@@ -367,6 +367,11 @@ func worktreeDelQuoteSegments(command string) []string {
 			r.pair()
 			continue
 		}
+		if r.state == worktreeDelQuoteComment && opened && c == '`' && command[i-1] != '\\' {
+			r.state, r.prev, opened = worktreeDelQuotePlain, '`', false // a comment in a backtick body ends at the closing backtick
+			cur = append(cur, c)
+			continue
+		}
 		state, prev := r.state, r.prev
 		r.step(c)
 		switch {
@@ -518,13 +523,15 @@ func worktreeDelQuoteEscape(state int, s string) ([]byte, int) {
 // ?; the numeric escapes are octal (up to three digits, the value wraps at 256), \x (two hex digits), \u (four) and \U (eight);
 // \cX is the control character of the byte X (X and 0x1f, 0x7f for ?, so NUL for @, a blank, a backtick or a byte such as
 // 0xE0), never the closing quote; \c\ takes the byte after the backslash as plain text, except another backslash, which it takes
-// with it, as bash's ansicstr reads them. The control letters \n \t and the like stay two bytes: no protected
-// path holds them. An escape without digits stays as written, so does a code point that is no character; a \U value with the
+// with it, as bash's ansicstr reads them. The letters a b f n r t v e E are the control characters (a tab or a newline in a
+// program string separates words and commands). An escape without digits stays as written, so does a code point that is no character; a \U value with the
 // high bit set (\U80000000 and above) vanishes, as in bash.
 func worktreeDelQuoteDecode(s string) (out []byte, n int) {
 	switch c := s[0]; {
 	case strings.IndexByte("\\'\"?", c) >= 0:
 		return []byte{c}, 1
+	case strings.IndexByte("abfnrtvEe", c) >= 0:
+		return []byte{"\a\b\f\n\r\t\v\x1b\x1b"[strings.IndexByte("abfnrtvEe", c)]}, 1
 	case c == 'c' && len(s) > 1 && s[1] != '\'':
 		v, used := []byte{s[1] & 0x1f}, 2
 		if s[1] == '?' {
@@ -621,26 +628,76 @@ func worktreeDelReadings(command string) []string {
 	return []string{scan}
 }
 
-// worktreeDelQuoteProgram is the program string that the words hand to a shell to be read again, if they hold one: the argument of
-// -c (alone or in a cluster such as -ec) after a shell name (sh, bash, dash, zsh, ksh, mksh, ash, csh, tcsh, fish or su, as
-// the word of a wrapper such as env, nohup or xargs too), or the arguments of eval joined by blanks. The inner shell reads the
-// program as a command of its own, so the walk judges it as one: this shell's single quotes keep a backslash-newline pair
-// that the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm).
-func worktreeDelQuoteProgram(words []string) (string, bool) {
-	if args := stripPrefixes(words); len(args) > 1 && basename(args[0]) == "eval" {
-		return strings.Join(args[1:], " "), true
-	}
+// The shell names, and the words that may stand before one without making it text (worktreeDelQuoteProgram).
+const (
+	worktreeDelQuoteShells   = " sh bash dash zsh ksh mksh ash csh tcsh fish su "
+	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice "
+)
+
+// worktreeDelQuoteProgram is the program string that the words hand to a shell to be read again, if they hold one, and whether
+// it is eval's, which this shell itself runs. The shell name or eval must start a command: only wrappers (sudo, env, nohup,
+// xargs and the like), options, assignments, numbers and the argument of an option may stand before it, so that
+// echo sh -c '...' is text. After a shell name the program is the first operand after a -c cluster (alone or as in -ec), after
+// eval it is the operands joined by blanks. The inner shell reads the program as a command of its own, so the walk judges it as
+// one: this shell's single quotes keep a backslash-newline pair that the inner shell removes (sh -c 'r<backslash><newline>m
+// -rf ...' runs rm).
+func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
 	for i, word := range words {
-		if !strings.Contains(" sh bash dash zsh ksh mksh ash csh tcsh fish su ", " "+basename(word)+" ") {
-			continue
-		}
-		for j := i + 1; j+1 < len(words); j++ {
-			if opt := words[j]; strings.HasPrefix(opt, "-") && !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
-				return words[j+1], true
+		name := basename(word)
+		if name == "eval" {
+			if args := worktreeDelQuoteOperands(words[i+1:]); len(args) > 0 {
+				return strings.Join(args, " "), true, true
 			}
 		}
+		if strings.Contains(worktreeDelQuoteShells, " "+name+" ") {
+			for j := i + 1; j < len(words); j++ {
+				if opt := words[j]; strings.HasPrefix(opt, "-") && !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
+					if args := worktreeDelQuoteOperands(words[j+1:]); len(args) > 0 {
+						return args[0], false, true
+					}
+					break
+				}
+			}
+		}
+		_, number := strconv.Atoi(word)
+		if !(strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") || strings.HasPrefix(word, "-") || isAssignment(word) || number == nil ||
+			i > 0 && strings.HasPrefix(words[i-1], "-")) {
+			break
+		}
 	}
-	return "", false
+	return "", false, false
+}
+
+// worktreeDelQuoteOperands drops from the front of words what a shell's argument parsing passes over before its operands:
+// options, -- and redirections with their targets.
+func worktreeDelQuoteOperands(words []string) []string {
+	for len(words) > 0 {
+		word := words[0]
+		switch {
+		case strings.HasPrefix(word, "-"):
+			words = words[1:]
+		case strings.HasPrefix(word, "<") || strings.HasPrefix(word, ">"):
+			words = words[1:]
+			if strings.Trim(word, "<>&|") == "" && len(words) > 0 { // an operator alone takes the next word as its target
+				words = words[1:]
+			}
+		case len(words) > 1 && strings.Trim(word, "0123456789") == "" && (strings.HasPrefix(words[1], "<") || strings.HasPrefix(words[1], ">")):
+			words = words[1:] // the descriptor of a redirection
+		default:
+			return words
+		}
+	}
+	return words
+}
+
+// worktreeDelQuoteEvalCwd is the directory this shell is in after eval has run program: a cd in it moves this shell.
+func worktreeDelQuoteEvalCwd(program, cwd string) string {
+	for _, segment := range worktreeDelQuoteSegments(worktreeDelJoinContinuations(program)) {
+		if tokens := worktreeDelQuoteTokenize(segment); len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
+			cwd = resolveFrom(cwd, tokens[1])
+		}
+	}
+	return cwd
 }
 
 // walk judges a command: the oracle's walk reads it as it is, the extended walk reads each of its readings, where the
@@ -703,9 +760,12 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 			segCwd = resolveFrom(segCwd, tokens[1])
 			continue
 		}
-		if program, ok := worktreeDelQuoteProgram(tokens); ok && quoting && depth < worktreeDelQuoteDepth {
+		if program, eval, ok := worktreeDelQuoteProgram(tokens); ok && quoting && depth < worktreeDelQuoteDepth {
 			if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
 				return verdict
+			}
+			if eval {
+				segCwd = worktreeDelQuoteEvalCwd(program, segCwd)
 			}
 		}
 		if hint.MatchString(foldASCII(segment)) {

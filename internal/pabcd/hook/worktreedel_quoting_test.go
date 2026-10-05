@@ -134,6 +134,7 @@ func TestWorktreeDelQuoteTargets(t *testing.T) {
 		{"rm -rf $'../re<BS>Uffffffffpo'", "rm -rf $'../ot<BS>Uffffffffher'", "rm -r ../repo"},
 		{"rm -rf $'../repo<BS>U80000001'", "rm -rf $'../other<BS>U80000001'", "rm -r ../repo"},
 		{"echo <BQ>#it's<BQ><NL>rm -rf ../repo", "echo <BQ>#it's<BQ><NL>rm -rf ../other", "rm -r ../repo"},
+		{"echo <BQ>#x'<BQ>; rm -rf ../repo", "echo <BQ>#x'<BQ>; rm -rf ../other", "rm -r ../repo"},
 		{"rm -rf { ..<BS>/repo", "rm -rf { ..<BS>/other", "rm -r ../repo"},
 		{"rm -rf } ..<BS>/repo", "rm -rf } ..<BS>/other", "rm -r ../repo"},
 		{"rm { -rf ..<BS>/repo", "rm { -rf ..<BS>/other", "rm -r ../repo"},
@@ -191,7 +192,8 @@ func TestWorktreeDelQuoteSegments(t *testing.T) {
 		{"# it's<NL>rm x", []string{"rm x"}},
 		{"echo a#b; rm x", []string{"echo a#b", "rm x"}},
 		{"echo \"a # b\"; rm x", []string{"echo \"a # b\"", "rm x"}},
-		{"echo <BQ>#it's<BQ><NL>rm x", []string{"echo <BQ>", "rm x"}},
+		{"echo <BQ>#it's<BQ><NL>rm x", []string{"echo <BQ><BQ>", "rm x"}},
+		{"echo <BQ>#x'<BQ>; rm x", []string{"echo <BQ><BQ>", "rm x"}}, // the comment ends at the closing backtick
 		{"echo <BQ>x<BQ># ; rm x", []string{"echo <BQ>x<BQ>#", "rm x"}},
 		{"rm -rf { x", []string{"rm -rf { x"}},
 		{"{ rm x; }", []string{"rm x"}},
@@ -259,6 +261,7 @@ func TestWorktreeDelQuoteTokenize(t *testing.T) {
 		{"$'<BS>?<BS><BS>'", []string{"?<BS>"}},
 		{"$'<BS>400'tail", []string{"tail"}},
 		{"$'<BS>u'", []string{"<BS>u"}},
+		{"$'<BS>a<BS>b<BS>f<BS>n<BS>r<BS>t<BS>v<BS>e<BS>E'", []string{"\a\b\f\n\r\t\v\x1b\x1b"}},
 		{"$'<BS>U80000000../repo'", []string{"../repo"}},
 		{"$'../re<BS>Uffffffffpo'", []string{"../repo"}},
 		{"''", []string{""}},
@@ -332,7 +335,17 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 		{"nohup bash -c 'r<BS><NL>m -rf ../../zk3q'", "nohup bash -c 'r<BS><NL>m -rf ../../other'", "rm -r ../../zk3q"},
 		{"xargs sh -c 'r<BS><NL>m -rf ../../zk3q'", "xargs sh -c 'r<BS><NL>m -rf ../../other'", "rm -r ../../zk3q"},
 		{"su -c 'r<BS><NL>m -rf ../../zk3q'", "su -c 'r<BS><NL>m -rf ../../other'", "rm -r ../../zk3q"},
-		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."}, // a program string with a relative target, found by the same reading
+		{"bash -c 2>/dev/null 'rm -rf ../repo'", "bash -c 2>/dev/null 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash -c -e 'rm -rf ../repo'", "bash -c -e 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash -c -- 'rm -rf ../repo'", "bash -c -- 'rm -rf ../other'", "rm -r ../repo"},
+		{"eval -- 'rm -rf ../repo'", "eval -- 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash -c $'rm<BS>t-rf<BS>t../repo'", "bash -c $'rm<BS>t-rf<BS>t../other'", "rm -r ../repo"}, // a control escape separates the words
+		{"eval $'rm<BS>t-rf<BS>t../repo'", "eval $'rm<BS>t-rf<BS>t../other'", "rm -r ../repo"},
+		{"sh -c $'echo a<BS>nrm -rf ../repo'", "sh -c $'echo a<BS>nrm -rf ../other'", "rm -r ../repo"},
+		{"sudo -u root bash -c 'rm -rf ../repo'", "sudo -u root bash -c 'rm -rf ../other'", "rm -r ../repo"},
+		{"timeout 5 sh -c 'rm -rf ../repo'", "timeout 5 sh -c 'rm -rf ../other'", "rm -r ../repo"},
+		{"eval 'cd ..'; rm -rf repo", "eval 'cd ..'; rm -rf other", "rm -r repo"}, // eval runs in this shell: its cd moves the later rm
+		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."},             // a program string with a relative target, found by the same reading
 	} {
 		deny := worktreeDelSpell(c.deny)
 		worktreeDelQuoteNeeds(t, r, deny)
@@ -341,6 +354,8 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 	}
 	// This shell removes the pair in double quotes, so the guard denied it before and after CRW-585 (through the fallback).
 	r.denied(t, worktreeDelSpell("sh -c \"r<BS><NL>m -rf ../../zk3q\""), unresolvable)
+	// sh -c runs in a shell of its own: its cd does not move this one. Words that only mention a shell are text, not a command.
+	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'")
 	// Without a program string handed to a shell the pair stays a part of a name, as CRW-585 reads it.
 	r.allowed(t, worktreeDelSpell("echo 'r<BS><NL>m -rf ../../zk3q'"), worktreeDelSpell("rm -rf '.<BS><NL>' sh"), worktreeDelSpell("rm -rf '.<BS><NL>' # sh"), worktreeDelSpell("rm -rf '.<BS><NL>'"))
 	r.intact(t)
