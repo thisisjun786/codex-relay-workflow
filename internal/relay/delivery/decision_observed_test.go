@@ -121,6 +121,14 @@ func TestDR13_an_answer_reaches_a_child_the_relay_saw_end(t *testing.T) {
 			if strings.Contains(message, "This answers the question your blocked_needs_input receipt asked") {
 				t.Fatalf("the observed end is answered with the blocked receipt's wording:\n%s", message)
 			}
+			// decision-show reads the record back with the answered outcome
+			shown, err := d.ack.DecisionsOf(d.ctx, d.rid)
+			mustDo(t, err)
+			list, _ := shown.Lookup("decisions")
+			items, _ := list.([]any)
+			if len(items) != 1 || field(items[0].(Obj), "decision") != "answer" || field(items[0].(Obj), "answersOutcome") != outcome {
+				t.Fatalf("decision-show = %v", shown)
+			}
 		})
 	}
 }
@@ -186,6 +194,13 @@ func TestDR16_the_blocked_receipts_answer_keeps_its_wording(t *testing.T) {
 	}
 	if strings.Contains(message, "The relay observed that your previous turn ended") {
 		t.Fatalf("the blocked receipt's answer carries the observed-end wording:\n%s", message)
+	}
+	shown, err := d.ack.DecisionsOf(d.ctx, d.rid)
+	mustDo(t, err)
+	list, _ := shown.Lookup("decisions")
+	items, _ := list.([]any)
+	if len(items) != 1 || field(items[0].(Obj), "answersOutcome") != "blocked_needs_input" {
+		t.Fatalf("decision-show = %v", shown)
 	}
 }
 
