@@ -310,3 +310,21 @@ func TestDispatchPinnedRenameFailureNamesThePaths(t *testing.T) {
 		t.Fatalf("error %v", err)
 	}
 }
+
+// A record that is a directory or a named pipe is named for what it is, and a pipe does not block the read.
+func TestDispatchPinnedRecordOfAnotherKind(t *testing.T) {
+	for _, kind := range []string{"directory", "named pipe"} {
+		t.Run(kind, func(t *testing.T) {
+			ws, env, _, file := dispatchTestFixture(t)
+			check(t, os.Remove(file))
+			want := "read " + file + ": is a directory"
+			if kind == "directory" {
+				check(t, os.Mkdir(file, 0o700))
+			} else {
+				check(t, syscall.Mkfifo(file, 0o600))
+				want = "dispatch state must be a regular file"
+			}
+			dispatchTestError(t, ws, env, dispatchPinnedInput("status", nil), want)
+		})
+	}
+}

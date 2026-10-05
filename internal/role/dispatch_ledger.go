@@ -236,8 +236,14 @@ func (d *dispatchPinnedDir) readFile(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	switch {
+	case opened.IsDir():
+		return nil, &fs.PathError{Op: "read", Path: d.display(name), Err: syscall.EISDIR}
+	case !opened.Mode().IsRegular():
+		return nil, errors.New("dispatch state must be a regular file")
+	}
 	now, nowErr := d.root.Lstat(name)
-	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) || nowErr != nil || !os.SameFile(info, now) {
+	if !os.SameFile(info, opened) || nowErr != nil || !os.SameFile(info, now) {
 		return nil, errors.New("dispatch state must not be a symlink")
 	}
 	return io.ReadAll(f)
