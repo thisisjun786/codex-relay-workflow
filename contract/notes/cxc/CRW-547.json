@@ -1,0 +1,32 @@
+{
+  "issue": "CRW-547",
+  "pending": [
+    "cli__review-round__open_signoff_and_binding_verdict",
+    "cli__review-round__unparsed_signoff_noted_and_abort"
+  ],
+  "identical": [
+    "cli-help__divergence__candidate_dashdash_help",
+    "cli-help__divergence__dash_h",
+    "cli-help__divergence__dashdash_help",
+    "cli-help__divergence__mode_dashdash_help",
+    "cli-help__divergence__word_help",
+    "cli-help__metric__dash_h",
+    "cli-help__metric__dashdash_help",
+    "cli-help__metric__ingest_dashdash_help",
+    "cli-help__metric__kind_dashdash_help",
+    "cli-help__metric__parse-line_dashdash_help",
+    "cli-help__metric__record_dashdash_help",
+    "cli-help__metric__show_dashdash_help",
+    "cli-help__metric__word_help",
+    "cli-help__review-round__abort_dashdash_help",
+    "cli-help__review-round__dash_h",
+    "cli-help__review-round__dashdash_help",
+    "cli-help__review-round__open_dashdash_help",
+    "cli-help__review-round__show_dashdash_help",
+    "cli-help__review-round__word_help",
+    "cli__divergence__mode_and_candidates",
+    "cli__metric__record_show_kind_parse_line",
+    "cli__review-round__show_and_open_refusals"
+  ],
+  "intentionally-changed": []
+}

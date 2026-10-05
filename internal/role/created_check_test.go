@@ -267,7 +267,8 @@ func TestCreatedCheckNativeDatabaseRefusalsAndOrdering(t *testing.T) {
 			}
 			dispatchTestCall(t, ws, env, map[string]any{"action": "claim", "attemptId": start.AttemptID})
 			_, err := CheckedDispatch(context.Background(), ws, createdCheckInput(start.AttemptID, "created"), env, nil)
-			if kind == "numeric-order" {
+			// An archived child of this session is a real child: the host archives it when it finishes.
+			if kind == "numeric-order" || kind == "archived" {
 				check(t, err)
 			} else if err == nil {
 				t.Fatal("invalid host witness accepted or older DB used")
