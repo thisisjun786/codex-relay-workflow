@@ -1,6 +1,7 @@
 package role
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,10 +21,11 @@ import (
 // but only once it has confirmed that the owner is gone. The oracle (fallback-dispatch.ts:137-139) has no way to recover a
 // lock at all. Nothing here steals a lock: a held lock is still refused, and so is one whose owner cannot be confirmed gone.
 const (
-	dispatchLockOwnerFile = "owner.json"
-	dispatchLockClearLog  = "lock-clears.jsonl"
-	dispatchLockClearWait = 5 * time.Second
-	dispatchLockClearHelp = "usage: crw role helper dispatch-lock-clear --session <id> (--dispatch <id> | --session-lock) --reason <text> [--cwd <dir>]"
+	dispatchLockOwnerFile   = "owner.json"
+	dispatchLockClearLog    = "lock-clears.jsonl"
+	dispatchLockClearWait   = 5 * time.Second
+	dispatchLockClearHelp   = "usage: crw role helper dispatch-lock-clear --session <id> (--dispatch <id> | --session-lock) --reason <text> [--cwd <dir>]"
+	dispatchLockUnconfirmed = "cannot confirm its owner is gone: "
 )
 
 // dispatchLockOwner is owner.json: the process that took the lock. processStart is empty when the platform could not read it.
@@ -84,52 +86,62 @@ func (d *dispatchPinnedDir) lockAbandon(lock string, created fs.FileInfo, cause 
 	return errors.Join(cause, fmt.Errorf("lock %s is not the directory that was created and is left in place", d.display(lock)))
 }
 
-// dispatchLockJudge returns the owner of lock when it is confirmed gone, and an error that says why not otherwise. The lock must be a real
-// directory holding a regular owner.json of a process on this host that no longer exists (kill 0 answers ESRCH) or whose start
-// time differs from the recorded one, which means the pid was taken over. A pid that exists with the recorded start time is alive,
-// EPERM included, and a pid whose start time cannot be compared is not confirmed either way.
-func dispatchLockJudge(dir *dispatchPinnedDir, lock string) (owner dispatchLockOwner, err error) {
-	const unconfirmed = "cannot confirm its owner is gone: "
-	info, err := dir.root.Lstat(lock)
+// dispatchLockOwnerRead returns the bytes of owner.json of the lock directory name of dir. The entry must be a real directory
+// (a link is refused) that is pinned while owner.json, a regular file, is read through that handle.
+func dispatchLockOwnerRead(dir *dispatchPinnedDir, name string) ([]byte, error) {
+	info, err := dir.root.Lstat(name)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return owner, fmt.Errorf("no lock to clear: %s", dir.display(lock))
+		return nil, fmt.Errorf("no lock to clear: %s", dir.display(name))
 	case err != nil:
-		return owner, dir.fail("lstat", lock, err)
+		return nil, dir.fail("lstat", name, err)
 	case !info.IsDir():
-		return owner, fmt.Errorf("%s is not a real directory; nothing was removed", dir.display(lock))
+		return nil, fmt.Errorf("%s is not a real directory; nothing was removed", dir.display(name))
 	}
-	sub, err := dispatchPinnedOpen(dir.root, lock, info)
+	sub, err := dispatchPinnedOpen(dir.root, name, info)
 	if err != nil {
-		return owner, errors.New(unconfirmed + err.Error())
+		return nil, errors.New(dispatchLockUnconfirmed + err.Error())
 	}
 	defer sub.Close()
-	data, err := (&dispatchPinnedDir{root: sub, path: dir.display(lock)}).readFile(dispatchLockOwnerFile)
-	if err == nil {
-		err = json.Unmarshal(data, &owner)
+	data, err := (&dispatchPinnedDir{root: sub, path: dir.display(name)}).readFile(dispatchLockOwnerFile)
+	if err != nil {
+		return nil, errors.New(dispatchLockUnconfirmed + err.Error())
 	}
+	return data, nil
+}
+
+// dispatchLockJudge returns the owner of lock when it is confirmed gone, with the bytes of owner.json it judged, and an error
+// that says why not otherwise. The lock must be a real directory holding a regular owner.json of a process on this host that
+// no longer exists (kill 0 answers ESRCH) or whose start time differs from the recorded one, which means the pid was taken
+// over. A pid that exists with the recorded start time is alive, EPERM included, and a pid whose start time cannot be
+// compared is not confirmed either way.
+func dispatchLockJudge(dir *dispatchPinnedDir, lock string) (owner dispatchLockOwner, data []byte, err error) {
+	if data, err = dispatchLockOwnerRead(dir, lock); err != nil {
+		return owner, nil, err
+	}
+	err = json.Unmarshal(data, &owner)
 	if err == nil && (owner.PID <= 0 || owner.PID > 1<<31-1 || owner.Host == "") {
 		err = errors.New("owner.json has no valid pid and host")
 	}
 	if err != nil {
-		return owner, errors.New(unconfirmed + err.Error())
+		return owner, data, errors.New(dispatchLockUnconfirmed + err.Error())
 	}
 	if name, err := os.Hostname(); err != nil || name != owner.Host {
-		return owner, fmt.Errorf("owner host differs from this host (%s); nothing was removed", owner.Host)
+		return owner, data, fmt.Errorf("owner host differs from this host (%s); nothing was removed", owner.Host)
 	}
 	if err := syscall.Kill(owner.PID, 0); errors.Is(err, syscall.ESRCH) {
-		return owner, nil
+		return owner, data, nil
 	} else if err != nil && !errors.Is(err, syscall.EPERM) {
-		return owner, errors.New(unconfirmed + err.Error())
+		return owner, data, errors.New(dispatchLockUnconfirmed + err.Error())
 	}
 	start, err := dispatchProcessStart(owner.PID)
 	switch {
 	case owner.ProcessStart == "" || err != nil:
-		return owner, errors.New(unconfirmed + "the pid exists and its start time cannot be compared")
+		return owner, data, errors.New(dispatchLockUnconfirmed + "the pid exists and its start time cannot be compared")
 	case start == owner.ProcessStart:
-		return owner, fmt.Errorf("owner process is alive (pid %d); nothing was removed", owner.PID)
+		return owner, data, fmt.Errorf("owner process is alive (pid %d); nothing was removed", owner.PID)
 	}
-	return owner, nil
+	return owner, data, nil
 }
 
 // dispatchLockClearExclusive takes an exclusive advisory lock on f, polling for dispatchLockClearWait. It belongs to the open
@@ -175,7 +187,7 @@ func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, err
 	case !logInfo.Mode().IsRegular():
 		return nil, fmt.Errorf("%s must be a regular file; nothing was removed", dir.display(dispatchLockClearLog))
 	}
-	owner, err := dispatchLockJudge(dir, lock)
+	owner, judged, err := dispatchLockJudge(dir, lock)
 	if err != nil {
 		return nil, err
 	}
@@ -195,11 +207,30 @@ func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	if err = dir.root.RemoveAll(lock); err != nil {
-		return nil, fmt.Errorf("%w (the lock may be partly removed; one without an owner stays refused)", err)
+	dir.point("judged")
+	tomb := lock + ".clearing-" + dispatchUUID()
+	if err = dir.root.Rename(lock, tomb); err != nil {
+		return nil, err
+	}
+	dir.point("claimed")
+	if now, err := dispatchLockOwnerRead(dir, tomb); err != nil || !bytes.Equal(now, judged) {
+		return nil, dir.restoreLock(lock, tomb)
+	}
+	if err = dir.root.RemoveAll(tomb); err != nil {
+		return nil, fmt.Errorf("%w (the lock is left at %s, partly removed, and one without an owner stays refused)", err, dir.display(tomb))
 	}
 	_, err = log.Write(append(line, '\n'))
 	return line, err
+}
+
+// restoreLock answers a clear that did not claim the lock it judged: the lock that was there changed after the judgment, so what
+// the rename moved is another process's lock. It goes back under its name when the name is still free; when the name was taken
+// again it stays at the tombstone name, where the error says to find it. It is never removed.
+func (d *dispatchPinnedDir) restoreLock(lock, tomb string) error {
+	if _, err := d.root.Lstat(lock); errors.Is(err, fs.ErrNotExist) && d.root.Rename(tomb, lock) == nil {
+		return fmt.Errorf("%s was replaced while it was being cleared and has been put back; nothing was removed", d.display(lock))
+	}
+	return fmt.Errorf("%s was replaced while it was being cleared and is left at %s; nothing was removed", d.display(lock), d.display(tomb))
 }
 
 // DispatchLockClearCommand is 'crw role helper dispatch-lock-clear'. Every outcome is one JSON line on stdout: the line that was
