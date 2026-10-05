@@ -646,8 +646,9 @@ const (
 // worktreeDelQuoteProgram is the program string that the words hand to a shell to be read again, if they hold one, and whether
 // it is eval's, which this shell itself runs. The shell name or eval must start a command: only wrappers (sudo, env, nohup,
 // xargs and the like), options, assignments, numbers and the argument of an option may stand before it, so that
-// echo sh -c '...' is text. After a shell name the program is the first operand after a -c cluster (alone or as in -ec), after
-// eval it is the operands joined by blanks. The inner shell reads the program as a command of its own, so the walk judges it as
+// echo sh -c '...' is text. After a shell name the program is the first operand after a -c cluster (alone or as in -ec) or a
+// long command option (worktreeDelQuoteLongCommand), after eval it is the operands joined by blanks. The inner shell reads
+// the program as a command of its own, so the walk judges it as
 // one: this shell's single quotes keep a backslash-newline pair that the inner shell removes (sh -c 'r<backslash><newline>m
 // -rf ...' runs rm).
 func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
@@ -660,7 +661,12 @@ func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
 		}
 		if strings.Contains(worktreeDelQuoteShells, " "+name+" ") {
 			for j := i + 1; j < len(words); j++ {
-				if opt := words[j]; strings.HasPrefix(opt, "-") && !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
+				opt := words[j]
+				value, attached, long := worktreeDelQuoteLongCommand(opt)
+				if long && attached {
+					return value, false, true
+				}
+				if long || strings.HasPrefix(opt, "-") && !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
 					if args := worktreeDelQuoteOperands(words[j+1:]); len(args) > 0 {
 						return args[0], false, true
 					}
@@ -675,6 +681,16 @@ func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
 		}
 	}
 	return "", false, false
+}
+
+// worktreeDelQuoteLongCommand reads a long option that hands its argument to a shell as a program: --command (su, fish) and
+// su's --session-command. getopt_long takes an unambiguous abbreviation (--com, --se) and the argument after an equals sign.
+func worktreeDelQuoteLongCommand(opt string) (value string, attached, long bool) {
+	if !strings.HasPrefix(opt, "--") {
+		return "", false, false
+	}
+	name, value, attached := strings.Cut(opt[2:], "=")
+	return value, attached, name != "" && strings.HasPrefix("command", name) || len(name) > 1 && strings.HasPrefix("session-command", name)
 }
 
 // worktreeDelQuoteOperands drops from the front of words what a shell's argument parsing passes over before its operands:

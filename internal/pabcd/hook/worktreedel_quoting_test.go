@@ -47,6 +47,7 @@ func TestWorktreeDelQuoteVerdicts(t *testing.T) {
 		{"echo a;# it's<NL>rm -rf ../repo", "echo a;# it's<NL>rm -rf ../other"}, // a # after each separator opens a comment
 		{"echo a&# it's<NL>rm -rf ../repo", "echo a&# it's<NL>rm -rf ../other"},
 		{"(echo a)# it's<NL>rm -rf ../repo", "(echo a)# it's<NL>rm -rf ../other"},
+		{"echo $(case x in x)# it's<NL>rm -rf ../repo ;; esac)", "echo $(case x in x)# it's<NL>rm -rf ../other ;; esac)"}, // a ) is a boundary also in a substitution: here a case pattern, and bash runs rm
 		{"{ # it's<NL>rm -rf ../repo; }", "{ # it's<NL>rm -rf ../other; }"},
 		{"echo a # '; rm -rf ../other<NL>rm -rf ../repo", "echo a # '; rm -rf ../repo<NL>rm -rf ../other"}, // a comment hides the separators and quotes in it, and is not a command
 	} {
@@ -336,6 +337,10 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 		{"nohup bash -c 'r<BS><NL>m -rf ../../zk3q'", "nohup bash -c 'r<BS><NL>m -rf ../../other'", "rm -r ../../zk3q"},
 		{"xargs sh -c 'r<BS><NL>m -rf ../../zk3q'", "xargs sh -c 'r<BS><NL>m -rf ../../other'", "rm -r ../../zk3q"},
 		{"su -c 'r<BS><NL>m -rf ../../zk3q'", "su -c 'r<BS><NL>m -rf ../../other'", "rm -r ../../zk3q"},
+		{"su --command 'rm -rf ../repo' root", "su --command 'rm -rf ../other' root", "rm -r ../repo"}, // su's long options (util-linux 2.41 su --help)
+		{"su --session-command 'rm -rf ../repo' root", "su --session-command 'rm -rf ../other' root", "rm -r ../repo"},
+		{"su --com='rm -rf ../repo' root", "su --com='rm -rf ../other' root", "rm -r ../repo"}, // an abbreviation with its argument attached
+		{"su --se 'rm -rf ../repo' root", "su --se 'rm -rf ../other' root", "rm -r ../repo"},
 		{"bash -c 2>/dev/null 'rm -rf ../repo'", "bash -c 2>/dev/null 'rm -rf ../other'", "rm -r ../repo"},
 		{"bash -c -e 'rm -rf ../repo'", "bash -c -e 'rm -rf ../other'", "rm -r ../repo"},
 		{"bash -c -- 'rm -rf ../repo'", "bash -c -- 'rm -rf ../other'", "rm -r ../repo"},
@@ -361,7 +366,8 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 	// This shell removes the pair in double quotes, so the guard denied it before and after CRW-585 (through the fallback).
 	r.denied(t, worktreeDelSpell("sh -c \"r<BS><NL>m -rf ../../zk3q\""), unresolvable)
 	// sh -c runs in a shell of its own: its cd does not move this one. Words that only mention a shell are text, not a command.
-	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), worktreeDelSpell("eval '(cd ..)'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'")
+	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), worktreeDelSpell("eval '(cd ..)'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'",
+		"echo su --command 'rm -rf ../repo'", "su --shell /bin/sh root")
 	// Without a program string handed to a shell the pair stays a part of a name, as CRW-585 reads it.
 	r.allowed(t, worktreeDelSpell("echo 'r<BS><NL>m -rf ../../zk3q'"), worktreeDelSpell("rm -rf '.<BS><NL>' sh"), worktreeDelSpell("rm -rf '.<BS><NL>' # sh"), worktreeDelSpell("rm -rf '.<BS><NL>'"))
 	r.intact(t)
