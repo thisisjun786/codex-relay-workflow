@@ -395,23 +395,9 @@ func TestHeadCompareBareClaimReadsNothing(t *testing.T) {
 	}
 }
 
-// A relay built with no pull request reader decides a forge pull request by its record, as before (production composition
-// always supplies one: see the next test).
-func TestHeadCompareForgePullRequestWithoutAReaderIsDecidedByTheRecord(t *testing.T) {
-	w := newFx(t)
-	turn := headCompareHeld(w, fxRepo, "head-501", 500, "", false)
-	answer := w.must(w.m.Ready(w.ctx, turn, alpha.TaskID, true, "", ""))
-	if answer["declaredReady"] != true || answer["pullRequestHead"] != nil {
-		t.Fatalf("%v", answer)
-	}
-	checked, err := headCompareCheck(w, turn, "head-501", w.target)
-	if err != nil || checked["state"] != Merging || checked["pullRequestHead"] != nil {
-		t.Fatalf("%v %v", checked, err)
-	}
-}
-
-// The relay commands build the service with a pull request reader and give merge-turn-check one: the comparison with the
-// forge is not left to a configuration.
+// A relay built with no pull request reader refuses a forge pull request instead of deciding it by its record: see
+// headcompare_readerless_test.go. The relay commands build the service with a pull request reader and give merge-turn-check
+// one: the comparison with the forge is not left to a configuration.
 func TestHeadCompareProductionWiringReadsPullRequests(t *testing.T) {
 	w := newFx(t)
 	if service(w.r).Pulls == nil {

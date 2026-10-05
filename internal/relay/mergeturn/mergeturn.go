@@ -34,7 +34,10 @@ type Service struct {
 	// Delivery is MergeTurn's delivery: absent, a grant carries no wake key at all, as in
 	// Python; the relay CLI always supplies one.
 	Delivery Delivery
-	// Pulls reads the head of a pull request. Absent, a turn's record alone decides which head is its own.
+	// Pulls reads the head of a pull request for Ready. Absent, Ready refuses a recorded forge pull request
+	// (merge_target_unreadable) whenever it moves the head or declares readiness: the turn's record never decides which head is
+	// its own, and no reader is built here. Check reads pull requests through the Reader it is given and refuses the same way
+	// when that reader cannot read them.
 	Pulls PullRequestHeadReader
 }
 
