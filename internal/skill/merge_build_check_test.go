@@ -600,6 +600,9 @@ func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	// The real go tool must not write its telemetry counters into the caller's directories: a run
+	// there with no off file leaves a writer behind that races the caller's TempDir cleanup (CRW-598).
+	telemetryOffWriteMode(t, base)
 	cmd.Env = base
 	out, err := cmd.Output()
 	if err != nil {
