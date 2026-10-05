@@ -324,10 +324,12 @@ Execution:
   after every CI job is green on that head and before you emit. The command keeps the run rules itself: the same
   patch-id is never reviewed again (a repeat answers `already_reviewed` and calls no model), one review runs at a time on the host
   (concurrency 1), and a daily cap bounds the starts, which you do not raise. A review that could not run at all
-  because of the account or the configuration (quota, authentication, an unknown model) is `unavailable`: it does not use up
-  the patch, and one more attempt is allowed on a later UTC day only (`retryNotBefore`; a call the same day answers
-  `retry_deferred`; a second unavailable run closes the patch), while a content filter, an invalid answer or the time
-  limit counts as a result at once. `--post-summary` creates or updates the one general summary comment of the pull request,
+  because of the account or the configuration (quota, authentication, an unknown model) or because the runner itself failed
+  (`crash` or `runner_error`) is `unavailable`: it does not use up the patch, and one more attempt is allowed on a later UTC
+  day only (`retryNotBefore`; a call the same day answers `retry_deferred`; a second unavailable run closes the patch), while a
+  content filter, an invalid answer or the time limit counts as a result at once. A run where agy was never started because
+  the host-wide lock was not free within the wait answers `lock_wait_expired`: it counts toward neither the patch nor the daily
+  cap and the same patch may be tried again the same day. `--post-summary` creates or updates the one general summary comment of the pull request,
   never a review thread, so the relay's `threadsSeen` and late-finding rules are not touched; a failed post is repaired by
   running the same command again while the patch is closed or its retry is deferred, and on or after the retry day (where
   the same command is the retry) by `crw review ... --post-only --pr <number>`, which runs no review, counts toward neither
