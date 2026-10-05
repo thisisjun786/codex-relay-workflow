@@ -307,21 +307,39 @@ func spawnInlineDecodeUTF8(data []byte) string {
 // Copied from the unexported JavaScript text helpers in internal/pabcd/attest,
 // keeping this library independent of recall and its storage/runtime features.
 // spawnInlineLowerJS is String.prototype.toLowerCase: the simple case mapping, with U+0130 as "i" and a combining dot above, and capital
-// sigma in its final form at the end of a word (Unicode Final_Sigma).
+// sigma in its final form at the end of a word (Unicode Final_Sigma). A lone surrogate is no code point to case-fold: it keeps the bytes
+// it was spelled with, as the JS reading leaves it, whether pyjson.CodePoint read it from WTF-8 or from a surrogateescape byte.
 func spawnInlineLowerJS(s string) string {
-	rs := []rune(s)
+	var units []spawnInlineLowerUnit
+	var rs []rune
+	for i := 0; i < len(s); {
+		r, n := pyjson.CodePoint(s, i)
+		units = append(units, spawnInlineLowerUnit{r: r, off: i, size: n})
+		rs = append(rs, r)
+		i += n
+	}
 	var b strings.Builder
-	for i, r := range rs {
+	for i, u := range units {
 		switch {
-		case r == 0x130:
+		case pyjson.IsSurrogate(u.r):
+			b.WriteString(s[u.off : u.off+u.size])
+		case u.r == 0x130:
 			b.WriteString("i\u0307")
-		case r == 0x3a3 && spawnInlineFinalSigma(rs, i):
+		case u.r == 0x3a3 && spawnInlineFinalSigma(rs, i):
 			b.WriteRune(0x3c2)
 		default:
-			b.WriteRune(unicode.ToLower(r))
+			b.WriteRune(unicode.ToLower(u.r))
 		}
 	}
 	return b.String()
+}
+
+// spawnInlineLowerUnit is one code point of spawnInlineLowerJS's input: the rune pyjson.CodePoint read and the byte span it was
+// spelled with, so a surrogate keeps its original bytes (strings.Builder.WriteRune writes U+FFFD for a surrogate rune instead).
+type spawnInlineLowerUnit struct {
+	r    rune
+	off  int
+	size int
 }
 
 // spawnInlineFinalSigma: a spawnInlineCased letter precedes rs[i] (skipping case-ignorable characters) and none follows it (likewise).
