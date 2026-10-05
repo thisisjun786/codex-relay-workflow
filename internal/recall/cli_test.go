@@ -570,9 +570,10 @@ func TestRecallRebuildFaultKeepsIndex(t *testing.T) {
 		// The first statement aborts before anything changes, so this case also holds on code without the
 		// transaction; it guards the symmetric failure and the error text.
 		{"msgs", "BEFORE DELETE ON msgs BEGIN SELECT RAISE(ABORT,'fault'); END", "chat index failed: fault\n"},
-		// SQLite rolls the explicit transaction back itself, so the helper's ROLLBACK fails and its reason
-		// is the one reported; only the rows are asserted.
-		{"files rollback", "BEFORE DELETE ON files BEGIN SELECT RAISE(ROLLBACK,'fault'); END", ""},
+		// A trigger raising ROLLBACK ends the transaction inside SQLite, so the rebuild's own ROLLBACK
+		// finds nothing to roll back; the delete's reason must still be the one reported.
+		{"files rollback", "BEFORE DELETE ON files BEGIN SELECT RAISE(ROLLBACK,'fault'); END", "chat index failed: fault\n"},
+		{"msgs rollback", "BEFORE DELETE ON msgs BEGIN SELECT RAISE(ROLLBACK,'fault'); END", "chat index failed: fault\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r, now := recallRebuildNew(t), time.Now()
@@ -582,7 +583,7 @@ func TestRecallRebuildFaultKeepsIndex(t *testing.T) {
 			recallRebuildRequirePopulated(t, before)
 			r.snapshot(t, "CREATE TRIGGER recall_rebuild_fault "+c.trigger)
 			code, out, e := r.run(t, now, "chat", "index", "--rebuild")
-			if code != 1 || out != "" || !strings.HasPrefix(e, "chat index failed: ") || c.stderr != "" && e != c.stderr {
+			if code != 1 || out != "" || !strings.HasPrefix(e, "chat index failed: ") || e != c.stderr {
 				t.Fatal(code, out, e)
 			}
 			if !reflect.DeepEqual(before, r.snapshot(t)) || !reflect.DeepEqual(search, r.search(t, now)) {
