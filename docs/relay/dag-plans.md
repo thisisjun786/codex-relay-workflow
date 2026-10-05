@@ -45,6 +45,8 @@ An edge is `{edge_id, from_node_id, to_node_id, kind}` plus, by kind: `target_re
 (artifact_verified, integrated); `decision_subject`, `decision_digest`, `required_authority` (decision). `required_authority`
 entries are opaque text: the format of an authority is undecided (D-09) and is not invented here.
 
+The plan does not check how a `target_repository` is spelled. For the `integrated` and code-pinned `artifact_verified` edges that leave an implementation node it is the `owner/name` of the repository the node's pull request is in: [accepting the node's result](dag-scheduler.md#accepting-a-result) refuses an absolute path (a local checkout is where `dag-base-refresh --checkout` reads commits) and any other text that is not that repository.
+
 A lifecycle change is `{"op":"pause_node","node_id":"n1"}` (likewise `resume_node`, `cancel_node`, `archive_node`: the op and the node, nothing else) or `{"op":"pause_plan"}`
 (likewise `resume_plan`: the op alone). A field that is not named is rejected like any other.
 
