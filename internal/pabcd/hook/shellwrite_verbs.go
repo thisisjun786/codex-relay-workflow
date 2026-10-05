@@ -808,8 +808,8 @@ func shellVerbSpaceRune(r rune) bool {
 
 // shellVerbOpenCall decides one call from its argument spans: whether its mode opens for writing, and its path. The decoded
 // reading (shellVerbLiteral) is added to the earlier one, which kept escapes other than a backslash and the quote as written, and
-// neither replaces the other: the call names the path of each reading that reads as a literal. A mode that either reading finds
-// writing counts, and so does one written with a \N{name} escape, which cannot be decoded (it needs the Unicode name table).
+// neither replaces the other: each reading names its own path when its own mode writes. A mode written with a \N{name} escape
+// cannot be decoded (it needs the Unicode name table), so it counts as writing for both readings.
 func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 	var path, mode []rune
 	positional := 0
@@ -835,13 +835,13 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 		}
 		positional++
 	}
-	kept, keptOK := shellWriteEscapeLiteral(mode, true)
-	decoded, decodedOK := shellVerbLiteral(mode)
 	names := []string{}
-	if !(keptOK && strings.ContainsAny(kept, "wax+") || decodedOK && strings.ContainsAny(decoded, "wax+") || !decodedOK && strings.Contains(string(mode), "\\N{")) {
-		return names
-	}
+	_, decodedOK := shellVerbLiteral(mode)
+	named := !decodedOK && strings.Contains(string(mode), "\\N{")
 	for _, earlier := range []bool{true, false} {
+		if kind, ok := shellWriteEscapeLiteral(mode, earlier); !named && !(ok && strings.ContainsAny(kind, "wax+")) {
+			continue
+		}
 		if file, ok := shellWriteEscapeLiteral(path, earlier); ok && file != "" && !slices.Contains(names, file) {
 			names = append(names, file)
 		}
@@ -929,9 +929,9 @@ func shellWriteEscapeUnquote(body []rune, quote rune) string {
 // blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
 // that is no literal, or an f-string with a field, leaves the rest of the path unknown, so the call names the literal prefix, the
 // directory the write lands under (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix
-// names nothing. Such a call also keeps the earlier reading, its first argument when that is a literal, read as that reading did
-// (shellWriteEscapeLiteral), so the join never names fewer destinations than before. The path grows in one buffer, so the work is
-// linear in the arguments.
+// names nothing. Such a call, and one with a single argument, also keeps the earlier reading, its first argument when that is a
+// literal, read as that reading did (shellWriteEscapeLiteral), so the join never names fewer destinations than before; only a call
+// of several literals names the join alone. The path grows in one buffer, so the work is linear in the arguments.
 func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 	var path []byte
 	known, dynamic, head, parts := true, false, "", 0
@@ -960,7 +960,7 @@ func shellWriteEscapePath(rs []rune, spans [][2]int) []string {
 	if len(path) > 0 {
 		names = append(names, string(path))
 	}
-	if dynamic && head != "" && head != string(path) {
+	if (dynamic || parts == 1) && head != "" && head != string(path) {
 		names = append(names, head)
 	}
 	return names

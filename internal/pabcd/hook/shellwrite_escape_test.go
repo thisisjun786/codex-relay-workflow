@@ -93,6 +93,7 @@ func TestShellWriteEscapePythonPaths(t *testing.T) {
 		{command: "python3 -c 'open(file=\"\\x2fm/a\",mode=\"w\")'", has: []string{"\\x2fm/a", "/m/a"}},
 		{command: "python3 -c 'open(file=\"/review/memories/\\N{LATIN SMALL LETTER A}\",mode=\"w\")'", has: []string{"/review/memories/\\N{LATIN SMALL LETTER A}"}},
 		{command: "python3 -c 'open(file=\"/m/a\\0\",mode=\"w\")'", has: []string{"/m/a\\0"}, lacks: []string{"/m/a\x00"}},
+		{command: "python3 -c 'open(file=\"/review/memories/\\N{LATIN SMALL LETTER A}\",mode=\"\\N{LATIN SMALL LETTER W}\")'", has: []string{"/review/memories/\\N{LATIN SMALL LETTER A}"}},
 		{command: "python3 -c 'open(\"\\u002fm/a\",\"w\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(\"/h/\\udcc3\\udca9/m\",\"w\")'", has: []string{"/h/\u00e9/m"}},
 		{command: "python3 -c 'open(\"\\057m/a\",\"w\")'", has: []string{"/m/a"}},
