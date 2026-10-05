@@ -189,7 +189,7 @@ type acceptOpts struct {
 	HeadSHA    string // implementation nodes: the head the acceptance pinned
 	PR         int64
 	Forge      string // forge slug (a dag_acceptance_forge row when set)
-	Repository string // the edge target recorded
+	Repository string // the edge target recorded: a local checkout path seeds a LEGACY local row; a new implementation acceptance names its forge (integrationKit.acceptOnForge)
 	Status     string // relationship status, active by default
 	Suffix     string // appended to the relationship id: a second acceptance of one node needs a second relationship
 	NoManifest bool   // a non_pr node's receipt declares no artifacts

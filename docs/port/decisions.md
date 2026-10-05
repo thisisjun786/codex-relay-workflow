@@ -5048,3 +5048,14 @@ refresh explanation when the guard ships. The readerless slice updates
 `docs/relay/coordination.md:297` when that exception is removed. Today both pages
 correctly describe the built behavior and stay unchanged. No skill, installation,
 live-store test or operating forge-lane change belongs to this design PR.
+
+Status of item 2, the readerless comparison (2026-10-05): built by the pull request
+for CRW-608 (#564). `Service.Ready` and `Service.Check` now refuse a recorded forge
+pull request with `merge_target_unreadable` when no pull request head reader is
+available, with the why text above, no work-report fallback and no default reader,
+and `docs/relay/coordination.md` describes it. The baseline anchors in this section
+(`pullhead.go:192`, `headcompare_test.go:400`) describe the code before that change.
+Not part of that slice: the generic remediation tail of `headCompareNothing`, which
+still points a forge turn at work reports, and the readiness that
+`merge-turn-request --ready --pr` records at claim time without a comparison
+(`merge-turn-check` still gates the merge).
