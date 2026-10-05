@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -63,6 +64,7 @@ func TestNodeErrorMessageSpellsWhatTheNodeRuntimePrints(t *testing.T) {
 		{"not a PathError", errors.New("boom"), "boom"},
 		{"an errno the table does not name", unnamed, unnamed.Error()},
 		{"a wrapped PathError", fmt.Errorf("candidate: %w", &os.PathError{Op: "mkdir", Path: "/w/.crw", Err: syscall.EACCES}), "EACCES: permission denied, mkdir '/w/.crw'"},
+		{"a write past the file-size limit", &os.PathError{Op: "write", Path: "/w/.crw/divergence/candidates.jsonl", Err: syscall.EFBIG}, "EFBIG: file too large, write"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -70,5 +72,39 @@ func TestNodeErrorMessageSpellsWhatTheNodeRuntimePrints(t *testing.T) {
 				t.Errorf("nodeErrorMessage(%v) = %q, want %q", c.err, got, c.want)
 			}
 		})
+	}
+}
+
+// TestDivergenceCliCandidateAddReportsTheFileSizeLimitFailure is the same text on the one path that
+// reaches a write outside the helper's unit rows: a candidate row past RLIMIT_FSIZE. The oracle
+// answers "divergence candidate add: EFBIG: file too large, write" (recorded with Node 24 and a
+// 512-byte limit), and Go returns the EFBIG PathError rather than dying of the signal the limit
+// raises, so the test lowers the limit for the process and restores it.
+func TestDivergenceCliCandidateAddReportsTheFileSizeLimitFailure(t *testing.T) {
+	cwd := divergenceCliSandbox(t)
+	var before syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &before); err != nil {
+		t.Skipf("RLIMIT_FSIZE is not available here: %v", err)
+	}
+	limit := before
+	limit.Cur = 4096
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+		t.Skipf("cannot lower RLIMIT_FSIZE here: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &before); err != nil {
+			t.Errorf("restoring RLIMIT_FSIZE: %v", err)
+		}
+	})
+	result, err := RunDivergenceCli([]string{
+		"candidate", "add", "--session", "cli", "--kind", "alternative",
+		"--title", strings.Repeat("t", 8192), "--rationale", "past the file size limit",
+		"--source", "https://example.invalid/a",
+	}, cwd)
+	if err != nil {
+		t.Fatalf("candidate add: %v", err)
+	}
+	if want := "divergence candidate add: EFBIG: file too large, write"; result.Output != want || result.Code != 1 {
+		t.Errorf("candidate add past RLIMIT_FSIZE: got %q (code %d), want %q (code 1)", result.Output, result.Code, want)
 	}
 }

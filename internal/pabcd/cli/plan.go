@@ -361,6 +361,8 @@ func planErrno(e syscall.Errno) (string, string) {
 		return "ENAMETOOLONG", "name too long"
 	case syscall.ELOOP:
 		return "ELOOP", "too many symbolic links encountered"
+	case syscall.EFBIG:
+		return "EFBIG", "file too large"
 	}
 	return "", ""
 }

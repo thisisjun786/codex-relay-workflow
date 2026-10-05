@@ -1164,6 +1164,13 @@ Source: `plugins/codexclaw/components/cxc-ops/src/hook-trust.ts` (`TomlSection` 
   plan init's output stays byte-identical (pinned by the recorded cases of `plan_test.go`);
   port: fixed (port-introduced, not an oracle defect: the oracle text is the reference and the port
   now matches it; no recorded case is retagged).
+- The table the conversion reads named thirteen errnos and left EFBIG out, so a candidate write past
+  RLIMIT_FSIZE still answered `divergence candidate add: write <archive>: file too large` where the
+  oracle prints `divergence candidate add: EFBIG: file too large, write` (both recorded with a
+  512-byte limit and Node 24 for the oracle; the limit needs a lowered `ulimit -f`, so no corpus
+  fixture reaches it). EFBIG with its verified description is added to `planErrno`, and
+  `TestDivergenceCliCandidateAddReportsTheFileSizeLimitFailure` pins the end-to-end text; the other
+  plan init outputs are unchanged. port: fixed (port-introduced, the same class as the line above).
 - The divergence CLI's other error path keeps Go's spelling: the mode write (the oracle's one
   uncaught path, `divergence-cli.ts:115`) is reported by its caller as `crw cli failed: <PathError
   text>` where the oracle prints `codexclaw cli failed: <err.message>` (`src/cli.ts:530`; the
