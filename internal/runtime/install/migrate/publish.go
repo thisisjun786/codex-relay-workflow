@@ -73,14 +73,22 @@ func (p *Publisher) step(name string) error {
 // run is never touched, and none of this run's is unlinked once its rename has happened.
 func (p *Publisher) Publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (Result, error) {
 	res, err := p.publish(dir, leaf, src, size, mode)
-	var refused *RefusedError
 	switch {
 	case err == nil:
 		return res, nil
-	case errors.As(err, &refused):
+	case refusal(err) != nil:
 		return ResultRefused, err
 	}
 	return ResultFailed, err
+}
+
+// refusal returns err as a refusal, or nil when it is anything else.
+func refusal(err error) *RefusedError {
+	var r *RefusedError
+	if errors.As(err, &r) {
+		return r
+	}
+	return nil
 }
 
 func (p *Publisher) publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (_ Result, err error) {
@@ -198,8 +206,7 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 	}
 	text := crwdir.GitignoreText
 	_, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
-	var refused *RefusedError
-	if errors.As(err, &refused) && refused.Reason == ReasonDiffers {
+	if r := refusal(err); r != nil && r.Reason == ReasonDiffers {
 		err = nil
 	}
 	if err != nil {

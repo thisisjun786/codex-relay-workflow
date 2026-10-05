@@ -99,6 +99,10 @@ func TestPublishNeverReplaces(t *testing.T) {
 			must(t, os.Symlink("target", d+"/leaf"))
 		}, ResultRefused, ReasonLink},
 		"directory": {func(d string) { mkdirs(t, d+"/leaf") }, ResultRefused, ReasonNotRegular},
+		"set-ID": {func(d string) {
+			put(t, d+"/leaf", "data", 0o644)
+			must(t, os.Chmod(d+"/leaf", fs.ModeSetuid|0o644))
+		}, ResultRefused, ReasonSetID},
 		"hard-linked": {func(d string) {
 			put(t, d+"/leaf", "data", 0o644)
 			must(t, os.Link(d+"/leaf", d+"/twin"))
@@ -226,6 +230,46 @@ func TestPublishLeavesTheTempNameAloneAfterTheRename(t *testing.T) {
 	}
 }
 
+// A temporary that cannot be removed after a refusal is a failure that names both: never a plain conflict, and never the retained
+// .gitignore of an owner that EnsureProjectRoot lets pass.
+func TestRefusalWithFailedCleanupIsAFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	// racer makes a different file just before the rename and takes the directory's write permission, so our temporary stays.
+	racer := func(t *testing.T, dir, leaf string, p *Publisher) {
+		p.at = func(step string) error {
+			if step == "rename" {
+				put(t, dir+"/"+leaf, "other", 0o600)
+				must(t, os.Chmod(dir, 0o555))
+				t.Cleanup(func() { os.Chmod(dir, 0o755) })
+			}
+			return nil
+		}
+	}
+	t.Run("Publish", func(t *testing.T) {
+		dir, d := outDir(t)
+		p := newPub(t)
+		racer(t, dir, "leaf", p)
+		res, err := pub(p, d, "leaf", "data", 0o644)
+		if res != ResultFailed || refusal(err) != nil || !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "differs") {
+			t.Errorf("result %q, error %v; want a failure that names the conflict and the cleanup error", res, err)
+		}
+	})
+	t.Run("EnsureProjectRoot", func(t *testing.T) {
+		ws := isolate(t) + "/ws"
+		mkdirs(t, ws+"/.crw")
+		r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+		must(t, err)
+		t.Cleanup(func() { r.Close() })
+		p := newPub(t)
+		racer(t, ws+"/.crw", ".gitignore", p)
+		if root, err := p.EnsureProjectRoot(r.Project); root != nil || !errors.Is(err, fs.ErrPermission) {
+			t.Errorf("EnsureProjectRoot = %v, %v; want the cleanup failure, not the retained .gitignore", root, err)
+		}
+	})
+}
+
 func TestEnsureProjectRoot(t *testing.T) {
 	boom := errors.New("interrupted")
 	open := func(t *testing.T, ws string) *Pair {
@@ -254,14 +298,27 @@ func TestEnsureProjectRoot(t *testing.T) {
 			ws := isolate(t) + "/ws"
 			mkdirs(t, ws)
 			c.setup(ws + "/.crw")
+			before := ""
+			if _, err := os.Lstat(ws + "/.crw"); err == nil {
+				before = fingerprint(t, ws+"/.crw")
+			}
 			root, err := newPub(t).EnsureProjectRoot(open(t, ws))
 			if c.reason != "" {
 				wantRefusal(t, err, c.reason)
+				if after := fingerprint(t, ws+"/.crw"); after != before {
+					t.Errorf("a refusal changed .crw:\nbefore:\n%safter:\n%s", before, after)
+				}
 				return
 			}
 			must(t, err)
 			if root == nil || get(t, ws+"/.crw/.gitignore") != c.want || !slices.Equal(ls(t, ws+"/.crw"), c.names) {
 				t.Errorf(".crw = %v, .gitignore %q", ls(t, ws+"/.crw"), get(t, ws+"/.crw/.gitignore"))
+			}
+			// Whatever was there before, state included, is still there with its bytes, mode and time.
+			for _, line := range strings.SplitAfter(before, "\n") {
+				if !strings.Contains(fingerprint(t, ws+"/.crw"), line) {
+					t.Errorf("an existing entry changed: %q", line)
+				}
 			}
 		})
 	}
