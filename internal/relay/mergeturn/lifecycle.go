@@ -148,19 +148,30 @@ func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason,
 // candidate_restated) to answer: the grant it holds names a head that no longer exists, and
 // unansweredGrant (refusals.go) stops merge-turn-check until the new one is acknowledged.
 //
-// A head that moves on a turn bound to a pull request must be that pull request's head (CRW-538): the head is read
-// from the forge before the transaction and compared with it (pullRequestVerdict), because nothing the turn records
-// says which head belongs to which pull request. A head that did not move, a turn that records no pull request and a
-// relay with no pull request reader read nothing.
+// A head that moves on a turn that records a pull request or a relationship must be the head of what the turn is bound to
+// (CRW-538, CRW-586), and so must the head a call declares ready even when it did not move: the head is compared with the
+// pull request on a forge repository, read from the forge before the transaction, and otherwise with the current work
+// reports of the turn's relationship (headCompareVerdict), because nothing the turn records says which head belongs to
+// which pull request. When there is nothing to compare it with, the call is refused. Withdrawing readiness on a head that
+// did not move asserts nothing about the head and compares nothing, and neither does a turn that records no pull request
+// and no relationship, or a relay with no pull request reader reading a forge pull request.
 func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, head, cause string) (map[string]any, error) {
 	var read *pullRequestRead
-	if s.Pulls != nil && head != "" {
+	if s.Pulls != nil && (head != "" || ready) {
 		early, err := s.Store.MergeTurn(ctx, turn)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-		if err == nil && early.PRNumber.Valid && forgeRepository(early.Repository) && early.HolderTaskID == actor && (early.State == Waiting || early.State == Holding) && head != early.CandidateHead {
-			read = readPullRequest(ctx, s.Pulls, early, head)
+		if err == nil && headCompareForge(early) && early.HolderTaskID == actor && (early.State == Waiting || early.State == Holding) {
+			// the head the call means: the candidate when it names none. The caller's own head is left as it was, so a candidate that
+			// changes before the transaction is not taken for a head the caller named (the read is for the candidate it saw).
+			meant := head
+			if meant == "" {
+				meant = early.CandidateHead
+			}
+			if meant != early.CandidateHead || ready {
+				read = readPullRequest(ctx, s.Pulls, early, meant)
+			}
 		}
 	}
 	at := s.now()
@@ -197,8 +208,11 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 			head = r.CandidateHead
 		}
 		moved := head != r.CandidateHead
-		if moved && s.Pulls != nil && r.PRNumber.Valid {
-			if refusal, decided = pullRequestVerdict(r, actor, "declares", head, read); refusal != nil {
+		if moved || ready {
+			if refusal, decided, err = s.headCompareVerdict(tx, r, actor, "declares", head, read, s.Pulls); err != nil {
+				return err
+			}
+			if refusal != nil {
 				return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
 			}
 		}
