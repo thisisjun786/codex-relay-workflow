@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -286,7 +285,7 @@ func recallCLIParseLax(args []string, stringKeys string) map[string]any {
 }
 func recallCLILaxHome(v map[string]any) (string, error) {
 	if s := recallCLIString(v, "home"); s != nil && *s != "" {
-		return filepath.Abs(*s)
+		return RecallPhysicalAbs(*s)
 	}
 	return codexHome()
 }
