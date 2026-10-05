@@ -119,8 +119,8 @@ func TestLivePullRefusalNamesThePlaceInTheOrder(t *testing.T) {
 }
 
 // What is another pull request. A request that states no identity is the live turn's replay. One that states some is its
-// replay when none contradicts what the turn records and at least one agrees. Identities the turn does not record at all
-// cannot be told from another pull request's, so they are the replay only when the request names the turn's own head.
+// replay only when every one of them is recorded on the turn and equal (CRW-587). An identity the turn does not record
+// cannot be told from another pull request's, whatever commit the request names: two pull requests can point at one commit.
 func TestLivePullWhatCountsAsAnotherPullRequest(t *testing.T) {
 	const own = "head-500"
 	for _, tc := range []struct {
@@ -145,11 +145,11 @@ func TestLivePullWhatCountsAsAnotherPullRequest(t *testing.T) {
 		{"the same relationship only", 500, "rel-500", 0, "rel-500", "", false},
 		{"nothing stated", 500, "rel-500", 0, "", "", false},
 		{"nothing stated against a claim recording none", 0, "", 0, "", "", false},
-		{"a relationship that agrees beside a pull request the claim does not record", 0, "rel-500", 501, "rel-500", "", false},
-		{"a pull request that agrees beside a relationship the claim does not record", 500, "", 500, "rel-other", "", false},
-		{"a pull request against a claim recording only a relationship, at its own head", 0, "rel-500", 500, "", own, false},
-		{"a relationship against a claim recording only a pull request, at its own head", 500, "", 0, "rel-500", own, false},
-		{"identities added to a claim recording none, at its own head", 0, "", 500, "rel-500", own, false},
+		{"a relationship that agrees beside a pull request the claim does not record", 0, "rel-500", 501, "rel-500", "", true},
+		{"a pull request that agrees beside a relationship the claim does not record", 500, "", 500, "rel-other", "", true},
+		{"a pull request against a claim recording only a relationship, at its own head", 0, "rel-500", 500, "", own, true},
+		{"a relationship against a claim recording only a pull request, at its own head", 500, "", 0, "rel-500", own, true},
+		{"identities added to a claim recording none, at its own head", 0, "", 500, "rel-500", own, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newFx(t)
@@ -180,7 +180,7 @@ func TestLivePullRefusalSaysWhyTheRequestIsNotTheLiveTurns(t *testing.T) {
 	w := newFx(t)
 	turn := w.must(livePullClaim(w, alpha, fxA, "head-500", 0, ""))["turnId"].(string)
 	_, err := livePullClaim(w, alpha, fxA, "head-501", 501, "")
-	livePullRefusedWith(t, err, turn, "no pull request or relationship", "does not record what this request names", "head-501", "repeat the request with the arguments the claim was made with")
+	livePullRefusedWith(t, err, turn, "no pull request or relationship", "does not record the pull request this request names", "repeat the request with the arguments the claim was made with (its identity arguments: neither --pr nor --relationship)", "request a turn with other or additional identities, return it with merge-turn-release")
 	if strings.Contains(livePullDetail(err), "is not answered with the turn it already has") {
 		t.Errorf("a request the turn cannot confirm is not a request for another pull request: %s", livePullDetail(err))
 	}
@@ -188,8 +188,8 @@ func TestLivePullRefusalSaysWhyTheRequestIsNotTheLiveTurns(t *testing.T) {
 	w2 := newFx(t)
 	w2.must(livePullClaim(w2, alpha, fxA, "head-500", 500, "rel-500"))
 	_, err = livePullClaim(w2, alpha, fxA, "head-501", 501, "rel-501")
-	livePullRefusedWith(t, err, "is not answered with the turn it already has")
-	if strings.Contains(livePullDetail(err), "does not record what this request names") {
+	livePullRefusedWith(t, err, "is not answered with the turn it already has", "repeat the request with the arguments the claim was made with (its identity arguments: --pr 500 --relationship 'rel-500')", "request a turn with other or additional identities, return it with merge-turn-release")
+	if strings.Contains(livePullDetail(err), "does not record the") {
 		t.Errorf("a contradiction is not an unconfirmed identity: %s", livePullDetail(err))
 	}
 }
