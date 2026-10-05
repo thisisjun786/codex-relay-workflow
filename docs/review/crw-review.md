@@ -2,6 +2,8 @@
 
 `crw review` runs the independent code review on one change and writes its artifact. It builds the context bundle (`internal/review/bundle`), runs the pipeline (`internal/review/pipeline`) with the agy runner (`internal/review/agy`), validates the result against schema v1 (`internal/review`) and writes `<head>.json` with its sha256; with `--post-summary` it also keeps one summary comment on the pull request. The review is a reference opinion, never a merge gate. The command is the top-level mode `review` of `crw` (the mode table in `cmd/crw/main.go`); the package contract is [doc.go](../../internal/review/command/doc.go).
 
+A child runs it only where the assignment in its packet names the independent code review for its task, never because a rule that describes the step mentions it, once per pull request after every CI job is green on the head it hands off.
+
 ```sh
 crw review --base <sha> --head <sha> --issue CRW-N --out <dir>
 crw review --base <sha> --head <sha> --issue CRW-N --out <dir> --post-summary --pr <n>

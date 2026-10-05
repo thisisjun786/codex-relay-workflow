@@ -883,7 +883,7 @@ host values filled in.
 5. **Reviews.** Where you open a pull request (with no pull request there is no review to wait for), Devin and GitHub Codex each review it once (Codex when it is opened, Devin when it becomes ready for
    review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit: a
    notice that a review was skipped (no credits, a usage limit) means skipped, and with no signal of any kind 30 minutes after the pull
-   request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, run once after CI, a reference opinion) is a separate step with its own bullet under `Execution:`. A Devin red, a Codex P0 or P1 and any security
+   request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names the independent code review for this task (this rule and that bullet mention it in every packet and are not such a naming), once per pull request after every CI job is green on the head you hand off. A Devin red, a Codex P0 or P1 and any security
    finding is fixed, or refuted from the code in a reply, and checked again on the new head. Devin yellow and Codex P2 and P3 get your
    reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed
    to the parent, not accepted by you, unless SCOPE grants that standing decision. Your own independent review, where your workflow runs
@@ -892,7 +892,7 @@ host values filled in.
    that has not finished or a blocking finding left open is BLOCKED: report it as blocked, never as complete with a note.
 
    Source: the `Execution:` bullets "Finish your own independent review ...", "A finding of your own review that you reject is not
-   yours to close", "Open that pull request non-draft ..." (which waits for the one run each of Devin and Codex makes) and "Finishing the
+   yours to close", "Open that pull request non-draft ..." (which waits for the one run each of Devin and Codex makes), "Where the assignment names the independent code review ..." (the condition of the independent-review sentence) and "Finishing the
    review is part of finishing the work", OPS-9.2, and in [Merge readiness](merge-readiness.md) the
    [reviewer policy](merge-readiness.md#reviewer-policy),
    [the one run of each reviewer, awaited before the receipt](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt)

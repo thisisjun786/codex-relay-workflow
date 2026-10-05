@@ -1,0 +1,296 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+  "dist": "plugins/codexclaw/components/cxc-ops/dist/doctor.js",
+  "node": "v24.20.0",
+  "note": "Each group holds the oracle answer for the input the Go test rebuilds, with the recorder's temp root replaced by ${TEMP}. pabcd cases run runDoctor with process.cwd() at the case workspace (checkPabcdHealth is private); an unreadable sessions directory is the oracle's uncaught throw and is recorded as threw. manifestTargets cases run runDoctor over a minimal payload; installRoot cases call runInstalledRootCheck directly. Every evidence string is passed through toWellFormed() at print time by the fixture recorder; these strings are compared in memory, not printed.",
+  "pabcd": [
+    {
+      "name": "absent",
+      "severity": "PASS",
+      "evidence": "no .codexclaw/sessions/ directory (clean state)",
+      "repair": ""
+    },
+    {
+      "name": "clean",
+      "severity": "PASS",
+      "evidence": "1 session file(s), all parseable",
+      "repair": ""
+    },
+    {
+      "name": "corrupt_one",
+      "severity": "WARN",
+      "evidence": "1 corrupt session file(s): bad.json",
+      "repair": "cxc reset --state"
+    },
+    {
+      "name": "corrupt_two",
+      "severity": "WARN",
+      "evidence": "2 corrupt session file(s): a.json, b.json",
+      "repair": "cxc reset --state"
+    },
+    {
+      "name": "entry_is_directory",
+      "severity": "WARN",
+      "evidence": "1 corrupt session file(s): dir.json",
+      "repair": "cxc reset --state"
+    },
+    {
+      "name": "deep_10001",
+      "severity": "PASS",
+      "evidence": "1 session file(s), all parseable",
+      "repair": ""
+    },
+    {
+      "name": "invalid_session_name",
+      "severity": "WARN",
+      "evidence": "1 corrupt session file(s): b�.json",
+      "repair": "cxc reset --state"
+    },
+    {
+      "name": "unreadable",
+      "threw": "EACCES: permission denied, scandir '${TEMP}/ws-unreadable/.codexclaw/sessions'"
+    }
+  ],
+  "manifestTargets": [
+    {
+      "name": "missing_hook_target",
+      "checks": [
+        {
+          "name": "hooks",
+          "severity": "FAIL",
+          "evidence": "hook references missing dist: dist/missing.js",
+          "repair": ""
+        },
+        {
+          "name": "mcp-targets",
+          "severity": "PASS",
+          "evidence": "all mcp target(s) present",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "missing_mcp_target",
+      "checks": [
+        {
+          "name": "hooks",
+          "severity": "PASS",
+          "evidence": "all hook target(s) present",
+          "repair": ""
+        },
+        {
+          "name": "mcp-targets",
+          "severity": "FAIL",
+          "evidence": "mcp server bridge references missing dist: ${PLUGIN_ROOT}/dist/missing.js",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "empty_target",
+      "checks": [
+        {
+          "name": "hooks",
+          "severity": "FAIL",
+          "evidence": "target is empty: dist/empty.js",
+          "repair": ""
+        },
+        {
+          "name": "mcp-targets",
+          "severity": "PASS",
+          "evidence": "all mcp target(s) present",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "escapes_root",
+      "checks": [
+        {
+          "name": "hooks",
+          "severity": "FAIL",
+          "evidence": "target escapes plugin root: ../outside.js",
+          "repair": ""
+        },
+        {
+          "name": "mcp-targets",
+          "severity": "PASS",
+          "evidence": "all mcp target(s) present",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "unparseable_hook",
+      "checks": [
+        {
+          "name": "hooks",
+          "severity": "FAIL",
+          "evidence": "unparseable hook json: ${TEMP}/payload-unparseable_hook/hooks.json",
+          "repair": ""
+        },
+        {
+          "name": "mcp-targets",
+          "severity": "WARN",
+          "evidence": "not evaluated after hook parse failure",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "unparseable_mcp",
+      "checks": [
+        {
+          "name": "hooks",
+          "severity": "WARN",
+          "evidence": "not evaluated after mcp parse failure",
+          "repair": ""
+        },
+        {
+          "name": "mcp-targets",
+          "severity": "FAIL",
+          "evidence": "unparseable mcp json: ${TEMP}/payload-unparseable_mcp/.mcp.json",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "nonparse_failure",
+      "checks": [
+        {
+          "name": "manifest-targets",
+          "severity": "FAIL",
+          "evidence": "target validation failed: Error: EISDIR: illegal operation on a directory, read",
+          "repair": ""
+        }
+      ]
+    },
+    {
+      "name": "null_manifest",
+      "checks": [
+        {
+          "name": "manifest-targets",
+          "severity": "FAIL",
+          "evidence": "target validation failed: TypeError: Cannot read properties of null (reading 'hooks')",
+          "repair": ""
+        }
+      ]
+    }
+  ],
+  "installRoot": [
+    {
+      "name": "matching_root",
+      "severity": "PASS",
+      "evidence": "installed root matches this payload (0.4.0); 1 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "stale_root",
+      "severity": "FAIL",
+      "evidence": "this payload declares 0.4.0, but the installed root(s) are: ${TEMP}/home-stale_root/plugins/cache/local/crw/0.1.0. Any session started before the last reinstall is running hooks from a path that no longer exists (STALE-ROOT-01).",
+      "repair": "codex plugin add <plugin>@<marketplace>, then RESTART Codex — a running session keeps the old PLUGIN_ROOT"
+    },
+    {
+      "name": "matching_and_stale",
+      "severity": "PASS",
+      "evidence": "installed root matches this payload (0.4.0); 2 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "two_stale",
+      "severity": "FAIL",
+      "evidence": "this payload declares 0.4.0, but the installed root(s) are: ${TEMP}/home-two_stale/plugins/cache/mkt1/crw/0.1.0, ${TEMP}/home-two_stale/plugins/cache/mkt2/crw/0.2.0. Any session started before the last reinstall is running hooks from a path that no longer exists (STALE-ROOT-01).",
+      "repair": "codex plugin add <plugin>@<marketplace>, then RESTART Codex — a running session keeps the old PLUGIN_ROOT"
+    },
+    {
+      "name": "no_cache",
+      "severity": "WARN",
+      "evidence": "no plugin cache at ${TEMP}/empty-home/plugins/cache (running uninstalled?)",
+      "repair": ""
+    },
+    {
+      "name": "not_installed",
+      "severity": "WARN",
+      "evidence": "crw is not installed under ${TEMP}/home-not_installed/plugins/cache",
+      "repair": ""
+    },
+    {
+      "name": "no_name_version",
+      "severity": "WARN",
+      "evidence": "manifest has no name/version; cannot locate the install root",
+      "repair": ""
+    },
+    {
+      "name": "manifest_absent",
+      "severity": "WARN",
+      "evidence": "ENOENT: no such file or directory, open '${TEMP}/root-manifest_absent/.codex-plugin/plugin.json'",
+      "repair": ""
+    },
+    {
+      "name": "manifest_null",
+      "severity": "WARN",
+      "evidence": "Cannot read properties of null (reading 'name')",
+      "repair": ""
+    },
+    {
+      "name": "linked_root",
+      "severity": "PASS",
+      "evidence": "installed root matches this payload (0.4.0); 1 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "entry_is_file",
+      "severity": "WARN",
+      "evidence": "ENOTDIR: not a directory, scandir '${TEMP}/home-entry_is_file/plugins/cache/mkt2/crw'",
+      "repair": ""
+    },
+    {
+      "name": "env_empty",
+      "severity": "WARN",
+      "evidence": "no plugin cache at plugins/cache (running uninstalled?)",
+      "repair": ""
+    },
+    {
+      "name": "home_empty",
+      "severity": "WARN",
+      "evidence": "no plugin cache at .codex/plugins/cache (running uninstalled?)",
+      "repair": ""
+    },
+    {
+      "name": "option_wins",
+      "severity": "WARN",
+      "evidence": "no plugin cache at ${TEMP}/option-empty-home/plugins/cache (running uninstalled?)",
+      "repair": ""
+    },
+    {
+      "name": "env_wins_over_home",
+      "severity": "PASS",
+      "evidence": "installed root matches this payload (0.4.0); 1 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "surrogate_name",
+      "severity": "PASS",
+      "evidence": "installed root matches this payload (0.4.0); 1 root(s) present",
+      "repair": ""
+    },
+    {
+      "name": "surrogate_missing",
+      "severity": "WARN",
+      "evidence": "x\ud800 is not installed under ${TEMP}/home-surrogate_missing/plugins/cache",
+      "repair": ""
+    },
+    {
+      "name": "invalid_market_name",
+      "severity": "WARN",
+      "evidence": "crw is not installed under ${TEMP}/home-invalid_market_name/plugins/cache",
+      "repair": ""
+    }
+  ],
+  "malformedManifest": {
+    "name": "malformed_manifest",
+    "severity": "WARN",
+    "evidence": "Unexpected token 'o', \"not json\" is not valid JSON",
+    "repair": ""
+  }
+}
