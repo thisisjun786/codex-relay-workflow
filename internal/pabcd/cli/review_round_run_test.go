@@ -360,7 +360,8 @@ func TestReviewRoundRunRefusesAStaleReusedRound(t *testing.T) {
 }
 
 // A stored round that revival cannot read would be deleted by the write that follows; the oracle does it silently (a record data-loss
-// defect, fixed here by refusing and leaving the file as it is). Show only reads, so it still answers.
+// defect, fixed here by refusing and leaving the file as it is: the write lock refuses a plan its revival would shrink, and the
+// runner gives that refusal). Show only reads, so it still answers.
 func TestReviewRoundRunRefusesToDropAStoredRound(t *testing.T) {
 	cwd := reviewRoundRunSeed(t)
 	reviewRoundRunOpenDoc(t, cwd)
@@ -374,7 +375,7 @@ func TestReviewRoundRunRefusesToDropAStoredRound(t *testing.T) {
 	reviewRoundRunPut(t, filepath.Join(dir, goalplan.GoalplanFile), string(edited))
 	for _, verb := range []string{"open", "abort"} {
 		res := reviewRoundRunDo(t, cwd, verb, "--session", "rb", "--plan-path", reviewRoundRunDoc)
-		if want := (ReviewRoundCliResult{Code: 1, Output: "review-round " + verb + ": the goalplan holds review rounds that this build cannot read; refusing to rewrite it"}); res != want {
+		if want := (ReviewRoundCliResult{Code: 1, Output: "review-round " + verb + ": goalplan '" + reviewRoundRunSlug + "' holds reviewRounds[1] that this build cannot keep; refusing to rewrite it; retry"}); res != want {
 			t.Errorf("%s: %+v", verb, res)
 		}
 		if reviewRoundRunBytes(t, cwd) != string(edited) {
@@ -387,7 +388,8 @@ func TestReviewRoundRunRefusesToDropAStoredRound(t *testing.T) {
 }
 
 // The stored rounds are counted under the reader's exact key: a differently cased key neither hides an unreadable round (the reader
-// reads "reviewRounds" only) nor counts as one.
+// reads "reviewRounds" only) nor counts as one. The write lock refuses a plan that holds a key the reader ignores, because the
+// write would drop it.
 func TestReviewRoundRunCountsTheExactKey(t *testing.T) {
 	cwd := reviewRoundRunSeed(t)
 	dir, err := goalplan.GoalplanDir(cwd, reviewRoundRunSlug)
@@ -402,8 +404,8 @@ func TestReviewRoundRunCountsTheExactKey(t *testing.T) {
 		t.Errorf("a cased twin must not hide an unreadable round: %+v", res)
 	}
 	put("\"ReviewRounds\": [1]")
-	if res := reviewRoundRunDo(t, cwd, "abort", "--session", "rb"); res.Code != 1 || strings.Contains(res.Output, "refusing") {
-		t.Errorf("a key the reader ignores holds no round: %+v", res)
+	if res := reviewRoundRunDo(t, cwd, "abort", "--session", "rb"); res.Code != 1 || !strings.Contains(res.Output, "holds ReviewRounds that this build cannot keep") {
+		t.Errorf("a key the reader ignores holds no round, and the lock refuses to drop it: %+v", res)
 	}
 }
 
@@ -499,11 +501,11 @@ type reviewRoundRunOracle struct {
 	}
 }
 
-// reviewRoundRunChanged lists the recorded cases the port answers differently on purpose: the refusal the first CLI step gets, with the
-// file left as it was seeded (the oracle drops the unreadable round and goes on).
+// reviewRoundRunChanged lists the recorded cases the port answers differently on purpose: the refusal the first CLI step gets, which is
+// the write lock's, with the file left as it was seeded (the oracle drops the unreadable round and goes on).
 var reviewRoundRunChanged = map[string]string{
-	"open_drops_an_unreadable_round":  "review-round open: the goalplan holds review rounds that this build cannot read; refusing to rewrite it",
-	"abort_drops_an_unreadable_round": "review-round abort: the goalplan holds review rounds that this build cannot read; refusing to rewrite it",
+	"open_drops_an_unreadable_round":  "review-round open: goalplan '" + reviewRoundRunSlug + "' holds reviewRounds[1] that this build cannot keep; refusing to rewrite it; retry",
+	"abort_drops_an_unreadable_round": "review-round abort: goalplan '" + reviewRoundRunSlug + "' holds reviewRounds[1] that this build cannot keep; refusing to rewrite it; retry",
 }
 
 var (
