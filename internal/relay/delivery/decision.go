@@ -68,9 +68,10 @@ func DecisionEventID(relationship, answered string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-// RecordDecision records the parent's decision on a child's blocked_needs_input receipt and queues it to the child in
-// one transaction. The same decision again (the same kind, note and criteria digest) is a replay (the record, marked _replay, and
-// nothing written); any other decision on the same receipt is refused disposition_conflict. A refusal writes nothing.
+// RecordDecision records the parent's decision on a child's blocked_needs_input receipt, or an answer on a receipt the
+// relay itself observed ending interrupted or failed, and queues it to the child in one transaction. The same decision
+// again (the same kind, note and criteria digest) is a replay (the record, marked _replay, and nothing written); any
+// other decision on the same receipt is refused disposition_conflict. A refusal writes nothing.
 func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, error) {
 	note, turn, digest := strings.TrimSpace(req.Note), strings.TrimSpace(req.Turn), strings.TrimSpace(req.CriteriaDigest)
 	switch {
