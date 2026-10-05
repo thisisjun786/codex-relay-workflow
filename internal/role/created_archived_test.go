@@ -308,6 +308,10 @@ func TestCreatedArchivedSiblingRecords(t *testing.T) {
 					t.Fatal("refused report changed the ledger")
 				}
 			case <-time.After(10 * time.Second):
+				// Release a reader that is blocked on a named pipe, so a failure leaves no goroutine behind.
+				if f, err := os.OpenFile(createdArchivedRecord(ws, "stray"), os.O_RDWR, 0); err == nil {
+					_ = f.Close()
+				}
 				t.Fatal("the guard blocked on a sibling record")
 			}
 		})
