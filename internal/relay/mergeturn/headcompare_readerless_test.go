@@ -1,6 +1,7 @@
 package mergeturn
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -65,6 +66,60 @@ func readerlessRefused(t *testing.T, w *fx, before string, answer map[string]any
 	if contests := readerlessContests(w); len(contests) != 1 || !strings.Contains(contests[0], readerlessWhy) {
 		t.Errorf("the contest was not recorded once with the readerless text: %q", contests)
 	}
+}
+
+// readerlessTipOnly is a Reader that implements only Tip: the reader merge-turn-check had before pull request heads could be
+// read. It has no pull request head capability.
+type readerlessTipOnly struct{ target Reader }
+
+func (r readerlessTipOnly) Tip(ctx context.Context, repository, base string) (Tip, error) {
+	return r.target.Tip(ctx, repository, base)
+}
+
+// The sequence a review of the earlier head-comparison change reported, step by step: pull request 500 of owner/repo has the
+// real head H500 on the forge, the turn is claimed with candidate H501, the grant is acknowledged, and the Service has no pull
+// request reader. Ready must not declare the wrong head ready, and a Check given a reader that implements only Tip must not
+// begin the merge with it. The real head sits on a fake forge that nothing is wired to, so the test shows no read of it.
+func TestReaderlessWrongHeadOfAForgePullRequestIsNeitherReadyNorMerged(t *testing.T) {
+	const realHead, wrongHead = "H500", "H501"
+	t.Run("ready", func(t *testing.T) {
+		w := newFx(t)
+		forge := newLivePullHeads()
+		forge.set(fxRepo, 500, realHead)
+		turn := headCompareHeld(w, fxRepo, wrongHead, 500, "", false)
+		if w.m.Pulls != nil {
+			t.Fatal("the fixture was meant to have no pull request reader")
+		}
+		before := readerlessLane(w)
+		answer, err := w.m.Ready(w.ctx, turn, alpha.TaskID, true, "", "")
+		readerlessRefused(t, w, before, answer, err, "declares", turn)
+		if live := w.must(w.m.Turn(w.ctx, turn)); live["declaredReady"] != false || live["candidateHead"] != wrongHead {
+			t.Errorf("the wrong head was declared ready: %v", live)
+		}
+		if forge.readCount() != 0 {
+			t.Errorf("the forge was read %d times", forge.readCount())
+		}
+	})
+	t.Run("check", func(t *testing.T) {
+		w := newFx(t)
+		forge := newLivePullHeads()
+		forge.set(fxRepo, 500, realHead)
+		// claimed ready from the start: Request records readiness without comparing a head
+		turn := headCompareHeld(w, fxRepo, wrongHead, 500, "", true)
+		reader := readerlessTipOnly{target: w.target}
+		if _, capable := Reader(reader).(PullRequestHeadReader); capable {
+			t.Fatal("the reader was meant to implement only Tip")
+		}
+		before := readerlessLane(w)
+		answer, err := headCompareCheck(w, turn, wrongHead, reader)
+		readerlessRefused(t, w, before, answer, err, "restates", turn)
+		if live := w.must(w.m.Turn(w.ctx, turn)); live["state"] != Holding {
+			t.Errorf("a refused check moved the turn to %v", live["state"])
+		}
+		if forge.readCount() != 0 {
+			t.Errorf("the forge was read %d times", forge.readCount())
+		}
+	})
 }
 
 // Ready with no pull request reader refuses a recorded forge pull request whether the head moved or not, and whether it is
