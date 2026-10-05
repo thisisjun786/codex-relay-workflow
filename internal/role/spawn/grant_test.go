@@ -291,6 +291,17 @@ func TestGrantWriteKeepsAnExistingName(t *testing.T) {
 	}
 }
 
+// Consuming only reads: with no grant tree under the temp root, nothing is created there.
+func TestGrantConsumeCreatesNothing(t *testing.T) {
+	root := t.TempDir()
+	if ConsumeRecursionGrant(spawnGrantTestScope, spawnGrantMarker+strings.Repeat("a", 64)+"]", root, time.UnixMilli(1)) {
+		t.Error("consumed a grant that was never minted")
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("consume created %d entries under the temp root", len(entries))
+	}
+}
+
 func TestGrantFollowsTempRootLink(t *testing.T) {
 	root := t.TempDir()
 	link := filepath.Join(t.TempDir(), "tmp")
@@ -305,7 +316,8 @@ func TestGrantFollowsTempRootLink(t *testing.T) {
 }
 
 // The directory conditions the oracle accepts and the port refuses: Mint yields no grant and
-// changes nothing, Consume is false and a planted valid grant stays where it is.
+// changes nothing, Consume is false and a planted valid grant stays where it is. The links are
+// relative and stay inside the temp root, which os.Root would follow.
 func TestGrantRefusesUnsafeDirectories(t *testing.T) {
 	fixture := spawnGrantTestOracle(t)
 	mkdir := func(path string, mode os.FileMode) {
@@ -319,13 +331,13 @@ func TestGrantRefusesUnsafeDirectories(t *testing.T) {
 		}
 	}
 	link := func(root, uidDir, keyDir string, key bool) {
-		mkdir(filepath.Join(root, "elsewhere", filepath.Base(keyDir)), 0o700)
 		if key {
-			mkdir(uidDir, 0o700)
-			_ = os.Symlink(filepath.Join(root, "elsewhere", filepath.Base(keyDir)), keyDir)
-		} else {
-			_ = os.Symlink(filepath.Join(root, "elsewhere"), uidDir)
+			mkdir(filepath.Join(uidDir, "elsewhere"), 0o700)
+			_ = os.Symlink("elsewhere", keyDir)
+			return
 		}
+		mkdir(filepath.Join(root, "elsewhere", filepath.Base(keyDir)), 0o700)
+		_ = os.Symlink("elsewhere", uidDir)
 	}
 	arrange := map[string]func(root, uidDir, keyDir string){
 		"key directory mode 0755":       func(_, u, k string) { mkdir(u, 0o700); mkdir(k, 0o755) },
@@ -401,8 +413,8 @@ func TestGrantRefusesNonRegularFile(t *testing.T) {
 			if !ok {
 				t.Fatal("mint")
 			}
-			grant := filepath.Join(spawnGrantTestKeyDir(t, root, uid, spawnGrantTestScope), spawnGrantFile(nonce))
-			valid := filepath.Join(root, "valid.json")
+			keyDir := spawnGrantTestKeyDir(t, root, uid, spawnGrantTestScope)
+			grant, valid := filepath.Join(keyDir, spawnGrantFile(nonce)), filepath.Join(keyDir, "valid.json")
 			if err := os.WriteFile(valid, []byte(spawnGrantTestValid), 0o600); err != nil || os.Remove(grant) != nil {
 				t.Fatal("arrange")
 			}
@@ -410,7 +422,7 @@ func TestGrantRefusesNonRegularFile(t *testing.T) {
 				if err := syscall.Mkfifo(grant, 0o600); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := os.Symlink(valid, grant); err != nil {
+			} else if err := os.Symlink("valid.json", grant); err != nil {
 				t.Fatal(err)
 			}
 			spawnGrantTestWithin(t, func() {
