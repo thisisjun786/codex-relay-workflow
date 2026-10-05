@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -411,4 +413,53 @@ func TestDispatchLockClearSerialisesConcurrentClears(t *testing.T) {
 	if lines := strings.Count(string(must(os.ReadFile(filepath.Join(lockClearDir(ws), "lock-clears.jsonl")))), "\n"); cleared != 1 || lines != 1 {
 		t.Fatalf("%d clears succeeded and the log holds %d lines, want one of each", cleared, lines)
 	}
+}
+
+// A writer that fails takes its lock away again. One that finds the lock swapped for another entry writes nothing through it
+// and leaves that entry alone: it is not the directory that was created.
+func TestDispatchLockWithAbandonsOnlyItsOwnLock(t *testing.T) {
+	setup := func(t *testing.T) (*dispatchPinnedDir, string) {
+		dir := must(dispatchDirectory(t.TempDir(), lockClearSession, nil))
+		t.Cleanup(func() { dir.Close() })
+		return dir, filepath.Join(dir.path, "w.lock")
+	}
+	t.Run("failed writer", func(t *testing.T) {
+		dir, lock := setup(t)
+		injected := errors.New("injected")
+		release, err := dir.lockWith("w", func(string, fs.FileInfo) error { return injected })
+		if release != nil || !errors.Is(err, injected) || lockClearExists(lock) {
+			t.Fatalf("release %v, error %v, lock left %v", release != nil, err, lockClearExists(lock))
+		}
+		if _, err = dir.lock("w"); err != nil {
+			t.Fatalf("the lock cannot be taken again: %v", err)
+		}
+	})
+	t.Run("lock swapped for a link", func(t *testing.T) {
+		dir, lock := setup(t)
+		inside := filepath.Join(dir.path, "inside")
+		check(t, os.Mkdir(inside, 0o700))
+		_, err := dir.lockWith("w", func(name string, created fs.FileInfo) error {
+			check(t, os.Rename(lock, lock+".moved"))
+			check(t, os.Symlink("inside", lock))
+			return dir.writeOwner(name, created)
+		})
+		if err == nil || lockClearExists(filepath.Join(inside, "owner.json")) {
+			t.Fatalf("error %v, owner.json written through the link %v", err, lockClearExists(filepath.Join(inside, "owner.json")))
+		}
+		if info, statErr := os.Lstat(lock); statErr != nil || info.Mode()&fs.ModeSymlink == 0 {
+			t.Fatalf("the entry that took the name was removed: %v", statErr)
+		}
+	})
+	t.Run("lock replaced by a directory", func(t *testing.T) {
+		dir, lock := setup(t)
+		_, err := dir.lockWith("w", func(string, fs.FileInfo) error {
+			check(t, os.Rename(lock, lock+".moved"))
+			check(t, os.Mkdir(lock, 0o700))
+			check(t, os.WriteFile(filepath.Join(lock, "sentinel"), []byte("untouched"), 0o600))
+			return errors.New("injected")
+		})
+		if err == nil || !strings.Contains(err.Error(), "left in place") || string(must(os.ReadFile(filepath.Join(lock, "sentinel")))) != "untouched" {
+			t.Fatalf("error %v: the replacement was removed", err)
+		}
+	})
 }
