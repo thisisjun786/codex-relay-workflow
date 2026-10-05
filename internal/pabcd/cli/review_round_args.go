@@ -148,21 +148,23 @@ func reviewRoundArgsAbs(cwd, p string) (string, error) {
 	return filepath.Join(wd, p), err
 }
 
-// reviewRoundCwdResolve is attest/plangate.go's resolve (plangate.go:147-156): an absolute p is used exactly as written — never
-// filepath.Clean'd — a relative p is joined to cwd, and a result still relative is made absolute against the kernel's working
-// directory (syscall.Getwd, which is what process.cwd() answers; os.Getwd would trust $PWD). The working directory is opened by
-// this spelling, not by path.resolve's cleaned one: cleaning an absolute cwd spelled "/r/alias/.." lands on "/r", so the boundary
-// was opened one level above the directory the OS reaches and a link's own ".." named a sibling of the workspace (CRW-649). The
-// error is where process.cwd() throws: the working directory cannot be read.
-func reviewRoundCwdResolve(cwd, p string) (string, error) {
-	if filepath.IsAbs(p) {
-		return p, nil
-	}
-	if p = filepath.Join(cwd, p); filepath.IsAbs(p) {
-		return p, nil
+// reviewRoundCwdBase is the working directory as the OS reaches it (CRW-649), not path.resolve's cleaned spelling: an absolute
+// cwd is used exactly as written, and a relative one is joined to the kernel working directory (syscall.Getwd, which is what
+// process.cwd() answers; os.Getwd would trust $PWD) WITHOUT cleaning, so "alias/.." stays physical and the boundary is the
+// directory the kernel resolves it to. Cleaning either spelling lands one level above the directory the OS reaches and lets a
+// link's own ".." name a sibling of the workspace. The error is where process.cwd() throws: the working directory cannot be read.
+func reviewRoundCwdBase(cwd string) (string, error) {
+	if filepath.IsAbs(cwd) {
+		return cwd, nil
 	}
 	wd, err := syscall.Getwd()
-	return filepath.Join(wd, p), err
+	if err != nil {
+		return "", err
+	}
+	if cwd == "" {
+		return wd, nil
+	}
+	return wd + string(filepath.Separator) + cwd, nil
 }
 
 // reviewRoundArgsBase is the working directory opened once as an os.Root, so that every decision about an entry and every read is
@@ -180,7 +182,7 @@ type reviewRoundArgsBase struct {
 // directory its real path names (replaced while it was opened); every entry then reads as outside. The error is where Node throws:
 // a relative working directory that cannot be made absolute.
 func reviewRoundArgsOpenBase(cwd string) (*reviewRoundArgsBase, error) {
-	abs, err := reviewRoundCwdResolve("", cwd)
+	abs, err := reviewRoundCwdBase(cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -233,55 +235,74 @@ func (b *reviewRoundArgsBase) readInside(abs string) (data []byte, below string,
 	return data, below, inside, err
 }
 
-// reviewRoundCwdKey chooses the key a plan file is stored under (CRW-649). It is the oracle's own spelling when it is usable,
-// then the entry's spelling relative to the working directory's real path, then the plan-unit spelling (reviewRoundCwdUnitKey);
-// an entry none of the three can name is refused, and the physical spelling is never stored. The first two keep every existing
-// key; the third keeps the link of the plan unit the round is bound to where the working directory is a link or the entry is
-// spelled by its physical path.
-func reviewRoundCwdKey(base string, opened *reviewRoundArgsBase, cwd, unit, rel, abs string) (string, bool) {
-	if key, err := filepath.Rel(base, abs); err == nil && filepath.IsLocal(key) {
-		return key, true
-	}
-	if opened != nil {
-		if key, err := filepath.Rel(opened.real, abs); err == nil && filepath.IsLocal(key) {
-			return key, true
-		}
-	}
-	return reviewRoundCwdUnitKey(opened, cwd, unit, rel, abs)
-}
-
-// reviewRoundCwdUnitKey is the plan-unit spelling: Rel(real, EvalSymlinks(Dir(unit))) joined with Base(unit) and the entry's
-// path below the unit (rel). It is returned only when it is local and when resolving it against cwd reaches the entry's real
-// path, so the spelling a later read resolves names the document the collection read.
-func reviewRoundCwdUnitKey(opened *reviewRoundArgsBase, cwd, unit, rel, abs string) (string, bool) {
-	if opened == nil {
-		return "", false
-	}
-	dirReal, err := filepath.EvalSymlinks(filepath.Dir(unit))
-	if err != nil {
-		return "", false
-	}
-	prefix, err := filepath.Rel(opened.real, dirReal)
-	if err != nil || !filepath.IsLocal(prefix) {
-		return "", false
-	}
-	spelling := filepath.Join(prefix, filepath.Base(unit), rel)
-	if !filepath.IsLocal(spelling) {
-		return "", false
-	}
+// reviewRoundCwdNames reports whether spelling, resolved against cwd exactly as Recomputed resolves a stored key, reaches the
+// entry at abs: its real path is abs's real path. A spelling that cannot be resolved, or that reaches another file, does not.
+func reviewRoundCwdNames(cwd, spelling, abs string) bool {
 	reached, err := reviewRoundArgsAbs(cwd, spelling)
 	if err != nil {
-		return "", false
+		return false
 	}
 	got, err := filepath.EvalSymlinks(reached)
 	if err != nil {
-		return "", false
+		return false
 	}
 	want, err := filepath.EvalSymlinks(abs)
-	if err != nil || got != want {
-		return "", false
+	return err == nil && got == want
+}
+
+// reviewRoundCwdKey chooses the key a plan file is stored under (CRW-649): the first candidate that is local and, resolved
+// against cwd exactly as Recomputed resolves a stored key, reaches the entry's real path. (a) is the oracle's own spelling,
+// (b) the entry's spelling relative to the working directory's real path, and (c) the shortest-prefix spelling
+// (reviewRoundCwdShortestKey), which keeps the links below the point where the path enters the working directory. An entry no
+// candidate can name is refused, and the physical spelling is never stored.
+func reviewRoundCwdKey(base string, opened *reviewRoundArgsBase, cwd, abs string) (string, bool) {
+	var candidates []string
+	if key, err := filepath.Rel(base, abs); err == nil {
+		candidates = append(candidates, key)
 	}
-	return spelling, true
+	if opened != nil {
+		if key, err := filepath.Rel(opened.real, abs); err == nil {
+			candidates = append(candidates, key)
+		}
+		candidates = append(candidates, reviewRoundCwdShortestKey(opened, abs))
+	}
+	for _, key := range candidates {
+		if filepath.IsLocal(key) && reviewRoundCwdNames(cwd, key, abs) {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// reviewRoundCwdShortestKey is the shortest-prefix spelling: the shortest leading prefix P of abs's spelled directory path whose
+// real path lies inside the real base, joined with the rest of abs as spelled after P, under P's own real path relative to the
+// base. Every link below P — the plan unit's own link and any link between it and the point where the path enters the working
+// directory — therefore stays in the key, so repointing one changes what a later read resolves to.
+func reviewRoundCwdShortestKey(opened *reviewRoundArgsBase, abs string) string {
+	if opened == nil {
+		return ""
+	}
+	dir, file := filepath.Dir(abs), filepath.Base(abs)
+	var components []string
+	for at := dir; ; {
+		parent := filepath.Dir(at)
+		if parent == at {
+			break
+		}
+		components = append(components, filepath.Base(at))
+		at = parent
+	}
+	slices.Reverse(components)
+	for i := range components {
+		real, err := filepath.EvalSymlinks(string(filepath.Separator) + filepath.Join(components[:i+1]...))
+		if err != nil {
+			continue
+		}
+		if below, ok := opened.inside(real); ok {
+			return filepath.Join(below, filepath.Join(components[i+1:]...), file)
+		}
+	}
+	return ""
 }
 
 // reviewRoundArgsNumberedDoc is NUMBERED_DOC_RE, /^\d{3}_.+\.md$/ (review-round-cli.ts:34): three ASCII digits, an underscore, at
@@ -342,7 +363,7 @@ func reviewRoundArgsCollectPlanFiles(cwd, planUnit string, paths []string) ([]go
 		if err != nil {
 			return nil, "", err
 		}
-		key, ok := reviewRoundCwdKey(base, opened, cwd, unit, rel, abs)
+		key, ok := reviewRoundCwdKey(base, opened, cwd, abs)
 		if !ok || !utf8.ValidString(key) {
 			return nil, unreadable, nil
 		}

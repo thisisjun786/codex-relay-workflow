@@ -83,3 +83,64 @@ func TestReviewRoundCwdLinkChainPastTheKernelLimitIsMissing(t *testing.T) {
 		t.Errorf("a chain past the kernel's link limit reads %v, want missing", got)
 	}
 }
+
+// A link between the plan unit and the point where the path enters the working directory stays in the stored key, so
+// repointing it changes what Recomputed reads (CRW-649).
+func TestReviewRoundCwdKeyKeepsTheLinkAboveThePlanUnit(t *testing.T) {
+	root := reviewRoundArgsRealTemp(t)
+	for _, dir := range []string{"a", "b"} {
+		reviewRoundArgsWrite(t, filepath.Join(root, "ws", dir, "u", "000_plan.md"), "plan "+dir+"\n")
+	}
+	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "ws"), filepath.Join(root, "alias")))
+	reviewRoundArgsMust(t, os.Symlink("a", filepath.Join(root, "ws", "link")))
+	cwd := filepath.Join(root, "ws")
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(cwd, "../alias/link/u", []string{"../alias/link/u/000_plan.md"})
+	if want := []goalplan.PlanFileHash{{Path: "link/u/000_plan.md", Sha256: reviewRoundArgsHex("plan a\n")}}; err != nil || refusal != "" || !slices.Equal(files, want) {
+		t.Fatalf("%v %q %v, want %v", files, refusal, err, want)
+	}
+	reviewRoundArgsMust(t, os.Remove(filepath.Join(root, "ws", "link")))
+	reviewRoundArgsMust(t, os.Symlink("b", filepath.Join(root, "ws", "link")))
+	if got := Recomputed(cwd, files); len(got) != 1 || got[0].Sha256 != reviewRoundArgsHex("plan b\n") {
+		t.Errorf("the key no longer follows the link above the unit: %v", got)
+	}
+}
+
+// A working directory spelled with a link and ".." whose target lies outside its cleaned parent: the stored key resolves
+// through Recomputed to the same document, or the entry is refused — never a key that reads missing (CRW-649).
+func TestReviewRoundCwdKeyResolvesThroughTheSameSpelling(t *testing.T) {
+	root := reviewRoundArgsRealTemp(t)
+	reviewRoundArgsWrite(t, filepath.Join(root, "x", "ws", "u", "000_plan.md"), "# plan\n")
+	reviewRoundArgsMust(t, os.MkdirAll(filepath.Join(root, "x", "ws", "deep"), 0o755))
+	reviewRoundArgsMust(t, os.MkdirAll(filepath.Join(root, "r"), 0o755))
+	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "x", "ws", "deep"), filepath.Join(root, "r", "alias")))
+	cwd := root + "/r/alias/.."
+	unit := filepath.Join(root, "x", "ws", "u")
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(cwd, unit, []string{unit + "/000_plan.md"})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if refusal != "" {
+		t.Logf("the entry is refused with %q", refusal)
+		return
+	}
+	if len(files) != 1 {
+		t.Fatalf("collect returned %v", files)
+	}
+	if got := Recomputed(cwd, files); len(got) != 1 || got[0].Sha256 != reviewRoundArgsHex("# plan\n") {
+		t.Errorf("the stored key %q reads %v, want the plan's hash (never missing)", files[0].Path, got)
+	}
+}
+
+// A relative working directory spelled with a link and ".." is the directory the OS reaches, not the cleaned one: an entry
+// inside only the cleaned path reads missing (CRW-649).
+func TestReviewRoundCwdRelativeDotDotIsTheDirectoryTheOsReaches(t *testing.T) {
+	root := reviewRoundArgsRealTemp(t)
+	reviewRoundArgsWrite(t, filepath.Join(root, "out", "000_secret.md"), "TOP SECRET\n")
+	reviewRoundArgsMust(t, os.MkdirAll(filepath.Join(root, "ws", "deep"), 0o755))
+	reviewRoundArgsMust(t, os.Symlink(filepath.Join(root, "ws", "deep"), filepath.Join(root, "alias")))
+	t.Chdir(root)
+	got := Recomputed("alias/..", []goalplan.PlanFileHash{{Path: "out/000_secret.md"}})
+	if len(got) != 1 || got[0].Sha256 != "missing" {
+		t.Errorf("a relative link-and-dot-dot cwd reads %v, want missing", got)
+	}
+}
