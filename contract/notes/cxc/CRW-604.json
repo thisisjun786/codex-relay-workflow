@@ -1,0 +1,17 @@
+{
+  "issue": "CRW-604",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__loop__criteria_questions_and_steer",
+    "cli__loop__held_goalplan_lock_refuses_write",
+    "cli__loop__refusals",
+    "cli__loop__work_phases_tasks_and_completion",
+    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__orchestrate__bound_goalplan_requires_work_phase_id",
+    "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt",
+    "cli__review-round__open_signoff_and_binding_verdict",
+    "cli__review-round__show_and_open_refusals",
+    "cli__review-round__unparsed_signoff_noted_and_abort"
+  ]
+}
