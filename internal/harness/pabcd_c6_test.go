@@ -269,7 +269,7 @@ func TestPabcdC6Verbs(t *testing.T) {
 			t.Fatal(err)
 		}
 		code, out, errOut := c6Run([]string{"metric", "record", "--session", "s1", "--name", "x", "--value", "1"}, strings.NewReader(""))
-		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") {
+		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") || !strings.HasSuffix(errOut, "\n") {
 			t.Fatalf("metric write failure: %d %q %q", code, out, errOut)
 		}
 	})
@@ -280,7 +280,7 @@ func TestPabcdC6Verbs(t *testing.T) {
 			t.Fatal(err)
 		}
 		code, out, errOut := c6Run([]string{"divergence", "mode", "on", "--session", "s1", "--collapse", "D", "--reason", "x"}, strings.NewReader(""))
-		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") {
+		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") || !strings.HasSuffix(errOut, "\n") {
 			t.Fatalf("divergence write failure: %d %q %q", code, out, errOut)
 		}
 	})
@@ -292,7 +292,7 @@ func TestPabcdC6Verbs(t *testing.T) {
 			t.Fatal(err)
 		}
 		code, out, errOut := c6Run([]string{"review-round", "abort", "--session", "s1"}, strings.NewReader(""))
-		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") {
+		if code != 1 || out != "" || !strings.HasPrefix(errOut, "crw cli failed: ") || !strings.HasSuffix(errOut, "\n") {
 			t.Fatalf("review-round lock failure: %d %q %q", code, out, errOut)
 		}
 	})
