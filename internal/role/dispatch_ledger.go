@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -178,6 +179,11 @@ type dispatchPinnedDir struct {
 	root  *os.Root
 	path  string
 	after func(point string)
+	// dispatchLockMutexHeld is the guard of the clear that holds this directory exclusively; only dispatchLockClear sets it.
+	// A lock taken through the same object is the clear's own, and a shared lock would wait for the clear's exclusive one.
+	dispatchLockMutexHeld *os.File
+	// dispatchLockMutexBound is how long a shared wait lasts; zero is dispatchLockMutexWait. A test shortens or lengthens it.
+	dispatchLockMutexBound time.Duration
 }
 
 // dispatchPinnedCheck runs once the temporary record is written and before it replaces the old one; an error from it
