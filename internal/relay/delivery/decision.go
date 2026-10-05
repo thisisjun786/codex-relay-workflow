@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The decision reply (CRW-394). A child that stops with a blocked_needs_input receipt waits for the parent, and a
@@ -19,9 +20,14 @@ import (
 // parent's own record on that receipt, kept apart from the verdict writer. docs/relay/README.md, "Replying to a
 // blocked receipt", is the contract; this file is the rule and the message.
 //
+// CRW-659 widens the receipt a decision answers: a final receipt the relay itself observed ending interrupted or
+// failed (producer daemon_observation) is answered with answer alone, so a parent can continue such a child in the
+// same generation through the relay's own delivery path. stop, split_approval and scope_change stay refused for it,
+// and every other producer and outcome pair is refused as before.
+//
 //	decision        generation       what the relay requires
-//	answer          stays            a note
-//	stop            stays            a note
+//	answer          stays            a note; a blocked_needs_input receipt of the child, or a receipt the relay observed ending interrupted or failed
+//	stop            stays            a note, on a blocked_needs_input receipt of the child
 //	split_approval  advances to g+1  a note and the digest of the criteria registered for the relationship
 //	scope_change    advances to g+1  the same
 
@@ -105,8 +111,18 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 			record = append(recorded, F{Key: "_replay", Value: true})
 			return nil
 		}
-		if event.S("producer") != "child" || event.S("outcome") != "blocked_needs_input" {
-			return refuse(DispositionConflict, "%s is a %s receipt of the %s, and a decision answers a blocked_needs_input receipt of the child: a receipt that carries an artifact is ruled with a verdict", strconv.Quote(req.EventID), event.S("outcome"), event.S("producer"))
+		answered, outcome := event.S("producer"), event.S("outcome")
+		switch {
+		case answered == store.ProducerChild && outcome == string(store.BlockedNeedsInput):
+			// the child's own question: every kind of decision answers it
+		case answered == store.ProducerDaemon && (outcome == string(store.Interrupted) || outcome == string(store.Failed)):
+			// the relay saw this turn end without a receipt, so the parent continues the child in the same generation,
+			// and only answer says that: the other kinds either stop it or change the criteria it works under
+			if req.Decision != DecisionAnswer {
+				return refuse(DispositionConflict, "%s is a %s receipt of the %s, and a turn the relay saw end is continued with answer: %s is not a decision this receipt takes", strconv.Quote(req.EventID), outcome, answered, req.Decision)
+			}
+		default:
+			return refuse(DispositionConflict, "%s is a %s receipt of the %s, and a decision answers a blocked_needs_input receipt of the child: a receipt that carries an artifact is ruled with a verdict", strconv.Quote(req.EventID), outcome, answered)
 		}
 		if event.S("stage") != "final" || truthy(event.Opt("suppressed_reason")) {
 			return refuse(DispositionConflict, "%s is not final: its turn has not been seen to end, so the parent has not been told and there is nothing to answer yet", strconv.Quote(req.EventID))
@@ -174,7 +190,7 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 			}
 		}
 		record = Obj{{Key: "eventId", Value: id}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: number}, {Key: "kind", Value: DecisionReply}, {Key: "decision", Value: req.Decision},
-			{Key: "answersEvent", Value: req.EventID}, {Key: "decisionTurnId", Value: turn}, {Key: "note", Value: note}, {Key: "generationEffect", Value: effect}}
+			{Key: "answersEvent", Value: req.EventID}, {Key: "answersOutcome", Value: outcome}, {Key: "decisionTurnId", Value: turn}, {Key: "note", Value: note}, {Key: "generationEffect", Value: effect}}
 		if advances(req.Decision) {
 			// the set is kept as it was when the decision was made: the message prints it, so the child works from what the parent
 			// approved even if the set is registered again before the message is sent
@@ -250,7 +266,11 @@ func renderDecision(row Row, record Obj, request string) string {
 	lines = append(lines, "", "DECISION: "+unheaded(inline(g("note"))), "")
 	switch decision {
 	case DecisionAnswer:
-		lines = append(lines, "This answers the question your blocked_needs_input receipt asked. Your generation and criteria are unchanged: continue the work from where you stopped.")
+		if answered := pyjson.Text(g("answersOutcome")); answered == string(store.Interrupted) || answered == string(store.Failed) {
+			lines = append(lines, "The relay observed that your previous turn ended "+answered+" without a receipt (event "+known(g("answersEvent"))+"). Your generation and criteria are unchanged: re-read your worktree, branch, commits and pull request and continue the work from where you stopped.")
+		} else {
+			lines = append(lines, "This answers the question your blocked_needs_input receipt asked. Your generation and criteria are unchanged: continue the work from where you stopped.")
+		}
 	case DecisionStop:
 		lines = append(lines, "Stop the work now and change nothing more in your checkout. End this turn recording the disposition interrupted and emit an interrupted receipt.")
 	default:
