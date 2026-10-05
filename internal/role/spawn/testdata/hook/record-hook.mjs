@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // record-hook.mjs - records what the CXC v0.2.40 spawn hook answers for the CRW-613 port of the first half of
-// runSpawnAttachHook (subagent-config/src/spawn-attach-hook.ts:849-987 and runtimeSkillsDir :54-73).
+// runSpawnAttachHook (subagent-config/src/spawn-attach-hook.ts:849-987 and runtimeSkillsDir :54-73) and, in the "route" and "deny"
+// sections at the end, for the CRW-614 port of the second half (:849-852, :991-1115) and its envelope serialization.
 //
 // Usage: node record-hook.mjs <oracle-root> <scratch> <output>     (Node 24: it imports the oracle .ts source directly)
 //
@@ -323,6 +324,280 @@ assert.deepEqual(capCases.map(c => c.appended), [true, false, true, false]);
   process.chdir(scratch);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// CRW-614: RunSpawnAttachHook end to end (spawn-attach-hook.ts:849-852 and :991-1115). The "route" array holds one step per
+// raw stdin text: the CRW-named payload, the oracle's raw answer renamed and tokenized (guard blocks as JSON-escaped {{TOKENS}},
+// scratch paths {WS} and {SKILLS}, grant nonces {N1}...), or sha256 and byte count for a large answer. {{FILL:unit:n}} stands
+// for unit repeated n times. The "deny" array holds the oracle's denyEnvelope for reasons that carry lone surrogates.
+import { execFileSync } from 'node:child_process';
+const FILL_RE = /\{\{FILL:([^:}]*):(\d+)\}\}/g;
+const fillIn = s => s.replace(FILL_RE, (_, u, n) => u.repeat(+n));
+const rename2 = s => rename(s).replaceAll('cxc subagents dispatch', 'crw role helper dispatch').replaceAll('CXC selects', 'CRW selects');
+const MARKER_RE = /cxc|codexclaw/i;
+const route = [];
+const sha = s => crypto.createHash('sha256').update(s).digest('hex');
+function routeReal(ctx, v) {
+  return deep(v, s => fillIn(ctx.blocks.reduce((o, [block, token]) => o.replaceAll(token, block), s)
+    .replaceAll('{WS}', ctx.dirs.ws).replace(/\{N(\d+)\}/g, (_, i) => ctx.nonces[i - 1])));
+}
+function routeStep(ctx, spec, prev) {
+  let template = spec.input, stdin, real;
+  if (spec.reapply) {
+    template = structuredClone(spec.input);
+    template.tool_input = JSON.parse(prev.raw).hookSpecificOutput.updatedInput;
+    real = template;
+  } else real = spec.raw === undefined ? routeReal(ctx, template) : undefined;
+  stdin = spec.raw !== undefined ? fillIn(spec.raw.replaceAll('{WS}', ctx.dirs.ws).replace(/\{N(\d+)\}/g, (_, i) => ctx.nonces[i - 1])) : JSON.stringify(real);
+  const raw = hook.runSpawnAttachHook(stdin);
+  for (const m of raw.matchAll(GRANT)) if (!ctx.nonces.includes(m[1])) ctx.nonces.push(m[1]);
+  const step = { note: spec.note };
+  if (spec.raw !== undefined) step.stdin = rename2(spec.raw);
+  else step.stdin = JSON.stringify(spec.reapply ? stored(ctx, real) : deep(template, rename2));
+  let expect = '', plain = '';
+  if (raw !== '') {
+    assert.equal(JSON.stringify(JSON.parse(raw)) + '\n', raw, ctx.name + ': the oracle output is its own JSON.stringify round trip');
+    expect = JSON.stringify(deep(JSON.parse(raw), s => {
+      for (const [block, token] of ctx.blocks) s = s.replaceAll(block, token);
+      s = s.replaceAll(ctx.real, '{SKILLS}').replaceAll(ctx.dirs.ws, '{WS}');
+      ctx.nonces.forEach((n, i) => { s = s.replaceAll(n, '{N' + (i + 1) + '}'); });
+      return rename2(s);
+    })) + '\n';
+    plain = JSON.stringify(deep(JSON.parse(raw), s => {
+      s = s.replaceAll(ctx.real, '{SKILLS}').replaceAll(ctx.dirs.ws, '{WS}');
+      ctx.nonces.forEach((n, i) => { s = s.replaceAll(n, '{N' + (i + 1) + '}'); });
+      return rename2(s);
+    })) + '\n';
+    if (!spec.warned) assert.ok(!MARKER_RE.test(expect.replace(/\{\{[A-Z_]+\}\}/g, '')), ctx.name + ': a CXC name survived the rename in ' + spec.note);
+  }
+  if (spec.hash) { step.expectSha256 = sha(plain); step.expectBytes = Buffer.byteLength(plain); } else step.expect = expect;
+  step.classification = raw === '' ? 'identical' : 'intentionally-changed';
+  step.reason = raw === '' ? undefined : 'CRW names: guard and skill markers, skill and namespace prefixes, notice wording.';
+  return { step, raw, stdin };
+}
+function recordRoute(name, test, env, specs) {
+  const ctx = setup('route ' + name, env);
+  const out = { name: 'route: ' + name, test, env: { skills: 'plain', tmp: 'present', store: env?.store ?? null, unreadableCwd: false }, steps: [] };
+  let prev;
+  for (const spec of specs) {
+    if (spec.project !== undefined) projectConfig(ctx, false);
+    prev = routeStep(ctx, spec, prev);
+    if (spec.project !== undefined) {
+      const clean = prev;
+      projectConfig(ctx, spec.project);
+      const warned = routeStep(ctx, { ...spec, warned: true }, clean);
+      assert.ok(warned.raw !== clean.raw && /CONFIG-IGNORED|ignored Git-tracked/.test(warned.raw), ctx.name + ': the project config must change the oracle answer');
+      clean.step.twin = { project: spec.project, oracleWarned: warned.step.expect };
+      clean.step.classification = 'intentionally-changed';
+      clean.step.reason = spec.changed;
+      projectConfig(ctx, false);
+    }
+    out.steps.push(prev.step);
+  }
+  route.push(out);
+}
+function projectConfig(ctx, roles) {
+  const dir = path.join(ctx.dirs.ws, '.codexclaw'), file = path.join(dir, 'subagents.json');
+  const git = (...a) => execFileSync('git', a, { cwd: ctx.dirs.ws, stdio: 'ignore' });
+  if (!fs.existsSync(path.join(ctx.dirs.ws, '.git'))) git('init', '-q');
+  if (roles) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify({ roles })); git('add', '-f', '.codexclaw/subagents.json'); }
+  else if (fs.existsSync(file)) { git('rm', '-q', '--cached', '-f', '.codexclaw/subagents.json'); fs.rmSync(dir, { recursive: true }); }
+}
+const roleStore = roles => JSON.stringify({ roles: Object.fromEntries(['explorer', 'reviewer', 'executor', 'architect'].map(r => [r, { mode: 'default', model: null, effort: null, promptOverride: null, fallback: null, ...(roles[r] ?? {}) }])) });
+const M = (model, effort = null, more = {}) => ({ mode: 'model', model, effort, ...more });
+const rs = (input, more = {}) => ({ input, ...more });
+const rr = (input, more = {}) => ({ input, reapply: true, ...more });
+const raw = (text, more = {}) => ({ raw: text, ...more });
+const TI = (ti, extra, tool) => T(ti, extra, tool);
+const V2 = (m, more = {}) => ({ task_name: 't', fork_turns: 'none', message: m, ...more });
+const payloadText = (ti, extra = '') => '{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","session_id":"s","cwd":"{WS}",' + extra + '"tool_input":' + ti + '}';
+
+{
+  const S = roleStore({ explorer: M('rec/explorer', 'high'), reviewer: M('rec/reviewer'), executor: { effort: 'high' }, architect: M('rec/architect', 'medium') });
+  recordRoute('model and effort', 'spawn-attach-hook.test.ts:440-520,562-646; spawn-items-routing.test.ts; explorer-role-routing.test.ts', { store: S }, [
+    rs(TI(V2('map the frontend codebase', { agent_type: 'explorer' }))),
+    rr(T({}), { note: 'reapplied v2 output: nothing changes' }),
+    rs(TI(V2('map the frontend codebase', { fork_turns: '3' })), { note: 'integer-like fork_turns is not a full fork' }),
+    rs(TI({ task_name: 't', message: 'map the frontend codebase' }), { note: 'v2 fork_turns omitted: full history, no model or effort' }),
+    rs(TI(V2('map the frontend codebase', { fork_turns: 'all' }))),
+    rs(TI({ agent_type: 'explorer', message: 'summarize this thread', fork_context: true })),
+    rs(TI(V2('map it', { model: 'gpt-5.5' })), { note: 'caller model: effort only' }),
+    rs(TI(V2('map it', { reasoning_effort: 'low' })), { note: 'caller effort: model only' }),
+    rs(TI({ model: '  ', agent_type: 'explorer', message: 'map it', reasoning_effort: '' }), { note: 'blank caller values do not count: replaced in place' }),
+    rs(TI({ model: null, reasoning_effort: 5, agent_type: 'explorer', message: 'map it' }), { note: 'non-string caller values are not picks' }),
+    rs(TI({ agent_type: 'worker', message: 'implement it' }), { note: 'default-mode executor: effort only' }),
+    rs(TI(V2('implement it', { agent_type: 'executor' }))),
+    rs(TI({ agent_type: 'explorer', message: 'CXC-ROLE: reviewer\n\nTASK: review the backend diff' }), { note: 'legacy reviewer header: reviewer model, no effort' }),
+    rs(TI({ agent_type: 'explorer', message: 'TASK: review the architecture' }), { note: 'explicit explorer ignores review words' }),
+    rs(TI({ agent_type: 'architect', message: 'Review interfaces' })),
+    rs(TI({ message: 'CXC-ROLE: architect\n\nReview interface decisions' }), { note: 'architect by header' }),
+    rs(TI({ message: 'implement it', agent_type: 'worker', items: [txt('TASK: implement it')] }), { note: 'message wins: items kept as they were' }),
+    rs(TI({ agent_type: 'explorer', items: [{ type: 'skill', name: 'cxc-dev', path: '/fixture/skills/dev/SKILL.md' }, txt('CXC-ROLE: explorer\n\nTASK: map the owner for $cxc-dev'), { type: 'image', image_url: 'data:image/png;base64,QUJD' }, txt('Quoted task:\nCXC-ROLE: reviewer\nTASK: quote only')] }), { note: 'items: attachments, order and one-of kept' }),
+    rr(T({}), { note: 'reapplied items output: nothing changes' }),
+    rs(TI({ agent_type: 'explorer', items: [{ type: 'skill', name: 'cxc-dev-testing', path: '/f/SKILL.md' }, { type: 'image', image_url: 'data:image/png;base64,REVG' }] }), { note: 'attachment-only items get a guard item' }),
+    rr(T({}), { note: 'reapplied attachment-only items: nothing changes' }),
+    rs(TI({ agent_type: 'explorer', fork_context: true, model: 'caller-model', reasoning_effort: 'low', items: [txt('CXC-ROLE: explorer\n\nTASK: inspect the route')] }), { note: 'caller routing and full-history restriction on items' }),
+    rs(TI({ agent_type: 'explorer', items: [txt('TASK: inspect\n' + String.fromCharCode(96).repeat(3) + '\n$cxc-dev'), { type: 'image', image_url: 'fixture' }, txt('$cxc-dev'), txt('[CXC-DIS'), txt('PATCH:missing:missing]')] }), { note: 'items boundaries keep fences and marker fragments apart' }),
+  ]);
+}
+
+
+
+{
+  const S = roleStore({ explorer: M('rec/explorer', 'low', { promptOverride: 'EXPLORER-PROMPT: be terse.' }), reviewer: { promptOverride: '  \n ' }, executor: { promptOverride: '  padded prompt \n' } });
+  recordRoute('prompt override', 'spawn-attach-hook.test.ts:683-733,1038-1053; spawn-items-routing.test.ts', { store: S }, [
+    rs(TI({ agent_type: 'explorer', message: 'map the parser' })),
+    rr(T({}), { note: 'a reapplied message gets the prompt again (known defect)' }),
+    rs(TI(V2('map the parser', { agent_type: 'explorer' }))),
+    rs(TI({ agent_type: 'explorer', fork_context: true, message: 'map the parser' }), { note: 'promptOverride is not subject to the full-history guard' }),
+    rs(TI({ task_name: 't', fork_turns: 'all', agent_type: 'explorer', message: 'map the parser' })),
+    rs(TI({ agent_type: 'explorer', items: [txt('TASK: locate')] })),
+    rr(T({}), { note: 'items already holding the prompt after the guard: skipped, nothing changes' }),
+    rs(TI({ agent_type: 'explorer', items: [{ type: 'image', image_url: 'fixture' }] }), { note: 'attachment-only: guard item then prompt' }),
+    rr(T({}), { note: 'reapplied attachment-only items: nothing changes' }),
+    rs(TI({ agent_type: 'reviewer', message: 'check the parser' }), { note: 'a whitespace-only prompt counts as none' }),
+    rs(TI({ agent_type: 'worker', message: 'implement it' }), { note: 'the prompt is trimmed' }),
+    rs(TI({ agent_type: 'explorer', message: TOKEN + ' coordinate' }), { note: 'coordinator guard carries the grant instruction before the prompt' }),
+    rs(TI({ agent_type: 'explorer', message: '{{V1}}' }), { note: 'a message that is exactly the guard: the prompt cannot be inserted, yet an envelope is printed (known defect)' }),
+  ]);
+}
+{
+  const S = roleStore({ explorer: M('rec/explorer', 'low', { promptOverride: 'A $& B $$ C $' + "'" + ' D $' + String.fromCharCode(96) + ' E $1 F $<x> G' }) });
+  recordRoute('prompt override dollar patterns', 'spawn-attach-hook.ts:1026-1029 String.replace substitution', { store: S }, [
+    rs(TI({ agent_type: 'explorer', message: 'TASKTEXT' })),
+    rs(TI(V2('TASKTEXT', { agent_type: 'explorer' }))),
+    rs(TI({ agent_type: 'explorer', items: [txt('TASKTEXT')] })),
+  ]);
+}
+{
+  const S = roleStore({ architect: M('rec/architect', 'high', { promptOverride: 'Architect-only instructions' }), explorer: M('rec/explorer', 'low', { fallback: { model: 'rec/fb', effort: null } }), reviewer: { fallback: { model: 'rec/fb2', effort: 'high' } } });
+  const CI = (more = {}) => V2(FERNET_VECTOR, { agent_type: 'architect', ...more });
+  recordRoute('v2 ciphertext', 'spawn-attach-hook.test.ts:1038-1075,1100-1155', { store: S }, [
+    rs(TI(CI({ task_name: 'design' }))),
+    rs(TI(CI(), {}, 'collaborationspawn_agent'), { note: 'the native hook name' }),
+    rs(TI(CI({ model: 'caller-fixture', reasoning_effort: 'low' })), { note: 'explicit settings: only the notice is printed' }),
+    rs(TI(CI({ fork_turns: 'all' })), { note: 'full history: only the notice is printed' }),
+    rs(TI(V2(FERNET_VECTOR, { agent_type: 'explorer' })), { note: 'fallback notice and ciphertext notice, joined by a newline' }),
+    rs(TI(V2(FERNET_VECTOR.slice(0, 80), { agent_type: 'architect' })), { note: 'a lookalike is plaintext: guard, prompt and affordance' }),
+    rs(TI({ agent_type: 'architect', items: [txt(FERNET_VECTOR), { type: 'attachment', ref: 'fixture-1' }] }), { note: 'v1 items never take the ciphertext path' }),
+  ]);
+}
+{
+  const S = roleStore({ explorer: M('rec/explorer', 'low', { fallback: { model: 'rec/fb', effort: null } }), reviewer: M('rec/reviewer') });
+  recordRoute('fallback notice', 'spawn-attach-hook.ts:1081-1086', { store: S }, [
+    rs(TI({ agent_type: 'explorer', message: 'map it' })),
+    rr(T({}), { note: 'unchanged input still prints the notice' }),
+    rs(TI({ agent_type: 'reviewer', message: 'check it' }), { note: 'no fallback for this role' }),
+    rs(TI(V2('map it', { agent_type: 'explorer' }))),
+  ]);
+}
+{
+  const body = '{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","session_id":"s","tool_input":{"message":"';
+  const tail = '"}}', base = Buffer.byteLength(body + tail), LIM = 4 * 1024 * 1024;
+  assert.equal(rename2('x'), 'x'); assert.equal(rename2('a'), 'a'); assert.equal(rename2('\u00e9'), '\u00e9');
+  const P = ti => payloadText(ti, '');
+  recordRoute('input forms and bounds', 'spawn-attach-hook.test.ts:741-775; spawn-attach-hook.ts:849-857', { store: roleStore({ explorer: M('rec/explorer', 'high') }) }, [
+    raw(''), raw('  \n\t '), raw('{not json'), raw('[]'), raw('null'), raw('"x"'), raw('5'), raw('{}'),
+    raw('\ufeff' + P('{"message":"padded","agent_type":"explorer"}') + '\u00a0\n', { note: 'the JavaScript trim set holds the BOM and NBSP' }),
+    raw(P('{"message":"first","message":"last","agent_type":"explorer"}'), { note: 'a repeated key keeps its first place and last value' }),
+    raw(P('{"b":1,"10":2,"2":3.0,"e":1E2,"big":12345678901234567890,"z":-0,"inf":1e999,"small":1e-7,"k":1e21,"tiny":1e-400,"neg":-1.5e+3,"message":"keep <>& \\u00e9 \\u2028 \\u007f \\u0000 \\/","nested":{"9":1,"a":[1.0,{"3":2,"1":1}]},"agent_type":"explorer"}'), { note: 'numbers respell as JavaScript doubles; integer-like keys move first' }),
+    raw(P('{"task_name":"t","fork_turns":3.0,"message":"numeric fork_turns"}'), { note: 'fork_turns 3.0 is a number: not a full fork' }),
+    raw(P('{"b":1,"2":0,"1":0,"01":0,"4294967295":0,"4294967294":0,"-1":0,"message":"x","agent_type":"explorer"}'), { note: 'only canonical array indices below 2^32-1 move first' }),
+    raw(body + '{{FILL:x:' + (LIM - base) + '}}' + tail, { hash: true, note: 'exactly 4 MiB is processed' }),
+    raw(body + '{{FILL:x:' + (LIM - base + 1) + '}}' + tail, { note: 'one byte more is denied' }),
+    raw(body + '{{FILL:\u00e9:' + (LIM / 2) + '}}' + tail, { note: 'the bound counts bytes, not characters' }),
+  ]);
+  const deepArr = n => '{{FILL:[:' + n + '}}{{FILL:]:' + n + '}}';
+  recordRoute('deep nesting', 'spawn-attach-hook.ts:854,1089-1109: JSON.parse is iterative, JSON.stringify throws a RangeError near 4,458 levels', { store: roleStore({ explorer: M('rec/explorer', 'high') }) }, [
+    raw(P('{"message":"x","agent_type":"explorer","junk":' + deepArr(100) + '}'), { note: '100 levels inside tool_input are echoed' }),
+    raw(P('{"message":"x","agent_type":"explorer","junk":' + deepArr(100000) + '}'), { note: '100,000 levels inside tool_input: the answer cannot be written, nothing is printed' }),
+    raw(payloadText('{"message":"x","agent_type":"explorer"}', '"junk":' + deepArr(100000) + ','), { note: 'the same field outside tool_input is never written: the normal answer' }),
+    raw(payloadText('{"message":"x"}', '"agent_id":"c","agent_type":"explorer","junk":' + deepArr(100000) + ','), { note: 'a subagent spawn with a deep field outside tool_input is still denied' }),
+    raw(payloadText('{"message":"x","junk":' + deepArr(100000) + '}', '"agent_id":"c","agent_type":"explorer",'), { note: 'a subagent spawn with a deep field inside tool_input is denied before anything is written' }),
+  ]);
+  recordRoute('deep documents', 'spawn-attach-hook.ts:854: JSON.parse refuses a malformed document at any depth', { store: roleStore({ explorer: M('rec/explorer', 'high') }) }, [
+    raw(P('{"message":"x","junk":' + deepArr(100000) + '}') + ' x', { note: 'trailing text after a deep document: the parse fails, nothing is printed' }),
+    raw(P('{"message":"x","junk":' + deepArr(100000) + '}') + '{}', { note: 'a second value after a deep document' }),
+    raw(P('{"message":"x","junk":' + '{{FILL:[:100000}}' + '}'), { note: 'a deep field that is never closed' }),
+    raw(payloadText('{"message":"x","junk":' + deepArr(100000) + '}', '"agent_id":"c","agent_type":"explorer",') + ' x', { note: 'a subagent spawn whose deep document does not parse prints nothing, not the deny' }),
+    raw('{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","session_id":"s","cwd":"{WS}","tool_input":{"message":"x","junk":' + deepArr(100000) + '},"tool_input":{"message":"y","agent_type":"explorer"}}', { note: 'the last tool_input wins: the deep first one is dropped' }),
+  ]);
+  recordRoute('grants through the hook', 'spawn-attach-hook.test.ts:408-438,664-673', {}, [
+    rs(TI({ agent_type: 'worker', items: [txt('do A'), { type: 'local_image', path: '/p.png' }, txt(TOKEN + ' coordinate B')] })),
+    rs(TI({ items: [txt('[CXC-SUBSPAWN-GRANT:{N1}] go'), { type: 'local_image', path: '/q.png' }] }, CHILD)),
+    rs(TI({ items: [txt('[CXC-SUBSPAWN-GRANT:{N1}] go')] }, CHILD), { note: 'the capability is single use' }),
+    rs(TI(V2('spawn a helper'), CHILD)),
+    rs(TI({ message: 'plain task' })),
+    rr(T({}), { note: 'reapplied plain v1 message: nothing changes' }),
+    rs(TI(V2('plain task'))),
+    rr(T({}), { note: 'reapplied v2 message: nothing changes' }),
+  ]);
+}
+{
+  const S = roleStore({ explorer: M('rec/explorer', 'high') });
+  const P = ti => payloadText(ti, '');
+  recordRoute('lone surrogates', 'c9: JSON.stringify keeps a lone surrogate as its escape', { store: S }, [
+    raw(P('{"message":"a\\ud800b","agent_type":"explorer"}'), { note: 'lone high surrogate in a v1 message' }),
+    raw(P('{"message":"a\\udc00b","agent_type":"explorer"}'), { note: 'lone low surrogate' }),
+    raw(P('{"message":"x\\udc00\\ud800y","agent_type":"explorer"}'), { note: 'a reversed pair is two lone surrogates' }),
+    raw(P('{"message":"pair \\ud83d\\ude00 and \ud83d\ude00 literal","agent_type":"explorer"}'), { note: 'a valid pair stays a character' }),
+    raw(P('{"agent_type":"explorer","items":[{"type":"text","text":"t\\ud800"},{"type":"image","ref":"\\udc00","k\\ud800":1}],"trace":"\\ud800"}'), { note: 'items text, attachment value, a key and another member' }),
+    raw(P('{"task_name":"t","fork_turns":"none","message":"v2 \\ud800 text"}'), { note: 'v2 message with the affordance' }),
+    raw(P('{"agent_type":"explorer","items":[{"type":"text","text":"a\\ud83d"},{"type":"text","text":"\\ude00b"}]}'), { note: 'a pair split across items stays two lone surrogates' }),
+    raw(P('{"message":"use $cxc-dev\\ud800 and $cxc-dev \\udc00","agent_type":"explorer"}'), { note: 'next to a skill mention' }),
+    raw(P('{"message":"a\\ud83dCXC-SUBSPAWN-ALLOWED\\ude00b","agent_type":"explorer"}'), { note: 'removing the recursion token brings two halves together: one character' }),
+    raw(P('{"message":"x\\ud83d[CXC-SUBSPAWN-GRANT:' + 'a'.repeat(64) + ']\\ude00y","agent_type":"explorer"}'), { note: 'removing a grant marker does the same' }),
+    raw(P('{"agent_type":"explorer","items":[{"type":"text","text":"i\\ud83dCXC-SUBSPAWN-ALLOWED\\ude00j"}]}'), { note: 'in an items text' }),
+    raw(P('{"task_name":"t","fork_turns":"none","message":"v\\ud83dCXC-SUBSPAWN-ALLOWED\\ude00w"}'), { note: 'in a v2 message' }),
+  ]);
+}
+{
+  const S = roleStore({ explorer: M('rec/explorer', 'high'), architect: M('rec/architect', 'high', { promptOverride: 'Architect-only instructions' }) });
+  const cfg = { explorer: M('proj/model', 'low') };
+  const changed = 'Decision 7: the project layer is dropped, so a tracked untrusted project config no longer prefixes the message or the notice; the port answers as the oracle does without the project config.';
+  recordRoute('trust warning', 'spawn-attach-hook.ts:927,1049,1084', { store: S }, [
+    rs(TI({ agent_type: 'explorer', message: 'TASKTEXT' }), { project: cfg, changed }),
+    rs(TI(V2(FERNET_VECTOR, { agent_type: 'architect' })), { project: cfg, changed }),
+  ]);
+}
+// 256 KiB items cap: the skill blocks are appended only while the total stays within the cap, counted in UTF-16 units.
+let itemsCap;
+{
+  const probe = setup('route cap probe', {});
+  const fills = { ascii: n => 'a'.repeat(n), astral: n => '\u{1F600}'.repeat(n >> 1) + 'a'.repeat(n & 1), lone: n => '\ud800'.repeat(n) };
+  const itemsOf = text => T({ agent_type: 'explorer', items: [txt('$cxc-dev ' + text), { type: 'attachment', ref: 'a' }, txt('tail')] });
+  const look = (unit, n) => {
+    const out = JSON.parse(hook.runSpawnAttachHook(JSON.stringify(routeReal(probe, itemsOf(fills[unit](n)))))).hookSpecificOutput.updatedInput.items;
+    const texts = out.filter(i => i.type === 'text');
+    return { appended: texts.at(-1).text.includes('<skill name="cxc-dev">'), total: texts.reduce((n2, i) => n2 + i.text.length, 0) + (texts.length - 1) * 2 };
+  };
+  // The edge itself moves with the renamed text's length (CRW names are shorter), so the port finds its own edge and checks these
+  // outcomes (as affordanceCap does); far from the edge the decision, and so the whole answer, is the same under both names.
+  itemsCap = { maxUnits: MAX, cases: [] };
+  for (const unit of Object.keys(fills)) {
+    const zero = look(unit, 0);
+    assert.ok(zero.appended);
+    const n = MAX - zero.total;
+    assert.deepEqual(look(unit, n), { appended: true, total: MAX });
+    assert.equal(look(unit, n + 1).appended, false);
+    itemsCap.cases.push({ unit, delta: 0, appended: true }, { unit, delta: 1, appended: false });
+    if (unit === 'ascii') {
+      const itemsFor = k => T({ agent_type: 'explorer', items: [txt('$cxc-dev {{FILL:a:' + k + '}}'), { type: 'attachment', ref: 'a' }, txt('tail')] });
+      recordRoute('items cap', 'spawn-attach-hook.ts:1057-1064', {}, [
+        rs(itemsFor(n - 1000), { hash: true, note: 'well within the cap: the blocks are appended' }),
+        rs(itemsFor(n + 1000), { hash: true, note: 'well past the cap: the blocks are not appended' }),
+      ]);
+    }
+  }
+}
+// The oracle's denyEnvelope (:450-458) is not exported: this replica is checked against the oracle's own deny answers.
+const denyEnvelope = reason => JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }) + '\n';
+assert.equal(denyEnvelope(JSON.parse(DENY_RAW).hookSpecificOutput.permissionDecisionReason), DENY_RAW);
+assert.equal(hook.runSpawnAttachHook('x'.repeat(4 * 1024 * 1024 + 1)), denyEnvelope('codexclaw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary'));
+const deny = ['\ud800', '\udc00', 'a\ud800b', 'x\udc00\ud800y', '\ud83d\ude00', 'q"\\\n\r\t\b\f\u0001\u007f\u2028\u2029<>&/', 'managed dispatch: marker \ud800 and \udc00']
+  .map(reason => ({ reason: JSON.stringify(reason), expect: rename2(denyEnvelope(reason)) }));
+
+
 const stepsTotal = cases.reduce((n, c) => n + c.steps.length, 0);
 fs.writeFileSync(output, JSON.stringify({
   oracle: 'CXC v0.2.40 (3c1459ac)',
@@ -331,5 +606,9 @@ fs.writeFileSync(output, JSON.stringify({
   skills: Object.fromEntries(FOLDERS.map(f => ['crw-' + f, rename(BODY(f))])),
   affordanceCap: { maxUnits: MAX, cases: capCases },
   cases,
+  route,
+  deny,
+  itemsCap,
 }, null, 1) + '\n');
-console.log('Recorded ' + cases.length + ' cases, ' + stepsTotal + ' steps and ' + capCases.length + ' cap cases.');
+const routeSteps = route.reduce((n, c) => n + c.steps.length, 0);
+console.log('Recorded ' + cases.length + ' cases, ' + stepsTotal + ' steps and ' + capCases.length + ' cap cases, ' + route.length + ' route cases, ' + routeSteps + ' route steps and ' + deny.length + ' deny cases.');
