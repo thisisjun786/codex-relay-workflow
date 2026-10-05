@@ -463,3 +463,26 @@ func harnessReportFeatureCheck(t *testing.T, states map[string]bool) HarnessChec
 	t.Helper()
 	return HarnessFeaturesCheck(HarnessRun{Status: harnessReportStatus(0), Stdout: harnessReportListing(states)})
 }
+
+// TestHarnessReportCorpusTextPort pins the exact text the recorded doctor fixtures cross-check,
+// after the cli table maps `cxc enable` and `cxc doctor` and R32 maps `codexclaw`: the hard-flag
+// fixture (cli__doctor__hard_flag_off_and_stale_install_root_fail) expects the FAIL evidence and
+// repair below, and the text-report fixture (cli__doctor__text_report) expects the
+// unreachable-probe WARN with the re-run hint that names the subcommand. These literals are the
+// contract the CLI issue compares, not a restatement of harnessReportRenamed.
+func TestHarnessReportCorpusTextPort(t *testing.T) {
+	check := harnessReportFeatureCheck(t, harnessReportOff(harnessReportAllOn(), "multi_agent", "goals", "default_mode_request_user_input"))
+	if want := "1/4 enabled; crw requires [multi_agent, goals]"; check.Evidence != want {
+		t.Fatalf("hard flag evidence = %q, want %q", check.Evidence, want)
+	}
+	if want := "crw install features enable"; check.Repair != want {
+		t.Fatalf("hard flag repair = %q, want %q", check.Repair, want)
+	}
+	check = HarnessFeaturesCheck(HarnessRun{Status: harnessReportStatus(127), Stderr: "stub codex: not scripted"})
+	if want := "could not read 'codex features list' (exit 127): stub codex: not scripted"; check.Evidence != want {
+		t.Fatalf("unreachable evidence = %q, want %q", check.Evidence, want)
+	}
+	if want := "ensure the `codex` binary is on PATH, then re-run `crw doctor harness`"; check.Repair != want {
+		t.Fatalf("unreachable repair = %q, want %q", check.Repair, want)
+	}
+}
