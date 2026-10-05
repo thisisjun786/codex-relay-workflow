@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"time"
 )
 
@@ -121,6 +122,11 @@ func createdCheckHeld(d *Dispatch, i int) string {
 type createdCheckIdentity struct {
 	ID, Parent, Status string
 	Subagent           bool
+	// Turns: the host's answer carried a turns list. The App Server sends one with every thread (empty unless turns were
+	// asked for), so this is a bound on the host calls of the stopped close, not a probe of what a host can do: an answer
+	// without the list is a host that reports no turns, and it keeps the single read every earlier host answered. A host
+	// that left the list out would turn the turn check off without a sign except the note of the close.
+	Turns bool
 }
 
 func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, agent string) (createdCheckIdentity, error) {
@@ -135,9 +141,10 @@ func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, a
 	}
 	var reply struct {
 		Thread struct {
-			ID         string `json:"id"`
-			Parent     string `json:"parentThreadId"`
-			SourceName string `json:"threadSource"`
+			ID         string          `json:"id"`
+			Parent     string          `json:"parentThreadId"`
+			SourceName string          `json:"threadSource"`
+			Turns      json.RawMessage `json:"turns"`
 			Status     struct {
 				Type string `json:"type"`
 			} `json:"status"`
@@ -154,11 +161,32 @@ func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, a
 		return createdCheckIdentity{}, err
 	}
 	t := reply.Thread
-	return createdCheckIdentity{ID: t.ID, Parent: t.Parent, Status: t.Status.Type, Subagent: t.SourceName == "subagent" || t.SourceName == "" && t.Source.SubAgent.Spawn.Parent == t.Parent && t.Parent != ""}, nil
+	return createdCheckIdentity{ID: t.ID, Parent: t.Parent, Status: t.Status.Type, Turns: len(t.Turns) > 0 && t.Turns[0] == '[', Subagent: t.SourceName == "subagent" || t.SourceName == "" && t.Source.SubAgent.Spawn.Parent == t.Parent && t.Parent != ""}, nil
+}
+
+// createdRuntimeStatus is the status of the child's newest turn, read through the host's turn list the way the bridge and the
+// child cleanup read it (newest first, one entry). It is "" when the list cannot be read or holds no turn.
+func createdRuntimeStatus(ctx context.Context, h DispatchHost, agent string) string {
+	raw, err := h.Call(ctx, "thread/turns/list", map[string]any{"threadId": agent, "limit": 1, "itemsView": "summary"})
+	if err != nil {
+		return ""
+	}
+	var page struct {
+		Data []struct {
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &page) != nil || len(page.Data) == 0 {
+		return ""
+	}
+	return page.Data[0].Status
 }
 
 // Closing reduces authority only. Caller reconciliation is recorded, never
 // presented as a host-authenticated termination receipt; the old ID is retained in the record and no longer held.
+// The host is asked twice about the recorded child, under one bound: its identity and status (the active refusal), then, for
+// a host that reports turns, its newest turn, which must not be in progress. A close that could not see the newest turn end
+// goes through and says so.
 func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost, after func(string)) (out DispatchResult, err error) {
 	status := map[string]any{"action": "status", "sessionId": b["sessionId"], "dispatchId": b["dispatchId"]}
 	if _, err := RunDispatch(cwd, status, env); err != nil {
@@ -204,9 +232,19 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	identity, readErr := createdCheckRead(ctx, env, h, *a.AgentID)
-	if readErr == nil && identity.ID == *a.AgentID && identity.Parent == session && identity.Subagent && identity.Status == "active" {
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	identity, readErr := createdCheckRead(readCtx, env, h, *a.AgentID)
+	own := readErr == nil && identity.ID == *a.AgentID && identity.Parent == session && identity.Subagent
+	if own && identity.Status == "active" {
 		return DispatchResult{}, errors.New("recorded child is active; stop it before closing")
+	}
+	newest := ""
+	if own && identity.Turns {
+		newest = createdRuntimeStatus(readCtx, h, *a.AgentID)
+	}
+	if newest == "inProgress" {
+		return DispatchResult{}, errors.New("recorded child has a turn in progress; stop it before closing")
 	}
 	a.Reconciliation = &reconciliation
 	a.Code = nil
@@ -216,7 +254,11 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	if err := dispatchSave(dir, name, &d, nil); err != nil {
 		return DispatchResult{}, err
 	}
-	return dispatchResult(&d, "stop", "dispatch closed; caller reconciliation recorded, recorded identity retained"), nil
+	reason := "dispatch closed; caller reconciliation recorded, recorded identity retained"
+	if !slices.Contains([]string{"completed", "interrupted", "failed"}, newest) {
+		reason += "; runtime not confirmed"
+	}
+	return dispatchResult(&d, "stop", reason), nil
 }
 
 // The host writes thread_spawn into threads.source when it creates a subagent.
