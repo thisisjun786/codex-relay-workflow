@@ -148,6 +148,7 @@ const codexVersionCases = [
   { name: "fallback_js_trim_nbsp", status: 0, stdout: "\u00a0nightly\u00a0", stderr: "" },
   { name: "nonzero_status", status: 1, stdout: "codex-cli 1.2.3\n", stderr: "boom" },
   { name: "empty_stdout", status: 0, stdout: "", stderr: "" },
+  { name: "whitespace_only_stdout", status: 0, stdout: "   ", stderr: "" },
   { name: "null_status", status: null, stdout: "", stderr: "killed by signal" },
   { name: "throws", throws: true },
 ].map((testCase) => {
