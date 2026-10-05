@@ -663,10 +663,20 @@ func worktreeDelQuoteProgram(words []string) []string {
 			}
 		}
 		if strings.Contains(worktreeDelQuoteShells, " "+name+" ") {
-			for _, operand := range words[i+1:] {
+			operands := words[i+1:]
+			redirected := worktreeDelRedirected(operands)
+			end := worktreeDelShellProgramEnd(name, operands, redirected)
+			for j, operand := range operands {
+				if j >= end && !redirected[j] { // a data operand ($0, $1...) of the program: no shell reads it as one
+					continue
+				}
 				candidates := []string{operand}
 				if _, value, attached := strings.Cut(operand, "="); attached && strings.HasPrefix(operand, "--") { // --command='...'
 					candidates = append(candidates, value)
+				} else if len(operand) > 2 && operand[0] == '-' && operand[1] != '-' { // -cPROGRAM, -lcPROGRAM: su takes the rest of the cluster
+					if _, program, found := strings.Cut(operand, "c"); found {
+						candidates = append(candidates, program)
+					}
 				}
 				for _, candidate := range candidates {
 					if strings.ContainsAny(candidate, " \t\r\n;&|()") {
@@ -685,6 +695,146 @@ func worktreeDelQuoteProgram(words []string) []string {
 		}
 	}
 	return nil
+}
+
+// worktreeDelRedirectLen is how many words the redirection that starts at words[i] takes, 0 when none starts there. The
+// quote-aware tokenizer leaves a descriptor (2, & or {v}) as a word of its own in front of the operator; an operator alone
+// has its target in the next word; an operator with a quoted target that holds a blank is one word (>'a b'), and so is a
+// quoted program that starts like one.
+func worktreeDelRedirectLen(words []string, i int) int {
+	word, n := words[i], 1
+	if i+1 < len(words) && (word == "&" || word != "" && strings.Trim(word, "0123456789") == "" || strings.HasPrefix(word, "{") && strings.HasSuffix(word, "}")) {
+		word, n = words[i+1], 2
+	}
+	if descriptor := strings.TrimLeft(word, "0123456789&"); strings.HasPrefix(descriptor, "{") { // {v}>f in one word
+		if end := strings.IndexByte(descriptor, '}'); end > 0 {
+			word = descriptor[end+1:]
+		}
+	} else {
+		word = descriptor
+	}
+	if !strings.HasPrefix(word, "<") && !strings.HasPrefix(word, ">") {
+		return 0
+	}
+	if strings.Trim(word, "<>&|") == "" && i+n < len(words) {
+		n++
+	}
+	return n
+}
+
+// worktreeDelRedirected marks the words that a redirection takes: the outer shell removes them from the arguments of the shell.
+func worktreeDelRedirected(words []string) []bool {
+	marks := make([]bool, len(words))
+	for i := 0; i < len(words); {
+		n := worktreeDelRedirectLen(words, i)
+		for j := i; j < i+n; j++ {
+			marks[j] = true
+		}
+		i += max(n, 1)
+	}
+	return marks
+}
+
+// worktreeDelNextOperand is the index of the first word at or after i that no redirection took, len(marks) when none is left.
+func worktreeDelNextOperand(marks []bool, i int) int {
+	for i < len(marks) && marks[i] {
+		i++
+	}
+	return i
+}
+
+// worktreeDelShellProgramEnd is how many of a shell's operands the walk reads as programs: the words from there on are $0, $1
+// and so on, which the shell does not read (bash -c 'echo OK' 'rm -rf x' runs echo). It is every operand, the reading that
+// CRW-611 left, unless the options name the -c program for sure, and also when that program holds a dollar sign, which can run
+// a data operand (bash -c 'eval "$0"' 'rm -rf x').
+func worktreeDelShellProgramEnd(name string, operands []string, redirected []bool) int {
+	program := -1
+	switch name {
+	case "su":
+		program = worktreeDelSuProgram(operands, redirected)
+	case "sh", "bash", "dash", "ash", "zsh":
+		program = worktreeDelFlagShellProgram(operands, redirected)
+	}
+	if program < 0 || strings.Contains(operands[program], "$") {
+		return len(operands)
+	}
+	return program + 1
+}
+
+// worktreeDelSuProgram is the index of the operand that holds su's -c program, -1 when none is certain. su reads its options
+// with getopt_long (util-linux 2.41.3): they may stand after the user; -c, -s, -g, -G and -w take the rest of their cluster or
+// the next word, whatever it looks like; --command and --session-command take theirs attached with = or in the next word and
+// may be abbreviated; the last -c wins (the walk reads every -c: an earlier one is before the index).
+func worktreeDelSuProgram(operands []string, redirected []bool) int {
+	program := -1
+	for i := worktreeDelNextOperand(redirected, 0); i < len(operands); i = worktreeDelNextOperand(redirected, i+1) {
+		word := operands[i]
+		switch {
+		case word == "--":
+			return program
+		case strings.HasPrefix(word, "--"):
+			if long, _, attached := strings.Cut(word[2:], "="); long != "" && (strings.HasPrefix("command", long) || strings.HasPrefix("session-command", long)) {
+				if !attached {
+					i = worktreeDelNextOperand(redirected, i+1)
+				}
+				if i < len(operands) {
+					program = i
+				}
+			}
+		case len(word) > 1 && word[0] == '-':
+			for k := 1; k < len(word); k++ {
+				if !strings.ContainsRune("cgGsw", rune(word[k])) {
+					continue
+				}
+				if k+1 == len(word) {
+					i = worktreeDelNextOperand(redirected, i+1)
+				}
+				if word[k] == 'c' && i < len(operands) {
+					program = i
+				}
+				break
+			}
+		}
+	}
+	return program
+}
+
+// worktreeDelFlagShellProgram is the index of the operand that holds the -c program of sh, bash, dash, ash or zsh, -1 when none
+// is certain. Their options end at the first operand or after --; every letter of a cluster is a flag, an o or O (-o posix,
+// -O nullglob) takes the next word, and so do --rcfile and --init-file. The program is the first operand when -c came before
+// it (bash -c -e 'cmd' runs cmd). A lone - and +c, which shells read in their own ways, are not a certainty.
+func worktreeDelFlagShellProgram(operands []string, redirected []bool) int {
+	command := false
+	for i := worktreeDelNextOperand(redirected, 0); i < len(operands); i = worktreeDelNextOperand(redirected, i+1) {
+		word := operands[i]
+		switch {
+		case word == "-":
+			return -1
+		case word == "--":
+			if i = worktreeDelNextOperand(redirected, i+1); command && i < len(operands) {
+				return i
+			}
+			return -1
+		case strings.HasPrefix(word, "--"):
+			if word == "--rcfile" || word == "--init-file" {
+				i = worktreeDelNextOperand(redirected, i+1)
+			}
+		case len(word) > 1 && (word[0] == '-' || word[0] == '+'):
+			for _, letter := range word[1:] {
+				switch {
+				case letter == 'c' && word[0] == '-':
+					command = true
+				case letter == 'o' || letter == 'O':
+					i = worktreeDelNextOperand(redirected, i+1)
+				}
+			}
+		case command:
+			return i
+		default:
+			return -1
+		}
+	}
+	return -1
 }
 
 // worktreeDelQuoteEvalArgs is the operands eval joins into its program: what is left after the redirections and the leading
@@ -729,7 +879,8 @@ func walk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict 
 	return worktreeDelQuoteJudge(command, cwd, id, 0)
 }
 
-// worktreeDelQuoteDepth is how many program strings deep the walk follows a shell's program (sh -c 'sh -c ...').
+// worktreeDelQuoteDepth is how many program strings deep the walk follows a shell's program (sh -c 'sh -c ...'). A program
+// that is still unread there is denied: the walk cannot tell what it runs.
 const worktreeDelQuoteDepth = 8
 
 // worktreeDelQuoteJudge is the extended walk of one text, depth program strings down: every reading over the old grammar and
@@ -777,8 +928,12 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 			segCwd = resolveFrom(segCwd, tokens[1])
 			continue
 		}
-		if quoting && depth < worktreeDelQuoteDepth {
-			for _, program := range worktreeDelQuoteProgram(tokens) {
+		if quoting {
+			programs := worktreeDelQuoteProgram(tokens)
+			if depth >= worktreeDelQuoteDepth && len(programs) > 0 {
+				return GuardVerdict{Deny: true, Reason: denyReason("a shell program nested past the reading depth", id)}
+			}
+			for _, program := range programs {
 				if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
 					return verdict
 				}
