@@ -262,10 +262,11 @@ func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, err
 	}
 	// A log that is also another name of a dispatch record would put the line into that record, and a link count that cannot
 	// be read is not known to be one.
-	if err == nil {
-		if st, ok := opened.Sys().(*syscall.Stat_t); !ok || uint64(st.Nlink) != 1 {
-			return nil, fmt.Errorf("%s must have exactly one link, or a line written to it would also appear in another file; nothing was removed", dir.display(dispatchLockClearLog))
-		}
+	if err != nil {
+		return nil, fmt.Errorf("%s cannot be checked: %w; nothing was removed", dir.display(dispatchLockClearLog), err)
+	}
+	if st, ok := opened.Sys().(*syscall.Stat_t); !ok || uint64(st.Nlink) != 1 {
+		return nil, fmt.Errorf("%s must have exactly one link, or a line written to it would also appear in another file; nothing was removed", dir.display(dispatchLockClearLog))
 	}
 	line, err := json.Marshal(dispatchLockCleared{time.Now().UnixMilli(), lock, owner, reason, os.Getpid()})
 	if err != nil {
