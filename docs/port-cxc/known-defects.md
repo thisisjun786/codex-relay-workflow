@@ -1039,3 +1039,12 @@ Source: `plugins/codexclaw/components/pabcd-state/src/state.ts` (`reconstructUnv
 - `BuildGoalplan` with a pointer to an empty `surface` writes `"surface":""` (the oracle's `buildGoalplan` defaults a missing surface only, `goalplan.ts:996-1012`), which revival drops, so the plan the writer made is refused on its next locked write; the writer test plan `criteria-host` is that case and is excluded by name from the round-trip test `TestRevivalLossLetsWhatTheWriterWroteThrough`; no caller of `BuildGoalplan` outside tests exists; port: kept.
 - A direct `WriteGoalplan` outside `WithGoalplanWriteLock` is not guarded by this check; the two callers of the Go port (`review_round_run.go`, open and abort) run inside the lock callback; port: kept.
 - The review-round runner appends `; retry` to every non-ok result of the lock (source `review-round-cli.ts:271`, `:287`), so the refusals of this change, which no retry can clear until the file is repaired, read as transient; port: kept.
+
+## CRW-346 — the doctor text renderer stderr slice
+
+- The 160-unit slice of a features-probe stderr can end inside a surrogate pair: the oracle text
+  report writes U+FFFD there while its `--json` report keeps the lone surrogate escape, and the
+  port holds U+FFFD in both, the same platform difference the lone-surrogate lines of the
+  manifest-targets section record (source `plugins/codexclaw/components/cxc-ops/src/doctor.ts:137`
+  with the JSON writer `plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`; the recorded case
+  `stderr_slice_cuts_a_surrogate_pair` of the CRW-346 recorder, checked on Node 24); port: kept.
