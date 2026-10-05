@@ -16,15 +16,17 @@ import (
 )
 
 var (
-	okResult      = agy.Result{Class: agy.ClassNormal, StructuredOutput: json.RawMessage(`{"findings":[]}`), Model: "Scripted"}
-	quotaResult   = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonQuota}
-	authResult    = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonAuthentication}
-	modelResult   = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonUnknownModel}
-	noStartResult = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonNotStarted}
-	filterResult  = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonContentFilter}
-	deniedResult  = agy.Result{Class: agy.ClassInvalid, Reason: agy.ReasonDeniedActions}
-	limitResult   = agy.Result{Class: agy.ClassInvalid, Reason: agy.ReasonTimeLimit}
-	crashResult   = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonCrash}
+	okResult        = agy.Result{Class: agy.ClassNormal, StructuredOutput: json.RawMessage(`{"findings":[]}`), Model: "Scripted"}
+	quotaResult     = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonQuota}
+	authResult      = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonAuthentication}
+	modelResult     = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonUnknownModel}
+	noStartResult   = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonNotStarted}
+	filterResult    = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonContentFilter}
+	deniedResult    = agy.Result{Class: agy.ClassInvalid, Reason: agy.ReasonDeniedActions}
+	limitResult     = agy.Result{Class: agy.ClassInvalid, Reason: agy.ReasonTimeLimit}
+	crashResult     = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonCrash}
+	runnerErrResult = agy.Result{Class: agy.ClassUnavailable, Reason: agy.Reason(reasonRunnerError)}
+	lockWaitResult  = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonLockWaitExpired}
 )
 
 // on sets the fake clock to noon UTC of the day and the answer of every agy call.
@@ -39,8 +41,9 @@ func (f *fixture) on(day string, result agy.Result) {
 	f.s.result = result
 }
 
-// A run that could not review at all because of the account or the configuration does not spend the patch: the same patch may be tried once more on a later UTC day, never on the same one,
-// and a second attempt of that kind closes it. Results that repeat for the same input close the patch at once. Every attempt that starts counts toward the daily cap.
+// A run that could not review at all because of the account or the configuration (or because the runner failed: a crash or a runner error) does not spend the patch: the same patch may be
+// tried once more on a later UTC day, never on the same one, and a second attempt of that kind closes it. A lock wait (agy was never started) counts toward neither the patch nor the daily
+// cap and may be repeated the same day. Results that repeat for the same input close the patch at once. Every attempt that starts counts toward the daily cap, except a lock wait.
 func TestRetryRule(t *testing.T) {
 	const d1, d2, d3 = "2026-10-04", "2026-10-05", "2026-10-06"
 	type step struct {
@@ -78,10 +81,17 @@ func TestRetryRule(t *testing.T) {
 			{d2, OutcomeReviewed, okResult, 2, "finished", "complete", ""},
 			{d3, OutcomeAlreadyReviewed, quotaResult, 0, "finished", "complete", ""},
 		}},
+		{"crash", account(crashResult)},
+		{"runner error", account(runnerErrResult)},
+		{"lock wait expired", []step{
+			{d1, OutcomeLockWaitExpired, lockWaitResult, 2, "lock_wait", "", ""},
+			{d1, OutcomeLockWaitExpired, lockWaitResult, 2, "lock_wait", "", ""}, // the same day again: it counts toward nothing
+			{d1, OutcomeReviewed, okResult, 2, "finished", "complete", ""},       // and the patch is still there to review
+			{d2, OutcomeAlreadyReviewed, okResult, 0, "finished", "complete", ""},
+		}},
 		{"content filter", closes(filterResult)},
 		{"denied actions", closes(deniedResult)},
 		{"time limit", closes(limitResult)},
-		{"crash", closes(crashResult)},
 		{"the clock goes back", []step{
 			{d2, OutcomeReviewed, quotaResult, 2, "unavailable", "unavailable", d3},
 			{d1, OutcomeRetryDeferred, okResult, 0, "refused", "unavailable", d3},
@@ -98,7 +108,7 @@ func TestRetryRule(t *testing.T) {
 				before := f.s.count()
 				code, sum, errOut := f.run(head)
 				wantCode := 0
-				if s.outcome == OutcomeRetryDeferred {
+				if s.outcome == OutcomeRetryDeferred || s.outcome == OutcomeLockWaitExpired {
 					wantCode = 3
 				}
 				recs := f.ledger()
@@ -106,7 +116,7 @@ func TestRetryRule(t *testing.T) {
 					t.Fatalf("step %d (%s): exit %d outcome %q calls %d event %q status %q notBefore %q; want %d %q %d %q %q %q: %s",
 						i, s.day, code, sum.Outcome, f.s.count()-before, recs[len(recs)-1].Event, sum.Status, sum.RetryNotBefore, wantCode, s.outcome, s.calls, s.event, s.status, s.notBefore, errOut)
 				}
-				if s.calls > 0 {
+				if s.calls > 0 && s.outcome != OutcomeLockWaitExpired { // a lock wait is not an attempt
 					started[s.day]++
 				}
 				if i == 0 {
@@ -274,11 +284,12 @@ func TestAccountUnavailable(t *testing.T) {
 		{"unknown model", u, []string{"review/unavailable/unknown_model"}, "unknown_model"},
 		{"not started", u, []string{"review/unavailable/not_started"}, "not_started"},
 		{"an auxiliary call does not count", u, []string{"review/unavailable/quota", "group/unavailable/crash"}, "quota"},
-		{"quota and a crash", u, []string{"review/unavailable/quota", "review/unavailable/crash"}, ""},
+		{"quota and a crash", u, []string{"review/unavailable/quota", "review/unavailable/crash"}, "crash,quota"},
+		{"crash", u, []string{"review/unavailable/crash"}, "crash"},
+		{"runner error", u, []string{"review/unavailable/runner_error"}, "runner_error"},
 		{"quota and a time limit", u, []string{"review/unavailable/quota", "review/invalid/time_limit_exceeded"}, ""},
 		{"content filter", u, []string{"review/unavailable/content_filter"}, ""},
 		{"lock wait expired", u, []string{"review/unavailable/lock_wait_expired"}, ""},
-		{"runner error", u, []string{"review/unavailable/runner_error"}, ""},
 		{"no review call", u, nil, ""},
 		{"partial", review.StatusPartial, []string{"review/unavailable/quota"}, ""},
 	} {
@@ -287,8 +298,92 @@ func TestAccountUnavailable(t *testing.T) {
 			p := strings.Split(s, "/")
 			a.Calls = append(a.Calls, review.CallRecord{Stage: p[0], Class: p[1], Reason: p[2]})
 		}
-		if got, ok := accountUnavailable(a); ok != (c.want != "") || got != c.want {
+		if got, ok := retryableUnavailable(a); ok != (c.want != "") || got != c.want {
 			t.Errorf("%s: %q %v, want %q", c.name, got, ok, c.want)
 		}
+	}
+}
+
+// A lock wait is the one unavailable run where agy never ran: lockWaitExpired names it and agyCalledOf says which runs called agy and which did not, when that can be told.
+func TestLockWaitExpiredAndAgyCalled(t *testing.T) {
+	const u = review.StatusUnavailable
+	art := func(status review.Status, calls ...string) *review.Artifact {
+		a := &review.Artifact{Status: status}
+		for _, s := range calls {
+			p := strings.Split(s, "/")
+			a.Calls = append(a.Calls, review.CallRecord{Stage: p[0], Class: p[1], Reason: p[2]})
+		}
+		return a
+	}
+	format := func(b *bool) string {
+		switch {
+		case b == nil:
+			return "unknown"
+		case *b:
+			return "true"
+		}
+		return "false"
+	}
+	for _, c := range []struct {
+		name   string
+		a      *review.Artifact
+		lock   bool
+		called string
+	}{
+		{"every review call waited for the lock", art(u, "review/unavailable/lock_wait_expired", "review/unavailable/lock_wait_expired"), true, "false"},
+		{"an auxiliary call does not count", art(u, "review/unavailable/lock_wait_expired", "group/unavailable/crash"), true, "false"},
+		{"a lock wait beside a quota call", art(u, "review/unavailable/lock_wait_expired", "review/unavailable/quota"), false, "true"},
+		{"a quota run", art(u, "review/unavailable/quota"), false, "true"},
+		{"agy was not started", art(u, "review/unavailable/not_started"), false, "false"},
+		{"a crash", art(u, "review/unavailable/crash"), false, "unknown"},
+		{"a runner error", art(u, "review/unavailable/runner_error"), false, "unknown"},
+		{"a completed review", art(review.StatusComplete, "review/normal/"), false, "unknown"},
+		{"a partial review", art(review.StatusPartial, "review/unavailable/quota"), false, "unknown"},
+	} {
+		if got := lockWaitExpired(c.a); got != c.lock {
+			t.Errorf("%s: lockWaitExpired = %v, want %v", c.name, got, c.lock)
+		}
+		if got := format(agyCalledOf(c.a)); got != c.called {
+			t.Errorf("%s: agyCalledOf = %s, want %s", c.name, got, c.called)
+		}
+	}
+}
+
+// A lock wait does not count toward the daily cap, so a patch may be tried again the same day until one attempt really starts.
+func TestLockWaitExpiredDoesNotCountTowardTheCap(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", lockWaitResult)
+	for i := 0; i < 2; i++ {
+		if code, sum, errOut := f.run(head, "--daily-cap", "1"); code != 3 || sum.Outcome != OutcomeLockWaitExpired {
+			t.Fatalf("lock wait %d: %d %+v %s", i, code, sum, errOut)
+		}
+	}
+	if n := runsOn(f.ledger(), "2026-10-04"); n != 0 {
+		t.Fatalf("a lock wait counted %d toward the cap", n)
+	}
+	f.on("2026-10-04", okResult)
+	if code, sum, errOut := f.run(head, "--daily-cap", "1"); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" {
+		t.Fatalf("the cap of 1 still allows the review after two lock waits: %d %+v %s", code, sum, errOut)
+	}
+}
+
+// A lock wait does not spend the one more attempt an unavailable run left open: on the retry day the lock may fail twice and the retry is still there the day after.
+func TestLockWaitExpiredDoesNotSpendTheRetry(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	if _, sum, _ := f.run(head); sum.Outcome != OutcomeReviewed || sum.RetryNotBefore != "2026-10-05" {
+		t.Fatalf("first attempt: %+v", sum)
+	}
+	f.on("2026-10-05", lockWaitResult)
+	for i := 0; i < 2; i++ {
+		if code, sum, _ := f.run(head); code != 3 || sum.Outcome != OutcomeLockWaitExpired {
+			t.Fatalf("the lock wait %d on the retry day: %d %+v", i, code, sum)
+		}
+	}
+	f.on("2026-10-06", okResult)
+	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" {
+		t.Fatalf("the one more attempt survived the lock waits: %d %+v %s", code, sum, errOut)
 	}
 }
