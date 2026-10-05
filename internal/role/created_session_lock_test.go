@@ -244,6 +244,12 @@ func TestCreatedSessionLockBusyAndReleased(t *testing.T) {
 	if _, err := os.Lstat(lock); err != nil {
 		t.Fatalf("the planted session lock was taken away: %v", err)
 	}
+	// With both locks held the session lock is the one that answers: it is taken first.
+	check(t, os.Mkdir(createdArchivedRecord(ws, "task-one")+".lock", 0o700))
+	if err := report("task-one", one, "child-a", h); err == nil || !strings.Contains(err.Error(), ".session.lock: file exists") {
+		t.Errorf("created report with both locks held: %v", err)
+	}
+	check(t, os.Remove(createdArchivedRecord(ws, "task-one")+".lock"))
 	check(t, os.Remove(lock))
 	// A dispatch lock that is held is the busy answer as before, and the session lock taken first is given back.
 	check(t, os.Mkdir(createdArchivedRecord(ws, "task-one")+".lock", 0o700))
@@ -280,19 +286,30 @@ func TestCreatedSessionLockBusyAndReleased(t *testing.T) {
 	gone("a refused stopped close")
 }
 
-// A dispatch the provider failure stopped keeps its attempt running and unreconciled: only the stopped close releases an id.
-func TestCreatedSessionLockProviderStopKeepsItsAgent(t *testing.T) {
-	ws := t.TempDir()
-	env, _ := home(t)
-	h := &createdLockHost{status: "idle"}
-	one, two := createdArchivedSession(t, ws, env, "task-one"), createdArchivedSession(t, ws, env, "task-two")
-	_, err := CheckedDispatch(context.Background(), ws, createdArchivedReport("task-one", one, "child-a"), env, h)
-	check(t, err)
-	stopped := dispatchTestCall(t, ws, env, map[string]any{"action": "report", "dispatchId": "task-one", "attemptId": one, "outcome": "failed", "error": "invalid_api_key", "executionState": "stopped", "agentId": "child-a", "reconciliation": "child stopped"})
-	if stopped.Action != "stop" {
-		t.Fatalf("provider failure = %q", stopped.Action)
-	}
-	if _, err = CheckedDispatch(context.Background(), ws, createdArchivedReport("task-two", two, "child-a"), env, h); err == nil || !strings.Contains(err.Error(), "already reported for dispatch task-one attempt "+one) {
-		t.Fatalf("report of the child of a provider-stopped dispatch: %v", err)
+// Only the stopped close releases an id: a dispatch the provider failure stopped keeps its attempt running, and one handed
+// to the main agent keeps a failed attempt with a reconciliation, and both go on holding their child.
+func TestCreatedSessionLockOtherEndsKeepTheirAgent(t *testing.T) {
+	for _, tc := range []struct{ name, store, code, want string }{
+		{"provider failure", "", "invalid_api_key", "stopped"},
+		{"handoff to the main agent", `{"roles":{"executor":{"mode":"model","model":"a/one"}}}`, "insufficient_quota", "main-direct"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			env, dir := home(t)
+			if tc.store != "" {
+				writeStore(t, dir, tc.store)
+			}
+			h := &createdLockHost{status: "idle"}
+			one, two := createdArchivedSession(t, ws, env, "task-one"), createdArchivedSession(t, ws, env, "task-two")
+			_, err := CheckedDispatch(context.Background(), ws, createdArchivedReport("task-one", one, "child-a"), env, h)
+			check(t, err)
+			dispatchTestCall(t, ws, env, map[string]any{"action": "report", "dispatchId": "task-one", "attemptId": one, "outcome": "failed", "error": tc.code, "executionState": "stopped", "agentId": "child-a", "reconciliation": "child stopped"})
+			if status := must(dispatchRead(createdArchivedRecord(ws, "task-one"), "session-test", "task-one")).Status; status != tc.want {
+				t.Fatalf("task-one is %v", status)
+			}
+			if _, err = CheckedDispatch(context.Background(), ws, createdArchivedReport("task-two", two, "child-a"), env, h); err == nil || !strings.Contains(err.Error(), "already reported for dispatch task-one attempt "+one) {
+				t.Fatalf("report of the child of a dispatch that was not closed: %v", err)
+			}
+		})
 	}
 }
