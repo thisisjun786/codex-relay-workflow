@@ -896,23 +896,25 @@ func shellVerbLiteral(arg []rune) (string, bool) {
 	return "", false
 }
 
-// shellWriteEscapePath is the path a Path(...) call names: posixpath.join of its arguments, when every non-blank one (a trailing
-// comma leaves a blank) is a string literal. An absolute part discards the parts before it and nothing else is normalized, so
-// Path("/m", "") is "/m/". One argument that is no literal, or an empty result, names nothing. The path grows in one buffer, so
-// the work is linear in the arguments.
+// shellWriteEscapePath is the path a Path(...) call names: posixpath.join of its string literal arguments (a trailing comma leaves
+// a blank). An absolute part discards the parts before it and nothing else is normalized, so Path("/m", "") is "/m/". An argument
+// that is no literal leaves the rest of the path unknown, so the call names the literal prefix, the directory the write lands under
+// (Path("/m", name) is "/m"), until an absolute literal part starts the path over; no known prefix names nothing. The path grows in
+// one buffer, so the work is linear in the arguments.
 func shellWriteEscapePath(rs []rune, spans [][2]int) (string, bool) {
 	var path []byte
+	known := true // false once a part that is no literal stands in the path
 	for _, span := range spans {
 		if shellVerbBlank(rs[span[0]:span[1]]) {
 			continue
 		}
 		part, ok := shellVerbLiteral(rs[span[0]:span[1]])
-		if !ok {
-			return "", false
-		}
 		switch {
+		case !ok:
+			known = false
 		case strings.HasPrefix(part, "/"):
-			path = append(path[:0], part...)
+			path, known = append(path[:0], part...), true
+		case !known:
 		case len(path) == 0 || path[len(path)-1] == '/':
 			path = append(path, part...)
 		default:
