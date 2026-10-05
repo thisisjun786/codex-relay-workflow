@@ -490,6 +490,13 @@
       "version": null
     },
     {
+      "name": "whitespace_only_stdout",
+      "status": 0,
+      "stdout": "   ",
+      "stderr": "",
+      "version": ""
+    },
+    {
       "name": "null_status",
       "status": null,
       "stdout": "",

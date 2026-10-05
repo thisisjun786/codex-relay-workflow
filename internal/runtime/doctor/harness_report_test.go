@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 )
@@ -129,7 +130,15 @@ func harnessReportRenamed(text string) string {
 	).Replace(text)
 }
 
-// harnessReportChecks converts recorded checks into the port type.
+// harnessReportPresent is a present optional string; the render cases record only the fields the
+// oracle report held, so an empty recorded value is an absent one.
+func harnessReportPresent(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 // harnessReportChecks converts recorded checks into the port type, renaming the text the names
 // decision covers; the recorded case is the oracle spelling, the port emits the renamed one.
 func harnessReportChecks(recorded []harnessReportCheckRecorded) []HarnessCheck {
@@ -175,9 +184,9 @@ func TestHarnessReportRenderRecorded(t *testing.T) {
 				SchemaVersion: recorded.Report.SchemaVersion,
 				Overall:       HarnessSeverity(recorded.Report.Overall),
 				Checks:        harnessReportChecks(recorded.Report.Checks),
-				PluginVersion: recorded.Report.PluginVersion,
-				CodexVersion:  recorded.Report.CodexVersion,
-				ActiveSurface: recorded.Report.ActiveSurface,
+				PluginVersion: harnessReportPresent(recorded.Report.PluginVersion),
+				CodexVersion:  harnessReportPresent(recorded.Report.CodexVersion),
+				ActiveSurface: harnessReportPresent(recorded.Report.ActiveSurface),
 			}
 			want := harnessReportRenamed(recorded.Text)
 			if got := RenderHarnessReport(report); got != want {
@@ -219,16 +228,16 @@ func TestHarnessReportCodexVersionRecorded(t *testing.T) {
 	for _, recorded := range harnessReportOracleRecorded(t).CodexVersion {
 		t.Run(recorded.Name, func(t *testing.T) {
 			var calls []string
-			run := func(file string, args []string) HarnessRun {
-				calls = append(calls, file+" "+strings.Join(args, " "))
+			run := func(file string, args []string, timeout time.Duration) HarnessRun {
+				calls = append(calls, fmt.Sprintf("%s %s %s", file, strings.Join(args, " "), timeout))
 				if recorded.Throws {
 					return HarnessRun{Stderr: "codex could not be spawned"}
 				}
 				return HarnessRun{Status: recorded.Status, Stdout: recorded.Stdout, Stderr: recorded.Stderr}
 			}
 			got := harnessReportDetectCodexVersion(run)
-			if len(calls) != 1 || calls[0] != "codex --version" {
-				t.Fatalf("runner calls = %v, want one codex --version", calls)
+			if len(calls) != 1 || calls[0] != "codex --version 5s" {
+				t.Fatalf("runner calls = %v, want one codex --version call with the oracle 5s timeout", calls)
 			}
 			switch {
 			case recorded.Version == nil && got != nil:
@@ -251,6 +260,27 @@ func TestHarnessReportWslRecorded(t *testing.T) {
 }
 
 // ---- the B tests of cxc-ops.test.ts and doctor-features.test.ts that call only these ----
+
+// The --json contract keeps a present-but-empty optional string and omits an undefined one
+// (doctor.ts:34-45 read by cli.ts:84-86); the recorded whitespace-only `codex --version` case
+// answers the empty string.
+func TestHarnessReportOptionalFieldsJSONPort(t *testing.T) {
+	empty := ""
+	raw, err := json.Marshal(HarnessReport{SchemaVersion: 1, Overall: HarnessPass, Checks: []HarnessCheck{}, CodexVersion: &empty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "\"codexVersion\":\"\"") {
+		t.Fatalf("marshalled report omits a present-but-empty codexVersion: %s", raw)
+	}
+	raw, err = json.Marshal(HarnessReport{SchemaVersion: 1, Overall: HarnessPass, Checks: []HarnessCheck{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "codexVersion") {
+		t.Fatalf("marshalled report keeps an undefined codexVersion: %s", raw)
+	}
+}
 
 func TestHarnessReportRollupPort(t *testing.T) {
 	pass := HarnessCheck{Name: "a", Severity: HarnessPass}
@@ -283,7 +313,7 @@ func TestHarnessReportCodexVersionPort(t *testing.T) {
 		{"trimmed stdout without a semver", "  nightly  \n", "nightly"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := harnessReportDetectCodexVersion(func(file string, args []string) HarnessRun {
+			got := harnessReportDetectCodexVersion(func(file string, args []string, timeout time.Duration) HarnessRun {
 				return HarnessRun{Status: harnessReportStatus(0), Stdout: test.stdout}
 			})
 			if got == nil || *got != test.want {

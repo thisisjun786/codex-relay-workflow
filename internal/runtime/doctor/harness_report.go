@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
@@ -54,14 +55,16 @@ type HarnessCheck struct {
 }
 
 // HarnessReport is DoctorReport (doctor.ts:34-45): the checks, their rollup, and the versions
-// the header shows. An empty optional field is omitted, as the oracle omits an undefined one.
+// the header shows. The three optional strings keep the oracle three states: nil is an undefined
+// field, which --json omits and the header drops, while a pointer to an empty string is a
+// present empty value, which --json keeps and the header still drops.
 type HarnessReport struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Overall       HarnessSeverity `json:"overall"`
 	Checks        []HarnessCheck  `json:"checks"`
-	PluginVersion string          `json:"pluginVersion,omitempty"`
-	CodexVersion  string          `json:"codexVersion,omitempty"`
-	ActiveSurface string          `json:"activeSurface,omitempty"`
+	PluginVersion *string         `json:"pluginVersion,omitempty"`
+	CodexVersion  *string         `json:"codexVersion,omitempty"`
+	ActiveSurface *string         `json:"activeSurface,omitempty"`
 }
 
 // HarnessOptions is DoctorOptions (doctor.ts:47-62), minus wslDeps (WSL is out of scope).
@@ -87,9 +90,12 @@ type HarnessRun struct {
 }
 
 // HarnessRunner is the injected subprocess seam (the runner / agRunner argument of the oracle):
-// the file and its arguments, and the completed run. A runner that cannot start the process
-// answers HarnessRun{Status: nil, Stderr: <message>}, the object the oracle catch clause builds.
-type HarnessRunner func(file string, args []string) HarnessRun
+// the file, its arguments, the per-call timeout the oracle passes, and the completed run. The
+// Codex version probe passes 5 s (doctor.ts:91) and the features probe runDoctor makes passes
+// 8 s (doctor.ts:349). A runner that cannot start the process, or kills one that did not finish
+// in time, answers HarnessRun{Status: nil, Stderr: <message>}, the object the oracle catch
+// clause builds.
+type HarnessRunner func(file string, args []string, timeout time.Duration) HarnessRun
 
 // harnessReportIsDir is isDir (doctor.ts:64-70): a stat that reads false instead of throwing.
 func harnessReportIsDir(path string) bool {
@@ -117,7 +123,7 @@ func HarnessRollup(checks []HarnessCheck) HarnessSeverity {
 // major.minor.patch in `codex --version` stdout, else the trimmed stdout, and nil when the run
 // did not exit 0, printed nothing or never ran.
 func harnessReportDetectCodexVersion(run HarnessRunner) *string {
-	result := run("codex", []string{"--version"})
+	result := run("codex", []string{"--version"}, 5*time.Second)
 	if result.Status == nil || *result.Status != 0 || result.Stdout == "" {
 		return nil
 	}
@@ -277,11 +283,11 @@ func RenderHarnessReport(report HarnessReport) string {
 		}
 		lines = append(lines, line)
 	}
-	if report.PluginVersion != "" {
-		lines = append([]string{"crw v" + report.PluginVersion}, lines...)
+	if report.PluginVersion != nil && *report.PluginVersion != "" {
+		lines = append([]string{"crw v" + *report.PluginVersion}, lines...)
 	}
-	if report.CodexVersion != "" {
-		lines = append([]string{"codex v" + report.CodexVersion}, lines...)
+	if report.CodexVersion != nil && *report.CodexVersion != "" {
+		lines = append([]string{"codex v" + *report.CodexVersion}, lines...)
 	}
 	lines = append(lines, "overall: "+string(report.Overall))
 	return strings.Join(lines, "\n")
