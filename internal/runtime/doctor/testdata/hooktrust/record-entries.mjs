@@ -7,6 +7,7 @@
 // unless the case names another. Structured oracle errors are recorded by text, engine errors
 // (ENOENT, EISDIR, JSON SyntaxError) by class, because their text names a host path or the engine.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const [dist, oraclePlugin, root, out] = process.argv.slice(2);
@@ -226,7 +227,7 @@ const answerOf = (error) => {
 
 const recorded = [];
 for (const c of cases) {
-  const base = mkdtempSync(join(process.env.TMPDIR ?? "/var/tmp", "hte-"));
+  const base = mkdtempSync(join(tmpdir(), "hte-"));
   const previous = process.cwd();
   try {
     for (const [rel, content] of Object.entries(c.files)) {
@@ -272,4 +273,3 @@ writeFileSync(out, JSON.stringify({
 }, null, 1) + "\n");
 const entries = recorded.reduce((n, c) => n + (c.entries?.length ?? 0), 0);
 console.log("recorded " + recorded.length + " cases (" + entries + " entries) to " + out);
-
