@@ -135,6 +135,7 @@ func TestWorktreeDelQuoteTargets(t *testing.T) {
 		{"rm -rf $'../repo<BS>U80000001'", "rm -rf $'../other<BS>U80000001'", "rm -r ../repo"},
 		{"echo <BQ>#it's<BQ><NL>rm -rf ../repo", "echo <BQ>#it's<BQ><NL>rm -rf ../other", "rm -r ../repo"},
 		{"echo <BQ>#x'<BQ>; rm -rf ../repo", "echo <BQ>#x'<BQ>; rm -rf ../other", "rm -r ../repo"},
+		{"echo <BQ>#x'<BS><BS><BQ>; rm -rf ../repo", "echo <BQ>#x'<BS><BS><BQ>; rm -rf ../other", "rm -r ../repo"}, // an even run of backslashes does not escape the backtick
 		{"rm -rf { ..<BS>/repo", "rm -rf { ..<BS>/other", "rm -r ../repo"},
 		{"rm -rf } ..<BS>/repo", "rm -rf } ..<BS>/other", "rm -r ../repo"},
 		{"rm { -rf ..<BS>/repo", "rm { -rf ..<BS>/other", "rm -r ../repo"},
@@ -344,8 +345,13 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 		{"sh -c $'echo a<BS>nrm -rf ../repo'", "sh -c $'echo a<BS>nrm -rf ../other'", "rm -r ../repo"},
 		{"sudo -u root bash -c 'rm -rf ../repo'", "sudo -u root bash -c 'rm -rf ../other'", "rm -r ../repo"},
 		{"timeout 5 sh -c 'rm -rf ../repo'", "timeout 5 sh -c 'rm -rf ../other'", "rm -r ../repo"},
-		{"eval 'cd ..'; rm -rf repo", "eval 'cd ..'; rm -rf other", "rm -r repo"}, // eval runs in this shell: its cd moves the later rm
-		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."},             // a program string with a relative target, found by the same reading
+		{"eval 'cd ..'; rm -rf repo", "eval 'cd ..'; rm -rf other", "rm -r repo"},                          // eval runs in this shell: its cd moves the later rm
+		{"eval '(cd ..)'; r<BS>m -rf ../repo", "eval '(cd ..)'; r<BS>m -rf ../other", "rm -r ../repo"},     // but not a cd in a subshell
+		{"bash -c '<<<ignored; rm -rf ../repo'", "bash -c '<<<ignored; rm -rf ../other'", "rm -r ../repo"}, // a quoted program that starts like a redirection
+		{"timeout 5s bash -c 'rm -rf ../repo'", "timeout 5s bash -c 'rm -rf ../other'", "rm -r ../repo"},
+		{"timeout 0.5 sh -c 'rm -rf ../repo'", "timeout 0.5 sh -c 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash -c -O nullglob 'rm -rf ../repo'", "bash -c -O nullglob 'rm -rf ../other'", "rm -r ../repo"}, // an option with an argument
+		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."},                                      // a program string with a relative target, found by the same reading
 	} {
 		deny := worktreeDelSpell(c.deny)
 		worktreeDelQuoteNeeds(t, r, deny)
@@ -355,7 +361,7 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 	// This shell removes the pair in double quotes, so the guard denied it before and after CRW-585 (through the fallback).
 	r.denied(t, worktreeDelSpell("sh -c \"r<BS><NL>m -rf ../../zk3q\""), unresolvable)
 	// sh -c runs in a shell of its own: its cd does not move this one. Words that only mention a shell are text, not a command.
-	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'")
+	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), worktreeDelSpell("eval '(cd ..)'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'")
 	// Without a program string handed to a shell the pair stays a part of a name, as CRW-585 reads it.
 	r.allowed(t, worktreeDelSpell("echo 'r<BS><NL>m -rf ../../zk3q'"), worktreeDelSpell("rm -rf '.<BS><NL>' sh"), worktreeDelSpell("rm -rf '.<BS><NL>' # sh"), worktreeDelSpell("rm -rf '.<BS><NL>'"))
 	r.intact(t)

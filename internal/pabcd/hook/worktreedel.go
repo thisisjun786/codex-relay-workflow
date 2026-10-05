@@ -367,7 +367,7 @@ func worktreeDelQuoteSegments(command string) []string {
 			r.pair()
 			continue
 		}
-		if r.state == worktreeDelQuoteComment && opened && c == '`' && command[i-1] != '\\' {
+		if r.state == worktreeDelQuoteComment && opened && c == '`' && worktreeDelQuoteBackslashes(command[:i])%2 == 0 {
 			r.state, r.prev, opened = worktreeDelQuotePlain, '`', false // a comment in a backtick body ends at the closing backtick
 			cur = append(cur, c)
 			continue
@@ -414,6 +414,15 @@ func worktreeDelQuoteRemoves(cur []byte) bool {
 		return true
 	}
 	return false
+}
+
+// worktreeDelQuoteBackslashes is the length of the run of backslashes that ends s; an odd run escapes the byte after it.
+func worktreeDelQuoteBackslashes(s string) int {
+	n := 0
+	for n < len(s) && s[len(s)-1-n] == '\\' {
+		n++
+	}
+	return n
 }
 
 // worktreeDelQuoteTokens is the words of a segment: the oracle's tokenizer, or bash's quote removal when quoting.
@@ -659,8 +668,8 @@ func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
 				}
 			}
 		}
-		_, number := strconv.Atoi(word)
-		if !(strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") || strings.HasPrefix(word, "-") || isAssignment(word) || number == nil ||
+		number := word != "" && word[0] >= '0' && word[0] <= '9' // 5, 0.5, 5s
+		if !(strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") || strings.HasPrefix(word, "-") || isAssignment(word) || number ||
 			i > 0 && strings.HasPrefix(words[i-1], "-")) {
 			break
 		}
@@ -669,14 +678,18 @@ func worktreeDelQuoteProgram(words []string) (program string, eval, ok bool) {
 }
 
 // worktreeDelQuoteOperands drops from the front of words what a shell's argument parsing passes over before its operands:
-// options, -- and redirections with their targets.
+// options (with the argument of -o, -O and --rcfile), -- and redirections with their targets. A word that starts like a
+// redirection but holds blanks or a separator was quoted, so it is an operand.
 func worktreeDelQuoteOperands(words []string) []string {
 	for len(words) > 0 {
 		word := words[0]
 		switch {
-		case strings.HasPrefix(word, "-"):
+		case strings.HasPrefix(word, "-") || strings.HasPrefix(word, "+"):
+			if len(words) > 1 && strings.Contains(" -o -O +o +O --rcfile --init-file ", " "+word+" ") { // an option with an argument
+				words = words[1:]
+			}
 			words = words[1:]
-		case strings.HasPrefix(word, "<") || strings.HasPrefix(word, ">"):
+		case (strings.HasPrefix(word, "<") || strings.HasPrefix(word, ">")) && !strings.ContainsAny(word, " \t\r\n;|()"): // a word with blanks was quoted: a program
 			words = words[1:]
 			if strings.Trim(word, "<>&|") == "" && len(words) > 0 { // an operator alone takes the next word as its target
 				words = words[1:]
@@ -690,10 +703,18 @@ func worktreeDelQuoteOperands(words []string) []string {
 	return words
 }
 
-// worktreeDelQuoteEvalCwd is the directory this shell is in after eval has run program: a cd in it moves this shell.
+// worktreeDelQuoteEvalCwd is the directory this shell is in after eval has run program: a cd in it moves this shell, except
+// inside parentheses, which are a subshell.
 func worktreeDelQuoteEvalCwd(program, cwd string) string {
+	var scopes []string
 	for _, segment := range worktreeDelQuoteSegments(worktreeDelJoinContinuations(program)) {
-		if tokens := worktreeDelQuoteTokenize(segment); len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
+		if segment == "(" || segment == ")" {
+			if segment == "(" {
+				scopes = append(scopes, cwd)
+			} else if n := len(scopes); n > 0 {
+				cwd, scopes = scopes[n-1], scopes[:n-1]
+			}
+		} else if tokens := worktreeDelQuoteTokenize(segment); len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
 			cwd = resolveFrom(cwd, tokens[1])
 		}
 	}
