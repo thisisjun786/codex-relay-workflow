@@ -205,6 +205,9 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	if receiptLateCancelHook != nil {
 		receiptLateCancelHook()
 	}
+	if options.Context != nil && options.Context.Err() != nil {
+		return refuse("receipt test: the command did not run to completion (interrupted); no receipt written")
+	}
 	record := receiptRecord{Kind: "test", SourceIdentity: after, Command: strings.Join(args.Command, " "), ExitCode: 0, CreatedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), OwnerSessionID: sid, CheckEpoch: *st.CheckEpoch, GeneratedPaths: args.Generated}
 	if _, err = crwdir.EnsureDir(args.Cwd); err != nil {
 		return ReceiptCLIResult{}, err
