@@ -345,16 +345,18 @@ func TestEnsureProjectRoot(t *testing.T) {
 			t.Error("the unreadable ignore was changed")
 		}
 	})
-	// A racer that makes the ignore between the look and the rename is judged like an existing one: a regular file of its own
-	// stays (state-migration.md "retain it"; crwdir.EnsureDir keeps one a concurrent creator wrote first), a link is refused.
+	// A racer that makes the ignore between the look and the rename is judged by whether an ignore existed before the call:
+	// an absent one is a conflicting initialization race and the refusal stops the caller before it copies state
+	// (state-migration.md Preflight 3-4), while an equal file still succeeds; a link is refused as before.
 	for name, c := range map[string]struct {
 		racer  func(path string)
 		reason Reason
 		want   string
+		bytes  string
 	}{
-		"different regular file": {func(p string) { put(t, p, "mine", 0o600) }, "", "mine"},
-		"equal text":             {func(p string) { put(t, p, crwdir.GitignoreText, 0o600) }, "", crwdir.GitignoreText},
-		"link":                   {func(p string) { must(t, os.Symlink("elsewhere", p)) }, ReasonLink, ""},
+		"different regular file": {func(p string) { put(t, p, "mine", 0o600) }, ReasonDiffers, "", "mine"},
+		"equal text":             {func(p string) { put(t, p, crwdir.GitignoreText, 0o600) }, "", crwdir.GitignoreText, crwdir.GitignoreText},
+		"link":                   {func(p string) { must(t, os.Symlink("elsewhere", p)) }, ReasonLink, "", ""},
 	} {
 		t.Run("racer makes the ignore: "+name, func(t *testing.T) {
 			ws := isolate(t) + "/ws"
@@ -369,6 +371,12 @@ func TestEnsureProjectRoot(t *testing.T) {
 			root, err := p.EnsureProjectRoot(open(t, ws))
 			if c.reason != "" {
 				wantRefusal(t, err, c.reason)
+				if root != nil {
+					t.Errorf("racer-created ignore: root = %v, want nil", root)
+				}
+				if c.bytes != "" && get(t, ws+"/.crw/.gitignore") != c.bytes {
+					t.Errorf("racer-created ignore: .gitignore = %q, want %q", get(t, ws+"/.crw/.gitignore"), c.bytes)
+				}
 				return
 			}
 			must(t, err)
@@ -399,6 +407,28 @@ func TestEnsureProjectRoot(t *testing.T) {
 			t.Errorf("rerun: %v, %v", root, err)
 		}
 	})
+}
+
+// A .gitignore absent when EnsureProjectRoot starts and made by a racer before the publication is a conflicting
+// initialization race: the refusal comes back so the caller stops before it copies state, and the racer's file stays.
+func TestEnsureProjectRootRefusesARacerCreatedIgnore(t *testing.T) {
+	ws := isolate(t) + "/ws"
+	mkdirs(t, ws)
+	p := newPub(t)
+	p.at = func(step string) error {
+		if step == "rename" {
+			put(t, ws+"/.crw/.gitignore", "mine", 0o600)
+		}
+		return nil
+	}
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { r.Close() })
+	root, err := p.EnsureProjectRoot(r.Project)
+	wantRefusal(t, err, ReasonDiffers)
+	if root != nil || get(t, ws+"/.crw/.gitignore") != "mine" || !slices.Equal(ls(t, ws+"/.crw"), []string{".gitignore"}) {
+		t.Errorf("root = %v, .crw = %v, .gitignore = %q; want a refusal, no root and the racer's file", root, ls(t, ws+"/.crw"), get(t, ws+"/.crw/.gitignore"))
+	}
 }
 
 func TestOlderTempsAreReportedNotTouched(t *testing.T) {
