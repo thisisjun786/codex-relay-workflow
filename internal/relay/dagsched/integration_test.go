@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // gitRepo is a real repository: a base commit on dev and helpers to make branches, merge them and read heads.
@@ -55,9 +54,10 @@ func (r *gitRepo) commit(file, content string) string {
 	return r.git("rev-parse", "HEAD")
 }
 
-// integrationKit is a release kit over a real repository. It comes in two worlds that differ in the name the repository is reached by. The forge world (newForgeIntegrationKit) lands node I on the
-// synthetic forge repository forgeKitRepository, and its fake tip reader and ancestry check map that forge to the temporary repository (forgekit_test.go). The local world (newIntegrationKit) lands I
-// on the repository's own path and reads with the production readers: it is what the legacy local rows seeded by acceptNode, the scenario tests that still use them and the CLI world need.
+// integrationKit is a release kit over a real repository. It comes in two worlds that differ in the name the repository is reached by. The default world (newIntegrationKit) lands node I on the
+// synthetic forge repository forgeKitRepository, and its fake tip reader and ancestry check map that forge to the temporary repository (forgekit_test.go). The legacy local world
+// (newLegacyLocalIntegrationKit) lands I on the repository's own path and reads with the production readers, its tip reader behind the guard that refuses a non-local target
+// (legacylocal_guard_test.go): it is what the legacy local rows seeded by acceptNode, the scenario tests that still use them and the CLI world need.
 type integrationKit struct {
 	*releaseKit
 	repo *gitRepo
@@ -65,36 +65,38 @@ type integrationKit struct {
 	readers *forgeKitReaders
 }
 
-// newIntegrationKit is the local world over a release kit of its own.
+// newIntegrationKit is the default world, the forge, over a release kit of its own.
 func newIntegrationKit(t *testing.T) *integrationKit {
 	t.Helper()
 	return newIntegrationKitOn(t, newReleaseKit(t))
 }
 
-// newIntegrationKitOn is the local world over the release kit rk: the production tip reader and ancestry check, and a plan whose edge lands on the repository's path.
-func newIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
-	t.Helper()
-	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
-	k.sched.Tips = mergeturn.TargetReader{}
-	k.sched.Ancestry = GitAncestry{}.Ancestry
-	k.putIntegrationPlan(k.repo.path)
-	return k
-}
-
-// newForgeIntegrationKit is the forge world over a release kit of its own.
-func newForgeIntegrationKit(t *testing.T) *integrationKit {
-	t.Helper()
-	return newForgeIntegrationKitOn(t, newReleaseKit(t))
-}
-
-// newForgeIntegrationKitOn is the forge world over the release kit rk: the plan lands I on forgeKitRepository, a new acceptance of I names it (acceptOnForge), and the fake readers read the temporary
+// newIntegrationKitOn is the forge world over the release kit rk: the plan lands I on forgeKitRepository, a new acceptance of I names it (acceptOnForge), and the fake readers read the temporary
 // repository in its name, so every observation is recorded under the forge. A forge the kit did not map is an error and fails the test.
-func newForgeIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
+func newIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
 	t.Helper()
 	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t), readers: newForgeKitReaders(t)}
 	k.readers.mapTo(forgeKitRepository, k.repo.path)
 	k.sched.Tips, k.sched.Ancestry = k.readers, k.readers.Ancestry
 	k.putIntegrationPlan(forgeKitRepository)
+	return k
+}
+
+// newLegacyLocalIntegrationKit is the legacy local world over a release kit of its own.
+func newLegacyLocalIntegrationKit(t *testing.T) *integrationKit {
+	t.Helper()
+	return newLegacyLocalIntegrationKitOn(t, newReleaseKit(t))
+}
+
+// newLegacyLocalIntegrationKitOn is the legacy local world over the release kit rk: the guarded tip reader (legacylocal_guard_test.go) and the production ancestry check, and a plan whose edge
+// lands on the repository's own path. The guard refuses a repository that is not an absolute path before the production reader can take it to gh, so a target that is not a local path fails the
+// test instead of reading the forge.
+func newLegacyLocalIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
+	t.Helper()
+	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
+	k.sched.Tips = legacyLocalTipReader{}
+	k.sched.Ancestry = GitAncestry{}.Ancestry
+	k.putIntegrationPlan(k.repo.path)
 	return k
 }
 
@@ -119,7 +121,7 @@ func (k *integrationKit) mark(a accepted) {
 // Criterion c5 (P-INT), c8: integration is an ancestry FACT the relay reads from a real repository, bound to the parent's merged mark on the same revision: a merge commit on the branch is
 // ancestry, a squashed copy is not, an unmerged head is not, and neither the observation alone nor the mark alone integrates the node.
 func TestIntegratedOnRealGit(t *testing.T) {
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	feature := repo.commit("feature.txt", "feature")
@@ -176,7 +178,7 @@ func TestIntegratedOnRealGit(t *testing.T) {
 
 // A squash or rebase landing keeps the content and loses the head: the accepted head is not an ancestor, and when a landed merge turn says the head was merged the reading names the contradiction.
 func TestSquashLandingIsNotAncestry(t *testing.T) {
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	feature := repo.commit("feature.txt", "feature")
@@ -198,7 +200,7 @@ func TestSquashLandingIsNotAncestry(t *testing.T) {
 
 // A terminal node has no outgoing edge, so its target arrives with the first observation (--target); a node with several targets integrates only when every one of them contains the head.
 func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	feature := repo.commit("feature.txt", "feature")
@@ -246,7 +248,7 @@ func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
 
 // An observation is a replay only when everything it says is what the latest one said: the same tip with another answer about ancestry is a new reading.
 func TestObservationReplayComparesTheAnswer(t *testing.T) {
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	k.declare("g", "I", "x.go")
 	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: head1, PR: 5})
 	answer := false
@@ -267,7 +269,7 @@ func TestObservationReplayComparesTheAnswer(t *testing.T) {
 
 // Contract 3.2: nothing new is integrated for a paused or cancelled relationship, and a pause that lands while the tip and the ancestry are being read is seen under the lock.
 func TestObserveRefusesPausedAndCancelled(t *testing.T) {
-	k := newForgeIntegrationKit(t)
+	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
 	feature := repo.commit("feature.txt", "feature")
