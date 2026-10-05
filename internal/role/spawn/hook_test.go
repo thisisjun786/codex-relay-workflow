@@ -387,3 +387,32 @@ func TestSpawnHookTmpDir(t *testing.T) {
 		}
 	}
 }
+
+// A subagent whose grant cannot be checked is denied whatever the input form: where the working directory cannot be resolved the
+// oracle's throw printed nothing and so allowed the recursion (known-defects, security). The replay holds one decoded form; this
+// holds the plain-map and ordered forms, v1 and v2, and every cwd that needs the process working directory.
+func TestSpawnHookUnreadableCwdDeniesEveryForm(t *testing.T) {
+	rig := spawnHookNewRig(t, nil, spawnHookCase{})
+	dead := filepath.Join(rig.dir, "dead")
+	spawnHookMust(t, os.Mkdir(dead, 0o755))
+	t.Chdir(dead)
+	spawnHookMust(t, os.Remove(dead))
+	marker := "[CRW-SUBSPAWN-GRANT:" + strings.Repeat("c", 64) + "]"
+	items := []any{pyjson.Object{{Key: "type", Value: "text"}, {Key: "text", Value: marker}}}
+	for _, cwd := range []any{nil, "", "rel"} {
+		for name, tool := range map[string]any{
+			"v1 map":    map[string]any{"message": marker + " go"},
+			"v2 map":    map[string]any{"task_name": "t", "message": marker + " go"},
+			"v1 object": pyjson.Object{{Key: "message", Value: marker + " go"}},
+			"v1 items":  pyjson.Object{{Key: "items", Value: items}},
+		} {
+			obj := map[string]any{"hook_event_name": "PreToolUse", "tool_name": "spawn_agent", "session_id": "s", "agent_id": "child", "tool_input": tool}
+			if cwd != nil {
+				obj["cwd"] = cwd
+			}
+			if _, deny, stop := spawnHookAssemble(obj, rig.env); !stop || deny != DenyEnvelope(RecurseDenyReason) {
+				t.Errorf("%s with cwd %v: stop=%v deny=%q", name, cwd, stop, deny)
+			}
+		}
+	}
+}
