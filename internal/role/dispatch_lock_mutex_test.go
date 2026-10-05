@@ -131,6 +131,10 @@ func TestDispatchLockMutexClearExcludesAcquireAndRelease(t *testing.T) {
 	const name = "task-one.json"
 	release, lock := dispatchLockMutexHold(t, dispatchLockMutexOpen(t, ws, nil), name)
 	identity, owner := must(os.Lstat(lock)), must(os.ReadFile(filepath.Join(lock, dispatchLockOwnerFile)))
+	// The release after the clear is a call of a holder whose lock is already gone. An inode that the clear frees goes to the
+	// next directory made on some filesystems, so the lock is kept open: its inode stays taken, and no later lock can look like it.
+	pin := must(os.Open(lock))
+	t.Cleanup(func() { pin.Close() })
 	seam := dispatchLockMutexStops(t, "judged", "claimed")
 	clearer := dispatchLockMutexOpen(t, ws, seam.after)
 	cleared := dispatchLockMutexRun(func() error { _, err := dispatchLockClear(clearer, name+".lock", "test"); return err })
@@ -223,6 +227,22 @@ func TestDispatchLockMutexBusyAnswersAfterTheBound(t *testing.T) {
 	if _, err := other.lock("task-two.json"); err != nil {
 		t.Errorf("acquisition after the clear: %v", err)
 	}
+}
+
+// Takers and releasers share the directory with each other: only a clear is excluded, so two of them never wait for one another.
+func TestDispatchLockMutexSharedHoldersDoNotExcludeEachOther(t *testing.T) {
+	dispatchLockMutexHomes(t)
+	ws := t.TempDir()
+	first, second := dispatchLockMutexOpen(t, ws, nil), dispatchLockMutexOpen(t, ws, nil)
+	second.dispatchLockMutexBound = 100 * time.Millisecond
+	dropFirst, err := first.dispatchLockMutexShared()
+	check(t, err)
+	defer dropFirst()
+	dropSecond, err := second.dispatchLockMutexShared()
+	if err != nil {
+		t.Fatalf("a second shared holder of the directory waited for the first: %v", err)
+	}
+	dropSecond()
 }
 
 // A release removes the directory its holder created and nothing else: a lock that another process put at the name, a link,

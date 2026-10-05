@@ -220,8 +220,20 @@ func (d *dispatchPinnedDir) lock(name string) (func() error, error) {
 }
 
 // lockWith is lock with the writer of the owner record as a parameter. A failed writer takes the lock away again (lockAbandon).
+// From the Mkdir to the end of that writer, and again in the release, the pinned directory is held shared
+// (dispatchLockMutexShared), so a dispatch-lock-clear, which holds it exclusively while it judges and moves a lock, never meets a
+// lock being taken or given back; when the shared wait runs out the answer is that of a held lock. The release removes the
+// directory this call created and only that one (dispatchLockMutexRelease).
 func (d *dispatchPinnedDir) lockWith(name string, write func(lock string, created fs.FileInfo) error) (func() error, error) {
 	lock := name + ".lock"
+	drop, err := d.dispatchLockMutexShared()
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		err = fmt.Errorf("%w (a dispatch-lock-clear of this session is running)", &fs.PathError{Op: "mkdir", Path: d.display(lock), Err: syscall.EEXIST})
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer drop()
 	if err := d.root.Mkdir(lock, 0o700); err != nil {
 		return nil, d.fail("mkdir", lock, err)
 	}
@@ -232,7 +244,7 @@ func (d *dispatchPinnedDir) lockWith(name string, write func(lock string, create
 	if err != nil {
 		return nil, d.lockAbandon(lock, created, err)
 	}
-	return func() error { return d.root.RemoveAll(lock) }, nil
+	return func() error { return d.dispatchLockMutexRelease(lock, created) }, nil
 }
 
 // readFile reads the record name. A link is refused, and the file that is opened must be the regular file that was looked

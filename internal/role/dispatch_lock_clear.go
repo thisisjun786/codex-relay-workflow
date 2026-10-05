@@ -24,6 +24,7 @@ const (
 	dispatchLockOwnerFile   = "owner.json"
 	dispatchLockClearLog    = "lock-clears.jsonl"
 	dispatchLockClearWait   = 5 * time.Second
+	dispatchLockMutexWait   = 2 * time.Second // how long taking or releasing a lock waits for a clear of the session
 	dispatchLockClearHelp   = "usage: crw role helper dispatch-lock-clear --session <id> (--dispatch <id> | --session-lock) --reason <text> [--cwd <dir>]"
 	dispatchLockUnconfirmed = "cannot confirm its owner is gone: "
 )
@@ -144,12 +145,53 @@ func dispatchLockJudge(dir *dispatchPinnedDir, lock string) (owner dispatchLockO
 	return owner, data, nil
 }
 
-// dispatchLockClearExclusive takes an exclusive advisory lock on f, polling for dispatchLockClearWait. It belongs to the open
-// file description, so it serialises clears (those of one process too) and the kernel takes it back at close or death.
-func dispatchLockClearExclusive(f *os.File) error {
-	deadline := time.Now().Add(dispatchLockClearWait)
+// dispatchLockMutexShared holds the pinned directory shared for as long as the caller needs it and returns what gives it back;
+// a wait that is not granted within the directory's bound answers EWOULDBLOCK. It is a descriptor of its own on the directory,
+// so it is excluded by a clear in any process, this one included, and by nothing but a clear. The directory object of a running
+// clear (dispatchLockMutexHeld) already holds the directory exclusively and takes nothing.
+func (d *dispatchPinnedDir) dispatchLockMutexShared() (drop func(), err error) {
+	if d.dispatchLockMutexHeld != nil {
+		return func() {}, nil
+	}
+	f, err := d.root.Open(".")
+	if err != nil {
+		return nil, d.fail("open", ".", err)
+	}
+	wait := d.dispatchLockMutexBound
+	if wait == 0 {
+		wait = dispatchLockMutexWait
+	}
+	if err = dispatchLockMutexFlock(f, syscall.LOCK_SH, wait); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() { _ = f.Close() }, nil
+}
+
+// dispatchLockMutexRelease gives back the lock directory that lockWith created, whose Lstat it was handed: under the shared
+// lock, and only when the name still leads to that directory. A lock that is gone, or that another process put at the name, is
+// not this holder's to remove and is left as it is.
+func (d *dispatchPinnedDir) dispatchLockMutexRelease(lock string, created fs.FileInfo) error {
+	drop, err := d.dispatchLockMutexShared()
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return fmt.Errorf("lock %s was not released: a dispatch-lock-clear of this session is running", d.display(lock))
+	} else if err != nil {
+		return err
+	}
+	defer drop()
+	if now, err := d.root.Lstat(lock); err != nil || !os.SameFile(created, now) {
+		return fmt.Errorf("lock %s is no longer the directory this holder created; nothing was removed", d.display(lock))
+	}
+	return d.root.RemoveAll(lock)
+}
+
+// dispatchLockMutexFlock takes the advisory lock how (LOCK_SH or LOCK_EX) on f, polling for wait; it answers EWOULDBLOCK when it
+// was not granted in time. The lock belongs to the open file description, so it holds between descriptors of one process too,
+// and the kernel takes it back at close or death.
+func dispatchLockMutexFlock(f *os.File, how int, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
 		switch {
 		case err == nil:
 			return nil
@@ -158,10 +200,20 @@ func dispatchLockClearExclusive(f *os.File) error {
 		case !errors.Is(err, syscall.EWOULDBLOCK):
 			return err
 		case time.Now().After(deadline):
-			return errors.New("another clear of this session is running")
+			return err
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// dispatchLockClearExclusive takes the exclusive lock on f, polling for dispatchLockClearWait. It serialises clears, and keeps
+// every acquisition and release of a lock of the session out while one runs.
+func dispatchLockClearExclusive(f *os.File) error {
+	err := dispatchLockMutexFlock(f, syscall.LOCK_EX, dispatchLockClearWait)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return errors.New("another clear of this session is running")
+	}
+	return err
 }
 
 // dispatchLockClear removes lock from dir once its owner is confirmed gone and appends what it did to lock-clears.jsonl; it
@@ -180,6 +232,8 @@ func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, err
 	if err = dispatchLockClearExclusive(guard); err != nil {
 		return nil, err
 	}
+	dir.dispatchLockMutexHeld = guard
+	defer func() { dir.dispatchLockMutexHeld = nil }()
 	logInfo, err := dir.root.Lstat(dispatchLockClearLog)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -202,8 +256,16 @@ func dispatchLockClear(dir *dispatchPinnedDir, lock, reason string) ([]byte, err
 		return nil, dir.fail("open", dispatchLockClearLog, err)
 	}
 	defer log.Close()
-	if opened, err := log.Stat(); logInfo != nil && (err != nil || !os.SameFile(logInfo, opened)) {
+	opened, err := log.Stat()
+	if logInfo != nil && (err != nil || !os.SameFile(logInfo, opened)) {
 		return nil, fmt.Errorf("%s changed while it was opened; nothing was removed", dir.display(dispatchLockClearLog))
+	}
+	// A log that is also another name of a dispatch record would put the line into that record, and a link count that cannot
+	// be read is not known to be one.
+	if err == nil {
+		if st, ok := opened.Sys().(*syscall.Stat_t); !ok || uint64(st.Nlink) != 1 {
+			return nil, fmt.Errorf("%s must have exactly one link, or a line written to it would also appear in another file; nothing was removed", dir.display(dispatchLockClearLog))
+		}
 	}
 	line, err := json.Marshal(dispatchLockCleared{time.Now().UnixMilli(), lock, owner, reason, os.Getpid()})
 	if err != nil {

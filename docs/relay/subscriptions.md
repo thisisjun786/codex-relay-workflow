@@ -85,10 +85,13 @@ process that dies while holding one leaves it behind. `crw role helper dispatch-
 directory with a readable `owner.json` of a process on this host that no longer exists or whose start time
 differs (the pid was taken over), then appends the removal to `lock-clears.jsonl` in the session directory and
 prints that line (exit 0). It removes nothing and exits 1 when the owner is alive (a pid it cannot signal still
-counts), `owner.json` is missing or unreadable, the host differs, the start time cannot be compared, or the
-entry is a link or not a directory; usage errors exit 2. Clears of one session take turns, and a lock that turns
-out to have been replaced after the check is put back, or left at a `.clearing-` name that the error
-reports, and never removed.
+counts), `owner.json` is missing or unreadable, the host differs, the start time cannot be compared, the
+entry is a link or not a directory, or `lock-clears.jsonl` has other hard links; usage errors exit 2. Clears of
+one session take turns, and a lock that turns out to have been replaced after the check is put back, or left at a
+`.clearing-` name that the error reports, and never removed. Taking a lock and giving it back hold the session
+directory shared (`flock`; a wait of two seconds, then the answer of a held lock) while a clear holds it exclusively
+from before its judgment to the removal of its tombstone, so none of them happens in the middle of a clear, and a
+release removes only the directory its holder created.
 
 Each callback attempt has a thirty-second budget. Known running holds keep polling
 with the existing five-second to five-minute backoff, including mixed subtrees
