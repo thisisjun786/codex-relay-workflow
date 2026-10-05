@@ -1,5 +1,6 @@
 // Package migrate holds the foundations of the explicit CXC-to-CRW state copy (docs/port-cxc/state-migration.md): the roots a run
-// reads and writes, pinned by descriptor so no link is ever followed. No hook, installer, activation or startup path calls it.
+// reads and writes, pinned by descriptor so no link is ever followed, and a publication step that never replaces a file. No hook,
+// installer, activation or startup path calls it.
 package migrate
 
 import (
@@ -58,6 +59,8 @@ const (
 	ReasonNotRegular   Reason = "not-regular"   // a directory, FIFO, socket or device where a regular file is required
 	ReasonHardLinked   Reason = "hard-linked"   // a file with more than one link
 	ReasonSetID        Reason = "set-id"        // a file with a set-user-ID or set-group-ID bit
+	ReasonDiffers      Reason = "differs"       // the destination exists with other bytes
+	ReasonUnsupported  Reason = "unsupported"   // no no-replace rename here, and no fallback
 )
 
 // RefusedError is a refusal: the path is skipped or the run stops, and nothing was changed on its account.

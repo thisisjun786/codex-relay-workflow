@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -98,31 +100,45 @@ func (g ghForge) Update(ctx context.Context, id int64, body string) (prComment, 
 	return g.one(ctx, body, "--method", "PATCH", fmt.Sprintf("repos/{owner}/{repo}/issues/comments/%d", id))
 }
 
-// postSummary keeps the one summary comment of pull request cfg.PR: it summarizes the artifact sum names (its bytes must be the recorded ones), then updates the first comment whose body begins with the marker,
-// creates one, or leaves it when the text is the same. The post lock is held from the listing to the write, so two posts of one state directory cannot both find no comment and both create one.
+// postSummary keeps the one summary comment of pull request cfg.PR: it summarizes the newest result of the patch (its artifact's bytes must be the recorded ones), then updates the first comment whose body begins with the marker,
+// creates one, or leaves it when the text is the same. The post lock is held from the reading of the ledger to the write, so two posts of one state directory cannot both find no comment and both create one, and a post that was
+// prepared from an older result of the patch than the ledger holds when it gets the lock summarizes the newer one instead (sum.Comment.Reason says so) and never puts the older over it.
 func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr io.Writer) error {
-	data, err := os.ReadFile(sum.Artifact)
-	if err != nil {
-		return fmt.Errorf("the artifact of the review cannot be read: %w", err)
-	}
-	digest := sha256.Sum256(data)
-	if got := hex.EncodeToString(digest[:]); got != sum.SHA256 {
-		return fmt.Errorf("the artifact %s has sha256 %s, not the recorded %s", sum.Artifact, got, sum.SHA256)
-	}
-	head := sum.Head
-	if sum.ReviewedHead != "" {
-		head = sum.ReviewedHead
-	}
-	a, err := review.ParseArtifact(data, head)
-	if err != nil {
-		return fmt.Errorf("the artifact %s is not a valid review: %w", sum.Artifact, err)
-	}
-	body := renderSummary(a, sum.SHA256)
-	unlock, err := (&ledger{dir: cfg.StateDir}).postLock(ctx, cfg.LockWait)
+	l := &ledger{dir: cfg.StateDir}
+	unlock, err := l.postLock(ctx, cfg.LockWait)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	path, sha, head, newer := sum.Artifact, sum.SHA256, sum.Head, ""
+	if sum.ReviewedHead != "" {
+		head = sum.ReviewedHead
+	}
+	recs, err := l.read()
+	if err != nil {
+		return err
+	}
+	if n := newestResult(recs, sum.PatchID); n != nil && n.SHA256 != sha {
+		path, sha, head, newer = n.Artifact, n.SHA256, n.Head, fmt.Sprintf("a newer result of this patch (sha256 %s) was recorded; the comment shows it", short(n.SHA256))
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) { // a result whose record was appended a moment ago and whose files are still being published: the copy kept before the record has the same bytes
+		if kept, keptErr := os.ReadFile(l.keptPath(sha)); keptErr == nil {
+			data, err = kept, nil
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("the artifact of the review cannot be read: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	if got := hex.EncodeToString(digest[:]); got != sha {
+		return fmt.Errorf("the artifact %s has sha256 %s, not the recorded %s", path, got, sha)
+	}
+	a, err := review.ParseArtifact(data, head)
+	if err != nil {
+		return fmt.Errorf("the artifact %s is not a valid review: %w", path, err)
+	}
+	body := renderSummary(a, sha)
 	comments, err := f.List(ctx, cfg.PR)
 	if err != nil {
 		return err
@@ -150,6 +166,6 @@ func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr 
 	if len(marked) > 1 {
 		fmt.Fprintf(stderr, "crw review: warning: %d comments of pull request %d carry the marker; the first was kept up to date and the others were left alone\n", len(marked), cfg.PR)
 	}
-	sum.Comment = &Posted{Action: action, URL: c.URL}
+	sum.Comment = &Posted{Action: action, URL: c.URL, Reason: newer}
 	return nil
 }
