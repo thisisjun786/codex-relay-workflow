@@ -440,7 +440,7 @@ func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *t
 	// scratch directory; elsewhere the first command it runs is the list.
 	firstArgs, firstHomeOK := "list -e -p=4 ", seen["home"] == realHome
 	if runtime.GOOS == "darwin" {
-		firstArgs, firstHomeOK = "env GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
+		firstArgs, firstHomeOK = "env -json GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
 	}
 	if !strings.HasPrefix(seen["args"], firstArgs) {
 		t.Errorf("the first go command is %q, want %q", seen["args"], firstArgs)
@@ -558,12 +558,19 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
 		}
 	}
-	linuxEnv, err := mergeBuildEnv(context.Background(), caller, t.TempDir(), "linux")
+	if raw, err := os.ReadFile(filepath.Join(home, "Library", "Application Support", "go", "telemetry", "mode")); err != nil || !strings.HasPrefix(string(raw), "off ") {
+		t.Errorf("darwin: the owned home holds no telemetry off file: %v %q", err, raw)
+	}
+	linuxOwned := t.TempDir()
+	linuxEnv, err := mergeBuildEnv(context.Background(), caller, linuxOwned, "linux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := mbcLastEnv(linuxEnv)["HOME"], mbcLastEnv(caller)["HOME"]; got != want {
 		t.Errorf("linux: HOME=%q, want the caller's %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(linuxOwned, "home", "Library", "Application Support", "go", "telemetry", "mode")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("linux: a darwin mode file was written: %v", err)
 	}
 }
 
@@ -571,7 +578,7 @@ func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
 // one trimmed into shape (CRW-562).
 func TestMergeBuildEnvKeepsWhatGoEnvAnswers(t *testing.T) {
 	bin := t.TempDir()
-	shim := "#!/bin/sh\nprintf '%s\\n' '/cache with space/ ' '/mod' '/gopath'\n"
+	shim := "#!/bin/sh\nprintf '%s' '{\"GOCACHE\":\"/cache with space/ \",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}'\n"
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -644,7 +651,7 @@ func mbcLastEnv(env []string) map[string]string {
 func TestMergeBuildEnvRunsTheCacheReadInItsOwnDirectory(t *testing.T) {
 	owned := t.TempDir()
 	log := mbcCacheShim(t, mbcCacheShimStandard)
-	env, err := mergeBuildEnv(context.Background(), append(os.Environ(), "HOME=/caller"), owned, "darwin")
+	env, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -668,7 +675,7 @@ func TestMergeBuildEnvRunsTheCacheReadInItsOwnDirectory(t *testing.T) {
 func TestMergeBuildEnvWritesTheDarwinTelemetryModeBeforeTheFirstGoCommand(t *testing.T) {
 	owned := t.TempDir()
 	log := mbcCacheShim(t, mbcCacheShimStandard)
-	if _, err := mergeBuildEnv(context.Background(), append(os.Environ(), "HOME=/caller"), owned, "darwin"); err != nil {
+	if _, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin"); err != nil {
 		t.Fatal(err)
 	}
 	if seen := mbcShimLog(t, log); !strings.HasPrefix(seen["mode"], "off ") {
@@ -743,7 +750,7 @@ func TestMergeBuildDecodeCachesReadsTheNamesExactly(t *testing.T) {
 func TestMergeBuildEnvKeepsACachePathWithANewline(t *testing.T) {
 	owned := t.TempDir()
 	mbcCacheShim(t, mbcCacheShimNewline)
-	env, err := mergeBuildEnv(context.Background(), append(os.Environ(), "HOME=/caller"), owned, "darwin")
+	env, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -782,7 +789,8 @@ const mbcCacheShimStandard = `#!/bin/sh
 	echo "pwd=$PWD"
 	echo "home=$HOME"
 	if [ -f "$HOME/Library/Application Support/go/telemetry/mode" ]; then
-		echo "mode=$(cat "$HOME/Library/Application Support/go/telemetry/mode")"
+		read -r mode < "$HOME/Library/Application Support/go/telemetry/mode"
+		echo "mode=$mode"
 	else
 		echo "mode=absent"
 	fi
@@ -838,4 +846,21 @@ func mbcShimLog(t *testing.T, path string) map[string]string {
 		seen[key] = value
 	}
 	return seen
+}
+
+// mbcEnvWithout is this process's environment without the named keys, so a value mergeBuildEnv
+// appends for the go tool's own run is the only one it can read under that name.
+func mbcEnvWithout(t *testing.T, keys ...string) []string {
+	t.Helper()
+	drop := map[string]bool{}
+	for _, key := range keys {
+		drop[key] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if key, _, ok := strings.Cut(kv, "="); !ok || !drop[key] {
+			env = append(env, kv)
+		}
+	}
+	return env
 }

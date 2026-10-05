@@ -76,13 +76,14 @@ type mergeBuild struct {
 
 // mergeBuildEnv is the go tool's environment: the caller's, except that what the tool writes outside
 // the build cache goes into a directory this run owns and removes: its temporary files (TMPDIR,
-// GOTMPDIR) and, where the user config directory follows XDG_CONFIG_HOME, its telemetry counters. The
-// owned config directory says telemetry is off, so no uploader the tool starts can write there after
-// the command ended and the directory is gone. On darwin os.UserConfigDir reads
-// $HOME/Library/Application Support and ignores XDG_CONFIG_HOME, so HOME moves into the owned
-// directory there as well, and the caches the caller's go environment names (GOCACHE, GOMODCACHE,
-// GOPATH) are read with the caller's environment before that and named again, so builds still share
-// the caller's caches. Elsewhere HOME, the build cache, the module cache and every setting stay as
+// GOTMPDIR) and its telemetry counters, which say telemetry is off at every mode file that applies.
+// The owned config directory is where a user config directory that follows XDG_CONFIG_HOME reads the
+// mode; on darwin os.UserConfigDir reads $HOME/Library/Application Support and ignores
+// XDG_CONFIG_HOME, so HOME moves into the owned directory there as well and the mode file is written
+// under that home too, before any go command can start in it. The caches the caller's go environment
+// names (GOCACHE, GOMODCACHE, GOPATH) are read with the caller's environment, in an owned directory
+// that holds no go.mod so a module in the caller's working directory cannot choose the go tool's
+// toolchain, and named again, so builds still share the caller's caches. Elsewhere HOME, the build cache, the module cache and every setting stay as
 // the caller has them, and GOENV is pinned to the caller's file first, so the settings of go env -w
 // keep their place between the environment and the defaults. The module workspace is off. targetOS
 // names the platform the go tool targets and defaults to runtime.GOOS; a test names darwin and linux
@@ -130,8 +131,12 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 		// initializes telemetry under it, and on darwin the telemetry directory is the one under
 		// HOME. So it runs with the owned HOME, and a value that lands under that home is the
 		// caller's own default with the home prefix swapped, which is swapped back here.
+		probe := mergeBuildProbeDir(owned)
+		if err := os.MkdirAll(probe, 0o700); err != nil {
+			return nil, err
+		}
 		readEnv := append(append([]string{}, env...), "HOME="+home)
-		caches, err := mergeBuildCallerCaches(ctx, readEnv, mergeBuildProbeDir(owned))
+		caches, err := mergeBuildCallerCaches(ctx, readEnv, probe)
 		if err != nil {
 			return nil, err
 		}
@@ -149,16 +154,21 @@ func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ..
 
 // mergeBuildTelemetryModeFiles are the mode files that say telemetry is off for the go tool: the one
 // under the owned config directory, which is where a user config directory that follows
-// XDG_CONFIG_HOME reads it.
+// XDG_CONFIG_HOME reads it, and on darwin the one under the owned home, which is where
+// os.UserConfigDir reads the mode ($HOME/Library/Application Support) once HOME has moved there.
 func mergeBuildTelemetryModeFiles(owned, goos string) []string {
-	return []string{filepath.Join(owned, "config", "go", "telemetry", "mode")}
+	files := []string{filepath.Join(owned, "config", "go", "telemetry", "mode")}
+	if goos == "darwin" {
+		files = append(files, filepath.Join(owned, "home", "Library", "Application Support", "go", "telemetry", "mode"))
+	}
+	return files
 }
 
 // mergeBuildProbeDir is the directory the caller-cache read runs in: a directory this run owns that
 // holds no go.mod, so a module the caller's working directory holds cannot choose the go tool's
-// toolchain for it. An empty name leaves the go tool where the caller's process is.
+// toolchain for it.
 func mergeBuildProbeDir(owned string) string {
-	return ""
+	return filepath.Join(owned, "probe")
 }
 
 // mergeBuildEnvValue is what an environment slice gives a key: of duplicated names the last value,
@@ -201,7 +211,8 @@ func mergeBuildCallerCaches(ctx context.Context, base []string, dir string) ([3]
 	if err != nil {
 		return caches, err
 	}
-	cmd := exec.CommandContext(ctx, goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	args := append([]string{"env", "-json"}, mergeBuildCacheKeys[:]...)
+	cmd := exec.CommandContext(ctx, goTool, args...)
 	cmd.Dir = dir
 	cmd.Env = append([]string{}, base...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -214,17 +225,24 @@ func mergeBuildCallerCaches(ctx context.Context, base []string, dir string) ([3]
 	return mergeBuildDecodeCaches(out)
 }
 
-// mergeBuildDecodeCaches reads what the cache read's go env command answered: one value per line, in
-// the order the command named the keys.
+// mergeBuildCacheKeys are the names the cache read asks for, in the order the values are kept.
+var mergeBuildCacheKeys = [3]string{"GOCACHE", "GOMODCACHE", "GOPATH"}
+
+// mergeBuildDecodeCaches reads what the cache read's go env -json command answered: the value of
+// every name in mergeBuildCacheKeys, each kept exactly as the answer gives it.
 func mergeBuildDecodeCaches(out []byte) ([3]string, error) {
 	var caches [3]string
-	// A line is the value itself: go env preserves whatever a path holds, including a trailing
-	// space, so only the newline that ends the last line is dropped.
-	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-	if len(lines) != 3 {
-		return caches, fmt.Errorf("go env GOCACHE GOMODCACHE GOPATH answered %d lines, want 3", len(lines))
+	values := map[string]string{}
+	if err := json.Unmarshal(out, &values); err != nil {
+		return caches, fmt.Errorf("go env -json wrote an answer this check cannot read: %w", err)
 	}
-	copy(caches[:], lines)
+	for i, key := range mergeBuildCacheKeys {
+		value, ok := values[key]
+		if !ok {
+			return caches, fmt.Errorf("go env -json did not answer %s", key)
+		}
+		caches[i] = value
+	}
 	return caches, nil
 }
 
