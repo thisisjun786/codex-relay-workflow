@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -157,7 +158,8 @@ func TestPostSummaryNeedsAnArtifactItCanTrust(t *testing.T) {
 	if code, sum, errOut := f.post(a); code != 1 || sum.Outcome != OutcomeAlreadyReviewed || !strings.Contains(errOut, "sha256") {
 		t.Fatalf("an artifact that is not the recorded one: %d %+v %s", code, sum, errOut)
 	}
-	if err := os.Remove(artifact); err != nil {
+	// A result recorded before results were kept (an older ledger) has no copy to restore the artifact from.
+	if err := errors.Join(os.Remove(artifact), os.RemoveAll(filepath.Join(f.state, "results"))); err != nil {
 		t.Fatal(err)
 	}
 	if code, sum, errOut := f.post(a); code != 1 || sum.Outcome != OutcomeAlreadyReviewed || !strings.Contains(errOut, "artifact") {
@@ -165,6 +167,72 @@ func TestPostSummaryNeedsAnArtifactItCanTrust(t *testing.T) {
 	}
 	if sf.lists+sf.creates+sf.updates != 0 {
 		t.Fatalf("the forge was used: %d %d %d", sf.lists, sf.creates, sf.updates)
+	}
+}
+
+// A post prepared from an older result that reaches the post lock after a newer result of the same patch was posted must not put the older one over it: inside the lock it summarizes the newest result.
+func TestLatePostNeverOverwritesANewerResult(t *testing.T) {
+	f := newFixture(t)
+	sf := &scriptedForge{}
+	f.forge = sf
+	h1 := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	code, a, errOut := f.run(h1) // A: the review that could not run; its post comes late
+	if code != 0 || a.Status != "unavailable" {
+		t.Fatalf("A: %d %+v %s", code, a, errOut)
+	}
+	f.repo.git("checkout", "-q", "--detach", h1)
+	h2 := f.repo.commit(nil) // the same patch on another head
+	f.on("2026-10-05", okResult)
+	if code, b, errOut := f.post(h2); code != 0 || b.Comment == nil || b.Comment.Action != "created" || b.Status != "complete" { // B: the retry, a complete result, posted at once
+		t.Fatalf("B: %d %+v %s", code, b, errOut)
+	}
+	posted := sf.comments[0].Body
+	cfg, exit := parseConfig(f.args(h1, "--post-summary", "--pr", "7"), io.Discard, io.Discard)
+	if exit != -1 {
+		t.Fatalf("config: %d", exit)
+	}
+	var stderr bytes.Buffer
+	if err := postSummary(context.Background(), cfg, sf, &a, &stderr); err != nil { // A's post, late
+		t.Fatal(err)
+	}
+	if len(sf.comments) != 1 || sf.comments[0].Body != posted || sf.updates != 0 || a.Comment == nil || a.Comment.Action != "unchanged" || a.Comment.Reason == "" {
+		t.Fatalf("the late post changed the comment: %+v (updates %d)\n%s", a.Comment, sf.updates, sf.comments[0].Body)
+	}
+	// The newer result's record is appended before its files are published, so the late post may meet it with no file yet: the copy kept before the record has the bytes.
+	if err := os.Remove(filepath.Join(f.out, h2+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := postSummary(context.Background(), cfg, sf, &a, &stderr); err != nil || a.Comment.Action != "unchanged" {
+		t.Fatalf("the late post with the newer result not yet published: %v %+v", err, a.Comment)
+	}
+}
+
+// --post-only posts the recorded result of the patch on any day: it runs no review, writes no ledger record, so the one more attempt of an unavailable review and the daily cap are untouched.
+func TestPostOnlyRepairsAPostOnALaterDayWithoutSpendingTheRetryOrTheCap(t *testing.T) {
+	f := newFixture(t)
+	sf := &scriptedForge{fail: errors.New("forge is down")}
+	f.forge = sf
+	a, other, none := f.repo.change(f.base, 2), f.repo.change(f.base, 3), f.repo.change(f.base, 4)
+	f.on("2026-10-04", quotaResult)
+	if code, sum, _ := f.post(a, "--daily-cap", "1"); code != 1 || sum.Outcome != OutcomeReviewed || len(sf.comments) != 0 { // unavailable, and the post failed
+		t.Fatalf("day one: %d %+v", code, sum)
+	}
+	f.on("2026-10-05", okResult)
+	if code, sum, errOut := f.run(other, "--daily-cap", "1"); code != 0 || sum.Outcome != OutcomeReviewed { // another patch spends the cap of the next day
+		t.Fatalf("another patch: %d %+v %s", code, sum, errOut)
+	}
+	calls, records := f.s.count(), len(f.ledger())
+	code, sum, errOut := f.run(a, "--post-only", "--pr", "7", "--daily-cap", "1")
+	if code != 0 || sum.Outcome != OutcomeRecorded || sum.Status != "unavailable" || sum.Comment == nil || sum.Comment.Action != "created" || len(sf.comments) != 1 ||
+		!strings.Contains(sf.comments[0].Body, "quota") || f.s.count() != calls || len(f.ledger()) != records || runsOn(f.ledger(), "2026-10-05") != 1 {
+		t.Fatalf("post-only: %d %+v %s (calls %d, were %d; records %d, were %d)", code, sum, errOut, f.s.count(), calls, len(f.ledger()), records)
+	}
+	if code, sum, errOut := f.run(a, "--daily-cap", "2"); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" || f.s.count() != calls+2 { // the retry is still there
+		t.Fatalf("the retry after the repair: %d %+v %s (calls %d, were %d)", code, sum, errOut, f.s.count(), calls)
+	}
+	if code, _, errOut := f.run(none, "--post-only", "--pr", "7"); code != 1 || !strings.Contains(errOut, "no recorded result") || f.s.count() != calls+2 { // post-only never makes a result
+		t.Fatalf("a patch with no result: %d %s", code, errOut)
 	}
 }
 

@@ -36,15 +36,17 @@ type startRun struct {
 	// register has registered the child; never nil, may be called more than once.
 	projectLock func()
 
-	receipt       map[string]any // the host's creation receipt, with what the standby recovery added to it
-	task, standby string         // the child's task id and its standby turn
-	parent        map[string]any // the request's parent as it was when the child was registered
-	childSettings map[string]any
-	recipients    []string
-	reg           *registry.Registry
-	record        registry.Relationship
-	sent          map[string]any // the host's receipt for the business send
-	turn          string         // the business turn the host accepted
+	receipt             map[string]any // the host's creation receipt, with what the standby recovery added to it
+	task, standby       string         // the child's task id and its standby turn
+	parent              map[string]any // the request's parent as it was when the child was registered
+	childSettings       map[string]any
+	recipients          []string
+	reg                 *registry.Registry
+	record              registry.Relationship
+	sent                map[string]any // the host's receipt for the business send
+	turn                string         // the business turn the host accepted
+	businessOperationID string         // internal ledger attempt; dispatch identity stays unchanged
+	businessAttempt     int
 
 	attempt    int             // the creation attempt now current: 0 is the request's own operation (reconcile.go)
 	adopted    bool            // the receipt is an unknown creation continued on the thread the App Server showed
@@ -354,22 +356,49 @@ func (r *startRun) readback(ctx context.Context) (contract.OrderedObject, error)
 	return nil, nil
 }
 
-// businessTurn sends the child its assignment, once. The host's receipt for the send is read first: a
-// request whose business send was attempted before is not sent again, whatever came of it.
+// businessTurn sends the child its assignment, once. Only a proven failure before
+// turn/start licenses a bounded successor operation; every older receipt is kept.
 func (r *startRun) businessTurn(ctx context.Context) (contract.OrderedObject, error) {
 	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
 		return nil, err
 	}
-	sent, err := r.m.Adapter.GetOperation(ctx, r.identity.DispatchRequestID)
-	if err != nil {
-		return nil, err
-	}
-	r.sent = sent
-	if sent != nil && sent["status"] != "not_attempted" {
-		return nil, nil
+	for r.businessAttempt = 0; r.businessAttempt < maxBusinessResendAttempts; r.businessAttempt++ {
+		r.businessOperationID = businessResendID(r.identity.RequestID, r.identity.DispatchRequestID, r.businessAttempt)
+		sent, err := r.m.Adapter.GetOperation(ctx, r.businessOperationID)
+		if err != nil {
+			return nil, err
+		}
+		r.sent = sent
+		if sent == nil || sent["status"] == "not_attempted" && !businessResendTurnPossible(sent) {
+			break
+		}
+		if !businessResendSafe(sent, r.task) || r.businessAttempt+1 == maxBusinessResendAttempts {
+			if r.businessAttempt > 0 && sent["status"] == "accepted" {
+				// The retained ID might belong to other arguments. Send's ledger
+				// lookup proves this exact packet before replaying, with no effect.
+				return nil, r.sendBusiness(ctx)
+			}
+			return nil, nil
+		}
 	}
 	if answer, err := r.awaitStandby(ctx); answer != nil || err != nil {
 		return answer, err
+	}
+	if r.businessAttempt > 0 {
+		code, err := r.businessResendReady(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			code = "lifecycle_unknown"
+		}
+		if code != "" {
+			state := "incomplete"
+			if code == "business_identity_unobserved" {
+				state = "refused"
+			}
+			return r.answer(ctx, state, "business", code)
+		}
 	}
 	return nil, r.sendBusiness(ctx)
 }
@@ -426,7 +455,7 @@ func (r *startRun) sendBusiness(ctx context.Context) error {
 		return err
 	}
 	var err error
-	r.sent, err = r.m.Adapter.SendMessage(ctx, SendRequest{RequestID: r.identity.DispatchRequestID, ThreadID: r.task, Message: r.m.packet(r.identity, r.row, r.req, r.assignment), Settings: settingsWithRole(r.childSettings, "child"), GuardRPCRequests: 10, BeforeStart: r.businessGuard})
+	r.sent, err = r.m.Adapter.SendMessage(ctx, SendRequest{RequestID: r.businessOperationID, ThreadID: r.task, Message: r.m.packet(r.identity, r.row, r.req, r.assignment), Settings: settingsWithRole(r.childSettings, "child"), GuardRPCRequests: 10, BeforeStart: r.businessGuard})
 	return err
 }
 
