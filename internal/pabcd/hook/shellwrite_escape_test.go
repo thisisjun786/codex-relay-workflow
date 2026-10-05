@@ -46,7 +46,9 @@ func shellWriteEscapeRun(t *testing.T, cases []shellWriteEscapeCase) {
 
 // A Path call names posixpath.join of its parts: an absolute part discards the ones before it and nothing else is normalized. A part
 // that is not a literal leaves the rest of the path unknown, so the call names the literal prefix the write lands under (none when no
-// literal comes first), and a later absolute literal part starts the path over.
+// literal comes first), and a later absolute literal part starts the path over. The earlier reading of such a call, its first
+// argument when that is a literal, is kept as well, so the join never names fewer destinations than before; an f-string with a field
+// counts as a part that is not a literal for this.
 func TestShellWriteEscapePathJoin(t *testing.T) {
 	path := func(call string) string { return "python3 -c \"from pathlib import Path; " + call + "\"" }
 	shellWriteEscapeRun(t, []shellWriteEscapeCase{
@@ -64,8 +66,13 @@ func TestShellWriteEscapePathJoin(t *testing.T) {
 		{command: path("Path('/m', name).write_text('x')"), has: []string{"/m"}},
 		{command: path("Path('/m', 'a', name).write_text('x')"), has: []string{"/m/a"}},
 		{command: path("Path('/m', name, 'x').write_text('x')"), has: []string{"/m"}, lacks: []string{"/m/x"}},
-		{command: path("Path('/w', name, '/m', 'x').write_text('x')"), has: []string{"/m/x"}, lacks: []string{"/w", "/m"}},
-		{command: path("Path('/m', name, '/w').write_text('x')"), has: []string{"/w"}, lacks: []string{"/m"}},
+		{command: path("Path('/w', name, '/m', 'x').write_text('x')"), has: []string{"/m/x", "/w"}, lacks: []string{"/m"}},
+		{command: path("Path('/m', name, '/w').write_text('x')"), has: []string{"/w", "/m"}},
+		{command: path("Path('/m', 'a', name).write_text('x')"), has: []string{"/m/a", "/m"}},
+		{command: path("Path('/review/memories', name, f'/safe/{tail}').write_text('x')"), has: []string{"/review/memories"}},
+		{command: path("Path('/review/memories', f'/safe/{tail}').write_text('x')"), has: []string{"/review/memories", "/safe/{tail}"}},
+		{command: path("Path(f'/m/{x}').write_text('x')"), has: []string{"/m/{x}"}},
+		{command: path("Path('/m', f'a{{b}}').write_text('x')"), has: []string{"/m/a{{b}}"}, lacks: []string{"/m/a{b}"}},
 		{command: path("Path(name, 'a').write_text('x')"), same: true},
 		{command: path("Path(base, '/m/a').write_text('x')"), has: []string{"/m/a"}},
 		{command: path("Path('/m', *parts).write_text('x')"), has: []string{"/m"}},
