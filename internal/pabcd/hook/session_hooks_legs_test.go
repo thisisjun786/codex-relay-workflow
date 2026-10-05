@@ -63,12 +63,16 @@ func TestSessionHookLegsAnswerThroughTheHarness(t *testing.T) {
 	if ignore, err := os.ReadFile(filepath.Join(cwd, crwdir.DirName, ".gitignore")); err != nil || string(ignore) != crwdir.GitignoreText {
 		t.Errorf(".gitignore %q: %v", ignore, err)
 	}
-	// A payload the parse refuses (a non-canonical session id) writes nothing.
+	// A payload the parse refuses (a non-canonical session id) writes nothing. The path a state file
+	// would take for that id is the sanitised one under the state directory, so that is what is checked.
 	if answer := start.Handle(call("SessionStart", map[string]any{"session_id": "../escape", "cwd": cwd})); answer != "" {
 		t.Errorf("a refused session id answered %q", answer)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "escape.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName, "escape.json")); err == nil {
 		t.Error("a refused session id wrote state")
+	}
+	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName, state.SessionsSubdir, "escape.json")); err == nil {
+		t.Error("a refused session id wrote a state file")
 	}
 
 	compact := sessionHookLeg(t, "post-compact-resetting-reinject-cursor")
