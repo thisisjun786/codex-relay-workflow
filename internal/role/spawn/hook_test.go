@@ -75,29 +75,29 @@ func spawnHookNewRig(t *testing.T, skills map[string]string, c spawnHookCase) *s
 	r.ws, r.tmp = filepath.Join(r.dir, "ws"), filepath.Join(r.dir, "tmp")
 	dir := filepath.Join(r.dir, "skills")
 	for folder, body := range skills {
-		must(t, os.MkdirAll(filepath.Join(dir, folder), 0o755))
-		must(t, os.WriteFile(filepath.Join(dir, folder, "SKILL.md"), []byte(body), 0o644))
+		spawnHookMust(t, os.MkdirAll(filepath.Join(dir, folder), 0o755))
+		spawnHookMust(t, os.WriteFile(filepath.Join(dir, folder, "SKILL.md"), []byte(body), 0o644))
 	}
-	must(t, os.MkdirAll(dir, 0o755))
-	must(t, os.MkdirAll(r.ws, 0o755))
+	spawnHookMust(t, os.MkdirAll(dir, 0o755))
+	spawnHookMust(t, os.MkdirAll(r.ws, 0o755))
 	r.skills = spawnHookEval(t, dir)
 	configured := dir
 	switch c.Env.Skills {
 	case "link":
 		configured = filepath.Join(r.dir, "skills-link")
-		must(t, os.Symlink(dir, configured))
+		spawnHookMust(t, os.Symlink(dir, configured))
 	case "padded":
 		configured = " \t" + dir + "\n "
 	}
 	if c.Env.Tmp == "missing" {
 		r.tmp = filepath.Join(r.dir, "absent", "tmp")
 	} else {
-		must(t, os.Mkdir(r.tmp, 0o700))
+		spawnHookMust(t, os.Mkdir(r.tmp, 0o700))
 	}
 	home := filepath.Join(r.dir, "crw")
-	must(t, os.MkdirAll(home, 0o755))
+	spawnHookMust(t, os.MkdirAll(home, 0o755))
 	if c.Env.Store != nil {
-		must(t, os.WriteFile(filepath.Join(home, "subagents.json"), []byte(*c.Env.Store), 0o644))
+		spawnHookMust(t, os.WriteFile(filepath.Join(home, "subagents.json"), []byte(*c.Env.Store), 0o644))
 	}
 	vars := map[string]string{"HOME": filepath.Join(r.dir, "home"), "CODEX_HOME": filepath.Join(r.dir, "codex"), "CRW_HOME": home, "TMPDIR": r.tmp, "CRW_SKILLS_DIR": configured}
 	r.env = func(key string) (string, bool) { v, ok := vars[key]; return v, ok }
@@ -134,7 +134,7 @@ func (r *spawnHookRig) expand(v any) any {
 	return v
 }
 
-func must(t *testing.T, err error) {
+func spawnHookMust(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
@@ -144,14 +144,14 @@ func must(t *testing.T, err error) {
 func spawnHookEval(t *testing.T, path string) string {
 	t.Helper()
 	real, err := filepath.EvalSymlinks(path)
-	must(t, err)
+	spawnHookMust(t, err)
 	return real
 }
 
 func spawnHookLoad(t *testing.T, raw []byte) any {
 	t.Helper()
 	v, err := pyjson.Loads(string(raw), pyjson.LoadOptions{Python: true, Surrogates: true})
-	must(t, err)
+	spawnHookMust(t, err)
 	return v
 }
 
@@ -217,8 +217,8 @@ func spawnHookWithoutRouting(o pyjson.Object) (out pyjson.Object) {
 func spawnHookReadFixture(t *testing.T) (fixture spawnHookFixture) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "hook", "oracle.json"))
-	must(t, err)
-	must(t, json.Unmarshal(data, &fixture))
+	spawnHookMust(t, err)
+	spawnHookMust(t, json.Unmarshal(data, &fixture))
 	return fixture
 }
 
@@ -233,9 +233,9 @@ func TestSpawnHookOracleReplay(t *testing.T) {
 			rig := spawnHookNewRig(t, fixture.Skills, c)
 			if c.Env.UnreadableCwd {
 				dead := filepath.Join(rig.dir, "dead")
-				must(t, os.Mkdir(dead, 0o755))
+				spawnHookMust(t, os.Mkdir(dead, 0o755))
 				t.Chdir(dead)
-				must(t, os.Remove(dead))
+				spawnHookMust(t, os.Remove(dead))
 			}
 			for i, step := range c.Steps {
 				steps++
@@ -252,7 +252,7 @@ func TestSpawnHookOracleReplay(t *testing.T) {
 				case "stop-empty", "stop-deny":
 					var want string
 					if step.Seam == "stop-deny" {
-						must(t, json.Unmarshal(step.Expected, &want))
+						spawnHookMust(t, json.Unmarshal(step.Expected, &want))
 					}
 					if !stop || deny != want || !reflect.DeepEqual(asm, spawnHookAssembly{}) {
 						t.Fatalf("%s: stop=%v deny=%q, want a stop with deny %q and the zero assembly", at, stop, deny, want)
@@ -314,7 +314,7 @@ func TestSpawnHookAffordanceCap(t *testing.T) {
 func TestSpawnHookAssemblyFields(t *testing.T) {
 	rig := spawnHookNewRig(t, map[string]string{"crw-dev": "---\nname: crw-dev\n---\nbody\n"}, spawnHookCase{})
 	wd, err := syscall.Getwd()
-	must(t, err)
+	spawnHookMust(t, err)
 	spawn := func(extra map[string]any, tool any) map[string]any {
 		obj := map[string]any{"hook_event_name": "PreToolUse", "tool_name": "spawn_agent", "session_id": "s1", "tool_input": tool}
 		for k, v := range extra {
@@ -353,9 +353,9 @@ func TestSpawnHookSkillsDir(t *testing.T) {
 	dir := t.TempDir()
 	real, plugin := filepath.Join(dir, "real"), filepath.Join(dir, "plugin")
 	for _, d := range []string{real, filepath.Join(plugin, "skills")} {
-		must(t, os.MkdirAll(d, 0o755))
+		spawnHookMust(t, os.MkdirAll(d, 0o755))
 	}
-	must(t, os.Symlink(real, filepath.Join(dir, "link")))
+	spawnHookMust(t, os.Symlink(real, filepath.Join(dir, "link")))
 	resolved, pluginSkills := spawnHookEval(t, real), spawnHookEval(t, filepath.Join(plugin, "skills"))
 	for name, tc := range map[string]struct{ override, plugin, want string }{
 		"trimmed link is resolved":                {" \u00a0" + filepath.Join(dir, "link") + "\n", "", resolved},
