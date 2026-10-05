@@ -3576,5 +3576,797 @@
     }
    ]
   }
- ]
+ ],
+ "route": [
+  {
+   "name": "route: model and effort",
+   "test": "spawn-attach-hook.test.ts:440-520,562-646; spawn-items-routing.test.ts; explorer-role-routing.test.ts",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"model\",\"model\":\"rec/reviewer\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"rec/architect\",\"effort\":\"medium\",\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"map the frontend codebase\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nmap the frontend codebase\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "reapplied v2 output: nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nmap the frontend codebase\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "integer-like fork_turns is not a full fork",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"3\",\"message\":\"map the frontend codebase\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"3\",\"message\":\"{{LEAF}}\\n\\nmap the frontend codebase\\n\\n{{AFFORDANCE}}\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "v2 fork_turns omitted: full history, no model or effort",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"message\":\"map the frontend codebase\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"message\":\"{{LEAF}}\\n\\nmap the frontend codebase\\n\\n{{AFFORDANCE}}\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"all\",\"message\":\"map the frontend codebase\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"all\",\"message\":\"{{LEAF}}\\n\\nmap the frontend codebase\\n\\n{{AFFORDANCE}}\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"summarize this thread\",\"fork_context\":true}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nsummarize this thread\",\"fork_context\":true}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "caller model: effort only",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"map it\",\"model\":\"gpt-5.5\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nmap it\\n\\n{{AFFORDANCE}}\",\"model\":\"gpt-5.5\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "caller effort: model only",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"map it\",\"reasoning_effort\":\"low\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nmap it\\n\\n{{AFFORDANCE}}\",\"reasoning_effort\":\"low\",\"model\":\"rec/explorer\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "blank caller values do not count: replaced in place",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"model\":\"  \",\"agent_type\":\"explorer\",\"message\":\"map it\",\"reasoning_effort\":\"\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"model\":\"rec/explorer\",\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nmap it\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "non-string caller values are not picks",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"model\":null,\"reasoning_effort\":5,\"agent_type\":\"explorer\",\"message\":\"map it\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\",\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nmap it\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "default-mode executor: effort only",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"worker\",\"message\":\"implement it\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"worker\",\"message\":\"{{V1}}\\n\\nimplement it\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"implement it\",\"agent_type\":\"executor\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nimplement it\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"executor\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "legacy reviewer header: reviewer model, no effort",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"CRW-ROLE: reviewer\\n\\nTASK: review the backend diff\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nCRW-ROLE: reviewer\\n\\nTASK: review the backend diff\",\"model\":\"rec/reviewer\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "explicit explorer ignores review words",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"TASK: review the architecture\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nTASK: review the architecture\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"architect\",\"message\":\"Review interfaces\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"architect\",\"message\":\"{{V1}}\\n\\nReview interfaces\",\"model\":\"rec/architect\",\"reasoning_effort\":\"medium\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "architect by header",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"CRW-ROLE: architect\\n\\nReview interface decisions\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nCRW-ROLE: architect\\n\\nReview interface decisions\",\"model\":\"rec/architect\",\"reasoning_effort\":\"medium\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "message wins: items kept as they were",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"implement it\",\"agent_type\":\"worker\",\"items\":[{\"type\":\"text\",\"text\":\"TASK: implement it\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nimplement it\",\"agent_type\":\"worker\",\"items\":[{\"type\":\"text\",\"text\":\"TASK: implement it\"}],\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "items: attachments, order and one-of kept",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"skill\",\"name\":\"crw-dev\",\"path\":\"/fixture/skills/dev/SKILL.md\"},{\"type\":\"text\",\"text\":\"CRW-ROLE: explorer\\n\\nTASK: map the owner for $crw-dev\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,QUJD\"},{\"type\":\"text\",\"text\":\"Quoted task:\\nCRW-ROLE: reviewer\\nTASK: quote only\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"skill\",\"name\":\"crw-dev\",\"path\":\"/fixture/skills/dev/SKILL.md\"},{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nCRW-ROLE: explorer\\n\\nTASK: map the owner for [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md)\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,QUJD\"},{\"type\":\"text\",\"text\":\"Quoted task:\\nCRW-ROLE: reviewer\\nTASK: quote only\\n\\n<skill name=\\\"crw-dev\\\">\\n---\\nname: crw-dev\\ndescription: \\\"Synthetic dev skill for hook oracle tests.\\\"\\n---\\n# dev\\nUse $crw-search only if the task calls for it.\\n</skill>\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "reapplied items output: nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"skill\",\"name\":\"crw-dev\",\"path\":\"/fixture/skills/dev/SKILL.md\"},{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nCRW-ROLE: explorer\\n\\nTASK: map the owner for [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md)\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,QUJD\"},{\"type\":\"text\",\"text\":\"Quoted task:\\nCRW-ROLE: reviewer\\nTASK: quote only\\n\\n<skill name=\\\"crw-dev\\\">\\n---\\nname: crw-dev\\ndescription: \\\"Synthetic dev skill for hook oracle tests.\\\"\\n---\\n# dev\\nUse $crw-search only if the task calls for it.\\n</skill>\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"skill\",\"name\":\"crw-dev\",\"path\":\"/fixture/skills/dev/SKILL.md\"},{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nCRW-ROLE: explorer\\n\\nTASK: map the owner for [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md)\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,QUJD\"},{\"type\":\"text\",\"text\":\"Quoted task:\\nCRW-ROLE: reviewer\\nTASK: quote only\\n\\n<skill name=\\\"crw-dev\\\">\\n---\\nname: crw-dev\\ndescription: \\\"Synthetic dev skill for hook oracle tests.\\\"\\n---\\n# dev\\nUse [$crw-search](skill://{SKILLS}/crw-search/SKILL.md) only if the task calls for it.\\n</skill>\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "attachment-only items get a guard item",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"skill\",\"name\":\"crw-dev-testing\",\"path\":\"/f/SKILL.md\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,REVG\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\"},{\"type\":\"skill\",\"name\":\"crw-dev-testing\",\"path\":\"/f/SKILL.md\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,REVG\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "reapplied attachment-only items: nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\"},{\"type\":\"skill\",\"name\":\"crw-dev-testing\",\"path\":\"/f/SKILL.md\"},{\"type\":\"image\",\"image_url\":\"data:image/png;base64,REVG\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "caller routing and full-history restriction on items",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"fork_context\":true,\"model\":\"caller-model\",\"reasoning_effort\":\"low\",\"items\":[{\"type\":\"text\",\"text\":\"CRW-ROLE: explorer\\n\\nTASK: inspect the route\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"fork_context\":true,\"model\":\"caller-model\",\"reasoning_effort\":\"low\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nCRW-ROLE: explorer\\n\\nTASK: inspect the route\"}]}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "items boundaries keep fences and marker fragments apart",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"TASK: inspect\\n```\\n$crw-dev\"},{\"type\":\"image\",\"image_url\":\"fixture\"},{\"type\":\"text\",\"text\":\"$crw-dev\"},{\"type\":\"text\",\"text\":\"[CRW-DIS\"},{\"type\":\"text\",\"text\":\"PATCH:missing:missing]\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nTASK: inspect\\n```\\n$crw-dev\"},{\"type\":\"image\",\"image_url\":\"fixture\"},{\"type\":\"text\",\"text\":\"[$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md)\"},{\"type\":\"text\",\"text\":\"[CRW-DIS\"},{\"type\":\"text\",\"text\":\"PATCH:missing:missing]\\n\\n<skill name=\\\"crw-dev\\\">\\n---\\nname: crw-dev\\ndescription: \\\"Synthetic dev skill for hook oracle tests.\\\"\\n---\\n# dev\\nUse $crw-search only if the task calls for it.\\n</skill>\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: prompt override",
+   "test": "spawn-attach-hook.test.ts:683-733,1038-1053; spawn-items-routing.test.ts",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"low\",\"promptOverride\":\"EXPLORER-PROMPT: be terse.\",\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":\"  \\n \",\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":\"  padded prompt \\n\",\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"map the parser\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a reapplied message gets the prompt again (known defect)",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"map the parser\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "promptOverride is not subject to the full-history guard",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"fork_context\":true,\"message\":\"map the parser\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"fork_context\":true,\"message\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"all\",\"agent_type\":\"explorer\",\"message\":\"map the parser\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"all\",\"agent_type\":\"explorer\",\"message\":\"{{LEAF}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nmap the parser\\n\\n{{AFFORDANCE}}\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"TASK: locate\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nTASK: locate\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "items already holding the prompt after the guard: skipped, nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\\n\\nTASK: locate\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "attachment-only: guard item then prompt",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"image\",\"image_url\":\"fixture\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\"},{\"type\":\"image\",\"image_url\":\"fixture\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "reapplied attachment-only items: nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nEXPLORER-PROMPT: be terse.\"},{\"type\":\"image\",\"image_url\":\"fixture\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "a whitespace-only prompt counts as none",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"reviewer\",\"message\":\"check the parser\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"reviewer\",\"message\":\"{{V1}}\\n\\ncheck the parser\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "the prompt is trimmed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"worker\",\"message\":\"implement it\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"worker\",\"message\":\"{{V1}}\\n\\npadded prompt\\n\\nimplement it\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "coordinator guard carries the grant instruction before the prompt",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"CRW-SUBSPAWN-ALLOWED coordinate\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1_COORD}}\\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:{N1}]\\n\\nEXPLORER-PROMPT: be terse.\\n\\ncoordinate\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a message that is exactly the guard: the prompt cannot be inserted, yet an envelope is printed (known defect)",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: prompt override dollar patterns",
+   "test": "spawn-attach-hook.ts:1026-1029 String.replace substitution",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"low\",\"promptOverride\":\"A $& B $$ C $' D $` E $1 F $<x> G\",\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"TASKTEXT\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nA {{V1}}\\n\\n B $ C TASKTEXT D  E $1 F $<x> G\\n\\nTASKTEXT\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"TASKTEXT\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nA {{LEAF}}\\n\\n B $ C TASKTEXT\\n\\n{{AFFORDANCE}} D  E $1 F $<x> G\\n\\nTASKTEXT\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"TASKTEXT\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nA {{V1}}\\n\\n B $ C TASKTEXT D  E $1 F $<x> G\\n\\nTASKTEXT\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: v2 ciphertext",
+   "test": "spawn-attach-hook.test.ts:1038-1075,1100-1155",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":{\"model\":\"rec/fb\",\"effort\":null}},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":{\"model\":\"rec/fb2\",\"effort\":\"high\"}},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"rec/architect\",\"effort\":\"high\",\"promptOverride\":\"Architect-only instructions\",\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"design\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"design\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "the native hook name",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"collaborationspawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "explicit settings: only the notice is printed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"caller-fixture\",\"reasoning_effort\":\"low\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"caller-fixture\",\"reasoning_effort\":\"low\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "full history: only the notice is printed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"all\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"all\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "fallback notice and ciphertext notice, joined by a newline",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"},\"additionalContext\":\"[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: Roles with a first fallback use the main-owned dispatch protocol before native spawn. Run crw role helper dispatch with one JSON object on stdin: {action:\\\"start\\\",sessionId:<your native session>,dispatchId:<unique task id>,role:<role>}. Then claim with {action:\\\"claim\\\",sessionId,dispatchId,attemptId}. Only action=spawn authorizes one native call; prepend its marker followed by a newline to the original task/skills, pass candidate model and effort when non-null, and use a fresh context. Report creation with {action:\\\"report\\\",outcome:\\\"created\\\",sessionId,dispatchId,attemptId,agentId:<returned id>}, then use native wait. Report success with {action:\\\"report\\\",outcome:\\\"complete\\\",sessionId,dispatchId,attemptId,agentId} only after validating final work; native completion alone is not task success and terminal reports cannot reopen. Report provider failure with action:\\\"report\\\",outcome:\\\"failed\\\", the same IDs, the original error and executionState (not_created/stopped/unknown/running). For confirmed stagnation or unusable final output, report outcome:\\\"task_failed\\\" with taskFailure:{kind:\\\"stagnation\\\"|\\\"unusable_output\\\",evidence:<concrete task evidence>}, the same IDs, executionState:\\\"stopped\\\", and reconciliation:<termination and partial-work evidence>. Task evidence and reconciliation must each be non-empty text of at most 2000 characters; taskFailure permits only kind and evidence. Omit error on task reports; supplied stop errors still stop, unknown errors reconcile, and next-eligible provider errors must use outcome:\\\"failed\\\". Never relabel cancellation, exhausted bounds, a bare wait timeout or supported disagreement as task failure. Failed handoff requires concrete reconciliation evidence and the recorded agentId for a stopped child. Inspect changes and stop all prior work before retrying. A ready result requires a new claim. Status never authorizes a second spawn. main-direct returns remaining work to the main agent; independent review still requires independent evidence. stop/reconcile never authorizes another model or direct execution. OCX owns provider retries; CRW selects at most two native attempts. Do not invent error codes from arbitrary prose; preserve structured errors or canonical transport error text. Explicit caller model overrides and full-history forks are outside this managed path. Never use a dispatch marker to bypass native permissions.\\n[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a lookalike is plaintext: guard, prompt and affordance",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7J\",\"agent_type\":\"architect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nArchitect-only instructions\\n\\ngAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7J\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "v1 items never take the ciphertext path",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"architect\",\"items\":[{\"type\":\"text\",\"text\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\"},{\"type\":\"attachment\",\"ref\":\"fixture-1\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"architect\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nArchitect-only instructions\\n\\ngAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\"},{\"type\":\"attachment\",\"ref\":\"fixture-1\"}],\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: fallback notice",
+   "test": "spawn-attach-hook.ts:1081-1086",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":{\"model\":\"rec/fb\",\"effort\":null}},\"reviewer\":{\"mode\":\"model\",\"model\":\"rec/reviewer\",\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"map it\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nmap it\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"},\"additionalContext\":\"[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: Roles with a first fallback use the main-owned dispatch protocol before native spawn. Run crw role helper dispatch with one JSON object on stdin: {action:\\\"start\\\",sessionId:<your native session>,dispatchId:<unique task id>,role:<role>}. Then claim with {action:\\\"claim\\\",sessionId,dispatchId,attemptId}. Only action=spawn authorizes one native call; prepend its marker followed by a newline to the original task/skills, pass candidate model and effort when non-null, and use a fresh context. Report creation with {action:\\\"report\\\",outcome:\\\"created\\\",sessionId,dispatchId,attemptId,agentId:<returned id>}, then use native wait. Report success with {action:\\\"report\\\",outcome:\\\"complete\\\",sessionId,dispatchId,attemptId,agentId} only after validating final work; native completion alone is not task success and terminal reports cannot reopen. Report provider failure with action:\\\"report\\\",outcome:\\\"failed\\\", the same IDs, the original error and executionState (not_created/stopped/unknown/running). For confirmed stagnation or unusable final output, report outcome:\\\"task_failed\\\" with taskFailure:{kind:\\\"stagnation\\\"|\\\"unusable_output\\\",evidence:<concrete task evidence>}, the same IDs, executionState:\\\"stopped\\\", and reconciliation:<termination and partial-work evidence>. Task evidence and reconciliation must each be non-empty text of at most 2000 characters; taskFailure permits only kind and evidence. Omit error on task reports; supplied stop errors still stop, unknown errors reconcile, and next-eligible provider errors must use outcome:\\\"failed\\\". Never relabel cancellation, exhausted bounds, a bare wait timeout or supported disagreement as task failure. Failed handoff requires concrete reconciliation evidence and the recorded agentId for a stopped child. Inspect changes and stop all prior work before retrying. A ready result requires a new claim. Status never authorizes a second spawn. main-direct returns remaining work to the main agent; independent review still requires independent evidence. stop/reconcile never authorizes another model or direct execution. OCX owns provider retries; CRW selects at most two native attempts. Do not invent error codes from arbitrary prose; preserve structured errors or canonical transport error text. Explicit caller model overrides and full-history forks are outside this managed path. Never use a dispatch marker to bypass native permissions.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "unchanged input still prints the notice",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nmap it\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nmap it\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"},\"additionalContext\":\"[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: Roles with a first fallback use the main-owned dispatch protocol before native spawn. Run crw role helper dispatch with one JSON object on stdin: {action:\\\"start\\\",sessionId:<your native session>,dispatchId:<unique task id>,role:<role>}. Then claim with {action:\\\"claim\\\",sessionId,dispatchId,attemptId}. Only action=spawn authorizes one native call; prepend its marker followed by a newline to the original task/skills, pass candidate model and effort when non-null, and use a fresh context. Report creation with {action:\\\"report\\\",outcome:\\\"created\\\",sessionId,dispatchId,attemptId,agentId:<returned id>}, then use native wait. Report success with {action:\\\"report\\\",outcome:\\\"complete\\\",sessionId,dispatchId,attemptId,agentId} only after validating final work; native completion alone is not task success and terminal reports cannot reopen. Report provider failure with action:\\\"report\\\",outcome:\\\"failed\\\", the same IDs, the original error and executionState (not_created/stopped/unknown/running). For confirmed stagnation or unusable final output, report outcome:\\\"task_failed\\\" with taskFailure:{kind:\\\"stagnation\\\"|\\\"unusable_output\\\",evidence:<concrete task evidence>}, the same IDs, executionState:\\\"stopped\\\", and reconciliation:<termination and partial-work evidence>. Task evidence and reconciliation must each be non-empty text of at most 2000 characters; taskFailure permits only kind and evidence. Omit error on task reports; supplied stop errors still stop, unknown errors reconcile, and next-eligible provider errors must use outcome:\\\"failed\\\". Never relabel cancellation, exhausted bounds, a bare wait timeout or supported disagreement as task failure. Failed handoff requires concrete reconciliation evidence and the recorded agentId for a stopped child. Inspect changes and stop all prior work before retrying. A ready result requires a new claim. Status never authorizes a second spawn. main-direct returns remaining work to the main agent; independent review still requires independent evidence. stop/reconcile never authorizes another model or direct execution. OCX owns provider retries; CRW selects at most two native attempts. Do not invent error codes from arbitrary prose; preserve structured errors or canonical transport error text. Explicit caller model overrides and full-history forks are outside this managed path. Never use a dispatch marker to bypass native permissions.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "no fallback for this role",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"reviewer\",\"message\":\"check it\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"reviewer\",\"message\":\"{{V1}}\\n\\ncheck it\",\"model\":\"rec/reviewer\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"map it\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nmap it\\n\\n{{AFFORDANCE}}\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"low\"},\"additionalContext\":\"[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: Roles with a first fallback use the main-owned dispatch protocol before native spawn. Run crw role helper dispatch with one JSON object on stdin: {action:\\\"start\\\",sessionId:<your native session>,dispatchId:<unique task id>,role:<role>}. Then claim with {action:\\\"claim\\\",sessionId,dispatchId,attemptId}. Only action=spawn authorizes one native call; prepend its marker followed by a newline to the original task/skills, pass candidate model and effort when non-null, and use a fresh context. Report creation with {action:\\\"report\\\",outcome:\\\"created\\\",sessionId,dispatchId,attemptId,agentId:<returned id>}, then use native wait. Report success with {action:\\\"report\\\",outcome:\\\"complete\\\",sessionId,dispatchId,attemptId,agentId} only after validating final work; native completion alone is not task success and terminal reports cannot reopen. Report provider failure with action:\\\"report\\\",outcome:\\\"failed\\\", the same IDs, the original error and executionState (not_created/stopped/unknown/running). For confirmed stagnation or unusable final output, report outcome:\\\"task_failed\\\" with taskFailure:{kind:\\\"stagnation\\\"|\\\"unusable_output\\\",evidence:<concrete task evidence>}, the same IDs, executionState:\\\"stopped\\\", and reconciliation:<termination and partial-work evidence>. Task evidence and reconciliation must each be non-empty text of at most 2000 characters; taskFailure permits only kind and evidence. Omit error on task reports; supplied stop errors still stop, unknown errors reconcile, and next-eligible provider errors must use outcome:\\\"failed\\\". Never relabel cancellation, exhausted bounds, a bare wait timeout or supported disagreement as task failure. Failed handoff requires concrete reconciliation evidence and the recorded agentId for a stopped child. Inspect changes and stop all prior work before retrying. A ready result requires a new claim. Status never authorizes a second spawn. main-direct returns remaining work to the main agent; independent review still requires independent evidence. stop/reconcile never authorizes another model or direct execution. OCX owns provider retries; CRW selects at most two native attempts. Do not invent error codes from arbitrary prose; preserve structured errors or canonical transport error text. Explicit caller model overrides and full-history forks are outside this managed path. Never use a dispatch marker to bypass native permissions.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: input forms and bounds",
+   "test": "spawn-attach-hook.test.ts:741-775; spawn-attach-hook.ts:849-857",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "  \n\t ",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "{not json",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "[]",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "null",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "\"x\"",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "5",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "{}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "the JavaScript trim set holds the BOM and NBSP",
+     "stdin": "﻿{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"padded\",\"agent_type\":\"explorer\"}} \n",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\npadded\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a repeated key keeps its first place and last value",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"first\",\"message\":\"last\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nlast\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "numbers respell as JavaScript doubles; integer-like keys move first",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"b\":1,\"10\":2,\"2\":3.0,\"e\":1E2,\"big\":12345678901234567890,\"z\":-0,\"inf\":1e999,\"small\":1e-7,\"k\":1e21,\"tiny\":1e-400,\"neg\":-1.5e+3,\"message\":\"keep <>& \\u00e9 \\u2028 \\u007f \\u0000 \\/\",\"nested\":{\"9\":1,\"a\":[1.0,{\"3\":2,\"1\":1}]},\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"2\":3,\"10\":2,\"b\":1,\"e\":100,\"big\":12345678901234567000,\"z\":0,\"inf\":null,\"small\":1e-7,\"k\":1e+21,\"tiny\":0,\"neg\":-1500,\"message\":\"{{V1}}\\n\\nkeep <>& é    \\u0000 /\",\"nested\":{\"9\":1,\"a\":[1,{\"1\":1,\"3\":2}]},\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "fork_turns 3.0 is a number: not a full fork",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":3.0,\"message\":\"numeric fork_turns\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":3,\"message\":\"{{LEAF}}\\n\\nnumeric fork_turns\\n\\n{{AFFORDANCE}}\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "only canonical array indices below 2^32-1 move first",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"b\":1,\"2\":0,\"1\":0,\"01\":0,\"4294967295\":0,\"4294967294\":0,\"-1\":0,\"message\":\"x\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"1\":0,\"2\":0,\"4294967294\":0,\"b\":1,\"01\":0,\"4294967295\":0,\"-1\":0,\"message\":\"{{V1}}\\n\\nx\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "exactly 4 MiB is processed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"tool_input\":{\"message\":\"{{FILL:x:4194201}}\"}}",
+     "expectSha256": "70b6f80d82652cd1471683cbc5a624839797c7c5f3262c50625e08c22c6488a5",
+     "expectBytes": 4194876,
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "one byte more is denied",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"tool_input\":{\"message\":\"{{FILL:x:4194202}}\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "the bound counts bytes, not characters",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"tool_input\":{\"message\":\"{{FILL:é:2097152}}\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: deep nesting",
+   "test": "spawn-attach-hook.ts:854,1089-1109: JSON.parse is iterative, JSON.stringify throws a RangeError near 4,458 levels",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "100 levels inside tool_input are echoed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"agent_type\":\"explorer\",\"junk\":{{FILL:[:100}}{{FILL:]:100}}}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nx\",\"agent_type\":\"explorer\",\"junk\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "100,000 levels inside tool_input: the answer cannot be written, nothing is printed",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\",\"agent_type\":\"explorer\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}}}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "note": "the same field outside tool_input is never written: the normal answer",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}},\"tool_input\":{\"message\":\"x\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nx\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a subagent spawn with a deep field outside tool_input is still denied",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"agent_id\":\"c\",\"agent_type\":\"explorer\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}},\"tool_input\":{\"message\":\"x\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a subagent spawn with a deep field inside tool_input is denied before anything is written",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"agent_id\":\"c\",\"agent_type\":\"explorer\",\"tool_input\":{\"message\":\"x\",\"junk\":{{FILL:[:100000}}{{FILL:]:100000}}}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: grants through the hook",
+   "test": "spawn-attach-hook.test.ts:408-438,664-673",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": null,
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"worker\",\"items\":[{\"type\":\"text\",\"text\":\"do A\"},{\"type\":\"local_image\",\"path\":\"/p.png\"},{\"type\":\"text\",\"text\":\"CRW-SUBSPAWN-ALLOWED coordinate B\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"worker\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1_COORD}}\\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:{N1}]\\n\\ndo A\"},{\"type\":\"local_image\",\"path\":\"/p.png\"},{\"type\":\"text\",\"text\":\" coordinate B\"}]}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"agent_id\":\"rec-child\",\"agent_type\":\"explorer\",\"tool_input\":{\"items\":[{\"type\":\"text\",\"text\":\"[CRW-SUBSPAWN-GRANT:{N1}] go\"},{\"type\":\"local_image\",\"path\":\"/q.png\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\n go\"},{\"type\":\"local_image\",\"path\":\"/q.png\"}]}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "the capability is single use",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"agent_id\":\"rec-child\",\"agent_type\":\"explorer\",\"tool_input\":{\"items\":[{\"type\":\"text\",\"text\":\"[CRW-SUBSPAWN-GRANT:{N1}] go\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"agent_id\":\"rec-child\",\"agent_type\":\"explorer\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"spawn a helper\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"plain task\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nplain task\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "reapplied plain v1 message: nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"{{V1}}\\n\\nplain task\"}}",
+     "expect": "",
+     "classification": "identical"
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"plain task\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nplain task\\n\\n{{AFFORDANCE}}\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "reapplied v2 message: nothing changes",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nplain task\\n\\n{{AFFORDANCE}}\"}}",
+     "expect": "",
+     "classification": "identical"
+    }
+   ]
+  },
+  {
+   "name": "route: lone surrogates",
+   "test": "c9: JSON.stringify keeps a lone surrogate as its escape",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "lone high surrogate in a v1 message",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"a\\ud800b\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\na\\ud800b\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "lone low surrogate",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"a\\udc00b\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\na\\udc00b\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a reversed pair is two lone surrogates",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"x\\udc00\\ud800y\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nx\\udc00\\ud800y\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a valid pair stays a character",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"pair \\ud83d\\ude00 and 😀 literal\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\npair 😀 and 😀 literal\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "items text, attachment value, a key and another member",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"t\\ud800\"},{\"type\":\"image\",\"ref\":\"\\udc00\",\"k\\ud800\":1}],\"trace\":\"\\ud800\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\nt\\ud800\"},{\"type\":\"image\",\"ref\":\"\\udc00\",\"k\\ud800\":1}],\"trace\":\"\\ud800\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "v2 message with the affordance",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"v2 \\ud800 text\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"{{LEAF}}\\n\\nv2 \\ud800 text\\n\\n{{AFFORDANCE}}\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a pair split across items stays two lone surrogates",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"a\\ud83d\"},{\"type\":\"text\",\"text\":\"\\ude00b\"}]}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"{{V1}}\\n\\na\\ud83d\"},{\"type\":\"text\",\"text\":\"\\ude00b\"}],\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "next to a skill mention",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"s\",\"cwd\":\"{WS}\",\"tool_input\":{\"message\":\"use $crw-dev\\ud800 and $crw-dev \\udc00\",\"agent_type\":\"explorer\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"message\":\"{{V1}}\\n\\nuse [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md)\\ud800 and [$crw-dev](skill://{SKILLS}/crw-dev/SKILL.md) \\udc00\\n\\n<skill name=\\\"crw-dev\\\">\\n---\\nname: crw-dev\\ndescription: \\\"Synthetic dev skill for hook oracle tests.\\\"\\n---\\n# dev\\nUse $crw-search only if the task calls for it.\\n</skill>\",\"agent_type\":\"explorer\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "route: trust warning",
+   "test": "spawn-attach-hook.ts:927,1049,1084",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"rec/explorer\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"model\",\"model\":\"rec/architect\",\"effort\":\"high\",\"promptOverride\":\"Architect-only instructions\",\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"message\":\"TASKTEXT\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"{{V1}}\\n\\nTASKTEXT\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "Decision 7: the project layer is dropped, so a tracked untrusted project config no longer prefixes the message or the notice; the port answers as the oracle does without the project config.",
+     "twin": {
+      "project": {
+       "explorer": {
+        "mode": "model",
+        "model": "proj/model",
+        "effort": "low"
+       }
+      },
+      "oracleWarned": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"[CRW-CONFIG-IGNORED] ignored Git-tracked .crw/subagents.json; review it, then run `cxc subagents trust-token` and export the printed project-bound value\\n\\n{{V1}}\\n\\nTASKTEXT\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n"
+     }
+    },
+    {
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "Decision 7: the project layer is dropped, so a tracked untrusted project config no longer prefixes the message or the notice; the port answers as the oracle does without the project config.",
+     "twin": {
+      "project": {
+       "explorer": {
+        "mode": "model",
+        "model": "proj/model",
+        "effort": "low"
+       }
+      },
+      "oracleWarned": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply. ignored Git-tracked .crw/subagents.json; review it, then run `cxc subagents trust-token` and export the printed project-bound value\"}}\n"
+     }
+    }
+   ]
+  },
+  {
+   "name": "route: items cap",
+   "test": "spawn-attach-hook.ts:1057-1064",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": null,
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "well within the cap: the blocks are appended",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"$crw-dev {{FILL:a:260378}}\"},{\"type\":\"attachment\",\"ref\":\"a\"},{\"type\":\"text\",\"text\":\"tail\"}]}}",
+     "expectSha256": "0254591e3de17070b0cecf70a9f89b20001f0b01a65a4c367eaf8b39b3f05a2c",
+     "expectBytes": 261338,
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "well past the cap: the blocks are not appended",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"explorer\",\"items\":[{\"type\":\"text\",\"text\":\"$crw-dev {{FILL:a:262378}}\"},{\"type\":\"attachment\",\"ref\":\"a\"},{\"type\":\"text\",\"text\":\"tail\"}]}}",
+     "expectSha256": "d0791d6403243917e765b03580fe0130163c5796abccaab493436f336497e274",
+     "expectBytes": 263122,
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  }
+ ],
+ "deny": [
+  {
+   "reason": "\"\\ud800\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"\\ud800\"}}\n"
+  },
+  {
+   "reason": "\"\\udc00\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"\\udc00\"}}\n"
+  },
+  {
+   "reason": "\"a\\ud800b\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"a\\ud800b\"}}\n"
+  },
+  {
+   "reason": "\"x\\udc00\\ud800y\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"x\\udc00\\ud800y\"}}\n"
+  },
+  {
+   "reason": "\"😀\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"😀\"}}\n"
+  },
+  {
+   "reason": "\"q\\\"\\\\\\n\\r\\t\\b\\f\\u0001  <>&/\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"q\\\"\\\\\\n\\r\\t\\b\\f\\u0001  <>&/\"}}\n"
+  },
+  {
+   "reason": "\"managed dispatch: marker \\ud800 and \\udc00\"",
+   "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"managed dispatch: marker \\ud800 and \\udc00\"}}\n"
+  }
+ ],
+ "itemsCap": {
+  "maxUnits": 262144,
+  "cases": [
+   {
+    "delta": 0,
+    "appended": true
+   },
+   {
+    "delta": 1,
+    "appended": false
+   }
+  ]
+ }
 }
