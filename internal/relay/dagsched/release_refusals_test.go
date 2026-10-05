@@ -227,7 +227,8 @@ func TestReleaseFreshnessFailsClosed(t *testing.T) {
 	}
 }
 
-// The forge is addressed by the owner/name the relay recorded at acceptance, never by the local path the edge targets.
+// The forge is addressed by the owner/name the relay recorded at acceptance, never by the local path the edge targets. This is a LEGACY local row, seeded with acceptNode on purpose: a new
+// implementation acceptance names its forge as the target (acceptOnForge), and every other release test here already does.
 func TestReleaseFreshnessUsesForgeIdentity(t *testing.T) {
 	k := newReleaseKit(t)
 	checkout := t.TempDir()

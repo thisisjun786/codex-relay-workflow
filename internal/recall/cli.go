@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,7 +228,7 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}()
 	if recallCLIBool(v, "rebuild") {
-		if err = db.Exec("DELETE FROM msgs; DELETE FROM files;"); err != nil {
+		if err = recallRebuildClearIndex(db); err != nil {
 			return fail(err)
 		}
 	}
@@ -251,6 +250,36 @@ func recallCLIChatIndex(args []string, stdout, stderr io.Writer) (code int) {
 	}
 	fmt.Fprint(stdout, recallCLIFormatStatusText(report))
 	return 0
+}
+
+// recallRebuildClearIndex clears the derived index in a transaction of its own: a failed delete must
+// not leave an empty msgs table beside the files fingerprints.
+//
+// The shared ingestTransaction (ingest.go:133-137) reports a failed ROLLBACK in place of the reason
+// the work failed, which is the oracle's ingest shape (recall/src/ingest.ts:269,286,343). A rebuild
+// delete that raises ROLLBACK (a BEFORE DELETE trigger) has already ended the transaction inside
+// SQLite, so the explicit ROLLBACK finds nothing to do and "cannot rollback - no transaction is
+// active" would replace the real reason. That exact rollback failure is dropped and the original
+// error is returned; any other rollback failure is appended after it.
+func recallRebuildClearIndex(db *RwDb) error {
+	const noTransaction = "cannot rollback - no transaction is active"
+	rollback := func(err error) error {
+		rb := db.Exec("ROLLBACK")
+		if rb == nil || rb.Error() == noTransaction {
+			return err
+		}
+		return fmt.Errorf("%w; rollback failed: %v", err, rb)
+	}
+	if err := db.Exec("BEGIN"); err != nil {
+		return err
+	}
+	if err := db.Exec("DELETE FROM msgs; DELETE FROM files;"); err != nil {
+		return rollback(err)
+	}
+	if err := db.Exec("COMMIT"); err != nil {
+		return rollback(err)
+	}
+	return nil
 }
 
 // Memory management preserves Node parseArgs(strict:false), unlike searches.
@@ -285,7 +314,7 @@ func recallCLIParseLax(args []string, stringKeys string) map[string]any {
 }
 func recallCLILaxHome(v map[string]any) (string, error) {
 	if s := recallCLIString(v, "home"); s != nil && *s != "" {
-		return filepath.Abs(*s)
+		return RecallPhysicalAbs(*s)
 	}
 	return codexHome()
 }

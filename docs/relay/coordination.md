@@ -224,24 +224,26 @@ about declared that pull request's head on the live one (2026-10-04). It is refu
 
 - A request that states no pull request and no relationship is the replay of the live turn, as
   before (`alreadyClaimed: true`).
-- A request that states some is the replay when no stated identity contradicts what the turn
-  records (the same kind, recorded and different) and at least one agrees. Another pull request or
-  another relationship is refused `disposition_conflict`. So are identities the turn does not record at
-  all, unless the request names the turn's own candidate head: a request for another pull request
-  names its own head, and two pull requests do not share one. A refused request writes nothing to the
-  turns or their ledgers; the refusal is kept as a contest (`merge-turn-show` lists it). It names the
-  live turn, what it is bound to, its state, its place in the order and the step that frees the
-  target, and says whether the request contradicts the turn or only names what the turn does not
-  record.
+- A request that states some is the replay only when every identity it states is recorded on the turn
+  and equal (the pull request number, the relationship id). Another pull request or another
+  relationship is refused `disposition_conflict`. So is an identity the turn does not record at
+  all, whatever head the request states: two pull requests can point at one commit (2026-10-05), so
+  the head does not tell a request for the turn's own pull request from one for another. A refused
+  request writes nothing to the turns or their ledgers; the refusal is kept as a contest
+  (`merge-turn-show` lists it). It names the live turn, what it is bound to, its state, its place in
+  the order and the step that frees the target, says whether the request contradicts the turn or only
+  names what the turn does not record, and tells the caller to repeat the request with the arguments
+  the claim was made with, which adds or changes no identity of the turn.
 - The place is counted among the live claims on the target in the order the lane serves them: the
   claims that hold the target first, then the waiting ones by the time they were made, which is the
   order a released target promotes them in. A claim that closed is not counted.
-- The other pull request's turn is requested after the earlier one lands or is returned
-  (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
-  `merge-turn-withdraw`). A claim made with no pull request and no relationship records nothing to
-  compare, so it answers only requests that state nothing or name its own candidate head, and a claim
-  that records one kind only (a relationship but no pull request) answers a request that states the
-  other kind only at that head: state both on every claim.
+- The other pull request's turn, or the same pull request with other identities, is requested after
+  the earlier one lands or is returned (`merge-turn-release --disposition returned`; a waiting claim
+  is withdrawn with `merge-turn-withdraw`). A claim records the identities it was made with and never
+  gains one. A claim made with no pull request and no relationship records nothing to compare, so it
+  answers only a request that states nothing, and a claim that records one kind only (a relationship
+  but no pull request) answers only a request that states that relationship or nothing: state both on
+  every claim.
 - `dag-merge-request` applies a stricter comparison to the turn it is answered with (pull request,
   relationship, head and project) and refuses `disposition_conflict` as before.
 
@@ -266,25 +268,43 @@ the head being a different commit. Both are deliberate: they were written with t
   nobody. The answer to the restating call names it, and `merge-turn-show` reads it later. A waiting claim holds no grant;
   it is granted one when it takes the target.
 
-**A head that moves on a turn bound to a pull request is that pull request's head.**
-`merge-turn-ready` with a head that is not the turn's candidate reads the head of the pull request
-the turn records (one GET of `repos/<owner>/<name>/pulls/<n>`, before its transaction) and takes the
-new head only if it is that head. Another pull request's head is refused `merge_candidate_moved`,
-naming the pull request, the head the forge reads and the head declared; a forge that cannot be
-read is refused `merge_target_unreadable`. Neither refusal changes the turn, its candidate head or its
-ledger; each is kept as a contest like the lane's other refusals, and a refused `merge-turn-check` as a
-check row. The turn records no head for its pull request and no work report is recorded, so nothing
-the relay holds could decide it. Where nothing can be compared no read is made: a head that did not
-move, a turn that records no pull request, a relay with no pull request reader. A turn on a
-local-path repository records a pull request number but not where it lives, so the record decides
-and the answer says so. The answer carries `pullRequestHead`: `decidedBy` `forge` with
-`pullRequest`, `head` and `source`, or `decidedBy` `record` with the `reason`; it is absent when
-nothing was compared. A branch update is asynchronous on the forge, so the first declaration after a
-refresh can still read the old head: the refusal says to read the pull request again and declare the
-head it shows, and a repeated refusal is not an escalation. `merge-turn-check` makes the same
-comparison with the head it restates, before the merge begins, and refuses the same two ways; it is
-also what stops a turn that a relay older than this rule left holding another pull request's head.
-The head a claim states at `merge-turn-request --head` is not read: the check is its gate.
+**A head declared or restated on a turn that records a pull request or a relationship is the head of what it is bound to.**
+`merge-turn-ready` and `merge-turn-check` compare the head with a source of truth, in this order:
+
+- A turn that records a pull request on a forge repository (`owner/name`) is compared with that pull request's head: one GET of
+  `repos/<owner>/<name>/pulls/<n>`, before the transaction. Another pull request's head is refused `merge_candidate_moved`,
+  naming the pull request, the head the forge reads and the head declared; a forge that cannot be read is refused
+  `merge_target_unreadable`. The answer's `pullRequestHead` is `{"pullRequest", "decidedBy": "forge", "head", "source"}`.
+- Every other turn that records a pull request or a relationship (a local-path repository, which records a pull request
+  number but not where it lives, or a claim that names only a relationship) is compared with the head the relationship's
+  current work reports name: the latest head-bearing submission of every event in the newest generation that names a head.
+  Another head is refused `merge_candidate_moved`, two different heads `revision_ambiguous`, and a relationship attached to
+  another project `foreign_scope`. A report that names the head for another pull request than the turn's, or for another
+  repository when the turn is on a forge repository, is another pull request's head and is refused `merge_candidate_moved` too
+  (a report that names no pull request has no number to contradict, and a local path cannot be matched to a repository). The answer's `pullRequestHead` is
+  `{"pullRequest" (the number, or null), "decidedBy": "work_report", "head", "relationship"}`.
+- When there is nothing to compare the head with, the call is refused `merge_target_unreadable` and the text says how to get one
+  compared: claim with `--pr` on a forge repository, or with `--relationship` and retry after a work report records the head
+  (a local-path turn with a pull request and no relationship; a relationship with no work report that names a head). Nothing
+  in the product records a work report ([the port decisions](../port/decisions.md), section 53), so a claim that is not on a
+  forge repository with a pull request refuses until a store holds one: the lane is forge-only in practice.
+
+`merge-turn-ready` compares a head that moved, and also readiness declared on a head that did not (`--ready` with the
+turn's own candidate head, or no `--head`): a head recorded wrong from the start is stopped there and not only at the check.
+Withdrawing readiness (`--not-ready`) on a head that did not move asserts nothing about the head and compares nothing. No
+refusal changes the turn, its candidate head or its ledger; each is kept as a contest like the lane's other refusals, and a
+refused `merge-turn-check` as a check row. A claim that records neither a pull request nor a relationship records nothing to
+compare, and is not compared. A recorded forge pull request is never decided by the turn's record: a relay with no pull request
+reader (a service built by a test; the relay commands always supply one) refuses it `merge_target_unreadable` at
+`merge-turn-ready`, moved head or not, and a `merge-turn-check` given a reader that cannot read pull requests refuses it the same
+way even when the relay has one. A work report does not stand in for the missing reader. A branch update is asynchronous on the
+forge, so the first declaration after a refresh can still read the old head: the refusal says to read the pull request again
+and declare the head it shows, and a repeated refusal is not an escalation. A candidate that changes between the read of the
+forge and the transaction is not the candidate that was read
+for: the call is refused `merge_target_unreadable` ("call again"), even when the forge agrees with the head. `merge-turn-check`
+compares the head it restates, before the merge begins and before the base is compared, and is what stops a turn that a relay
+older than this rule left holding another pull request's head. The head a claim states at `merge-turn-request --head` is
+not compared: the check is its gate.
 
 The answer to the restating call carries `readinessReset` whenever the head changed: `previousHead`, `candidateHead`,
 `readyRequested` (what the call asked for), `grantId` (the grant the holder now owes, null for a waiting claim) and
@@ -528,13 +548,14 @@ the item, or when `--expect-independent-review` is given (the flag grades a rest
 usage error without `--restate`). Otherwise the payload is exactly what it was.
 
 - **What is compared.** The item's shape; the file at `artifact.path`; its sha256 against the file's
-  bytes; its status against the artifact's; the artifact's head against the head under restatement; and
-  every kept P0, P1 or security finding of the artifact against the dispositions. The head matches when
-  it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`: a base refresh
-  does not change the patch, and a head whose patch-id is unchanged is not reviewed again. The relay does
-  not compute the patch-id; the parent confirms the stated one with the diff the review bundle builds
-  (command below; its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain `git diff`
-  differs on binary files).
+  bytes; its status against the artifact's; the artifact's head against the forge's current candidate
+  head (the collected snapshot's pinned `headSha`, or the head under restatement when the forge reports
+  none); and every kept P0, P1 or security finding of the artifact against the dispositions. The head
+  matches when it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`: a
+  base refresh does not change the patch, and a head whose patch-id is unchanged is not reviewed again.
+  The relay does not compute the patch-id; the parent confirms the stated one with the diff the review
+  bundle builds (command below; its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain
+  `git diff` differs on binary files).
 - **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
   `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
   `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the

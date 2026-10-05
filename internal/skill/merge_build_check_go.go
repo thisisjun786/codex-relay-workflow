@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -75,12 +76,24 @@ type mergeBuild struct {
 
 // mergeBuildEnv is the go tool's environment: the caller's, except that what the tool writes outside
 // the build cache goes into a directory this run owns and removes: its temporary files (TMPDIR,
-// GOTMPDIR) and, where the user config directory follows XDG_CONFIG_HOME, its telemetry counters. The
-// owned config directory says telemetry is off, so no uploader the tool starts can write there after
-// the command ended and the directory is gone. HOME, the build cache, the module cache and every
-// setting stay as the caller has them, and GOENV is pinned to the caller's file first, so the settings
-// of go env -w keep their place between the environment and the defaults. The module workspace is off.
-func mergeBuildEnv(base []string, owned string) ([]string, error) {
+// GOTMPDIR) and its telemetry counters, which say telemetry is off at every mode file that applies.
+// The owned config directory is where a user config directory that follows XDG_CONFIG_HOME reads the
+// mode; on darwin os.UserConfigDir reads $HOME/Library/Application Support and ignores
+// XDG_CONFIG_HOME, so HOME moves into the owned directory there as well and the mode file is written
+// under that home too, before any go command can start in it. The caches the caller's go environment
+// names (GOCACHE, GOMODCACHE, GOPATH) are read with the caller's environment, in an owned directory
+// that is its own module root, so neither a module in the caller's working directory nor one above
+// the run scratch can choose the go tool's toolchain, and named again, so builds still share the caller's caches. Elsewhere HOME, the build cache, the module cache and every setting stay as
+// the caller has them, and GOENV is pinned to the caller's file first, so the settings of go env -w
+// keep their place between the environment and the defaults. The module workspace is off. targetOS
+// names the platform the go tool targets and defaults to runtime.GOOS; a test names darwin and linux
+// to exercise both on any host. ctx is the check's own deadline: what this environment prepares runs
+// under it, so nothing it starts can outlast the check.
+func mergeBuildEnv(ctx context.Context, base []string, owned string, targetOS ...string) ([]string, error) {
+	goos := runtime.GOOS
+	if len(targetOS) > 0 {
+		goos = targetOS[0]
+	}
 	env := append([]string{}, base...)
 	switch goenv := os.Getenv("GOENV"); goenv {
 	case "off":
@@ -95,17 +108,165 @@ func mergeBuildEnv(base []string, owned string) ([]string, error) {
 		}
 	}
 	config := filepath.Join(owned, "config")
-	telemetry := filepath.Join(config, "go", "telemetry")
 	tmp := filepath.Join(owned, "tmp")
-	for _, dir := range []string{tmp, telemetry} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return nil, err
+	}
+	mode := []byte("off " + time.Now().UTC().Format("2006-01-02"))
+	for _, file := range mergeBuildTelemetryModeFiles(owned, goos) {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(file, mode, 0o600); err != nil {
 			return nil, err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(telemetry, "mode"), []byte("off "+time.Now().UTC().Format("2006-01-02")), 0o600); err != nil {
-		return nil, err
+	env = append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
+	if goos == "darwin" {
+		home := filepath.Join(owned, "home")
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			return nil, err
+		}
+		// The read must not run with the caller's HOME either: every go command started there
+		// initializes telemetry under it, and on darwin the telemetry directory is the one under
+		// HOME. So it runs with the owned HOME, and a value that lands under that home is the
+		// caller's own default with the home prefix swapped, which is swapped back here.
+		probe := mergeBuildProbeDir(owned)
+		if err := os.MkdirAll(probe, 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(probe, "go.mod"), []byte(mergeBuildProbeModule), 0o600); err != nil {
+			return nil, err
+		}
+		readEnv := append(append([]string{}, env...), "HOME="+home)
+		caches, err := mergeBuildCallerCaches(ctx, readEnv, probe)
+		if err != nil {
+			return nil, err
+		}
+		callerHome := mergeBuildEnvValue(base, "HOME")
+		if callerHome == "" {
+			callerHome = os.Getenv("HOME")
+		}
+		for i, value := range caches {
+			caches[i] = mergeBuildCallerPath(value, home, callerHome)
+		}
+		env = append(env, "HOME="+home, "GOCACHE="+caches[0], "GOMODCACHE="+caches[1], "GOPATH="+caches[2])
 	}
-	return append(env, "GOWORK=off", "XDG_CONFIG_HOME="+config, "TMPDIR="+tmp, "GOTMPDIR="+tmp), nil
+	return env, nil
+}
+
+// mergeBuildTelemetryModeFiles are the mode files that say telemetry is off for the go tool: the one
+// under the owned config directory, which is where a user config directory that follows
+// XDG_CONFIG_HOME reads it, and on darwin the one under the owned home, which is where
+// os.UserConfigDir reads the mode ($HOME/Library/Application Support) once HOME has moved there.
+func mergeBuildTelemetryModeFiles(owned, goos string) []string {
+	files := []string{filepath.Join(owned, "config", "go", "telemetry", "mode")}
+	if goos == "darwin" {
+		files = append(files, filepath.Join(owned, "home", "Library", "Application Support", "go", "telemetry", "mode"))
+	}
+	return files
+}
+
+// mergeBuildProbeModule is the go.mod the probe directory holds. The go tool looks for a go.mod in the
+// directory it runs in and then in every parent, so a probe directory that holds none is captured by a
+// module above the run scratch (the scratch root is made under TMPDIR, CRW-610). The module line makes
+// the probe directory the main module, which ends that search; with no go or toolchain line the go
+// command assumes the oldest language version and selects no toolchain, so the file cannot make the
+// cache read switch toolchains or reject one.
+const mergeBuildProbeModule = "module crw-merge-build-probe\n"
+
+// mergeBuildProbeDir is the directory the caller-cache read runs in: a directory this run owns that is
+// its own module root, so the go tool's search for a go.mod stops there and neither a module the
+// caller's working directory holds nor one above the run scratch can choose the go tool's toolchain
+// for it.
+func mergeBuildProbeDir(owned string) string {
+	return filepath.Join(owned, "probe")
+}
+
+// mergeBuildEnvValue is what an environment slice gives a key: of duplicated names the last value,
+// as the go tool reads them.
+func mergeBuildEnvValue(env []string, key string) string {
+	value := ""
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			value = v
+		}
+	}
+	return value
+}
+
+// mergeBuildCallerPath turns a value computed for one home into the value for another: a path that
+// landed inside the owned home is the caller's default under that home, so its prefix becomes the
+// caller's home; anything else, which is what the caller's environment or settings file names, is
+// itself.
+func mergeBuildCallerPath(value, ownedHome, callerHome string) string {
+	if callerHome == "" {
+		return value
+	}
+	rest, ok := strings.CutPrefix(value, ownedHome+string(filepath.Separator))
+	if !ok {
+		return value
+	}
+	return filepath.Join(callerHome, rest)
+}
+
+// mergeBuildCallerCaches reads the build cache, the module cache and GOPATH the caller's go
+// environment names, so that moving HOME on darwin does not move the caches away from the caller.
+// It runs in the directory dir, which the caller owns and which is its own module root, and in a process
+// group of its own that the check's context ends as a whole, so a go env that stalls is cut off with
+// the check instead of keeping it running past its timeout. The caller has already pointed the
+// environment it passes at the run's own home, whose go defaults are the caller's own with the home
+// prefix changed; the caller swaps that prefix back.
+func mergeBuildCallerCaches(ctx context.Context, base []string, dir string) ([3]string, error) {
+	var caches [3]string
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		return caches, err
+	}
+	args := append([]string{"env", "-json"}, mergeBuildCacheKeys[:]...)
+	cmd := exec.CommandContext(ctx, goTool, args...)
+	cmd.Dir = dir
+	cmd.Env = append([]string{}, base...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return caches, err
+	}
+	return mergeBuildDecodeCaches(out)
+}
+
+// mergeBuildCacheKeys are the names the cache read asks for, in the order the values are kept.
+var mergeBuildCacheKeys = [3]string{"GOCACHE", "GOMODCACHE", "GOPATH"}
+
+// mergeBuildDecodeCaches reads what the cache read's go env -json command answered: the value of
+// every name in mergeBuildCacheKeys, each kept exactly as the answer gives it.
+func mergeBuildDecodeCaches(out []byte) ([3]string, error) {
+	var caches [3]string
+	values := map[string]string{}
+	if err := json.Unmarshal(out, &values); err != nil {
+		return caches, fmt.Errorf("go env -json wrote an answer this check cannot read: %w", err)
+	}
+	for i, key := range mergeBuildCacheKeys {
+		value, ok := values[key]
+		if !ok {
+			return caches, fmt.Errorf("go env -json did not answer %s", key)
+		}
+		caches[i] = value
+	}
+	return caches, nil
+}
+
+// mergeBuildTagFlag is how a command line names a tag set. A command-line flag wins over GOFLAGS and
+// over the pinned GOENV file, so the untagged pass names the empty set explicitly: without -tags= a
+// -tags the caller carries would run the untagged pass tagged and it would miss what only an
+// untagged build of the merge has (CRW-562).
+func mergeBuildTagFlag(tags string) []string {
+	if tags == "" {
+		return []string{"-tags="}
+	}
+	return []string{"-tags", tags}
 }
 
 // run classifies the changed directories for both targets, runs the steps and reports. It returns the
@@ -279,9 +440,7 @@ func (b *mergeBuild) classify(ctx context.Context, darwin bool, dirs []string) (
 
 func (b *mergeBuild) list(ctx context.Context, darwin bool, tags string, dirs []string) ([]mergeBuildListed, string, bool, error) {
 	args := []string{"list", "-e", "-p=" + strconv.Itoa(b.parallel), "-json=Match,ImportPath,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,Error"}
-	if tags != "" {
-		args = append(args, "-tags", tags)
-	}
+	args = append(args, mergeBuildTagFlag(tags)...)
 	for _, dir := range dirs {
 		args = append(args, mergeBuildPattern(dir))
 	}
@@ -316,9 +475,7 @@ func (b *mergeBuild) argv(step, tags string, patterns []string) []string {
 	default:
 		args = []string{"vet", p}
 	}
-	if tags != "" {
-		args = append(args, "-tags", tags)
-	}
+	args = append(args, mergeBuildTagFlag(tags)...)
 	return append(args, patterns...)
 }
 

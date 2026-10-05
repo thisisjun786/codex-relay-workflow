@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // gitRepo is a real repository: a base commit on dev and helpers to make branches, merge them and read heads.
@@ -55,27 +54,57 @@ func (r *gitRepo) commit(file, content string) string {
 	return r.git("rev-parse", "HEAD")
 }
 
-// integrationKit is a release kit over a real repository: the tip reader and the ancestry check are the production ones.
+// integrationKit is a release kit over a real repository. It comes in two worlds that differ in the name the repository is reached by. The default world (newIntegrationKit) lands node I on the
+// synthetic forge repository forgeKitRepository, and its fake tip reader and ancestry check map that forge to the temporary repository (forgekit_test.go). The legacy local world
+// (newLegacyLocalIntegrationKit) lands I on the repository's own path and reads with the production readers, its tip reader behind the guard that refuses a non-local target
+// (legacylocal_guard_test.go): it is what the legacy local rows seeded by acceptNode, the scenario tests that still use them and the CLI world need.
 type integrationKit struct {
 	*releaseKit
 	repo *gitRepo
+	// readers answers for the forge repository; nil in the local world.
+	readers *forgeKitReaders
 }
 
+// newIntegrationKit is the default world, the forge, over a release kit of its own.
 func newIntegrationKit(t *testing.T) *integrationKit {
 	t.Helper()
 	return newIntegrationKitOn(t, newReleaseKit(t))
 }
 
-// newIntegrationKitOn is an integration kit over the release kit rk.
+// newIntegrationKitOn is the forge world over the release kit rk: the plan lands I on forgeKitRepository, a new acceptance of I names it (acceptOnForge), and the fake readers read the temporary
+// repository in its name, so every observation is recorded under the forge. A forge the kit did not map is an error and fails the test.
 func newIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
 	t.Helper()
-	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
-	k.sched.Tips = mergeturn.TargetReader{}
-	k.sched.Ancestry = GitAncestry{}.Ancestry
-	// the plan: I lands on dev, K waits for it; D is a terminal node with no outgoing edge
-	k.putPlan("g", 0, "g-r1", addRelNode("I", dag.NodeImplementation), addRelNode("K", dag.NodeNonPR), addRelNode("D", dag.NodeImplementation),
-		addEdge("ik", "I", "K", dag.EdgeIntegrated, doc{"target_repository": k.repo.path}))
+	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t), readers: newForgeKitReaders(t)}
+	k.readers.mapTo(forgeKitRepository, k.repo.path)
+	k.sched.Tips, k.sched.Ancestry = k.readers, k.readers.Ancestry
+	k.putIntegrationPlan(forgeKitRepository)
 	return k
+}
+
+// newLegacyLocalIntegrationKit is the legacy local world over a release kit of its own.
+func newLegacyLocalIntegrationKit(t *testing.T) *integrationKit {
+	t.Helper()
+	return newLegacyLocalIntegrationKitOn(t, newReleaseKit(t))
+}
+
+// newLegacyLocalIntegrationKitOn is the legacy local world over the release kit rk: the guarded tip reader (legacylocal_guard_test.go) and the production ancestry check, and a plan whose edge
+// lands on the repository's own path. The guard refuses a repository that is not an absolute path before the production reader can take it to gh, so a target that is not a local path fails the
+// test instead of reading the forge.
+func newLegacyLocalIntegrationKitOn(t *testing.T, rk *releaseKit) *integrationKit {
+	t.Helper()
+	k := &integrationKit{releaseKit: rk, repo: newGitRepo(t)}
+	k.sched.Tips = newLegacyLocalTipReader(t)
+	k.sched.Ancestry = GitAncestry{}.Ancestry
+	k.putIntegrationPlan(k.repo.path)
+	return k
+}
+
+// putIntegrationPlan is the plan of both worlds: I lands on dev of target, K waits for it; D is a terminal node with no outgoing edge.
+func (k *integrationKit) putIntegrationPlan(target string) {
+	k.t.Helper()
+	k.putPlan("g", 0, "g-r1", addRelNode("I", dag.NodeImplementation), addRelNode("K", dag.NodeNonPR), addRelNode("D", dag.NodeImplementation),
+		addEdge("ik", "I", "K", dag.EdgeIntegrated, doc{"target_repository": target}))
 }
 
 func (k *integrationKit) observe(targets ...Target) (IntegrationResult, error) {
@@ -98,12 +127,13 @@ func TestIntegratedOnRealGit(t *testing.T) {
 	feature := repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	k.declare("g", "I", "feature.txt")
-	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+	a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: feature, PR: 5})
 	k.holdSlotsFor("g", "I")
 
-	// not merged: the observation says so and the node stays unintegrated
+	// not merged: the observation says so and the node stays unintegrated; it is recorded under the forge the plan's edge names, not under the temporary repository the forge is mapped to
 	res, err := k.observe()
-	if err != nil || len(res.Observations) != 1 || res.Observations[0].IsAncestor || res.Integrated || res.Observations[0].Method != "git merge-base --is-ancestor" {
+	if err != nil || len(res.Observations) != 1 || res.Observations[0].IsAncestor || res.Integrated || res.Observations[0].Method != "git merge-base --is-ancestor" ||
+		res.Observations[0].Repository != forgeKitRepository || res.Observations[0].BaseRef != "dev" || res.Observations[0].TipSHA != repo.git("rev-parse", "dev") {
 		t.Fatalf("unmerged = %v %+v", err, res)
 	}
 	if n := k.read("g").node("K"); n.Reason != WaitEdge("ik") {
@@ -141,6 +171,9 @@ func TestIntegratedOnRealGit(t *testing.T) {
 	if again, err := k.observe(); err != nil || again.SlotReleased != false || !again.Integrated {
 		t.Fatalf("after integration = %v %+v", err, again)
 	}
+	if n := k.count("SELECT COUNT(*) FROM dag_integration_observations WHERE repository <> ?", forgeKitRepository); n != 0 {
+		t.Fatalf("%d observations were recorded under a name other than the forge", n)
+	}
 }
 
 // A squash or rebase landing keeps the content and loses the head: the accepted head is not an ancestor, and when a landed merge turn says the head was merged the reading names the contradiction.
@@ -153,13 +186,13 @@ func TestSquashLandingIsNotAncestry(t *testing.T) {
 	repo.git("merge", "-q", "--squash", "feature")
 	repo.git("commit", "-q", "-m", "squashed feature")
 	k.declare("g", "I", "feature.txt")
-	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+	a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: feature, PR: 5})
 	k.mark(a)
 	res, err := k.observe()
 	if err != nil || res.Observations[0].IsAncestor || res.Integrated {
 		t.Fatalf("squashed = %v %+v", err, res)
 	}
-	k.landedTurn(repo.path, "dev", feature)
+	k.landedTurn(forgeKitRepository, "dev", feature)
 	if n := k.read("g").node("K"); n.Reason != BlockedIntegrationUnprovable {
 		t.Fatalf("K = %+v, want blocked:integration_unprovable", n)
 	}
@@ -176,12 +209,12 @@ func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
 	repo.git("merge", "-q", "--no-ff", "-m", "merge feature", "feature")
 	k.putPlan("t", 0, "t-r1", addRelNode("D", dag.NodeImplementation))
 	k.declare("t", "D", "x.go")
-	a := k.acceptNode("t", "D", acceptOpts{HeadSHA: feature, PR: 6, Forge: "owner/repo", Repository: repo.path})
+	a := k.acceptOnForge("t", "D", acceptOpts{HeadSHA: feature, PR: 6})
 	k.mark(a)
 	if _, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", nil); refusalReason(err) != "malformed_receipt" {
 		t.Fatalf("a terminal node with no target = %v", err)
 	}
-	dev, release := Target{repo.path, "dev"}, Target{repo.path, "release"}
+	dev, release := k.forgeTarget("dev"), k.forgeTarget("release")
 	res, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", []Target{dev})
 	if err != nil || !res.Integrated {
 		t.Fatalf("a terminal node observed on its one target = %v %+v", err, res)
@@ -200,7 +233,7 @@ func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
 	}
 	// the order the targets are judged in decides nothing: a target without the head that sorts first still holds the node back
 	repo.git("branch", "alpha", "dev~1")
-	if res, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", []Target{{repo.path, "alpha"}}); err != nil || res.Observations[0].IsAncestor || res.Integrated {
+	if res, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", []Target{k.forgeTarget("alpha")}); err != nil || res.Observations[0].IsAncestor || res.Integrated {
 		t.Fatalf("a first target without the head = %v %+v", err, res)
 	}
 	if res, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", []Target{dev}); err != nil || res.Integrated {
@@ -208,7 +241,7 @@ func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
 	}
 	// and a target that sorts last and holds the head does not decide for the others either
 	repo.git("branch", "zeta", "dev")
-	if res, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", []Target{{repo.path, "zeta"}}); err != nil || !res.Observations[0].IsAncestor || res.Integrated {
+	if res, err := k.sched.ObserveIntegration(context.Background(), "t", "D", "parent", []Target{k.forgeTarget("zeta")}); err != nil || !res.Observations[0].IsAncestor || res.Integrated {
 		t.Fatalf("the last target holds the head, the first two do not = %v %+v", err, res)
 	}
 }
@@ -217,18 +250,18 @@ func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
 func TestObservationReplayComparesTheAnswer(t *testing.T) {
 	k := newIntegrationKit(t)
 	k.declare("g", "I", "x.go")
-	k.acceptNode("g", "I", acceptOpts{HeadSHA: head1, PR: 5, Forge: "owner/repo", Repository: k.repo.path})
+	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: head1, PR: 5})
 	answer := false
 	k.sched.Ancestry = func(context.Context, string, string, string) (bool, string, error) { return answer, "scripted", nil }
-	first, err := k.observe(Target{k.repo.path, "dev"})
+	first, err := k.observe(k.forgeTarget("dev"))
 	if err != nil || first.Observations[0].IsAncestor || first.Observations[0].Seq != 1 {
 		t.Fatalf("first = %v %+v", err, first)
 	}
-	if again, err := k.observe(Target{k.repo.path, "dev"}); err != nil || !again.Observations[0].Replayed {
+	if again, err := k.observe(k.forgeTarget("dev")); err != nil || !again.Observations[0].Replayed {
 		t.Fatalf("the same answer = %v %+v", err, again)
 	}
 	answer = true
-	flipped, err := k.observe(Target{k.repo.path, "dev"})
+	flipped, err := k.observe(k.forgeTarget("dev"))
 	if err != nil || flipped.Observations[0].Replayed || flipped.Observations[0].Seq != 2 || !flipped.Observations[0].IsAncestor {
 		t.Fatalf("the same tip, another answer = %v %+v", err, flipped)
 	}
@@ -243,7 +276,7 @@ func TestObserveRefusesPausedAndCancelled(t *testing.T) {
 	repo.git("checkout", "-q", "dev")
 	repo.git("merge", "-q", "--no-ff", "-m", "merge feature", "feature")
 	k.declare("g", "I", "feature.txt")
-	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+	a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: feature, PR: 5})
 	k.mark(a)
 	k.holdSlotsFor("g", "I")
 	for _, status := range []string{"paused", "cancelled"} {

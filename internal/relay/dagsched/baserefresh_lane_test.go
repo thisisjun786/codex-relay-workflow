@@ -2,13 +2,8 @@ package dagsched
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // CRW-447: once the parent has recorded a base refresh (dag-base-refresh), the head the acceptance stands on is the head of its pull request. The merge judgement, the merge request, the release
@@ -46,7 +41,8 @@ func (s *refreshScenario) moveOn() string {
 	return head
 }
 
-// report is the work report of generation 2 naming a head: the merge lane compares the candidate it is asked about with the head the newest generation's report names.
+// report is the work report of generation 2 naming a head: base refresh compares the head it refreshes with the head the verified report names, and the lane's check still compares the work reports of
+// the turn's relationship with the head it restates (the head itself is compared with the pull request).
 func (s *refreshScenario) report(head string) {
 	s.t.Helper()
 	s.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, pr_url, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
@@ -57,10 +53,10 @@ func (s *refreshScenario) report(head string) {
 func (s *refreshScenario) recordRow(seq int, head string) {
 	s.t.Helper()
 	proof, resolved := "{}", "[]"
-	id := refreshDigest(s.accepted.Acceptance.AcceptanceID, s.rid, 2, s.event2, s.revision2, head, s.repo.path, "dev", head, proof, resolved)
+	id := refreshDigest(s.accepted.Acceptance.AcceptanceID, s.rid, 2, s.event2, s.revision2, head, s.target(), "dev", head, proof, resolved)
 	s.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json,"+
 		" recorded_by_task_id, coordinator_epoch, recorded_at) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?, 'dev', ?, ?, ?, 'someone', 0, 't')",
-		id, s.accepted.Acceptance.AcceptanceID, seq, s.rid, s.event2, s.revision2, head, s.repo.path, head, proof, resolved)
+		id, s.accepted.Acceptance.AcceptanceID, seq, s.rid, s.event2, s.revision2, head, s.target(), head, proof, resolved)
 }
 
 // recordedScenario is the node whose child refreshed the base in generation 2 and whose refresh the parent recorded; the pull request is open at the refreshed head.
@@ -74,10 +70,6 @@ func recordedScenario(t *testing.T) (*refreshScenario, RefreshResult) {
 		t.Fatalf("record = %v", err)
 	}
 	return s, rec
-}
-
-func (s *refreshScenario) laneService() *mergeturn.Service {
-	return &mergeturn.Service{Store: s.s, Registry: &registry.Registry{Store: s.s}, Now: s.sched.now, Delivery: mergeturn.StoreDelivery{Store: s.s}}
 }
 
 // Criterion c1: a node whose base refresh is recorded has its pull request judged and merged through the merge lane, and the edge that waits for its verified result no longer reads blocked:stale_head.
@@ -128,30 +120,26 @@ func TestARefreshedNodeIsJudgedAndMergedInTheLane(t *testing.T) {
 	if err != nil || turn == nil || turn["candidateHead"] != s.head || turn["relationshipId"] != s.rid {
 		t.Fatalf("request after the record = %v %v", err, turn)
 	}
-	service := s.laneService()
+	// what the forge shows for the pull request after the child refreshed the base is seeded here, from the head the scenario built; the lane compares with it and never reads it from the turn
+	pulls := s.lanePulls()
+	pulls.show(7, s.head)
+	service := forgeLaneService(s.sched, s.s, pulls)
 	id := turn["turnId"].(string)
 	if grant, _ := turn["grant"].(map[string]any); grant != nil {
 		if _, err := service.Acknowledge(ctx, id, "parent", grant["grantId"].(string), "re-read the store before merging"); err != nil {
 			t.Fatalf("acknowledge: %v", err)
 		}
 	}
-	green := contract.OrderedObject{{Key: "hasNextPage", Value: false}, {Key: "pagesRead", Value: json.Number("1")}, {Key: "totalCount", Value: json.Number("0")}, {Key: "threadsSeen", Value: []any{}}, {Key: "unresolved", Value: json.Number("0")}}
-	var list []any
-	for _, c := range s.forge.by["owner/repo#7"].Checks {
-		list = append(list, contract.OrderedObject{{Key: "runId", Value: c.RunID}, {Key: "name", Value: c.Name}, {Key: "headSha", Value: c.HeadSHA}, {Key: "conclusion", Value: c.Conclusion}, {Key: "attempt", Value: json.Number("1")}})
-	}
-	if _, err := service.Check(ctx, id, "parent", s.head, s.repo.git("rev-parse", "dev"), list, green, []string{"test"}, mergeturn.TargetReader{}); err != nil {
-		t.Fatalf("the lane's check of the refreshed head: %v", err)
-	}
+	forgeLaneCheck(t, service, pulls, id, s.head, s.repo.git("rev-parse", "dev"), forgeLaneChecks(s.forge.by["owner/repo#7"].Checks), forgeLaneGreen(), []string{"test"})
 	s.land()
-	if _, err := service.Land(ctx, id, "parent", s.repo.git("rev-parse", "dev"), "", "merged by the forge", mergeturn.TargetReader{}); err != nil {
+	if _, err := service.Land(ctx, id, "parent", s.repo.git("rev-parse", "dev"), "", "merged by the forge", pulls); err != nil {
 		t.Fatalf("landing the refreshed head: %v", err)
 	}
 	if st := s.artifactEdge(); !st.Satisfied {
 		t.Fatalf("the edge after the landing = %+v", st)
 	}
 	obs, err := s.observe()
-	if err != nil || !obs.Integrated || !obs.MarkPresent || !obs.SlotReleased || obs.Observations[0].SubjectSHA != s.head {
+	if err != nil || !obs.Integrated || !obs.MarkPresent || !obs.SlotReleased || obs.Observations[0].SubjectSHA != s.head || obs.Observations[0].MergeTurnID != id {
 		t.Fatalf("observe after the lane landed it = %v %+v", err, obs)
 	}
 	if n := s.read("g").node("I"); n.State != StateIntegrated || n.Reason != DoneIntegrated {
@@ -217,7 +205,7 @@ func TestARefreshedPullRequestNoRecordCoversIsRefusedAsBefore(t *testing.T) {
 			s.refreshBase()
 			s.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json,"+
 				" recorded_by_task_id, coordinator_epoch, recorded_at) VALUES ('dbr-0123456789abcdef0123456789abcdef', ?, 1, ?, 2, ?, ?, ?, ?, 'dev', ?, '{}', '[]', 'someone', 0, 't')",
-				s.accepted.Acceptance.AcceptanceID, s.rid, s.event2, s.revision2, s.head, s.repo.path, s.head)
+				s.accepted.Acceptance.AcceptanceID, s.rid, s.event2, s.revision2, s.head, s.target(), s.head)
 			return s
 		}},
 	}

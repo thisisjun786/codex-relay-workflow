@@ -1,0 +1,466 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459ac)",
+  "source": "subagent-config/src/spawn-attach-hook.ts:284-350,596-848",
+  "tests": "subagent-config/test/spawn-attach-hook.test.ts:804-810,835-841,879-963,1172-1200",
+  "skills": {
+    "crw-dev": "---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n",
+    "crw-search": "---\nname: crw-search\ndescription: \"Synthetic search skill for direct oracle tests.\"\n---\n# search\nUse $crw-search only if the task calls for it.\n",
+    "crw-dev-testing": "---\nname: crw-dev-testing\ndescription: \"Synthetic dev-testing skill for direct oracle tests.\"\n---\n# dev-testing\nUse $crw-search only if the task calls for it.\n",
+    "crw-loop": "---\nname: crw-loop\ndescription: \"Synthetic loop skill for direct oracle tests.\"\n---\n# loop\nUse $crw-search only if the task calls for it.\n",
+    "crw-pabcd": "---\nname: crw-pabcd\ndescription: \"Synthetic pabcd skill for direct oracle tests.\"\n---\n# pabcd\nUse $crw-search only if the task calls for it.\n"
+  },
+  "groups": [
+    {
+      "number": 1,
+      "name": "mentionedFolders recognizes all supported mention shapes",
+      "cases": [
+        {
+          "op": "mentionedFolders",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "$crw-dev and $crw:crw-dev-testing and [$crw-search](skill:///x/skills/crw-search/SKILL.md)",
+          "folders": [
+            "crw-dev",
+            "crw-dev-testing",
+            "crw-search"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "name": "inlineSkillBodies: appends one block per recognized folder, dedupes repeats",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "load $crw-dev then $crw-dev again",
+          "oracle": "load $cxc-dev then $cxc-dev again\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "load $crw-dev then $crw-dev again\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "name": "inlineSkillBodies: unknown folders and mention-free messages are untouched",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "no mentions here",
+          "oracle": "no mentions here",
+          "expected": "no mentions here"
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "$crw-does-not-exist",
+          "oracle": "$cxc-does-not-exist",
+          "expected": "$crw-does-not-exist"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "name": "inlineSkillBodies: already-inlined folder is not duplicated",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "use $crw-dev",
+          "oracle": "use $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracle": "use $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "name": "inlineSkillBodies: atomic overflow appends nothing when bodies would exceed the cap",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "recipe": {
+            "unit": "x",
+            "n": 262104,
+            "closes": 0,
+            "tail": "\nuse $crw-dev"
+          },
+          "identity": true,
+          "suffix": "",
+          "oracleDigestPieces": [
+            "15a4cfc522e92a2ed3bb13ea6447055d",
+            "8d3d5fc9d975f7ff09e90ace5fa995dd"
+          ],
+          "oracleUnits": 262117
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "name": "inlineSkillBodies: an unclosed skill tag does not suppress the real attachment",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "<skill name=\"crw-dev\">\nuse $crw-dev now",
+          "oracle": "<skill name=\"cxc-dev\">\nuse $cxc-dev now\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "<skill name=\"crw-dev\">\nuse $crw-dev now\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "name": "inlineSkillBodies: mentions inside an unclosed block still count; closed blocks dedupe",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "use $crw-dev",
+          "oracle": "use $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracle": "use $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "<skill name=\"crw-dev broken\nuse $crw-dev",
+          "oracle": "<skill name=\"cxc-dev broken\nuse $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "<skill name=\"crw-dev broken\nuse $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "name": "inlineSkillBodies: oversized input passes through untouched (early guard)",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "recipe": {
+            "unit": "y",
+            "n": 262154,
+            "closes": 0,
+            "tail": " $crw-dev"
+          },
+          "identity": true,
+          "suffix": "",
+          "oracleDigestPieces": [
+            "d4370630739c71cd028d8fb8c7dd0579",
+            "e29a6d9d40abb01b01425acd650cd308"
+          ],
+          "oracleUnits": 262163
+        }
+      ]
+    },
+    {
+      "number": 9,
+      "name": "inlineSkillBodies: adversarial delimiter floods stay linear-time (scaling check)",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "recipe": {
+            "unit": "<skill name=\"crw-dev\">",
+            "n": 500,
+            "closes": 500,
+            "tail": " $crw-search"
+          },
+          "identity": false,
+          "suffix": "\n\n<skill name=\"crw-search\">\n---\nname: crw-search\ndescription: \"Synthetic search skill for direct oracle tests.\"\n---\n# search\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracleDigestPieces": [
+            "d7ee3c48336042c8d3d3035818e92746",
+            "dbc028c190d70b9a7c58edceba2f31cf"
+          ],
+          "oracleUnits": 15192
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "recipe": {
+            "unit": "<skill name=\"crw-dev\">",
+            "n": 2000,
+            "closes": 2000,
+            "tail": " $crw-search"
+          },
+          "identity": false,
+          "suffix": "\n\n<skill name=\"crw-search\">\n---\nname: crw-search\ndescription: \"Synthetic search skill for direct oracle tests.\"\n---\n# search\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracleDigestPieces": [
+            "e7c4d3960d32db0bcf8e19d6c1f61bbc",
+            "fdac5146563a687de671a5d2147d23b4"
+          ],
+          "oracleUnits": 60192
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "recipe": {
+            "unit": "<skill name=\"crw-dev\">",
+            "n": 8000,
+            "closes": 8000,
+            "tail": " $crw-search"
+          },
+          "identity": false,
+          "suffix": "\n\n<skill name=\"crw-search\">\n---\nname: crw-search\ndescription: \"Synthetic search skill for direct oracle tests.\"\n---\n# search\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracleDigestPieces": [
+            "5414b0c331efda1a5f1c04b5cb54bc91",
+            "29bc862c203ee0cf681ea7ea4ae7ffd6"
+          ],
+          "oracleUnits": 240192
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "recipe": {
+            "unit": "<skill name=\"crw-dev\">",
+            "n": 6000,
+            "closes": 0,
+            "tail": " $crw-search"
+          },
+          "identity": false,
+          "suffix": "\n\n<skill name=\"crw-search\">\n---\nname: crw-search\ndescription: \"Synthetic search skill for direct oracle tests.\"\n---\n# search\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracleDigestPieces": [
+            "76a277d0073d77ef091d67e7b31bb78e",
+            "65bc185435f06a0e9a5ac223fef457ed"
+          ],
+          "oracleUnits": 132192
+        }
+      ]
+    },
+    {
+      "number": 10,
+      "name": "inlineSkillBodies: nested closed blocks hide their whole interior from scanning",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "<skill name=\"crw-dev\">\nouter body\n<skill name=\"crw-search\">\ninner body mentioning $crw-loop\n</skill>\nouter tail also mentioning $crw-loop\n</skill>\nno outside mentions",
+          "oracle": "<skill name=\"cxc-dev\">\nouter body\n<skill name=\"cxc-search\">\ninner body mentioning $cxc-loop\n</skill>\nouter tail also mentioning $cxc-loop\n</skill>\nno outside mentions",
+          "expected": "<skill name=\"crw-dev\">\nouter body\n<skill name=\"crw-search\">\ninner body mentioning $crw-loop\n</skill>\nouter tail also mentioning $crw-loop\n</skill>\nno outside mentions"
+        }
+      ]
+    },
+    {
+      "number": 11,
+      "name": "skillAffordanceBlock names the skills dir and the mention forms",
+      "cases": [
+        {
+          "op": "skillAffordanceBlock",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "",
+          "oracle": "[CXC-SKILL-AFFORDANCE] Skill mentions in this task (tokens like\n$cxc-<name> or $codexclaw:cxc-<name>, or [$cxc-<name>](skill://...) links)\nare NOT auto-loaded on this surface. Before working, read each mentioned\nskill yourself: open ${SKILLS}/<name>/SKILL.md with your file tools and\nfollow it. If a mentioned skill file does not exist there, note that in\nyour answer and continue.\n\nAvailable skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: Synthetic dev skill for direct oracle tests.\n- cxc-dev-testing: Synthetic dev-testing skill for direct oracle tests.\n- cxc-search: Synthetic search skill for direct oracle tests.",
+          "expected": "[CRW-SKILL-AFFORDANCE] Skill mentions in this task (tokens like\n$crw-<name> or $crw:crw-<name>, or [$crw-<name>](skill://...) links)\nare NOT auto-loaded on this surface. Before working, read each mentioned\nskill yourself: open ${SKILLS}/<name>/SKILL.md with your file tools and\nfollow it. If a mentioned skill file does not exist there, note that in\nyour answer and continue.\n\nAvailable skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: Synthetic dev skill for direct oracle tests.\n- crw-dev-testing: Synthetic dev-testing skill for direct oracle tests.\n- crw-search: Synthetic search skill for direct oracle tests."
+        }
+      ]
+    },
+    {
+      "number": 12,
+      "name": "concise dev metadata remains readable by the real leaf catalog",
+      "cases": [
+        {
+          "op": "buildLeafSkillCatalog",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "",
+          "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: Synthetic dev skill for direct oracle tests.\n- cxc-dev-testing: Synthetic dev-testing skill for direct oracle tests.\n- cxc-search: Synthetic search skill for direct oracle tests.",
+          "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: Synthetic dev skill for direct oracle tests.\n- crw-dev-testing: Synthetic dev-testing skill for direct oracle tests.\n- crw-search: Synthetic search skill for direct oracle tests."
+        }
+      ]
+    },
+    {
+      "number": 13,
+      "name": "concise entrypoint is delivered once without recursively inlining its refs",
+      "cases": [
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "use $crw-dev",
+          "oracle": "use $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        },
+        {
+          "op": "inlineSkillBodies",
+          "classification": "intentionally-changed",
+          "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
+          "input": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>",
+          "oracle": "use $cxc-dev\n\n<skill name=\"cxc-dev\">\n---\nname: cxc-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $cxc-search only if the task calls for it.\n</skill>",
+          "expected": "use $crw-dev\n\n<skill name=\"crw-dev\">\n---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n</skill>"
+        }
+      ]
+    }
+  ],
+  "guards": {
+    "LEAF_GUARD_BLOCK": {
+      "oracle": "[CXC-LEAF-GUARD] You are a LEAF agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher: (1) Do NOT spawn\nsub-agents (no spawn_agent calls, no delegation chains). If decomposition seems\nnecessary, finish your own scope and REPORT the need in your final answer\ninstead. (2) Do NOT run cxc orchestrate, cxc loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. These dispatcher constraints are enforced by a spawn hook (a\nrecursive spawn without a grant is DENIED at the tool boundary, regardless of\nany delegation guidance you may see). A dispatcher can authorize recursion for\na specific spawn by\nincluding the recursion grant token in the spawn message.\n(4) You are NOT in a copy or fork of the workspace: you share the parent's\nworking directory, branch and HEAD, so your edits are the parent's uncommitted\nchanges. Stay inside your write scope and do NOT run branch-level git commands\n(checkout, switch, branch, stash, reset, rebase, merge, pull) - another agent\nmay be working in the same tree right now.",
+      "expected": "[CRW-LEAF-GUARD] You are a LEAF agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher: (1) Do NOT spawn\nsub-agents (no spawn_agent calls, no delegation chains). If decomposition seems\nnecessary, finish your own scope and REPORT the need in your final answer\ninstead. (2) Do NOT run crw orchestrate, crw loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. These dispatcher constraints are enforced by a spawn hook (a\nrecursive spawn without a grant is DENIED at the tool boundary, regardless of\nany delegation guidance you may see). A dispatcher can authorize recursion for\na specific spawn by\nincluding the recursion grant token in the spawn message.\n(4) You are NOT in a copy or fork of the workspace: you share the parent's\nworking directory, branch and HEAD, so your edits are the parent's uncommitted\nchanges. Stay inside your write scope and do NOT run branch-level git commands\n(checkout, switch, branch, stash, reset, rebase, merge, pull) - another agent\nmay be working in the same tree right now.",
+      "classification": "intentionally-changed",
+      "reason": "CRW markers and command wording."
+    },
+    "LEAF_GUARD_BLOCK_COORDINATOR": {
+      "oracle": "[CXC-LEAF-GUARD] You are a COORDINATOR agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher:\n(1) Recursion is authorized for this task. (2) Do NOT run cxc orchestrate, cxc loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. All remaining constraints still apply.\n(4) You share the parent's working directory, branch and HEAD - this is not a\ncopy. Your edits are the parent's uncommitted changes, and so are your own\nchildren's. Give every child a non-overlapping write scope and do NOT run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull) or let a child run them.",
+      "expected": "[CRW-LEAF-GUARD] You are a COORDINATOR agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher:\n(1) Recursion is authorized for this task. (2) Do NOT run crw orchestrate, crw loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. All remaining constraints still apply.\n(4) You share the parent's working directory, branch and HEAD - this is not a\ncopy. Your edits are the parent's uncommitted changes, and so are your own\nchildren's. Give every child a non-overlapping write scope and do NOT run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull) or let a child run them.",
+      "classification": "intentionally-changed",
+      "reason": "CRW markers and command wording."
+    },
+    "V1_SCOPE_BLOCK": {
+      "oracle": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.",
+      "expected": "[CRW-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns crw orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.",
+      "classification": "intentionally-changed",
+      "reason": "CRW markers and command wording."
+    },
+    "V1_SCOPE_BLOCK_COORDINATOR": {
+      "oracle": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task with authorized\nrecursion. The parent owns cxc orchestration, loop, and goal state;\ndo not invoke those commands. Stay within the stated file/write scope.\nYou and any child you spawn run in the parent's own working directory, on its\nbranch and HEAD - not a copy. Keep every write scope non-overlapping and do not\nrun branch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull).",
+      "expected": "[CRW-SUBAGENT-SCOPE] This is one bounded delegated task with authorized\nrecursion. The parent owns crw orchestration, loop, and goal state;\ndo not invoke those commands. Stay within the stated file/write scope.\nYou and any child you spawn run in the parent's own working directory, on its\nbranch and HEAD - not a copy. Keep every write scope non-overlapping and do not\nrun branch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull).",
+      "classification": "intentionally-changed",
+      "reason": "CRW markers and command wording."
+    }
+  },
+  "security": {
+    "input": "use $crw-dev and $crw-search",
+    "oracleInline": "use $cxc-dev and $cxc-search\n\n<skill name=\"cxc-dev\">\nname: cxc-dev\ndescription: \"outside sentinel\"\nOUTSIDE-CONTENT\n</skill>\n\n<skill name=\"cxc-search\">\nname: cxc-dev\ndescription: \"outside sentinel\"\nOUTSIDE-CONTENT\n</skill>",
+    "oracleCatalog": "Available skills (self-load from ${LINKED}/<name>/SKILL.md):\n- cxc-dev: outside sentinel",
+    "expectedInline": "use $crw-dev and $crw-search",
+    "expectedCatalog": "",
+    "classification": "intentionally-changed",
+    "reason": "Security: reject linked SKILL.md and linked skill folder, including reads outside the caller root."
+  },
+  "decoder": [
+    {
+      "bytes": [
+        226,
+        130
+      ],
+      "expected": "�"
+    },
+    {
+      "bytes": [
+        237,
+        160,
+        128
+      ],
+      "expected": "���"
+    },
+    {
+      "bytes": [
+        240,
+        159,
+        146
+      ],
+      "expected": "�"
+    },
+    {
+      "bytes": [
+        192,
+        175
+      ],
+      "expected": "��"
+    },
+    {
+      "bytes": [
+        226,
+        40,
+        161
+      ],
+      "expected": "�(�"
+    },
+    {
+      "bytes": [
+        239,
+        187,
+        191
+      ],
+      "expected": "﻿"
+    },
+    {
+      "bytes": [
+        244,
+        144,
+        128,
+        128
+      ],
+      "expected": "����"
+    },
+    {
+      "bytes": [
+        128,
+        128
+      ],
+      "expected": "��"
+    }
+  ],
+  "catalogCases": [
+    {
+      "body": "name: crw-dev\r\ndescription:\t\"line\"\r\n",
+      "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: line",
+      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: line",
+      "classification": "intentionally-changed",
+      "reason": "CRW metadata name substitution; regex quirks retained."
+    },
+    {
+      "body": "# body\nname: crw-other\ndescription: \"body metadata\"\n",
+      "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-other: body metadata",
+      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-other: body metadata",
+      "classification": "intentionally-changed",
+      "reason": "CRW metadata name substitution; regex quirks retained."
+    },
+    {
+      "body": "name:\nnext-line-name\ndescription:\nnext-line-description\n",
+      "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- next-line-name: next-line-description",
+      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- next-line-name: next-line-description",
+      "classification": "intentionally-changed",
+      "reason": "CRW metadata name substitution; regex quirks retained."
+    },
+    {
+      "body": "name: crw-dev\ndescription: has \"quotes\" in middle\n",
+      "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: ",
+      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: ",
+      "classification": "intentionally-changed",
+      "reason": "CRW metadata name substitution; regex quirks retained."
+    },
+    {
+      "body": "name: crw-dev\ndescription: \"single\" name: extra\n",
+      "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: single",
+      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: single",
+      "classification": "intentionally-changed",
+      "reason": "CRW metadata name substitution; regex quirks retained."
+    },
+    {
+      "body": "name: crw-dev\ndescription: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+      "oracle": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- cxc-dev: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "Available skills (self-load from ${SKILLS}/<name>/SKILL.md):\n- crw-dev: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "classification": "intentionally-changed",
+      "reason": "CRW metadata name substitution; regex quirks retained."
+    }
+  ]
+}

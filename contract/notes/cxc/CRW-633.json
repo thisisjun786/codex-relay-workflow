@@ -1,0 +1,13 @@
+{
+  "issue": "CRW-633",
+  "pending": [
+    "hook__pre-tool-use-attaching-skills__final_gate_corrupt_source_binding_denied",
+    "hook__pre-tool-use-attaching-skills__final_gate_items_marker_denied",
+    "hook__pre-tool-use-attaching-skills__final_gate_missing_test_receipt_denied",
+    "hook__pre-tool-use-attaching-skills__final_gate_prerequisites_present_allowed",
+    "hook__pre-tool-use-attaching-skills__final_gate_stale_receipt_denied",
+    "hook__pre-tool-use-attaching-skills__final_gate_web_criterion_requires_qa"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

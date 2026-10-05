@@ -56,6 +56,12 @@ func ReadGoalplanDetailed(cwd, slug string) GoalplanReadResult {
 func ReadGoalplan(cwd, slug string) *Goalplan { return ReadGoalplanDetailed(cwd, slug).Plan }
 
 func readPlanAt(dir *os.File, real, path, slug string) GoalplanReadResult {
+	result, _ := revivalLossReadPlan(dir, real, path, slug)
+	return result
+}
+
+// revivalLossReadPlan is readPlanAt that also returns what the write lock judges besides the plan (see revivalLossFile).
+func revivalLossReadPlan(dir *os.File, real, path, slug string) (GoalplanReadResult, revivalLossFile) {
 	err := boundFile(dir, real, true)
 	var file *os.File
 	if err == nil {
@@ -66,12 +72,12 @@ func readPlanAt(dir *os.File, real, path, slug string) GoalplanReadResult {
 		if pathAbsent(err) {
 			kind = "absent"
 		}
-		return readFailure(kind, path, err.Error(), "")
+		return readFailure(kind, path, err.Error(), ""), revivalLossFile{}
 	}
 	defer file.Close()
 	raw, err := io.ReadAll(file)
 	if err != nil {
-		return readFailure("unreadable", path, err.Error(), "")
+		return readFailure("unreadable", path, err.Error(), ""), revivalLossFile{}
 	}
 	decoded := source.DecodeUTF8(raw)
 	dec := json.NewDecoder(strings.NewReader(decoded))
@@ -87,17 +93,17 @@ func readPlanAt(dir *os.File, real, path, slug string) GoalplanReadResult {
 		}
 	}
 	if err != nil {
-		return readFailure("invalid-json", path, err.Error(), "")
+		return readFailure("invalid-json", path, err.Error(), ""), revivalLossFile{}
 	}
 	if at := unpairedSurrogate(decoded); at >= 0 {
-		return readFailure("unreadable", path, fmt.Sprintf("unpaired JSON surrogate at byte %d would lose stored text", at), "")
+		return readFailure("unreadable", path, fmt.Sprintf("unpaired JSON surrogate at byte %d would lose stored text", at), ""), revivalLossFile{}
 	}
 	plan := reviveGoalplan(parsed, &slug)
 	if plan == nil {
 		field := firstInvalidField(parsed)
-		return readFailure("invalid-shape", path, "the goalplan parsed as JSON but field '"+field+"' did not satisfy the schema", field)
+		return readFailure("invalid-shape", path, "the goalplan parsed as JSON but field '"+field+"' did not satisfy the schema", field), revivalLossFile{}
 	}
-	return GoalplanReadResult{Plan: plan}
+	return GoalplanReadResult{Plan: plan}, revivalLossFile{parsed: parsed, text: decoded, badByte: revivalLossBadByte(raw)}
 }
 
 // Refuse valid JSON that encoding/json would decode lossily (data-loss exception).

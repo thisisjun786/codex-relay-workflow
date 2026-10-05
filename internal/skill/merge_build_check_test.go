@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -294,6 +295,109 @@ func TestMergeBuildCheckVetsADarwinOnlyPackageAndBuildsAMainPackage(t *testing.T
 		"refused: vet_darwin_failed:", "undefinedName", "skipped: example.test/m/dn steps=build,vet,test_compile reason=not_built_on_host")
 }
 
+// A -tags the caller carries must not decide the untagged pass: a tag named by GOFLAGS, and again a
+// tag named by the caller's go settings file, must leave the two //go:build !dev files of the merge
+// in the untagged pass and turn their clash into a build_failed refusal. Without an explicit empty
+// tag set both passes run tagged and the check answers ok (CRW-562).
+func TestMergeBuildCheckIgnoresATagTheCallerCarries(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		use  func(t *testing.T)
+	}{
+		{"GOFLAGS", func(t *testing.T) { t.Setenv("GOFLAGS", "-tags=dev") }},
+		{"the go settings file", func(t *testing.T) {
+			mbcNoGoFlags(t)
+			settings := filepath.Join(t.TempDir(), "goenv")
+			if err := os.WriteFile(settings, []byte("GOFLAGS=-tags=dev\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GOENV", settings)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := newMbcRepo(t)
+			clash := "//go:build !dev\n\npackage p\n\nfunc Clash() {}\n"
+			m.sibling("s1", map[string]string{"p/b.go": clash})
+			head := m.sibling("s2", map[string]string{"p/c.go": clash})
+			m.land("s1")
+			c.use(t)
+			mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 1,
+				"refused: build_failed:", "Clash redeclared in this block", "example.test/m/p", "step=build")
+		})
+	}
+}
+
+// mbcNoGoFlags takes GOFLAGS out of this process's environment, where it would mask the value the
+// caller's go settings file names.
+func mbcNoGoFlags(t *testing.T) {
+	t.Helper()
+	if value, ok := os.LookupEnv("GOFLAGS"); ok {
+		os.Unsetenv("GOFLAGS")
+		t.Cleanup(func() { os.Setenv("GOFLAGS", value) })
+	}
+}
+
+// Every step of the untagged pass names the empty tag set on its command line, so a -tags the
+// caller carries cannot decide it: with GOFLAGS=-tags=dev a shim that logs each go invocation and
+// then runs the real go shows list, build, vet and test asked both tagged and untagged (CRW-562).
+func TestMergeBuildCheckNamesTheEmptyTagSetOnEveryStep(t *testing.T) {
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trueTool, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newMbcRepo(t)
+	head := m.sibling("s1", map[string]string{
+		"p/b.go":      mbcTokenize,
+		"p/b_test.go": "package p\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) { tokenize() }\n",
+	})
+	bin := t.TempDir()
+	for name, path := range map[string]string{"git": git, "true": trueTool} {
+		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log := filepath.Join(t.TempDir(), "go.log")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MBC_SHIM_LOG\"\nexec " + realGo + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("MBC_SHIM_LOG", log)
+	t.Setenv("GOFLAGS", "-tags=dev")
+	mbcExpect(t, m.check(t, "--head", head, "--base", "dev"), 0, "ok: ")
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		step, _, _ := strings.Cut(line, " ")
+		if seen[step] == nil {
+			seen[step] = map[string]bool{}
+		}
+		for _, form := range []string{"-tags=", "-tags dev"} {
+			if strings.Contains(line, form+" ") {
+				seen[step][form] = true
+			}
+		}
+	}
+	for _, step := range []string{"list", "build", "vet", "test"} {
+		for _, form := range []string{"-tags=", "-tags dev"} {
+			if !seen[step][form] {
+				t.Errorf("go %s was never asked with %q: %q", step, form, strings.Split(string(raw), "\n"))
+			}
+		}
+	}
+}
+
 // The go tool runs with a home, a temporary directory and a telemetry setting of its own, below the
 // directory the check removes, and with the caller's caches. A check that outran its time is cut off:
 // the go process is gone, exit 3, and nothing is left, not even the go tool's own temporary files.
@@ -332,15 +436,21 @@ func TestMergeBuildCheckKeepsTheGoToolInsideItsOwnScratchAndEndsItOnTimeout(t *t
 		key, value, _ := strings.Cut(line, "=")
 		seen[key] = value
 	}
-	if !strings.HasPrefix(seen["args"], "list -e -p=4 ") {
-		t.Errorf("go list does not carry -p: %q", seen["args"])
+	// On darwin the check reads the caller's caches first, with the go tool's HOME inside its own
+	// scratch directory; elsewhere the first command it runs is the list.
+	firstArgs, firstHomeOK := "list -e -p=4 ", seen["home"] == realHome
+	if runtime.GOOS == "darwin" {
+		firstArgs, firstHomeOK = "env -json GOCACHE GOMODCACHE GOPATH", strings.HasPrefix(seen["home"], m.scratch)
+	}
+	if !strings.HasPrefix(seen["args"], firstArgs) {
+		t.Errorf("the first go command is %q, want %q", seen["args"], firstArgs)
 	}
 	for _, key := range []string{"tmpdir", "gotmpdir", "xdg"} {
 		if !strings.HasPrefix(seen[key], m.scratch) {
 			t.Errorf("%s of the go tool is %q, not below the scratch directory %s", key, seen[key], m.scratch)
 		}
 	}
-	if seen["home"] != realHome || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
+	if !firstHomeOK || seen["gocache"] != "/pinned/gocache" || seen["gowork"] != "off" || seen["goenv"] != filepath.Join(config, "go", "env") {
 		t.Errorf("home %q, gocache %q, gowork %q, goenv %q", seen["home"], seen["gocache"], seen["gowork"], seen["goenv"])
 	}
 	pid, _ := strconv.Atoi(seen["pid"])
@@ -398,7 +508,7 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 		{"off", ""},
 	} {
 		t.Setenv("GOENV", c.set)
-		env, err := mergeBuildEnv([]string{"A=1"}, t.TempDir())
+		env, err := mergeBuildEnv(context.Background(), []string{"A=1", "HOME=" + t.TempDir()}, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -411,6 +521,533 @@ func TestMergeBuildEnvKeepsTheCallersGoSettingsFile(t *testing.T) {
 		switch {
 		case c.want == "" && len(got) != 0, c.want != "" && !reflect.DeepEqual(got, []string{c.want}):
 			t.Errorf("GOENV=%q: the environment names %v, want %q", c.set, got, c.want)
+		}
+	}
+}
+
+// The go tool on darwin reads the directory it keeps telemetry in from HOME, not from
+// XDG_CONFIG_HOME, so the darwin environment moves HOME into the directory the run owns, reads the
+// three cache locations the caller's go environment holds without running a go command under the
+// caller's home either, and pins the caller's values. Linux keeps the caller's HOME (CRW-562).
+func TestMergeBuildEnvMovesOnlyTheDarwinHome(t *testing.T) {
+	callerHome := t.TempDir()
+	callerConfig := t.TempDir()
+	caller := append(os.Environ(), "HOME="+callerHome, "XDG_CONFIG_HOME="+callerConfig)
+	owned := t.TempDir()
+	darwinEnv, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(darwinEnv)
+	home := filepath.Join(owned, "home")
+	if got["HOME"] != home {
+		t.Errorf("darwin: HOME=%q, want the owned %q", got["HOME"], home)
+	}
+	if info, err := os.Stat(home); err != nil || !info.IsDir() {
+		t.Errorf("darwin: the owned home is not a directory: %v", err)
+	}
+	if left, _ := os.ReadDir(callerHome); len(left) != 0 {
+		t.Errorf("darwin: the cache read wrote to the caller's home: %v", left)
+	}
+	if left, _ := os.ReadDir(callerConfig); len(left) != 0 {
+		t.Errorf("darwin: the cache read wrote to the caller's config directory: %v", left)
+	}
+	caches := mbcCallerGoEnv(t, caller)
+	// The helper above ran the real go tool with the caller's environment: a run without an off
+	// file below the caller's config directory leaves the asynchronous telemetry writer behind,
+	// and its writes then race this test's temporary-directory cleanup (CRW-598).
+	telemetryOffForbidLocal(t, caller)
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("darwin: %s=%q, want the caller's %q", key, got[key], want)
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(home, "Library", "Application Support", "go", "telemetry", "mode")); err != nil || !strings.HasPrefix(string(raw), "off ") {
+		t.Errorf("darwin: the owned home holds no telemetry off file: %v %q", err, raw)
+	}
+	linuxOwned := t.TempDir()
+	linuxEnv, err := mergeBuildEnv(context.Background(), caller, linuxOwned, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := mbcLastEnv(linuxEnv)["HOME"], mbcLastEnv(caller)["HOME"]; got != want {
+		t.Errorf("linux: HOME=%q, want the caller's %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(linuxOwned, "home", "Library", "Application Support", "go", "telemetry", "mode")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("linux: a darwin mode file was written: %v", err)
+	}
+}
+
+// What go env answers is a value in itself: a path that ends in a space is the path, not another
+// one trimmed into shape (CRW-562).
+func TestMergeBuildEnvKeepsWhatGoEnvAnswers(t *testing.T) {
+	bin := t.TempDir()
+	shim := "#!/bin/sh\nprintf '%s' '{\"GOCACHE\":\"/cache with space/ \",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	env, err := mergeBuildEnv(context.Background(), []string{"HOME=/caller"}, t.TempDir(), "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(env)
+	for key, want := range map[string]string{"GOCACHE": "/cache with space/ ", "GOMODCACHE": "/mod", "GOPATH": "/gopath"} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want %q", key, got[key], want)
+		}
+	}
+}
+
+// mbcCallerGoEnv reads the three cache locations a go env names for the caller's environment.
+func mbcCallerGoEnv(t *testing.T, base []string) [3]string {
+	t.Helper()
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(goTool, "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	// The real go tool must not write its telemetry counters into the caller's directories: a run
+	// there with no off file leaves a writer behind that races the caller's TempDir cleanup (CRW-598).
+	telemetryOffWriteMode(t, base)
+	cmd.Env = base
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("go env GOCACHE GOMODCACHE GOPATH answered %q", out)
+	}
+	return [3]string{strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2])}
+}
+
+// telemetryOffDir is the directory the go tool of this environment keeps telemetry in: the user
+// config directory of that environment as os.UserConfigDir resolves it - XDG_CONFIG_HOME, or
+// HOME/.config when it names none, and HOME/Library/Application Support on darwin (CRW-598).
+func telemetryOffDir(env []string) string {
+	last := mbcLastEnv(env)
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(last["HOME"], "Library", "Application Support", "go", "telemetry")
+	}
+	if config := last["XDG_CONFIG_HOME"]; config != "" {
+		return filepath.Join(config, "go", "telemetry")
+	}
+	return filepath.Join(last["HOME"], ".config", "go", "telemetry")
+}
+
+// telemetryOffWriteMode puts the off mode file - the same one the check itself writes - under the
+// environment's telemetry directory before a real go command runs with it: without it the go tool
+// writes counters there asynchronously, after the command returned, and those writes race the
+// test's temporary-directory cleanup (CRW-598).
+func telemetryOffWriteMode(t *testing.T, env []string) {
+	t.Helper()
+	dir := telemetryOffDir(env)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mode"), []byte("off "+time.Now().UTC().Format("2006-01-02")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// telemetryOffForbidLocal waits out the go tool's asynchronous telemetry writer and then requires
+// that it never created go/telemetry/local under the environment's config directory (CRW-598).
+func telemetryOffForbidLocal(t *testing.T, env []string) {
+	t.Helper()
+	time.Sleep(2 * time.Second)
+	local := filepath.Join(telemetryOffDir(env), "local")
+	entries, err := os.ReadDir(local)
+	switch {
+	case err == nil:
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the go tool wrote telemetry below the caller's config directory: %s holds %v", local, names)
+	case !errors.Is(err, fs.ErrNotExist):
+		t.Errorf("cannot tell whether %s exists: %v", local, err)
+	}
+}
+
+// The cache read darwin needs runs under the check's own context: a go env that stalls is cut off
+// with the check instead of keeping merge-build-check running past --timeout (CRW-562).
+func TestMergeBuildEnvStopsAStalledCacheRead(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := mergeBuildEnv(ctx, []string{"HOME=/caller"}, t.TempDir(), "darwin"); err == nil {
+		t.Error("a stalled go env was not cut off")
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Errorf("the stalled go env was not cut off promptly: %v", elapsed)
+	}
+}
+
+// mbcLastEnv folds an environment the way exec uses it: of duplicated keys the last value wins.
+func mbcLastEnv(env []string) map[string]string {
+	last := map[string]string{}
+	for _, kv := range env {
+		if key, value, ok := strings.Cut(kv, "="); ok {
+			last[key] = value
+		}
+	}
+	return last
+}
+
+// The cache read darwin needs runs in a directory this run owns that is its own module root, so the go
+// tool's search for a go.mod stops there and neither a module in the caller's working directory nor one
+// above the run scratch can choose the go tool's toolchain for it (CRW-610). The shim records where it
+// ran: a shell's $PWD is the directory the go tool was started in.
+func TestMergeBuildEnvRunsTheCacheReadInItsOwnDirectory(t *testing.T) {
+	owned := t.TempDir()
+	log := mbcCacheShim(t, mbcCacheShimStandard)
+	env, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mbcLastEnv(env)["GOCACHE"]; got != "/cache" {
+		t.Errorf("GOCACHE=%q, want the shim's /cache", got)
+	}
+	seen := mbcShimLog(t, log)
+	want := filepath.Join(owned, "probe")
+	if got := seen["pwd"]; got != want {
+		if resolved, err := filepath.EvalSymlinks(got); err != nil || resolved != want {
+			t.Errorf("the cache read ran in %q, want the owned directory %q", got, want)
+		}
+	}
+	module, err := os.ReadFile(filepath.Join(want, "go.mod"))
+	if err != nil {
+		t.Fatalf("the probe directory holds no go.mod: %v", err)
+	}
+	if string(module) != mergeBuildProbeModule {
+		t.Errorf("the probe go.mod is %q, want %q", module, mergeBuildProbeModule)
+	}
+}
+
+// On darwin the go tool reads the telemetry mode from HOME/Library/Application Support, so the off
+// file must be there before the first go command runs: the shim reads it while it runs.
+func TestMergeBuildEnvWritesTheDarwinTelemetryModeBeforeTheFirstGoCommand(t *testing.T) {
+	owned := t.TempDir()
+	log := mbcCacheShim(t, mbcCacheShimStandard)
+	if _, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin"); err != nil {
+		t.Fatal(err)
+	}
+	if seen := mbcShimLog(t, log); !strings.HasPrefix(seen["mode"], "off ") {
+		t.Errorf("the first go command saw telemetry mode %q under its HOME, want an off file", seen["mode"])
+	}
+	linuxOwned := t.TempDir()
+	if _, err := mergeBuildEnv(context.Background(), []string{"HOME=/caller"}, linuxOwned, "linux"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(linuxOwned, "home", "Library", "Application Support", "go", "telemetry", "mode")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("linux: a darwin mode file was written: %v", err)
+	}
+}
+
+// The mode files that say telemetry is off: the XDG config path everywhere and, on darwin, the one
+// under the owned home.
+func TestMergeBuildTelemetryModeFilesPerOS(t *testing.T) {
+	owned := t.TempDir()
+	wantLinux := []string{filepath.Join(owned, "config", "go", "telemetry", "mode")}
+	if linux := mergeBuildTelemetryModeFiles(owned, "linux"); !reflect.DeepEqual(linux, wantLinux) {
+		t.Errorf("linux mode files %v, want %v", linux, wantLinux)
+	}
+	wantDarwin := append(append([]string{}, wantLinux...), filepath.Join(owned, "home", "Library", "Application Support", "go", "telemetry", "mode"))
+	if darwin := mergeBuildTelemetryModeFiles(owned, "darwin"); !reflect.DeepEqual(darwin, wantDarwin) {
+		t.Errorf("darwin mode files %v, want %v", darwin, wantDarwin)
+	}
+}
+
+// The probe runs in a fresh directory inside the owned scratch, not the temporary-file directory and
+// not the home the go tool reads its configuration from.
+func TestMergeBuildProbeDirOutsideTheOtherScratchDirs(t *testing.T) {
+	owned := t.TempDir()
+	dir := mergeBuildProbeDir(owned)
+	if want := filepath.Join(owned, "probe"); dir != want {
+		t.Fatalf("mergeBuildProbeDir(%q)=%q, want %q", owned, dir, want)
+	}
+	for _, scratch := range []string{filepath.Join(owned, "tmp"), filepath.Join(owned, "home")} {
+		if strings.HasPrefix(dir, scratch) {
+			t.Errorf("the probe directory %q is inside %q", dir, scratch)
+		}
+	}
+}
+
+// What go env -json answers is read by name: each value is kept exactly, including a newline a path
+// holds, and a key the answer leaves out is an error naming it.
+func TestMergeBuildDecodeCachesReadsTheNamesExactly(t *testing.T) {
+	for _, c := range []struct {
+		name, out, bad string
+		want           [3]string
+	}{
+		{"three keys", "{\"GOCACHE\":\"/cache\",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}", "", [3]string{"/cache", "/mod", "/gopath"}},
+		{"a newline is the value", "{\"GOCACHE\":\"/cache\\nwith newline\",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}", "", [3]string{"/cache\nwith newline", "/mod", "/gopath"}},
+		{"a trailing space is the value", "{\"GOCACHE\":\"/cache with space/ \",\"GOMODCACHE\":\"/mod\",\"GOPATH\":\"/gopath\"}", "", [3]string{"/cache with space/ ", "/mod", "/gopath"}},
+		{"a missing key is named", "{\"GOCACHE\":\"/cache\",\"GOMODCACHE\":\"/mod\"}", "GOPATH", [3]string{}},
+		{"not an object", "not json", "cannot read", [3]string{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := mergeBuildDecodeCaches([]byte(c.out))
+			switch {
+			case c.bad != "" && (err == nil || !strings.Contains(err.Error(), c.bad)):
+				t.Fatalf("err=%v, want one naming %q", err, c.bad)
+			case c.bad == "" && err != nil:
+				t.Fatalf("err=%v, want nil", err)
+			case c.bad == "" && got != c.want:
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A cache path that holds a newline is the path: the answer is read by name, not split into lines.
+func TestMergeBuildEnvKeepsACachePathWithANewline(t *testing.T) {
+	owned := t.TempDir()
+	mbcCacheShim(t, mbcCacheShimNewline)
+	env, err := mergeBuildEnv(context.Background(), mbcEnvWithout(t, "HOME"), owned, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mbcLastEnv(env)
+	for key, want := range map[string]string{"GOCACHE": "/cache\nwith newline", "GOMODCACHE": "/mod", "GOPATH": "/gopath"} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want %q", key, got[key], want)
+		}
+	}
+}
+
+// Linux keeps the caller's environment and appends the same four settings in the same order.
+func TestMergeBuildEnvAppendsTheSameKeysOnLinux(t *testing.T) {
+	t.Setenv("GOENV", "off")
+	owned := t.TempDir()
+	base := []string{"A=1", "HOME=/caller"}
+	env, err := mergeBuildEnv(context.Background(), base, owned, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]string{}, base...),
+		"GOWORK=off",
+		"XDG_CONFIG_HOME="+filepath.Join(owned, "config"),
+		"TMPDIR="+filepath.Join(owned, "tmp"),
+		"GOTMPDIR="+filepath.Join(owned, "tmp"))
+	if !reflect.DeepEqual(env, want) {
+		t.Errorf("linux environment\n got %v\nwant %v", env, want)
+	}
+}
+
+// mbcCacheShimStandard answers the caller-cache read with fixed values in whichever protocol the
+// command line names: -json is one JSON object, otherwise one value per line. While it runs it
+// records where it ran, its HOME and the darwin telemetry mode file it can see there.
+const mbcCacheShimStandard = `#!/bin/sh
+{
+	echo "pwd=$PWD"
+	echo "home=$HOME"
+	if [ -f "$HOME/Library/Application Support/go/telemetry/mode" ]; then
+		read -r mode < "$HOME/Library/Application Support/go/telemetry/mode"
+		echo "mode=$mode"
+	else
+		echo "mode=absent"
+	fi
+} > "$MBC_SHIM_LOG"
+json=0
+for a in "$@"; do
+	[ "$a" = "-json" ] && json=1
+done
+if [ "$json" = 1 ]; then
+	printf '%s' '{"GOCACHE":"/cache","GOMODCACHE":"/mod","GOPATH":"/gopath"}'
+else
+	printf '%s\n' /cache /mod /gopath
+fi
+`
+
+// mbcCacheShimNewline answers a GOCACHE that holds a newline: one JSON value after the change, four
+// lines under the old line protocol.
+const mbcCacheShimNewline = `#!/bin/sh
+json=0
+for a in "$@"; do
+	[ "$a" = "-json" ] && json=1
+done
+if [ "$json" = 1 ]; then
+	printf '%s' '{"GOCACHE":"/cache\nwith newline","GOMODCACHE":"/mod","GOPATH":"/gopath"}'
+else
+	printf '%s\n' /cache 'with newline' /mod /gopath
+fi
+`
+
+// mbcCacheShim puts a script on PATH as the go tool and returns the path it logs to.
+func mbcCacheShim(t *testing.T, script string) string {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "shim.log")
+	t.Setenv("PATH", bin)
+	t.Setenv("MBC_SHIM_LOG", log)
+	return log
+}
+
+// mbcShimLog folds a shim's key=value lines.
+func mbcShimLog(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the shim never ran: %v", err)
+	}
+	seen := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		seen[key] = value
+	}
+	return seen
+}
+
+// mbcEnvWithout is this process's environment without the named keys, so a value mergeBuildEnv
+// appends for the go tool's own run is the only one it can read under that name.
+func mbcEnvWithout(t *testing.T, keys ...string) []string {
+	t.Helper()
+	drop := map[string]bool{}
+	for _, key := range keys {
+		drop[key] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if key, _, ok := strings.Cut(kv, "="); !ok || !drop[key] {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
+// mbcCacheShimModuleSearch mimics the go tool's own search for the module it runs in: from the directory
+// it was started in up to the first directory that holds a go.mod. Like go env with GOTOOLCHAIN=auto and a
+// module that names an unavailable toolchain, it fails when the module it found names a toolchain line,
+// and it records the go.mod the search stopped at.
+const mbcCacheShimModuleSearch = `#!/bin/sh
+dir=$PWD
+found=
+while :; do
+	if [ -f "$dir/go.mod" ]; then
+		found=$dir/go.mod
+		break
+	fi
+	[ "$dir" = / ] && break
+	dir=${dir%/*}
+	[ -z "$dir" ] && dir=/
+done
+echo "module=$found" > "$MBC_SHIM_LOG"
+if [ -n "$found" ]; then
+	while IFS= read -r line; do
+		case $line in
+		toolchain\ *)
+			echo "go: downloading ${line#toolchain }" >&2
+			exit 2
+			;;
+		esac
+	done < "$found"
+fi
+printf '%s' '{"GOCACHE":"/cache","GOMODCACHE":"/mod","GOPATH":"/gopath"}'
+`
+
+// A go.mod above the run scratch must not reach the cache read (CRW-610): the go tool looks for a go.mod in
+// the directory it runs in and then in every parent, and the scratch root is made under TMPDIR, so a TMPDIR
+// inside another module makes the probe read that module's toolchain line and, with GOTOOLCHAIN=auto, try to
+// switch to a toolchain that cannot be fetched instead of answering. The probe directory is its own module
+// root, so the read stops there and answers the caller's values. GOPROXY=off keeps the red case offline:
+// go1.999.0 was never published, so no cache or proxy can supply it.
+func TestMergeBuildEnvProbeStopsAtItsOwnDirectoryWhenAModuleIsAbove(t *testing.T) {
+	callerModule := t.TempDir()
+	if err := os.WriteFile(filepath.Join(callerModule, "go.mod"), []byte("go 1.21\ntoolchain go1.999.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(callerModule, "tmp", "owned") // where the run scratch sits when TMPDIR is inside a module
+	if err := os.MkdirAll(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caller := append(os.Environ(),
+		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(),
+		"CODEX_HOME="+t.TempDir(), "CRW_HOME="+t.TempDir(),
+		"GOTOOLCHAIN=auto", "GOPROXY=off")
+	// A real go tool runs with this environment below: its telemetry must read off before that (CRW-598).
+	telemetryOffWriteMode(t, caller)
+	env, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
+	if err != nil {
+		t.Fatalf("the cache read failed with a module above the scratch root: %v", err)
+	}
+	got := mbcLastEnv(env)
+	caches := mbcCallerGoEnv(t, caller)
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want the caller's %q", key, got[key], want)
+		}
+	}
+}
+
+// The go tool's search for a go.mod runs from its own directory up through every parent, so the probe
+// directory must be the module root that stops it before the module above the run scratch (CRW-610). The
+// shim records the go.mod the search stopped at: a probe without its own go.mod finds the module above and
+// fails the way go env fails with an unavailable toolchain.
+func TestMergeBuildEnvProbeModuleRootStopsTheSearchAboveTheScratchRoot(t *testing.T) {
+	callerModule := t.TempDir()
+	if err := os.WriteFile(filepath.Join(callerModule, "go.mod"), []byte("go 1.21\ntoolchain go1.999.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(callerModule, "tmp", "owned")
+	if err := os.MkdirAll(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := mbcCacheShim(t, mbcCacheShimModuleSearch)
+	base := append(mbcEnvWithout(t, "HOME", "CODEX_HOME", "CRW_HOME"),
+		"HOME="+t.TempDir(), "CODEX_HOME="+t.TempDir(), "CRW_HOME="+t.TempDir())
+	env, err := mergeBuildEnv(context.Background(), base, owned, "darwin")
+	if err != nil {
+		t.Fatalf("the cache read failed with a module above the scratch root: %v", err)
+	}
+	if got := mbcLastEnv(env)["GOCACHE"]; got != "/cache" {
+		t.Errorf("GOCACHE=%q, want the shim's /cache", got)
+	}
+	seen := mbcShimLog(t, log)
+	want := filepath.Join(owned, "probe", "go.mod")
+	if got := seen["module"]; got != want {
+		if resolved, err := filepath.EvalSymlinks(got); err != nil || resolved != want {
+			t.Errorf("the go.mod search stopped at %q, want the probe's own %q", got, want)
+		}
+	}
+}
+
+// A module above the scratch root that names a newer Go in its go directive must not reach the cache
+// read either (CRW-610): under GOTOOLCHAIN=auto the go command honours the go line the way it honours a
+// toolchain line, so the same upward search made the probe try to select a toolchain it cannot fetch.
+// The probe's own module root stops the search, and with no go line of its own it requires nothing.
+func TestMergeBuildEnvProbeStopsAtItsOwnDirectoryWhenTheModuleAboveNamesANewerGo(t *testing.T) {
+	callerModule := t.TempDir()
+	if err := os.WriteFile(filepath.Join(callerModule, "go.mod"), []byte("go 1.999.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(callerModule, "tmp", "owned")
+	if err := os.MkdirAll(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caller := append(os.Environ(),
+		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(),
+		"CODEX_HOME="+t.TempDir(), "CRW_HOME="+t.TempDir(),
+		"GOTOOLCHAIN=auto", "GOPROXY=off")
+	telemetryOffWriteMode(t, caller)
+	env, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
+	if err != nil {
+		t.Fatalf("the cache read failed with a newer go named above the scratch root: %v", err)
+	}
+	got := mbcLastEnv(env)
+	caches := mbcCallerGoEnv(t, caller)
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want the caller's %q", key, got[key], want)
 		}
 	}
 }

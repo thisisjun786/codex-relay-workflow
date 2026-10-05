@@ -476,3 +476,137 @@ func TestRecallCLIHTMLAndLiteralEscapes(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+// recallRebuildIndex addresses a synthetic Codex home and a sidecar index in temporary directories;
+// HOME, CODEX_HOME and CRW_HOME are temporary, so nothing reaches the real ones.
+type recallRebuildIndex struct{ home, idx string }
+
+func recallRebuildNew(t *testing.T) recallRebuildIndex {
+	t.Helper()
+	recallCLIHome(t)
+	return recallRebuildIndex{buildIngestCodexHome(t), filepath.Join(t.TempDir(), "index.sqlite")}
+}
+
+func (r recallRebuildIndex) run(t *testing.T, now time.Time, args ...string) (int, string, string) {
+	t.Helper()
+	return recallCLIInvoke(t, append(args, "--home", r.home, "--index-path", r.idx), now)
+}
+
+// ok runs a command that must succeed and returns stdout with the wall-clock fields replaced.
+func (r recallRebuildIndex) ok(t *testing.T, now time.Time, args ...string) string {
+	t.Helper()
+	code, out, e := r.run(t, now, args...)
+	if code != 0 || e != "" {
+		t.Fatal(args, code, out, e)
+	}
+	return recallRebuildNormalize(out)
+}
+
+// recallRebuildNormalize replaces the elapsed milliseconds and the last-ingest time, the two wall-clock
+// fields of the index command's text output.
+func recallRebuildNormalize(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if j := strings.LastIndex(l, ", "); strings.HasPrefix(l, "ingested ") && j >= 0 {
+			lines[i] = l[:j] + ", Nms)"
+		}
+		if j := strings.Index(l, "last ingest: "); j >= 0 {
+			lines[i] = l[:j] + "last ingest: T"
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// search returns the --no-refresh JSON answer without its two wall-clock fields, elapsedMs (omitted
+// when it is zero) and index.lastIngestAt; one fixed now keeps the score equal.
+func (r recallRebuildIndex) search(t *testing.T, now time.Time) map[string]any {
+	t.Helper()
+	var got map[string]any
+	err := json.Unmarshal([]byte(r.ok(t, now, "chat", "search", "deployed", "--no-refresh", "--days", "0", "--json")), &got)
+	index, _ := got["index"].(map[string]any)
+	if err != nil || got["hits"] == nil || index == nil {
+		t.Fatal(got, err)
+	}
+	delete(index, "lastIngestAt")
+	delete(got, "elapsedMs")
+	return got
+}
+
+// snapshot reads every table the rebuild deletes from, including both FTS5 inverted indexes through MATCH
+// (a bare rowid select reads the content table of an external-content FTS5 table and proves nothing).
+func (r recallRebuildIndex) snapshot(t *testing.T, sql ...string) map[string][]map[string]any {
+	t.Helper()
+	db, err := openIndex(r.idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range sql {
+		recallSQL(t, db, q)
+	}
+	out := map[string][]map[string]any{}
+	for name, q := range map[string]string{
+		"files": "SELECT * FROM files ORDER BY path", "msgs": "SELECT * FROM msgs ORDER BY id",
+		"msgs_fts": "SELECT rowid FROM msgs_fts WHERE msgs_fts MATCH 'deployed' ORDER BY rowid",
+		"msgs_tri": "SELECT rowid FROM msgs_tri WHERE msgs_tri MATCH 'deployed' ORDER BY rowid",
+	} {
+		out[name] = indexRows(t, db, q)
+	}
+	return out
+}
+
+// recallRebuildRequirePopulated stops a comparison of two empty indexes from passing.
+func recallRebuildRequirePopulated(t *testing.T, s map[string][]map[string]any) {
+	t.Helper()
+	if len(s["files"]) != 4 || len(s["msgs"]) != 12 || len(s["msgs_fts"]) == 0 || len(s["msgs_tri"]) == 0 {
+		t.Fatal("index is not the populated fixture", len(s["files"]), len(s["msgs"]), len(s["msgs_fts"]), len(s["msgs_tri"]))
+	}
+}
+
+// A failed rebuild leaves the index exactly as it was: both deletes run in one transaction.
+func TestRecallRebuildFaultKeepsIndex(t *testing.T) {
+	for _, c := range []struct{ name, trigger, stderr string }{
+		{"files", "BEFORE DELETE ON files BEGIN SELECT RAISE(ABORT,'fault'); END", "chat index failed: fault\n"},
+		// The first statement aborts before anything changes, so this case also holds on code without the
+		// transaction; it guards the symmetric failure and the error text.
+		{"msgs", "BEFORE DELETE ON msgs BEGIN SELECT RAISE(ABORT,'fault'); END", "chat index failed: fault\n"},
+		// A trigger raising ROLLBACK ends the transaction inside SQLite, so the rebuild's own ROLLBACK
+		// finds nothing to roll back; the delete's reason must still be the one reported.
+		{"files rollback", "BEFORE DELETE ON files BEGIN SELECT RAISE(ROLLBACK,'fault'); END", "chat index failed: fault\n"},
+		{"msgs rollback", "BEFORE DELETE ON msgs BEGIN SELECT RAISE(ROLLBACK,'fault'); END", "chat index failed: fault\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r, now := recallRebuildNew(t), time.Now()
+			r.ok(t, now, "chat", "index")
+			noop, search := r.ok(t, now, "chat", "index"), r.search(t, now)
+			before := r.snapshot(t)
+			recallRebuildRequirePopulated(t, before)
+			r.snapshot(t, "CREATE TRIGGER recall_rebuild_fault "+c.trigger)
+			code, out, e := r.run(t, now, "chat", "index", "--rebuild")
+			if code != 1 || out != "" || !strings.HasPrefix(e, "chat index failed: ") || e != c.stderr {
+				t.Fatal(code, out, e)
+			}
+			if !reflect.DeepEqual(before, r.snapshot(t)) || !reflect.DeepEqual(search, r.search(t, now)) {
+				t.Error("failed rebuild changed the index")
+			}
+			r.snapshot(t, "DROP TRIGGER recall_rebuild_fault")
+			if got := r.ok(t, now, "chat", "index"); got != noop || !reflect.DeepEqual(before, r.snapshot(t)) || !reflect.DeepEqual(search, r.search(t, now)) {
+				t.Fatalf("index after the failed rebuild differs: %q want %q", got, noop)
+			}
+		})
+	}
+}
+
+// A successful rebuild prints what the first build printed and re-creates the same rows.
+func TestRecallRebuildSuccessOutput(t *testing.T) {
+	r, now := recallRebuildNew(t), time.Now()
+	first := r.ok(t, now, "chat", "index")
+	before, search := r.snapshot(t), r.search(t, now)
+	recallRebuildRequirePopulated(t, before)
+	if got := r.ok(t, now, "chat", "index", "--rebuild"); got != first {
+		t.Fatalf("rebuild printed %q, first build printed %q", got, first)
+	}
+	if !reflect.DeepEqual(before, r.snapshot(t)) || !reflect.DeepEqual(search, r.search(t, now)) {
+		t.Fatal("rebuild did not re-create the same index")
+	}
+}
