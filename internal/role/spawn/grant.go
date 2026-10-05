@@ -113,9 +113,10 @@ func spawnGrantConsume(obj map[string]any, message, tmpRoot string, uid int, now
 	return spawnGrantUnexpired(dir, claimed, now)
 }
 
-// spawnGrantUnexpired reads a claimed grant like JSON.parse followed by a typeof-number test: one
+// spawnGrantUnexpired reads a claimed grant as JSON.parse followed by a typeof-number test does: one
 // JSON object with no trailing text whose expiresAt is a number, an overflowing exponent reading
-// as infinity, not before now. The file must be a regular file reached without a link.
+// as infinity, not before now; the decoder alone refuses nesting beyond 10,000 levels, which
+// JSON.parse accepts (known-defects.md). The file must be a regular file reached without a link.
 func spawnGrantUnexpired(dir *os.Root, name string, now time.Time) bool {
 	named, err := dir.Lstat(name)
 	if err != nil || !named.Mode().IsRegular() {
