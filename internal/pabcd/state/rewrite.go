@@ -3,7 +3,9 @@ package state
 import (
 	"encoding/json"
 	"math/big"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // rewriteNumberMaxLen bounds the text of an attempts value the guard will compare exactly; a longer literal is read as a loss.
@@ -19,8 +21,15 @@ const rewriteNumberMaxLen = 64
 // reader does not handle is not judged, as nowhere else in the file. raw is read as ReadStateStrict reads it, so a file that is
 // not a JSON object, a list that is not an array and a record that is not an object are all refused.
 //
-// Not judged: a lone surrogate escape in a Node-written receipt reads as U+FFFD on both sides, so its rewrite shows no difference.
+// The characters of the file are judged first, before any decoding. encoding/json reads an unpaired UTF-16 surrogate escape (such as
+// \ud800, which Node keeps and writes back as written) and every byte of invalid UTF-8 as U+FFFD, in the reader and here alike, so
+// the two lists would agree while a rewrite replaced the stored text. A file that holds either is refused wherever it sits, because
+// the callers rewrite the whole file: a key the reader ignores, or a repeated key that a later one shadows, counts like any other
+// text. The comparison of fields keeps its scope.
 func RewriteKeepsUnverified(raw []byte, kept []UnverifiedSubagent) bool {
+	if !utf8.Valid(raw) || rewriteLosslessUnpaired(raw) {
+		return false
+	}
 	m := decodeObject(raw)
 	if m == nil {
 		return false
@@ -70,8 +79,9 @@ func rewriteFlag(stored any, kept bool) bool {
 // reads back as the reader's float64, which is not the float64's own value (a stored 1000000000000000128 comes back as
 // 1.0000000000000001e+18) and not the stored text (the writer's 1e+23 and 3.0 read as 1e23 and 3). The forms of one value (3, 3.0,
 // 1e2, -0) are all kept; a fraction the reader floors to its default, a digit lost beyond 2^53 and a tiny value rounded to zero are
-// losses. A literal over rewriteNumberMaxLen bytes, or with an exponent of more than three digits, is read as a loss without
-// being parsed, so a hostile file cannot make the comparison expensive.
+// losses. A literal over rewriteNumberMaxLen bytes, or with an exponent of more than three digits once its sign and leading zeros
+// are removed (3e0000 is the value 3), is read as a loss without being parsed, so a hostile file cannot make the comparison
+// expensive.
 func rewriteCount(stored any, kept float64) bool {
 	if stored == nil {
 		return true
@@ -80,7 +90,7 @@ func rewriteCount(stored any, kept float64) bool {
 	if !ok || len(n) > rewriteNumberMaxLen {
 		return false
 	}
-	if e := strings.IndexAny(string(n), "eE"); e >= 0 && len(strings.TrimLeft(string(n)[e+1:], "+-")) > 3 {
+	if e := strings.IndexAny(string(n), "eE"); e >= 0 && len(strings.TrimLeft(strings.TrimLeft(string(n)[e+1:], "+-"), "0")) > 3 {
 		return false
 	}
 	written, err := json.Marshal(kept)
@@ -90,4 +100,38 @@ func rewriteCount(stored any, kept float64) bool {
 	was, wasOK := new(big.Rat).SetString(string(n))
 	now, nowOK := new(big.Rat).SetString(string(written))
 	return wasOK && nowOK && was.Cmp(now) == 0
+}
+
+// rewriteLosslessUnpaired says whether raw holds a surrogate escape (\uD800 to \uDFFF) that is not half of a pair written high then
+// low, which the decoder reads as U+FFFD. It is unpairedSurrogate of internal/pabcd/goalplan/read.go, copied because goalplan
+// imports this package, over bytes and bounded by the end of the input, since it runs before the decoder has judged the file. A
+// backslash escapes the byte after it, so the u after an escaped backslash starts no escape; a \u without four hex digits is left
+// to the decoder, which refuses the file.
+func rewriteLosslessUnpaired(raw []byte) bool {
+	unit := func(at int) uint64 {
+		if at+6 > len(raw) || raw[at] != '\\' || raw[at+1] != 'u' {
+			return 0
+		}
+		n, _ := strconv.ParseUint(string(raw[at+2:at+6]), 16, 16)
+		return n
+	}
+	for i := 0; i+1 < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		switch n := unit(i); {
+		case n >= 0xd800 && n <= 0xdbff:
+			if m := unit(i + 6); m < 0xdc00 || m > 0xdfff {
+				return true
+			}
+			i += 11
+		case n >= 0xdc00 && n <= 0xdfff:
+			return true
+		case raw[i+1] == 'u':
+			i += 5
+		default:
+			i++
+		}
+	}
+	return false
 }

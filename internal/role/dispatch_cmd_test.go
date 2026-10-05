@@ -57,6 +57,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	userHome := t.TempDir()
 	createdCheckSeed(t, native, "child-a", "session-test")
 	createdCheckSeed(t, native, "child-b", "session-test")
+	createdCheckSeed(t, native, "child-c", "session-test")
 	createdCheckSeed(t, native, "foreign", "other-session")
 	vars := map[string]string{"HOME": userHome, "CODEX_HOME": native, "CRW_HOME": global}
 	var env host.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
@@ -127,7 +128,8 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	}
 	complete := run("completion", map[string]any{"action": "start", "role": "executor"}, 0)
 	run("completion", map[string]any{"action": "claim", "attemptId": complete.AttemptID}, 0)
-	run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "created", "agentId": "child-a"}, 0)
+	// The completion dispatch has a child of its own: one agent id is reported once per session.
+	run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "created", "agentId": "child-c"}, 0)
 	wrong := run("wrong", map[string]any{"action": "start", "role": "executor"}, 0)
 	run("wrong", map[string]any{"action": "claim", "attemptId": wrong.AttemptID}, 0)
 	// Replay the old oracle's accepted wrong ID through the parity API, then
@@ -135,7 +137,7 @@ func TestDispatchCommandHostReportsAcrossProcesses(t *testing.T) {
 	_, err = RunDispatch(ws, map[string]any{"action": "report", "sessionId": "session-test", "dispatchId": "wrong", "attemptId": wrong.AttemptID, "outcome": "created", "agentId": "PLACEHOLDER"}, env)
 	check(t, err)
 	check(t, os.Rename(filepath.Join(native, "state_5.sqlite"), filepath.Join(native, "disconnected.sqlite")))
-	if got := run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "complete", "agentId": "child-a"}, 0); got.Action != "complete" {
+	if got := run("completion", map[string]any{"action": "report", "attemptId": complete.AttemptID, "outcome": "complete", "agentId": "child-c"}, 0); got.Action != "complete" {
 		t.Fatal("complete depends on connected host")
 	}
 	stop := run("wrong", map[string]any{"action": "report", "attemptId": wrong.AttemptID, "outcome": "stopped", "agentId": "PLACEHOLDER", "executionState": "stopped", "reconciliation": "actual child stopped; partial work inspected"}, 0)

@@ -389,11 +389,11 @@ func TestLegsMatchTheDeclaredRegistrations(t *testing.T) {
 
 func TestPabcdVerbs(t *testing.T) {
 	var got []string
-	verbs := []Verb{{"orchestrate", func(args []string, _ io.Reader, out, _ io.Writer) int {
+	verbs := []Verb{{Name: "orchestrate", Run: func(args []string, _ io.Reader, out, _ io.Writer) int {
 		got = args
 		io.WriteString(out, "ran\n")
 		return 7
-	}}, {"freeze", nil}}
+	}}, {Name: "freeze"}}
 	for _, c := range []struct {
 		args           []string
 		code           int
