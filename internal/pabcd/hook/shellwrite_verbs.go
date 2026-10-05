@@ -652,8 +652,8 @@ func shellVerbCpMvWrites(args []string) []string {
 // shellVerbScriptWrites is scriptWriteDestinations (:535): the path of open(path, "w"), Path(path).write_text(...) and
 // writeFile(path...) calls, pattern by pattern in that order. The oracle's backreferences (the closing quote repeats the opening
 // one) become one alternative per quote; each alternation picks its branch by the quote present, so it never competes with
-// lazy matching and each pattern matches what the backtracking original does. hard adds template literal paths and the open()
-// reader.
+// lazy matching and each pattern matches what the backtracking original does. hard adds template literal paths, the open() and
+// Path reader and the decoded value of a JavaScript literal, after the oracle's raw text.
 func shellVerbScriptWrites(script string, hard bool) []string {
 	s, dot, pre := lintSpace, lintDot, "[rRuUbBfF]*"
 	quoted := func(body string) string { return "(?:'(" + body + ")'|\"(" + body + ")\")" }
@@ -677,6 +677,7 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 		}
 	}
 	if hard {
+		out = append(out, shellWriteEscapeJSWrites(script, out)...)
 		out = append(out, shellVerbOpenWrites(script)...)
 	}
 	return out
@@ -685,7 +686,8 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 // shellVerbOpenWrites reads each open(...) call of a program as Python does, in one pass over the text: the path is the first
 // argument or file=, the mode the second or mode=, in either order and with other keywords between. A call whose mode writes,
 // appends, creates or updates (a w, a, x or + in it) names its path; only string literals count. One frame is kept per open
-// bracket and arguments are spans of the text, so unclosed and nested calls cost no more than their own characters.
+// bracket and arguments are spans of the text, so unclosed and nested calls cost no more than their own characters. A
+// Path(...).write_text or .write_bytes call names the join of its arguments (shellWriteEscapePath).
 func shellVerbOpenWrites(script string) []string {
 	type frame struct {
 		kind  byte // 'o' for open(, 'p' for Path(, else 0
@@ -721,13 +723,8 @@ func shellVerbOpenWrites(script string) []string {
 					out = append(out, path)
 				}
 			} else if top.kind == 'p' && c == ')' && shellVerbWriteMethod(rs, i+1) {
-				for _, span := range spans {
-					if !shellVerbBlank(rs[span[0]:span[1]]) {
-						if path, ok := shellVerbLiteral(rs[span[0]:span[1]]); ok && path != "" {
-							out = append(out, path)
-						}
-						break
-					}
+				if path, ok := shellWriteEscapePath(rs, spans); ok {
+					out = append(out, path)
 				}
 			}
 		}
@@ -865,37 +862,224 @@ func shellVerbKeywordArg(arg []rune) (string, []rune, bool) {
 }
 
 // shellVerbLiteral is the value of a Python string literal argument: a quoted string with an optional r, u, b or f prefix, whose
-// quote and backslash escapes are decoded unless it is raw. Anything else around the quotes (a concatenation, a name) makes it
-// no literal.
+// escapes are decoded unless it is raw (shellWriteEscapePython). Anything else around the quotes (a concatenation, a name), and a
+// literal Python would reject or whose value holds NUL, makes it no literal.
 func shellVerbLiteral(arg []rune) (string, bool) {
-	i, raw := 0, false
+	i, raw, isBytes := 0, false, false
 	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
 		i++
 	}
 	for ; i < len(arg) && strings.ContainsRune("rRuUbBfF", arg[i]); i++ {
 		raw = raw || arg[i] == 'r' || arg[i] == 'R'
+		isBytes = isBytes || arg[i] == 'b' || arg[i] == 'B'
 	}
 	if i >= len(arg) || arg[i] != '\'' && arg[i] != '"' {
 		return "", false
 	}
-	quote, body := arg[i], []rune{}
+	quote := arg[i]
 	for k := i + 1; k < len(arg); k++ {
 		switch c := arg[k]; {
-		case c == '\\' && k+1 < len(arg):
-			if k++; raw || arg[k] != quote && arg[k] != '\\' {
-				body = append(body, c)
-			}
-			body = append(body, arg[k])
+		case c == '\\':
+			k++ // the character after a backslash never closes the literal
 		case c == quote:
 			for _, rest := range arg[k+1:] {
 				if !shellVerbSpaceRune(rest) {
 					return "", false
 				}
 			}
-			return string(body), true
-		default:
-			body = append(body, c)
+			if raw {
+				return string(arg[i+1 : k]), true
+			}
+			return shellWriteEscapePython(arg[i+1:k], isBytes)
 		}
 	}
 	return "", false
+}
+
+// shellWriteEscapePath is the path a Path(...) call names: posixpath.join of its arguments, when every non-blank one (a trailing
+// comma leaves a blank) is a string literal. An absolute part discards the parts before it and nothing else is normalized, so
+// Path("/m", "") is "/m/". One argument that is no literal, or an empty result, names nothing.
+func shellWriteEscapePath(rs []rune, spans [][2]int) (string, bool) {
+	path := ""
+	for _, span := range spans {
+		if shellVerbBlank(rs[span[0]:span[1]]) {
+			continue
+		}
+		part, ok := shellVerbLiteral(rs[span[0]:span[1]])
+		if !ok {
+			return "", false
+		}
+		switch {
+		case strings.HasPrefix(part, "/"):
+			path = part
+		case path == "" || strings.HasSuffix(path, "/"):
+			path += part
+		default:
+			path += "/" + part
+		}
+	}
+	return path, path != ""
+}
+
+// shellWriteEscapePython decodes the body of a non-raw Python string literal: a line continuation (a CR or CRLF is a newline to
+// Python as well), the one-character escapes, octal of one to three digits, \xhh, and in a str literal \uXXXX and \UXXXXXXXX. An
+// unknown escape keeps its backslash. It reports false for what Python rejects (a short or oversized \x, \u or \U) and for a \N
+// escape, which needs the Unicode name table, and for a NUL, which no path holds. In a b literal \u, \U and \N are plain text, an
+// escape is a byte (octal wraps at eight bits) and is written as that byte.
+func shellWriteEscapePython(body []rune, isBytes bool) (string, bool) {
+	var out strings.Builder
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' || i+1 == len(body) {
+			out.WriteRune(body[i])
+			continue
+		}
+		i++
+		c, value := body[i], -1
+		switch {
+		case c == '\n': // a line continuation
+		case c == '\r':
+			if i+1 < len(body) && body[i+1] == '\n' {
+				i++
+			}
+		case c == '\\' || c == '\'' || c == '"':
+			value = int(c)
+		case strings.ContainsRune("abfnrtv", c):
+			value = int("\a\b\f\n\r\t\v"[strings.IndexRune("abfnrtv", c)])
+		case c >= '0' && c <= '7':
+			value = int(c - '0')
+			for n := 0; n < 2 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7'; n++ {
+				i++
+				value = value*8 + int(body[i]-'0')
+			}
+		case c == 'x' || !isBytes && (c == 'u' || c == 'U'):
+			width := []int{2, 4, 8}[strings.IndexRune("xuU", c)]
+			var ok bool
+			if value, ok = shellWriteEscapeDigits(body, i+1, width); !ok {
+				return "", false
+			}
+			i += width
+		case c == 'N' && !isBytes:
+			return "", false
+		default:
+			out.WriteByte('\\')
+			out.WriteRune(c)
+		}
+		if isBytes && value > 0xff {
+			value &= 0xff
+		}
+		switch {
+		case value == 0:
+			return "", false
+		case value > 0 && isBytes:
+			out.WriteByte(byte(value))
+		case value > 0:
+			out.WriteRune(rune(value))
+		}
+	}
+	return out.String(), true
+}
+
+// shellWriteEscapeDigits is the value of the n hexadecimal digits of rs from index from; false when they are not all digits or
+// the value is past the Unicode range.
+func shellWriteEscapeDigits(rs []rune, from, n int) (int, bool) {
+	if n < 1 || from+n > len(rs) {
+		return 0, false
+	}
+	value := 0
+	for _, r := range rs[from : from+n] {
+		switch {
+		case r >= '0' && r <= '9':
+			value = value*16 + int(r-'0')
+		case r >= 'a' && r <= 'f':
+			value = value*16 + int(r-'a') + 10
+		case r >= 'A' && r <= 'F':
+			value = value*16 + int(r-'A') + 10
+		default:
+			return 0, false
+		}
+		if value > 0x10ffff {
+			return 0, false
+		}
+	}
+	return value, true
+}
+
+// shellWriteEscapeJSWrites reads the first argument of each writeFile*, appendFile* and createWriteStream call as JavaScript reads
+// a string or template literal, and names the decoded value unless have holds it already. The oracle's lazy dot stops at an
+// escaped quote and never crosses a line terminator, so a path hidden by an escape (or a line continuation) is not in its raw
+// text. A quoted literal holds no raw LF or CR; a template does and keeps an escape's backslash pair together.
+func shellWriteEscapeJSWrites(script string, have []string) []string {
+	quoted := func(q string) string { return q + `((?:[^` + q + `\\\n\r]|\\(?:\r\n|[\s\S]))*)` + q }
+	pattern := `\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)` + lintSpace + `*\(` + lintSpace + `*(?:` +
+		quoted("'") + "|" + quoted("\"") + `|\x60((?:[^\x60\\]|\\(?:\r\n|[\s\S]))*)\x60)`
+	seen := make(map[string]struct{}, len(have))
+	for _, path := range have {
+		seen[path] = struct{}{}
+	}
+	out := []string{}
+	for _, m := range regexp.MustCompile(pattern).FindAllStringSubmatch(script, -1) {
+		decoded, ok := shellWriteEscapeJS(m[1]+m[2]+m[3], m[3] != "")
+		if _, found := seen[decoded]; ok && decoded != "" && !found {
+			seen[decoded] = struct{}{}
+			out = append(out, decoded)
+		}
+	}
+	return out
+}
+
+// shellWriteEscapeJS decodes the body of a JavaScript string or template literal: \xhh, \uXXXX, \u{...}, legacy octal (up to
+// three digits when the first is 0 to 3, else two; \0 alone is NUL), \b \f \n \r \t \v, a line continuation (LF, CR, CRLF, U+2028,
+// U+2029), and any other \c as c. The value is built from UTF-16 units, so a surrogate pair joins and a lone surrogate becomes
+// U+FFFD as everywhere in this package. A template reads a raw CR or CRLF as LF and, with an unescaped dollar-brace placeholder,
+// is no literal; a malformed \x, \u or a code point past U+10FFFF makes either kind no literal.
+func shellWriteEscapeJS(body string, template bool) (string, bool) {
+	rs, units := []rune(body), []uint16{}
+	for i := 0; i < len(rs); i++ {
+		switch c := rs[i]; {
+		case c == '$' && template && i+1 < len(rs) && rs[i+1] == '{':
+			return "", false
+		case c == '\r' && template:
+			units = append(units, '\n')
+			if i+1 < len(rs) && rs[i+1] == '\n' {
+				i++
+			}
+		case c != '\\' || i+1 == len(rs):
+			units = utf16.AppendRune(units, c)
+		default:
+			i++
+			switch d := rs[i]; {
+			case d == '\n' || d == '\u2028' || d == '\u2029': // a line continuation
+			case d == '\r':
+				if i+1 < len(rs) && rs[i+1] == '\n' {
+					i++
+				}
+			case strings.ContainsRune("bfnrtv", d):
+				units = append(units, uint16("\b\f\n\r\t\v"[strings.IndexRune("bfnrtv", d)]))
+			case d == 'x' || d == 'u' && (i+1 == len(rs) || rs[i+1] != '{'):
+				width := 2 + 2*strings.IndexRune("xu", d)
+				value, ok := shellWriteEscapeDigits(rs, i+1, width)
+				if !ok {
+					return "", false
+				}
+				units, i = append(units, uint16(value)), i+width
+			case d == 'u':
+				end := slices.Index(rs[i:], '}')
+				value, ok := shellWriteEscapeDigits(rs, i+2, end-2)
+				if !ok {
+					return "", false
+				}
+				units, i = utf16.AppendRune(units, rune(value)), i+end
+			case d >= '0' && d <= '7':
+				value := int(d - '0')
+				for more := 2 - value/4; more > 0 && i+1 < len(rs) && rs[i+1] >= '0' && rs[i+1] <= '7'; more-- {
+					i++
+					value = value*8 + int(rs[i]-'0')
+				}
+				units = append(units, uint16(value))
+			default:
+				units = utf16.AppendRune(units, d)
+			}
+		}
+	}
+	return shellString(units), true
 }

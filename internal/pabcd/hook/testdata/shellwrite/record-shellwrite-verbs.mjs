@@ -128,6 +128,9 @@ group('security: combinations of the classes above in one command, with the orac
  [R`python3 -c "open (mode='w', file='/m/a')"`, ['/m/a']], [R`python3 -c "open('/m/a',mode='w',)"`, ['/m/a']], [R`python3 -c "open(file='/m/a',mode='w',)"`, ['/m/a']], [R`python3 -c "# don't skip` + '\n' + R`open(mode='w',file='/m/a')"`, ['/m/a']], [R`python3 -c "open('/m/a', # output file` + '\n' + R`mode='w')"`, ['/m/a']], [R`python3 -c "from pathlib import Path; Path('/m/a',).write_text('x')"`, ['/m/a']], [R`python3 -c "Path(` + '\n' + R`'/m/a', # output file` + '\n' + R`).write_bytes(b'x')"`, ['/m/a']], [R`python3 -c "Path('/m/a',) . write_text ('x')"`, ['/m/a']], [R`python3 -c "Path('/m/a',).read_text()"`, []], [R`python3 -c "f = Path('/m/a',).write_text"`, []], [R`python3 -c "Path('/m/a',)xwrite_text('x')"`, []], [R`python3 -c "Path('/m/' + 'a',).write_text('x')"`, []], [R`node -p "fs.writeFile(\"/m/a\",1)"`, ['/m/a']],
  ['echo a >&2; echo b &> /m/c', []], ['echo a 2>&1 | tee /m/b', []], ['echo a |& tee /m/b', []], ["echo 'a & tee /m/a'", []], ['echo a\\&tee /m/a', []],
 ]);
+group('security: a Python string escape hid the real path, which is named after the oracle\'s raw text', [
+ [R`python3 -c "open('/m/a\nb','w')"`, ['/m/a\nb']],
+]);
 const utf8 = s => Buffer.from(s).toString('utf8');
 const data = { oracle: 'CXC v0.2.40 commit 3c1459ac', source: path, entry: [], units: [] };
 for (const [command, extraCase] of [...new Set(commands)].map(c => [c, additions.get(c)]).concat([...additions.keys()].filter(c => !commands.includes(c)).map(c => [c, additions.get(c)]))) {

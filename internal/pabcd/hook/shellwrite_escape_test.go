@@ -130,7 +130,7 @@ func TestShellWriteEscapeJSPaths(t *testing.T) {
 		{command: js("fs.writeFileSync(\"/m/\\a\",\"x\")"), has: []string{"/m/a"}},
 		{command: js("fs.writeFileSync(`/m/\\${x}`,\"x\")"), has: []string{"/m/${x}"}},
 		{command: js("fs.writeFileSync(`\\x2fm/${x}`,\"x\")"), has: []string{"\\x2fm/${x}"}, lacks: []string{"/m/${x}"}},
-		{command: js("fs.writeFileSync(`/m/\\\\${x}`,\"x\")"), has: []string{"/m/\\\\${x}"}, lacks: []string{"/m/\\${x}"}},
+		{command: js("fs.writeFileSync(`/m/\\\\${x}`,\"x\")"), has: []string{"/m/\\\\${x}"}},
 		{command: js("fs.writeFileSync(\"\\x2m/a\",\"x\")"), same: true},
 		{command: js("fs.writeFileSync(\"/m/a\",\"x\")"), has: []string{"/m/a"}, same: true},
 		{command: js("fs.writeFileSync(\"\\x2fm/\\\na\",\"x\")"), has: []string{"/m/a"}},
@@ -151,5 +151,35 @@ func TestShellWriteEscapeScriptWrites(t *testing.T) {
 	}
 	if got := shellVerbScriptWrites(script, true); !slices.Equal(got, []string{`\x2fm/a`, "/m/a"}) {
 		t.Errorf("hardened reading: got %q", got)
+	}
+	if got := shellVerbScriptWrites(`fs.writeFileSync("/m/a","x")`, true); !slices.Equal(got, []string{"/m/a"}) {
+		t.Errorf("a value that equals the raw text is named once: got %q", got)
+	}
+}
+
+// shellWriteEscapeJS decodes the body of a JavaScript literal as Node reads it (escapes, a template's raw line breaks and its
+// placeholders); a malformed escape makes it no literal.
+func TestShellWriteEscapeJSLiteral(t *testing.T) {
+	for _, c := range []struct {
+		body     string
+		template bool
+		want     string
+		ok       bool
+	}{
+		{`\x2fm/a`, false, "/m/a", true}, {`\u002fm/a`, false, "/m/a", true}, {`\u{2f}m/a`, false, "/m/a", true},
+		{`\u{0000002f}m/a`, false, "/m/a", true}, {`\u{1F600}`, false, "\U0001f600", true}, {`\ud83d\ude00`, false, "\U0001f600", true},
+		{`\ud800`, false, "\ufffd", true}, {`\0`, false, "\x00", true}, {`\01`, false, "\x01", true}, {`\08`, false, "\x008", true},
+		{`\101`, false, "A", true}, {`\1010`, false, "A0", true}, {`\400`, false, " 0", true}, {`\477`, false, "'7", true},
+		{`\57m`, false, "/m", true}, {`\8`, false, "8", true}, {`\q/m`, false, "q/m", true}, {`\$`, false, "$", true},
+		{`\'\"\\`, false, "'\"\\", true}, {`\b\f\n\r\t\v`, false, "\b\f\n\r\t\v", true}, {`a\`, false, `a\`, true},
+		{"a\\\nb", false, "ab", true}, {"a\\\r\nb", false, "ab", true}, {"a\\\rb", false, "ab", true}, {"a\\\u2028b", false, "ab", true},
+		{`${x}`, false, `${x}`, true}, {`${x}`, true, "", false}, {`\${x}`, true, `${x}`, true}, {`\\${x}`, true, "", false},
+		{"a\r\nb", true, "a\nb", true}, {"a\rb", true, "a\nb", true}, {`a\rb`, true, "a\rb", true},
+		{`\x2`, false, "", false}, {`\x`, false, "", false}, {`\xzz`, false, "", false}, {`\u12`, false, "", false}, {`\u`, false, "", false},
+		{`\u{}`, false, "", false}, {`\u{110000}`, false, "", false}, {`\u{2f`, false, "", false},
+	} {
+		if got, ok := shellWriteEscapeJS(c.body, c.template); got != c.want || ok != c.ok {
+			t.Errorf("%q (template %v): got %q, %v; want %q, %v", c.body, c.template, got, ok, c.want, c.ok)
+		}
 	}
 }
