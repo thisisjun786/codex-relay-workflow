@@ -1104,3 +1104,15 @@ recorder and replay in `internal/role/spawn/testdata/classify/`.
   manifest-targets section record (source `plugins/codexclaw/components/cxc-ops/src/doctor.ts:137`
   with the JSON writer `plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`; the recorded case
   `stderr_slice_cuts_a_surrogate_pair` of the CRW-346 recorder, checked on Node 24); port: kept.
+
+## CRW-615 — the doctor install checks
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` at v0.2.40 (commit 3c1459ac), through
+the recorder and replay in `internal/runtime/doctor/testdata/harness/install/`.
+
+- `cxc doctor` aborts the whole report with an uncaught `EACCES` when the project's
+  `.codexclaw/sessions` directory exists but cannot be enumerated, instead of reporting a WARN
+  (source `doctor.ts:171`; the recorded case `unreadable` holds the thrown message, and the CLI's
+  own top-level boundary prints "cxc-ops error: EACCES: permission denied, scandir '<path>'" with
+  exit 1); the port keeps the abort as a panic at the same seam (`HarnessPabcdCheck`), which the
+  CLI boundary of the assembly issue catches as `cli.ts` does; port: kept.

@@ -145,7 +145,6 @@ func harnessInstallSessions(t *testing.T, ws string, files map[string]string) {
 	}
 }
 
-
 // harnessInstallPabcdWorkspace rebuilds the tree of one recorded pabcd case.
 func harnessInstallPabcdWorkspace(t *testing.T, root, name string) string {
 	t.Helper()
@@ -324,7 +323,6 @@ func harnessInstallHomeAt(t *testing.T, root, name string, entries [][]string) s
 	}
 	return home
 }
-
 
 // harnessInstallUnsetEnv removes one variable and restores its presence on cleanup, so the
 // "variable absent" branch is reachable without touching the host.
@@ -521,4 +519,3 @@ func TestHarnessInstallCorruptRepairRendersPort(t *testing.T) {
 		t.Fatalf("rendered report misses the repair line:\n%s", text)
 	}
 }
-
