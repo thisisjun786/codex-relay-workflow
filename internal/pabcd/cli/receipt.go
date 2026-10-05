@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"golang.org/x/sys/unix"
 )
 
 // ReceiptCLIArgs is receipt-cli.ts ReceiptCliArgs, including the declared generated paths.
@@ -147,6 +148,9 @@ var receiptBeforePublishHook func()
 // where the rename beat the cancellation.
 var receiptAfterPublishHook func()
 
+// receiptLockRetry is how often a run whose context can end asks again for a receipt directory lock that another run holds.
+const receiptLockRetry = 20 * time.Millisecond
+
 // receiptLateCancelHook, when non-nil, runs immediately before the late-cancellation check in a
 // receipt test. It is nil in production (an uninitialized variable, no package-level work at
 // start); receipt_late_cancel_test.go sets it to cancel the context at the one point where the
@@ -154,10 +158,21 @@ var receiptAfterPublishHook func()
 // captured again.
 var receiptLateCancelHook func()
 
+// receiptLockAfterCompareHook, when non-nil, runs inside a withdrawal after it has compared the receipt on
+// disk with its own bytes and found them equal, and before it unlinks them. It is nil in production;
+// receipt_withdraw_race_test.go uses it to let a second run publish at the one point where a withdrawal
+// that does not exclude other runs would remove that run's receipt.
+var receiptLockAfterCompareHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
 // A cancellation seen anywhere before the rename refuses the receipt, and one that lands after the publication check
 // withdraws the receipt the rename beat it to.
+// The publication, the cancellation check after it and that withdrawal run under one exclusive flock on the receipt
+// directory, so a withdrawal never removes a receipt another run published after the withdrawal compared the bytes. The
+// lock is the open directory handle: no lock file is created. A wait for it that ends with the context publishes nothing and
+// answers the interrupted refusal. The lock is cooperative: the run-start removal below, which is the oracle's, and any other
+// writer of the file do not take it.
 // A non-nil error models the oracle's thrown remove/before-capture/publication errors. Atomic publication intentionally fixes
 // the oracle's record-truncation defect; ordinary parser and runner refusals remain result values.
 func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIResult, error) {
@@ -243,6 +258,17 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return ReceiptCLIResult{}, err
+	}
+	defer dir.Close() // drops the lock
+	if err = receiptLockWait(ctx, dir); err != nil {
+		if ctx.Err() != nil && err == ctx.Err() {
+			return refuse(receiptInterrupted)
+		}
+		return ReceiptCLIResult{}, err
+	}
 	if err = crwdir.PublishContext(ctx, path, data); err != nil {
 		if result, refused := receiptPublishRefusal(ctx, err); refused {
 			return result, nil
@@ -276,6 +302,29 @@ func receiptPublishRefusal(ctx context.Context, err error) (ReceiptCLIResult, bo
 	return ReceiptCLIResult{Output: receiptInterrupted, Code: 1}, true
 }
 
+// receiptLockWait takes the exclusive lock on the receipt directory. A context that can end is asked for it without blocking,
+// and again every receiptLockRetry while another run holds it, so the wait ends with ctx and returns its error. One that can
+// never end (context.Background) blocks in the kernel. A free lock is taken even when ctx has ended since the caller looked:
+// PublishContext then reports the cancellation at its rename step, as it did before the lock existed.
+func receiptLockWait(ctx context.Context, dir *os.File) error {
+	if ctx.Done() == nil {
+		return unix.Flock(int(dir.Fd()), unix.LOCK_EX)
+	}
+	tick := time.NewTicker(receiptLockRetry)
+	defer tick.Stop()
+	for {
+		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
 // withdrawReceipt removes the receipt this invocation published at path, while the bytes on disk are
 // still the ones it wrote; a path another invocation for the same session replaced stays. An already
 // absent path is fine, and any other failure is reported as it happened.
@@ -289,6 +338,9 @@ func withdrawReceipt(path string, published []byte) error {
 	}
 	if !bytes.Equal(current, published) {
 		return nil
+	}
+	if receiptLockAfterCompareHook != nil {
+		receiptLockAfterCompareHook()
 	}
 	return removeReceipt(path)
 }
