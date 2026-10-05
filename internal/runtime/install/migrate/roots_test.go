@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -46,6 +47,15 @@ func put(t *testing.T, path, data string, mode fs.FileMode) {
 	mkdirs(t, filepath.Dir(path))
 	must(t, os.WriteFile(path, []byte(data), 0o600))
 	must(t, os.Chmod(path, mode))
+	old := time.Unix(1577934245, 0) // a fixed old time, so a rewrite shows in a later fingerprint
+	must(t, os.Chtimes(path, old, old))
+}
+
+func get(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	must(t, err)
+	return string(b)
 }
 
 // tree lists every path below root.

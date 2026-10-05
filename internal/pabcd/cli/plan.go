@@ -329,19 +329,7 @@ func planPathError(op, path string, err error) error {
 }
 
 func planFailure(err error) PlanCliResult {
-	output := err.Error()
-	var path *os.PathError
-	var errno syscall.Errno
-	if errors.As(err, &path) && errors.As(err, &errno) {
-		name, desc := planErrno(errno)
-		if name != "" {
-			output = name + ": " + desc + ", " + path.Op
-			if path.Op != "write" && path.Op != "close" {
-				output += " '" + path.Path + "'"
-			}
-		}
-	}
-	return PlanCliResult{Code: 1, Output: "plan init failed: " + output}
+	return PlanCliResult{Code: 1, Output: "plan init failed: " + nodeErrorMessage(err)}
 }
 
 // libuv's filesystem errno descriptions, exposed by the oracle's Error.message.
@@ -373,6 +361,8 @@ func planErrno(e syscall.Errno) (string, string) {
 		return "ENAMETOOLONG", "name too long"
 	case syscall.ELOOP:
 		return "ELOOP", "too many symbolic links encountered"
+	case syscall.EFBIG:
+		return "EFBIG", "file too large"
 	}
 	return "", ""
 }

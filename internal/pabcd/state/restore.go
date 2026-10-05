@@ -236,8 +236,9 @@ func reconstructSourceIdentity(v any) *SourceIdentity {
 
 // reconstructDcloseRecovery rebuilds the D-close marker with the strictness of every other persisted field. An absent or
 // malformed successor is kept as Legacy and never promoted to an explicit null: null authoritatively says "this close had no
-// successor", and laundering damage into it would let a corrupt marker skip a real successor. (The flag does not survive a
-// write and read: the persisted null reads back as explicit.) A marker of another session is dropped.
+// successor", and laundering damage into it would let a corrupt marker skip a real successor. A stored legacy flag (what
+// WriteState persists for such a marker) is authoritative and keeps the distinction across a write. A marker of another
+// session is dropped.
 func reconstructDcloseRecovery(v any, sessionID string) *DcloseRecoveryMarker {
 	m, ok := v.(map[string]any)
 	epoch, _ := m["checkEpoch"].(string)
@@ -246,6 +247,14 @@ func reconstructDcloseRecovery(v any, sessionID string) *DcloseRecoveryMarker {
 		return nil
 	}
 	marker := &DcloseRecoveryMarker{SessionID: sessionID, CheckEpoch: epoch, ClosedWorkPhaseID: closed}
+	// Changed from the oracle, a fix for a loss of state (CRW-648): the oracle never reads the legacy key it writes, so a marker
+	// it refused reads back as an explicit "no successor" after any state write and recovery may act on it. Here a stored
+	// legacy true is authoritative: the marker stays refused with no successor, whatever nextWorkPhaseId holds. Only boolean
+	// true counts; every other type or value is ignored as before.
+	if m["legacy"] == true {
+		marker.Legacy = true
+		return marker
+	}
 	next, present := m["nextWorkPhaseId"]
 	switch n := next.(type) {
 	case nil:
