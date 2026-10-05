@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -178,6 +179,11 @@ type dispatchPinnedDir struct {
 	root  *os.Root
 	path  string
 	after func(point string)
+	// dispatchLockMutexHeld is the guard of the clear that holds this directory exclusively; only dispatchLockClear sets it.
+	// A lock taken through the same object is the clear's own, and a shared lock would wait for the clear's exclusive one.
+	dispatchLockMutexHeld *os.File
+	// dispatchLockMutexBound is how long a shared wait lasts; zero is dispatchLockMutexWait. A test shortens or lengthens it.
+	dispatchLockMutexBound time.Duration
 }
 
 // dispatchPinnedCheck runs once the temporary record is written and before it replaces the old one; an error from it
@@ -207,13 +213,38 @@ func (d *dispatchPinnedDir) fail(op, name string, err error) error {
 func dispatchPinnedLinked() error { return errors.New("dispatch directory must not be a symlink") }
 
 // lock creates the record's lock directory in the pinned directory (it fails when one exists) and returns the release
-// that removes it.
+// that removes it. The lock records its owner in owner.json (dispatchLockOwner), which is what lets dispatch-lock-clear
+// tell a lock a dead process left from one that is held.
 func (d *dispatchPinnedDir) lock(name string) (func() error, error) {
+	return d.lockWith(name, d.writeOwner)
+}
+
+// lockWith is lock with the writer of the owner record as a parameter. A failed writer takes the lock away again (lockAbandon).
+// From the Mkdir to the end of that writer, and again in the release, the pinned directory is held shared
+// (dispatchLockMutexShared), so a dispatch-lock-clear, which holds it exclusively while it judges and moves a lock, never meets a
+// lock being taken or given back; when the shared wait runs out the answer is that of a held lock. The release removes the
+// directory this call created and only that one (dispatchLockMutexRelease).
+func (d *dispatchPinnedDir) lockWith(name string, write func(lock string, created fs.FileInfo) error) (func() error, error) {
 	lock := name + ".lock"
+	drop, err := d.dispatchLockMutexShared()
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		err = fmt.Errorf("%w (a dispatch-lock-clear of this session is running)", &fs.PathError{Op: "mkdir", Path: d.display(lock), Err: syscall.EEXIST})
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer drop()
 	if err := d.root.Mkdir(lock, 0o700); err != nil {
 		return nil, d.fail("mkdir", lock, err)
 	}
-	return func() error { return d.root.RemoveAll(lock) }, nil
+	created, err := d.root.Lstat(lock)
+	if err == nil {
+		err = write(lock, created)
+	}
+	if err != nil {
+		return nil, d.lockAbandon(lock, created, err)
+	}
+	return func() error { return d.dispatchLockMutexRelease(lock, created) }, nil
 }
 
 // readFile reads the record name. A link is refused, and the file that is opened must be the regular file that was looked
