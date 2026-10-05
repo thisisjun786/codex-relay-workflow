@@ -153,6 +153,28 @@ func TestMergeEvidenceIndependentReview(t *testing.T) {
 			t.Fatalf("the fallback warned about a head the record and the artifact agree on: %v", found)
 		}
 	})
+	t.Run("a record about H1 restated while the forge reports H2 does not reuse its patch-id", func(t *testing.T) {
+		// The record is about H1 and its item states the patch-id of the head the record is about,
+		// which is the artifact's patch-id. The forge now reports H2, a different head: the item's
+		// patch-id describes H1, so it cannot clear the comparison with H2. The restatement refuses
+		// with candidate_moved as before and the coverage warns against H2.
+		_, first := runMerge(t, scriptedForge{})
+		item := reviewItem(t, lateHead, same)
+		item["headPatchId"] = strings.Repeat("c", 40)
+		first["handoff"].(map[string]any)[reviewMember] = item
+		record := lateWrite(t, "record.json", first)
+		code, p := runMerge(t, scriptedForge{head: lateOtherHead}, "--restate", record)
+		rest := p["restatement"].(map[string]any)
+		if code != 2 || rest["current"] != false || !strings.Contains(lateCodes(t, p), "candidate_moved") {
+			t.Fatal(code, p)
+		}
+		if strings.Join(reviewWarnings(t, p), ",") != "head_differs" {
+			t.Fatal(code, p)
+		}
+		if detail := reviewDetail(t, p, "head_differs"); !strings.Contains(detail, lateOtherHead) {
+			t.Fatalf("the detail does not name the candidate head: %s", detail)
+		}
+	})
 	t.Run("the flag grades a restated record and needs one", func(t *testing.T) {
 		var out, stderr bytes.Buffer
 		code := Execute(context.Background(), []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7", "--expect-independent-review"}, &out, &stderr)

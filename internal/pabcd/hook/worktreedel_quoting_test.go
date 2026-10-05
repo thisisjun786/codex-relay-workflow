@@ -398,14 +398,13 @@ func worktreeDelQuoteNest(program string, depth int) string {
 }
 
 // A program string inside a program string is judged down to worktreeDelQuoteDepth levels, and a deeper nest costs no more than
-// that: the walk stops following programs there (the fallback of the old grammar still sees the text). The text doubles its
-// backslashes at each level, so twelve levels are as deep as a test needs.
+// that: the walk stops following programs there and denies the one it has not read, since it cannot tell what it runs (CRW-639;
+// CRW-611 allowed it). The text doubles its backslashes at each level, so twelve levels are as deep as a test needs.
 func TestWorktreeDelQuoteNestedPrograms(t *testing.T) {
 	r := newDelRig(t)
 	worktreeDelQuoteNeeds(t, r, worktreeDelQuoteNest("rm -rf .", 3))
 	r.denied(t, worktreeDelQuoteNest("rm -rf .", 3), "rm -r .")
-	r.allowed(t, worktreeDelQuoteNest("rm -rf ./build", 3), worktreeDelQuoteNest("rm -rf ./build", 12))
-	if got := r.verdict(worktreeDelQuoteNest("rm -rf .", 12)); got.Deny {
-		t.Errorf("a nest past the depth limit was followed: %s", got.Reason)
-	}
+	r.allowed(t, worktreeDelQuoteNest("rm -rf ./build", 3))
+	worktreeDelWrapperNestDenied(t, r, "sh -c x12 build", worktreeDelQuoteNest("rm -rf ./build", 12), worktreeDelWrapperDeep)
+	worktreeDelWrapperNestDenied(t, r, "sh -c x12 worktree", worktreeDelQuoteNest("rm -rf .", 12), worktreeDelWrapperDeep)
 }
