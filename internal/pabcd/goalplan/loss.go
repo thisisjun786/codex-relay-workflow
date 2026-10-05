@@ -75,6 +75,9 @@ func revivalLossCovers(file, enc any, path string) string {
 	}
 	switch f := file.(type) {
 	case nil:
+		if enc != nil {
+			return here
+		}
 	case map[string]any:
 		e, ok := enc.(map[string]any)
 		if !ok {
@@ -84,11 +87,8 @@ func revivalLossCovers(file, enc any, path string) string {
 			if f[k] == nil || path == "" && k == "updatedAt" {
 				continue
 			}
-			v, present := e[k]
-			if !present {
-				return revivalLossKey(path, k)
-			}
-			if lost := revivalLossCovers(f[k], v, revivalLossKey(path, k)); lost != "" {
+			// A key the encoding lacks reads as nil, which no non-null file value is covered by.
+			if lost := revivalLossCovers(f[k], e[k], revivalLossKey(path, k)); lost != "" {
 				return lost
 			}
 		}
@@ -123,6 +123,7 @@ func revivalLossCovers(file, enc any, path string) string {
 // only a zero, whatever its exponent; for any other value a text the big package refuses, an exponent beyond its limit, equals
 // only the identical text.
 func revivalLossNumber(a, b json.Number) bool {
+	a, b = revivalLossTrim(a), revivalLossTrim(b)
 	if zeroA, zeroB := revivalLossZero(a), revivalLossZero(b); zeroA || zeroB {
 		return zeroA && zeroB
 	}
@@ -132,6 +133,19 @@ func revivalLossNumber(a, b json.Number) bool {
 		return a == b
 	}
 	return x.Cmp(y) == 0
+}
+
+// revivalLossTrim is n in lower case without the zeros that end the fraction of its mantissa (1.500 is 1.5, 1.0 is 1): the value is
+// the same, and a very long run of them would put an equal number outside what the big package accepts.
+func revivalLossTrim(n json.Number) json.Number {
+	mantissa, exponent, hasExponent := strings.Cut(strings.ToLower(string(n)), "e")
+	if strings.Contains(mantissa, ".") {
+		mantissa = strings.TrimSuffix(strings.TrimRight(mantissa, "0"), ".")
+	}
+	if hasExponent {
+		return json.Number(mantissa + "e" + exponent)
+	}
+	return json.Number(mantissa)
 }
 
 // revivalLossZero is whether the mantissa of n, the text before an exponent, holds no digit 1 to 9.

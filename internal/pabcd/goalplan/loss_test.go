@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -118,6 +119,9 @@ func TestRevivalLossRefusesWhatARewriteWouldDrop(t *testing.T) {
 			revivalLossRound(m)["lane"].(map[string]any)["sourceIdentity"] = map[string]any{"kind": "resolved", "commitSha": "c", "dirty": "yes", "capturedAt": "2026-01-01T00:00:00.000Z", "treeHash": "t"}
 		}},
 		{"a fractional schemaVersion", "schemaVersion", func(m map[string]any) { m["schemaVersion"] = 2.9 }},
+		{"an updatedAt below the top level", "finalGate.updatedAt", func(m map[string]any) {
+			m["finalGate"] = map[string]any{"status": "pending", "qaRequired": false, "updatedAt": 5}
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) { revivalLossRefused(t, revivalLossEdit(t, c.edit), revivalLossReason(c.path), true) })
 	}
@@ -149,6 +153,7 @@ func TestRevivalLossNumber(t *testing.T) {
 		{"9007199254740993", "9007199254740992", false}, {"1e21", "1e+21", true}, {"1e21", "1000000000000000000000", true},
 		{"-0", "0", true}, {"0.1", "0.10", true}, {"0e9223372036854775808", "0", true}, {"-0e-9223372036854775808", "0", true},
 		{"1e-9223372036854775808", "0", false}, {"1e9223372036854775808", "1e9223372036854775808", true}, {"1e9223372036854775808", "2e9223372036854775808", false},
+		{"1.50", "1.5", true}, {"10", "1e1", true}, {"1." + strings.Repeat("0", 1000001), "1", true}, {"1.0000000000000000001", "1", false},
 	} {
 		if got := revivalLossNumber(json.Number(c.a), json.Number(c.b)); got != c.want {
 			t.Errorf("revivalLossNumber(%s, %s) = %v", c.a, c.b, got)
@@ -234,6 +239,34 @@ func TestRevivalLossLetsWhatTheWriterWroteThrough(t *testing.T) {
 			t.Errorf("%q: the plan the builder made was refused: %+v", in.Objective, res)
 		}
 	}
+
+	// The recorded builds of the writer tests, each written and locked again. criteria-host is excluded by name: its criterion with an
+	// explicitly empty surface is written as "surface":"" and revival drops that key (known-defects.md, CRW-604 section).
+	var records struct{ Builds []struct{ ID string } }
+	raw, err := os.ReadFile(filepath.Join("testdata", "write", "oracle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &records); err != nil || len(records.Builds) != 11 {
+		t.Fatalf("recorded builds %d: %v", len(records.Builds), err)
+	}
+	values := map[string]float64{"zero": 0, "negative": -7, "nan": math.NaN(), "inf": math.Inf(1), "negative-inf": math.Inf(-1), "two": 2, "fraction": 2.9, "three": 3, "future": 99}
+	for _, b := range records.Builds {
+		if b.ID == "criteria-host" {
+			continue
+		}
+		in := NewGoalplanInput{Objective: "Hello, World!!", Now: func() string { return "2026-01-01T00:00:00.000Z" }}
+		if n, ok := values[b.ID]; ok {
+			in.SchemaVersion = &n
+		}
+		cwd, plan := t.TempDir(), BuildGoalplan(in)
+		if err := WriteGoalplan(cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+		if res, called := revivalLossLock(t, cwd, plan.Slug); res.Kind != "ok" || !called {
+			t.Errorf("recorded build %s: the plan the builder made was refused: %+v", b.ID, res)
+		}
+	}
 }
 
 func TestRevivalLossOrderAndShapes(t *testing.T) {
@@ -270,6 +303,26 @@ func TestRevivalLossOrderAndShapes(t *testing.T) {
 	for _, raw := range []string{"null", `"x"`, "[]", "5", `{"objective":"o","slug":"demo","workPhases":"x","criteria":[],"host":{}}`, `{"objective":"o","slug":"demo","workPhases":[5],"criteria":[],"host":{}}`} {
 		if got := revivalLoss(decodePlan(t, raw)); got != "" {
 			t.Errorf("revivalLoss(%s) = %q", raw, got)
+		}
+	}
+}
+
+func TestRevivalLossCovers(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		file, enc any
+		want      string
+	}{
+		{"a null array element is not replaced by a value", []any{nil}, []any{"x"}, "a[0]"},
+		{"a file array shorter than its re-encoding", []any{}, []any{"x"}, "a"},
+		{"a number is not a string", json.Number("1"), "1", "a"},
+		{"a boolean is not a string", true, "true", "a"},
+		{"a null key is covered by an absent key", map[string]any{"k": nil}, map[string]any{}, ""},
+		{"a key the re-encoding lacks", map[string]any{"k": "v"}, map[string]any{}, "a.k"},
+		{"an object in place of an array", map[string]any{}, []any{}, "a"},
+	} {
+		if got := revivalLossCovers(c.file, c.enc, "a"); got != c.want {
+			t.Errorf("%s: revivalLossCovers = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
