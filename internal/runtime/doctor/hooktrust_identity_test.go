@@ -30,7 +30,7 @@ type hookTrustIdentityRecorded struct {
 }
 
 type hookTrustIdentityOracle struct {
-	Oracle string                       `json:"oracle"`
+	Oracle string                      `json:"oracle"`
 	Cases  []hookTrustIdentityRecorded `json:"cases"`
 }
 
