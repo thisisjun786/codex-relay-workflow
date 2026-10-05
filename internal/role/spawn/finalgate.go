@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -145,7 +146,7 @@ func spawnFinalGateCurrent(cwd, sessionID string, capture func(cwd string) sourc
 // from cwd; a path that leaves cwd, by name or by a link, is not readable, nor is a file that is not a regular non-empty one or holds
 // no readable identity.
 func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bool) {
-	rel := filepath.Clean(path)
+	rel := filepath.Clean(spawnFinalGateFSPath(path))
 	if filepath.IsAbs(rel) {
 		var err error
 		if rel, err = filepath.Rel(cwd, rel); err != nil {
@@ -153,6 +154,21 @@ func spawnFinalGateReceipt(root *os.Root, cwd, path string) (source.Identity, bo
 		}
 	}
 	return spawnFinalGateIdentity(spawnFinalGateObject(root, rel)["sourceIdentity"])
+}
+
+// spawnFinalGateFSPath is path as Node's fs reads a string: a lone surrogate, which pyjson keeps as the three WTF-8 bytes of its code
+// point, is U+FFFD there. The refusal keeps the path as the goalplan wrote it.
+func spawnFinalGateFSPath(path string) string {
+	var b strings.Builder
+	for i := 0; i < len(path); i++ {
+		if path[i] == 0xed && i+2 < len(path) && path[i+1] >= 0xa0 && path[i+1] <= 0xbf && path[i+2] >= 0x80 && path[i+2] <= 0xbf {
+			b.WriteRune(utf8.RuneError)
+			i += 2
+		} else {
+			b.WriteByte(path[i])
+		}
+	}
+	return b.String()
 }
 
 // spawnFinalGateIdentity is readIdentity: a kind that is resolved or unavailable, a string commitSha and a boolean dirty, a treeHash

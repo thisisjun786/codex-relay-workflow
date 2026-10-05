@@ -155,6 +155,8 @@ const cases = [
   ['an absolute receipt path outside the working directory is not read', { testPath: WS + '/' + OUT, files: { [OUT]: OUTSIDE } }, [true], { without: [OUT], reason: 'Security finding: every read stays below the working directory (os.Root), where the oracle reads the receipt wherever the path leads.' }],
   ['a link that leaves the working directory is not followed', { testPath: EVID + 'link.json', link: '../../../' + OUT.slice(3), files: { [OUT]: OUTSIDE } }, [true], { without: [OUT], reason: 'Security finding: every read stays below the working directory (os.Root), where the oracle follows a link wherever it leads.' }],
   ['an absolute link to a file below the working directory is not followed', { testReceipt: HERE, testPath: EVID + 'link.json', link: WS + '/' + EVID + 'test.json' }, [true], { without: [EVID + 'link.json'], reason: 'os.Root refuses an absolute link even when its target lies below the root, where the oracle follows it (a consequence of the security fix above).' }],
+  // Node's fs reads a lone surrogate of a path string as U+FFFD, so the receipt below, named with U+FFFD, is the one the path finds.
+  ['a receipt path with an escaped lone surrogate is read as U+FFFD', { planRaw: '{"criteria":[],"finalGate":{"testReceiptPath":".codexclaw/evidence/\\ud800.json"}}', files: { '.codexclaw/evidence/\uFFFD.json': JSON.stringify({ kind: 'test', sourceIdentity: HERE }) } }, [true]],
 ];
 
 // execute builds the case in a fresh directory, leaving out the files (and links) named in drop, and runs the oracle on it.

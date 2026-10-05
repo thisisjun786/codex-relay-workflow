@@ -2231,6 +2231,32 @@
       },
       "classification": "intentionally-changed",
       "reason": "os.Root refuses an absolute link even when its target lies below the root, where the oracle follows it (a consequence of the security fix above)."
+    },
+    {
+      "name": "a receipt path with an escaped lone surrogate is read as U+FFFD",
+      "packet": "[CRW-FINAL-GATE] please review the final gate",
+      "session": "sess-1",
+      "files": {
+        ".crw/sessions/sess-1.json": "{\"sessionId\":\"sess-1\",\"slug\":\"demo\"}",
+        ".crw/goalplans/demo/goalplan.json": "{\"criteria\":[],\"finalGate\":{\"testReceiptPath\":\".crw/evidence/\\ud800.json\"}}",
+        ".crw/evidence/�.json": "{\"kind\":\"test\",\"sourceIdentity\":{\"kind\":\"resolved\",\"commitSha\":\"aaaaaaa\",\"dirty\":false}}"
+      },
+      "dirs": [
+        ".crw/evidence/"
+      ],
+      "symlinks": {},
+      "capture": {
+        "kind": "resolved",
+        "commitSha": "aaaaaaa",
+        "dirty": false
+      },
+      "oracle": {
+        "ok": true
+      },
+      "expected": {
+        "ok": true
+      },
+      "classification": "identical"
     }
   ]
 }

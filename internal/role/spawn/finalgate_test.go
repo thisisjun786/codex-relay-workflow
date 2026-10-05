@@ -125,8 +125,8 @@ func TestCheckFinalGatePrereqsMatchesTheOracle(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	if len(fixture.Cases) != 81 {
-		t.Fatalf("got %d recorded cases, want 81", len(fixture.Cases))
+	if len(fixture.Cases) != 82 {
+		t.Fatalf("got %d recorded cases, want 82", len(fixture.Cases))
 	}
 	for _, c := range fixture.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -244,5 +244,27 @@ func TestCheckFinalGatePrereqsDoesNotWaitOnANamedPipe(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the check is waiting on the named pipe")
+	}
+}
+
+// The guard recaptures the tree with the session capture's defaults, which is how the oracle does it, while the receipt's producer and
+// the enforcing check leave out the state directory and the paths the check generates (known-defects.md): in an unbound repository
+// that does not ignore .crw/, and for a path the receipt declared generated, a receipt that is right for the tree reads as stale.
+func TestCheckFinalGatePrereqsRecapturesWithoutTheReceiptsExclusions(t *testing.T) {
+	cwd := spawnFinalGateTestTree(t)
+	spawnFinalGateTestGit(t, cwd, "init", "-q", "-b", "main", ".")
+	spawnFinalGateTestWrite(t, cwd, "generated.txt", "one\n")
+	spawnFinalGateTestGit(t, cwd, "add", ".")
+	spawnFinalGateTestGit(t, cwd, "commit", "-qm", "first")
+	head := spawnFinalGateTestGit(t, cwd, "rev-parse", "HEAD")
+	spawnFinalGateTestWrite(t, cwd, "generated.txt", "two\n")
+	receipt := source.Capture(cwd, source.Options{ExcludeStateArtifacts: true, GeneratedPaths: []string{"generated.txt"}})
+	if receipt.Dirty {
+		t.Fatalf("the receipt's own capture is dirty: %+v", receipt)
+	}
+	spawnFinalGateTestPlan(t, cwd, receipt)
+	got := CheckFinalGatePrereqs(spawnFinalGateTestPacket, "sess-1", cwd, nil)
+	if want := "produced against " + head[:7] + ", but the tree is now " + head[:7] + "+dirty"; got.OK || !strings.Contains(got.Reason, want) {
+		t.Fatalf("a receipt that left out its generated path and the state directory was not stale: %+v", got)
 	}
 }
