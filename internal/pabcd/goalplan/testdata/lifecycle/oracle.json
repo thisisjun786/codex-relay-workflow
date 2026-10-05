@@ -6700,6 +6700,96 @@
       }
     },
     {
+      "name": "meet_unchanged_duplicate_met_then_open",
+      "fn": "meet",
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": null,
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Exporter",
+            "status": "in_progress",
+            "tasks": [],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": "done",
+            "status": "met"
+          },
+          {
+            "id": "c-1",
+            "scenario": "s",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ]
+      },
+      "args": {
+        "criterionId": "c-1",
+        "evidence": "again"
+      },
+      "input": {
+        "workPhases": [
+          {
+            "id": "wp1",
+            "status": "in_progress",
+            "awaitsDecision": null,
+            "tasks": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "status": "met",
+            "capturedEvidence": "done"
+          },
+          {
+            "id": "c-1",
+            "status": "open",
+            "capturedEvidence": null
+          }
+        ],
+        "decisions": []
+      },
+      "expect": {
+        "kind": "unchanged",
+        "reason": "criterion 'c-1' is already met",
+        "plan": {
+          "workPhases": [
+            {
+              "id": "wp1",
+              "status": "in_progress",
+              "awaitsDecision": null,
+              "tasks": []
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "status": "met",
+              "capturedEvidence": "done"
+            },
+            {
+              "id": "c-1",
+              "status": "open",
+              "capturedEvidence": null
+            }
+          ],
+          "decisions": []
+        }
+      }
+    },
+    {
       "name": "unmet_mixed",
       "fn": "unmet",
       "plan": {

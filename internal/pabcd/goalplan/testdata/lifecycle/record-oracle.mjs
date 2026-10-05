@@ -126,6 +126,7 @@ add('meet_reject_untrimmed_id', 'meet', openBase, { criterionId: ' c-1', evidenc
 add('meet_unchanged_already_met', 'meet', () => plan([ phase('wp1', 'Exporter', 'in_progress', []) ], { criteria: [ criterion('c-1', 'met', 'done') ] }), { criterionId: 'c-1', evidence: 'again' });
 add('meet_ok_duplicate_criterion_ids', 'meet', () => plan([ phase('wp1', 'Exporter', 'in_progress', []) ], { criteria: [ criterion('c-1', 'open'), criterion('c-1', 'open') ] }), { criterionId: 'c-1', evidence: 'ok' });
 
+add('meet_unchanged_duplicate_met_then_open', 'meet', () => plan([ phase('wp1', 'Exporter', 'in_progress', []) ], { criteria: [ criterion('c-1', 'met', 'done'), criterion('c-1', 'open') ] }), { criterionId: 'c-1', evidence: 'again' });
 // derived helpers
 add('unmet_mixed', 'unmet', () => plan([ phase('wp1', 'Exporter', 'in_progress', []) ], { criteria: [ criterion('c-1', 'open'), criterion('c-2', 'met', 'done'), criterion('c-3', 'open') ] }), {});
 add('done_with_pending_found', 'doneWithPending', () => plan([ phase('wp1', 'Exporter', 'done', [ task('t-1', 'a', { status: 'done', outcome: 'ok' }), task('t-2', 'b') ]) ]), {});

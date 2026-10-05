@@ -175,7 +175,7 @@ func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 	if err := json.Unmarshal(raw, &corpus); err != nil {
 		t.Fatal(err)
 	}
-	if len(corpus.Cases) != 78 {
+	if len(corpus.Cases) != 79 {
 		t.Fatalf("recorded corpus changed: %d cases", len(corpus.Cases))
 	}
 	for _, c := range corpus.Cases {
