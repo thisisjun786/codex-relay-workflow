@@ -70,7 +70,8 @@ func (p *Publisher) step(name string) error {
 // link, directory, hard-linked or set-ID leaf is refused. A rename the platform cannot do is ReasonUnsupported: nothing falls back to
 // replacing or to writing in place. An error after the rename (ResultFailed) leaves the whole final file, and a rerun finds it equal.
 // Only permission bits can be published: a set-ID source is refused by the preflight before it gets here. A temporary of an older
-// run is never touched, and none of this run's is unlinked once its rename has happened.
+// run is never touched, and none of this run's is unlinked once its rename has happened. The temporary is addressed by name until
+// the rename, so a process of the same user that swaps it in that window is a residual risk, as it is for Dir.OpenRegular.
 func (p *Publisher) Publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (Result, error) {
 	res, err := p.publish(dir, leaf, src, size, mode)
 	switch {
