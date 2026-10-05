@@ -22,11 +22,15 @@ type createdLockHost struct {
 	reads  int
 	status string
 	err    error
+	onRead func()        // runs at the start of every read, still inside the locks of the call
 	held   chan struct{} // closed once the first read is blocked
 	hold   chan struct{} // closed by the test to let it go
 }
 
 func (h *createdLockHost) Call(ctx context.Context, _ string, args map[string]any) (json.RawMessage, error) {
+	if h.onRead != nil {
+		h.onRead()
+	}
 	h.mu.Lock()
 	h.reads++
 	block := h.reads == 1 && h.hold != nil
@@ -309,6 +313,37 @@ func TestCreatedSessionLockOtherEndsKeepTheirAgent(t *testing.T) {
 			}
 			if _, err = CheckedDispatch(context.Background(), ws, createdArchivedReport("task-two", two, "child-a"), env, h); err == nil || !strings.Contains(err.Error(), "already reported for dispatch task-one attempt "+one) {
 				t.Fatalf("report of the child of a dispatch that was not closed: %v", err)
+			}
+		})
+	}
+}
+
+// A lock that cannot be given back is an error of the call, not a silent leftover that refuses every later report of the session.
+func TestCreatedSessionLockReleaseFailureIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	for _, stop := range []bool{false, true} {
+		t.Run(map[bool]string{false: "created report", true: "stopped close"}[stop], func(t *testing.T) {
+			ws := t.TempDir()
+			env, _ := home(t)
+			stuck := filepath.Join(filepath.Dir(createdArchivedRecord(ws, "x")), ".session.lock", "stuck")
+			t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+			// While the call holds the lock, a file in a read-only directory inside it makes the removal of the lock fail.
+			h := &createdLockHost{status: "idle", onRead: func() {
+				check(t, os.Mkdir(stuck, 0o700))
+				check(t, os.WriteFile(filepath.Join(stuck, "f"), nil, 0o600))
+				check(t, os.Chmod(stuck, 0o500))
+			}}
+			one := createdArchivedSession(t, ws, env, "task-one")
+			input := createdArchivedReport("task-one", one, "child-a")
+			if stop {
+				_, err := CheckedDispatch(context.Background(), ws, input, env, &createdLockHost{status: "idle"})
+				check(t, err)
+				input = createdLockStop("task-one", one, "child-a")
+			}
+			if _, err := CheckedDispatch(context.Background(), ws, input, env, h); err == nil || !strings.Contains(err.Error(), "permission denied") {
+				t.Fatalf("call that could not remove its session lock: %v", err)
 			}
 		})
 	}
