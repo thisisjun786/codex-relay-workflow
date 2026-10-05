@@ -431,6 +431,28 @@ func TestEnsureProjectRootRefusesARacerCreatedIgnore(t *testing.T) {
 	}
 }
 
+// A .gitignore a racer makes in the window EnsureDest opens when it creates the root is a racer too, even though the later
+// look would find it: the root did not exist before the call, so the file cannot be a retained one.
+func TestEnsureProjectRootRefusesARacerCreatedIgnoreWhenTheRootIsNew(t *testing.T) {
+	ws := isolate(t) + "/ws"
+	mkdirs(t, ws)
+	p := newPub(t)
+	p.at = func(step string) error {
+		if step == "root" {
+			put(t, ws+"/.crw/.gitignore", "mine", 0o600)
+		}
+		return nil
+	}
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { r.Close() })
+	root, err := p.EnsureProjectRoot(r.Project)
+	wantRefusal(t, err, ReasonDiffers)
+	if root != nil || get(t, ws+"/.crw/.gitignore") != "mine" || !slices.Equal(ls(t, ws+"/.crw"), []string{".gitignore"}) {
+		t.Errorf("root = %v, .crw = %v, .gitignore = %q; want a refusal, no root and the racer's file", root, ls(t, ws+"/.crw"), get(t, ws+"/.crw/.gitignore"))
+	}
+}
+
 func TestOlderTempsAreReportedNotTouched(t *testing.T) {
 	dir, d := outDir(t)
 	p := newPub(t)

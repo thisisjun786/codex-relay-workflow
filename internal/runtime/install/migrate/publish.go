@@ -199,19 +199,24 @@ func sum(r io.Reader) ([sha256.Size]byte, error) {
 // ReasonDiffers refusal is returned so the caller stops before copying state (state-migration.md Preflight 3-4). A link,
 // directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
 func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
+	// Was .gitignore already there when this call started? Capture that before EnsureDest can create the root, so a .gitignore
+	// a racer makes in the window that creation opens (or in the root step) is a conflicting initialization race, not a
+	// retained owner file: the root did not exist before the call, so no .gitignore could have.
+	pre := false
+	if pair.Dest != nil {
+		switch _, err := pair.Dest.typeOf(".gitignore"); {
+		case err == nil:
+			pre = true
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, err
+		}
+	}
 	root, err := pair.EnsureDest(0o777)
 	if err == nil {
 		err = p.step("root")
 	}
 	if err != nil {
 		return nil, err
-	}
-	// Was .gitignore already there when this call started? A racer that creates a differing one between this look and the
-	// publication is a conflicting initialization race, not a retained owner file; an absent entry is the ordinary case.
-	_, lerr := root.typeOf(".gitignore")
-	pre := lerr == nil
-	if lerr != nil && !errors.Is(lerr, fs.ErrNotExist) {
-		return nil, lerr
 	}
 	text := crwdir.GitignoreText
 	_, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
