@@ -1169,3 +1169,15 @@ Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` 
 - `JSON.parse` reads any depth, but `JSON.stringify` throws a RangeError near 4,458 levels at Node 24's default stack (9,103 with a 2 MB stack), which the hook's outer catch turns into no output, even for a spawn that would have been allowed; the threshold depends on the stack size. The port reads any depth as well (a document nested past pyjson's 10,000 levels is checked against the JSON grammar by an explicit-stack scan, which a recursive parser could not do for the 2 million levels 4 MiB holds, and cut to its first 4,402 levels), so a subagent that carries a deep junk field is still denied and a malformed deep document prints nothing; it prints nothing for a `tool_input` nested past 4,400 levels, so a depth in 4,400-4,458 differs, and the writer is not recursive past that bound, because a Go stack overflow cannot be recovered (recorded in "deep nesting" and "deep documents"; `TestSpawnHookRouteMaximumNesting` runs the deepest payload 4 MiB holds); port: kept.
 - The 256 KiB cap on the skill blocks of an items spawn is measured on the renamed text, whose guard and skill lines are shorter than the oracle's, so the exact edge differs by the length difference; the port finds its own edge and checks the oracle's outcomes at it (`itemsCap`), and far from the edge the answers are identical (hash steps); port: kept (a consequence of the name substitution).
 - A role's `promptOverride` that holds a lone surrogate escape is read as U+FFFD by the role store (the existing note in `internal/role/role.go`, I8), so a message the oracle would write with the escape is written with U+FFFD; the surrogate cases of this port use messages, not role strings; port: kept.
+
+## CRW-615 — the doctor install checks
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` at v0.2.40 (commit 3c1459ac), through
+the recorder and replay in `internal/runtime/doctor/testdata/harness/install/`.
+
+- `cxc doctor` aborts the whole report with an uncaught `EACCES` when the project's
+  `.codexclaw/sessions` directory exists but cannot be enumerated, instead of reporting a WARN
+  (source `doctor.ts:171`; the recorded case `unreadable` holds the thrown message, and the CLI's
+  own top-level boundary prints "cxc-ops error: EACCES: permission denied, scandir '<path>'" with
+  exit 1); the port keeps the abort as a panic at the same seam (`HarnessPabcdCheck`), which the
+  CLI boundary of the assembly issue catches as `cli.ts` does; port: kept.
