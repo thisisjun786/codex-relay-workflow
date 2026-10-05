@@ -1,0 +1,1213 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459ac)",
+  "source": "subagent-config/src/spawn-attach-hook.ts:279-281,351-408",
+  "baseMs": 1800000000000,
+  "constants": {
+    "token": "CXC-SUBSPAWN-ALLOWED",
+    "markerSource": "\\[CXC-SUBSPAWN-GRANT:([a-f0-9]{64})\\]",
+    "markerFlags": "gi",
+    "ttlMs": 900000
+  },
+  "spawner": [
+    {
+      "obj": {
+        "agent_id": "a1"
+      },
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "obj": {
+        "agent_type": "worker"
+      },
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "obj": {
+        "agent_id": "",
+        "agent_type": ""
+      },
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "obj": {
+        "agent_id": "a1",
+        "agent_type": ""
+      },
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "obj": {},
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "obj": {
+        "agent_id": 5
+      },
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "obj": {
+        "agent_id": null,
+        "agent_type": "t"
+      },
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "obj": {
+        "agent_id": true
+      },
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "obj": {
+        "agent_id": [
+          "x"
+        ]
+      },
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "obj": {
+        "agent_id": "",
+        "agent_type": "explorer"
+      },
+      "oracle": true,
+      "expected": true
+    }
+  ],
+  "paths": [
+    {
+      "obj": {
+        "cwd": "/ws/a/../b/",
+        "session_id": "s1"
+      },
+      "nonce": "676b8bb84ce7267dd520deca4811c8f10a53e636352f06987f42fe425acedd80",
+      "scope": {
+        "cwd": "/ws/b",
+        "session": "s1"
+      },
+      "oracleDirName": "codexclaw-subspawn-{UID}",
+      "expectedDirName": "crw-subspawn-{UID}",
+      "scopeDigest": "846671090f1481329437fc9c079e4dc6e5492fea50fc9e50c0e7bef0a99958f5",
+      "file": "6ccec6998aa4551b8b3b63b6657a72fcda82e06e7720c5374a251d372aedf8db.json",
+      "classification": "intentionally-changed",
+      "reason": "CRW directory prefix (codexclaw- to crw-); the key and file digests are identical."
+    },
+    {
+      "obj": {
+        "cwd": "/ws//x",
+        "session_id": "unknown-session"
+      },
+      "nonce": "0480a93d2e9b094b89e08e01976089ac18193af802c66b631cc8d2dc1bae8c88",
+      "scope": {
+        "cwd": "/ws/x",
+        "session": "unknown-session"
+      },
+      "oracleDirName": "codexclaw-subspawn-{UID}",
+      "expectedDirName": "crw-subspawn-{UID}",
+      "scopeDigest": "3ca5cf7be7aa3fd7606caf4c814c2dfcebe27914600bd2d1206cf0c994543930",
+      "file": "00f0993c42cb6227cda4cb6164fb7fdfdab3d992525d831ed6a2abe949490f93.json",
+      "classification": "intentionally-changed",
+      "reason": "CRW directory prefix (codexclaw- to crw-); the key and file digests are identical."
+    },
+    {
+      "obj": {
+        "cwd": "/ws/한글",
+        "session_id": "세션-1"
+      },
+      "nonce": "8721d664ef60096aa559e1aa6c72caf1facf5ce08b03aa6921ed9af5645d5466",
+      "scope": {
+        "cwd": "/ws/한글",
+        "session": "세션-1"
+      },
+      "oracleDirName": "codexclaw-subspawn-{UID}",
+      "expectedDirName": "crw-subspawn-{UID}",
+      "scopeDigest": "f1983fa30071b481a3c6064326baa63e5627381c5f11475d3a3688a929d59f25",
+      "file": "0805809997e7198c4ca2cb47d571dd3d404145ac43ace7549df5b5b70d8d39ef.json",
+      "classification": "intentionally-changed",
+      "reason": "CRW directory prefix (codexclaw- to crw-); the key and file digests are identical."
+    },
+    {
+      "obj": {
+        "cwd": "/ws/c"
+      },
+      "nonce": "88450b082ec4df2fdccd3a626c6e489b31ef8cbf151bd543acf6e8890ffa1f49",
+      "scope": {
+        "cwd": "/ws/c",
+        "session": "unknown-session"
+      },
+      "oracleDirName": "codexclaw-subspawn-{UID}",
+      "expectedDirName": "crw-subspawn-{UID}",
+      "scopeDigest": "d25a6b018bd4ed73300a46cc1ee50e649522592dee31a444af241028ce07b8a7",
+      "file": "d9bf42778f662fce9795080ad91f2ba47552a78e5b43a1d5a4736bf850ea2698.json",
+      "classification": "intentionally-changed",
+      "reason": "CRW directory prefix (codexclaw- to crw-); the key and file digests are identical."
+    },
+    {
+      "obj": {
+        "cwd": "/ws",
+        "session_id": "a{LONE}b"
+      },
+      "nonce": "4a8456f10e37689778cef532ab6a73742a152d4481190ab31de5d6f3f32f329c",
+      "scope": null,
+      "oracleDirName": "codexclaw-subspawn-{UID}",
+      "expectedDirName": "crw-subspawn-{UID}",
+      "scopeDigest": "215953cee47b5c9bc7b847286dbcc65779f015739b4d571d18bd5e666c714769",
+      "file": "e6a100a7708cfd0962736391f486fd814b5ae02ce095e60aea56e964ca62c3f0.json",
+      "classification": "intentionally-changed",
+      "reason": "CRW directory prefix (codexclaw- to crw-); the key and file digests are identical."
+    },
+    {
+      "obj": {
+        "cwd": "/ws{LONE}",
+        "session_id": "s"
+      },
+      "nonce": "2d8e452e1634cae42e17cc9ec974afed94029e20e98fde4444706e3efac1bf77",
+      "scope": null,
+      "oracleDirName": "codexclaw-subspawn-{UID}",
+      "expectedDirName": "crw-subspawn-{UID}",
+      "scopeDigest": "fc6d5cccd0f735eb0a3e25cb5613357ae759a44864ea301d79be53f14f48127d",
+      "file": "41083597b832a617c117b3fb821e98be6a5645e76fee022aed65eceb37456c73.json",
+      "classification": "intentionally-changed",
+      "reason": "CRW directory prefix (codexclaw- to crw-); the key and file digests are identical."
+    }
+  ],
+  "mintShape": {
+    "at": 0,
+    "content": "{\"expiresAt\":1800000900000}",
+    "fileMode": "600",
+    "keyDirMode": "700",
+    "uidDirMode": "700",
+    "nonceLength": 64
+  },
+  "sequences": [
+    {
+      "name": "a grant is consumed once",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 1000,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 2000,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "two markers refuse without spending the grant",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}] [CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}][CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 1,
+          "expected": 1
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "marker count and shape",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "no marker here",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1:short}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1:long}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT: {N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CXC-SUBSPAWN-ALLOWED]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 1,
+          "expected": 1
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "x\n[CRW-SUBSPAWN-GRANT:{N1}]\ny",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "prefix case folds, nonce case and non-ASCII look-alikes do not",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N2",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N3",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[crw-subspawn-grant:{N1}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SubSpawn-Grant:{N2:upper}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SubSpawn-Grant:{N2}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBſPAWN-GRANT:{N3}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N3}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "expiry is inclusive at fifteen minutes and a spent grant is removed",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 900000,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N2",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N2}]",
+          "at": 900001,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N2}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "mint",
+          "as": "N3",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 10,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N3}]",
+          "at": 900009,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "cwd and session scope the grant",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/b",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s2"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/x/../a/",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "missing, empty and non-string cwd and session fall back to the defaults",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {},
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {},
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N2",
+          "obj": {
+            "cwd": "",
+            "session_id": ""
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {},
+          "message": "[CRW-SUBSPAWN-GRANT:{N2}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N3",
+          "obj": {
+            "cwd": 5,
+            "session_id": 7
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": null
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N3}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N4",
+          "obj": {
+            "session_id": "unknown-session"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {},
+          "message": "[CRW-SUBSPAWN-GRANT:{N4}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        }
+      ]
+    },
+    {
+      "name": "a lone surrogate in the session is hashed as U+FFFD",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws",
+            "session_id": "a{LONE}"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws",
+            "session_id": "a�"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N2",
+          "obj": {
+            "cwd": "/ws",
+            "session_id": "a{LONE}"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws",
+            "session_id": "a{LONE}"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N2}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        }
+      ]
+    },
+    {
+      "name": "a malformed candidate or an open bracket in front of a good marker still consumes",
+      "steps": [
+        {
+          "op": "mint",
+          "as": "N1",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "mint",
+          "as": "N2",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:[CRW-SUBSPAWN-GRANT:{N1}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:{N2:short}] [CRW-SUBSPAWN-GRANT:{N2}]",
+          "at": 0,
+          "oracle": true,
+          "expected": true
+        },
+        {
+          "op": "count",
+          "obj": {
+            "cwd": "/ws/a",
+            "session_id": "s1"
+          },
+          "at": 0,
+          "oracle": 0,
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "no grant tree at all",
+      "steps": [
+        {
+          "op": "consume",
+          "obj": {
+            "cwd": "/ws/none",
+            "session_id": "none"
+          },
+          "message": "[CRW-SUBSPAWN-GRANT:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]",
+          "at": 0,
+          "oracle": false,
+          "expected": false
+        }
+      ]
+    }
+  ],
+  "planted": [
+    {
+      "content": "{\"expiresAt\":1900000000000}",
+      "nonce": "895652b57ae2e3f9d01811e7271d614a7c8f0f3527e1072c45443743fe327fa7",
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "content": "{\"expiresAt\":\"1900000000000\"}",
+      "nonce": "669cbc31da79d45ed5a7c62b8c429cd3f87b6e01dd0693feeb8a43757c633050",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":null}",
+      "nonce": "dd84e621de8df817e247501dd3a2e7fc0348242b6700fe2bb5afd01966b01040",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{}",
+      "nonce": "9a8109782fee4df4a0ed17117252180641d5d1cabf6f35567c43a9525dd7cd33",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "[]",
+      "nonce": "de6827c4909b49938997095c5dfcc965ad41b58802aaa47c646f7f620c7bae1f",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "",
+      "nonce": "2d93da0f45b47b3414bd28b1446c93ca49600e44c1093a4e5d42af6a42ebc422",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "null",
+      "nonce": "c5a105cd8568216796d0349d2520d229d6872911e00906832b822ee03b58c7c4",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "[1]",
+      "nonce": "9bbcf408248d6b0cd47bb2e458e5e1b75cb93149d544b11b84288a074cae12f9",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "\"x\"",
+      "nonce": "2bc238a36cca43f0694fe51a47ba865efec6265f716dd3b017d25a21d3cf9baf",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1e999}",
+      "nonce": "526793ca54c56c75115ad6b44016c360c832030e9798258e0435ce00a0dd7233",
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "content": "{\"expiresAt\":-1e999}",
+      "nonce": "6fe5713c75144a855e2b58cead67c08749adc5100505d3d6fced231f7a6ecbba",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000.5}",
+      "nonce": "cd3d64a03b0ba45062073e693986df79739eaa326e2c5c5e5ab29bf1e2db22de",
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "content": "{\"expiresAt\":1799999999999}",
+      "nonce": "64022230783af6771958ed8bb7debdeb527369e3c1227b9c24af6435e9642d78",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1800000000000}",
+      "nonce": "daec33ac18ea4c4386931920f03faef1c0ca2b66441fabb7d1fed21d114e42df",
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000} trailing",
+      "nonce": "da88b37ee33cf3a6fb3cf2b2f8fb8d714b3ca08d7f261c3075c582937c30e8fe",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "﻿{\"expiresAt\":1900000000000}",
+      "nonce": "edcf620cb6fbc9a7eff72fe631fe4123a34a715f2abac18526b9d0b66347a8b0",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000,\"expiresAt\":1}",
+      "nonce": "513d4e0b650c8487833fbde1378c75603bae67b41d1b8f8d7a91894fb3bd6093",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1,\"expiresAt\":1900000000000}",
+      "nonce": "e89481ce8e2e8509b4b9d5bd9d62e1d75ba7acb93ca0a81a34793068c3ff3a2d",
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "content": "{\"expiresAt\":true}",
+      "nonce": "3ecf0b6e39b918a4e3063d9069a1abdc01ed779835c7603dae1d6467d9fc1e20",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":[1900000000000]}",
+      "nonce": "a5d8dc91cd49c9af1c2e1f305cdda66b04c902f3b0c758b5475ce044df6e0ec4",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000}\n",
+      "nonce": "b1b0992fa699e4449715b3b18f8adcc11d12b1e9eee1d6468c0a9171373036d3",
+      "oracle": true,
+      "expected": true
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000",
+      "nonce": "cc138156f832ac5da3e972c31d997b95f1da5e6a31b9895e301190501675577c",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000} {}",
+      "nonce": "973e4b1dc921e28e01dea5e5ca9fd179813442cc12744552658a14afbfeb89ee",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000} true",
+      "nonce": "d144a119164d0a5211b10a91faf1345ec5ec5009d2d916ad2f7351fa664b0bef",
+      "oracle": false,
+      "expected": false
+    },
+    {
+      "content": "{\"expiresAt\":1900000000000}{\"expiresAt\":1}",
+      "nonce": "aa195ee2477b29e453ccd2946588cef9f6e12adea77c0e1de39f9913900b7396",
+      "oracle": false,
+      "expected": false
+    }
+  ],
+  "unsafe": [
+    {
+      "name": "key directory mode 0755",
+      "oracle": {
+        "minted": true,
+        "consumed": true
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security fix (port: fixed): the per-uid and key directories are used only when they are real directories owned by the current uid with mode 0700; the oracle mints into and consumes from whatever mkdir recursive finds."
+    },
+    {
+      "name": "key directory mode 0770",
+      "oracle": {
+        "minted": true,
+        "consumed": true
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security fix (port: fixed): the per-uid and key directories are used only when they are real directories owned by the current uid with mode 0700; the oracle mints into and consumes from whatever mkdir recursive finds."
+    },
+    {
+      "name": "uid directory mode 0755",
+      "oracle": {
+        "minted": true,
+        "consumed": true
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security fix (port: fixed): the per-uid and key directories are used only when they are real directories owned by the current uid with mode 0700; the oracle mints into and consumes from whatever mkdir recursive finds."
+    },
+    {
+      "name": "uid directory mode 0770",
+      "oracle": {
+        "minted": true,
+        "consumed": true
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security fix (port: fixed): the per-uid and key directories are used only when they are real directories owned by the current uid with mode 0700; the oracle mints into and consumes from whatever mkdir recursive finds."
+    },
+    {
+      "name": "uid directory is a symlink",
+      "oracle": {
+        "minted": true,
+        "consumed": true
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security fix (port: fixed): the per-uid and key directories are used only when they are real directories owned by the current uid with mode 0700; the oracle mints into and consumes from whatever mkdir recursive finds."
+    },
+    {
+      "name": "key directory is a symlink",
+      "oracle": {
+        "minted": true,
+        "consumed": true
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "intentionally-changed",
+      "reason": "Security fix (port: fixed): the per-uid and key directories are used only when they are real directories owned by the current uid with mode 0700; the oracle mints into and consumes from whatever mkdir recursive finds."
+    },
+    {
+      "name": "uid directory is a plain file",
+      "oracle": {
+        "minted": false,
+        "consumed": false
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "key directory is a plain file",
+      "oracle": {
+        "minted": false,
+        "consumed": false
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "uid directory is a FIFO",
+      "oracle": {
+        "minted": false,
+        "consumed": false
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "identical"
+    },
+    {
+      "name": "key directory is a FIFO",
+      "oracle": {
+        "minted": false,
+        "consumed": false
+      },
+      "expected": {
+        "minted": false,
+        "consumed": false
+      },
+      "classification": "identical"
+    }
+  ]
+}

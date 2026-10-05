@@ -12,7 +12,8 @@ import (
 )
 
 // The scenario of CRW-430, built on real git and the relay's own writers where the existing kits have them: a node I accepted at its head on generation 1; the same child then refreshes the base in a
-// generation opened by hand (three merges of dev into its branch, the middle one with a hand resolved conflict); the pull request lands and the parent marks the merge on generation 2's event.
+// generation opened by hand (three merges of dev into its branch, the middle one with a hand resolved conflict); the pull request lands and the parent marks the merge on generation 2's event. The node
+// lands on the forge repository, and the temporary repository is only where the commits are read (checkout); a scenario that leaves checkout empty seeds a legacy local target instead.
 type refreshScenario struct {
 	*integrationKit
 	rid               string
@@ -21,6 +22,25 @@ type refreshScenario struct {
 	head              string // the head of the pull request after the base was refreshed
 	event2, revision2 string // the report of generation 2
 	criteria          string
+	checkout          string // the checkout dag-base-refresh reads the commits in; empty when the node's target is that checkout itself
+}
+
+// target is the repository the node lands on: the forge when the commits are read in a checkout, else the checkout.
+func (s *refreshScenario) target() string {
+	if s.checkout != "" {
+		return forgeKitRepository
+	}
+	return s.repo.path
+}
+
+// acceptRefreshNode accepts another node of the scenario on the repository the scenario lands on.
+func (s *refreshScenario) acceptRefreshNode(node string, o acceptOpts) accepted {
+	s.t.Helper()
+	if s.checkout != "" {
+		return s.acceptOnForge("g", node, o)
+	}
+	o.Forge, o.Repository = "owner/repo", s.repo.path
+	return s.acceptNode("g", node, o)
 }
 
 // tryGit is git that may fail (a merge with a conflict): the output and the error.
@@ -45,7 +65,7 @@ func newRefreshScenario(t *testing.T) *refreshScenario { return newRefreshScenar
 // newRefreshScenarioWith is newRefreshScenario with a step on the branch of the pull request before the head the parent accepts is committed (a file to add, an attribute to commit).
 func newRefreshScenarioWith(t *testing.T, onBranch func(repo *gitRepo)) *refreshScenario {
 	t.Helper()
-	k := newIntegrationKit(t)
+	k := newForgeIntegrationKit(t)
 	repo := k.repo
 	repo.commit("shared.json", "version 0\n")
 	repo.git("checkout", "-q", "-b", "feature")
@@ -57,13 +77,13 @@ func newRefreshScenarioWith(t *testing.T, onBranch func(repo *gitRepo)) *refresh
 	h1 := repo.commit("feature.txt", "feature")
 	repo.git("checkout", "-q", "dev")
 	// a node that waits for I's verified result (an artifact edge), beside K, which waits for its landing
-	k.putPlan("g", 1, "g-r2", addRelNode("A", dag.NodeNonPR), addEdge("ia", "I", "A", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": k.repo.path, "target_base_ref": "dev"}))
+	k.putPlan("g", 1, "g-r2", addRelNode("A", dag.NodeNonPR), addEdge("ia", "I", "A", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": forgeKitRepository, "target_base_ref": "dev"}))
 	k.declare("g", "I", "feature.txt")
-	a := k.acceptNode("g", "I", acceptOpts{HeadSHA: h1, PR: 7, Forge: "owner/repo", Repository: repo.path})
+	a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: h1, PR: 7})
 	k.holdSlotsFor("g", "I")
 	n, _ := nodeOf(k.snapshot("g"), "I")
 	k.forge.by["owner/repo#7"] = openPR("owner/repo", 7, h1)
-	return &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: h1, head: h1, criteria: n.CriteriaSetDigest}
+	return &refreshScenario{integrationKit: k, rid: a.Acceptance.RelationshipID, accepted: a, h1: h1, head: h1, criteria: n.CriteriaSetDigest, checkout: repo.path}
 }
 
 // openGeneration is the coordinator opening generation 2 by hand and the child's report there, ruled verified under the plan's criteria.
@@ -128,7 +148,7 @@ func (s *refreshScenario) markGeneration2() {
 
 func (s *refreshScenario) record(resolved ...string) (RefreshResult, error) {
 	s.t.Helper()
-	return s.sched.RecordBaseRefresh(context.Background(), "g", "I", "parent", RefreshInput{Resolved: resolved})
+	return s.sched.RecordBaseRefresh(context.Background(), "g", "I", "parent", RefreshInput{Resolved: resolved, Checkout: s.checkout})
 }
 
 func (s *refreshScenario) slotHeld() bool {

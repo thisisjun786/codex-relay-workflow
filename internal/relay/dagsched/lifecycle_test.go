@@ -502,7 +502,7 @@ func TestLandingOfAPausedOrCancelledNodeIsRefused(t *testing.T) {
 			refusedFor(t, err, c.reason)
 			_, _, err = k.sched.RequestMergeTurn(ctx, "g", "I", "parent", MergeRequestInput{Host: "host"})
 			refusedFor(t, err, c.reason)
-			_, err = k.sched.ObserveIntegration(ctx, "g", "I", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev"}})
+			_, err = k.sched.ObserveIntegration(ctx, "g", "I", "parent", []Target{k.forgeTarget("dev")})
 			refusedFor(t, err, c.reason)
 			if got := k.count("SELECT COUNT(*) FROM dag_merge_checks") + k.count("SELECT COUNT(*) FROM dag_integration_observations") + k.count("SELECT COUNT(*) FROM merge_turns"); got != 0 {
 				t.Fatalf("%d rows were written", got)
@@ -524,7 +524,7 @@ func TestAnArchivedNodeStillLands(t *testing.T) {
 	if _, turn, err := k.sched.RequestMergeTurn(ctx, "g", "I", "parent", MergeRequestInput{Host: "host"}); err != nil || turn == nil {
 		t.Fatalf("request = %v %v", err, turn)
 	}
-	observed, err := k.sched.ObserveIntegration(ctx, "g", "I", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev"}})
+	observed, err := k.sched.ObserveIntegration(ctx, "g", "I", "parent", []Target{k.forgeTarget("dev")})
 	if err != nil || len(observed.Observations) != 1 {
 		t.Fatalf("observe = %v %+v", err, observed)
 	}
@@ -590,7 +590,7 @@ func TestAPauseThatLandsBetweenTheReadAndTheTransactionIsCaught(t *testing.T) {
 		l := &lifeLog{t: t, f: k.fixture, plan: "g", rev: int(k.snapshot("g").Revision)}
 		fired := false
 		k.sched.testBeforeObserveTx = func() { fired = true; l.put(lifeOp("pause_node", "I")) }
-		_, err := k.sched.ObserveIntegration(context.Background(), "g", "I", "parent", []Target{{Repository: k.repo.path, BaseRef: "dev"}})
+		_, err := k.sched.ObserveIntegration(context.Background(), "g", "I", "parent", []Target{k.forgeTarget("dev")})
 		if !fired {
 			t.Fatal("the seam did not fire")
 		}
