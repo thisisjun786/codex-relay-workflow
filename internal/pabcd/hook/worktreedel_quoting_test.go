@@ -7,11 +7,14 @@ import (
 )
 
 // worktreeDelQuoteGrammars says whether the old grammar of the extended walk and the quote-aware grammar each deny some reading of
-// the command.
+// the command (the quote-aware one with and without the directory an eval moves).
 func worktreeDelQuoteGrammars(r delRig, cmd string) (old, quoting bool) {
 	for _, reading := range worktreeDelReadings(cmd) {
 		old = old || worktreeDelQuoteWalk(reading, r.checkout, r.id(), true, false, 0).Deny
-		quoting = quoting || worktreeDelQuoteWalk(reading, r.checkout, r.id(), true, true, 0).Deny
+		for _, moves := range []bool{true, false} {
+			verdict, _ := worktreeDelQuoteScan(reading, r.checkout, r.id(), true, true, moves, 0)
+			quoting = quoting || verdict.Deny
+		}
 	}
 	return old, quoting
 }
@@ -356,7 +359,22 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 		{"timeout 5s bash -c 'rm -rf ../repo'", "timeout 5s bash -c 'rm -rf ../other'", "rm -r ../repo"},
 		{"timeout 0.5 sh -c 'rm -rf ../repo'", "timeout 0.5 sh -c 'rm -rf ../other'", "rm -r ../repo"},
 		{"bash -c -O nullglob 'rm -rf ../repo'", "bash -c -O nullglob 'rm -rf ../other'", "rm -r ../repo"}, // an option with an argument
-		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."},                                      // a program string with a relative target, found by the same reading
+		{"bash -co posix 'rm -rf ../repo'", "bash -co posix 'rm -rf ../other'", "rm -r ../repo"},           // the argument of an o inside a cluster is not the program
+		{"bash -oc posix 'rm -rf ../repo'", "bash -oc posix 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash -cO nullglob 'rm -rf ../repo'", "bash -cO nullglob 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash +c 'rm -rf ../repo'", "bash +c 'rm -rf ../other'", "rm -r ../repo"},                           // bash takes +c for -c
+		{"bash -c -- '-missing; rm -rf ../repo'", "bash -c -- '-missing; rm -rf ../other'", "rm -r ../repo"}, // nothing after -- is an option
+		{"eval -- '+echo; rm -rf ../repo'", "eval -- '+echo; rm -rf ../other'", "rm -r ../repo"},
+		{"eval -- '-missing; rm -rf ../repo'", "eval -- '-missing; rm -rf ../other'", "rm -r ../repo"},
+		{"bash --rcfile /dev/null -c 'rm -rf ../repo'", "bash --rcfile /dev/null -c 'rm -rf ../other'", "rm -r ../repo"}, // a long option with an argument
+		{"bash --init-file /dev/null -c 'rm -rf ../repo'", "bash --init-file /dev/null -c 'rm -rf ../other'", "rm -r ../repo"},
+		{"bash --norc -c 'rm -rf ../repo'", "bash --norc -c 'rm -rf ../other'", "rm -r ../repo"}, // a long option without an argument
+		{"eval '+echo; rm -rf ../repo'", "eval '+echo; rm -rf ../other'", "rm -r ../repo"},       // eval has no + options
+		{"bash -n +n -c 'rm -rf ../repo'", "bash -n +n -c 'rm -rf ../other'", "rm -r ../repo"},
+		{"eval \"eval 'cd ..'\"; rm -rf repo", "eval \"eval 'cd ..'\"; rm -rf other", "rm -r repo"},            // the cd of a nested eval moves this shell too
+		{"eval 'cd .. | cat'; r<BS>m -rf ../repo", "eval 'cd .. | cat'; r<BS>m -rf ../other", "rm -r ../repo"}, // a cd in a pipeline or a background job does not
+		{"eval 'cd .. & wait'; r<BS>m -rf ../repo", "eval 'cd .. & wait'; r<BS>m -rf ../other", "rm -r ../repo"},
+		{"bash -c 'rm -rf .'", "bash -c 'rm -rf ./build'", "rm -r ."}, // a program string with a relative target, found by the same reading
 	} {
 		deny := worktreeDelSpell(c.deny)
 		worktreeDelQuoteNeeds(t, r, deny)
@@ -367,7 +385,8 @@ func TestWorktreeDelQuoteShellProgram(t *testing.T) {
 	r.denied(t, worktreeDelSpell("sh -c \"r<BS><NL>m -rf ../../zk3q\""), unresolvable)
 	// sh -c runs in a shell of its own: its cd does not move this one. Words that only mention a shell are text, not a command.
 	r.allowed(t, worktreeDelSpell("sh -c 'cd ..'; rm -rf repo"), worktreeDelSpell("eval '(cd ..)'; rm -rf repo"), "echo sh -c 'rm -rf .'", "printf '%s' sh -c 'rm -rf .'", "echo bash -c 'rm -rf ../repo'", "echo eval 'rm -rf ../repo'",
-		"echo su --command 'rm -rf ../repo'", "su --shell /bin/sh root")
+		"echo su --command 'rm -rf ../repo'", "su --shell /bin/sh root",
+		"bash -n -c 'rm -rf ../repo'", "bash script.sh -c 'rm -rf ../repo'", "bash - -c 'rm -rf ../repo'") // a syntax check, and -c as an argument of a script or a script's name
 	// Without a program string handed to a shell the pair stays a part of a name, as CRW-585 reads it.
 	r.allowed(t, worktreeDelSpell("echo 'r<BS><NL>m -rf ../../zk3q'"), worktreeDelSpell("rm -rf '.<BS><NL>' sh"), worktreeDelSpell("rm -rf '.<BS><NL>' # sh"), worktreeDelSpell("rm -rf '.<BS><NL>'"))
 	r.intact(t)
