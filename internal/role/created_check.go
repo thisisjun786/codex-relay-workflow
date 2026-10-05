@@ -159,7 +159,7 @@ func createdCheckRead(ctx context.Context, env host.LookupEnv, h DispatchHost, a
 
 // Closing reduces authority only. Caller reconciliation is recorded, never
 // presented as a host-authenticated termination receipt; the old ID is retained in the record and no longer held.
-func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost, after func(string)) (DispatchResult, error) {
+func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env host.LookupEnv, h DispatchHost, after func(string)) (out DispatchResult, err error) {
 	status := map[string]any{"action": "status", "sessionId": b["sessionId"], "dispatchId": b["dispatchId"]}
 	if _, err := RunDispatch(cwd, status, env); err != nil {
 		return DispatchResult{}, err
@@ -179,13 +179,13 @@ func createdCheckStop(ctx context.Context, cwd string, b map[string]any, env hos
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	defer releaseSession()
+	defer func() { err = errors.Join(err, releaseSession()) }()
 	name := id + ".json"
 	release, err := dir.lock(name)
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	defer release()
+	defer func() { err = errors.Join(err, release()) }()
 	d, err := dispatchPinnedRead(dir, name, session, id)
 	if err != nil {
 		return DispatchResult{}, err
