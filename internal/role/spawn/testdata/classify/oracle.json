@@ -1,0 +1,2416 @@
+{
+  "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+  "source": "subagent-config/src/spawn-attach-hook.ts:279-280,409-419,450-595",
+  "tests": "subagent-config/test/spawn-attach-hook.test.ts; subagent-config/test/explorer-role-routing.test.ts",
+  "note": "Recorded by record-classify.mjs under Node 24. input is the CRW-named case the Go test replays; oracle is the raw answer the CXC source gave for the CXC-named case; expected is the renamed answer.",
+  "sections": [
+    {
+      "fn": "SubspawnToken",
+      "cases": [
+        {
+          "input": null,
+          "oracle": "CXC-SUBSPAWN-ALLOWED",
+          "expected": "CRW-SUBSPAWN-ALLOWED",
+          "classification": "intentionally-changed",
+          "reason": "CRW marker and namespace substitution (R6/R7/R9/R32).",
+          "test": ""
+        }
+      ]
+    },
+    {
+      "fn": "StripControlMarkers",
+      "cases": [
+        {
+          "input": {
+            "message": "CRW-SUBSPAWN-ALLOWED spawn one helper",
+            "preserveWhitespace": false
+          },
+          "oracle": "spawn one helper",
+          "expected": "spawn one helper",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "CRW-SUBSPAWN-ALLOWED spawn one helper",
+            "preserveWhitespace": true
+          },
+          "oracle": " spawn one helper",
+          "expected": " spawn one helper",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "lead CRW-SUBSPAWN-ALLOWED tail",
+            "preserveWhitespace": false
+          },
+          "oracle": "lead  tail",
+          "expected": "lead  tail",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "lead CRW-SUBSPAWN-ALLOWED tail",
+            "preserveWhitespace": true
+          },
+          "oracle": "lead  tail",
+          "expected": "lead  tail",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "  CRW-SUBSPAWN-ALLOWED  ",
+            "preserveWhitespace": false
+          },
+          "oracle": "",
+          "expected": "",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "say cxc-subspawn-allowed instead",
+            "preserveWhitespace": false
+          },
+          "oracle": "say cxc-subspawn-allowed instead",
+          "expected": "say cxc-subspawn-allowed instead",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "say [crw-subspawn-grant:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] now",
+            "preserveWhitespace": false
+          },
+          "oracle": "say  now",
+          "expected": "say  now",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "x [CRW-SUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+            "preserveWhitespace": false
+          },
+          "oracle": "x  y",
+          "expected": "x  y",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "x [CRW-SUBSPAWN-GRANT:A1B2C3D4A1B2C3D4A1B2C3D4A1B2C3D4A1B2C3D4A1B2C3D4A1B2C3D4A1B2C3D4] y",
+            "preserveWhitespace": false
+          },
+          "oracle": "x  y",
+          "expected": "x  y",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "x [CrW-SuBsPaWn-GrAnT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+            "preserveWhitespace": false
+          },
+          "oracle": "x  y",
+          "expected": "x  y",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "x [CRW-SUBSPAWN-GRANT:1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+            "preserveWhitespace": false
+          },
+          "oracle": "x [CXC-SUBSPAWN-GRANT:1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+          "expected": "x [CRW-SUBSPAWN-GRANT:1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+          "classification": "intentionally-changed",
+          "reason": "CRW marker and namespace substitution (R6/R7/R9/R32).",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "[CRW-SUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4]",
+            "preserveWhitespace": true
+          },
+          "oracle": "",
+          "expected": "",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "[CRW-SUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] and CRW-SUBSPAWN-ALLOWED",
+            "preserveWhitespace": true
+          },
+          "oracle": " and ",
+          "expected": " and ",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "a\n\n\n\nb",
+            "preserveWhitespace": false
+          },
+          "oracle": "a\n\nb",
+          "expected": "a\n\nb",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "a\n\n\n\nb",
+            "preserveWhitespace": true
+          },
+          "oracle": "a\n\n\n\nb",
+          "expected": "a\n\n\n\nb",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "﻿  keep  ﻿",
+            "preserveWhitespace": false
+          },
+          "oracle": "keep",
+          "expected": "keep",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "keep",
+            "preserveWhitespace": false
+          },
+          "oracle": "keep",
+          "expected": "keep",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": " keep ",
+            "preserveWhitespace": false
+          },
+          "oracle": "keep",
+          "expected": "keep",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "a\r\n\r\n\r\n\r\nb",
+            "preserveWhitespace": false
+          },
+          "oracle": "a\r\n\r\n\r\n\r\nb",
+          "expected": "a\r\n\r\n\r\n\r\nb",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "[CRW-SUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4]  CRW-SUBSPAWN-ALLOWED ",
+            "preserveWhitespace": false
+          },
+          "oracle": "",
+          "expected": "",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "message": "x [CRW-ſUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+            "preserveWhitespace": false
+          },
+          "oracle": "x [CXC-ſUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+          "expected": "x [CRW-ſUBSPAWN-GRANT:a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4] y",
+          "classification": "intentionally-changed",
+          "reason": "CRW marker and namespace substitution (R6/R7/R9/R32).",
+          "test": ""
+        }
+      ]
+    },
+    {
+      "fn": "DenyEnvelope",
+      "cases": [
+        {
+          "input": {
+            "reason": "plain reason"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"plain reason\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"plain reason\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": ""
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "quote \" and backslash \\ inside"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"quote \\\" and backslash \\\\ inside\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"quote \\\" and backslash \\\\ inside\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "tab\tnewline\ncarriage\rbackspace\bformfeed\f"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"tab\\tnewline\\ncarriage\\rbackspace\\bformfeed\\f\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"tab\\tnewline\\ncarriage\\rbackspace\\bformfeed\\f\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "control \u0001 and \u001f"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"control \\u0001 and \\u001f\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"control \\u0001 and \\u001f\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "line separators   and  "
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"line separators   and  \"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"line separators   and  \"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "한국어 이유와 이모지 🙂"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"한국어 이유와 이모지 🙂\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"한국어 이유와 이모지 🙂\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "literal \\u2028 text must stay text"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"literal \\\\u2028 text must stay text\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"literal \\\\u2028 text must stay text\"}}\n",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "CRW-SUBSPAWN-ALLOWED must stay literal in the reason"
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"CXC-SUBSPAWN-ALLOWED must stay literal in the reason\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"CRW-SUBSPAWN-ALLOWED must stay literal in the reason\"}}\n",
+          "classification": "intentionally-changed",
+          "reason": "CRW marker and namespace substitution (R6/R7/R9/R32).",
+          "test": ""
+        },
+        {
+          "input": {
+            "reason": "crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message."
+          },
+          "oracle": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"codexclaw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+          "expected": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.\"}}\n",
+          "classification": "intentionally-changed",
+          "reason": "CRW marker and namespace substitution (R6/R7/R9/R32).",
+          "test": ""
+        }
+      ]
+    },
+    {
+      "fn": "RecurseDenyReason",
+      "cases": [
+        {
+          "input": null,
+          "oracle": "codexclaw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.",
+          "expected": "crw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message.",
+          "classification": "intentionally-changed",
+          "reason": "CRW marker and namespace substitution (R6/R7/R9/R32).",
+          "test": ""
+        }
+      ]
+    },
+    {
+      "fn": "InferRole",
+      "cases": [
+        {
+          "input": {
+            "agentType": "worker",
+            "message": "review this"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "map the codebase"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "architect",
+            "message": "verify interfaces"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "map the codebase"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "audit the plan for blockers"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "코드 검증 부탁"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "map the codebase"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "audit the patch"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "locate the owner"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "preview the diff"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "REVIEW the plan"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "REVİEW"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": 7,
+            "message": "review the plan"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": true,
+            "message": "audit the change"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": {},
+            "message": "verification of the plan"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": [
+              "review"
+            ],
+            "message": "map the codebase"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: architect\n\nTASK: find the audit logger"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: reviewer\n\nTASK: find the audit logger"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "CRW-ROLE: explorer\n\nTASK: x"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "CRW-ROLE: explorer\n\nTASK: x"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "worker",
+            "message": "CRW-ROLE: architect\n\nTASK: x"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "TASK: quote\nCRW-ROLE: reviewer"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: executor\n\nTASK: x"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: reviewer \t\nTASK: x"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: architect\r\n\r\nTASK: find the audit logger"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: architect  TASK: x"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: architect"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: architectX\nTASK: x"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE:architect\nTASK: x"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "TASK: review the plan"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "audit only\nTASK: x"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "note\nCRW-ROLE: reviewer\nTASK: y"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: reviewer\nTASK: y\nCRW-ROLE: architect"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "TASK: locate the cache owner; no review or verification"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "explicit explorer ignores task vocabulary, including negative review instructions"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "TASK: find the audit logger and preview route"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "explicit explorer ignores task vocabulary, including negative review instructions"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "TASK: 호출 경로만 찾아라. 검증과 리뷰는 하지 마라."
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "explicit explorer ignores task vocabulary, including negative review instructions"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "TASK: review the architecture"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "explicit explorer ignores task vocabulary, including negative review instructions"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: explorer\n\nTASK: find the audit logger"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: explorer\n\nTASK: find the audit logger"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "CRW-ROLE: explorer\n\nTASK: find the audit logger"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "CRW-ROLE: explorer\n\nTASK: find the audit logger"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: reviewer\n\nTASK: find the audit logger"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: reviewer\n\nTASK: find the audit logger"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "CRW-ROLE: reviewer\n\nTASK: find the audit logger"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "CRW-ROLE: reviewer\n\nTASK: find the audit logger"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: architect\n\nTASK: find the audit logger"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: architect\n\nTASK: find the audit logger"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "CRW-ROLE: architect\n\nTASK: find the audit logger"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "CRW-ROLE: architect\n\nTASK: find the audit logger"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "TASK: quote\nCRW-ROLE: reviewer"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "audit the patch"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "locate the owner"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "legacy read-only headers remain deliberate role selections"
+        },
+        {
+          "input": {
+            "agentType": "worker",
+            "message": "review this"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "map the codebase"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "map the codebase"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "audit the plan for blockers"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "코드 검증 부탁"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "map the codebase"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "map the codebase"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "inferRole: worker -> executor; review keywords -> reviewer; default explorer"
+        },
+        {
+          "input": {
+            "agentType": "architect",
+            "message": "verify interfaces"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: architect\n\nReview plan alignment"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": null,
+            "message": "CRW-ROLE: architect\n\nReview plan alignment"
+          },
+          "oracle": "architect",
+          "expected": "architect",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "executor",
+            "message": "CRW-ROLE: architect\n\nReview plan alignment"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "worker",
+            "message": "CRW-ROLE: architect\n\nReview plan alignment"
+          },
+          "oracle": "executor",
+          "expected": "executor",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "reviewer",
+            "message": "CRW-ROLE: architect\n\nReview plan alignment"
+          },
+          "oracle": "reviewer",
+          "expected": "reviewer",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "review the architect proposal"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "map architecture"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        },
+        {
+          "input": {
+            "agentType": "explorer",
+            "message": "CRW-ROLE: executor\n\nTASK: x"
+          },
+          "oracle": "explorer",
+          "expected": "explorer",
+          "classification": "identical",
+          "reason": "",
+          "test": "architect role identity wins review words while explicit write/reviewer roles win markers"
+        }
+      ]
+    },
+    {
+      "fn": "IsV2SpawnInput",
+      "cases": [
+        {
+          "input": {
+            "toolInput": {}
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "message": "x"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": true
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_turns": "none"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_turns": null
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "all"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "items": []
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "message": "x"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_turns": "none"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        }
+      ]
+    },
+    {
+      "fn": "IsFullHistoryFork",
+      "cases": [
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": true
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": false
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": 1
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": "true"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "message": "x"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "all"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "ALL"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "  "
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": " "
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "﻿"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "﻿all"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": ""
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": " none "
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "none"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "3"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "0"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": 3
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": 0
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": null
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": true
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": [
+                "all"
+              ]
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": {
+                "mode": "all"
+              }
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_turns": "all"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "all",
+              "fork_context": false
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": true
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_context": false
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "message": "x"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "all"
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "  "
+            }
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "none"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "task_name": "t",
+              "fork_turns": "3"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        },
+        {
+          "input": {
+            "toolInput": {
+              "fork_turns": 3
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isV2SpawnInput and isFullHistoryFork classify spawn shapes"
+        }
+      ]
+    },
+    {
+      "fn": "IsFernetTokenShape",
+      "cases": [
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==",
+            "label": "reference padded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA",
+            "label": "reference unpadded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw==",
+            "label": "n=1 padded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw",
+            "label": "n=1 unpadded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM=",
+            "label": "n=2 padded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz",
+            "label": "n=3 padded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz",
+            "label": "n=3 unpadded"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gP__________ERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw==",
+            "label": "non-gAAAA timestamp"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gQAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw==",
+            "label": "wrong version byte"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7J",
+            "label": "truncated frame"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERETMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz",
+            "label": "empty ciphertext"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAAAAAAERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz",
+            "label": "non-16-byte-block ciphertext"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAx",
+            "label": "short gAAAA prefix"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAABopaque-payload",
+            "label": "old e2e fixture"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAA",
+            "label": "impossible base64 length"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAABaB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_aB9_==",
+            "label": "old invalid fixture"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpG VWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==",
+            "label": "embedded whitespace"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ/eEwCGM4BLLF/5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==",
+            "label": "standard-alphabet characters"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA=",
+            "label": "partial padding"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA===",
+            "label": "excess padding"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\n",
+            "label": "trailing newline"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA=\r",
+            "label": "padding with carriage return"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQF=BgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==",
+            "label": "mid-string padding"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDB==",
+            "label": "nonzero unused pad bits"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "=",
+            "label": "only padding"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "",
+            "label": "empty"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "token": "égAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA",
+            "label": "non-ASCII"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        }
+      ]
+    },
+    {
+      "fn": "IsSpawnToolName",
+      "cases": [
+        {
+          "input": {
+            "name": "spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaborationspawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaboration.spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaboration_spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "shell"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "multi_agent_v1.spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "Spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": " spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaboration.spawn_agent "
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaborationspawnagent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": ""
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": null
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": 7
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": [
+              "spawn_agent"
+            ]
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": {
+              "name": "spawn_agent"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": true
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        },
+        {
+          "input": {
+            "name": "collaborationspawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        },
+        {
+          "input": {
+            "name": "collaboration.spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        },
+        {
+          "input": {
+            "name": "shell"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        },
+        {
+          "input": {
+            "name": "multi_agent_v1.spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        }
+      ]
+    },
+    {
+      "fn": "IsCollaborationToolName",
+      "cases": [
+        {
+          "input": {
+            "name": "spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaborationspawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaboration.spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaboration_spawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "shell"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "multi_agent_v1.spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "Spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": " spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaboration.spawn_agent "
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "collaborationspawnagent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": ""
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": null
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": 7
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": [
+              "spawn_agent"
+            ]
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": {
+              "name": "spawn_agent"
+            }
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": true
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": ""
+        },
+        {
+          "input": {
+            "name": "spawn_agent"
+          },
+          "oracle": false,
+          "expected": false,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        },
+        {
+          "input": {
+            "name": "collaborationspawn_agent"
+          },
+          "oracle": true,
+          "expected": true,
+          "classification": "identical",
+          "reason": "",
+          "test": "isSpawnToolName / isCollaborationToolName accept native V2 hook names"
+        }
+      ]
+    }
+  ]
+}

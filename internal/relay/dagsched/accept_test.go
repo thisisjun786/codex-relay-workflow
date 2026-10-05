@@ -2,11 +2,14 @@ package dagsched
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 var verifier = VerifierRule{SkillsDigest: "skills-1", Model: "gpt-5", Effort: "high"}
@@ -269,25 +272,6 @@ func TestAcceptCodeNodePinsTheForgeHead(t *testing.T) {
 			t.Fatal("an acceptance was committed without its forge row")
 		}
 	})
-	t.Run("two repositories on the outgoing edges", func(t *testing.T) {
-		k := newReleaseKit(t)
-		k.putPlan("two", 0, "two-r1", addRelNode("I", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addRelNode("Y", dag.NodeNonPR),
-			addEdge("ix", "I", "X", dag.EdgeIntegrated, nil), addEdge("iy", "I", "Y", dag.EdgeIntegrated, doc{"target_repository": "owner/other"}))
-		k.reportNode("two", "I", acceptOpts{})
-		k.forge.by["owner/repo#7"] = openPR("owner/repo", 7, head1)
-		if _, err := k.sched.Accept(context.Background(), "two", "I", "parent", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, RuleVersion: verifier}); refusalReason(err) != "malformed_receipt" {
-			t.Fatalf("accept = %v", err)
-		}
-	})
-	t.Run("the edges land on a repository the pull request is not in", func(t *testing.T) {
-		k := newReleaseKit(t)
-		k.putPlan("elsewhere", 0, "e-r1", addRelNode("I", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addEdge("ix", "I", "X", dag.EdgeIntegrated, doc{"target_repository": "owner/other"}))
-		k.reportNode("elsewhere", "I", acceptOpts{})
-		k.forge.by["owner/repo#7"] = openPR("owner/repo", 7, head1)
-		if _, err := k.sched.Accept(context.Background(), "elsewhere", "I", "parent", AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}, RuleVersion: verifier}); refusalReason(err) != "disposition_conflict" {
-			t.Fatalf("accept = %v", err)
-		}
-	})
 }
 
 // The slot of a node returns where the node's work ends: at the acceptance of a non_pr node. An operator who returned it first leaves the acceptance to commit without a second return.
@@ -358,4 +342,194 @@ func TestAcceptRefusesAPlanThatChangedWhileTheHeadWasRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+// acceptTargetCheckout is the absolute path of a local checkout that a plan names as an edge target. Nothing reads it: an acceptance looks at the pull request, never at a repository on disk.
+const acceptTargetCheckout = "/work/checkouts/repo"
+
+// acceptTargetPull is the pull request every acceptance of the tests below names; the forge shows it open at head1.
+var acceptTargetPull = AcceptInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 7}}
+
+// acceptTargetIntegrated is an edge from I that lands on target, and acceptTargetPinned one that pins I's code head to it.
+func acceptTargetIntegrated(to, target string) doc {
+	return addEdge("i"+strings.ToLower(to), "I", to, dag.EdgeIntegrated, doc{"target_repository": target})
+}
+
+func acceptTargetPinned(to, target string) doc {
+	return addEdge("i"+strings.ToLower(to), "I", to, dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": target, "target_base_ref": "dev"})
+}
+
+// acceptTargetKit is a plan with the implementation nodes I and J and the non_pr nodes X and Y, the edges given, a verified report of I and the pull request owner/repo#7 open at head1.
+func acceptTargetKit(t *testing.T, edges ...doc) *releaseKit {
+	t.Helper()
+	k := newReleaseKit(t)
+	k.putPlan("rp", 0, "rp-r1", append([]doc{addRelNode("I", dag.NodeImplementation), addRelNode("J", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addRelNode("Y", dag.NodeNonPR)}, edges...)...)
+	k.reportNode("rp", "I", acceptOpts{})
+	k.forge.by["owner/repo#7"] = openPR("owner/repo", 7, head1)
+	return k
+}
+
+// acceptTargetRefusal is the reason and the whole detail of a refusal, and the error as it is when it is none.
+func acceptTargetRefusal(err error) (reason, detail string) {
+	var refused *store.RefusedError
+	if errors.As(err, &refused) {
+		return refused.Reason, refused.Detail
+	}
+	if err != nil {
+		return "not a refusal", err.Error()
+	}
+	return "", ""
+}
+
+func (k *releaseKit) acceptTargetForgeRows() int {
+	return k.count("SELECT COUNT(*) FROM dag_acceptance_forge")
+}
+
+const (
+	// acceptTargetRemedy is the refusal of an absolute path (decision 77): the forge is the target, the checkout belongs to dag-base-refresh. acceptTargetLandsOn is every other target that is not the forge.
+	acceptTargetRemedy  = "the outgoing edges of I name local checkout %s as their target; an implementation node is accepted on its pull request's forge repository owner/repo. Set target_repository to owner/repo and use --checkout for dag-base-refresh when local Git objects are needed"
+	acceptTargetLandsOn = "the outgoing edges of I land on %s and the pull request is in owner/repo"
+)
+
+// Decision 77: a new implementation acceptance names its pull request's forge repository as its integration target. A local checkout is a place to read Git objects, never an identity the merge lane works
+// under, and a plan does not check how a target is spelled, so equality with the forge is the rule: a local checkout is refused with the way out, every other target that is not that repository is refused as
+// landing elsewhere, and a refusal writes no acceptance and no forge row. Before the guard the local, relative, bare and malformed rows below were accepted; the other-case, leading-space and other-forge rows were already refused and stay as controls of exact equality.
+func TestAcceptTargetIsTheForgeRepositoryOfThePullRequest(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		edge   func(to, target string) doc
+		target string
+		detail string
+	}{
+		{"a local checkout an integrated edge lands on", acceptTargetIntegrated, acceptTargetCheckout, fmt.Sprintf(acceptTargetRemedy, acceptTargetCheckout)},
+		{"a local checkout a code-pinned artifact edge names", acceptTargetPinned, acceptTargetCheckout, fmt.Sprintf(acceptTargetRemedy, acceptTargetCheckout)},
+		{"a relative path", acceptTargetIntegrated, "../checkout", fmt.Sprintf(acceptTargetLandsOn, "../checkout")},
+		{"a bare name", acceptTargetPinned, "checkout", fmt.Sprintf(acceptTargetLandsOn, "checkout")},
+		{"a path with too many segments", acceptTargetIntegrated, "owner/repo/extra", fmt.Sprintf(acceptTargetLandsOn, "owner/repo/extra")},
+		{"a URL", acceptTargetPinned, "https://example.com/owner/repo", fmt.Sprintf(acceptTargetLandsOn, "https://example.com/owner/repo")},
+		{"a name without a repository", acceptTargetIntegrated, "owner/", fmt.Sprintf(acceptTargetLandsOn, "owner/")},
+		{"the forge repository spelled in another case", acceptTargetIntegrated, "Owner/Repo", fmt.Sprintf(acceptTargetLandsOn, "Owner/Repo")},
+		{"the forge repository with a space before it", acceptTargetPinned, " owner/repo", fmt.Sprintf(acceptTargetLandsOn, " owner/repo")},
+		{"another forge repository", acceptTargetPinned, "owner/other", fmt.Sprintf(acceptTargetLandsOn, "owner/other")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k := acceptTargetKit(t, c.edge("X", c.target))
+			_, err := k.accept("rp", "I", acceptTargetPull)
+			if reason, detail := acceptTargetRefusal(err); reason != "disposition_conflict" || detail != c.detail {
+				t.Fatalf("accept = %s: %s\nwant disposition_conflict: %s", reason, detail, c.detail)
+			}
+			if k.acceptCount() != 0 || k.acceptTargetForgeRows() != 0 {
+				t.Fatalf("a refused acceptance wrote %d acceptances and %d forge rows", k.acceptCount(), k.acceptTargetForgeRows())
+			}
+		})
+	}
+}
+
+// What the guard leaves as it was: the forge's own repository on one or both kinds of edge, a terminal node (no outgoing edge, so the forge is the default), the refusal of several repositories (checked first,
+// so a checkout beside a forge is that refusal), and a node with no pull request, whose acceptance never looks at a target.
+func TestAcceptTargetKeepsTheRoutesItDoesNotGuard(t *testing.T) {
+	accepts := func(name string, edges ...doc) {
+		t.Run(name, func(t *testing.T) {
+			k := acceptTargetKit(t, edges...)
+			res, err := k.accept("rp", "I", acceptTargetPull)
+			if err != nil || res.AcceptanceID == "" || res.Replayed || k.acceptCount() != 1 || k.acceptTargetForgeRows() != 1 {
+				t.Fatalf("accept = %v %+v (%d acceptances, %d forge rows)", err, res, k.acceptCount(), k.acceptTargetForgeRows())
+			}
+			var repository, forge string
+			if err := k.s.DB.QueryRow("SELECT a.repository, f.forge_repository FROM dag_acceptances a JOIN dag_acceptance_forge f ON f.acceptance_id = a.acceptance_id").Scan(&repository, &forge); err != nil || repository != "owner/repo" || forge != "owner/repo" {
+				t.Fatalf("target %q, forge %q, %v", repository, forge, err)
+			}
+		})
+	}
+	accepts("an integrated edge on the forge repository", acceptTargetIntegrated("X", "owner/repo"))
+	accepts("an integrated and a pinned edge on the same forge repository", acceptTargetIntegrated("X", "owner/repo"), acceptTargetPinned("Y", "owner/repo"))
+	accepts("a terminal node")
+	// an edge of another node is not a target of I's acceptance: the forge is
+	accepts("a checkout named by another node's edge", addEdge("jy", "J", "Y", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": acceptTargetCheckout, "target_base_ref": "dev"}))
+	t.Run("a checkout beside a forge repository is several repositories", func(t *testing.T) {
+		k := acceptTargetKit(t, acceptTargetIntegrated("X", "owner/repo"), acceptTargetPinned("Y", acceptTargetCheckout))
+		_, err := k.accept("rp", "I", acceptTargetPull)
+		if reason, detail := acceptTargetRefusal(err); reason != "malformed_receipt" || detail != "the outgoing edges of I name more than one repository; one acceptance is judged against one" {
+			t.Fatalf("accept = %s: %s", reason, detail)
+		}
+		if k.acceptCount() != 0 || k.acceptTargetForgeRows() != 0 {
+			t.Fatal("a refused acceptance wrote a row")
+		}
+	})
+	t.Run("a node with no pull request", func(t *testing.T) {
+		// the plan's only integration target is a local checkout, and Y, which has no outgoing edge and no pull request, is accepted all the same
+		k := acceptTargetKit(t, acceptTargetIntegrated("X", acceptTargetCheckout))
+		k.reportNode("rp", "Y", acceptOpts{})
+		res, err := k.accept("rp", "Y", AcceptInput{})
+		if err != nil || res.AcceptanceID == "" || k.acceptCount() != 1 || k.acceptTargetForgeRows() != 0 || k.count("SELECT COUNT(*) FROM dag_acceptances WHERE repository IS NOT NULL OR pr_number IS NOT NULL") != 0 {
+			t.Fatalf("accept = %v %+v (%d acceptances, %d forge rows)", err, res, k.acceptCount(), k.acceptTargetForgeRows())
+		}
+	})
+}
+
+// Acceptances recorded before the guard keep the target they stored. Replay and re-validation find the acceptance of the output and never ask for its target again, so a local one is neither rewritten nor
+// refused. A replacement is a new acceptance: it is refused while the plan's edges still name the checkout, the refusal leaves the acceptance in force as it was (the replacement's update of its state is in the
+// refused transaction), and it succeeds once the plan's edge lands on the forge. The rows of a legacy local acceptance are seeded as they were written then (acceptNode), not through Accept.
+func TestAcceptTargetLeavesALegacyLocalAcceptanceAsItWas(t *testing.T) {
+	legacy := func(t *testing.T) (*releaseKit, accepted) {
+		k := newReleaseKit(t)
+		k.putPlan("rp", 0, "rp-r1", addRelNode("I", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), acceptTargetIntegrated("X", acceptTargetCheckout))
+		k.forge.by["owner/repo#7"] = openPR("owner/repo", 7, head1)
+		return k, k.acceptNode("rp", "I", acceptOpts{HeadSHA: head1, PR: 7, Forge: "owner/repo", Repository: acceptTargetCheckout})
+	}
+	stored := func(k *releaseKit, id string) (repository, state string) {
+		t := k.t
+		t.Helper()
+		if err := k.s.DB.QueryRow("SELECT repository, state FROM dag_acceptances WHERE acceptance_id = ?", id).Scan(&repository, &state); err != nil {
+			t.Fatal(err)
+		}
+		return repository, state
+	}
+	t.Run("a replay keeps the stored checkout", func(t *testing.T) {
+		k, old := legacy(t)
+		res, err := k.accept("rp", "I", acceptTargetPull)
+		if repository, state := stored(k, old.Acceptance.AcceptanceID); err != nil || !res.Replayed || res.AcceptanceID != old.Acceptance.AcceptanceID || repository != acceptTargetCheckout || state != "active" ||
+			k.acceptCount() != 1 || k.acceptTargetForgeRows() != 1 {
+			t.Fatalf("replay = %v %+v: stored %q %q, %d acceptances, %d forge rows", err, res, repository, state, k.acceptCount(), k.acceptTargetForgeRows())
+		}
+	})
+	t.Run("a re-validation keeps the stored checkout", func(t *testing.T) {
+		k, old := legacy(t)
+		c := dig("criteria registered again")
+		node := relNode("I", dag.NodeImplementation)
+		node["criteria_set_digest"] = c
+		k.putPlan("rp", int(k.snapshot("rp").Revision), "rp-r2", doc{"op": dag.OpUpdateNode, "node": node})
+		k.exec("UPDATE canonical_criteria SET set_digest = ?", c)
+		k.exec("UPDATE verdict_context SET set_digest = ?", c)
+		res, err := k.accept("rp", "I", acceptTargetPull)
+		if repository, state := stored(k, old.Acceptance.AcceptanceID); err != nil || !res.Revalidated || res.AcceptanceID != old.Acceptance.AcceptanceID || repository != acceptTargetCheckout || state != "active" ||
+			k.acceptCount() != 1 || k.count("SELECT COUNT(*) FROM dag_acceptance_revalidations") != 1 {
+			t.Fatalf("revalidation = %v %+v: stored %q %q, %d acceptances", err, res, repository, state, k.acceptCount())
+		}
+	})
+	t.Run("a refused replacement leaves the acceptance active and writes nothing", func(t *testing.T) {
+		k, old := legacy(t)
+		k.supersedeReport(old.Acceptance.RelationshipID, "I", "rp", "second")
+		replace := AcceptInput{PullRequest: acceptTargetPull.PullRequest, Supersedes: old.Acceptance.AcceptanceID}
+		_, err := k.accept("rp", "I", replace)
+		if reason, detail := acceptTargetRefusal(err); reason != "disposition_conflict" || detail != fmt.Sprintf(acceptTargetRemedy, acceptTargetCheckout) {
+			t.Fatalf("replacement = %s: %s", reason, detail)
+		}
+		if _, state := stored(k, old.Acceptance.AcceptanceID); state != "active" || k.acceptCount() != 1 || k.acceptTargetForgeRows() != 1 ||
+			k.count("SELECT COUNT(*) FROM dag_acceptances WHERE state <> 'active' OR supersedes_acceptance_id IS NOT NULL") != 0 {
+			t.Fatalf("the refusal left acceptance %s %q, %d acceptances, %d forge rows", old.Acceptance.AcceptanceID, state, k.acceptCount(), k.acceptTargetForgeRows())
+		}
+		// the coordinator moves the edge to the forge: the same call is accepted and supersedes the legacy acceptance
+		k.putPlan("rp", int(k.snapshot("rp").Revision), "rp-r2", doc{"op": dag.OpRetireEdge, "edge_id": "ix"}, addEdge("ix-forge", "I", "X", dag.EdgeIntegrated, doc{"target_repository": "owner/repo"}))
+		res, err := k.accept("rp", "I", replace)
+		if err != nil || res.SupersededID != old.Acceptance.AcceptanceID || k.acceptCount() != 2 || k.acceptTargetForgeRows() != 2 {
+			t.Fatalf("replacement on the forge = %v %+v (%d acceptances, %d forge rows)", err, res, k.acceptCount(), k.acceptTargetForgeRows())
+		}
+		if repository, _ := stored(k, res.AcceptanceID); repository != "owner/repo" {
+			t.Fatalf("the new acceptance's target = %q", repository)
+		}
+		if _, state := stored(k, old.Acceptance.AcceptanceID); state != "superseded" {
+			t.Fatalf("the legacy acceptance is %q, want superseded", state)
+		}
+	})
 }

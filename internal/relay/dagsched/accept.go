@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -430,8 +430,11 @@ func (s *Scheduler) unsentGenerationHint(ctx context.Context, q store.Querier, r
 	return "; if generation " + itoa64(rel.Generation) + " was opened by hand and never sent to the child, close it with dag-generation-withdraw and accept the generation before it"
 }
 
-// acceptTarget is the repository an implementation node's accepted head is judged against: the single repository its outgoing integrated and code-pinned edges name. A node with none
-// (a terminal node) is judged against the forge repository, observed with an explicit target. Several repositories are not a single acceptance's.
+// acceptTarget is the repository an implementation node's accepted head is judged against: the pull request's own forge repository (decision 77). The single repository its outgoing integrated and
+// code-pinned edges name has to be exactly that one, and a node with none (a terminal node) is judged against the forge repository, observed with an explicit target. Several repositories are not a
+// single acceptance's. A local checkout is where Git objects are read (dag-base-refresh --checkout), not a target an acceptance is judged against, and a plan does not check how a target is spelled, so a
+// path is refused with the way out and any other target that is not the forge is refused as landing elsewhere. Only a new acceptance asks: a replay or a re-validation of an acceptance already recorded
+// (which may carry a local target) finds that acceptance and does not come here.
 func (s *Scheduler) acceptTarget(ctx context.Context, q store.Querier, snap dag.Snapshot, node, forge string) (string, error) {
 	targets := map[string]bool{}
 	for _, e := range snap.Edges {
@@ -444,8 +447,10 @@ func (s *Scheduler) acceptTarget(ctx context.Context, q store.Querier, snap dag.
 		return forge, nil
 	case 1:
 		for t := range targets {
-			// a forge target is the pull request's own repository; a local checkout is allowed as the target of ancestry
-			if _, _, err := evidence.SplitRepository(t); err == nil && t != forge {
+			if filepath.IsAbs(t) {
+				return "", refuse(contract.RefusalDispositionConflict, "the outgoing edges of %s name local checkout %s as their target; an implementation node is accepted on its pull request's forge repository %s. Set target_repository to %s and use --checkout for dag-base-refresh when local Git objects are needed", node, t, forge, forge)
+			}
+			if t != forge {
 				return "", refuse(contract.RefusalDispositionConflict, "the outgoing edges of %s land on %s and the pull request is in %s", node, t, forge)
 			}
 			return t, nil
