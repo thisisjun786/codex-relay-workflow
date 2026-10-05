@@ -78,25 +78,30 @@ func businessResendSafe(receipt map[string]any, task string) bool {
 }
 
 // A one-row complete listing is affirmative evidence. Empty, malformed or
-// paginated history is not proof that the child has only its standby turn.
+// paginated history is not proof that the child has only its standby turn, but
+// a visible foreign turn is conclusive even on an incomplete page.
 func (r *startRun) businessResendOnlyStandby(ctx context.Context) (string, error) {
 	answer, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": r.task, "limit": 2, "itemsView": "summary"})
 	if err != nil {
 		return "", err
 	}
 	rows, ok := answer["data"].([]any)
-	if !ok || len(rows) == 0 || answer["nextCursor"] != nil && answer["nextCursor"] != "" {
+	if !ok || len(rows) == 0 {
 		return "lifecycle_unknown", nil
 	}
-	if len(rows) != 1 {
-		return "business_identity_unobserved", nil
+	unknown := false
+	for _, row := range rows {
+		id, ok := pyjson.Map(row)["id"].(string)
+		if !ok || id == "" {
+			unknown = true
+			continue
+		}
+		if id != r.standby {
+			return "business_identity_unobserved", nil
+		}
 	}
-	id, ok := pyjson.Map(rows[0])["id"].(string)
-	if !ok || id == "" {
+	if unknown || len(rows) != 1 || answer["nextCursor"] != nil && answer["nextCursor"] != "" {
 		return "lifecycle_unknown", nil
-	}
-	if id != r.standby {
-		return "business_identity_unobserved", nil
 	}
 	return "", nil
 }
