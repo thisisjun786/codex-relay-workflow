@@ -700,9 +700,10 @@ func mbcLastEnv(env []string) map[string]string {
 	return last
 }
 
-// The cache read darwin needs runs in a directory this run owns that holds no go.mod, so a module in
-// the caller's working directory cannot choose the go tool's toolchain for it. The shim records
-// where it ran: a shell's $PWD is the directory the go tool was started in.
+// The cache read darwin needs runs in a directory this run owns that is its own module root, so the go
+// tool's search for a go.mod stops there and neither a module in the caller's working directory nor one
+// above the run scratch can choose the go tool's toolchain for it (CRW-610). The shim records where it
+// ran: a shell's $PWD is the directory the go tool was started in.
 func TestMergeBuildEnvRunsTheCacheReadInItsOwnDirectory(t *testing.T) {
 	owned := t.TempDir()
 	log := mbcCacheShim(t, mbcCacheShimStandard)
@@ -720,8 +721,12 @@ func TestMergeBuildEnvRunsTheCacheReadInItsOwnDirectory(t *testing.T) {
 			t.Errorf("the cache read ran in %q, want the owned directory %q", got, want)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(want, "go.mod")); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("the probe directory holds a go.mod: %v", err)
+	module, err := os.ReadFile(filepath.Join(want, "go.mod"))
+	if err != nil {
+		t.Fatalf("the probe directory holds no go.mod: %v", err)
+	}
+	if string(module) != mergeBuildProbeModule {
+		t.Errorf("the probe go.mod is %q, want %q", module, mergeBuildProbeModule)
 	}
 }
 
@@ -918,4 +923,100 @@ func mbcEnvWithout(t *testing.T, keys ...string) []string {
 		}
 	}
 	return env
+}
+
+// mbcCacheShimModuleSearch mimics the go tool's own search for the module it runs in: from the directory
+// it was started in up to the first directory that holds a go.mod. Like go env with GOTOOLCHAIN=auto and a
+// module that names an unavailable toolchain, it fails when the module it found names a toolchain line,
+// and it records the go.mod the search stopped at.
+const mbcCacheShimModuleSearch = `#!/bin/sh
+dir=$PWD
+found=
+while :; do
+	if [ -f "$dir/go.mod" ]; then
+		found=$dir/go.mod
+		break
+	fi
+	[ "$dir" = / ] && break
+	dir=${dir%/*}
+	[ -z "$dir" ] && dir=/
+done
+echo "module=$found" > "$MBC_SHIM_LOG"
+if [ -n "$found" ]; then
+	while IFS= read -r line; do
+		case $line in
+		toolchain\ *)
+			echo "go: downloading ${line#toolchain }" >&2
+			exit 2
+			;;
+		esac
+	done < "$found"
+fi
+printf '%s' '{"GOCACHE":"/cache","GOMODCACHE":"/mod","GOPATH":"/gopath"}'
+`
+
+// A go.mod above the run scratch must not reach the cache read (CRW-610): the go tool looks for a go.mod in
+// the directory it runs in and then in every parent, and the scratch root is made under TMPDIR, so a TMPDIR
+// inside another module makes the probe read that module's toolchain line and, with GOTOOLCHAIN=auto, try to
+// switch to a toolchain that cannot be fetched instead of answering. The probe directory is its own module
+// root, so the read stops there and answers the caller's values. GOPROXY=off keeps the red case offline:
+// go1.999.0 was never published, so no cache or proxy can supply it.
+func TestMergeBuildEnvProbeStopsAtItsOwnDirectoryWhenAModuleIsAbove(t *testing.T) {
+	callerModule := t.TempDir()
+	if err := os.WriteFile(filepath.Join(callerModule, "go.mod"), []byte("go 1.21\ntoolchain go1.999.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(callerModule, "tmp", "owned") // where the run scratch sits when TMPDIR is inside a module
+	if err := os.MkdirAll(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caller := append(os.Environ(),
+		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(),
+		"CODEX_HOME="+t.TempDir(), "CRW_HOME="+t.TempDir(),
+		"GOTOOLCHAIN=auto", "GOPROXY=off")
+	// A real go tool runs with this environment below: its telemetry must read off before that (CRW-598).
+	telemetryOffWriteMode(t, caller)
+	env, err := mergeBuildEnv(context.Background(), caller, owned, "darwin")
+	if err != nil {
+		t.Fatalf("the cache read failed with a module above the scratch root: %v", err)
+	}
+	got := mbcLastEnv(env)
+	caches := mbcCallerGoEnv(t, caller)
+	for key, want := range map[string]string{"GOCACHE": caches[0], "GOMODCACHE": caches[1], "GOPATH": caches[2]} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want the caller's %q", key, got[key], want)
+		}
+	}
+}
+
+// The go tool's search for a go.mod runs from its own directory up through every parent, so the probe
+// directory must be the module root that stops it before the module above the run scratch (CRW-610). The
+// shim records the go.mod the search stopped at: a probe without its own go.mod finds the module above and
+// fails the way go env fails with an unavailable toolchain.
+func TestMergeBuildEnvProbeModuleRootStopsTheSearchAboveTheScratchRoot(t *testing.T) {
+	callerModule := t.TempDir()
+	if err := os.WriteFile(filepath.Join(callerModule, "go.mod"), []byte("go 1.21\ntoolchain go1.999.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(callerModule, "tmp", "owned")
+	if err := os.MkdirAll(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := mbcCacheShim(t, mbcCacheShimModuleSearch)
+	base := append(mbcEnvWithout(t, "HOME", "CODEX_HOME", "CRW_HOME"),
+		"HOME="+t.TempDir(), "CODEX_HOME="+t.TempDir(), "CRW_HOME="+t.TempDir())
+	env, err := mergeBuildEnv(context.Background(), base, owned, "darwin")
+	if err != nil {
+		t.Fatalf("the cache read failed with a module above the scratch root: %v", err)
+	}
+	if got := mbcLastEnv(env)["GOCACHE"]; got != "/cache" {
+		t.Errorf("GOCACHE=%q, want the shim's /cache", got)
+	}
+	seen := mbcShimLog(t, log)
+	want := filepath.Join(owned, "probe", "go.mod")
+	if got := seen["module"]; got != want {
+		if resolved, err := filepath.EvalSymlinks(got); err != nil || resolved != want {
+			t.Errorf("the go.mod search stopped at %q, want the probe's own %q", got, want)
+		}
+	}
 }
