@@ -1,0 +1,2533 @@
+{
+ "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
+ "dist": "plugins/codexclaw/components/cxc-ops/dist/hook-trust.js",
+ "node": "v24.20.0",
+ "note": "Each case is a tree under one base directory (files by relative path: text, or {base64} for bytes; links: symlink targets) and the oracle's answer: entries, error (structured message) or errorClass (engine error).",
+ "cases": [
+  {
+   "name": "oracle_codexclaw_plugin",
+   "key": "codexclaw@local",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\n  \"name\": \"codexclaw\",\n  \"version\": \"0.2.40+codex.20260929183231\",\n  \"description\": \"cli-jaw-style dev discipline (dev skills + PABCD) and multi-model subagents for the OpenAI Codex runtime, with optional opencodex provider routing.\",\n  \"author\": {\n    \"name\": \"lidge-jun\",\n    \"url\": \"https://github.com/lidge-jun\"\n  },\n  \"repository\": \"https://github.com/lidge-jun/codexclaw\",\n  \"homepage\": \"https://lidge-jun.github.io/codexclaw/\",\n  \"license\": \"MIT\",\n  \"keywords\": [\n    \"codex\",\n    \"codex-plugin\",\n    \"codexclaw\",\n    \"pabcd\",\n    \"subagents\",\n    \"opencodex\",\n    \"dev-skills\"\n  ],\n  \"skills\": \"./skills/\",\n  \"hooks\": [\n    \"./hooks/session-start-ensuring-provider-bridge.json\",\n    \"./hooks/session-start-bootstrapping-pabcd-state.json\",\n    \"./hooks/session-start-healing-declared-features.json\",\n    \"./hooks/session-start-announcing-map-affordance.json\",\n    \"./hooks/session-start-advising-agent-thread-permissions.json\",\n    \"./hooks/user-prompt-submit-checking-pabcd-trigger.json\",\n    \"./hooks/stop-checking-pabcd-continuation.json\",\n    \"./hooks/pre-tool-use-guarding-goal-budget.json\",\n    \"./hooks/permission-request-allowing-agent-thread.json\",\n    \"./hooks/pre-tool-use-guarding-interview-in-goal.json\",\n    \"./hooks/pre-tool-use-guarding-goal-complete.json\",\n    \"./hooks/post-tool-use-capturing-interview-answers.json\",\n    \"./hooks/subagent-stop-verifying-evidence.json\",\n    \"./hooks/subagent-stop-observing-review.json\",\n    \"./hooks/pre-tool-use-attaching-skills.json\",\n    \"./hooks/session-start-announcing-subagent-fallback.json\",\n    \"./hooks/post-compact-resetting-reinject-cursor.json\",\n    \"./hooks/pre-tool-use-linting-apply-patch.json\",\n    \"./hooks/post-tool-use-tracking-render-observations.json\",\n    \"./hooks/session-start-injecting-recall-context.json\",\n    \"./hooks/post-compact-injecting-recall-context.json\",\n    \"./hooks/post-compact-injecting-bg-terminal-affordance.json\",\n    \"./hooks/user-prompt-submit-detecting-recall-intent.json\",\n    \"./hooks/session-start-detecting-managed-worktree.json\",\n    \"./hooks/user-prompt-submit-guiding-worktree-rename.json\",\n    \"./hooks/pre-tool-use-guarding-managed-worktree-deletion.json\",\n    \"./hooks/pre-tool-use-guarding-memory-write.json\",\n    \"./hooks/stop-waking-on-background-completion.json\",\n    \"./hooks/user-prompt-submit-delivering-background-completions.json\",\n    \"./hooks/session-start-adopting-background-completions.json\",\n    \"./hooks/pre-tool-use-guarding-automation-ownership.json\"\n  ],\n  \"mcpServers\": \"./.mcp.json\",\n  \"interface\": {\n    \"displayName\": \"Codexclaw\",\n    \"shortDescription\": \"cli-jaw dev discipline + multi-model subagents for Codex.\",\n    \"longDescription\": \"Codexclaw reuses the OpenAI Codex runtime and layers cli-jaw-style development discipline (dev-* skills, PABCD workflow), multi-model subagent routing, and an optional opencodex (ocx) provider bridge. Includes a local GUI for subagent model selection and prompt tuning.\",\n    \"developerName\": \"lidge-jun\",\n    \"websiteURL\": \"https://lidge-jun.github.io/codexclaw/\",\n    \"composerIcon\": \"./assets/composer-icon.png\",\n    \"logo\": \"./assets/logo.png\",\n    \"brandColor\": \"#D7010F\",\n    \"category\": \"Developer Tools\",\n    \"capabilities\": [\n      \"Skills\",\n      \"Hooks\",\n      \"Workflow\",\n      \"Subagents\",\n      \"Context Injection\"\n    ],\n    \"defaultPrompt\": [\n      \"Plan this with codexclaw PABCD and use multi-model subagents.\",\n      \"Run cxc map to get the shape of this repo before we dive in.\",\n      \"Interview me first, then draft a diff-level plan.\"\n    ],\n    \"screenshots\": [\n      \"./assets/screenshot-docs-home.png\",\n      \"./assets/screenshot-docs-pabcd.png\"\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-ensuring-provider-bridge.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/provider-bridge/dist/cli.js\\\" hook session-start\",\n            \"timeout\": 20,\n            \"statusMessage\": \"(codexclaw) Detecting provider bridge\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-bootstrapping-pabcd-state.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook session-start\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Bootstrapping PABCD session state\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-healing-declared-features.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/config-guard/dist/cli.js\\\" hook session-start\",\n            \"timeout\": 20,\n            \"statusMessage\": \"(codexclaw) Ensuring declared codex features\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-announcing-map-affordance.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/cxc-ops/dist/cli.js\\\" hook session-start\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Announcing cxc map affordance\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-advising-agent-thread-permissions.json": "{\n  \"hooks\": {\n    \"SessionStart\": [{\n      \"hooks\": [{\n        \"type\": \"command\",\n        \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook session-start-permission-advisory\",\n        \"timeout\": 10,\n        \"statusMessage\": \"(codexclaw) Advising on agent-created thread permissions\"\n      }]\n    }]\n  }\n}\n",
+    "plugin/hooks/user-prompt-submit-checking-pabcd-trigger.json": "{\n  \"hooks\": {\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook user-prompt-submit\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Checking PABCD trigger\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/stop-checking-pabcd-continuation.json": "{\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook stop\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Checking PABCD continuation\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-guarding-goal-budget.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook pre-tool-use\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Guarding goal budget\"\n          }\n        ],\n        \"matcher\": \"^create_goal$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/permission-request-allowing-agent-thread.json": "{\n  \"hooks\": {\n    \"PermissionRequest\": [{\n      \"matcher\": \"*\",\n      \"hooks\": [{\n        \"type\": \"command\",\n        \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook permission-request\",\n        \"timeout\": 10,\n        \"statusMessage\": \"(codexclaw) Checking agent-created thread permission\"\n      }]\n    }]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-guarding-interview-in-goal.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook pre-tool-use\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Denying interview/user-input in goal mode\"\n          }\n        ],\n        \"matcher\": \"^request_user_input$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-guarding-goal-complete.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook pre-tool-use\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Gating lazy goal completion (E8)\"\n          }\n        ],\n        \"matcher\": \"^update_goal$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/post-tool-use-capturing-interview-answers.json": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook post-tool-use\",\n            \"timeout\": 15,\n            \"statusMessage\": \"(codexclaw) Capturing interview answer\"\n          }\n        ],\n        \"matcher\": \"^request_user_input$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/subagent-stop-verifying-evidence.json": "{\n  \"hooks\": {\n    \"SubagentStop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook subagent-stop\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Verifying subagent evidence\"\n          }\n        ],\n        \"matcher\": \"^(executor|worker)$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/subagent-stop-observing-review.json": "{\n  \"hooks\": {\n    \"SubagentStop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook subagent-stop-review\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Recording review verdict\"\n          }\n        ],\n        \"matcher\": \".*\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-attaching-skills.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/subagent-config/dist/spawn-attach-hook.js\\\" hook pre-tool-use\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Attaching skills to spawn\"\n          }\n        ],\n        \"matcher\": \"^(collaboration[._]?)?spawn_agent$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-announcing-subagent-fallback.json": "{\n  \"hooks\": {\n    \"SessionStart\": [{\n      \"hooks\": [{\n        \"type\": \"command\",\n        \"command\": \"node \\\"${PLUGIN_ROOT}/components/subagent-config/dist/fallback-dispatch-cli.js\\\" hook session-start\",\n        \"timeout\": 10,\n        \"statusMessage\": \"(codexclaw) Loading subagent fallback protocol\"\n      }]\n    }]\n  }\n}\n",
+    "plugin/hooks/post-compact-resetting-reinject-cursor.json": "{\n  \"hooks\": {\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook post-compact\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Recovering PABCD state after compaction\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-linting-apply-patch.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook pre-tool-use-edit\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Checking structured edit\"\n          }\n        ],\n        \"matcher\": \"^(apply_patch|Write|Edit)$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/post-tool-use-tracking-render-observations.json": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook post-tool-use-render-observation\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Tracking render observation\"\n          }\n        ],\n        \"matcher\": \"^(view_image|browser:control-in-app-browser|chrome:control-chrome|computer-use:computer-use|apply_patch)$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-injecting-recall-context.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/recall/dist/cli.js\\\" hook session-start\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Injecting recall context\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/post-compact-injecting-recall-context.json": "{\n  \"hooks\": {\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/recall/dist/cli.js\\\" hook post-compact\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Recovering recall context after compaction\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/post-compact-injecting-bg-terminal-affordance.json": "{\n  \"hooks\": {\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/cxc-ops/dist/cli.js\\\" hook post-compact\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Queuing compact affordance recovery\"\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/cxc-ops/dist/cli.js\\\" hook user-prompt-submit\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Restoring queued compact affordances\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/user-prompt-submit-detecting-recall-intent.json": "{\n  \"hooks\": {\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/recall/dist/cli.js\\\" hook user-prompt-submit\",\n            \"timeout\": 5,\n            \"statusMessage\": \"(codexclaw) Checking recall intent\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-detecting-managed-worktree.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook worktree-guard\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Checking managed-worktree identity\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/user-prompt-submit-guiding-worktree-rename.json": "{\n  \"hooks\": {\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook worktree-guard\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Checking worktree rename intent\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-guarding-managed-worktree-deletion.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook worktree-guard-pretool\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Guarding managed worktree\"\n          }\n        ],\n        \"matcher\": \"^Bash$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-guarding-memory-write.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook pre-tool-use-memory-write\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Guarding memory write\"\n          }\n        ],\n        \"matcher\": \"^(memories[._]?add_ad_hoc_note|apply_patch|Write|Edit|Bash)$\"\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/stop-waking-on-background-completion.json": "{\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/bg-wake/dist/cli.js\\\" hook stop\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Checking background task completions\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/user-prompt-submit-delivering-background-completions.json": "{\n  \"hooks\": {\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/bg-wake/dist/cli.js\\\" hook user-prompt-submit\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Delivering background completions\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/session-start-adopting-background-completions.json": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/bg-wake/dist/cli.js\\\" hook session-start\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Adopting background completions\"\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    "plugin/hooks/pre-tool-use-guarding-automation-ownership.json": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node \\\"${PLUGIN_ROOT}/components/pabcd-state/dist/cli.js\\\" hook pre-tool-use-automation-ownership\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(codexclaw) Checking automation ownership\"\n          }\n        ],\n        \"matcher\": \"^(mcp__codex_app__|mcp__codex_app[._]|codex_app[._])?automation_update$\"\n      }\n    ]\n  }\n}\n"
+   },
+   "entries": [
+    {
+     "key": "codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0",
+     "hash": "sha256:9cf9b8e5dca9ba92e8454de25ce51ae1447f470aca4947ade7f7c1084e2f492f",
+     "fileSha256": "59b9e401af0b5962eb10ee66cfbbe762c41796a80f207d158148d9b9e90837b1"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-bootstrapping-pabcd-state.json:session_start:0:0",
+     "hash": "sha256:a1337bf2f68792c8b073ae88febdbb8b43f50ed0c78978dc4fc58109e9b0589d",
+     "fileSha256": "62dab230cd5c958342aa26deac2870fc69f68be36be6a0b53fc54974ae2b5f0c"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-healing-declared-features.json:session_start:0:0",
+     "hash": "sha256:f54c17baceea6d3b2ac1c3d4d2beafa9a20db2befe4cfecde4006abb92aab19a",
+     "fileSha256": "562ac6424da44d3636f6b055e5ef158823373b9c1564fb1af5390aa011397c74"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-announcing-map-affordance.json:session_start:0:0",
+     "hash": "sha256:4148e51b76205572e3f7a7ab5d61199b7f2eae0b43d97664b05f7502ee92af53",
+     "fileSha256": "a69440d3a84057b74308e2066fa83289209d24579a1f628398e74b3953ddc05b"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-advising-agent-thread-permissions.json:session_start:0:0",
+     "hash": "sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8",
+     "fileSha256": "8ded4e8bc7bcb29de96faf35e37792ac79089023923fbef43d49f356420ef330"
+    },
+    {
+     "key": "codexclaw@local:hooks/user-prompt-submit-checking-pabcd-trigger.json:user_prompt_submit:0:0",
+     "hash": "sha256:04462b4d2a0ca316e967d5429e4808f2dd73636b13d9a9a9c984de6de17d4da7",
+     "fileSha256": "e43a241f3fbeb7462bff82735ebeabd92b0d512c9b3a35323986ec7ca422225c"
+    },
+    {
+     "key": "codexclaw@local:hooks/stop-checking-pabcd-continuation.json:stop:0:0",
+     "hash": "sha256:5be9da5eadafb4043c6576a5fa2805a8cb7cc259ad811a67251fde7b77f04f4a",
+     "fileSha256": "950a17c381a990cda79e337ea91e65e2b72c9e9c0cbab2796c9cca0d29376348"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-guarding-goal-budget.json:pre_tool_use:0:0",
+     "hash": "sha256:a327f72ff6506a5e9820c59a8a3c625f9a5b2b5b1f755ce622948199482bf041",
+     "fileSha256": "967ff07a664a7fdadcd0c2cb731f682099573badda33e350aafa90fac6e24441"
+    },
+    {
+     "key": "codexclaw@local:hooks/permission-request-allowing-agent-thread.json:permission_request:0:0",
+     "hash": "sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5",
+     "fileSha256": "4cdc14a0a61fbffaec7aa7c03fe1edb266d657b40944d3ffc40789276324ba89"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-guarding-interview-in-goal.json:pre_tool_use:0:0",
+     "hash": "sha256:1243674f7367995a3861abc2d1bc3c64300ea910bf4ebaeb4a02a9c4a00d1db3",
+     "fileSha256": "950d1be4a79e583c5d46076931dc3754af9260c3764feee885aa8b8420e94069"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-guarding-goal-complete.json:pre_tool_use:0:0",
+     "hash": "sha256:caaf85c7e4e04d9edce2adc0461c6c466fe4ffdcae133fc18ae8137e26541d05",
+     "fileSha256": "057d63fb37f8d7c25040cd091d947d8949e878a8969b8f173de59f31155b75ff"
+    },
+    {
+     "key": "codexclaw@local:hooks/post-tool-use-capturing-interview-answers.json:post_tool_use:0:0",
+     "hash": "sha256:d42e62bcace6ba3932ac67c5bb87a9aa40335af9fb0c21cc7e2db8ed03a79357",
+     "fileSha256": "ffa972b6d9215b85dd8d76e8ceda3724b55cf5e717f0871720c79a3ba7090337"
+    },
+    {
+     "key": "codexclaw@local:hooks/subagent-stop-verifying-evidence.json:subagent_stop:0:0",
+     "hash": "sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8",
+     "fileSha256": "5e7b04b9029e0c229501748ec1fdef38c75398ffc2437af323511d63d8c84def"
+    },
+    {
+     "key": "codexclaw@local:hooks/subagent-stop-observing-review.json:subagent_stop:0:0",
+     "hash": "sha256:e7cd578f89527c913ddacfff648e3f70cb7b05b8efadf7b4d413f99e520e365d",
+     "fileSha256": "20db0f9b60f75c1552e0859cd1027a37b1525ba8570e0f62dd3eb5165939faeb"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-attaching-skills.json:pre_tool_use:0:0",
+     "hash": "sha256:b66c73febc5a76b12b0a9b59b44696aa78fa723d3af2f94c027a68b4e38fad31",
+     "fileSha256": "4f87c5f8a9b7e11be854600c41766aae9f6bb713d99e1f6929e605652a102915"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-announcing-subagent-fallback.json:session_start:0:0",
+     "hash": "sha256:0d7b75687b54be277a52170df5d040d08a706952fd03984db6c1159ded03dc05",
+     "fileSha256": "12695b6295a29a9623acd31de98a2a0d29d0fc5f06973b580f71934f16bee615"
+    },
+    {
+     "key": "codexclaw@local:hooks/post-compact-resetting-reinject-cursor.json:post_compact:0:0",
+     "hash": "sha256:ccde59b7b74e2ed742009f5e7a3147a5e4ce3439dbe95222a3708eb145faf977",
+     "fileSha256": "7e9d557ff27d29b9338a1a9680eaff686931683091bb2382df3d37be2a9d259e"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-linting-apply-patch.json:pre_tool_use:0:0",
+     "hash": "sha256:2277c611e71fbf3e34b524a552155783a13f0230e816f23c9fbbed05ee538fd0",
+     "fileSha256": "13f5d66ce035aa9bc69afd500abd67a6d362d4d5e1829c3a687bc8c955dae420"
+    },
+    {
+     "key": "codexclaw@local:hooks/post-tool-use-tracking-render-observations.json:post_tool_use:0:0",
+     "hash": "sha256:fa02c465abac8cc04890e347a4849b747bb47dfc83580b87ffaa07607b991d62",
+     "fileSha256": "f9466ef5f3fad9565053b380728b7626cca4c2f010410d06a258332a5b7a98b1"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-injecting-recall-context.json:session_start:0:0",
+     "hash": "sha256:797c968d7c27dd2c4703d0d4aad010479c88d8c26efa7c87284222eb4d8a2e13",
+     "fileSha256": "b61e95f8cd2df15235f3cba7d96d240c6720fef2ba5b0ba6330e7bf78c046ca8"
+    },
+    {
+     "key": "codexclaw@local:hooks/post-compact-injecting-recall-context.json:post_compact:0:0",
+     "hash": "sha256:edf979d4135581ac8ee94714b9753ff2a764eed8292a7f06ccbd320593baf93c",
+     "fileSha256": "de3f0e4a3015469c1c9c7d1a405bd7e93e689921bd607e3966120c0f08bda6da"
+    },
+    {
+     "key": "codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:post_compact:0:0",
+     "hash": "sha256:f62ec767f6dc7bd82bef3955475a59bbecdbee44dee3634efa36f26d8ba60372",
+     "fileSha256": "cd5306daa6a6a8d98977e5f72d9ac96ef4315a80b2679b084f7aa59c42572676"
+    },
+    {
+     "key": "codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:user_prompt_submit:0:0",
+     "hash": "sha256:fbc69c162733c90cfe203c4936131e92cbe93b4d13f6f55700c550a824704046",
+     "fileSha256": "cd5306daa6a6a8d98977e5f72d9ac96ef4315a80b2679b084f7aa59c42572676"
+    },
+    {
+     "key": "codexclaw@local:hooks/user-prompt-submit-detecting-recall-intent.json:user_prompt_submit:0:0",
+     "hash": "sha256:9b424d6b9d0b267391769bbf929aed48f584ad0f9c3cc2bee48a6ab973621deb",
+     "fileSha256": "f75eb9ebc6d164ef34dad264f07cc9c53a7542b308c0490fe1be281b323e92a4"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-detecting-managed-worktree.json:session_start:0:0",
+     "hash": "sha256:c09f6a180fbca87cdb3aa28cb1749107558bccf7200abbe2a533f5dba7cb58d8",
+     "fileSha256": "7b5db51a56ca61f0271a6fbb40ad5deb345902b9da93b5488e2bc5e401258389"
+    },
+    {
+     "key": "codexclaw@local:hooks/user-prompt-submit-guiding-worktree-rename.json:user_prompt_submit:0:0",
+     "hash": "sha256:ddd3cc41e640a7ea199ccf13fb29724492f23069e7c18ec954553cf6715532c4",
+     "fileSha256": "f26de5241f4fa3aef38d5f0498f4db2915732ed84acd62ac47158535bfdb9f60"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-guarding-managed-worktree-deletion.json:pre_tool_use:0:0",
+     "hash": "sha256:a743a8218d37e99fb5beca96b4aae44876c2d208cf5c4cff23b8b808f7edbaf8",
+     "fileSha256": "29744da962277c5557ae0b3f2bca20ae89f386d05f24f74e1a4915052fe9cd89"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-guarding-memory-write.json:pre_tool_use:0:0",
+     "hash": "sha256:4679e43b7647519c6365c0d6195b99af68762289ef59574f6a808419317c3c73",
+     "fileSha256": "78d0c42a299922a23504bd3e65559b5ae9eba3bd85048023ce9b04040af02e4e"
+    },
+    {
+     "key": "codexclaw@local:hooks/stop-waking-on-background-completion.json:stop:0:0",
+     "hash": "sha256:dbe7ca8d48dcf3e9c61260990c2cd7e8b10ad3ab745d8196e9038291142ce393",
+     "fileSha256": "21cc86681f7a5036aa4538c30139c5e1d03a0be8634b61c0e11b54dc465da8df"
+    },
+    {
+     "key": "codexclaw@local:hooks/user-prompt-submit-delivering-background-completions.json:user_prompt_submit:0:0",
+     "hash": "sha256:a1f54e9f2f294e8f3c7100c97c1412218518ba55c2f669835b5ad9468b4c4c06",
+     "fileSha256": "0a2ce384a9454798ec4c2fbb6ea22e748653ec37cb219b3b7d5e553635807df4"
+    },
+    {
+     "key": "codexclaw@local:hooks/session-start-adopting-background-completions.json:session_start:0:0",
+     "hash": "sha256:14a9e02e680e471d5042335a55e57020320d05aebdb4d94f79652da3625733b0",
+     "fileSha256": "d51b61cfe7d3fea946db95753ef55419860f8edc78d6d866c4eec8210030f279"
+    },
+    {
+     "key": "codexclaw@local:hooks/pre-tool-use-guarding-automation-ownership.json:pre_tool_use:0:0",
+     "hash": "sha256:84f818ef990109f1ab59c6db05833833215bd2164f6af3c286c4822a6c932c93",
+     "fileSha256": "e37a68f39280c820fb647ca26a898ee9780882ae5b552a48a9895eec276166ea"
+    }
+   ]
+  },
+  {
+   "name": "crw_plugin_snapshot",
+   "key": "crw@local",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\n  \"name\": \"crw\",\n  \"version\": \"0.4.0+adfc99ffc96f\",\n  \"description\": \"Linear-driven workflow skills for Codex: define an initiative, plan projects and issues, run delivery, and check the result against its canonical criteria.\",\n  \"author\": {\n    \"name\": \"thisisjun786\",\n    \"url\": \"https://github.com/thisisjun786\"\n  },\n  \"repository\": \"https://github.com/thisisjun786/codex-relay-workflow\",\n  \"license\": \"MIT\",\n  \"keywords\": [\n    \"codex\",\n    \"codex-plugin\",\n    \"linear\",\n    \"workflow\",\n    \"planning\",\n    \"delivery\"\n  ],\n  \"skills\": \"./skills/\",\n  \"hooks\": [\n    \"./wiring/hooks/stop-recording-completion.json\"\n  ],\n  \"mcpServers\": \"./wiring/mcp.json\",\n  \"interface\": {\n    \"displayName\": \"CRW\",\n    \"shortDescription\": \"Linear-driven planning and delivery workflow skills.\",\n    \"longDescription\": \"CRW turns a Linear product record into executable work. Define explores intent and fixes an initiative goal, Plan decomposes it into projects and one-PR issues, Run and Loop execute one project through independent tasks, Status reports where that work stands and how it compares with the agreed schedule, Check and Logic verify delivery and internal consistency against the canonical criteria, and Tidy supplements records that fall short of the rules already agreed. Refactor diagnoses structural debt after a verified cycle, recommends up to three bounded repairs, and executes only selected authorized work. The skills share one integration guide and keep product decisions in Linear. The package also declares the task-bridge MCP server and the completion Stop hook, and both start the crw runtime through the installer's pointer under the home directory. It carries no runtime: the runtime is installed separately. A declared hook does not run until it is trusted.\",\n    \"developerName\": \"thisisjun786\",\n    \"category\": \"Developer Tools\",\n    \"capabilities\": [\n      \"Skills\",\n      \"Hooks\",\n      \"Workflow\"\n    ],\n    \"defaultPrompt\": [\n      \"Decompose this goal into Linear projects and issues.\",\n      \"Run this Linear project through to delivery.\",\n      \"Check whether this issue is really finished.\"\n    ]\n  }\n}\n",
+    "plugin/wiring/hooks/stop-recording-completion.json": "{\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"\\\"$HOME/.local/share/crw-runtime/current/bin/crw\\\" hook --plugin-launch; exit 0\",\n            \"timeout\": 10,\n            \"statusMessage\": \"(crw) Checking the completion records\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+   },
+   "entries": [
+    {
+     "key": "crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0",
+     "hash": "sha256:d919278c5e6e864e90b8e2817dd8fc39961a9ab33218c59f2e3b29453aea5984",
+     "fileSha256": "d4c2e8db97f5e92a275bbab8aa601a26c8a213a8729d049a2dadfa10b78fec37"
+    }
+   ]
+  },
+  {
+   "name": "all_ten_events",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"PostToolUse\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"SessionStart\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"UserPromptSubmit\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"Stop\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"SubagentStart\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"SubagentStop\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"PreCompact\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"PostCompact\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"PermissionRequest\":[{\"matcher\":\"^m$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:88eedfb58d32fb58942ce0143e9b832a5c28e53af79cc413882a6ad656f7a6a5",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:post_tool_use:0:0",
+     "hash": "sha256:bd7fe0e05c105054f5cb3e485d59cd2a231db51a7963a18dd7c845e758b4ce0b",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:session_start:0:0",
+     "hash": "sha256:8c11e02b4ab9dda1fd4f3cb47d85f9469882ab56a6017f417316005679dcfe28",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:user_prompt_submit:0:0",
+     "hash": "sha256:10e7160952b47ea84688f45488b890ed14c0706d8338ac7d9dc3ac27f30549f6",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:subagent_start:0:0",
+     "hash": "sha256:38ed4362d19da7a275b2c54a11cc9716686437d668793bd64a75f84935455495",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:subagent_stop:0:0",
+     "hash": "sha256:45dd031f784ff065bcbeda861e3d20f07dfb7eb96e1f3dd4ed8877c88715c299",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:pre_compact:0:0",
+     "hash": "sha256:74ec22d11388505f2ddfc351cc42cd2cac314e988e8ba52814366118f9195d0a",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:post_compact:0:0",
+     "hash": "sha256:f471b16b03a78a7051f88dd206b70c323c71992beaa5518a56262bf5c53e5466",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:permission_request:0:0",
+     "hash": "sha256:449a9c56bc069a426705d25e076340f6a2e9d0d1664b2a4d3c1d8670a72af4ff",
+     "fileSha256": "079fbebe1d2c6701e289a3e498e5904b4ce523b0e9abdb6ee35fe90f40821216"
+    }
+   ]
+  },
+  {
+   "name": "event_order_unsorted",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "62af7f6e66e4cb3eee8785317e131518b7e77a115279501cbd02efaa9e8d34ac"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:13811b91e8e70b1af68ab7b9e27d5e41d49364f1924603e0c2653049235c8f3d",
+     "fileSha256": "62af7f6e66e4cb3eee8785317e131518b7e77a115279501cbd02efaa9e8d34ac"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:session_start:0:0",
+     "hash": "sha256:35a2cb35aa83c3424a0194ba9180d0618ef388abe1268d229b084938b87ff928",
+     "fileSha256": "62af7f6e66e4cb3eee8785317e131518b7e77a115279501cbd02efaa9e8d34ac"
+    }
+   ]
+  },
+  {
+   "name": "duplicate_event_key",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"first\"}]}],\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"pre\"}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"last\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:15abf93c3ee99c68a3d6d819a8c876e3db1feddbc948a2722c2a8328663b1b2f",
+     "fileSha256": "2c5d801320376a8dce375c9b926eb5fbbbda6c5d7f4c15716127f37b83867b27"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:ca2b4b84b656b8317957f34c77f7c4bb21baf2c2d8b68906cdabb5f6bb9a85c1",
+     "fileSha256": "2c5d801320376a8dce375c9b926eb5fbbbda6c5d7f4c15716127f37b83867b27"
+    }
+   ]
+  },
+  {
+   "name": "two_files_in_manifest_order",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/b.json\",\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"a\"}]}]}}",
+    "plugin/hooks/b.json": "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"b\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/b.json:pre_tool_use:0:0",
+     "hash": "sha256:22803547c82bcf0d877c31be22d49e8f238ac4f2bd4490ccbe28457946464fe8",
+     "fileSha256": "49b9bde8224fb7b9449014b69b7e91d16f18002950a9c4f043c83f98ec9192f9"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:c75a850480544f28d4a0e3e73be3b2659a93058c0746b3a82ad494187e86ecbc",
+     "fileSha256": "50d8b33fa5899c8cbabef4e46df59514b540dec24b4e2d59fdcf14264a6d8912"
+    }
+   ]
+  },
+  {
+   "name": "later_ref_failure_discards_earlier",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\",\"../outside/x.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest path escapes plugin root: ../outside/x.json"
+  },
+  {
+   "name": "ref_dot_slash",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "ref_double_dot_slash",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"././hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:./hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "ref_no_prefix",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "ref_triple_dot_slash_then_slash",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"././/hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest path escapes plugin root: .//hooks/a.json"
+  },
+  {
+   "name": "ref_triple_dot_slash_then_absolute",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"././/etc/hosts\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest path escapes plugin root: .//etc/hosts"
+  },
+  {
+   "name": "ref_lone_surrogate_path",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":[\"hooks/\\ud800.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "plugin/hooks/�.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/\ud800.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "ref_sibling_prefix_escape",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"../plugin-sibling/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "plugin-sibling/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest path escapes plugin root: ../plugin-sibling/a.json"
+  },
+  {
+   "name": "ref_symlink_to_sibling_prefix",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"sib/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "plugin-sibling/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "links": {
+    "plugin/sib": "../plugin-sibling"
+   },
+   "error": "plugin manifest symlink escapes plugin root: sib/a.json"
+  },
+  {
+   "name": "manifest_duplicate_refs",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\",\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "async_true_with_invalid_timeout_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":true,\"timeout\":\"bad\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_octal_range_end_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\\\\1-Z]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:940b003805f3bef4da589de9d0d45a020a750f6125406b39af4827a8f6060341",
+     "fileSha256": "2fc275373608a2eb25fca13ac98e5e7b887bbb07a8f6cb20e5790419f777dd80"
+    }
+   ]
+  },
+  {
+   "name": "matcher_octal_range_hex_end_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^[\\\\1-\\\\x20]+$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:31d6c13a5dd1e2ff52e0bd2cd0976f03cab6e5697d7fa652254297835877a428",
+     "fileSha256": "8dd00b2794f5a7ae2d2c4db12489537852e941f75d31035d8393a614ebe594cf"
+    }
+   ]
+  },
+  {
+   "name": "matcher_class_range_to_octal_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[a-\\\\1]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_escaped_backslash_then_lookahead_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\\\\\\\\(?=a)\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:519d3bcfa50c8f7a87e734832bbe4941fad3b576d1492c237565e0efeb8e48d8",
+     "fileSha256": "26efbb1ea4aff3089a0ea3b63a4a872df72972e1f58393fadc8f7e95e4dc14c3"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_reversed_octal_range",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\\\\3-\\\\1]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_residual_unknown_named_backreference",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?<n>a)\\\\k<x>\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_residual_quantified_lookbehind",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?<=a)*\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_residual_class_range_to_decimal_escape",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[0-\\\\9]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:60f718a08cafa6ab5493f710b9f614988b7779f71d52fee4d2e84aa7e36e96dd",
+     "fileSha256": "f4f5e3840a055ffbe7056924cbda6744f0bedced07f1c49d06c46ee7cd7cd211"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_class_octal_range",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\\\\x02-\\\\7]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:d2ef4596fd341d3c883a22fb866677f87ff53603524ff60c828aa08f4905f0d2",
+     "fileSha256": "935c3471b2b553473283cda4cde11d0ba5dfda9d9cea8b39f90162172766984f"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_class_range_to_named_escape",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[a-\\\\k<z>]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:1d246626c0dca0508a88afaff7c5297a6ae851036f558be38fb2731678f6a7b7",
+     "fileSha256": "59deee482f8099a0aa7961548db93252031dda13a38836b42d9d4fd5c262ae71"
+    }
+   ]
+  },
+  {
+   "name": "ref_dotdot_inside_root",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/../hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/../hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "relative_plugin_root",
+   "key": "fixture@market",
+   "relativeRoot": true,
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "plugin_root_is_symlink",
+   "key": "fixture@market",
+   "rootName": "link",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "links": {
+    "link": "plugin"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "plugin_key_empty",
+   "key": "",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin key contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "plugin_key_quote",
+   "key": "a\"b",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin key contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "plugin_key_backslash",
+   "key": "a\\b",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin key contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "plugin_key_newline",
+   "key": "a\nb",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin key contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "plugin_key_carriage_return",
+   "key": "a\rb",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin key contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "hook_path_backslash",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks\\\\a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hook path contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "hook_path_quote",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/\\\"a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hook path contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "hook_path_newline",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/a\\n.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hook path contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "hook_path_empty",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hook path contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "hook_path_only_dot_slash",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hook path contains characters unsafe for a TOML quoted key"
+  },
+  {
+   "name": "ref_absolute",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"/etc/hosts\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest path must be relative: /etc/hosts"
+  },
+  {
+   "name": "ref_absolute_after_dot_slash",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\".//etc/hosts\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest path must be relative: /etc/hosts"
+  },
+  {
+   "name": "ref_dotdot_escape",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"../outside/x.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "outside/x.json": "{}"
+   },
+   "error": "plugin manifest path escapes plugin root: ../outside/x.json"
+  },
+  {
+   "name": "ref_nested_dotdot_escape",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/../../outside/x.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "outside/x.json": "{}"
+   },
+   "error": "plugin manifest path escapes plugin root: hooks/../../outside/x.json"
+  },
+  {
+   "name": "ref_symlink_file_outside",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/link.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "outside/x.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "links": {
+    "plugin/hooks/link.json": "../../outside/x.json"
+   },
+   "error": "plugin manifest symlink escapes plugin root: hooks/link.json"
+  },
+  {
+   "name": "ref_symlink_dir_outside",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"linked/x.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}",
+    "outside/x.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "links": {
+    "plugin/linked": "../outside"
+   },
+   "error": "plugin manifest symlink escapes plugin root: linked/x.json"
+  },
+  {
+   "name": "ref_symlink_inside_root",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/link.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "links": {
+    "plugin/hooks/link.json": "a.json"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/link.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "922a1a9c92a1acf2676f25c11dcdbe159376b02d7963ffa370f8076d2dae9fa8"
+    }
+   ]
+  },
+  {
+   "name": "ref_missing_file",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks/missing.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "errorClass": "ENOENT"
+  },
+  {
+   "name": "ref_is_directory",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"hooks\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "errorClass": "EISDIR"
+  },
+  {
+   "name": "ref_dot",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\".\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "errorClass": "EISDIR"
+  },
+  {
+   "name": "root_missing",
+   "key": "fixture@market",
+   "files": {},
+   "errorClass": "ENOENT"
+  },
+  {
+   "name": "manifest_hooks_absent",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\"}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_hooks_empty_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":[]}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_hooks_object",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":{\"a\":\"./hooks/a.json\"}}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_hooks_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":\"./hooks/a.json\"}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_hooks_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":null}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_top_level_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "null",
+    "plugin/hooks/a.json": "{}"
+   },
+   "error": "Cannot read properties of null (reading 'hooks')"
+  },
+  {
+   "name": "manifest_top_level_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "[1,2]",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_top_level_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "\"x\"",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "manifest_not_json",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{",
+    "plugin/hooks/a.json": "{}"
+   },
+   "errorClass": "SyntaxError"
+  },
+  {
+   "name": "manifest_bom",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "﻿{\"hooks\":[]}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "errorClass": "SyntaxError"
+  },
+  {
+   "name": "manifest_ref_number",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":[5]}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "error": "plugin manifest hook references must be strings"
+  },
+  {
+   "name": "manifest_ref_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":[null]}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "error": "plugin manifest hook references must be strings"
+  },
+  {
+   "name": "manifest_ref_object",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":[{}]}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "error": "plugin manifest hook references must be strings"
+  },
+  {
+   "name": "manifest_second_ref_not_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"hooks\":[\"./hooks/a.json\",7]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "plugin manifest hook references must be strings"
+  },
+  {
+   "name": "doc_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "null"
+   },
+   "error": "Cannot read properties of null (reading 'hooks')"
+  },
+  {
+   "name": "doc_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "[1]"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "\"x\""
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_number",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "7"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_not_json",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{"
+   },
+   "errorClass": "SyntaxError"
+  },
+  {
+   "name": "doc_trailing_data",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{}} x"
+   },
+   "errorClass": "SyntaxError"
+  },
+  {
+   "name": "doc_nan",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "NaN"
+   },
+   "errorClass": "SyntaxError"
+  },
+  {
+   "name": "doc_bom",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "﻿{\"hooks\":{}}"
+   },
+   "errorClass": "SyntaxError"
+  },
+  {
+   "name": "doc_hooks_absent",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{}"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_hooks_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":null}"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_hooks_empty_object",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_hooks_empty_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":[]}"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_hooks_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":[1]}"
+   },
+   "error": "unsupported hook event: 0"
+  },
+  {
+   "name": "doc_hooks_empty_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":\"\"}"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_hooks_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":\"ab\"}"
+   },
+   "error": "unsupported hook event: 0"
+  },
+  {
+   "name": "doc_hooks_number",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":5}"
+   },
+   "entries": []
+  },
+  {
+   "name": "doc_hooks_true",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":true}"
+   },
+   "entries": []
+  },
+  {
+   "name": "event_unknown",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Unknown\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "unsupported hook event: Unknown"
+  },
+  {
+   "name": "event_lowercase",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "unsupported hook event: stop"
+  },
+  {
+   "name": "event_unknown_after_valid",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}],\"Unknown\":[]}}"
+   },
+   "error": "unsupported hook event: Unknown"
+  },
+  {
+   "name": "event_not_array_object",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":{}}}"
+   },
+   "error": "hooks/a.json:Stop must contain an array"
+  },
+  {
+   "name": "event_not_array_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":\"x\"}}"
+   },
+   "error": "hooks/a.json:Stop must contain an array"
+  },
+  {
+   "name": "event_not_array_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":null}}"
+   },
+   "error": "hooks/a.json:Stop must contain an array"
+  },
+  {
+   "name": "event_not_array_number",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":5}}"
+   },
+   "error": "hooks/a.json:Stop must contain an array"
+  },
+  {
+   "name": "int_keys_first",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":5,\"1\":[],\"0\":[]}}"
+   },
+   "error": "unsupported hook event: 0"
+  },
+  {
+   "name": "int_keys_numeric_order",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"10\":[],\"2\":[]}}"
+   },
+   "error": "unsupported hook event: 2"
+  },
+  {
+   "name": "int_key_largest_index",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":5,\"4294967294\":[],\"4294967295\":[]}}"
+   },
+   "error": "unsupported hook event: 4294967294"
+  },
+  {
+   "name": "int_key_not_an_index",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":5,\"4294967295\":[],\"01\":[],\"-1\":[]}}"
+   },
+   "error": "hooks/a.json:Stop must contain an array"
+  },
+  {
+   "name": "proto_constructor",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"constructor\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function Object() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "e99794f283b8ec1bf36570499581fe2ec9dac1a98337659057a3942ef798777c"
+    }
+   ]
+  },
+  {
+   "name": "proto_toString",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"toString\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function toString() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "814b7be0edee620ff30008724a80915487512a34cc2265e6c4309fbca792d325"
+    }
+   ]
+  },
+  {
+   "name": "proto_valueOf",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"valueOf\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function valueOf() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "0df78ffbf87a1ba385682de1360375f6b53d7771b62394aff0bff55b74069835"
+    }
+   ]
+  },
+  {
+   "name": "proto_hasOwnProperty",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"hasOwnProperty\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function hasOwnProperty() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "17824ade51949683b2f3e40fcfd7c653aed51023583f4f0fa09c274025f8ca85"
+    }
+   ]
+  },
+  {
+   "name": "proto_isPrototypeOf",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"isPrototypeOf\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function isPrototypeOf() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "14c2a6943f4f607ad465f5557cebab9cadc1ca0534b1d3fb578a9b602bc2be5e"
+    }
+   ]
+  },
+  {
+   "name": "proto_propertyIsEnumerable",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"propertyIsEnumerable\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function propertyIsEnumerable() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "2a0f0af6ab28ca9580469ae83020fd2c8fb472e8cb69745e33326fa21ce3f4b0"
+    }
+   ]
+  },
+  {
+   "name": "proto_toLocaleString",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"toLocaleString\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function toLocaleString() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "54d670403190926a1bb84c316313420299d0987a71d2807f4d9d2e93bfd79568"
+    }
+   ]
+  },
+  {
+   "name": "proto___defineGetter__",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"__defineGetter__\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function __defineGetter__() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "603db3d2ba0c2b9cb456e739d40348c3ee6a0f2b7ac1119c356e31e069dba65c"
+    }
+   ]
+  },
+  {
+   "name": "proto___defineSetter__",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"__defineSetter__\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function __defineSetter__() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "09276aaa6f776862760468cd7f518225786f8d69def17bcd81246890081ebfcc"
+    }
+   ]
+  },
+  {
+   "name": "proto___lookupGetter__",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"__lookupGetter__\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function __lookupGetter__() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "ab222a050d6b1fb678a8f2a6ca4e58bff6678f8e13bea65e383e7f17a5c9b376"
+    }
+   ]
+  },
+  {
+   "name": "proto___lookupSetter__",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"__lookupSetter__\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function __lookupSetter__() { [native code] }:0:0",
+     "hash": "sha256:21b0e6b60758c2fe3677969ffb6d84c7a43b8b9115a8d53d90c5dc0854cf8c99",
+     "fileSha256": "0a09300d86ce6c4fa11f499b704e44af8c64d9b84f232fb129e0c74ff62bf1cc"
+    }
+   ]
+  },
+  {
+   "name": "proto_proto",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"__proto__\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:[object Object]:0:0",
+     "hash": "sha256:1f169188f9a3e6d8add9b245c2f4ff12975ca27eefd28bdf712b5e35c7216f9c",
+     "fileSha256": "3fad488dd40113ada8d3136b757d840d854e7bd4d17068ff47a8b92518f67c25"
+    }
+   ]
+  },
+  {
+   "name": "proto_matcher_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"toString\":[{\"matcher\":\"^x$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:function toString() { [native code] }:0:0",
+     "hash": "sha256:7d5116de2251940411e5be5337b8a074da618a5d807cd7bf62deb23a6a3b5acb",
+     "fileSha256": "e1ee1d5006206d8042ed435ee98ed81908c1bde2da30adb8af5f8483c460369c"
+    }
+   ]
+  },
+  {
+   "name": "proto_not_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"toString\":\"x\"}}"
+   },
+   "error": "hooks/a.json:toString must contain an array"
+  },
+  {
+   "name": "proto_empty_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"toString\":[]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "group_invalid_0",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[null]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_invalid_1",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[5]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_invalid_2",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[\"x\"]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_invalid_3",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[true]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_invalid_4",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[false]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_invalid_5",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[0]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_invalid_6",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[\"\"]}}"
+   },
+   "error": "hooks/a.json:Stop[0] is invalid"
+  },
+  {
+   "name": "group_second_invalid",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]},null]}}"
+   },
+   "error": "hooks/a.json:Stop[1] is invalid"
+  },
+  {
+   "name": "group_is_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[[]]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks must be an array"
+  },
+  {
+   "name": "group_empty_object",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks must be an array"
+  },
+  {
+   "name": "group_hooks_object",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":{}}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks must be an array"
+  },
+  {
+   "name": "group_hooks_string",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":\"x\"}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks must be an array"
+  },
+  {
+   "name": "group_hooks_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":null}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks must be an array"
+  },
+  {
+   "name": "matcher_not_string_0",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"matcher\":5,\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].matcher must be a string"
+  },
+  {
+   "name": "matcher_not_string_1",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"matcher\":null,\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].matcher must be a string"
+  },
+  {
+   "name": "matcher_not_string_2",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"matcher\":{},\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].matcher must be a string"
+  },
+  {
+   "name": "matcher_not_string_3",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"matcher\":true,\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].matcher must be a string"
+  },
+  {
+   "name": "matcher_not_string_4",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"matcher\":[],\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].matcher must be a string"
+  },
+  {
+   "name": "matcher_empty_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:1f381026b9d81abbae17e1e8ed04226b413c9faa4bed639baeb7acb6dc089eac",
+     "fileSha256": "46350a3d28aacd842b3c9832901034076a85edffa58c12807057a5dac8857c0d"
+    }
+   ]
+  },
+  {
+   "name": "matcher_star_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:6b953e84ad243c9686e6c6bfb62426a589fdf99df73ce684382f2a2397cfa6eb",
+     "fileSha256": "16a97ccd8290a9e96fcfd49c7a5a412b4e1747803b51584c407dc90f9225b01f"
+    }
+   ]
+  },
+  {
+   "name": "matcher_literal_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^Bash$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:46535446e9e7fbe0fdc7ca4e8202330301bb5d12e2f9dc7e20d0d96ccdf7bde3",
+     "fileSha256": "5334f01675827a822ad4a61301c45e16c9796c2a6cb9ed1da677c9319035feb3"
+    }
+   ]
+  },
+  {
+   "name": "matcher_unicode_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"한글|Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:1b7691fa7706dbb5e57c1ddf82ad1ee51dde4cc6787ac42a88c5287f04e4fdd7",
+     "fileSha256": "5190ddfcdaf1155d042c126d485728bf20027f48b5b3954b9c1be9742036e171"
+    }
+   ]
+  },
+  {
+   "name": "matcher_lookahead_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^(?=Bash)\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:796c13c87fb0ea169a483fa2fdcc803b228657208d7d2a0ed96ba05135ffd293",
+     "fileSha256": "808578cba03ec94bb0f01d5a7fb2e8883689886cbfde5be4daed59de849ae7e0"
+    }
+   ]
+  },
+  {
+   "name": "matcher_negative_lookahead_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^(?!Bash)\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:713702b4b2a0ada1c777e745e815b65e3aaf5520a54012b60c1eb8a54bd73ee2",
+     "fileSha256": "bc07c31c1019577b32d8c99127204f6cdb2913a8f1fb7560c5fc0495b35c2b49"
+    }
+   ]
+  },
+  {
+   "name": "matcher_lookbehind_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?<=a)b\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:e464b592dca82076de55425dd01ddaf71dc466347a8bff4715fac6d6e7e974af",
+     "fileSha256": "d572967f5c134a1acdd68e9bc862f646ab17b507e6924c0231bc1114b8eb5093"
+    }
+   ]
+  },
+  {
+   "name": "matcher_negative_lookbehind_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?<!a)b\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:2262daa234c342e6efbae1ddcc37c9b82135e686af72c5dbc2bcc2550267b72b",
+     "fileSha256": "ca2eb0c02a17109e755f782e6c01c5333412a9fe529474c81f6d2e7d296a7213"
+    }
+   ]
+  },
+  {
+   "name": "matcher_backreference_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(a)\\\\1\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:3d369d75e177fce5441545f5e93650b254825c77b8f2ca1916f1bf2403291da0",
+     "fileSha256": "87aae1f2ace1a0fe22e6804e8a617019ecf6163d2f98d2aa619c115599d8a406"
+    }
+   ]
+  },
+  {
+   "name": "matcher_quantified_backreference_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(a)\\\\1*\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:2f010a1f7f9f0444d449a7a021880a03bee92a7204e16ba880c705d7e2e20f38",
+     "fileSha256": "9c585199ec46466c9f1545ac24da19272e20b2044cfc18a506d332283a3f7e1c"
+    }
+   ]
+  },
+  {
+   "name": "matcher_named_backreference_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?<x>a)\\\\k<x>\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:14eb29c51de00da96b47e790ebc6b81c47711f6c4e4431e06e0e81977e26a045",
+     "fileSha256": "0d59db754c4bd3e2468d152bdf758e6cc16c516c307592b9f1f3219362ef5381"
+    }
+   ]
+  },
+  {
+   "name": "matcher_escaped_paren_then_unmatched_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\\\\(?=a)\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_bracket_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_paren_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_repeat_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"a**\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_leading_repeat_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"+a\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_bad_range_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[z-a]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_bad_lookahead_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?=a\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_lookahead_and_syntax_error_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?=a)[\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_invalid_group_not_validated",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\",\"hooks\":[5,null]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_invalid_group_hooks_not_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\",\"hooks\":\"x\"}]}}"
+   },
+   "error": "hooks/a.json:PreToolUse[0].hooks must be an array"
+  },
+  {
+   "name": "matcher_invalid_group_skipped_next_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]},{\"matcher\":\"^ok$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:1:0",
+     "hash": "sha256:c63d5c04e4564860f3c3de18818373cd2a2d97b877b5fad5c341ccc1d3290caf",
+     "fileSha256": "5959e5d8dc452cdb508d32a6948fa6a98b1d0da9137c2acd667556878608d53a"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_inline_flag",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?i)a\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_residual_empty_class_negated",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"[^]\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:73e7f44d050c53c6a70f9b5d689c3328c055ac75fdcd7223e9d0fa279695748e",
+     "fileSha256": "4594b9ec7ef38017fc25046c59818447a1bf85ad142ddfc4176b43a01313b75c"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_unicode_escape",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\\\\u0041\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:76fb2927b459c97b4f52a7a8de07ceec0e29504393c61e85552cfe5f91f6b4ce",
+     "fileSha256": "8b30298ab374eb69ce183de512875f438d7c8acce192ae77e3c387a09f9d8b4f"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_quantified_anchor",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^*\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "matcher_residual_repeat_limit",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"a{1001}\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:0",
+     "hash": "sha256:1c0aa98398ba5aa0917e78b9bdf252111dad1ade4a233f1a526515597c0ce0ab",
+     "fileSha256": "4384893dac85b3372cea79360eafad96e5583f54aa04e685502f8a0ad68fb2ba"
+    }
+   ]
+  },
+  {
+   "name": "matcher_residual_named_group_python",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"(?P<n>a)\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "handler_invalid_0",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[null]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks[0] is invalid"
+  },
+  {
+   "name": "handler_invalid_1",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[5]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks[0] is invalid"
+  },
+  {
+   "name": "handler_invalid_2",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[\"x\"]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks[0] is invalid"
+  },
+  {
+   "name": "handler_invalid_3",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[true]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks[0] is invalid"
+  },
+  {
+   "name": "handler_second_invalid",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\"},5]}]}}"
+   },
+   "error": "hooks/a.json:Stop[0].hooks[1] is invalid"
+  },
+  {
+   "name": "handler_is_array",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[[],{\"type\":\"command\",\"command\":\"echo ok\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:1",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "bc26d907ea76a28c2c2568fa4aad1909f760e38f5cf933fcb739240330ecbaec"
+    }
+   ]
+  },
+  {
+   "name": "type_prompt",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"prompt\",\"command\":\"x\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "type_missing",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"command\":\"x\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "type_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":null,\"command\":\"x\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "type_number",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":5,\"command\":\"x\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_missing",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_null",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":null}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_number",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":5}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_empty",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_spaces",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"   \"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_tab_newline",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"\\t\\n\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_nbsp",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\" \"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_bom_char",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"﻿\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_ideographic_space",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"　\"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_line_separator",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\" \"}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "command_next_line_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:47d4f8df41d08eb17a2b0203fda95ff99bfa3353fc34ab9b15996f074b10edc5",
+     "fileSha256": "87b2ea88f07bd7bcbc90a2f21b0556cf3ba3c6e5821bfeba05a2e0aff92dc8d6"
+    }
+   ]
+  },
+  {
+   "name": "command_zero_width_space_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"​\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:7aaecc108866c0d59fd86c209cddeb77a689f575a22bb8f434ad7e94bee4874b",
+     "fileSha256": "c5363d5347dd72d8ecbd3523381dd96b7147056100c7d20aa8ae5d30296e3da8"
+    }
+   ]
+  },
+  {
+   "name": "async_true_skipped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":true}]}]}}"
+   },
+   "entries": []
+  },
+  {
+   "name": "async_false_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":false}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "d6ceed635499b30a9171bac26a809059781da973b78622906c15765a025f1594"
+    }
+   ]
+  },
+  {
+   "name": "async_null_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":null}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:61d84ddbe34686344e05fe5a36be7f8d35413ba336ba68452a9ba6ccf0181ff4",
+     "fileSha256": "3c658148bbd3d61dd1218795da323d4c003490cc7e392f4d135199b88f67a120"
+    }
+   ]
+  },
+  {
+   "name": "async_one_refused",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":1}]}]}}"
+   },
+   "error": "hook async must be a boolean"
+  },
+  {
+   "name": "async_string_refused",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":\"true\"}]}]}}"
+   },
+   "error": "hook async must be a boolean"
+  },
+  {
+   "name": "timeout_zero_clamped",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":0}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:95002713883067b245450850844909fe4b33bc4de172bd32b9455cc755ef43a7",
+     "fileSha256": "6d023aa7f7ba2391cc298f4bbe024bc40897168b4975316e5da8ca651caa5a77"
+    }
+   ]
+  },
+  {
+   "name": "timeout_string_refused",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"timeout\":\"5\"}]}]}}"
+   },
+   "error": "hook timeout must be a finite number"
+  },
+  {
+   "name": "timeout_huge",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\",\"timeout\":1e400}]}]}}"
+   },
+   "error": "hook timeout must be a finite number"
+  },
+  {
+   "name": "timeout_beyond_2p53",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\",\"timeout\":9007199254740993}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:84b8a7b893e364f62ac62468df2529d2dc7f7514c4b0a652f183f394babc3510",
+     "fileSha256": "26db820bd0040bdf6245f4a8d66cb06d24b256563d0c4488d6760da70eb4635e"
+    }
+   ]
+  },
+  {
+   "name": "status_message_kept",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"statusMessage\":\"Checking\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:aa3499813167b39ae29ce580136c674973f0c97e0fea04919d7ec97ce397451a",
+     "fileSha256": "305888656bf8cc2a10d494cc4f8873f116e53ae22a6d15fe99cfc4613ab0ee6d"
+    }
+   ]
+  },
+  {
+   "name": "status_message_number_refused",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"statusMessage\":5}]}]}}"
+   },
+   "error": "hook statusMessage must be a string"
+  },
+  {
+   "name": "handler_extra_fields_ignored",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"extra\":{\"nested\":[1,2]},\"timeout\":30}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:7768c75fcf9bb41590dfb4546bf719fbebc1d656fa72341a55070811c9e6ecd3",
+     "fileSha256": "e596a87ebe1654c05de0167082dc236348526946b5b20add08c5528940814bdd"
+    }
+   ]
+  },
+  {
+   "name": "indices_with_skips",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"^a$\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo ok\",\"async\":true},{\"type\":\"command\",\"command\":\"one\"},{\"type\":\"prompt\"},{\"type\":\"command\",\"command\":\"three\"}]},{\"hooks\":[{\"type\":\"command\",\"command\":\"g1\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:1",
+     "hash": "sha256:d1c08fd3c5265a0f86ecdb7a5aa4771161aafd6030969595678f6937ca1adf9c",
+     "fileSha256": "032fc388f9c5c721b648d9aea996d46688b0972ccf630362f9d65eaf74776282"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:0:3",
+     "hash": "sha256:f1b64becc114116751796f06685544a0c5aca50029efd74bdeb8933a623317f2",
+     "fileSha256": "032fc388f9c5c721b648d9aea996d46688b0972ccf630362f9d65eaf74776282"
+    },
+    {
+     "key": "fixture@market:hooks/a.json:pre_tool_use:1:0",
+     "hash": "sha256:9b5144503e2b34571fb85ba5864f2e0758d7e18b0d69996b4a775c13d63273dd",
+     "fileSha256": "032fc388f9c5c721b648d9aea996d46688b0972ccf630362f9d65eaf74776282"
+    }
+   ]
+  },
+  {
+   "name": "command_multiline_unicode",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo é日😀\\nsecond\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:7b86a686eccf3b0f3ace2682394e7c997a7f691e59d9e85f298a84ea8d9ca702",
+     "fileSha256": "9926c73db89aa763c1fceeba924823f15578bb76e76e384751c21ffebfa27ab3"
+    }
+   ]
+  },
+  {
+   "name": "lone_surrogate_command",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"echo \\ud800\"}]}]}}"
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:15a24d6f471b84f88bbd006ba80e5d1b25dcee043fdba1ec9e538dd8ee5ada86",
+     "fileSha256": "74b1cc37e36e75bc4a20abae21bf601bafb996f93653506488161688497e1c97"
+    }
+   ]
+  },
+  {
+   "name": "utf8_one_invalid_byte",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi/yJ9XX1dfX0="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:0586a5e1116fd6bf36857f8c094cd8f4d3f391a80d77b3c1241e4cbe056913b8",
+     "fileSha256": "18dad7450bbec6b74ff6e40aa5120b43239d7028ccdccf3db938e94fea2589b0"
+    }
+   ]
+  },
+  {
+   "name": "utf8_two_invalid_bytes",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi//4ifV19XX19"
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:e5ae6060504a97da3c8d753420382e53ca194b41eb18f68d761abd78a79a693c",
+     "fileSha256": "e383519e12ce1a0e109d21e14c1f1e4d0485468d20c3686cde7d0a5b8bf06e73"
+    }
+   ]
+  },
+  {
+   "name": "utf8_truncated_sequence_then_ascii",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi4oJBIn1dfV19fQ=="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:c9996cd724fcc5a9439123412f39129b70ecb672aff814ad2eb3f1a706e0ab38",
+     "fileSha256": "ad7f2e150f131f0df582d7eba27584ed2ed646781aa059b7f41f1fabb8cbb00c"
+    }
+   ]
+  },
+  {
+   "name": "utf8_truncated_four_byte_then_ascii",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi8J9BIn1dfV19fQ=="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:c9996cd724fcc5a9439123412f39129b70ecb672aff814ad2eb3f1a706e0ab38",
+     "fileSha256": "f97ab3829d5cbfea819861c5748695a7f4ac34b509fbceb3068a65a1b08a0680"
+    }
+   ]
+  },
+  {
+   "name": "utf8_encoded_surrogate_bytes",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi7aCAIn1dfV19fQ=="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:6b5de90b9274afa7e1434226d2b29c732a7e9650aa6b379631bf601c16f8723e",
+     "fileSha256": "df7577ffafdac2ee44d30e85443bc5e52f634248a705ed6730929cf8b25c9360"
+    }
+   ]
+  },
+  {
+   "name": "utf8_overlong_lead",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoiwIAifV19XX19"
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:e5ae6060504a97da3c8d753420382e53ca194b41eb18f68d761abd78a79a693c",
+     "fileSha256": "c5c517e81e83670b79e895dc87aec2c9bdf75d1a4f8b0f9ede32442cd8d7b530"
+    }
+   ]
+  },
+  {
+   "name": "utf8_beyond_max_lead",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi9YCAgCJ9XX1dfX0="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:422fa985ac1a452495d57bed714429a7618955da568e3911b37fe2fa63fbf41b",
+     "fileSha256": "590252f649d1e9ccbd291197ac690614359317ae6f33d98829bfe3bc463483fe"
+    }
+   ]
+  },
+  {
+   "name": "utf8_valid_four_byte",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoi8J+YgCJ9XX1dfX0="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:9d85739f4be55583e0172b47d3efde06ad32f269c971b83e27dfbfce271ddadf",
+     "fileSha256": "ceebf3376899b3824321d5c4ec8a4887a990870f84969442d70e06a75d147566"
+    }
+   ]
+  },
+  {
+   "name": "file_digest_of_raw_bytes",
+   "key": "fixture@market",
+   "files": {
+    "plugin/.codex-plugin/plugin.json": "{\"name\":\"fixture\",\"hooks\":[\"./hooks/a.json\"]}",
+    "plugin/hooks/a.json": {
+     "base64": "eyJob29rcyI6eyJTdG9wIjpbeyJob29rcyI6W3sidHlwZSI6ImNvbW1hbmQiLCJjb21tYW5kIjoieFx1MDBlOSJ9XX1dfX0KCg=="
+    }
+   },
+   "entries": [
+    {
+     "key": "fixture@market:hooks/a.json:stop:0:0",
+     "hash": "sha256:3c405e9ac5ec117c32b741cc1f133f70d0a525e93d6fd8d45534123dd4c69dcf",
+     "fileSha256": "67bd773ba1f7f71d252530854c635ee2c9a14727b6babdbf539629cdd55e6433"
+    }
+   ]
+  }
+ ]
+}
