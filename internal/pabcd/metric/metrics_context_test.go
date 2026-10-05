@@ -158,7 +158,8 @@ func TestRecordMetricsFromTextContextGivesUpWhileTheLedgerIsLocked(t *testing.T)
 	cancel()
 	got := metricsWithin(t, done, release)
 	after, _ := os.ReadFile(metricsPath(cwd))
-	if !errors.Is(got.err, context.Canceled) || len(got.rows) != 0 || string(after) != string(before) {
+	// The give-up returns the context's own error as it is, not a join that merely wraps it.
+	if got.err != context.Canceled || len(got.rows) != 0 || string(after) != string(before) {
 		t.Fatalf("ingest cancelled in the lock wait: error %v, rows %v, ledger now %q, was %q", got.err, got.rows, after, before)
 	}
 	if now := metricsLedgerDescriptors(t, cwd); now != held {
