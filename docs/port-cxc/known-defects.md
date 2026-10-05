@@ -1069,3 +1069,20 @@ Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` 
 - An ill-formed raw UTF-8 sequence in the hook input reaches the digest as one U+FFFD per byte (a raw `ED A0 80` as one), where Node's decoder gives one U+FFFD per maximal ill-formed subsequence (three for `ED A0 80`); an escaped lone surrogate is U+FFFD in both and is recorded (source `spawn-attach-hook.ts:365-366` hashing a decoded string); port: pending (decided where the hook reads its stdin).
 - The oracle creates a missing temp root itself, because `mkdirSync` with `recursive: true` makes every missing parent of `<tmpdir>/codexclaw-subspawn-<uid>/<key>`, so a call whose `os.tmpdir()` names a directory that does not exist still mints (source `spawn-attach-hook.ts:380`; reproduced with Node); `MintRecursionGrant` opens the temp root it is given as an `os.Root` and answers no grant when it does not exist, and `ConsumeRecursionGrant` answers false; port: pending (`os.TempDir` and Node's `os.tmpdir()` name an existing directory in every normal run, and the hook issue that passes the root decides whether it must be created first).
 - `JSON.parse` of a claimed grant has no nesting limit of its own, so a grant file whose `expiresAt` is in the future and that also holds an ignored array nested 10,001 levels deep is consumed; Go's `encoding/json` refuses nesting beyond 10,000 levels, so `ConsumeRecursionGrant` answers false for that file (reproduced with Node and with the Go decoder; the minting hook writes only `{"expiresAt":<ms>}`); port: pending.
+
+## Found by the CRW-367 spawn classifier port
+
+Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` at v0.2.40, through the
+recorder and replay in `internal/role/spawn/testdata/classify/`.
+
+- `stripControlMarkers` collapses only runs of three or more LF, so a CRLF-separated message keeps
+  its blank-line runs (source `subagent-config/src/spawn-attach-hook.ts:409-414`; the CRLF case is
+  recorded in `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+- The spawn tool-name set accepts `collaboration.spawn_agent` and `collaboration_spawn_agent`,
+  spellings codex-rs never emits, as defensive aliases (source
+  `subagent-config/src/spawn-attach-hook.ts:579-584`; recorded in
+  `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
+- The review-keyword fallback is a substring search, so a task that merely contains a keyword
+  fragment ("preview the diff") infers reviewer (source
+  `subagent-config/src/spawn-attach-hook.ts:511-516`; recorded in
+  `internal/role/spawn/testdata/classify/oracle.json`); port: kept.
