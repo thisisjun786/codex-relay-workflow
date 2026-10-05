@@ -2,8 +2,10 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -51,6 +53,25 @@ func TestRecordedOracle(t *testing.T) {
 		Expected any
 	}](t, raw)
 	reviewTestEqual(t, len(cases), 49)
+	// The four recorded answers this port changes on purpose (CRW-573, a data-loss defect fixed under the parity rule of
+	// 2026-10-03, see known-defects.md): the oracle mints an id that repeats a stored one or is no longer exact. oracle.json keeps
+	// what Node answered; the replay expects the refusal, and a tag whose recorded answer already is the refusal fails.
+	const stored, limit = "round id %s is already stored: opening another round would overwrite it", "the next round id %s is not an exact integer below 2^53: it could repeat a stored round id"
+	changed := map[string]string{
+		"order-r9007199254740992":      fmt.Sprintf(stored, "r9007199254740992"),
+		"duplicate-id":                 fmt.Sprintf(stored, "r9007199254740992"),
+		"order-r100000000000000000000": fmt.Sprintf(stored, "r100000000000000000000"),
+		"order-r999999999999999999999": fmt.Sprintf(limit, "r1000000000000000000000"),
+	}
+	recorded := map[string]bool{}
+	for _, c := range cases {
+		recorded[c.Name] = true
+	}
+	for name := range changed {
+		if !recorded[name] {
+			t.Fatalf("%s is tagged intentionally-changed but is not a recorded case", name)
+		}
+	}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			if c.Op == "parseSignoff" {
@@ -109,7 +130,13 @@ func TestRecordedOracle(t *testing.T) {
 			default:
 				t.Fatalf("unknown oracle operation %s", c.Op)
 			}
-			reviewTestEqual(t, reviewOracleJSON(t, actual), c.Expected)
+			want := c.Expected
+			if reason, ok := changed[c.Name]; ok {
+				if want = map[string]any{"kind": "invalid_input", "reason": reason}; reflect.DeepEqual(want, c.Expected) {
+					t.Fatal("tagged intentionally-changed but the recorded answer is the new one")
+				}
+			}
+			reviewTestEqual(t, reviewOracleJSON(t, actual), want)
 			reviewTestEqual(t, reviewOracleJSON(t, p), before)
 		})
 	}

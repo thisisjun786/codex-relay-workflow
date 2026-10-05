@@ -6,6 +6,7 @@ package evidence
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -14,16 +15,23 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// CurrentReportHeads is the head_sha of every row report.current_reports(db, relationship)
-// returns: for the newest generation with a head-bearing report, each event's own latest
-// head-bearing submission. ctx carries the caller's open transaction, if any.
-func CurrentReportHeads(ctx context.Context, s *store.Store, relationship string) ([]string, error) {
+// CurrentReport is one row report.current_reports(db, relationship) returns: a head-bearing work report with the repository
+// and the pull request it names (PRNumber is not Valid when the report names none).
+type CurrentReport struct {
+	Head       string
+	Repository string
+	PRNumber   sql.NullInt64
+}
+
+// CurrentReports is the rows report.current_reports(db, relationship) returns: for the newest generation with a head-bearing
+// report, each event's own latest head-bearing submission, in event order. ctx carries the caller's open transaction, if any.
+func CurrentReports(ctx context.Context, s *store.Store, relationship string) ([]CurrentReport, error) {
 	newest, err := s.One(ctx, "SELECT MAX(execution_generation) AS generation FROM work_reports"+
 		"  WHERE relationship_id = ? AND head_sha IS NOT NULL", relationship)
 	if err != nil || newest == nil || newest.Get("generation") == nil {
 		return nil, err
 	}
-	rows, err := s.All(ctx, "SELECT w.event_id, w.submission_no, w.head_sha, w.repository, w.base_ref,"+
+	rows, err := s.All(ctx, "SELECT w.event_id, w.submission_no, w.head_sha, w.repository, w.pr_number, w.base_ref,"+
 		"       h.required_declared"+
 		"  FROM work_reports w LEFT JOIN work_report_handoffs h"+
 		"    ON h.event_id = w.event_id AND h.submission_no = w.submission_no"+
@@ -34,10 +42,28 @@ func CurrentReportHeads(ctx context.Context, s *store.Store, relationship string
 	if err != nil {
 		return nil, err
 	}
-	heads := make([]string, 0, len(rows))
+	reports := make([]CurrentReport, 0, len(rows))
 	for _, row := range rows {
-		head, _ := row.Get("head_sha").(string)
-		heads = append(heads, head)
+		report := CurrentReport{}
+		report.Head, _ = row.Get("head_sha").(string)
+		report.Repository, _ = row.Get("repository").(string)
+		if number, ok := row.Get("pr_number").(int64); ok {
+			report.PRNumber = sql.NullInt64{Int64: number, Valid: true}
+		}
+		reports = append(reports, report)
+	}
+	return reports, nil
+}
+
+// CurrentReportHeads is the head_sha of every row CurrentReports returns.
+func CurrentReportHeads(ctx context.Context, s *store.Store, relationship string) ([]string, error) {
+	reports, err := CurrentReports(ctx, s, relationship)
+	if err != nil {
+		return nil, err
+	}
+	heads := make([]string, 0, len(reports))
+	for _, report := range reports {
+		heads = append(heads, report.Head)
 	}
 	return heads, nil
 }
