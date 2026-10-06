@@ -111,6 +111,16 @@ type auditDraftSummary struct {
 	State       string `json:"state"`
 }
 
+// auditDraftSkip is one ok ledger row this run could not draft from, with the reason it could
+// not. A ledger is append-only and a bundle directory is mutable, so a row the product cannot
+// trust is named here rather than silently dropped or turned into an empty pass.
+type auditDraftSkip struct {
+	Mode    string `json:"mode"`
+	Subject string `json:"subject"`
+	Head    string `json:"head"`
+	Reason  string `json:"reason"`
+}
+
 // auditDraftReport is what crw manage audit drafts prints: the drafts this run created and
 // the ones it appended a sighting to, the fingerprints whose owner the owners map does not
 // name, and how many new drafts the cap left for a later run.
@@ -118,7 +128,8 @@ type auditDraftReport struct {
 	Created      []auditDraftSummary `json:"created"`
 	Updated      []auditDraftSummary `json:"updated"`
 	OwnerUnknown []string            `json:"owner_unknown"`
-	Skipped      []string            `json:"skipped"`
+	Skipped      []auditDraftSkip    `json:"skipped"`
+	TornLines    int                 `json:"torn_lines"`
 	Remaining    int                 `json:"remaining"`
 }
 
@@ -426,7 +437,7 @@ func auditDraftBundleOf(row auditLedgerRow) error {
 		return err
 	}
 	if bundle.Mode != row.Mode || bundle.Subject != row.Subject || bundle.Head != row.Head {
-		return fmt.Errorf("the bundle now declares mode=%s subject=%s head=%s", bundle.Mode, bundle.Subject, bundle.Head)
+		return fmt.Errorf("the bundle now declares another audit: mode=%s subject=%s head=%s", bundle.Mode, bundle.Subject, bundle.Head)
 	}
 	return nil
 }
@@ -589,7 +600,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		Created:      []auditDraftSummary{},
 		Updated:      []auditDraftSummary{},
 		OwnerUnknown: []string{},
-		Skipped:      []string{},
+		Skipped:      []auditDraftSkip{},
 	}
 	section, err := auditDraftSectionOf(cfg)
 	if err != nil {
@@ -620,9 +631,9 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	if err != nil {
 		return report, err
 	}
-	if torn > 0 {
-		report.Skipped = append(report.Skipped, fmt.Sprintf("the ledger carries %d torn line(s), which are not whole rows", torn))
-	}
+	// A torn line is the fragment auditAppendLine leaves on its own line when it separates an
+	// interrupted append from the rows after it, so it is counted rather than treated as a row.
+	report.TornLines = torn
 	candidates := map[string]*auditDraftCandidate{}
 	var order []string
 	for _, row := range rows {
@@ -633,16 +644,16 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		if !matches {
 			continue
 		}
+		// A ledger is append-only and unscoped runs read every ok row, so one row the product
+		// cannot read must not stop the rows it can: the row is named in the report instead.
 		if err := auditDraftBundleOf(row); err != nil {
-			report.Skipped = append(report.Skipped, fmt.Sprintf("%s %s %s: %v", row.Mode, row.Subject, row.Head, err))
+			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: err.Error()})
 			continue
 		}
-		// The bundle still declares this row's audit, so a grade.json it does not carry is an
-		// anomaly and not a reason to report an empty pass: the run fails rather than silently
-		// drafting nothing from an ok row.
 		doc, ok := auditParseResult(filepath.Join(row.Bundle, auditGradeFile))
 		if !ok {
-			return report, fmt.Errorf("the ok ledger row for %s at %s carries no usable %s", row.Subject, row.Head, auditGradeFile)
+			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head, Reason: "no usable " + auditGradeFile})
+			continue
 		}
 		for _, defect := range doc.Defects {
 			rank, knownSeverity := auditDraftSeverityRank[defect.Severity]
