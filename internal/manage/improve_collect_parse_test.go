@@ -184,6 +184,53 @@ func TestImproveParseDraftFileThatIsNotAnObjectIsRefused(t *testing.T) {
 	}
 }
 
+// TestImproveParseDraftsSkipAForeignSchemaDocument covers C1's "any other schema" clause on its
+// own: a document in the drafts directory that carries a schema and is not a crw-issue-draft/1 is
+// skipped and not counted, exactly as index.json is. Only the listing was covered before, so a
+// reader that keyed on any object would still have passed.
+func TestImproveParseDraftsSkipAForeignSchemaDocument(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	dir := improveParseDraftsDir(t, s)
+	improveParseWriteDraft(t, dir, improveParseDraft("aaaa1111bbbb2222", "project-a", "the only draft",
+		[]auditDraftSeen{{At: "2026-10-06T01:00:00Z"}}))
+	improveTestWrite(t, filepath.Join(dir, "foreign.json"), "{\"schema\":\"crw-improve-bundle/1\",\"records\":[]}\n")
+	out := improveParseConfig(t, s, dir)
+
+	bundle := improveParseCollect(t, s, out)
+	if got := improveTestSourceOf(t, bundle, improveKindDraft); got.State != improveStateRead || got.Rows != 1 {
+		t.Errorf("the draft source = %+v, want read with 1 row: a foreign schema is not a draft", got)
+	}
+	records := improveTestRecordsOf(bundle, improveKindDraft)
+	if len(records) != 1 || records[0].Key != "aaaa1111bbbb2222" {
+		t.Errorf("draft records = %+v, want only the crw-issue-draft/1 document", records)
+	}
+}
+
+// TestImproveParseDraftSourceMayBeASingleFile covers the other source shape: the configured path
+// may name one draft file rather than a directory, which is what the reader accepted before and
+// still accepts.
+func TestImproveParseDraftSourceMayBeASingleFile(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	dir := improveParseDraftsDir(t, s)
+	path := improveParseWriteDraft(t, dir, improveParseDraft("eeee5555ffff6666", "project-c", "the single file",
+		[]auditDraftSeen{{At: "2026-10-06T04:00:00Z"}, {At: "2026-10-06T03:00:00Z"}}))
+	out := improveParseConfig(t, s, path)
+
+	bundle := improveParseCollect(t, s, out)
+	if got := improveTestSourceOf(t, bundle, improveKindDraft); got.State != improveStateRead || got.Rows != 1 {
+		t.Errorf("a single-file draft source = %+v, want read with 1 row", got)
+	}
+	records := improveTestRecordsOf(bundle, improveKindDraft)
+	if len(records) != 1 || records[0].Key != "eeee5555ffff6666" || records[0].Where != "project-c" {
+		t.Fatalf("draft records = %+v, want the one draft the file holds", records)
+	}
+	if records[0].FirstAt != "2026-10-06T03:00:00Z" || records[0].LastAt != "2026-10-06T04:00:00Z" {
+		t.Errorf("the single-file draft times = %q..%q, want its seen bounds", records[0].FirstAt, records[0].LastAt)
+	}
+}
+
 // TestImproveParseBlockedReasonComesFromTheDecisionReply covers C2: a child receipt carries no
 // reason field, so the reason of a blockage is the note of the decision reply that answered it,
 // and a blockage no decision answered keeps the bare outcome name.
