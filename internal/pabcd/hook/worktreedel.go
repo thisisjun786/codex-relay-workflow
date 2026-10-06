@@ -778,6 +778,12 @@ const (
 	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice "
 )
 
+// worktreeDelUnreadableCompoundKeywords are the shell keywords that open a compound whose body continues past a
+// separator: the pipe rule reads a compound's region to the end of the text, because the keyword's own separators and a
+// case pattern's make the end hard to find (CRW-726, c15(b)). select belongs with for: its body runs with the
+// compound's standard input, so a pipe feeds a shell in it. One list, read by every reader that needs it.
+const worktreeDelUnreadableCompoundKeywords = " if while until for case select "
+
 // worktreeDelQuoteProgram is the program strings that the words hand to a shell to be read again. The shell name or eval must
 // start a command: only wrappers (sudo, env, nohup, xargs and the like), options, assignments, numbers and the argument of an
 // option may stand before it, so that echo sh -c '...' is text. After a shell name every later word that holds a blank or a
@@ -2421,6 +2427,7 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 func worktreeDelUnreadablePipes(text string) (string, bool) {
 	r := worktreeDelQuoteReader{prev: ' '}
 	depth := 0
+	brace := 0 // the ${...} parameter expansions the reader stands in: a # inside one is data, never a comment (c13)
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		if r.escapes(text, i) {
@@ -2429,7 +2436,7 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 			continue
 		}
 		state := r.state
-		r.step(c)
+		worktreeDelUnreadablePipeStep(&r, text, i, &brace)
 		if state != worktreeDelQuotePlain {
 			continue
 		}
@@ -2445,8 +2452,8 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 				i++
 				continue
 			}
-			start := worktreeDelUnreadablePipeStart(text, i+1, &r)
-			end := worktreeDelUnreadablePipeEnd(text, start, &r, &depth)
+			start := worktreeDelUnreadablePipeStart(text, i+1, &r, &brace)
+			end := worktreeDelUnreadablePipeEnd(text, start, &r, &depth, &brace)
 			region := strings.TrimSpace(text[start:end])
 			if worktreeDelUnreadableOpensCompound(region) {
 				end = len(text) // a compound keeps the pipe to its own end, which a separator or a case pattern can hide
@@ -2461,14 +2468,30 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 	return "", false
 }
 
+// worktreeDelUnreadablePipeStep steps the reader over one byte of the pipe scan and keeps the ${...} parameter
+// expansion depth, the way worktreeDelSubstitutions does it: a # inside an expansion is data and never opens a comment
+// (CRW-726, c13), so a reader that read the # of ${x:- #} as a comment would swallow the | and the shell after it.
+func worktreeDelUnreadablePipeStep(r *worktreeDelQuoteReader, text string, i int, brace *int) {
+	if r.state == worktreeDelQuotePlain || r.state == worktreeDelQuoteDouble {
+		switch {
+		case text[i] == '$' && i+1 < len(text) && text[i+1] == '{':
+			*brace++
+		case text[i] == '}' && *brace > 0:
+			*brace--
+		}
+	}
+	r.brace = *brace > 0
+	r.step(text[i])
+}
+
 // worktreeDelUnreadablePipeStart is the first byte of the command a pipe feeds. The operator's own suffix is skipped:
 // the & of |& pipes the standard error as well, and a pipeline continues on the next line, so whitespace and a comment
 // after the operator are no command either. The reader is stepped over the skipped bytes, so it stands where the shell
 // reads the command (CRW-726, c15(b)).
-func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteReader) int {
+func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteReader, brace *int) int {
 	i := from
 	if i < len(text) && text[i] == '&' && r.state == worktreeDelQuotePlain { // the & of |&
-		r.step(text[i])
+		worktreeDelUnreadablePipeStep(r, text, i, brace)
 		i++
 	}
 	for i < len(text) {
@@ -2479,12 +2502,12 @@ func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteRe
 			continue
 		}
 		if r.state == worktreeDelQuoteComment {
-			r.step(c)
+			worktreeDelUnreadablePipeStep(r, text, i, brace)
 			i++
 			continue
 		}
 		if r.state == worktreeDelQuotePlain && (strings.IndexByte(" \t\r\n", c) >= 0 || c == '#') {
-			r.step(c)
+			worktreeDelUnreadablePipeStep(r, text, i, brace)
 			i++
 			continue
 		}
@@ -2494,7 +2517,7 @@ func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteRe
 }
 
 // worktreeDelUnreadableOpensCompound says whether a text opens a compound whose body continues past a separator: a
-// subshell or a brace group, or the shell keywords if, while, until, for and case. A compound's own separators and its
+// subshell or a brace group, or one of worktreeDelUnreadableCompoundKeywords. A compound's own separators and its
 // case patterns make its end hard to find, so the region a pipe feeds runs to the end of the text when it opens one:
 // reading past the compound can only deny too much, never too little (CRW-726, c15(b)).
 func worktreeDelUnreadableOpensCompound(text string) bool {
@@ -2502,8 +2525,7 @@ func worktreeDelUnreadableOpensCompound(text string) bool {
 	if len(plain) == 0 {
 		return false
 	}
-	switch basename(plain[0]) {
-	case "if", "while", "until", "for", "case":
+	if strings.Contains(worktreeDelUnreadableCompoundKeywords, " "+basename(plain[0])+" ") {
 		return true
 	}
 	return strings.HasPrefix(strings.TrimSpace(text), "(") || strings.HasPrefix(strings.TrimSpace(text), "{")
@@ -2514,7 +2536,7 @@ func worktreeDelUnreadableOpensCompound(text string) bool {
 // caller resumes at the answer without replaying the prefix and the whole scan stays linear. The byte it returns has
 // not been stepped, so the caller steps it once. An unbalanced delimiter does not swallow the rest: a depth that never
 // returns to zero still ends the region at the next separator at that depth or, failing that, at the end of the text.
-func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteReader, depth *int) int {
+func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteReader, depth, brace *int) int {
 	start := *depth
 	for i := from; i < len(text); i++ {
 		c := text[i]
@@ -2526,11 +2548,11 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 		if r.state == worktreeDelQuotePlain {
 			switch c {
 			case '(', '{':
-				r.step(c)
+				worktreeDelUnreadablePipeStep(r, text, i, brace)
 				*depth++
 				continue
 			case ')', '}':
-				r.step(c)
+				worktreeDelUnreadablePipeStep(r, text, i, brace)
 				if *depth > 0 {
 					*depth--
 				}
@@ -2541,7 +2563,7 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 				}
 			}
 		}
-		r.step(c)
+		worktreeDelUnreadablePipeStep(r, text, i, brace)
 	}
 	return len(text)
 }
@@ -2649,7 +2671,10 @@ func worktreeDelUnreadableCompoundKeyword(words []string) (int, bool) {
 	switch basename(words[0]) {
 	case "then", "do", "else", "elif":
 		return 1, true // the clause introducer of a compound already opened
-	case "if", "while", "until", "for", "case":
+	default:
+		if !strings.Contains(worktreeDelUnreadableCompoundKeywords, " "+basename(words[0])+" ") {
+			return 0, false
+		}
 		for i, word := range words {
 			if word == "then" || word == "do" {
 				return i + 1, true
@@ -2657,7 +2682,6 @@ func worktreeDelUnreadableCompoundKeyword(words []string) (int, bool) {
 		}
 		return len(words), true
 	}
-	return 0, false
 }
 
 // heredocs judges every here-document of a text that a listed shell reads as its program: with a delimiter word that

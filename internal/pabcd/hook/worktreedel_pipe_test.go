@@ -286,3 +286,45 @@ func TestWorktreeDelPipeQuoteAndChain(t *testing.T) {
 	}
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeBraceHash pins the ${B}...} expansion in the pipe scan: a # inside a parameter expansion is data and
+// never opens a comment (CRW-726, c13), so the | and the shell after the expansion are still read. The scan's reader
+// must carry the expansion depth, or the # of ${x:- #} opens a comment and swallows the rest of the line: on the head
+// this test was written against, printf 'rm -rf ../repo' ${x:- #} | bash was allowed while bash ran the piped
+// program (checked in bash 5.3.9 with a touch stand-in for rm).
+func TestWorktreeDelPipeBraceHash(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' ${x:- #} | bash",
+		"printf 'rm -rf ../repo' ${x:-a #b} | bash",
+		"printf 'rm -rf ../repo' ${x:- #} |& bash",
+		"printf 'rm -rf ../repo' ${x:- #} |\\nbash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A # outside any expansion is still a comment, and a command that is no shell stays allowed.
+	r.allowed(t,
+		"printf x | # c\\ncat",
+		"printf x ${x:- #} | cat",
+		"echo ${x:- #}",
+	)
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeCompoundSelect is the shell's select loop: like for, while and until it is a compound whose body
+// runs with the pipe on standard input, so a shell in its body reads the piped program (bash 5.3.9 runs it when the
+// menu choice is read from the pipe). select was missing from the compound keyword list, so the region a pipe feeds
+// ended at the first separator and the body was never judged.
+func TestWorktreeDelPipeCompoundSelect(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | select x in a; do bash; break; done",
+		"printf 'rm -rf ../repo' | select x in a\ndo bash\ndone",
+		"printf 'rm -rf ../repo' | select x; do bash; done",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A select body that runs something else stays allowed.
+	r.allowed(t, "printf x | select y in a; do cat; break; done", "printf x | select y in a; do echo $y; done")
+	r.intact(t)
+}
