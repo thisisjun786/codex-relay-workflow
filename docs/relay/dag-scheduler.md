@@ -33,6 +33,8 @@ one disposition and (except for a ready node) one reason from a closed set. A re
 no second connection, so with unchanged store rows and artifact bytes two readings are byte-identical (a command that carries the [host memory bound](#host-memory), as `dag-ready` and `dag-release` do, also depends on the host sample it took). Its `input_digest` hashes the plan identity, the node states and dispositions, the selected order, the capacity summary, the host memory sample (when the command reads the host) and the hashes of the artifact files it checked;
 it is not a fingerprint of every source row read. A store with no DAG zone, or a plan it does not hold, answers `unregistered_scope` and is left as it was.
 
+Beside its disposition and reason a node may carry four objects that are not reasons: `stale` (what its accepted result no longer matches), `release` (how a candidate is released and on what basis), `merge_order` (its place in the measured merge order) and `stagnation` (how often it has failed the same way and which repair comes next, [A node’s stagnation counter](#a-nodes-stagnation-counter-and-the-repair-ladder)). Each is absent when it does not apply.
+
 A node is a **candidate** when it is not owned and every incoming edge is satisfied (the predicates are [Edge satisfaction](#edge-satisfaction)).
 Candidates are then checked against what lies outside the plan, ranked, and cut by free slots and by exclusive edit-region overlap. Other overlaps are released and settled when the branches meet ([Edit regions](#edit-regions)).
 
@@ -345,7 +347,8 @@ The values are rows of `dag_release_policy`: the highest `policy_seq` of a plan 
 
 `crw relay dag-ready --plan P --record --actor A` keeps the reading as a row of `dag_passes`: the ready node ids in order, the free slots, the ceiling, the held slots, the
 deciding limit and the node dispositions, each judged node with its `release` object (the rule, the overlaps by grade and the basis). The reading's `pass` object adds `overlaps` (the overlaps the pass judged, by grade, summed over its candidates) and
-`overlap_count` (the local and exclusive ones: mechanical overlaps are released and left out of it), and `order_constraints` (the pairs of live nodes the reading puts in a merge order, [The merge-order constraint](#the-merge-order-constraint)); each node's `merge_order` object is kept with its disposition. A pass is a fact and never a decision; a duplicate wake records another pass. A plan with a [release policy](#release-policy) also keeps the policy state the pass saw in `dag_pass_release_policy` (one row per pass: the object `release_policy` prints), so the switch of local-optimistic release and its basis are in the pass record. A command that carries the [host memory bound](#host-memory) keeps its verdict in `dag_pass_host_memory` as well (one row per pass: `state`, `reading_limit` and the object `pass.host_memory` prints).
+`overlap_count` (the local and exclusive ones: mechanical overlaps are released and left out of it), and `order_constraints` (the pairs of live nodes the reading puts in a merge order, [The merge-order constraint](#the-merge-order-constraint)); each node’s `merge_order` object is kept with its disposition. A pass is a fact and never a decision; a duplicate wake records another pass. A plan with a [release policy](#release-policy) also keeps the policy state the pass saw in `dag_pass_release_policy` (one row per pass: the object `release_policy` prints), so the switch of local-optimistic release and its basis are in the pass record. A command that carries the [host memory bound](#host-memory) keeps its verdict in `dag_pass_host_memory` as well (one row per pass: `state`, `reading_limit` and the object `pass.host_memory` prints).
+`pass.stagnation` counts the nodes that carry a `stagnation` object, one key per rung, and each node’s object is kept with its disposition like `merge_order` ([A node’s stagnation counter](#a-nodes-stagnation-counter-and-the-repair-ladder)); the pass record keeps it in the same `dispositions_json` column, so no table or column is added.
 
 ## Releasing a node
 
@@ -727,6 +730,37 @@ now: `yes`, `no`, or `unknown` for a node whose head the store does not hold, wh
 
 The constraint is advisory (decision D-16: merge order stays first in, first out until measured, and an observed conflict is the measured exception). The relay does not hold a merge back for it: the parent does (see [Release by region grade](../../plugins/crw/skills/crw-run/references/region-grades.md)). A conflict nobody measured is not seen: without a sweep there is no constraint.
 
+## A node’s stagnation counter and the repair ladder
+
+A node that keeps failing the same way is counted, and the repair that comes next is named. The reading is derived from rows the store already keeps and adds no writer for them, so the count clears by itself once the cause is repaired, exactly as invalidation does. It reads no clock, writes nothing and refuses nothing: two readings of one store state return the same object.
+
+The counter has two causes, and the reading names the one whose run is longer:
+
+| Cause | Read from | Meaning |
+| --- | --- | --- |
+| `repeated_finding` | the node’s correction generations (`dag_node_executions`, kind `correction`) with the finding of the `needs_changes` ruling that opened each | consecutive corrections carried the same findings |
+| `repeated_check_failure` | the node’s merge-check history (`dag_merge_checks`, the `round_no` and the failed required checks) | the same required checks failed again on the same head after the merge lane’s one retry |
+
+A correction generation’s **finding identity** is the canonical-JSON sha256 of the ruling’s `verdict_context.findings` entries that are **not** the restoration block, each entry as the relay stored it. The restoration entry is excluded because its note carries this generation’s manifest digest, which differs every round; that is why the identity is taken over the remaining entries rather than over the whole text. Two corrections of one node share an identity exactly when the ruling carried the same findings. A generation the coordinator opened by hand has no ruling and no findings at all ([Three ways to open the generation](#corrections)), and a correction whose ruling carried no findings reads the same way: neither carries an identity, so both break the run and raise no `repeated_finding` count.
+
+A repeated check failure is the newest merge-check row of the node’s acceptance and the newest row before it, when both failed a non-empty set of required checks and the later row’s round is greater: the same failure seen again after the retry. The failed names are the identity; a check failure has no finding text.
+
+The rungs are closed, and the count names one of them:
+
+| Count | Rung | What the parent does |
+| --- | --- | --- |
+| 1 | `retry_same_packet` | rerun the node as it was released (`dag-release`) |
+| 2 | `edit_packet` | correct the node’s inputs and instructions (`dag-correct`) |
+| 3 | `split_node` | a plan revision with `replace_node` |
+| 4 | `neighbour_repair` | a plan revision with `replace_node` for the sibling it keeps conflicting with |
+| 5 and above | `full_replan` | a plan revision |
+
+The threshold is 2: one correction is not repetition, and the object appears once the same finding has been carried by two consecutive corrections of the node, so it is absent from a reading of a plan nobody has corrected twice. A count past the last rung keeps naming `full_replan`, and the reading names no further rung.
+
+**What the reading says.** A node whose count has reached the threshold carries a `stagnation` object beside its `release` and `merge_order` objects: `node_id`, `count`, `cause`, `rung`, `next` (the rung the ladder names after this one, absent at `full_replan`), `finding_digest` (absent for a repeated check failure) and `last_event_id` (the event the newest counted row belongs to). The pass counts the nodes that carry an object in `pass.stagnation`, one key per rung (`retry_same_packet`, `edit_packet`, `split_node`, `neighbour_repair`, `full_replan`), each zero when nothing stagnates. The input digest covers the object and the counts, so a stagnating node is a changed world.
+
+The object is advisory, like the merge-order constraint: the reading names a rung and stops there. Nothing is refused and nothing is written, because a reading that mutated the ladder would make two `dag-ready` calls differ. A later issue that wants the last rung refused would add that refusal where the triggering command runs, reusing the existing `disposition_conflict`. A node that landed reads no object whatever the rows say: it is never run again (E-20).
+
 ## Measurements
 
 `crw relay dag-measurements --plan P` reads the measurements of a plan from the store (CRW-411): one query, no write and no clock. It is there for the comparison of DAG runs and for a parent that wants to see what its optimism cost. Every measure prints `samples` (the rows it rests on) and either its values or an `absent` reason; a measure with no data prints no value at all and never a zero. A zero that is printed is a count over rows that exist (a landing that was judged and never found behind the base has zero stale-base judgements; a grade at which no measured pull request conflicted has zero pull requests). The reasons are a closed set: `no_recorded_pass`, `no_landings`, `no_observations` (landings or pull requests exist and nothing measured the thing), `not_recorded` (the store keeps no record of it in this build), `none_recorded` (the parent has recorded no statement of the kind) and `table_missing` (a store whose zone predates the table that holds it).
@@ -793,7 +827,7 @@ An unknown merge turn stays unknown until the head is observed; the merge lane a
 
 | Command | Reads or writes | Answer |
 | --- | --- | --- |
-| `dag-ready --plan P [--record --actor A]` | reads; writes one `dag_passes` row (and one `dag_pass_host_memory` row) with `--record` | the reading: `plan_id`, `plan_revision`, `state_digest`, `input_digest`, `pass`, `ready`, `nodes` (a node in a merge-order constraint carries `merge_order`; a plan with a release policy carries `release_policy`; the pass carries `host_memory`) |
+| `dag-ready --plan P [--record --actor A]` | reads; writes one `dag_passes` row (and one `dag_pass_host_memory` row) with `--record` | the reading: `plan_id`, `plan_revision`, `state_digest`, `input_digest`, `pass`, `ready`, `nodes` (a node in a merge-order constraint carries `merge_order`; a plan with a release policy carries `release_policy`; the pass carries `host_memory` and `stagnation`) |
 | `dag-region-declare --plan P --node N --actor A --regions R` | writes `dag_node_regions`, `dag_node_region_grades` and `dag_node_region_holds` | the declaration in force (each region with its `grade`, `rule` and the `exclusive` whole-repository hold the declarer stated), whether it replayed, and `narrowed` when it narrowed the declaration of a node that holds its regions |
 | `dag-release --plan P --node N --actor A --request R --marker-root D` | writes the intent (`dag_releases` and `dag_release_requests`, or a `rereleased` row of `dag_release_recoveries` after a close of the same manifest; `dag_input_manifests`), reserves a slot, starts a managed task, binds it (`dag_node_executions`) | the release: manifest digest, request id, slot, relationship, generation and child; exit 2 with the managed engine's answer nested under `managed` when the start was refused or incomplete; `capacity_exhausted` while the host is short of memory ([Host memory](#host-memory)) |
 | `dag-release-close --plan P --node N --actor A --manifest D --request-id Q --reason R` | writes the closure (`dag_release_recoveries`) and returns the node's slot, in one transaction; then removes the closed intent's frozen copy and journals it | the closure: `request_id`, `slot_id`, `slot_released`, `replayed`, `successor_request_id`, `frozen_copy` (path and whether the file is gone) |
