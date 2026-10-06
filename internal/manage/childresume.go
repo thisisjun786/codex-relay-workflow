@@ -54,11 +54,14 @@ type resumeOptions struct {
 
 // resumeSettings is the authorized record child-resume resumes the child with.
 type resumeSettings struct {
-	Model                 string
-	ReasoningEffort       string
-	CWD                   string
-	ApprovalPolicy        string
-	RuntimeWorkspaceRoots []string
+	Model           string
+	ReasoningEffort string
+	CWD             string
+	ApprovalPolicy  string
+	// RuntimeWorkspaceRoots is a pointer so an empty list is a value: the relay preserves the
+	// recorded [] and the resume must send it as an empty array, while a key that is absent or
+	// null supplied nothing and stays missing.
+	RuntimeWorkspaceRoots *[]string
 	Sandbox               map[string]any
 }
 
@@ -185,7 +188,7 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 			missing = append(missing, name)
 		}
 	}
-	if len(settings.RuntimeWorkspaceRoots) == 0 {
+	if settings.RuntimeWorkspaceRoots == nil {
 		missing = append(missing, "runtimeWorkspaceRoots")
 	}
 	if settings.Sandbox == nil {
@@ -269,8 +272,28 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err := client.Connect(ctx); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadUnreachable), Detail: err.Error()}
 	}
+	// One connection, fenced: the watch is admitted on the socket Connect just established and
+	// every step below is called through watch.Context, so a connection that drops fails the next
+	// step with its name instead of the client silently dialing a second socket. thread/resume
+	// binds the thread to the connection it was answered on; running the later steps on another
+	// socket would start a turn against thread state nobody verified.
+	watch, err := client.WatchTurn(ctx, child)
+	if err != nil {
+		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "watch: " + err.Error()}
+	}
+	started := false
+	defer func() {
+		// A run that started a turn hands the turn id to Finish so the subscription manager can
+		// follow it; every other ending finishes with no turn and no retention.
+		turn := ""
+		if started {
+			turn = report.TurnID
+		}
+		watch.Finish(turn, false)
+	}()
+	fenced := watch.Context(ctx)
 	call := func(method string, params map[string]any) (json.RawMessage, error) {
-		result, err := client.Call(ctx, method, params)
+		result, err := client.Call(fenced, method, params)
 		if err != nil {
 			return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: method + ": " + err.Error()}
 		}
@@ -362,19 +385,20 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return &resumeFailure{Reason: resumeTurnStartUncertain, Detail: "the turn may or may not have started (" + detail +
 			"); read the thread before sending the message again"}
 	}
-	started, err := client.Call(ctx, "turn/start", map[string]any{"threadId": child,
+	startedRaw, err := client.Call(fenced, "turn/start", map[string]any{"threadId": child,
 		"input": []map[string]any{{"type": "text", "text": opts.message}}})
 	if err != nil {
 		return nil, uncertain("turn/start: " + err.Error())
 	}
 	var turn struct{ Turn struct{ ID string } }
-	if err := json.Unmarshal(started, &turn); err != nil {
+	if err := json.Unmarshal(startedRaw, &turn); err != nil {
 		return nil, uncertain("turn/start result: " + err.Error())
 	}
 	if turn.Turn.ID == "" {
 		return nil, uncertain("turn/start answered with no turn id")
 	}
 	report.TurnID = turn.Turn.ID
+	started = true
 	report.AdmitTurn = resumeAdmitTurn(resumeProgram(e), cfg, opts.relationship, generation, turn.Turn.ID, parent)
 	return report, nil
 }
