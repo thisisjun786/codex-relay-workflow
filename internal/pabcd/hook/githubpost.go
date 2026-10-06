@@ -227,7 +227,7 @@ func githubPostWords(s string) ([]string, bool) {
 			cur.WriteString(s[i : j+1])
 			i = j
 		case c == '$' || c == 0x60 || c == '\\' || c == '*' || c == '?' || c == '[' || c == ']' ||
-			c == '~' || c == '{' || c == '}' || c == '(' || c == ')' || c == '<' || c == '>' || c == '!':
+			c == '~' || c == '{' || c == '}' || c == '(' || c == ')' || c == '<' || c == '>':
 			return nil, false
 		default:
 			started = true

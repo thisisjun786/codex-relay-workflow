@@ -203,6 +203,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"after and", "true && gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"after a newline", "echo x\ngh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"single quoted title", "gh pr create -t 'Plain title' --body-file clean.md", "", ""},
+		// A bang is a literal character in the operator's word list, so an unquoted one is allowed.
+		{"unquoted bang in a title", "gh pr create --title Fix! --body-file body.md", "", ""},
 		{"single quoted dollar", "gh pr create -t 'v$X' --body-file clean.md", "", ""},
 		{"single quoted backtick", "gh pr create -t 'Fix `make test`' --body-file clean.md", "", ""},
 		{"bare title", "gh pr create --title Plain --body-file clean.md", "", ""},
