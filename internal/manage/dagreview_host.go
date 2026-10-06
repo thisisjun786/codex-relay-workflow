@@ -334,13 +334,13 @@ type dagHostRefusal struct {
 	reason   string
 }
 
-// A relay dag- invocation is a relay command word followed by a dag- subcommand; the review
-// requires both, so a filename or a search term that merely contains "dag-" is not a relay command.
-// The relay answers a refusal in two shapes: a command that reports its own answer as
+// A relay dag- invocation names the relay (crw relay, codex-session-relay) and a dag- subcommand;
+// the review requires both, so a filename or a search term that merely contains "dag-" is not a
+// relay command. The relay answers a refusal in two shapes: a command that reports its own answer as
 // {"ok": false, "reason": ...}, and the scheduler's own envelope {"error": "refused", "reason": ...}
 // (internal/relay/dispatch/answer.go emit). Either shape with a reason is a refusal.
 var (
-	dagHostRelayDagCommand = regexp.MustCompile(`\brelay\b[^\n]{0,240}?\bdag-[a-z-]+`)
+	dagHostRelayInvocation = regexp.MustCompile(`\brelay\b`)
 	dagHostDagCommand      = regexp.MustCompile(`\bdag-[a-z-]+`)
 	dagHostRefusedAnswer   = regexp.MustCompile(`"ok"\s*:\s*false`)
 	dagHostRefusedEnvelope = regexp.MustCompile(`"error"\s*:\s*"refused"`)
@@ -389,7 +389,7 @@ func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, 
 					if text == "" {
 						text = entry.Payload.Input
 					}
-					if dagHostRelayDagCommand.MatchString(text) {
+					if dagHostRelayInvocation.MatchString(text) && dagHostDagCommand.MatchString(text) {
 						calls[entry.Payload.CallID] = dagHostCall{commands: dagHostDagCommand.FindAllString(text, 3), lineStart: lineStart}
 					}
 				case "function_call_output", "custom_tool_call_output":
@@ -403,11 +403,13 @@ func dagHostRolloutRefusals(path string, start int64) ([]dagHostRefusal, int64, 
 					if !dagHostRefusedAnswer.MatchString(output) && !dagHostRefusedEnvelope.MatchString(output) {
 						break
 					}
-					reason := dagHostRefusedReason.FindStringSubmatch(output)
-					if reason == nil {
-						break
+					// The body asks for an output carrying "ok": false or a refused reason, so either
+					// marker reports; the reason names the refusal when the output carries one.
+					reason := "the command was refused"
+					if found := dagHostRefusedReason.FindStringSubmatch(output); found != nil {
+						reason = found[1]
 					}
-					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason[1]})
+					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason})
 				}
 			}
 		}
