@@ -16,7 +16,9 @@ package cli
 //   - A state write whose error is state.Published (renamed into place, only the directory sync
 //     failed) counts as written, and the answer carries the warning line the scope gives
 //     (CRW-744 and CRW-811's rule). A failure before the rename and a failed ledger append stay
-//     the oracle's: the marker survives and a retry takes the recovery path.
+//     the oracle's: on the bound path the marker survives and a retry takes the recovery path,
+//     and on the unbound path the failure is reported as the oracle reports it
+//     (docs/port-cxc/known-defects/CRW-756.md records why that order is kept).
 //
 // The oracle's commit hooks (OrchestrateCommitHooks, :424-429) become orchestrateDcloseSeam, an
 // unexported seam the tests pass in. Nothing here is a package-level variable and nothing runs at
