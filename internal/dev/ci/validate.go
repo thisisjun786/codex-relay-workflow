@@ -302,8 +302,9 @@ func repositoryRoot() (string, error) {
 	return resolve(strings.TrimSpace(string(out))), nil
 }
 
-// Validate is `crw-dev ci validate`: skill metadata, local link paths, no Python outside skill assets
-// and no blob over 2 MiB brought into the history.
+// Validate is `crw-dev ci validate`: skill metadata, local link paths, no Python outside skill assets,
+// the generated case sections of the dispatch-verification reference matching their data files, and no
+// blob over 2 MiB brought into the history.
 func Validate(args []string, stdout, stderr io.Writer) int {
 	if code := parseFlags(newFlags("validate"), "Validate this repository's supported metadata format and link paths, that Python sits only in skill assets, "+
 		"and that no blob over 2 MiB comes into the history (BLOB_RANGE_BASE and GITHUB_EVENT_NAME give the range; see docs/CI.md).",
@@ -329,7 +330,10 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	count := 0
 	for _, name := range names {
 		path := filepath.Join(root, name)
-		if filepath.Ext(name) == ".md" && !refactorBacklogFragment(name) {
+		// The dispatch-cases data files and the refactor backlog fragments are generator inputs, not
+		// documents: their relative links are written for the generated document's directory, and that
+		// document is link-checked itself.
+		if filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) && !refactorBacklogFragment(name) {
 			found, err := LinkErrors(root, name)
 			if err != nil {
 				errs = append(errs, name+": "+err.Error())
@@ -347,6 +351,9 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	}
 	_, fidelity := skillport.Check(root, nil)
 	errs = append(errs, fidelity...)
+	if err := dispatchCasesVerify(root); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if count == 0 {
 		errs = append(errs, "No skills validated")
 	}

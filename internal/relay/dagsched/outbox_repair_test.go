@@ -14,6 +14,7 @@ import (
 // parent that follows the protocol stops there. The old claimant reads the document AFTER the newer summary landed, so a write of its container text would match what it just read and pass the
 // connector's condition: only the rule 'never write when the entry is not writable or the document holds a newer one' stops it.
 func TestSummaryAnOvertakenClaimantThatReadsTheNewerSummaryWritesNothing(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -58,6 +59,7 @@ func TestSummaryAnOvertakenClaimantThatReadsTheNewerSummaryWritesNothing(t *test
 // Two claimants that both read a document with no container must not make two: the container is created by a conditional replacement of the whole document, so the second is refused whole
 // and reads again. Nothing in the protocol is an append.
 func TestSummaryTwoClaimantsThatBothFindNoContainerMakeOne(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	lin.doc = "# Coordination\n\nSome text.\n"
@@ -103,6 +105,7 @@ func TestSummaryTwoClaimantsThatBothFindNoContainerMakeOne(t *testing.T) {
 // the protocol; markers that appear twice, a container or block that is not closed and a block outside its container are not, so the relay says manual, writes nothing, and the failure is
 // recorded for a person.
 func TestSummaryRepairsWhatOneReplacementCanAndSendsTheRestToAPerson(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		build  func(op SummaryOperation) string

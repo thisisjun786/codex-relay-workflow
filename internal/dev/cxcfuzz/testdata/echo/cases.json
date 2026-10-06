@@ -1,0 +1,10 @@
+[
+  {
+    "name": "echo-roundtrip",
+    "input": "{\"text\": \"hello\", \"n\": 1, \"flag\": true}",
+    "oracle": "{\"flag\": true, \"n\": 1, \"text\": \"hello\"}",
+    "go": "{\"flag\": true, \"n\": 1, \"text\": \"hello\"}",
+    "tag": "identical",
+    "record": ""
+  }
+]

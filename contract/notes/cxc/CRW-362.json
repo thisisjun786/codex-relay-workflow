@@ -1,0 +1,45 @@
+{
+  "issue": "CRW-362",
+  "pending": [
+    "cli__hooks__retrust_needs_bootstrap_then_writes"
+  ],
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli-help__hooks__retrust_dashdash_help",
+      "reason": "R29 renames the component word in the catch prefix and the CLI table maps the step to crw doctor retrust; a rewrite rule cannot be applied to the expectation, so the claim names the port's text. The refusal itself (--help is not help) and the exit status are unchanged.",
+      "set": {
+        "steps/0/stderr": "crw doctor retrust: unknown hooks option: --help\n"
+      }
+    },
+    {
+      "id": "cli__hooks__retrust_without_install_key_fails",
+      "reason": "The same refusal (0 enabled install keys, nothing written). The catch prefix follows the CLI table (cxc-ops hooks retrust -> crw doctor retrust), and the port reads the plugin package from the host PLUGIN_ROOT, which the claim's given supplies.",
+      "given": {
+        "env": {
+          "PLUGIN_ROOT": "${PLUGIN_ROOT}"
+        }
+      },
+      "set": {
+        "steps/0/stderr": "crw doctor retrust: enabled install key is ambiguous (0); candidates: (none); pass --key <plugin@marketplace>\n"
+      }
+    },
+    {
+      "id": "cli__hooks__retrust_safety_pin_refuses_all_drifted",
+      "reason": "The safety pin is ported unchanged: one existing trust entry, no hash matching its recomputation, refused with and without --bootstrap-ok, config.toml untouched. The given names the CRW plugin's one declared hook (whose identity differs from the oracle's 32), and the catch prefix follows the CLI table.",
+      "given": {
+        "env": {
+          "PLUGIN_ROOT": "${PLUGIN_ROOT}"
+        },
+        "files": {
+          "codex/config.toml": "model = \"gpt-5.5\"\n\n[plugins.\"crw@local\"]\nenabled = true\n\n[hooks.state.\"crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
+        }
+      },
+      "set": {
+        "steps/0/stderr": "crw doctor retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n",
+        "steps/1/stderr": "crw doctor retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n",
+        "tree/codex/config.toml/content": "model = \"gpt-5.5\"\n\n[plugins.\"crw@local\"]\nenabled = true\n\n[hooks.state.\"crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
+      }
+    }
+  ]
+}

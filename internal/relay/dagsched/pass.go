@@ -88,6 +88,9 @@ func (r Reading) dispositionsJSON() string {
 		if n.MergeOrder != nil {
 			node["merge_order"] = n.MergeOrder.canonical()
 		}
+		if n.Stagnation != nil {
+			node["stagnation"] = n.Stagnation.canonical()
+		}
 		nodes[i] = node
 	}
 	return dag.Canonical(nodes)

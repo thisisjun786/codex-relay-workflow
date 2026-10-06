@@ -12,6 +12,7 @@ import (
 // test_host_lost_turn.py HLT-4, HLT-8..HLT-17 (see hostloss_a_test.go for the method).
 
 func Test21_HLT04_an_undecided_turn_check_is_named_and_kept(t *testing.T) {
+	t.Parallel()
 	t.Run("re-confirm from the token keeps the name", func(t *testing.T) {
 		mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_a_manual_reconcile_keeps_the_name_on_a_token_confirmed_send", func(h *hl) {
 			event, request, turn := h.tokenConfirmed()
@@ -158,6 +159,7 @@ func Test21_HLT04_an_undecided_turn_check_is_named_and_kept(t *testing.T) {
 }
 
 func Test21_HLT08_reconcile_names_the_loss_and_queues_the_redelivery_without_sending(t *testing.T) {
+	t.Parallel()
 	plain := func(name string, stage func(h *hl, turn string), full bool) {
 		t.Run(name, func(t *testing.T) {
 			mirror(t, hlt, name, func(h *hl) {
@@ -198,6 +200,7 @@ func Test21_HLT08_reconcile_names_the_loss_and_queues_the_redelivery_without_sen
 }
 
 func Test21_HLT09_an_unreadable_turn_list_is_unchecked_and_changes_nothing(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "ReconcileReportsTheRecipientTurn.test_an_unreadable_turn_list_is_reported_as_unchecked_and_changes_nothing", func(h *hl) {
 		event, first, turn := h.dispatched()
 		h.hostLoses(turn, true)
@@ -211,6 +214,7 @@ func Test21_HLT09_an_unreadable_turn_list_is_unchecked_and_changes_nothing(t *te
 }
 
 func Test21_HLT10_the_delivery_token_vetoes_a_missing_turn_row(t *testing.T) {
+	t.Parallel()
 	t.Run("token in the parent's items", func(t *testing.T) {
 		mirror(t, hlt, "ReconcileReportsTheRecipientTurn.test_the_delivery_token_in_the_parents_items_vetoes_a_missing_turn_row", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -255,6 +259,7 @@ func Test21_HLT10_the_delivery_token_vetoes_a_missing_turn_row(t *testing.T) {
 }
 
 func Test21_HLT11_the_lost_attempt_is_the_once_count(t *testing.T) {
+	t.Parallel()
 	t.Run("reconciling it again changes nothing", func(t *testing.T) {
 		mirror(t, hlt, "ReconcileReportsTheRecipientTurn.test_reconciling_a_lost_attempt_again_changes_nothing", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -317,6 +322,7 @@ func Test21_HLT11_the_lost_attempt_is_the_once_count(t *testing.T) {
 }
 
 func Test21_HLT12_a_recorded_acknowledgement_wins_over_a_missing_turn(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "ReconcileReportsTheRecipientTurn.test_a_recorded_acknowledgement_wins_over_a_missing_turn", func(h *hl) {
 		event, first, turn := h.dispatched()
 		_, err := h.ack.Acknowledge(h.ctx, event, "ack-later", AckProof(event, "ack-later"), true, nil, nil)
@@ -334,6 +340,7 @@ func Test21_HLT12_a_recorded_acknowledgement_wins_over_a_missing_turn(t *testing
 }
 
 func Test21_HLT13_the_controls_read_as_before(t *testing.T) {
+	t.Parallel()
 	t.Run("a lost acknowledgement keeps waiting", func(t *testing.T) {
 		mirror(t, hlt, "TheControlsReadAsBefore.test_a_lost_acknowledgement_keeps_waiting_and_is_read_as_present", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -382,6 +389,7 @@ func anySlice(list []string) []any {
 }
 
 func Test21_HLT14_assignment_show_names_the_next_actor_for_each_completion_state(t *testing.T) {
+	t.Parallel()
 	run := func(name string, body func(h *hl)) {
 		t.Run(name, func(t *testing.T) {
 			mirror(t, hlt, "AssignmentShowNamesTheNextActor."+name, func(h *hl) {
@@ -434,6 +442,7 @@ func Test21_HLT14_assignment_show_names_the_next_actor_for_each_completion_state
 }
 
 func Test21_HLT15_the_host_loss_is_named_at_every_step_of_its_recovery(t *testing.T) {
+	t.Parallel()
 	t.Run("every step", func(t *testing.T) {
 		mirror(t, hlt, "AssignmentShowNamesTheNextActor.test_the_host_loss_is_named_at_every_step_of_its_recovery", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -513,6 +522,7 @@ func Test21_HLT15_the_host_loss_is_named_at_every_step_of_its_recovery(t *testin
 }
 
 func Test21_HLT16_only_the_delivered_user_message_vetoes_a_loss(t *testing.T) {
+	t.Parallel()
 	t.Run("a message only under another turn", func(t *testing.T) {
 		mirror(t, hlt, "TheHostListsALostTurnAfterAReload.test_a_message_found_only_under_another_turn_is_read_again_and_its_loss_caught", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -559,6 +569,7 @@ func Test21_HLT16_only_the_delivered_user_message_vetoes_a_loss(t *testing.T) {
 }
 
 func Test21_HLT17_listed_turns_are_read_from_their_own_items(t *testing.T) {
+	t.Parallel()
 	t.Run("a long finished turn is read from its first item", func(t *testing.T) {
 		mirror(t, hlt, "TheHostListsALostTurnAfterAReload.test_a_long_finished_turn_is_read_from_its_first_item", func(h *hl) {
 			_, first, turn := h.dispatched()
