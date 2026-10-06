@@ -33,6 +33,9 @@ func orchestrateReviewBindingCheck(cur state.State, a OrchestrateCliArgs, sessio
 	if plan == nil {
 		return nil
 	}
+	// A round the reader DROPPED is invisible here, exactly as it is to the oracle's latestRound: a
+	// missing plan hash, a status outside the four, a lane that is not an object. That residual is kept
+	// and recorded (known-defects/CRW-755.md); widening the refusal to it belongs to the reader.
 	round := review.LatestRound(plan, goalplan.PurposePlanAudit)
 	if round == nil {
 		return nil
@@ -120,6 +123,8 @@ func orchestrateReviewBindingSourceGate(cwd, sessionID string, cur state.State) 
 	if orchestrateReviewBindingRootsDiffer(entry.SourceRoot, now.SourceRoot) {
 		return &CliResult{Code: 1, Output: "orchestrate C: SOURCE-ROOT: source binding changed since B began. Re-plan and capture a new baseline; nothing was written."}, nil
 	}
+	// Only "same" refuses, as the oracle's `cmp.kind === "same"` does: an "unavailable" comparison passes
+	// and SOURCE-DELTA-01 cannot fire for that session (kept, known-defects/CRW-755.md).
 	if source.Compare(entry, now).Kind == source.ComparisonSame {
 		return &CliResult{Code: 1, Output: "orchestrate C: " + RenderPhaseContext(cur, sessionID) +
 			"; the source is unchanged since B began (" + source.Describe(now) + "), so nothing was implemented in this B (SOURCE-DELTA-01). Implement inside B rather than carrying earlier work across the edge. Nothing was written."}, nil
