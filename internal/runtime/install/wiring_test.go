@@ -162,7 +162,7 @@ var bridgeLaunchers = []bridgeLauncher{
 			// The declaration as shipped: `sh ./wiring/crw-bridge.sh` from the version directory.
 			command, args, cwd := declaredServer(t, wiring("mcp.json"))
 			version := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0")
-			write(t, filepath.Join(version, "wiring", "crw-bridge.sh"), readFile(t, wiring("crw-bridge.sh")))
+			writeExecutable(t, filepath.Join(version, "wiring", "crw-bridge.sh"), []byte(readFile(t, wiring("crw-bridge.sh"))), 0o644)
 			return filepath.Join(version, cwd), append([]string{command}, args...)
 		}},
 }
