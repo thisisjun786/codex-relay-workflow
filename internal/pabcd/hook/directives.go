@@ -143,7 +143,7 @@ const loopArmAfter = "   a phase without its persisted transition + artifact did
 
 const phaseFooterTail = "At the end of your reply, print exactly one status line in the format `IPABCD: <phase> (<LABEL>)`, using the latest verified persisted phase and its matching label for the current SessionStart-bound session and cwd. A later authorized, successful phase transition supersedes this snapshot for reporting. Otherwise retain the latest verified state; a request, lexical hint, narration, or failed transition is not a persisted phase change. This reporting instruction requires no additional tool calls and authorizes no transitions or gate bypasses. D closes to IDLE; a later authorized successful re-entry supersedes that resting state too."
 
-// ActiveWorkPhase is the caller's binding target. Loading a goalplan is outside this package.
+// ActiveWorkPhase is the caller's binding target; ActiveWorkPhaseOpts loads the bound goalplan.
 type ActiveWorkPhase struct{ ID, Title string }
 
 // DirectiveOptions supplies the optional B-phase slice (hook.ts:399-411).

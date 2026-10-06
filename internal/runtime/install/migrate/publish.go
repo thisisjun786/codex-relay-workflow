@@ -193,10 +193,24 @@ func sum(r io.Reader) ([sha256.Size]byte, error) {
 
 // EnsureProjectRoot returns the pinned W/.crw, created when absent, once its .gitignore is there: published as
 // crwdir.GitignoreText whenever it is absent, also in a root that already exists, so a run interrupted between the mkdir and the
-// publication is repaired by the next one before any state is copied (crwdir.EnsureDir stops at an existing root). An existing
-// regular .gitignore, one a racer made included, belongs to its owner and is kept as it is; a link, directory, hard-linked or
-// set-ID one is refused, and one that cannot be read fails.
+// publication is repaired by the next one before any state is copied (crwdir.EnsureDir stops at an existing root). A regular
+// .gitignore that was already there when the call began belongs to its owner and is kept as it is, so a differing one is
+// published past and the call succeeds; when it was absent and a racer makes a differing one before the rename, that
+// ReasonDiffers refusal is returned so the caller stops before copying state (state-migration.md Preflight 3-4). A link,
+// directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
 func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
+	// Was .gitignore already there when this call started? Capture that before EnsureDest can create the root, so a .gitignore
+	// a racer makes in the window that creation opens (or in the root step) is a conflicting initialization race, not a
+	// retained owner file: the root did not exist before the call, so no .gitignore could have.
+	pre := false
+	if pair.Dest != nil {
+		switch _, err := pair.Dest.typeOf(".gitignore"); {
+		case err == nil:
+			pre = true
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, err
+		}
+	}
 	root, err := pair.EnsureDest(0o777)
 	if err == nil {
 		err = p.step("root")
@@ -206,7 +220,7 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 	}
 	text := crwdir.GitignoreText
 	_, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
-	if r := refusal(err); r != nil && r.Reason == ReasonDiffers {
+	if r := refusal(err); r != nil && r.Reason == ReasonDiffers && pre {
 		err = nil
 	}
 	if err != nil {
