@@ -706,10 +706,7 @@ func TestTheBackupFlagIsOnTheCommandsThatSwapAndNowhereElse(t *testing.T) {
 	// Main reads the Codex version from the codex on the process PATH (Options.CodexVersion is not reachable from the
 	// command line), so a host without one is given a stand-in that answers as the real one does.
 	fakeBin := t.TempDir()
-	write(t, filepath.Join(fakeBin, "codex"), "#!/bin/sh\necho codex-cli 0.154.0\n")
-	if err := os.Chmod(filepath.Join(fakeBin, "codex"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(fakeBin, "codex"), []byte("#!/bin/sh\necho codex-cli 0.154.0\n"), 0o755)
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	h, _, second, _, next := zoneInstalled(t)
 	zoneStore(t, h)
