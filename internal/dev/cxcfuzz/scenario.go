@@ -34,7 +34,9 @@ func Scenarios(root string, input any) (int, error) {
 		return 0, nil
 	}
 	for _, entry := range entries {
-		if _, err := confine(root, entry.Path); err != nil {
+		// A path is checked with the case root in place of the ROOT placeholder it may carry, and a
+		// path without the placeholder is unchanged.
+		if _, err := confine(root, rootSubstitutedPath(root, entry.Path)); err != nil {
 			return 0, err
 		}
 		if entry.Kind == "symlink" {
@@ -150,14 +152,21 @@ func confine(root, path string) (string, error) {
 		return "", fmt.Errorf("the fs path %q is absolute", path)
 	}
 	joined := filepath.Join(root, path)
-	rel, err := filepath.Rel(root, joined)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("the fs path %q leaves the case root", path)
-	}
-	if err := withinRoot(root, joined); err != nil {
+	if err := contained(root, joined); err != nil {
 		return "", fmt.Errorf("the fs path %q %w", path, err)
 	}
 	return joined, nil
+}
+
+// contained refuses a joined path that is lexically outside root or whose existing part resolves
+// outside it. The lexical check is the one that decides a path a symlink cannot carry away, and the
+// resolve is what refuses a path that reaches out through a link standing under the root.
+func contained(root, joined string) error {
+	rel, err := filepath.Rel(root, joined)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("leaves the case root")
+	}
+	return withinRoot(root, joined)
 }
 
 // withinRoot refuses a joined path whose existing part resolves outside root, so a symlink standing
@@ -190,20 +199,40 @@ func withinRoot(root, joined string) error {
 
 // linkTarget is a symlink entry's target resolved under root, refused when it leaves root.
 func linkTarget(root string, entry Entry) (string, error) {
-	target := entry.Target
+	target := rootSubstitutedPath(root, entry.Target)
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(entry.Path), target)
 	}
-	resolved, err := confine(root, target)
+	joined := filepath.Clean(target)
+	if filepath.IsAbs(joined) {
+		// An absolute target is the case's own root: confine keeps refusing every absolute path for
+		// an fs entry, so the containment check is made here instead of routing it through confine.
+		if err := contained(root, joined); err != nil {
+			return "", fmt.Errorf("the symlink %s target %q leaves the case root", entry.Path, entry.Target)
+		}
+		return joined, nil
+	}
+	resolved, err := confine(root, joined)
 	if err != nil {
 		return "", fmt.Errorf("the symlink %s target %q leaves the case root", entry.Path, entry.Target)
 	}
 	return resolved, nil
 }
 
+// rootSubstitutedPath is a path or link target with the case root in place of an opening ROOT
+// placeholder. Text that does not open with the placeholder is returned unchanged, so a relative
+// target stays relative and the two sides' trees compare equal. Each side substitutes its own root,
+// and it is the substituted text that is checked and created, never the placeholder itself.
+func rootSubstitutedPath(root, text string) string {
+	if root != "" && strings.HasPrefix(text, rootPlaceholder+"/") {
+		return root + text[len(rootPlaceholder):]
+	}
+	return text
+}
+
 // build writes one entry. Content is written as content and never executed.
 func build(root string, entry Entry) error {
-	path, err := confine(root, entry.Path)
+	path, err := confine(root, rootSubstitutedPath(root, entry.Path))
 	if err != nil {
 		return err
 	}
@@ -222,7 +251,9 @@ func build(root string, entry Entry) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		return os.Symlink(entry.Target, path)
+		// The link is created with the substituted target, so a ROOT-prefixed entry becomes a real
+		// absolute link into the case root instead of a dangling link to the placeholder text.
+		return os.Symlink(rootSubstitutedPath(root, entry.Target), path)
 	default:
 		return fmt.Errorf("unknown fs kind %q", entry.Kind)
 	}
@@ -242,6 +273,49 @@ func ReplaceRoot(out, root string) string {
 		return out
 	}
 	return strings.ReplaceAll(out, root, "${ROOT}")
+}
+
+// substituteRootValue replaces the ROOT placeholder in every string of a decoded value, object keys
+// included, and leaves every other value as it is. It is the one substitution both Go sides use, and
+// it runs on the DECODED input, before any serialization, exactly as the oracle's shim does
+// (testdata/memorygate/shim.mjs substitute(), :19-27): substituting into serialized JSON instead
+// corrupted the text whenever the case root held a quote, a backslash or a line break, and the two
+// sides then read different inputs. New containers are built rather than the receiver mutated, so a
+// caller's decoded input survives unchanged; an empty root is left alone, as the text-level
+// ReplaceRoot is.
+func substituteRootValue(value any, root string) any {
+	if root == "" {
+		return value
+	}
+	switch v := value.(type) {
+	case string:
+		return substituteRootText(v, root)
+	case pyjson.Object:
+		out := make(pyjson.Object, 0, len(v))
+		for _, item := range v {
+			out = append(out, pyjson.Field{Key: substituteRootText(item.Key, root), Value: substituteRootValue(item.Value, root)})
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, substituteRootValue(item, root))
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[substituteRootText(key, root)] = substituteRootValue(item, root)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// substituteRootText is the string leaf of substituteRootValue.
+func substituteRootText(text, root string) string {
+	return strings.ReplaceAll(text, rootPlaceholder, root)
 }
 
 // stripRoot applies ReplaceRoot to every string inside a value, keys included: a target may key an

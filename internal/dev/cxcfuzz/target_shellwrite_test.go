@@ -158,3 +158,101 @@ func TestShellwriteSeedCasesReplay(t *testing.T) {
 		})
 	}
 }
+
+// c2 (CRW-857): the shared generator emits every Python literal spelling the issue required, with
+// the f form sometimes holding a doubled brace.
+func TestShellwritePythonLiteralForms(t *testing.T) {
+	forms := shellWritePythonLiteralForms("/m/a")
+	for _, want := range []string{
+		"'/m/a'", "\"/m/a\"", "'''/m/a'''", "\"\"\"/m/a\"\"\"",
+		"r'/m/a'", "b'/m/a'", "u'/m/a'", "f'/m/a'", "f'{{/m/a}}'", "f\"\"\"{{/m/a}}\"\"\"",
+	} {
+		found := false
+		for _, form := range forms {
+			if form == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the literal forms do not include %q: %v", want, forms)
+		}
+	}
+}
+
+// c2 (CRW-857): each single-character escape Python accepts for a slash is available for a
+// destination, and a destination with no slash yields none.
+func TestShellwritePythonEscapeForms(t *testing.T) {
+	forms := shellWritePythonEscapeForms("/m/a")
+	for _, want := range []string{`\x2f` + "m/a", `\u002f` + "m/a", `\057` + "m/a", `\N{SOLIDUS}` + "m/a"} {
+		found := false
+		for _, form := range forms {
+			if form == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the escape forms do not include %q: %v", want, forms)
+		}
+	}
+	if got := shellWritePythonEscapeForms("rel"); got != nil {
+		t.Errorf("a destination without a slash produced %v", got)
+	}
+}
+
+// c2 (CRW-857): the program builder emits the new write forms. The seed is fixed, so the set it
+// produces is the same on every run.
+func TestShellwriteGeneratorEmitsTheRequiredPrograms(t *testing.T) {
+	rng := rand.New(rand.NewSource(11))
+	seen := map[string]bool{}
+	for i := 0; i < 20000; i++ {
+		seen[shellWriteProgram(rng, shellWritePathFragments())] = true
+	}
+	for _, want := range []struct{ name, has string }{
+		{"os.rename", "os.rename("},
+		{"shutil.copy", "shutil.copy("},
+		{"shutil.copyfile", "shutil.copyfile("},
+		{"triple single quote", "'''"},
+		{"triple double quote", "\"\"\""},
+		{"f prefix", "f'"},
+		{"r prefix", "r'"},
+		{"b prefix", "b'"},
+		{"u prefix", "u'"},
+		{"x2f escape", `\x2f`},
+		{"u002f escape", `\u002f`},
+		{"octal escape", `\057`},
+		{"named escape", `\N{SOLIDUS}`},
+	} {
+		found := false
+		for program := range seen {
+			if strings.Contains(program, want.has) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the generator never emitted %s (%q)", want.name, want.has)
+		}
+	}
+}
+
+// c2 (CRW-857): the nested builder emits a subshell, a brace group, a command substitution and a
+// backtick substitution around a real write.
+func TestShellwriteGeneratorEmitsTheRequiredGroups(t *testing.T) {
+	rng := rand.New(rand.NewSource(5))
+	seen := map[string]bool{}
+	for i := 0; i < 400; i++ {
+		seen[shellWriteNested(rng, []string{"/m/a"})] = true
+	}
+	for _, want := range []struct{ name, has string }{
+		{"subshell", "(echo hi > /m/a)"},
+		{"brace group", "{ echo hi > /m/a; }"},
+		{"command substitution", "x=$(echo hi > /m/a)"},
+		{"backticks", "y=`echo hi > /m/a`"},
+	} {
+		if !seen[want.has] {
+			t.Errorf("the generator never emitted the %s %q", want.name, want.has)
+		}
+	}
+}
