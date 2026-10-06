@@ -76,3 +76,21 @@ func TestShellWriteTripleScanNodeKeepsTheDestination(t *testing.T) {
 		{command: js("const x = " + "\x60" + `""""` + "\x60" + `; fs.writeFileSync("\x2freview/memories/c", "x")`), has: []string{"/review/memories/c"}},
 	})
 }
+
+// TestShellWriteTripleScanUnterminated pins the fail-closed answer the independent audit asked for: a program whose
+// triple-quoted literal is never closed is not valid Python (a SyntaxError), so no write runs, and the reader names nothing
+// rather than guessing a destination. An odd run of quotes that desyncs the walk is the same case: the region runs to the end
+// of the text and no later call is read. Naming nothing is the safe answer for a security gate.
+func TestShellWriteTripleScanUnterminated(t *testing.T) {
+	for _, script := range []string{
+		`open("""/m/a,b""`,
+		`open("""/m/a""`,
+		`open("""/m/a`,
+		`open('''/m/a`,
+		`x = """; open("/m/a","w")`,
+	} {
+		if got := shellVerbOpenWrites(script); len(got) != 0 {
+			t.Errorf("%q: got %q, want no destination (fail-closed)", script, got)
+		}
+	}
+}
