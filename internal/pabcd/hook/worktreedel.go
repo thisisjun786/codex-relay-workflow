@@ -947,8 +947,9 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 			continue
 		}
 		if backtick {
-			if c == '`' && (r.state == worktreeDelQuotePlain || r.state == worktreeDelQuoteComment) {
-				// a # in a backtick body opens a comment, but the closing backtick still ends the substitution (echo "`# '`" runs nothing)
+			if c == '`' {
+				// the first unescaped backtick ends the substitution whatever the state inside it: bash ends it there even in a comment
+				// or an unterminated quote (echo "`# '`" and echo "`'`" both close at the backtick)
 				return string(out), i + 1
 			}
 		} else {
