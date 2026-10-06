@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
 )
@@ -24,6 +26,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "declared-schema":
 			return declaredSchema(ctx, args[1:], stdout, stderr)
+		case "harness":
+			// The CXC plugin-health report (doctor.ts runDoctor), text or --json, exit 1 on FAIL.
+			return RunHarnessDoctorCLI(args[1:], stdout, stderr, host.LookupEnv(os.LookupEnv), os.Getwd, harnessRunExec, time.Now())
 		}
 	}
 	flags := flag.NewFlagSet("crw doctor", flag.ContinueOnError)
@@ -43,7 +48,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return usageExit
 	}
 	if flags.NArg() > 0 {
-		fmt.Fprintf(stderr, "crw doctor: unknown argument %q (choose from declared-schema)\n", flags.Arg(0))
+		fmt.Fprintf(stderr, "crw doctor: unknown argument %q (choose from declared-schema, harness)\n", flags.Arg(0))
 		return usageExit
 	}
 	options := Options{Env: env, CodexHome: *codexHome, RecordPath: *recordPath, RelayCommand: *relayCommand, Socket: *socket, State: *state, Temporary: *temporary}
