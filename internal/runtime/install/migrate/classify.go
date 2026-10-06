@@ -189,7 +189,7 @@ func (c *classifier) classifyChild(scope Scope, dir *Dir, dirPath, name string, 
 		}
 	}
 
-	if scope == ScopeCodex { // the Codex-home leaf map is decided by CodexLeaf before any row
+	if scope == ScopeCodex && dirPath == "" { // only direct children of the Codex-home root are mapped by leaf name
 		if dest, ok := CodexLeaf(name); ok {
 			switch typ {
 			case unix.S_IFREG:
@@ -654,39 +654,90 @@ func classifyJudge(kind, path string, data []byte) error {
 	return refuse(ReasonUnreadable, path, "unknown record kind "+kind)
 }
 
-// classifyJudgeDispatch judges a dispatch record by the vocabulary of internal/role/dispatch_ledger.go: a record still active, or
-// an attempt still ready/claimed/running, refuses the scope (ReasonActive); a record or attempt outside the vocabulary is not the
-// shape the store writes (ReasonUnreadable).
+// classifyJudgeDispatch judges a dispatch record by the shape internal/role/dispatch_ledger.go:52-85 writes: version the number
+// 1, sessionId and id equal to the path, a non-empty role, a candidates array, and non-empty attempts each with id, claimed,
+// candidate and status. Terminal statuses copy; active or in-flight ones refuse ReasonActive; anything else ReasonUnreadable.
 func classifyJudgeDispatch(path string, data []byte) error {
-	var rec struct {
-		Status   string `json:"status"`
-		Attempts []struct {
-			Status string `json:"status"`
-		} `json:"attempts"`
-	}
+	var rec map[string]json.RawMessage
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return refuse(ReasonUnreadable, path, "the dispatch record is not readable JSON")
 	}
-	switch rec.Status {
-	case "stopped", "complete", "main-direct":
-	case "":
-		return refuse(ReasonUnreadable, path, "the dispatch record names no status")
-	default:
-		return refuse(ReasonActive, path, "the dispatch record is still "+rec.Status)
+	var version int
+	if err := json.Unmarshal(rec["version"], &version); err != nil || version != 1 {
+		return refuse(ReasonUnreadable, path, "the dispatch record names no version 1")
 	}
-	if len(rec.Attempts) == 0 {
+	session, id := filepath.Base(filepath.Dir(path)), strings.TrimSuffix(filepath.Base(path), ".json")
+	gotSession, err := classifyString(rec["sessionId"])
+	if err != nil || gotSession != session {
+		return refuse(ReasonUnreadable, path, "the dispatch record sessionId does not match its directory")
+	}
+	gotID, err := classifyString(rec["id"])
+	if err != nil || gotID != id {
+		return refuse(ReasonUnreadable, path, "the dispatch record id does not match its file name")
+	}
+	role, err := classifyString(rec["role"])
+	if err != nil || role == "" {
+		return refuse(ReasonUnreadable, path, "the dispatch record names no role")
+	}
+	if !classifyRawIs(rec, "candidates", 0x5b) {
+		return refuse(ReasonUnreadable, path, "the dispatch record candidates is not an array")
+	}
+	if !classifyRawIs(rec, "attempts", 0x5b) {
+		return refuse(ReasonUnreadable, path, "the dispatch record attempts is not an array")
+	}
+	var attempts []map[string]json.RawMessage
+	if err := json.Unmarshal(rec["attempts"], &attempts); err != nil || len(attempts) == 0 {
 		return refuse(ReasonUnreadable, path, "the dispatch record names no attempt")
 	}
-	for _, a := range rec.Attempts {
-		switch a.Status {
-		case "reconcile", "failed", "complete":
-		case "":
+	status, err := classifyString(rec["status"])
+	if err != nil {
+		return refuse(ReasonUnreadable, path, "the dispatch record names no status")
+	}
+	switch status {
+	case "stopped", "complete", "main-direct":
+	case "active":
+		return refuse(ReasonActive, path, "the dispatch record is still active")
+	default:
+		return refuse(ReasonUnreadable, path, "the dispatch record status is not one the store writes: "+status)
+	}
+	for _, a := range attempts {
+		if _, err := classifyString(a["id"]); err != nil {
+			return refuse(ReasonUnreadable, path, "an attempt names no id")
+		}
+		if !classifyRawIs(a, "claimed", 0x74) && !classifyRawIs(a, "claimed", 0x66) {
+			return refuse(ReasonUnreadable, path, "an attempt names no claimed boolean")
+		}
+		if !classifyRawIs(a, "candidate", 0x7b) {
+			return refuse(ReasonUnreadable, path, "an attempt names no candidate object")
+		}
+		as, err := classifyString(a["status"])
+		if err != nil {
 			return refuse(ReasonUnreadable, path, "an attempt names no status")
+		}
+		switch as {
+		case "reconcile", "failed", "complete":
+		case "ready", "claimed", "running":
+			return refuse(ReasonActive, path, "an attempt is still "+as)
 		default:
-			return refuse(ReasonActive, path, "an attempt is still "+a.Status)
+			return refuse(ReasonUnreadable, path, "an attempt status is not one the store writes: "+as)
 		}
 	}
 	return nil
+}
+
+// classifyRawIs reports whether the key is present and its JSON value starts with the given byte.
+func classifyRawIs(m map[string]json.RawMessage, key string, first byte) bool {
+	v := m[key]
+	return len(v) > 0 && v[0] == first
+}
+
+// classifyString decodes a JSON string value; a missing key or another type is an error.
+func classifyString(v json.RawMessage) (string, error) {
+	var s string
+	if err := json.Unmarshal(v, &s); err != nil {
+		return "", err
+	}
+	return s, nil
 }
 
 // classifyJudgeBG judges a job record by the store of internal/relay/job (registry.go): the record must be the shape the store
