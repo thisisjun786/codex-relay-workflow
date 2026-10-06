@@ -78,7 +78,7 @@ func TestRelayResolvesTheStatePerEnv(t *testing.T) {
 func TestRelayRefusesADoctorThatFails(t *testing.T) {
 	exe, _ := coreFakeCRW(t, "", 3)
 	stdout, code, err := relayHelperTestEnv(exe).Relay(context.Background(), &Config{Relay: coreRelay{Socket: "/k0"}}, "status")
-	if !errors.Is(err, relayHelperErrStateUnresolved) {
+	if !relayHelperIsUnresolved(err) {
 		t.Fatalf("err = %v, want relay_state_unresolved", err)
 	}
 	if len(stdout) != 0 || code != 0 {
@@ -89,7 +89,7 @@ func TestRelayRefusesADoctorThatFails(t *testing.T) {
 // A doctor that names no state directory is relay_state_unresolved (C3).
 func TestRelayRefusesADoctorWithoutAState(t *testing.T) {
 	exe, _ := coreFakeCRW(t, "", 0)
-	if _, _, err := relayHelperTestEnv(exe).Relay(context.Background(), &Config{Relay: coreRelay{Socket: "/k0"}}, "status"); !errors.Is(err, relayHelperErrStateUnresolved) {
+	if _, _, err := relayHelperTestEnv(exe).Relay(context.Background(), &Config{Relay: coreRelay{Socket: "/k0"}}, "status"); !relayHelperIsUnresolved(err) {
 		t.Fatalf("err = %v, want relay_state_unresolved", err)
 	}
 }
@@ -99,7 +99,7 @@ func TestRelayRefusesADoctorWithoutAState(t *testing.T) {
 func TestRelayRefusesADoctorThatAnswersGarbage(t *testing.T) {
 	exe := relayHelperScript(t, "printf '%s\n' 'not json'\nprintf '%s\n' 'doctor noise' 1>&2\nexit 0\n")
 	_, _, err := relayHelperTestEnv(exe).Relay(context.Background(), &Config{Relay: coreRelay{Socket: "/k0"}}, "status")
-	if !errors.Is(err, relayHelperErrStateUnresolved) {
+	if !relayHelperIsUnresolved(err) {
 		t.Fatalf("err = %v, want relay_state_unresolved", err)
 	}
 	if !strings.Contains(err.Error(), "doctor noise") {
@@ -110,7 +110,7 @@ func TestRelayRefusesADoctorThatAnswersGarbage(t *testing.T) {
 // A relay executable that cannot be run is relay_state_unresolved (C3).
 func TestRelayRefusesADoctorItCannotRun(t *testing.T) {
 	exe := filepath.Join(t.TempDir(), "no-such-crw")
-	if _, _, err := relayHelperTestEnv(exe).Relay(context.Background(), &Config{Relay: coreRelay{Socket: "/k0"}}, "status"); !errors.Is(err, relayHelperErrStateUnresolved) {
+	if _, _, err := relayHelperTestEnv(exe).Relay(context.Background(), &Config{Relay: coreRelay{Socket: "/k0"}}, "status"); !relayHelperIsUnresolved(err) {
 		t.Fatalf("err = %v, want relay_state_unresolved", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestRelayReportsADoctorWhoseContextEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	_, _, err := relayHelperTestEnv(exe).Relay(ctx, &Config{Relay: coreRelay{Socket: "/k0"}}, "status")
-	if !errors.Is(err, relayHelperErrStateUnresolved) || !errors.Is(err, context.DeadlineExceeded) {
+	if !relayHelperIsUnresolved(err) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want relay_state_unresolved naming the deadline", err)
 	}
 }

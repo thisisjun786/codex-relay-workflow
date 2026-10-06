@@ -14,10 +14,23 @@ import (
 // first bytes, so a command that fails loudly cannot fill a log with its noise.
 const relayHelperStderrLimit = 2000
 
-// relayHelperErrStateUnresolved is the refusal of a relay run whose state directory the
-// relay's own doctor answer did not supply. It is a sentinel so a caller can test for it
-// with errors.Is while the error still carries the reason it happened.
-var relayHelperErrStateUnresolved = errors.New("relay_state_unresolved")
+// relayHelperUnresolvedError is the refusal of a relay run whose state directory the
+// relay's own doctor answer did not supply. Its message names the refusal, and it keeps
+// the reason it happened reachable. It is a type rather than a sentinel variable because
+// every package-level name this issue adds starts with relayHelper.
+type relayHelperUnresolvedError struct{ detail error }
+
+// Error is the refusal, with the reason when there is one.
+func (e *relayHelperUnresolvedError) Error() string {
+	if e.detail == nil {
+		return "relay_state_unresolved"
+	}
+	return "relay_state_unresolved: " + e.detail.Error()
+}
+
+// Unwrap exposes the reason, so errors.Is and errors.As still reach a doctor's failure or
+// a context that ended.
+func (e *relayHelperUnresolvedError) Unwrap() error { return e.detail }
 
 // relayHelperMemoMu guards relayHelperMemo. It covers the map's own reads and writes and
 // is never held across the doctor call, so a doctor that hangs for one Env cannot hold up
@@ -159,12 +172,12 @@ func relayHelperError(err error, stderr string) error {
 	return fmt.Errorf("%w (stderr: %s)", err, stderr)
 }
 
-// relayHelperUnresolved marks a state resolution failure as relay_state_unresolved while
-// keeping the reason it carries, so a caller sees both the refusal and what caused it: a
-// doctor's exit status, an unreadable answer, or a context that ended.
-func relayHelperUnresolved(detail error) error {
-	if detail == nil {
-		return relayHelperErrStateUnresolved
-	}
-	return fmt.Errorf("%w: %w", relayHelperErrStateUnresolved, detail)
+// relayHelperUnresolved is the refusal with the reason it carries: a doctor's exit status,
+// an unreadable answer, or a context that ended.
+func relayHelperUnresolved(detail error) error { return &relayHelperUnresolvedError{detail: detail} }
+
+// relayHelperIsUnresolved reports whether err is that refusal.
+func relayHelperIsUnresolved(err error) bool {
+	var refused *relayHelperUnresolvedError
+	return errors.As(err, &refused)
 }
