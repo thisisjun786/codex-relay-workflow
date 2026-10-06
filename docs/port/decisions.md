@@ -5719,7 +5719,7 @@ a row inside the store. The split between writers and readers follows decision 7
 (`docs/port/decisions.md`, section 76): a writable open refuses, and a read-only command
 still answers, because the reading is how an operator finds out what happened. A refusal
 reason is required and no existing reason has this meaning: the registered reasons were read
-from `contract/schema/relay-exit-codes.json` (`refusalReasons`, 121 entries), and the only
+from `contract/schema/relay-exit-codes.json` (`refusalReasons`, 112 entries), and the only
 one near this surface is `store_owned_by_other` (`:119`), which names a foreign owner and
 would send the operator to the ownership page for a problem that is not about ownership. Per
 D-02 the new reason is registered in `contract/schema/relay-exit-codes.json` and the
