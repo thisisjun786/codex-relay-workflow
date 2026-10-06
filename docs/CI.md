@@ -87,10 +87,14 @@ running run instead of cancelling it, and a later push cancels it in turn. Every
 a retarget included, still cancels obsolete runs.
 
 `validate`, `secrets` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
-and only on such an edit. The script reads, with `gh api`, the newest completed run of this workflow,
-of this repository, for the same `head_sha`, other than the run it is in, and mirrors the job when
-that run's same-named job's newest attempt concluded `success`. It answers `mirrored=true` with the
-run id in its step output and its step summary, or `mirrored=false`.
+and only on such an edit. The script reads, with `gh api`, the newest created run of this workflow,
+of this pull request, of this repository, for the same `head_sha`, other than the run it is in, and
+mirrors the job when that run's same-named job's newest attempt concluded `success`. Creation order
+is the run's `run_number`, and the larger `id` when two runs share one: those two values are what a
+rerun leaves alone. `run_started_at` is deliberately not the order, because rerunning only the
+failed jobs moves it forward and would let an older run outrank a newer one whose same-named job
+failed. It answers `mirrored=true` with the run id in its step output and its step summary, or
+`mirrored=false`.
 
 Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
 condition the step already had. The full checkout is one of them, and the sparse checkout of
@@ -98,7 +102,8 @@ condition the step already had. The full checkout is one of them, and the sparse
 succeeds without running its steps, and nothing is skipped at job level: GitHub reports a skipped
 job's check as success, so a skipped `dev-gate` could hide an earlier red run.
 
-The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing job,
+The lookup never fails the job, and an older run is never consulted: the newest created run alone
+answers for the job. No candidate, a failure, a cancellation, a skip, a missing job,
 another head, workflow or repository, an unreadable API and the run itself all answer
 `mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
 unchanged, and the three jobs add only `actions: read` to the workflow's `contents: read`, which is
