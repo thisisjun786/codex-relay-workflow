@@ -68,7 +68,11 @@ state that separately from installation and successful live operation.
 CI runs every check on every event, in parallel, and reports one result-only
 `dev-gate`: validation, plugin identity, offline contracts, secret scanning and the
 Go product checks (lint, the test parts, the release binaries and the isolated-home
-install). Nothing is selected by changed paths, except the temporary light mode below.
+install), plus the `gui` screen check. Only two jobs select by changed paths: `gui`
+(the screens under `web/`, their committed build under `internal/gui/assets/`, and the
+gui definition) and `skill-scripts-node`; each is a dev-gate prerequisite and ends
+successfully without installing Node when nothing it watches changed. Nothing else is
+selected by changed paths, except the temporary light mode below.
 See [CI operation](docs/CI.md).
 
 Every PR base receives the checks and the final gate, including explicit dependent
@@ -86,6 +90,7 @@ The release workflow is manual and owner-controlled.
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
 | Pinned secret scan: all fetched history on a push to `dev`, the commits a pull request adds on a pull request | No finding under the reviewed scanner configuration in the commits scanned |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
+| The `gui` job: the screens build on Node 24.20.0 and match the committed `internal/gui/assets` tree byte for byte | The screens embedded in `crw` are the build of `web/`, so a Node-free checkout serves the current screen |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
 
 The stable gate runs after failures. Every job it needs must succeed; a missing,
@@ -96,9 +101,10 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data. The runtime, installer and CI do not depend on Python: CI installs none, and the only
-skill scripts it runs are the staged skills' Node tests in the path-gated skill-scripts-node
-job (Node 24.20.0); no hook path or crw binary needs Node, and a helper script in a skill's
+data. The runtime, installer and CI do not depend on Python: CI installs none. Node runs in
+exactly two jobs, both path-gated and both ending without it when nothing they watch changed:
+the staged skills' Node tests in `skill-scripts-node`, and the screen build and drift check in
+`gui` (Node 24.20.0); no hook path or crw binary needs Node, and a helper script in a skill's
 `scripts/` or `examples/` is an original asset an agent runs when it needs it. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
@@ -122,7 +128,12 @@ Repository ignore files and inline allow comments must not suppress findings.
 An exception requires an exact synthetic value and exact path with review;
 never baseline away an unexplained finding. Keep private receipts, session
 transcripts, personal paths and credentials out of commits and public reports.
-Do not bundle dependencies or runtime state to make CI green.
+Do not bundle dependencies or runtime state to make CI green. The one committed
+generated output is the GUI deployment build under `internal/gui/assets`: the screens
+are built with Node and embedded in the `crw` binary, so a Node-free checkout serves
+them. `node_modules`, dependency caches and installed runtimes are never committed, the
+lockfile stays pinned and the secret scan is unchanged. Source: the GUI port's approval
+scope (Jun, 2026-10-06, "Node only builds the screens and runs the gui CI job").
 
 ### Temporary CI light mode (CRW-790)
 
