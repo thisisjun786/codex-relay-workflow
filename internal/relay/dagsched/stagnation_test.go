@@ -18,12 +18,20 @@ func stagnatingPlan(f *fixture, plan string) {
 }
 
 // addCorrection appends one correction generation of a node's relationship and, unless handOpened, the needs_changes ruling on the
-// generation before it that opened it: the ruling event carries the findings the relay's verdict writer stores, the restoration block
-// being the one entry declared with restoration true. A generation opened by hand has no ruling and no findings at all.
+// generation before it that opened it. It is addCorrectionFrom with the ruling on generation-1, which is what a store with no withdrawn
+// generation holds.
 func (f *fixture) addCorrection(plan, node, rid string, gen int64, findings []map[string]any, handOpened bool) {
 	f.t.Helper()
+	f.addCorrectionFrom(plan, node, rid, gen, gen-1, findings, handOpened)
+}
+
+// addCorrectionFrom appends one correction generation of a node's relationship and, unless handOpened, the needs_changes ruling on the
+// generation it follows (from): the ruling event carries the findings the relay's verdict writer stores, the restoration block being the
+// one entry declared with restoration true. A generation opened by hand has no ruling and no findings at all. A generation that follows a
+// withdrawn one is ruled on the nearest live generation below it, which is what from names here.
+func (f *fixture) addCorrectionFrom(plan, node, rid string, gen, from int64, findings []map[string]any, handOpened bool) {
+	f.t.Helper()
 	now := f.clock()
-	before := gen - 1
 	if !handOpened {
 		raw, err := json.Marshal(findings)
 		if err != nil {
@@ -31,7 +39,7 @@ func (f *fixture) addCorrection(plan, node, rid string, gen int64, findings []ma
 		}
 		event := fmt.Sprintf("evt-rule-%s-%d", rid, gen)
 		f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
-			" VALUES (?, ?, ?, ?, 'ready_for_review', 'child', 'child', 'turn-r', 'completed', '{}', 'final', ?, ?)", event, rid, before, dig(fmt.Sprintf("revision %s %d", rid, before)), now, now)
+			" VALUES (?, ?, ?, ?, 'ready_for_review', 'child', 'child', 'turn-r', 'completed', '{}', 'final', ?, ?)", event, rid, from, dig(fmt.Sprintf("revision %s %d", rid, from)), now, now)
 		f.exec("INSERT INTO verdicts (event_id, record, verdict, next_generation, verdict_turn_id, decided_at) VALUES (?, '{}', 'needs_changes', ?, 'verdict-turn', ?)", event, gen, now)
 		f.exec("INSERT INTO verdict_context (event_id, set_digest, coverage, findings, currency, ack_evidence, recorded_at) VALUES (?, NULL, '{}', ?, 'current', '{}', ?)", event, string(raw), now)
 	}
@@ -40,6 +48,18 @@ func (f *fixture) addCorrection(plan, node, rid string, gen int64, findings []ma
 	f.exec("UPDATE relationships SET execution_generation = ? WHERE relationship_id = ?", gen, rid)
 	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?, ?, ?, ?, ?, 'correction', NULL)",
 		plan, node, rid, gen, dig(fmt.Sprintf("manifest %s %d", rid, gen)))
+}
+
+// withdrawGeneration records a generation the coordinator opened by hand and withdrew before it was sent: its generations row stays, the
+// withdrawal names the generation the relationship goes back to, and the number is never reused.
+func (f *fixture) withdrawGeneration(rid, plan, node string, gen, restored int64) {
+	f.t.Helper()
+	now := f.clock()
+	request := fmt.Sprintf("revision-hand-%s-%d", rid, gen)
+	f.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES (?, ?, ?, 'bound', 'turn-r', 'correction', ?, ?)",
+		rid, gen, request, now, now)
+	f.exec("INSERT INTO dag_generation_withdrawals (relationship_id, execution_generation, plan_id, node_id, dispatch_request_id, opened_reason, restored_generation, reason, withdrawn_by_task_id, coordinator_epoch, withdrawn_at)"+
+		" VALUES (?, ?, ?, ?, ?, 'correction', ?, 'withdrawn before sending', 'parent', 0, ?)", rid, gen, plan, node, request, restored, now)
 }
 
 // rulingFinding is one ruling's findings: the criterion entries, with the restoration block's note differing every round (it carries the
@@ -64,6 +84,30 @@ func (f *fixture) zoneRows() map[string]int {
 func (f *fixture) stagnationOf(plan, node string) *Stagnation {
 	f.t.Helper()
 	return f.read(plan).node(node).Stagnation
+}
+
+// stagnatingHead2 is a second head a stagnation test moves an acceptance onto with a recorded base refresh.
+const stagnatingHead2 = "2222222222222222222222222222222222222222"
+
+// mergeCheckRow appends one merge-check row of an acceptance the way the merge-check writer appends it: the head the acceptance stood on when the row was written (head_sha, which is the stand head
+// after a recorded base refresh), the head the pull request showed (the same here), the failed required checks and the outcome. Writing it directly lets a test put a history there.
+func (f *fixture) mergeCheckRow(acceptance, id string, seq int, head, failed string, round int, outcome string) {
+	f.t.Helper()
+	body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
+	f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+		" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, ?, ?, ?, 'test', 't')", id, acceptance, seq, head, head, dig("evidence "+id), body, failed, round, outcome)
+}
+
+// recordStandHead records a base refresh that moves an acceptance onto another head, the way dag-base-refresh does: the acceptance keeps its row and its head, and the head it STANDS on becomes the
+// record's. The reading follows the head the acceptance stands on now.
+func (f *fixture) recordStandHead(a accepted, head string) {
+	f.t.Helper()
+	generation := a.Acceptance.ExecutionGeneration + 1
+	revision := dig("revision refresh " + head)
+	id := refreshDigest(a.Acceptance.AcceptanceID, a.Acceptance.RelationshipID, generation, a.Event, revision, head, "owner/repo", "dev", "tip", "{}", "[]")
+	f.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'owner/repo', 'dev', 'tip', '{}', '[]', 'parent', 0, 't')",
+		id, a.Acceptance.AcceptanceID, a.Acceptance.RelationshipID, generation, a.Event, revision, head)
 }
 
 // TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung is the red test the issue body names: two corrections carrying the
@@ -155,27 +199,20 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 		f.projectParent()
 		stagnatingPlan(f, "sp")
 		a := f.acceptNode("sp", "I", pinnedOpts)
-		failed := failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}})
-		body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
-		digest := dig("evidence")
-		f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
-			" VALUES ('mc-1', ?, 1, ?, ?, 'tip', ?, ?, ?, 1, 'retry_same_sha', 'failed once', 't')", a.Acceptance.AcceptanceID, head1, head1, digest, body, failed)
-		f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
-			" VALUES ('mc-2', ?, 2, ?, ?, 'tip', ?, ?, ?, 2, 'evicted', 'failed again', 't')", a.Acceptance.AcceptanceID, head1, head1, digest, body, failed)
+		// the retry round's failure is one attempt and the eviction after it another: two distinct failed attempts of the same required check
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
 		st := f.stagnationOf("sp", "I")
 		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure || st.Rung != RungEditPacket || st.FindingDigest != "" {
-			t.Fatalf("two rows failing the same required check read %+v, want count 2 and repeated_check_failure", st)
+			t.Fatalf("two distinct failed attempts of the same required check read %+v, want count 2 and repeated_check_failure", st)
 		}
-		// a head accepted again and evicted again is the same failure a third time: the round restarts, the names do not change
-		f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
-			" VALUES ('mc-3', ?, 3, ?, ?, 'tip', ?, ?, ?, 1, 'evicted', 'again after a fresh acceptance', 't')", a.Acceptance.AcceptanceID, head1, head1, digest, body, failed)
+		// a head accepted again and evicted again is the same check a third time: the round restarts, the attempt does not
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-3", 3, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 3}}), 1, OutcomeEvicted)
 		if st := f.stagnationOf("sp", "I"); st == nil || st.Count != 3 || st.Cause != CauseRepeatedCheckFailure || st.Rung != RungSplitNode {
 			t.Fatalf("the same required check failing a third time reads %+v, want count 3 and split_node", st)
 		}
 		// a different required check failing is a different failure and starts the run over
-		other := failuresJSON([]failure{{Name: "lint", Run: "4", Attempt: 1}})
-		f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
-			" VALUES ('mc-4', ?, 4, ?, ?, 'tip', ?, ?, ?, 1, 'retry_same_sha', 'another check failed', 't')", a.Acceptance.AcceptanceID, head1, head1, digest, body, other)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-4", 4, head1, failuresJSON([]failure{{Name: "lint", Run: "4", Attempt: 1}}), 1, OutcomeRetrySameSHA)
 		if st := f.stagnationOf("sp", "I"); st != nil {
 			t.Fatalf("a different required check reads %+v, want the run reset and no object", st)
 		}
@@ -190,13 +227,8 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 		for gen := int64(2); gen <= 4; gen++ {
 			f.addCorrection("sp", "I", rid, gen, rulingFinding("the same thing", gen), false)
 		}
-		failed := failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}})
-		body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
-		digest := dig("evidence")
-		for seq, round := range []int{1, 2} {
-			f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
-				" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, ?, ?, 'evicted', 'same check failed', 't')", fmt.Sprintf("mc-%d", seq+1), a.Acceptance.AcceptanceID, seq+1, head1, head1, digest, body, failed, round)
-		}
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeEvicted)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
 		st := f.stagnationOf("sp", "I")
 		if st == nil || st.Count != 3 || st.Cause != CauseRepeatedFinding {
 			t.Fatalf("a three-run of findings beside a two-run of checks reads %+v, want repeated_finding at count 3", st)
@@ -227,23 +259,18 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 		f.projectParent()
 		stagnatingPlan(f, "sp")
 		a := f.acceptNode("sp", "I", pinnedOpts)
-		failed := failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}})
-		body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
-		digest := dig("evidence")
-		for seq, round := range []int{1, 2} {
-			f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
-				" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, ?, ?, 'evicted', 'same check failed', 't')", fmt.Sprintf("mc-%d", seq+1), a.Acceptance.AcceptanceID, seq+1, head1, head1, digest, body, failed, round)
-		}
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
 		if st := f.stagnationOf("sp", "I"); st == nil || st.Count != 2 {
 			t.Fatalf("two failed checks on the accepted head read %+v, want count 2", st)
 		}
-		// a repaired head is accepted: the rows of the old head are that head’s history, and this one has failed nothing yet
+		// a REPAIRED head (another head) is accepted: the rows of the old head are that head’s history, and this one has failed nothing yet
 		f.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
 		f.insertAcceptance(Acceptance{AcceptanceID: dig("acc-new"), PlanID: "sp", NodeID: "I", ManifestDigest: a.Manifest, RelationshipID: a.Acceptance.RelationshipID, ExecutionGeneration: 1,
-			EventID: a.Event, RevisionHash: dig("revision acc new"), CriteriaSetDigest: "criteria", Verdict: "verified", HeadSHA: head1, Repository: "owner/repo", PRNumber: 7,
+			EventID: a.Event, RevisionHash: dig("revision acc new"), CriteriaSetDigest: "criteria", Verdict: "verified", HeadSHA: stagnatingHead2, Repository: "owner/repo", PRNumber: 7,
 			AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: "t", State: "active"})
 		if st := f.stagnationOf("sp", "I"); st != nil {
-			t.Fatalf("a head accepted again with no failed check reads %+v, want no object", st)
+			t.Fatalf("a repaired head accepted with no failed check reads %+v, want no object", st)
 		}
 	})
 
@@ -348,6 +375,129 @@ func TestTheStagnationLadderStopsAtFullReplan(t *testing.T) {
 		}
 		if st := g.stagnationOf("sp2", "I"); st == nil || st.Count != 4 || st.Rung != RungNeighbourRepair || st.Next != RungFullReplan {
 			t.Fatalf("count 4 reads %+v, want neighbour_repair and full_replan next", st)
+		}
+	})
+}
+
+// TestTheStagnationCounterReadsTheHeadItStandsOnAndCountsDistinctAttempts is the red test the issue body names: the five reproduced post-merge P1s on PR #710. The reading must count repeated
+// required-check failures on the head the node's acceptance stands on now (standOf, so a recorded base refresh moves it), gathered from every acceptance of that head, by distinct failed attempt of
+// the same required-name set with checks_pending rows transparent; and it must find the ruling that opened a correction generation at the nearest live generation below it, so a withdrawn generation
+// neither counts nor breaks. Each subtest is one of the reproduced cases, and the two controls at the end pin the copies the merge lane writes.
+func TestTheStagnationCounterReadsTheHeadItStandsOnAndCountsDistinctAttempts(t *testing.T) {
+	t.Run("P1-1 failures on the head a base refresh moved the acceptance to are counted", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		// dag-base-refresh moves the acceptance onto H2; the acceptance row keeps H1, and the writer records H2 as head_sha (atStand). Only H2 failed, twice.
+		f.recordStandHead(a, stagnatingHead2)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-h2-1", 1, stagnatingHead2, failuresJSON([]failure{{Name: "dev-gate", Run: "9", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-h2-2", 2, stagnatingHead2, failuresJSON([]failure{{Name: "dev-gate", Run: "9", Attempt: 2}}), 2, OutcomeEvicted)
+		st := f.stagnationOf("sp", "I")
+		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure || st.Rung != RungEditPacket {
+			t.Fatalf("two failures of the same required check on the refreshed head read %+v, want count 2 on the head the acceptance stands on", st)
+		}
+	})
+
+	t.Run("P1-1 the head before a base refresh is that head's history", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		// the accepted head H1 failed twice before the base refresh; after the refresh the acceptance stands on H2, which has failed nothing, so those rows are H1's history
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-h1-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-h1-2", 2, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
+		f.recordStandHead(a, stagnatingHead2)
+		if st := f.stagnationOf("sp", "I"); st != nil {
+			t.Fatalf("the head before a base refresh reads %+v, want no object (another head's history)", st)
+		}
+	})
+
+	t.Run("P1-2a the same failed attempt observed twice is one failure", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		// the same run and attempt of the required check, round 1 both times; only an optional check's result changed the evidence digest
+		same := failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}})
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, same, 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, same, 1, OutcomeRetrySameSHA)
+		if st := f.stagnationOf("sp", "I"); st != nil {
+			t.Fatalf("one failed attempt observed twice reads %+v, want no object", st)
+		}
+	})
+
+	t.Run("P1-2b pending re-runs between two failures do not end the run", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		// two re-runs in progress: a checks_pending row is neither counted nor a break, however many of them sit in the run
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, "[]", 1, OutcomeChecksPending)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-3", 3, head1, "[]", 1, OutcomeChecksPending)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-4", 4, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
+		// a pending row after the newest failure is transparent too
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-5", 5, head1, "[]", 2, OutcomeChecksPending)
+		st := f.stagnationOf("sp", "I")
+		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure {
+			t.Fatalf("fail, rerun pending, fail again reads %+v, want count 2", st)
+		}
+	})
+
+	t.Run("P1-3 a withdrawn generation between two corrections does not hide the ruling", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		rid := a.Acceptance.RelationshipID
+		f.addCorrection("sp", "I", rid, 2, rulingFinding("the same thing", 2), false)
+		// generation 3 was opened by hand and withdrawn before it was sent: the relationship goes back to 2 and the number is never reused
+		f.withdrawGeneration(rid, "sp", "I", 3, 2)
+		// generation 2's report is ruled needs_changes with the same finding and opens generation 4
+		f.addCorrectionFrom("sp", "I", rid, 4, 2, rulingFinding("the same thing", 4), false)
+		st := f.stagnationOf("sp", "I")
+		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedFinding {
+			t.Fatalf("corrections 2 and 4 with the same finding around a withdrawn 3 read %+v, want count 2", st)
+		}
+	})
+
+	t.Run("P1-4 accepting the same head again keeps its unresolved repeated failure", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
+		f.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
+		f.insertAcceptance(Acceptance{AcceptanceID: dig("acc-a2"), PlanID: "sp", NodeID: "I", ManifestDigest: a.Manifest, RelationshipID: a.Acceptance.RelationshipID, ExecutionGeneration: 1,
+			EventID: a.Event, RevisionHash: dig("revision a2"), CriteriaSetDigest: "criteria", Verdict: "verified", HeadSHA: head1, Repository: "owner/repo", PRNumber: 7,
+			AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: "t", State: "active"})
+		// the merge judge copies the eviction of this head onto the acceptance in force as one row (mergejudge.go, round maxRounds)
+		f.mergeCheckRow(dig("acc-a2"), "mc-a2-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), maxRounds, OutcomeEvicted)
+		st := f.stagnationOf("sp", "I")
+		// the copy is the same attempt as mc-2: it is not a third failure, and the two distinct attempts of the head are kept across both acceptances
+		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure {
+			t.Fatalf("the same head accepted again after two failures reads %+v, want count 2 (the copied eviction is the same attempt)", st)
+		}
+	})
+
+	t.Run("an attempt copied to a second acceptance of the same head is one failure", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		// the first acceptance recorded both attempts of the head; the second (in force) carries only the copy of the newest, so the history of the head is still two distinct attempts
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}}), 1, OutcomeRetrySameSHA)
+		f.mergeCheckRow(a.Acceptance.AcceptanceID, "mc-2", 2, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), 2, OutcomeEvicted)
+		f.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
+		f.insertAcceptance(Acceptance{AcceptanceID: dig("acc-b2"), PlanID: "sp", NodeID: "I", ManifestDigest: a.Manifest, RelationshipID: a.Acceptance.RelationshipID, ExecutionGeneration: 1,
+			EventID: a.Event, RevisionHash: dig("revision b2"), CriteriaSetDigest: "criteria", Verdict: "verified", HeadSHA: head1, Repository: "owner/repo", PRNumber: 7,
+			AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: "t", State: "active"})
+		f.mergeCheckRow(dig("acc-b2"), "mc-b2-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), maxRounds, OutcomeEvicted)
+		st := f.stagnationOf("sp", "I")
+		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure {
+			t.Fatalf("an attempt copied to a second acceptance reads %+v, want count 2 across both acceptances of the head", st)
 		}
 	})
 }

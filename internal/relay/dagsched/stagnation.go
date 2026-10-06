@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 
@@ -66,8 +67,9 @@ func (st Stagnation) canonical() map[string]any {
 // its merge-check history (dag_merge_checks, the round and the failed required checks) and its revalidations (dag_acceptance_revalidations). It returns nil below the threshold of 2, and a
 // node that landed reads none whatever the rows say (it is never run again, E-20). It reads no clock and writes nothing.
 //
-// What counts is the current state of the node: an acceptance is the repair, so the rows of the generations before it, and the check rows of a head other than the one it stands on, are the history
-// of a result that was already repaired. A node with no active acceptance counts everything it has.
+// What counts is the current state of the node: an acceptance is the repair, so the rows of the generations before it, and the check rows of a head other than the one it stands on now, are the
+// history of a result that was already repaired. The head a node stands on is the one its acceptance stands on now (standOf): a recorded base refresh moves it, and the check rows of the head it
+// stood on before the record are that head’s history. A node with no active acceptance counts everything it has.
 //
 // A revalidation (dag_acceptance_revalidations) is read as part of the acceptance it re-verifies and not as a row of its own: it re-verifies the SAME accepted output under the plan’s criteria and
 // writes no correction generation, so it moves neither the floor nor the run. It matters here for the other direction: because the active acceptance is what the floor comes from, a node whose result
@@ -75,9 +77,12 @@ func (st Stagnation) canonical() map[string]any {
 func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stagnation, error) {
 	// a node that landed is never run again, so the ladder has nothing to say about it
 	since := int64(0)
-	if acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID); err != nil {
+	head := ""
+	acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+	if err != nil {
 		return nil, err
-	} else if has {
+	}
+	if has {
 		landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc)
 		if err != nil {
 			return nil, err
@@ -92,6 +97,7 @@ func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string
 			return nil, err
 		}
 		since = stand.Generation
+		head = stand.Head
 	}
 	runs, err := s.correctionRuns(ctx, q, plan, n.NodeID, since)
 	if err != nil {
@@ -104,7 +110,7 @@ func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string
 		best = runs[len(runs)-1].count
 		bestDigest = runs[len(runs)-1].digest
 	}
-	checks, err := s.repeatedCheckFailure(ctx, q, plan, n.NodeID)
+	checks, err := s.repeatedCheckFailure(ctx, q, plan, n.NodeID, head)
 	if err != nil {
 		return nil, err
 	}
@@ -170,13 +176,13 @@ type correctionRun struct {
 // The ruling is looked up the way RecordCorrection looks it up: the event of the generation BEFORE this one, in this relationship, that was ruled needs_changes and named this generation next. The
 // relationship and the event are what scope it; the verdict alone would let a correction of one node read another relationship’s ruling when the generation numbers coincide. A generation that several
 // events of that relationship name (a report superseded by a later one) is read once, from the newest ruling.
+//
+// The generation before is the nearest one below it that was not withdrawn (store.LiveGenerationBefore), the same lookup RecordCorrection makes: a withdrawn generation is neither counted nor a
+// break, it is simply not there, and the ruling that opened the correction sits on the live generation below it.
 func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, node string, since int64) ([]correctionRun, error) {
-	rows, err := q.QueryContext(ctx, "SELECT e.execution_generation, v.event_id, c.findings FROM dag_node_executions e"+
-		" LEFT JOIN events ev ON ev.relationship_id = e.relationship_id AND ev.execution_generation = e.execution_generation - 1"+
-		" LEFT JOIN verdicts v ON v.event_id = ev.event_id AND v.verdict = 'needs_changes' AND v.next_generation = e.execution_generation"+
-		" LEFT JOIN verdict_context c ON c.event_id = v.event_id"+
+	rows, err := q.QueryContext(ctx, "SELECT e.execution_generation, e.relationship_id FROM dag_node_executions e"+
 		" WHERE e.plan_id = ? AND e.node_id = ? AND e.kind = 'correction' AND e.execution_generation > ?"+
-		" ORDER BY e.execution_generation, v.decided_at DESC", plan, node, since)
+		" ORDER BY e.execution_generation, e.relationship_id", plan, node, since)
 	if err != nil {
 		return nil, err
 	}
@@ -185,16 +191,30 @@ func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, n
 	var seen int64
 	for rows.Next() {
 		var generation int64
-		var eventID, findings *string
-		if err := rows.Scan(&generation, &eventID, &findings); err != nil {
+		var rid string
+		if err := rows.Scan(&generation, &rid); err != nil {
 			return nil, err
 		}
 		if generation == seen {
 			continue
 		}
 		seen = generation
+		// the generation this one follows: the nearest one below it that was not withdrawn
+		before, err := store.LiveGenerationBefore(ctx, q, rid, generation)
+		if err != nil {
+			return nil, err
+		}
+		var eventID, findings *string
+		found, err := queryOne(ctx, q, "SELECT v.event_id, c.findings FROM verdicts v"+
+			" JOIN events e ON e.event_id = v.event_id"+
+			" JOIN verdict_context c ON c.event_id = v.event_id"+
+			" WHERE e.relationship_id = ? AND e.execution_generation = ? AND v.verdict = 'needs_changes' AND v.next_generation = ?"+
+			" ORDER BY v.decided_at DESC LIMIT 1", []any{rid, before, generation}, &eventID, &findings)
+		if err != nil {
+			return nil, err
+		}
 		digest := ""
-		if findings != nil {
+		if found && findings != nil {
 			digest = correctionFindingDigest(*findings)
 		}
 		if digest == "" {
@@ -243,53 +263,74 @@ func correctionFindingDigest(findings string) string {
 	return dag.Digest(kept)
 }
 
-// repeatedCheckFailure is a node's run of repeated failed required checks: the newest merge-check row of the node's acceptance, and the consecutive rows before it that failed the same non-empty set of
-// required check names as the newest rows of the node's merge-check history, newest first (the merge lane's retry round and its eviction, D-12). Count 2 is the failure seen again after the retry; the round is carried in the history but is not what ends the run, because a head accepted again restarts it. The digest is empty: a check failure has no finding text, and the failed check names are its identity.
-func (s *Scheduler) repeatedCheckFailure(ctx context.Context, q store.Querier, plan, node string) (correctionRun, error) {
-	// only the rows of the head the node’s active acceptance stands on: the checks ran on the commit, so a head accepted again carries its own history and an older head’s failures are history
-	rows, err := q.QueryContext(ctx, "SELECT c.round_no, c.failed_required_json FROM dag_merge_checks c"+
+// repeatedCheckFailure is a node’s run of repeated failed required checks on one head: the newest merge-check row that is not a re-run in progress, and the consecutive rows before it that failed
+// the same non-empty set of required check names, newest first (the merge lane’s retry round and its eviction, D-12). The rows come from EVERY acceptance of the node that observed this head
+// (whatever its state: the checks ran on the commit, so a head accepted again keeps the failures the earlier acceptance recorded), and the head is the one the node’s acceptance stands on now — the
+// accepted head, or after a recorded base refresh the head the record names.
+//
+// The count is the number of DISTINCT failed attempts, not the number of rows: an attempt is the (name, run, attempt) of every failed required check of one judgement, so the same attempt observed
+// again (another evidence digest, or the eviction copied onto a fresh acceptance of the same head) counts once. A checks_pending row is neither counted nor a break: it is a re-run in progress, not a
+// result. A row that failed nothing, or failed another set of names, ends the run. The round is carried in the history but is not what ends the run, because a head accepted again restarts it. The
+// digest is empty: a check failure has no finding text, and the failed check names are its identity.
+func (s *Scheduler) repeatedCheckFailure(ctx context.Context, q store.Querier, plan, node, head string) (correctionRun, error) {
+	if head == "" {
+		return correctionRun{}, nil
+	}
+	rows, err := q.QueryContext(ctx, "SELECT c.failed_required_json, c.outcome FROM dag_merge_checks c"+
 		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id"+
-		" WHERE a.plan_id = ? AND a.node_id = ? AND a.state = 'active' AND c.head_sha = a.head_sha ORDER BY c.rowid DESC", plan, node)
+		" WHERE a.plan_id = ? AND a.node_id = ? AND c.head_sha = ? ORDER BY c.rowid DESC", plan, node, head)
 	if err != nil {
 		return correctionRun{}, err
 	}
 	defer rows.Close()
 	var list []struct {
-		round  int64
-		failed string
+		failed, outcome string
 	}
 	for rows.Next() {
-		var round int64
-		var failed string
-		if err := rows.Scan(&round, &failed); err != nil {
+		var failed, outcome string
+		if err := rows.Scan(&failed, &outcome); err != nil {
 			return correctionRun{}, err
 		}
 		list = append(list, struct {
-			round  int64
-			failed string
-		}{round, failed})
+			failed, outcome string
+		}{failed, outcome})
 	}
 	if err := rows.Err(); err != nil {
 		return correctionRun{}, err
 	}
-	if len(list) < 2 {
+	// a re-run in progress says nothing about the failure: the newest row that is not one names the failure the run is about
+	start := 0
+	for start < len(list) && list[start].outcome == OutcomeChecksPending {
+		start++
+	}
+	if start == len(list) {
 		return correctionRun{}, nil
 	}
-	if names, err := failedNames(list[0].failed); err != nil {
+	first, err := stagnationAttemptOf(list[start].failed)
+	if err != nil {
 		return correctionRun{}, err
-	} else if len(names) == 0 {
+	}
+	if len(first.names) == 0 {
 		return correctionRun{}, nil
 	}
+	seen := map[string]bool{first.identity: true}
 	count := 1
-	for _, row := range list[1:] {
-		same, err := sameFailedRequired(row.failed, list[0].failed)
+	for _, row := range list[start+1:] {
+		if row.outcome == OutcomeChecksPending {
+			continue
+		}
+		next, err := stagnationAttemptOf(row.failed)
 		if err != nil {
 			return correctionRun{}, err
 		}
 		// the same names failing again is the same failure; a different set, or a row that failed nothing, ends the run
-		if !same {
+		if !stagnationSameNames(next.names, first.names) {
 			break
 		}
+		if seen[next.identity] {
+			continue
+		}
+		seen[next.identity] = true
 		count++
 	}
 	if count < stagnationThreshold {
@@ -298,53 +339,64 @@ func (s *Scheduler) repeatedCheckFailure(ctx context.Context, q store.Querier, p
 	return correctionRun{count: count}, nil
 }
 
-// sameFailedRequired is whether two stored failed-required lists name the same non-empty set of checks, compared as a sorted set of names: the same check failing again is the same failure however
-// the forge ordered the runs, and a re-run of it (another run id) is still the same check.
-func sameFailedRequired(a, b string) (bool, error) {
-	left, err := failedNames(a)
-	if err != nil {
-		return false, err
-	}
-	right, err := failedNames(b)
-	if err != nil {
-		return false, err
-	}
-	if len(left) == 0 || len(left) != len(right) {
-		return false, nil
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false, nil
-		}
-	}
-	return true, nil
+// stagnationAttempt is one judgement’s failed required checks: the set of names that failed (the failure’s identity) and the (name, run, attempt) of every one of them (the attempt’s identity). Two
+// judgements are the same attempt exactly when their attempt identities are equal.
+type stagnationAttempt struct {
+	names    []string // sorted, deduplicated
+	identity string
 }
 
-// failedNames is the names of the failed required checks a row records, deduplicated and sorted. The relay's canonical form is a list of objects (name, run, attempt); a row written before that
-// shape holds the names alone. The run identity is deliberately left out: the retry of a check is a new run of the same check, so the name is what makes it the same failure.
-func failedNames(text string) ([]string, error) {
+// stagnationAttemptOf reads the failed required checks a row records: the names that failed and the (name, run, attempt) of each. The relay’s canonical form is a list of objects (name, run, attempt);
+// a row written before that shape holds the names alone, and then the name is the whole attempt (there is no run or attempt to tell two observations apart, so they read as one). The identity is the
+// canonical JSON of the sorted (name, run, attempt) tuples, an unambiguous encoding of a set.
+func stagnationAttemptOf(text string) (stagnationAttempt, error) {
 	if strings.TrimSpace(text) == "" {
-		return nil, nil
+		return stagnationAttempt{}, nil
 	}
 	var list []any
 	if err := json.Unmarshal([]byte(text), &list); err != nil {
-		return nil, err
+		return stagnationAttempt{}, err
 	}
-	seen := map[string]bool{}
+	names := map[string]bool{}
+	tuples := make([]any, 0, len(list))
 	for _, entry := range list {
 		switch f := entry.(type) {
 		case string:
-			seen[f] = true
-		case map[string]any:
-			if name, _ := f["name"].(string); name != "" {
-				seen[name] = true
+			if f == "" {
+				continue
 			}
+			names[f] = true
+			tuples = append(tuples, []any{f, "", int64(0)})
+		case map[string]any:
+			name, _ := f["name"].(string)
+			if name == "" {
+				continue
+			}
+			run, _ := f["run"].(string)
+			attempt, _ := f["attempt"].(float64)
+			names[name] = true
+			tuples = append(tuples, []any{name, run, int64(attempt)})
 		}
 	}
-	out := make([]string, 0, len(seen))
-	for name := range seen {
-		out = append(out, name)
+	out := stagnationAttempt{names: make([]string, 0, len(names))}
+	for name := range names {
+		out.names = append(out.names, name)
 	}
-	sort.Strings(out)
+	sort.Strings(out.names)
+	slices.SortFunc(tuples, func(a, b any) int { return strings.Compare(dag.Canonical(a), dag.Canonical(b)) })
+	out.identity = dag.Canonical(tuples)
 	return out, nil
+}
+
+// stagnationSameNames is whether two sorted name lists are equal.
+func stagnationSameNames(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
