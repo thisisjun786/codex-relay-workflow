@@ -5729,11 +5729,11 @@ request runs had run 26,328 s of job execution time between them. Cancelling doe
 runners it stops, but only from the moment of the cancellation, so the queue time those runs had
 already cost is not given back.
 
-The pattern repeats outside the window, in this pull request itself: a `pull_request` event
-triggered by the review bot started a second run of all ten jobs four seconds after the first,
+The pattern repeats outside the window, in this pull request itself: a `pull_request` event by the
+review bot started a second run of all ten jobs on the same head four seconds after the first,
 because the edited-run reuse of option 7 has not landed yet. Both runs report the same `head_sha`,
-`8e053f26cf`. A body edit on an unchanged base is the case option 7 removes, and this is what it
-removes.
+`8e053f26cf`, which is the pull request head rather than what either run tested; on a base that
+did not move between them the two runs cover one tree.
 
 ### The current concurrency settings, checked against the documentation
 
