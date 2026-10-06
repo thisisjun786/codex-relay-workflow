@@ -46,11 +46,16 @@ func emitRefuseTurnIDForm(thread, turn string) error {
 // unassigned_turn only when that host answered with an exhausted listing that does not hold it.
 // A store that records no socket, a hook a build leaves nil, and a host that could not be reached
 // or read leave the receipt to stage as before (CRW-675).
-func emitConfirmTurn(c *cliRun, thread, turn string) error {
+//
+// The socket is read from the store connection the emit already opened (CRW-846): going through
+// store.StoreSocket would open and close a descriptor of relay.sqlite3 in a process that may hold
+// the store's WAL connection, which drops that connection's POSIX lock. The query and its answer
+// are the ones storeSocket ran.
+func emitConfirmTurn(c *cliRun, s *store.Store, thread, turn string) error {
 	if EmitConfirmTurn == nil || !emitCodexID.MatchString(thread) {
 		return nil
 	}
-	socket := store.StoreSocket(c.state + "/relay.sqlite3")
+	socket := recordedSocket(c.ctx, s)
 	if socket == "" {
 		return nil
 	}
@@ -62,6 +67,16 @@ func emitConfirmTurn(c *cliRun, thread, turn string) error {
 		return nil
 	}
 	return &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + strconv.Quote(turn) + " does not exist on " + strconv.Quote(thread) + ": the host's listing was exhausted and does not hold it, so take the current turn id from the command output and emit again"}
+}
+
+// recordedSocket is schema_meta.socket_path read from an already-open store: "" when the store
+// records none or the read could not be made, which the caller treats as "stage as before".
+func recordedSocket(ctx context.Context, s *store.Store) string {
+	var value string
+	if err := s.Querier(ctx).QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='socket_path'").Scan(&value); err != nil {
+		return ""
+	}
+	return value
 }
 
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
@@ -86,7 +101,7 @@ func cmdEmit(c *cliRun) (any, error) {
 		return nil, err
 	}
 	if c.socket == "" {
-		if err := emitConfirmTurn(c, thread, turn); err != nil {
+		if err := emitConfirmTurn(c, d.Store, thread, turn); err != nil {
 			return nil, err
 		}
 	}

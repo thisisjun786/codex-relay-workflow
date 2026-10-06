@@ -20,7 +20,8 @@ import (
 //
 // A body that states a line estimate is scaled by the measured actual/estimate ratios of the
 // calibration table: when the stated estimate times the 75th-percentile ratio exceeds the ceiling,
-// the decision becomes split_recommended with the reason estimate_scaled_over_ceiling. The ratios
+// the reason estimate_scaled_over_ceiling is shown beside the counts (the answer stays advisory,
+// so the reason never blocks by itself). The ratios
 // are computed from the table on every run (no number is baked into the code) and the percentile
 // arithmetic is exact rational arithmetic, so the same table and body are the same bytes and no
 // measurement can overflow it. Package-level names carry the sizeEstimate prefix (the calibrate
