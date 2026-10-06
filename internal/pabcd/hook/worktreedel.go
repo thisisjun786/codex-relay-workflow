@@ -944,6 +944,7 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 			end := worktreeDelBraceEnd(rest[i+2:]) // a parameter expansion: its own ) does not close the substitution
 			out = append(out, rest[i:i+2+end]...)
 			i += 1 + end
+			r.prev = 'x' // the expansion is part of the word it stands in: a # right after it does not open a comment
 			continue
 		}
 		if backtick {
