@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -246,7 +247,9 @@ func RunHarnessDoctorCLI(args []string, stdout, stderr io.Writer, env host.Looku
 			return 1
 		}
 	} else {
-		fmt.Fprintln(stdout, RenderHarnessReport(report))
+		if _, err := fmt.Fprintln(stdout, RenderHarnessReport(report)); err != nil {
+			return 1
+		}
 	}
 	if report.Overall == HarnessFail {
 		return 1
@@ -326,8 +329,35 @@ func harnessRunWriteJSON(w io.Writer, report HarnessReport) error {
 	if err := encoder.Encode(report); err != nil {
 		return err
 	}
-	_, err := w.Write(buffer.Bytes())
+	_, err := w.Write(harnessRunUnescapeSeparators(buffer.Bytes()))
 	return err
+}
+
+// harnessRunUnescapeSeparators rewrites the \u2028 and \u2029 escapes encoding/json always emits
+// back to the characters themselves, which JSON.stringify writes literally (cli.ts:83). The
+// report carries the manifest version and the environment's active surface, so a separator in
+// either must not change the bytes. An escaped backslash (\\u2028) is data and stays as it is.
+func harnessRunUnescapeSeparators(data []byte) []byte {
+	out := make([]byte, 0, len(data))
+	for i := 0; i < len(data); {
+		if data[i] == '\\' && i+1 < len(data) {
+			if i+5 < len(data) && data[i+1] == 'u' && (string(data[i+2:i+6]) == "2028" || string(data[i+2:i+6]) == "2029") {
+				if string(data[i+2:i+6]) == "2028" {
+					out = utf8.AppendRune(out, '\u2028')
+				} else {
+					out = utf8.AppendRune(out, '\u2029')
+				}
+				i += 6
+				continue
+			}
+			out = append(out, data[i], data[i+1])
+			i += 2
+			continue
+		}
+		out = append(out, data[i])
+		i++
+	}
+	return out
 }
 
 // harnessRunExec is the real HarnessRunner: run file with args under the timeout and answer the
@@ -340,10 +370,11 @@ func harnessRunExec(file string, args []string, timeout time.Duration) HarnessRu
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, file, args...)
+	command.WaitDelay = commandWaitDelay
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
-	if ctx.Err() == context.DeadlineExceeded {
+	if ctx.Err() == context.DeadlineExceeded || errors.Is(err, exec.ErrWaitDelay) {
 		return HarnessRun{Status: harnessRunInt(harnessDriftKilled), Stdout: stdout.String(), Stderr: stderr.String()}
 	}
 	if err == nil {

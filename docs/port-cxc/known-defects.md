@@ -1280,3 +1280,9 @@ are pinned by the recorded oracle in `internal/runtime/doctor/testdata/harness/r
   (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:277`); the port prints `encoding/json`'s
   message with the same FAIL severity (asserted by severity and a non-empty evidence in
   `harness_run_test.go`); port: kept as a runtime diagnostic difference.
+- The oracle's `spawnSync` probe has no bound on a descendant that inherited the output pipe, so
+  a `codex` or `python3` probe whose grandchild holds the pipe can hold the whole report open past
+  its timeout (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:349,620`); the port bounds the
+  wait with `WaitDelay` (the same bound `CodexVersion` uses) and answers the killed status, so a
+  stuck probe degrades to the check's WARN instead of a hang; port: kept as a robustness difference
+  (the oracle's hang cannot be recorded).

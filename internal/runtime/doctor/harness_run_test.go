@@ -17,7 +17,9 @@ package doctor
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -476,5 +478,73 @@ func TestHarnessRunDoctorRecoversCheckPanics(t *testing.T) {
 	}
 	if !strings.HasPrefix(stderr.String(), "crw-ops error: ") || !strings.HasSuffix(stderr.String(), "\n") {
 		t.Errorf("stderr = %q, want the cli.ts catch text", stderr.String())
+	}
+}
+
+// harnessRunFailWriter is a stream that cannot be written to.
+type harnessRunFailWriter struct{}
+
+func (harnessRunFailWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+// TestHarnessRunDoctorCLIFailsWhenTextCannotBeWritten: a report the caller never received is not a
+// success, so the text path reports the write failure the JSON path already did.
+func TestHarnessRunDoctorCLIFailsWhenTextCannotBeWritten(t *testing.T) {
+	tmp := t.TempDir()
+	root := harnessRunPayload(t, tmp, "cli-write", harnessRunPayloadOptions{manifest: "{\"name\":\"crw\",\"version\":\"0.0.1\",\"hooks\":[\"./hooks/a.json\"]}"})
+	codexHome := filepath.Join(tmp, "codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	allOn := map[string]bool{"multi_agent": true, "goals": true, "hooks": true, "default_mode_request_user_input": true}
+	env := harnessRunEnv(map[string]string{"PLUGIN_ROOT": root, "CODEX_HOME": codexHome})
+	code := RunHarnessDoctorCLI(nil, harnessRunFailWriter{}, io.Discard, env, func() (string, error) { return tmp, nil }, harnessRunStub(allOn, "codex-cli 1.2.3\n"), time.Now())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 when the text report cannot be written", code)
+	}
+}
+
+// TestHarnessRunWriteJSONKeepsSeparators: JSON.stringify writes U+2028 and U+2029 literally, so
+// the report bytes must keep them; an escaped backslash sequence is data and stays escaped.
+func TestHarnessRunWriteJSONKeepsSeparators(t *testing.T) {
+	report := HarnessReport{
+		SchemaVersion: HarnessSchemaVersion,
+		Overall:       HarnessPass,
+		Checks:        []HarnessCheck{{Name: "manifest", Severity: HarnessPass, Evidence: "ok"}},
+		PluginVersion: harnessRunString("a\u2028b"),
+		ActiveSurface: harnessRunString("c\u2029d" + "\\u2028"),
+	}
+	var out bytes.Buffer
+	if err := harnessRunWriteJSON(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "\"a\u2028b\"") || !strings.Contains(got, "\"c\u2029d\\\\u2028\"") {
+		t.Fatalf("the separators did not survive as JSON.stringify writes them:\n%s", got)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["pluginVersion"] != "a\u2028b" || parsed["activeSurface"] != "c\u2029d"+"\\u2028" {
+		t.Fatalf("round trip = %v / %v", parsed["pluginVersion"], parsed["activeSurface"])
+	}
+}
+
+// TestHarnessRunExecBoundsAnInheritedPipe: a probe whose descendant holds the output pipe must not
+// hold the report open past the wait delay; it answers the killed status, never a hang.
+func TestHarnessRunExecBoundsAnInheritedPipe(t *testing.T) {
+	saved := commandWaitDelay
+	commandWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { commandWaitDelay = saved })
+	script := filepath.Join(t.TempDir(), "leaky.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 5 &\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	run := harnessRunExec(script, nil, 30*time.Second)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the run waited %s for an inherited pipe", elapsed)
+	}
+	if run.Status == nil || *run.Status != harnessDriftKilled {
+		t.Fatalf("status = %v, want the killed status %d", run.Status, harnessDriftKilled)
 	}
 }
