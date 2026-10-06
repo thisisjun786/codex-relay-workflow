@@ -947,3 +947,95 @@ func TestImproveCollectRecordsTheCriteriaRefreshHistory(t *testing.T) {
 		t.Errorf("the current set digest-b is missing: %+v", criteria)
 	}
 }
+
+// TestImproveCollectRefusesAnOutputUnderASymlinkedSourceDirectory covers the correction's
+// first case: a new file whose parent is a symbolic link into a configured source directory
+// is refused, and nothing appears in the source directory. The parent is resolved with
+// filepath.EvalSymlinks, so an output that does not exist yet cannot slip past the prefix
+// check through an unresolved spelling.
+func TestImproveCollectRefusesAnOutputUnderASymlinkedSourceDirectory(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	link := filepath.Join(s.root, "link")
+	if err := os.Symlink(s.stateDir, link); err != nil {
+		t.Fatal(err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(link, "bundle.json"))
+	if code == 0 || !strings.Contains(stderr, "never overwrites") {
+		t.Fatalf("an output under a symlinked source directory: exit %d, stderr %q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(s.stateDir, "bundle.json")); !os.IsNotExist(err) {
+		t.Errorf("the refused run left a file in the source directory (stat err %v)", err)
+	}
+}
+
+// TestImproveCollectRefusesASymlinkDestination covers the correction's second case: an
+// output whose last name is a symbolic link is refused, because the rename would replace
+// whatever it points at.
+func TestImproveCollectRefusesASymlinkDestination(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	ledger := filepath.Join(s.root, "ledger.jsonl")
+	improveTestWrite(t, ledger, "{\"mode\":\"pr\",\"issue\":\"CRW-1\",\"status\":\"ok\",\"graded_at\":\"2026-10-06T01:00:00Z\"}\n")
+	link := filepath.Join(s.root, "out-link")
+	if err := os.Symlink(ledger, link); err != nil {
+		t.Fatal(err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", link)
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputSymlink) {
+		t.Fatalf("a symlink destination: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputSymlink)
+	}
+	before, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(before), "\"mode\"") {
+		t.Errorf("the ledger behind the link was replaced: %q", before)
+	}
+}
+
+// TestImproveCollectWritesAnOrdinaryOutput is the control: a plain --out with an existing
+// parent still writes the bundle.
+func TestImproveCollectWritesAnOrdinaryOutput(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a','manifest_forbidden','detail')")
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	dir := filepath.Join(s.root, "out")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	if bundle := improveTestReadBundle(t, out); bundle.Schema != improveBundleSchema {
+		t.Errorf("the ordinary output was not written: %+v", bundle)
+	}
+}
+
+// TestImproveCollectRefusesAnOutputWithNoParentDirectory covers the named refusal of a
+// destination whose parent does not exist.
+func TestImproveCollectRefusesAnOutputWithNoParentDirectory(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(s.root, "absent-dir", "bundle.json"))
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputParent) {
+		t.Fatalf("an output with no parent directory: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputParent)
+	}
+}

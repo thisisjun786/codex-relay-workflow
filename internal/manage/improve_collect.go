@@ -45,6 +45,13 @@ const (
 // the bundle as missing.
 const improveReasonSourceUnreadable = "improve_source_unreadable"
 
+// The named refusals of an output path: its parent directory is missing or cannot be
+// resolved, or the destination is an existing symbolic link.
+const (
+	improveReasonOutputParent  = "improve_output_parent_missing"
+	improveReasonOutputSymlink = "improve_output_symlink"
+)
+
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
@@ -220,7 +227,12 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 		return 1
 	}
 	if out != "" {
-		if err := improveRefuseInputOutput(out, section); err != nil {
+		plan, err := improvePlanOutput(out)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+			return 1
+		}
+		if err := improveRefuseInputOutput(plan.Dest, section); err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 			return 1
 		}
@@ -249,20 +261,45 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 		}
 		return 0
 	}
-	if err := improveWriteFile(out, data); err != nil {
+	if err := improveWriteFile(out, data, section); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-// improveRefuseInputOutput refuses an output that is one of the configured sources, so a
-// bundle can never overwrite the evidence it was read from.
-func improveRefuseInputOutput(out string, section improveSection) error {
-	dest, err := improveResolvedPath(out)
+// improveOutputPlan is a resolved output destination: the parent directory with its
+// symlinks followed, and the destination built from it. The guard and the write use the
+// same plan, so a destination that does not exist yet cannot slip past the containment
+// check through an unresolved spelling.
+type improveOutputPlan struct {
+	Dest   string
+	Parent string
+}
+
+// improvePlanOutput resolves an output path. The parent directory must exist and is
+// resolved with filepath.EvalSymlinks; a destination that already exists and is a symbolic
+// link is refused, because the rename would replace whatever it points at.
+func improvePlanOutput(out string) (improveOutputPlan, error) {
+	absolute, err := filepath.Abs(out)
 	if err != nil {
-		return err
+		return improveOutputPlan{}, err
 	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if err != nil {
+		return improveOutputPlan{}, fmt.Errorf("%s: %s: %w", improveReasonOutputParent, out, err)
+	}
+	dest := filepath.Join(parent, filepath.Base(absolute))
+	if info, err := os.Lstat(dest); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return improveOutputPlan{}, fmt.Errorf("%s: %s", improveReasonOutputSymlink, out)
+	}
+	return improveOutputPlan{Dest: dest, Parent: parent}, nil
+}
+
+// improveRefuseInputOutput refuses a resolved destination that is a configured source or
+// lies under one. Both sides are resolved, and an existing pair is also compared with
+// os.SameFile, so a hard link cannot pass the spelling comparison.
+func improveRefuseInputOutput(dest string, section improveSection) error {
 	for _, source := range improveInputPaths(section) {
 		if source == "" {
 			continue
@@ -273,10 +310,26 @@ func improveRefuseInputOutput(out string, section improveSection) error {
 			continue
 		}
 		if dest == resolved || strings.HasPrefix(dest, resolved+string(filepath.Separator)) {
-			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", out, source)
+			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", dest, source)
+		}
+		if same, err := improveSameFile(dest, resolved); err == nil && same {
+			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", dest, source)
 		}
 	}
 	return nil
+}
+
+// improveSameFile reports whether two paths name the same existing file.
+func improveSameFile(a, b string) (bool, error) {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(ai, bi), nil
 }
 
 // improveInputPaths is every path the configuration names.
@@ -302,16 +355,29 @@ func improveResolvedPath(path string) (string, error) {
 	return resolved, nil
 }
 
-// improveWriteFile writes the bundle beside its destination and renames it into place, so a
-// crash leaves either no bundle or the whole one, never a half-written document.
-func improveWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, "improve-bundle-*")
+// improveWriteFile writes the bundle in the resolved parent directory and renames it onto
+// the resolved destination. The temporary file is fsynced, and the refusal check runs again
+// immediately before the rename, so a parent replaced between the first check and the write
+// is still caught.
+func improveWriteFile(out string, data []byte, section improveSection) error {
+	plan, err := improvePlanOutput(out)
+	if err != nil {
+		return err
+	}
+	if err := improveRefuseInputOutput(plan.Dest, section); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(plan.Parent, "improve-bundle-*")
 	if err != nil {
 		return err
 	}
 	name := temp.Name()
 	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := temp.Sync(); err != nil {
 		temp.Close()
 		os.Remove(name)
 		return err
@@ -324,7 +390,16 @@ func improveWriteFile(path string, data []byte) error {
 		os.Remove(name)
 		return err
 	}
-	if err := os.Rename(name, path); err != nil {
+	fresh, err := improvePlanOutput(out)
+	if err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := improveRefuseInputOutput(fresh.Dest, section); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, fresh.Dest); err != nil {
 		os.Remove(name)
 		return err
 	}
