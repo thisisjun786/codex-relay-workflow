@@ -42,7 +42,7 @@ func TestPabcdCLIArgumentsAndStreams(t *testing.T) {
 		code        int
 		out, errOut string
 	}{
-		{[]string{"--help"}, 0, "usage: crw pabcd [-h] {freeze,plan,receipt,evidence,memory,reset,config,scan,review-round,metric,divergence,orchestrate} ...\n", ""},
+		{[]string{"--help"}, 0, "usage: crw pabcd [-h] {freeze,plan,receipt,evidence,memory,reset,config,scan,review-round,metric,divergence,loop,orchestrate} ...\n", ""},
 		{[]string{"plan", "init"}, 1, "", "plan: plan init requires a <slug> argument\n"},
 		{[]string{"receipt", "test", "--help"}, 1, "", "receipt: unexpected argument '--help' before --\n"},
 		{[]string{"receipt", "test"}, 1, "receipt test: --session <id> is required\n", ""},
@@ -63,6 +63,27 @@ func TestPabcdCLIArgumentsAndStreams(t *testing.T) {
 		if code != 0 || errOut != "" || !strings.HasPrefix(out, "crw pabcd "+verb+" — ") || !strings.HasSuffix(out, "\n") {
 			t.Errorf("%s help: %d %q %q", verb, code, out, errOut)
 		}
+	}
+}
+
+// TestPabcdCLILoopVerb drives the loop row through the dispatcher: the bare help tokens exit 0 with the usage
+// block on stdout, and a subcommand's --help is the parse refusal the oracle records, on stderr with exit 1.
+func TestPabcdCLILoopVerb(t *testing.T) {
+	pabcdCLITestHome(t)
+	for _, token := range []string{"help", "--help", "-h"} {
+		code, out, errOut := pabcdCLITestRun([]string{"loop", token}, "")
+		if code != 0 || errOut != "" || out != cli.RenderLoopHelp()+"\n" {
+			t.Fatalf("loop %s: %d %q %q", token, code, out, errOut)
+		}
+	}
+	code, out, errOut := pabcdCLITestRun([]string{"loop", "init", "--help"}, "")
+	if code != 1 || out != "" || errOut != "loop: init: unknown flag '--help'\n" {
+		t.Fatalf("loop init --help: %d %q %q", code, out, errOut)
+	}
+	code, out, errOut = pabcdCLITestRun([]string{"loop", "frobnicate"}, "")
+	if code != 1 || out != "" || !strings.HasPrefix(errOut, "loop: unknown loop verb 'frobnicate' (expected ") ||
+		!strings.HasSuffix(errOut, "); run crw pabcd loop --help\n") {
+		t.Fatalf("loop frobnicate: %d %q %q", code, out, errOut)
 	}
 }
 
