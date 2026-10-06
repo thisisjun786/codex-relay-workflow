@@ -387,7 +387,7 @@ func TestResumeCommandLineAndRefusals(t *testing.T) {
 	// read before the server list, so this is what a record with a field missing reports.
 	missing := `{"settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":["/w"],"model":"m"}}`
 	missingExe, _ := resumeRelayScript(t, resumeTestAssignment, missing, 0)
-	e, out, _ = resumeEnv(t, missingExe)
+	e, _, _ = resumeEnv(t, missingExe)
 	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
 	if failure, ok := err.(*resumeFailure); !ok || failure.Reason != resumeSettingsUnavailable || resumeExit(failure) != usageExit ||
 		!strings.Contains(failure.Detail, "reasoningEffort") {
