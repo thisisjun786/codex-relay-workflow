@@ -20,10 +20,12 @@ package doctor
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -106,7 +108,8 @@ func (c HarnessCheck) MarshalJSON() ([]byte, error) {
 // HarnessReport is DoctorReport (doctor.ts:34-45): the checks, their rollup, and the versions
 // the header shows. The three optional strings keep the oracle three states: nil is an undefined
 // field, which --json omits and the header drops, while a pointer to an empty string is a
-// present empty value, which --json keeps and the header still drops.
+// present empty value, which --json keeps and the header still drops. MarshalJSON below keeps
+// that shape while writing every string the way JSON.stringify writes it.
 type HarnessReport struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Overall       HarnessSeverity `json:"overall"`
@@ -238,9 +241,11 @@ func harnessReportSoft(key string) bool {
 // permanently red); and an unreachable codex warns rather than fails, because a diagnostic
 // must not manufacture a verdict about state it could not read.
 func HarnessFeaturesCheck(run HarnessRun) HarnessCheck {
+	// The runner's killed marker is the oracle's null status: spawnSync answers status null when its
+	// timeout ended the probe, so no exit number belongs in the evidence (harnessRunExec, doctor.ts:352).
 	if run.Status == nil || *run.Status != 0 {
 		evidence := "could not read 'codex features list'"
-		if run.Status != nil {
+		if run.Status != nil && *run.Status != harnessDriftKilled {
 			evidence += fmt.Sprintf(" (exit %d)", *run.Status)
 		}
 		if stderr := text.Trim(run.Stderr); stderr != "" {
@@ -364,18 +369,54 @@ func HarnessWslCheck() HarnessCheck {
 func RenderHarnessReport(report HarnessReport) string {
 	lines := make([]string, 0, len(report.Checks)+3)
 	for _, check := range report.Checks {
-		line := "[" + string(check.Severity) + "] " + check.Name + ": " + harnessReportText(check.Evidence)
+		line := "[" + string(check.Severity) + "] " + harnessReportText(check.Name) + ": " + harnessReportText(check.Evidence)
 		if check.Repair != nil && *check.Repair != "" && check.Severity != HarnessPass {
 			line += "\n    repair: " + harnessReportText(*check.Repair)
 		}
 		lines = append(lines, line)
 	}
 	if report.PluginVersion != nil && *report.PluginVersion != "" {
-		lines = append([]string{"crw v" + *report.PluginVersion}, lines...)
+		lines = append([]string{harnessReportText("crw v" + *report.PluginVersion)}, lines...)
 	}
 	if report.CodexVersion != nil && *report.CodexVersion != "" {
-		lines = append([]string{"codex v" + *report.CodexVersion}, lines...)
+		lines = append([]string{harnessReportText("codex v" + *report.CodexVersion)}, lines...)
 	}
 	lines = append(lines, "overall: "+string(report.Overall))
 	return strings.Join(lines, "\n")
 }
+
+// MarshalJSON is JSON.stringify of the report (doctor.ts:34-45 read by cli.ts:83-84): the six
+// fields in the oracle's order, each optional string present only when it is not undefined, and
+// every string quoted as harnessReportJSONString quotes it -- so a lone surrogate the manifest
+// version, the codex version or the active surface carries is written as its escape, not as the
+// U+FFFD the text renderer writes for the same string. The checks array is marshalled by
+// encoding/json, which delegates each element to HarnessCheck.MarshalJSON.
+func (r HarnessReport) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteString(`{"schemaVersion":`)
+	b.WriteString(strconv.Itoa(r.SchemaVersion))
+	b.WriteString(`,"overall":`)
+	b.WriteString(harnessReportJSONString(string(r.Overall)))
+	b.WriteString(`,"checks":`)
+	checks, err := json.Marshal(r.Checks)
+	if err != nil {
+		return nil, err
+	}
+	b.Write(checks)
+	if r.PluginVersion != nil {
+		b.WriteString(`,"pluginVersion":`)
+		b.WriteString(harnessReportJSONString(*r.PluginVersion))
+	}
+	if r.CodexVersion != nil {
+		b.WriteString(`,"codexVersion":`)
+		b.WriteString(harnessReportJSONString(*r.CodexVersion))
+	}
+	if r.ActiveSurface != nil {
+		b.WriteString(`,"activeSurface":`)
+		b.WriteString(harnessReportJSONString(*r.ActiveSurface))
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
+// HarnessOptions is DoctorOptions (doctor.ts:47-62), minus wslDeps (WSL is out of scope).

@@ -37,6 +37,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
 // The oracle's paths and probe timeouts (doctor.ts:263, :291, :313, :91, :350).
@@ -46,6 +47,9 @@ const (
 	harnessRunAgentsDir        = "agents"
 	harnessRunVersionTimeout   = 5 * time.Second
 	harnessRunFeaturesTimeout  = 8 * time.Second
+	// harnessRunPluginName is the plugin folder the installed root sits under in the Codex
+	// home's plugin cache: <codexHome>/plugins/cache/<marketplace>/crw/<version>.
+	harnessRunPluginName = "crw"
 )
 
 // RunHarnessDoctor is runDoctor (doctor.ts:261-360): assemble every check of the CXC plugin slice
@@ -214,7 +218,8 @@ func harnessRunString(value string) *string { return &value }
 // assemble the report, print it as text unless --json and exit 1 on an overall FAIL. An option the
 // parser rejects, a check that throws where the oracle throws outside every catch, and a working
 // directory that cannot be read all take the entry point's catch (cli.ts:155-162). The plugin root
-// comes from PLUGIN_ROOT; without it there is nothing to diagnose, so the command is a usage error.
+// is the host-provided PLUGIN_ROOT when it is set, else the one crw plugin root the Codex home's
+// cache holds (harnessRunRoot); a root that cannot be resolved is the same catch, not the usage exit.
 func RunHarnessDoctorCLI(args []string, stdout, stderr io.Writer, env host.LookupEnv, getwd func() (string, error), runner HarnessRunner, now time.Time) int {
 	jsonMode := false
 	hookArgs := make([]string, 0, len(args))
@@ -229,10 +234,9 @@ func RunHarnessDoctorCLI(args []string, stdout, stderr io.Writer, env host.Looku
 	if err != nil {
 		return harnessRunCatch(stderr, err)
 	}
-	pluginRoot, _ := env("PLUGIN_ROOT")
-	if pluginRoot == "" {
-		fmt.Fprintln(stderr, "crw doctor harness: PLUGIN_ROOT is not set; the harness checks read the plugin package it names")
-		return usageExit
+	pluginRoot, err := harnessRunRoot(options, env)
+	if err != nil {
+		return harnessRunCatch(stderr, err)
 	}
 	projectRoot, err := getwd()
 	if err != nil {
@@ -255,6 +259,61 @@ func RunHarnessDoctorCLI(args []string, stdout, stderr io.Writer, env host.Looku
 		return 1
 	}
 	return 0
+}
+
+// harnessRunRoot is the plugin package the harness checks read. The oracle derives it from its
+// own module path (cli.ts:27-31), which a Go binary installed through the runtime pointer has no
+// relation to; the port takes the host-provided PLUGIN_ROOT when it is set (the port's convention,
+// internal/harness/observation.go and internal/role/spawn/hook.go) and otherwise the one crw
+// plugin root the Codex home's cache holds, found as HarnessInstalledRootCheck finds it.
+//
+// Exactly one root is diagnosed. No root, several roots or a cache that cannot be read is the
+// catch path (cli.ts:155-162), never a guessed root and never the usage exit: the command has an
+// answer to give either way.
+func harnessRunRoot(options HarnessOptions, env host.LookupEnv) (string, error) {
+	if value, set := env("PLUGIN_ROOT"); set && value != "" {
+		return value, nil
+	}
+	codexHome, err := harnessInstallCodexHome(options.CodexHome, record.Environ(env), harnessInstallPasswdHome)
+	if err != nil {
+		return "", err
+	}
+	cacheRoot := filepath.Join(codexHome, "plugins", "cache")
+	found := harnessRunInstalledRoots(cacheRoot)
+	if len(found) == 1 {
+		return found[0], nil
+	}
+	if len(found) == 0 {
+		return "", fmt.Errorf("no installed crw plugin under %s: no plugins/cache/<marketplace>/crw/<version> directory holds .codex-plugin/plugin.json; set PLUGIN_ROOT to the plugin package to diagnose", cacheRoot)
+	}
+	return "", fmt.Errorf("%d installed crw plugin roots under %s (%s); set PLUGIN_ROOT to the one to diagnose", len(found), cacheRoot, strings.Join(found, ", "))
+}
+
+// harnessRunInstalledRoots lists the version directories under cacheRoot that hold a plugin
+// manifest, the way harnessInstallRootBody scans the same tree (harness_install.go): every
+// marketplace segment, the crw folder, then each version. A cache or marketplace directory that
+// cannot be read contributes nothing rather than failing the scan.
+func harnessRunInstalledRoots(cacheRoot string) []string {
+	markets, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return nil
+	}
+	found := []string{}
+	for _, market := range markets {
+		dir := filepath.Join(cacheRoot, harnessInstallNodeName(market.Name()), harnessRunPluginName)
+		versions, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range versions {
+			root := filepath.Join(dir, harnessInstallNodeName(entry.Name()))
+			if _, err := os.Stat(filepath.Join(root, harnessRunManifestRelative)); err != nil {
+				continue
+			}
+			found = append(found, root)
+		}
+	}
+	return found
 }
 
 // harnessRunCatch is the entry point's catch (cli.ts:155-162): the message on stderr, exit 1.
