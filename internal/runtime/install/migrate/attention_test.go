@@ -108,3 +108,26 @@ func TestAttentionLeavesEveryRecordAlone(t *testing.T) {
 		t.Errorf("attention must write nothing: %v", err)
 	}
 }
+func TestAttentionReportsTheInstallManifestTableKeys(t *testing.T) {
+	base := isolate(t)
+	home := filepath.Join(base, "codex")
+	mkdirs(t, home)
+	put(t, filepath.Join(home, installSource), "{\"tableKeys\":{\"a.b\":{\"priorValue\":\"old/.codexclaw/x\",\"appliedValue\":\"old/.codexclaw/y\"}}}", 0o644)
+	r, err := Open(Options{Scope: ScopeCodex, CodexHome: home})
+	must(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	p, err := classify(r)
+	must(t, err)
+	got := attention(r, p)
+	if !attHas(got, installSource, AttentionOldRoot, "tableKeys.*.priorValue") || !attHas(got, installSource, AttentionOldRoot, "tableKeys.*.appliedValue") {
+		t.Fatalf("the manifest table rows must be scanned: %v", got)
+	}
+}
+
+func TestAttentionBoundsWhatItReads(t *testing.T) {
+	_, r, p := apPlan(t, map[string]string{"sessions/rec-1.json": "{\"note\":\"" + strings.Repeat("x", attentionReadCap) + "\"}"}, nil)
+	got := attention(r, p)
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "larger than") {
+		t.Fatalf("got %v, want one entry naming the size bound", got)
+	}
+}

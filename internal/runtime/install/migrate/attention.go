@@ -9,7 +9,9 @@ package migrate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -24,6 +26,9 @@ const (
 
 // attentionValueCap bounds the retained value a report carries; the record itself is never changed.
 const attentionValueCap = 256
+
+// attentionReadCap bounds the bytes of one record this report reads, so a very large artifact cannot exhaust memory.
+const attentionReadCap = 1 << 20
 
 // Attention is one report entry: the copied record, the listed field, the retained value and why it needs attention.
 type Attention struct {
@@ -185,9 +190,19 @@ func attentionWalk(v any, path []string, label string, f func(field, value strin
 		return
 	}
 	if path[0] == "*" {
-		if arr, ok := v.([]any); ok {
-			for _, e := range arr {
+		switch node := v.(type) {
+		case []any:
+			for _, e := range node {
 				attentionWalk(e, path[1:], label+".*", f)
+			}
+		case map[string]any:
+			keys := make([]string, 0, len(node))
+			for k := range node {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				attentionWalk(node[k], path[1:], label+".*", f)
 			}
 		}
 		return
@@ -258,5 +273,12 @@ func (a *attentionRun) read(scope Scope, path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, attentionReadCap+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > attentionReadCap {
+		return nil, errors.New("the record is larger than the attention view reads")
+	}
+	return data, nil
 }

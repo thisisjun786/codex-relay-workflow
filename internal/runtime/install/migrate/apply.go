@@ -2,9 +2,11 @@ package migrate
 
 // apply.go is the M3 write step of docs/port-cxc/state-migration.md: it publishes the plan classify() produced, in
 // dependency order, through M1's Publisher, and never changes a payload byte. It creates the destination directories
-// first, gives each the private applyTempMode, publishes the files in rank order (artifacts, plans and backups before the
-// bindings, ledgers and control records that reference them), and finishes the directories' modes deepest first. A
-// refusal or an error stops the run and leaves every published file whole, so a rerun skips what is already equal.
+// first, each at the private marker mode below, then publishes the files in rank order (artifacts and plans before the
+// records that reference them), and finishes the directories' modes deepest first. Every source is rechecked against the
+// preflight inventory immediately before its own write and every published file is verified afterwards, so a source that
+// moved stops the run. A refusal or an error stops the run and leaves every published file whole, so a rerun skips what
+// is already equal. No hook, installer, activation or startup path calls this.
 
 import (
 	"cmp"
@@ -17,10 +19,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// applyTempMode is the private mode every directory this run creates is given before its children are published, so a
-// directory is never readable more widely than its final mode allows; finishModes restores the source mode. It is also
-// the mark of a directory this migration made, because nothing else widens a directory to exactly 0o700.
-const applyTempMode fs.FileMode = 0o700
+// applyTempRaw is the raw mode, permission bits plus the sticky bit, that every directory this run creates is given
+// before its children are published: private, and a marker no other writer in this repository uses, so a rerun can tell
+// a directory this migration made from one it must leave alone. applyTempMode is the same mode as the permission bits a
+// Go FileMode reports, which is what the comparisons below use.
+const (
+	applyTempRaw  = 0o1700
+	applyTempMode = fs.FileMode(0o700)
+)
 
 // applyReasonChanged refuses a source that moved between classification and publication, which stops the run.
 const applyReasonChanged Reason = "changed"
@@ -103,15 +109,15 @@ func applyDir(it Item) bool {
 	return applyWrites(it) && it.Size == 0 && it.Digest == ([sha256.Size]byte{})
 }
 
-// applyRank orders the files: 0 the artifacts, plans and backups a referencing record depends on, 1 the rest, 2 the
-// bindings, ledgers and control records that reference them (state-migration.md Preflight 3).
+// applyRank orders the files: 0 the plans and artifacts, 1 the rest (backups, and the freeze that names its plan files),
+// 2 the bindings, ledgers and control records that reference them (state-migration.md Preflight 3).
 func applyRank(it Item) int {
 	if it.Scope == ScopeCodex { // the install manifest, the self-heal marker and the config backups
 		return 0
 	}
 	p := it.Source
 	switch {
-	case p == "plan" || strings.HasPrefix(p, "plan/"), p == "evidence" || strings.HasPrefix(p, "evidence/"), p == "interview/freeze.json":
+	case p == "plan" || strings.HasPrefix(p, "plan/"), p == "evidence" || strings.HasPrefix(p, "evidence/"):
 		return 0
 	case p == "sessions" || strings.HasPrefix(p, "sessions/"), p == "ledger.jsonl", p == "interviews" || strings.HasPrefix(p, "interviews/"),
 		p == "goalplans" || strings.HasPrefix(p, "goalplans/"), p == "sources" || strings.HasPrefix(p, "sources/"),
@@ -123,6 +129,9 @@ func applyRank(it Item) int {
 }
 
 func (a *applyRun) run() error {
+	if a.plan == nil {
+		return nil
+	}
 	if err := a.ensureRoots(); err != nil {
 		return err
 	}
@@ -196,9 +205,20 @@ func (a *applyRun) open(scope Scope, rel string, dest bool) (*Dir, error) {
 	return child, nil
 }
 
-// ensureRoots creates and pins the destination root of every scope the plan covers, before any state is written, and
-// gives a root this call created the private applyTempMode at once. EnsureProjectRoot also publishes CRW's canonical
-// .gitignore no-replace when it is absent and refuses a conflicting initialization race.
+// rootItem returns the plan item of a scope's root, whose Mode the source root is rechecked against.
+func (a *applyRun) rootItem(scope Scope) (Item, bool) {
+	for _, it := range a.plan.Items {
+		if it.Scope == scope && applyDir(it) && applyRel(it.Source) == "" {
+			return it, true
+		}
+	}
+	return Item{}, false
+}
+
+// ensureRoots rechecks each source root, then creates and pins the destination root of every scope the plan covers before
+// any state is written. The root is made at the private marker mode first, because EnsureProjectRoot creates it 0777
+// subject to umask and only a root this call made may be chmodded afterwards; EnsureProjectRoot also publishes CRW's
+// canonical .gitignore no-replace and refuses a conflicting initialization race. The Codex scope maps its files in place.
 func (a *applyRun) ensureRoots() error {
 	if a.plan == nil {
 		return nil
@@ -214,19 +234,25 @@ func (a *applyRun) ensureRoots() error {
 		if pair == nil {
 			continue
 		}
+		if it, ok := a.rootItem(scope); ok && pair.Source != nil {
+			cur, err := classifyDirMode(pair.Source)
+			if err != nil {
+				return err
+			}
+			if cur != it.Mode.Perm() {
+				return refuse(applyReasonChanged, it.Source, "the source root mode changed since classification")
+			}
+		}
 		made := pair.Dest == nil
-		var root *Dir
-		var err error
-		if scope == ScopeProject {
+		root, err := pair.EnsureDest(applyTempRaw)
+		if err == nil && scope == ScopeProject {
 			root, err = a.pub.EnsureProjectRoot(pair)
-		} else {
-			root, err = pair.EnsureDest(uint32(applyTempMode))
 		}
 		if err != nil {
 			return err
 		}
 		if made {
-			if err = applyChmod(root, applyTempMode); err != nil {
+			if err = applyChmodRaw(root, applyTempRaw); err != nil {
 				return err
 			}
 		}
@@ -236,8 +262,8 @@ func (a *applyRun) ensureRoots() error {
 }
 
 // makeDirectories creates, in plan order (the planner emits a parent before its children), every destination directory
-// the plan names and does not already hold, giving each the private applyTempMode, and rechecks the source mode against
-// the preflight inventory so a moved source stops the run. The scope-root items belong to ensureRoots and are skipped.
+// the plan names and does not already hold, gives each the private marker mode, and rechecks each source mode against the
+// preflight inventory. The scope-root items belong to ensureRoots and are skipped.
 func (a *applyRun) makeDirectories() error {
 	for i, it := range a.plan.Items {
 		if !applyDir(it) || applyRel(it.Destination) == "" {
@@ -261,8 +287,8 @@ func (a *applyRun) makeDirectories() error {
 	return nil
 }
 
-// ensureDestDir returns the pinned destination directory, creating it with applyTempMode when it is absent, and records
-// that this run created it.
+// ensureDestDir returns the pinned destination directory, creating it with the private marker mode when it is absent, and
+// records that this run created it.
 func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	if d, ok := a.dirs[applyKey(scope, rel)]; ok {
 		return d, nil
@@ -280,10 +306,10 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, err
 	}
-	if child, err = parent.EnsureChild(base, uint32(applyTempMode)); err != nil {
+	if child, err = parent.EnsureChild(base, applyTempRaw); err != nil {
 		return nil, err
 	}
-	if err := applyChmod(child, applyTempMode); err != nil {
+	if err := applyChmodRaw(child, applyTempRaw); err != nil {
 		_ = child.Close()
 		return nil, err
 	}
@@ -294,7 +320,7 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 
 // writeFiles publishes every file item in rank order, keeping plan order inside a rank, and rechecks each source against
 // the preflight inventory immediately before its own write, so a source that moved stops the run instead of publishing
-// other bytes. The source is opened once and both hashed and published through that one descriptor.
+// other bytes.
 func (a *applyRun) writeFiles() error {
 	order := make([]int, 0, len(a.plan.Items))
 	for i, it := range a.plan.Items {
@@ -342,14 +368,17 @@ func (a *applyRun) publishFile(i int, it Item) error {
 	res, err := a.pub.Publish(parent, leaf, f, it.Size, it.Mode.Perm())
 	a.result.Items[i].Result = res
 	if err != nil {
+		// A failure after the no-replace rename leaves a whole final file, which the report must count.
+		if res == ResultFailed && a.checkDest(parent, leaf, it) == nil {
+			a.result.WritesCompleted++
+			a.result.Items[i].Note = "the final file is whole but its directory sync failed"
+		}
 		return err
 	}
 	switch res {
 	case ResultCopied:
 		a.result.WritesCompleted++
-		if err := a.checkDestMode(parent, leaf, it.Mode.Perm()); err != nil {
-			return err
-		}
+		return a.checkDest(parent, leaf, it)
 	case ResultAlreadyEqual:
 		// Nothing was written, and equality never changes a destination's mode or times, so a difference is reported.
 		if got, err := a.destMode(parent, leaf); err == nil && got != it.Mode.Perm() {
@@ -359,7 +388,28 @@ func (a *applyRun) publishFile(i int, it Item) error {
 	return nil
 }
 
-// destMode returns the permission bits of a file in a pinned directory.
+// checkDest verifies a file this run published against the preflight inventory: its size, its bytes and its mode. The
+// source was hashed before the publish, so this is the check that the bytes that landed are the bytes the plan
+// authorized, even if a writer changed the source while the temporary was being filled.
+func (a *applyRun) checkDest(parent *Dir, leaf string, it Item) error {
+	f, info, err := parent.OpenRegular(leaf)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	got, err := sum(f)
+	if err != nil {
+		return err
+	}
+	if info.Size() != it.Size || got != it.Digest {
+		return &fs.PathError{Op: "verify", Path: parent.join(leaf), Err: errors.New("the published bytes differ from the preflight inventory")}
+	}
+	if info.Mode().Perm() != it.Mode.Perm() {
+		return &fs.PathError{Op: "stat", Path: parent.join(leaf), Err: errors.New("the destination mode is " + info.Mode().Perm().String() + ", want " + it.Mode.Perm().String())}
+	}
+	return nil
+}
+
 func (a *applyRun) destMode(parent *Dir, leaf string) (fs.FileMode, error) {
 	f, info, err := parent.OpenRegular(leaf)
 	if err != nil {
@@ -369,18 +419,10 @@ func (a *applyRun) destMode(parent *Dir, leaf string) (fs.FileMode, error) {
 	return info.Mode().Perm(), nil
 }
 
-// checkDestMode rechecks the mode of a file this run published against the preflight inventory.
-func (a *applyRun) checkDestMode(parent *Dir, leaf string, want fs.FileMode) error {
-	got, err := a.destMode(parent, leaf)
-	if err == nil && got != want {
-		err = &fs.PathError{Op: "stat", Path: parent.join(leaf), Err: errors.New("the destination mode is " + got.String() + ", want " + want.String())}
-	}
-	return err
-}
-
-// finishModes applies the source mode to every directory the plan names, deepest first. A directory this run created is
-// finished outright. One that was already there is finished only when its mode is exactly the private applyTempMode this
-// run leaves behind (so a rerun repairs an interruption) and every entry is one the plan expects; others keep their mode.
+// finishModes applies the source mode to every directory the plan names, deepest first. A directory this run created, or
+// one an interrupted run left at the private marker mode, is finished; any other directory keeps its mode and is reported.
+// The marker is the raw mode, sticky bit included, which nothing else in this repository writes, so a directory this
+// migration did not create is never chmodded.
 func (a *applyRun) finishModes() error {
 	order := make([]int, 0, len(a.plan.Items))
 	for i, it := range a.plan.Items {
@@ -389,11 +431,10 @@ func (a *applyRun) finishModes() error {
 		}
 	}
 	depth := func(i int) int {
-		rel := applyRel(a.plan.Items[i].Destination)
-		if rel == "" {
-			return 0
+		if rel := applyRel(a.plan.Items[i].Destination); rel != "" {
+			return strings.Count(rel, "/") + 1
 		}
-		return strings.Count(rel, "/") + 1
+		return 0
 	}
 	slices.SortStableFunc(order, func(x, y int) int { return cmp.Compare(depth(y), depth(x)) })
 	for _, i := range order {
@@ -403,12 +444,12 @@ func (a *applyRun) finishModes() error {
 		if err != nil {
 			return err
 		}
-		cur, err := classifyDirMode(dir)
+		raw, err := applyDirRaw(dir)
 		if err != nil {
 			return err
 		}
-		switch {
-		case a.made[applyKey(it.Scope, rel)], cur == applyTempMode && cur != it.Mode.Perm() && a.entriesExpected(it.Scope, rel, dir):
+		switch cur := fs.FileMode(raw).Perm(); {
+		case a.made[applyKey(it.Scope, rel)], raw == applyTempRaw && cur != it.Mode.Perm() && a.entriesExpected(it.Scope, rel, dir):
 			err = applyChmod(dir, it.Mode.Perm())
 		case cur == it.Mode.Perm():
 		default:
@@ -422,8 +463,8 @@ func (a *applyRun) finishModes() error {
 }
 
 // entriesExpected reports whether every entry of an existing destination directory is one the plan accounts for: a
-// written item names it, a reported item names it, or it is the canonical .gitignore of a project root, which
-// EnsureProjectRoot publishes and which no plan item names when the source .codexclaw holds none.
+// written or reported item names it, or it is the canonical .gitignore of a project root, which EnsureProjectRoot
+// publishes and no plan item names when the source .codexclaw holds none.
 func (a *applyRun) entriesExpected(scope Scope, rel string, dir *Dir) bool {
 	names, err := dir.Names()
 	if err != nil {
@@ -465,9 +506,21 @@ func (a *applyRun) stop(i int, it Item, err error) error {
 }
 
 // applyChmod sets a pinned directory's permission bits through its descriptor, so a replaced ancestor cannot redirect it.
-func applyChmod(d *Dir, mode fs.FileMode) error {
-	if err := unix.Fchmod(d.fd(), uint32(mode.Perm())); err != nil {
+func applyChmod(d *Dir, mode fs.FileMode) error { return applyChmodRaw(d, uint32(mode.Perm())) }
+
+// applyChmodRaw sets a pinned directory's raw mode, the sticky marker included.
+func applyChmodRaw(d *Dir, raw uint32) error {
+	if err := unix.Fchmod(d.fd(), raw); err != nil {
 		return &fs.PathError{Op: "fchmod", Path: d.path, Err: err}
 	}
 	return nil
+}
+
+// applyDirRaw returns a pinned directory's raw mode: its permission bits and its sticky bit.
+func applyDirRaw(d *Dir) (uint32, error) {
+	var st unix.Stat_t
+	if err := unix.Fstat(d.fd(), &st); err != nil {
+		return 0, &fs.PathError{Op: "stat", Path: d.path, Err: err}
+	}
+	return st.Mode & 0o7777, nil
 }

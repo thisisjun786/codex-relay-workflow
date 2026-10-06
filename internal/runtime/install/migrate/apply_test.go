@@ -138,19 +138,20 @@ func TestApplyInterruptionThenRerun(t *testing.T) {
 
 func TestApplyWritesReferencesLast(t *testing.T) {
 	ws, r, p := apPlan(t, map[string]string{
-		"ledger.jsonl":    "{\"event\":\"created\"}",
-		"sessions/a.json": "{\"phase\":\"P\"}",
-		"plan/s/x.md":     "plan bytes",
+		"ledger.jsonl":          "{\"event\":\"created\"}",
+		"sessions/a.json":       "{\"phase\":\"P\"}",
+		"plan/s/x.md":           "plan bytes",
+		"interview/freeze.json": "{\"planFiles\":[{\"path\":\"x.md\"}]}",
 	}, nil)
 	pub := newPub(t)
-	pub.at = apFailRename(3) // .gitignore, then the plan artifact, then the first referencing record
+	pub.at = apFailRename(3) // .gitignore, then the plan artifact, then the freeze that names it
 	if _, err := applyWith(r, p, pub); !errors.Is(err, errApplyInterrupted) {
 		t.Fatalf("interrupted run: %v", err)
 	}
 	if _, err := os.Lstat(apDst(ws, "plan/s/x.md")); err != nil {
 		t.Errorf("the plan artifact must be published first: %v", err)
 	}
-	for _, rel := range []string{"ledger.jsonl", "sessions/a.json"} {
+	for _, rel := range []string{"interview/freeze.json", "ledger.jsonl", "sessions/a.json"} {
 		if _, err := os.Lstat(apDst(ws, rel)); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s must not be published before the plan artifact: %v", rel, err)
 		}
@@ -164,7 +165,7 @@ func TestApplyRankTable(t *testing.T) {
 		want  int
 	}{
 		{ScopeProject, "plan", 0}, {ScopeProject, "plan/s/x.md", 0}, {ScopeProject, "evidence", 0},
-		{ScopeProject, "evidence/rec-1/test-receipt.json", 0}, {ScopeProject, "interview/freeze.json", 0},
+		{ScopeProject, "evidence/rec-1/test-receipt.json", 0}, {ScopeProject, "interview/freeze.json", 1},
 		{ScopeProject, "sessions", 2}, {ScopeProject, "sessions/a.json", 2}, {ScopeProject, "ledger.jsonl", 2},
 		{ScopeProject, "interviews/rec-1.jsonl", 2}, {ScopeProject, "goalplans", 2},
 		{ScopeProject, "goalplans/s/goalplan.json", 2}, {ScopeProject, "goalplans/s/ledger.jsonl", 2},
@@ -186,22 +187,28 @@ func TestApplyRankTable(t *testing.T) {
 	}
 }
 
-func TestApplyRechecksTheDestinationMode(t *testing.T) {
-	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, nil)
-	pub := newPub(t)
-	// The rename step runs before the rename and the directory sync after it, so the destination exists by then.
-	seen := 0
-	pub.at = func(step string) error {
-		if step == "dirsync" {
-			seen++
-			if seen == 2 {
-				_ = os.Chmod(apDst(ws, "sessions/a.json"), 0o600)
+// The rename step runs before the rename and the directory sync after it, so the destination exists by then.
+func TestApplyRechecksThePublishedFile(t *testing.T) {
+	for name, damage := range map[string]func(t *testing.T, path string){
+		"mode":  func(t *testing.T, path string) { _ = os.Chmod(path, 0o600) },
+		"bytes": func(t *testing.T, path string) { put(t, path, "changed bytes", 0o644) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, nil)
+			pub := newPub(t)
+			seen := 0
+			pub.at = func(step string) error {
+				if step == "dirsync" {
+					if seen++; seen == 2 {
+						damage(t, apDst(ws, "sessions/a.json"))
+					}
+				}
+				return nil
 			}
-		}
-		return nil
-	}
-	if _, err := applyWith(r, p, pub); err == nil {
-		t.Fatal("a destination whose mode changed must fail the run")
+			if _, err := applyWith(r, p, pub); err == nil {
+				t.Fatal("a published file that changed must fail the run")
+			}
+		})
 	}
 }
 
@@ -230,8 +237,8 @@ func TestApplyFinishesDirectoryModesAfterAnInterruption(t *testing.T) {
 	if _, err := applyWith(r, p, pub); !errors.Is(err, errApplyInterrupted) {
 		t.Fatalf("interrupted run: %v", err)
 	}
-	if fi, err := os.Stat(apDst(ws, "plan/s")); err != nil || fi.Mode().Perm() != applyTempMode {
-		t.Fatalf("the interrupted run must leave the temporary mode: %v %v", fi, err)
+	if fi, err := os.Stat(apDst(ws, "plan/s")); err != nil || fi.Mode().Perm() != applyTempMode || fi.Mode()&fs.ModeSticky == 0 {
+		t.Fatalf("the interrupted run must leave the private marker mode: %v %v", fi, err)
 	}
 	if _, err := apply(r, p); err != nil {
 		t.Fatal(err)
@@ -242,16 +249,21 @@ func TestApplyFinishesDirectoryModesAfterAnInterruption(t *testing.T) {
 }
 
 func TestApplyKeepsTheModeOfAForeignDirectory(t *testing.T) {
-	ws, r, p := apPlan(t, map[string]string{"plan/s/x.md": "plan bytes"}, apReadOnlySource(t, "plan/s"))
-	// A destination directory this migration did not create, whose mode differs from the source's.
+	ws, r, p := apPlan(t, map[string]string{"plan/s/x.md": "plan bytes", "sessions/a.json": "{\"phase\":\"P\"}"}, apReadOnlySource(t, "plan/s"))
+	// Two directories this migration did not create: one at 0755, one private at 0700 holding only plan-named entries.
+	// Neither carries the migration's private marker mode, so neither may be chmodded.
 	mkdirs(t, apDst(ws, "plan/s"))
+	mkdirs(t, apDst(ws, "sessions"))
+	must(t, os.Chmod(apDst(ws, "sessions"), 0o700))
 	res, err := apply(r, p)
 	must(t, err)
-	if fi, err := os.Stat(apDst(ws, "plan/s")); err != nil || fi.Mode().Perm() != 0o755 {
-		t.Errorf("a directory the migration did not create must keep its mode: %v %v", fi, err)
-	}
-	if ai := apItem(t, res, "plan/s"); !strings.Contains(ai.Note, "kept its mode") {
-		t.Errorf("the retained directory must be reported, note = %q", ai.Note)
+	for _, rel := range []string{"plan/s", "sessions"} {
+		if fi, err := os.Stat(apDst(ws, rel)); err != nil || fi.Mode().Perm() != 0o700 && rel == "sessions" || rel == "plan/s" && (err != nil || fi.Mode().Perm() != 0o755) {
+			t.Errorf("%s must keep its mode: %v %v", rel, fi, err)
+		}
+		if ai := apItem(t, res, rel); !strings.Contains(ai.Note, "kept its mode") {
+			t.Errorf("%s must be reported, note = %q", rel, ai.Note)
+		}
 	}
 }
 
@@ -320,5 +332,51 @@ func TestApplyNeverStartsOnARefusedPlan(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(ws, crwdir.DirName)); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a refused plan must write nothing: %v", err)
+	}
+}
+func TestApplyWithANilPlanWritesNothing(t *testing.T) {
+	base := isolate(t)
+	ws := filepath.Join(base, "ws")
+	mkdirs(t, ws)
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	res, err := apply(r, nil)
+	if err != nil || res.WritesCompleted != 0 || len(res.Items) != 0 {
+		t.Fatalf("a nil plan must be a no-op: %v %v", res, err)
+	}
+}
+
+func TestApplyRefusesAChangedSourceRoot(t *testing.T) {
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, nil)
+	src := filepath.Join(ws, ProjectSourceName)
+	must(t, os.Chmod(src, 0o700))
+	t.Cleanup(func() { _ = os.Chmod(src, 0o755) })
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a source root whose mode changed must stop the run")
+	}
+}
+
+func TestApplyCountsAWholeFileWhoseDirectorySyncFailed(t *testing.T) {
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, nil)
+	pub := newPub(t)
+	seen := 0
+	pub.at = func(step string) error {
+		if step == "dirsync" {
+			if seen++; seen == 2 {
+				return errApplyInterrupted
+			}
+		}
+		return nil
+	}
+	res, err := applyWith(r, p, pub)
+	if err == nil {
+		t.Fatal("a failed directory sync must stop the run")
+	}
+	if res.WritesCompleted != 1 {
+		t.Errorf("the whole final file must be counted: %d", res.WritesCompleted)
+	}
+	if get(t, apDst(ws, "sessions/a.json")) != "{\"phase\":\"P\"}" {
+		t.Error("the final file must be whole")
 	}
 }
