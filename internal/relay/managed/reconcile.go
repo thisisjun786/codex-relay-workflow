@@ -153,6 +153,18 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 	if !unknownCreation(r.receipt) {
 		return nil, nil
 	}
+	// A repeat whose reservation already recorded the accepted child and standby turn adopts that
+	// recorded identity and never reads the host: the identity was published by a run that observed
+	// it, and a host that has moved on since (the business turn beside the standby turn, or the
+	// standby turn gone from a shorter listing) must not talk the engine out of it.
+	if child, standby, ok := r.reservationRecordedIdentity(); ok {
+		base := reconciliation{attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+		base.state, base.thread = reconAdopted, child
+		base.detail = fmt.Sprintf("the reservation recorded standby turn %s for thread %s", standby, child)
+		r.receipt, r.adopted = adopted(r.receipt, child, standby), true
+		r.reconciled = &base
+		return nil, nil
+	}
 	d, err := r.decide(ctx)
 	if err != nil {
 		return nil, err
@@ -197,6 +209,23 @@ func (r *startRun) holdProject(ctx context.Context) error {
 		r.projectLock = func() { once.Do(func() { _ = held() }) }
 	}
 	return r.m.scopeRefusal(ctx, r.attemptIdentity(), r.req)
+}
+
+// reservationRecordedIdentity is the child and standby turn the reservation already published for this
+// creation, when it published them for the very thread the unknown receipt names.
+//
+// Reservation.Receipt records an accepted row only with a non-blank child and turn
+// (reservation.go), so a row that says accepted always carries both; the equality against the
+// receipt's own thread is what keeps the recorded identity from being adopted for a thread the
+// creation did not leave (a receipt that names none, or a newer attempt whose receipt names
+// another thread, falls through to decide() unchanged).
+func (r *startRun) reservationRecordedIdentity() (string, string, bool) {
+	child, standby := r.row.ChildTaskID.String, r.row.StandbyTurnID.String
+	receiptThread := pyjson.Text(r.receipt["threadId"])
+	if !r.row.ReceiptStatus.Valid || r.row.ReceiptStatus.String != "accepted" || !delivery.ValidSegment(child) || !delivery.ValidSegment(standby) || !delivery.ValidSegment(receiptThread) || child != receiptThread {
+		return "", "", false
+	}
+	return child, standby, true
 }
 
 // adopted is the unknown receipt as a creation that reached its thread: the thread is the one observed and thread/start is among the effects,
@@ -579,10 +608,17 @@ func (r *startRun) standbyTurnDecision(base reconciliation, thread string, rows 
 	return decision{}, false
 }
 
-// standbyTurnInput is the text of a summary turn's first user message: the first userMessage item's own text, or, when the item carries
-// none, its first text part. A summary item may state the text directly on the item or nest it in content, and the bridge's own reads
-// accept both (delivery.itemText reads an item's text first). A turn with no user message, or one whose text cannot be read, answers "",
-// which never equals the bootstrap.
+// standbyTurnInput is the text of a summary turn's first user message, and only when that message
+// is the whole of what this creation sent: the standby is recognised on the message, not on a
+// fragment of it, so a message that carries anything besides the bootstrap is not it.
+//
+// A summary item may state the text directly on the item or nest it in content, and the bridge's
+// own reads accept both (delivery.itemText reads an item's text first). Either way the whole
+// message has to be one text part: an item's own text is read only when the content beside it is
+// absent, empty, or that same single text part, and a message without its own text is read only
+// when the content is exactly one text part. The part's other keys are the host's (text_elements
+// and the like) and are not read. Two or more parts, a part that is not text, or an item text that
+// differs from the content answer "", which never equals the bootstrap.
 func standbyTurnInput(row map[string]any) string {
 	items, _ := row["items"].([]any)
 	for _, item := range items {
@@ -590,18 +626,39 @@ func standbyTurnInput(row map[string]any) string {
 		if pyjson.Text(message["type"]) != "userMessage" {
 			continue
 		}
-		if text := pyjson.Text(message["text"]); text != "" {
+		return standbyMessageText(message)
+	}
+	return ""
+}
+
+// standbyMessageText is one user message's standby text, or "" when the message is not the
+// bootstrap alone (standbyTurnInput).
+func standbyMessageText(message map[string]any) string {
+	parts := standbyMessageParts(message)
+	if text := pyjson.Text(message["text"]); text != "" {
+		if len(parts) == 0 {
 			return text
 		}
-		content, _ := message["content"].([]any)
-		for _, part := range content {
-			if text := pyjson.Text(pyjson.Map(part)["text"]); text != "" {
-				return text
-			}
+		if len(parts) == 1 && pyjson.Text(parts[0]["type"]) == "text" && pyjson.Text(parts[0]["text"]) == text {
+			return text
 		}
 		return ""
 	}
+	if len(parts) == 1 && pyjson.Text(parts[0]["type"]) == "text" {
+		return pyjson.Text(parts[0]["text"])
+	}
 	return ""
+}
+
+// standbyMessageParts is a message's content as a list of parts; a message that carries none reads as no
+// parts, whatever shape the host left behind.
+func standbyMessageParts(message map[string]any) []map[string]any {
+	content, _ := message["content"].([]any)
+	parts := make([]map[string]any, 0, len(content))
+	for _, part := range content {
+		parts = append(parts, pyjson.Map(part))
+	}
+	return parts
 }
 
 // standbyRecheck is when a recognised standby turn that is still in progress is looked at again: the grace period after the later of the
