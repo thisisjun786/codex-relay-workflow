@@ -1,0 +1,207 @@
+package reset
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+)
+
+// resetLinkWalkRoot opens dir as an os.Root and closes it when the test ends.
+func resetLinkWalkRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	return root
+}
+
+// resetLinkWalkWorkspace makes a directory holding keep/ (with inner.txt), which the links of
+// these cases point at.
+func resetLinkWalkWorkspace(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestResetLinkWalkRemovesDotEndingLinkInARenamedPinnedDirectory: the judgement walks the target's
+// components through the pinned descriptor and never uses the root's path name, so renaming the
+// pinned directory between resetPin and the removal no longer changes the verdict. The dot-ending
+// link is removed and reset continues with the remaining candidates, as it did before CRW-745.
+func TestResetLinkWalkRemovesDotEndingLinkInARenamedPinnedDirectory(t *testing.T) {
+	base := t.TempDir()
+	sessions := filepath.Join(base, "sessions")
+	if err := os.MkdirAll(filepath.Join(sessions, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("keep/.", filepath.Join(sessions, "a.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(sessions, "b.json")); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	observed, err := parent.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := resetPin(parent, "sessions", observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(sessions, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := ResetResult{Removed: []string{}, Absent: []string{}}
+	if err := resetRmIfExists(pinned, "a.json", "a.json", &result); err != nil {
+		t.Fatalf("a.json: %v", err)
+	}
+	if err := resetRmIfExists(pinned, "b.json", "b.json", &result); err != nil {
+		t.Fatalf("b.json: %v (reset must continue with the remaining candidates)", err)
+	}
+	if len(result.Removed) != 1 || result.Removed[0] != "a.json" {
+		t.Errorf("removed = %v, want [a.json]", result.Removed)
+	}
+	if len(result.Absent) != 1 || result.Absent[0] != "b.json" {
+		t.Errorf("absent = %v, want [b.json]", result.Absent)
+	}
+	if _, err := os.Lstat(filepath.Join(moved, "a.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the pinned link must be removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "keep", "inner.txt")); err != nil {
+		t.Errorf("target directory lost: %v", err)
+	}
+}
+
+// TestResetLinkWalkChainDoesNotOpenTheTargetDirectory: a link whose immediate target is another
+// link ending in a dot component (interviews -> alias, alias -> keep/.) is judged by walking the
+// chain, so the target directory is never opened. The root stat seam counts the descriptor-path
+// calls; a walk that never opens the target makes none, where CRW-745's dot-ending check on the
+// link's own Readlink text only does not see through the chain.
+func TestResetLinkWalkChainDoesNotOpenTheTargetDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name, link, target string
+		wantExists         bool
+	}{
+		{"chain_ending_dot", "interviews", "alias", true},
+		{"chain_ending_dot_missing", "gone", "alias_missing", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := resetLinkWalkWorkspace(t)
+			if err := os.Symlink("keep/.", filepath.Join(dir, "alias")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("missing/.", filepath.Join(dir, "alias_missing")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, filepath.Join(dir, tc.link)); err != nil {
+				t.Fatal(err)
+			}
+			root := resetLinkWalkRoot(t, dir)
+			calls := 0
+			stat := func(name string) (os.FileInfo, error) {
+				calls++
+				return root.Stat(name)
+			}
+			got, err := resetLinkTargetExistsWith(root, tc.link, stat)
+			if err != nil {
+				t.Fatalf("resetLinkTargetExistsWith: %v", err)
+			}
+			if got != tc.wantExists {
+				t.Errorf("exists = %v, want %v", got, tc.wantExists)
+			}
+			if calls != 0 {
+				t.Errorf("root stat calls = %d, want 0: the target directory must not be opened", calls)
+			}
+		})
+	}
+}
+
+// TestResetLinkWalkJudgesLikeToday pins the verdicts the walk must not change: an absent target, a
+// link loop, a chain past 40 links, an out-of-root absolute target, and a component that is not a
+// directory where a directory is needed. Every one of these judges as it did before the walk.
+func TestResetLinkWalkJudgesLikeToday(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		setup      func(t *testing.T, dir, outside string) string
+		wantExists bool
+	}{
+		{"absent_target", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "missing", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
+		{"link_loop", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "loop.json", filepath.Join(dir, "loop.json"))
+			return "loop.json"
+		}, false},
+		{"chain_past_40", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "keep/inner.txt", filepath.Join(dir, "c41"))
+			for i := 40; i >= 1; i-- {
+				resetLinksLink(t, "c"+strconv.Itoa(i+1), filepath.Join(dir, "c"+strconv.Itoa(i)))
+			}
+			resetLinksLink(t, "c1", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
+		{"out_of_root_absolute_present", func(t *testing.T, dir, outside string) string {
+			resetLinksWrite(t, filepath.Join(outside, "keep.json"), "outside")
+			resetLinksLink(t, filepath.Join(outside, "keep.json"), filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, true},
+		{"out_of_root_absolute_dangling", func(t *testing.T, dir, outside string) string {
+			resetLinksLink(t, filepath.Join(outside, "gone.json"), filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
+		{"not_a_directory_component", func(t *testing.T, dir, _ string) string {
+			resetLinksWrite(t, filepath.Join(dir, "file"), "regular")
+			resetLinksLink(t, "file/inner", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
+		{"trailing_slash_on_a_regular_file", func(t *testing.T, dir, _ string) string {
+			resetLinksWrite(t, filepath.Join(dir, "file"), "regular")
+			resetLinksLink(t, "file/", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
+		{"empty_component_inside_the_target", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "keep//inner.txt", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, true},
+		{"dotdot_above_the_root", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "../../outside.json", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, outside := resetLinkWalkWorkspace(t), t.TempDir()
+			link := tc.setup(t, dir, outside)
+			root := resetLinkWalkRoot(t, dir)
+			got, err := resetLinkTargetExists(root, link)
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v", err)
+			}
+			if got != tc.wantExists {
+				t.Errorf("exists = %v, want %v", got, tc.wantExists)
+			}
+		})
+	}
+}

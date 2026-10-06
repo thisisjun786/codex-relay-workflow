@@ -3,7 +3,6 @@ package reset
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -111,15 +110,18 @@ func TestResetLinkDotTargetRemovesTheLinkNotTheTarget(t *testing.T) {
 	})
 }
 
-// TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved: the dot-ending branch judges on the root's
-// own path, so it needs that path to still name the pinned directory. When another process renames the
-// pinned directory first, the judgement refuses instead of falling back to the descriptor (which is
-// what CRW-554 forbids opening for such a target) and the link is left in place. The descriptor path
-// dev used would have removed it; the difference is recorded in this issue's known-defects file.
+// TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved: CRW-745 judged a dot-ending target on the
+// root's own path, so it needed that path to still name the pinned directory and refused once another
+// process renamed it. The walk through the pinned descriptor never uses the root's path name, so the
+// verdict is the one dev had before CRW-745: the link is removed and its target survives. The name
+// keeps the CRW-745 case label; its expectation is the one row this issue changes.
 func TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved(t *testing.T) {
 	base := t.TempDir()
 	sessions := filepath.Join(base, "sessions")
 	if err := os.MkdirAll(filepath.Join(sessions, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("keep/.", filepath.Join(sessions, "a.json")); err != nil {
@@ -147,15 +149,17 @@ func TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := ResetResult{Removed: []string{}, Absent: []string{}}
-	err = resetRmIfExists(pinned, "a.json", "a.json", &result)
-	if err == nil || !strings.Contains(err.Error(), "reset directory changed") {
-		t.Fatalf("err = %v, want a 'reset directory changed' refusal", err)
+	if err := resetRmIfExists(pinned, "a.json", "a.json", &result); err != nil {
+		t.Fatalf("resetRmIfExists: %v", err)
 	}
-	if len(result.Removed) != 0 {
-		t.Errorf("removed = %v, want none", result.Removed)
+	if len(result.Removed) != 1 || result.Removed[0] != "a.json" {
+		t.Errorf("removed = %v, want [a.json]", result.Removed)
 	}
-	if _, statErr := os.Lstat(filepath.Join(moved, "a.json")); statErr != nil {
-		t.Errorf("the link must stay: %v", statErr)
+	if _, err := os.Lstat(filepath.Join(moved, "a.json")); !os.IsNotExist(err) {
+		t.Errorf("the pinned link must be removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "keep", "inner.txt")); err != nil {
+		t.Errorf("target directory lost: %v", err)
 	}
 }
 
