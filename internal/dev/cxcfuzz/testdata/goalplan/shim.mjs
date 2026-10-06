@@ -24,13 +24,34 @@ const goalplanPath = (cwd, slug) => join(goalplanDir(cwd, slug), GOALPLAN_FILE);
 
 const SLUG = "rec-plan";
 
-// Both sides stamp the wall clock into updatedAt, so the two values can never match; each is rewritten
-// to one placeholder before the answers compare. The Go side masks its own the same way.
-const TIMESTAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
+// writeGoalplan restamps the plan's updatedAt from the wall clock, so the two sides' written values
+// can never match; each is rewritten to one placeholder before the answers compare. Only that key is
+// masked, and only at the plan's top level: every other timestamp-shaped value (a review round's
+// openedAt, a persisted updatedAt, a sourceIdentity's capturedAt) is compared as stored, because
+// masking by shape would hide a persisted timestamp the port rewrites to another instant (CRW-708
+// generation 3, c8). The read form needs no mask: the oracle's reader defaults a missing or non-text
+// updatedAt to the epoch, a fixed value both sides keep, and it never stamps the clock.
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const TIMESTAMP_PLACEHOLDER = "@TS@";
 
-function mask(text) {
-  return text.replace(TIMESTAMP, TIMESTAMP_PLACEHOLDER);
+// maskUpdatedAt is the plan text with the value of its top-level updatedAt replaced by the
+// placeholder, when that value is a wall-clock stamp. A parsed copy decides whether to mask; the
+// replacement is spliced into the original text so every other byte is unchanged.
+function maskUpdatedAt(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return text;
+  if (typeof parsed.updatedAt !== "string" || !TIMESTAMP.test(parsed.updatedAt)) return text;
+  const key = /"updatedAt"\s*:\s*"/.exec(text);
+  if (key === null) return text;
+  const start = key.index + key[0].length;
+  const end = text.indexOf('"', start);
+  if (end === -1) return text;
+  return text.slice(0, start) + TIMESTAMP_PLACEHOLDER + text.slice(end);
 }
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one, then
@@ -61,7 +82,7 @@ function run(request) {
       answer.field = read.diagnostic.field;
     }
   }
-  answer.plan = read.plan === null ? null : mask(JSON.stringify(read.plan, null, 2));
+  answer.plan = read.plan === null ? null : JSON.stringify(read.plan, null, 2);
   if (read.plan === null) return answer;
   try {
     writeGoalplan(root, read.plan);
@@ -70,7 +91,7 @@ function run(request) {
     return answer;
   }
   try {
-    answer.written = mask(readFileSync(goalplanPath(root, SLUG), "utf8"));
+    answer.written = maskUpdatedAt(readFileSync(goalplanPath(root, SLUG), "utf8"));
   } catch (error) {
     answer.writeError = error instanceof Error ? error.message : String(error);
   }

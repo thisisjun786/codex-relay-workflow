@@ -20,15 +20,50 @@ const { readStateStrict, writeState, statePath } = await import(oracleRoot + "/p
 
 const SESSION_ID = "s";
 
-// Both sides stamp the wall clock into updatedAt, so the two values can never match. Each is rewritten
-// to one placeholder before the answers compare; the Go side masks its own the same way.
-const TIMESTAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
+// The write restamps updatedAt from the wall clock, so the two sides' written values can never match;
+// each is rewritten to one placeholder before the answers compare. Only that key is masked, and only
+// at the document's top level: every other timestamp-shaped value (a persisted updatedAt, a
+// recordedAt, a capturedAt) is compared as stored, because masking by shape would hide a persisted
+// timestamp the port rewrites to another instant (CRW-708 generation 3, c8). The read form's
+// updatedAt is masked only when the reader defaulted it from the clock, which it does when the source
+// file carried no updatedAt string; a persisted updatedAt is compared as stored.
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // The Go side writes the same literal; it holds no regexp metacharacter.
 const TIMESTAMP_PLACEHOLDER = "@TS@";
 
-function mask(text) {
-  return text.replace(TIMESTAMP, TIMESTAMP_PLACEHOLDER);
+// maskUpdatedAt is the document text with the value of its top-level updatedAt replaced by the
+// placeholder, when that value is a wall-clock stamp. A parsed copy decides whether to mask; the
+// replacement is spliced into the original text so every other byte is unchanged.
+function maskUpdatedAt(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return text;
+  if (typeof parsed.updatedAt !== "string" || !TIMESTAMP.test(parsed.updatedAt)) return text;
+  const key = /"updatedAt"\s*:\s*"/.exec(text);
+  if (key === null) return text;
+  const start = key.index + key[0].length;
+  const end = text.indexOf('"', start);
+  if (end === -1) return text;
+  return text.slice(0, start) + TIMESTAMP_PLACEHOLDER + text.slice(end);
+}
+
+// readDefaultedUpdatedAt is whether readStateStrict will create the document's updatedAt from the
+// clock, which it does when the source file holds no updatedAt string (an absent, unreadable or
+// non-object file included).
+function readDefaultedUpdatedAt(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return true;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return true;
+  return typeof parsed.updatedAt !== "string";
 }
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one, then
@@ -47,6 +82,7 @@ function run(request) {
   // input, and the shrinker can never leave the two sides reading different documents.
   const source = join(root, ".crw", "sessions", SESSION_ID + ".json");
   const target = join(root, ".codexclaw", "sessions", SESSION_ID + ".json");
+  const sourceText = existsSync(source) ? readFileSync(source, "utf8") : "";
   if (existsSync(source)) {
     mkdirSync(dirname(target), { recursive: true });
     copyFileSync(source, target);
@@ -54,7 +90,8 @@ function run(request) {
   const { state, unreadable } = readStateStrict(root, SESSION_ID);
   // The state travels as its text form, JSON.stringify(state, null, 2), the shape the port's
   // state.Encode prints, so both sides compare the same rebuilt state and the same rewritten bytes.
-  const answer = { unreadable, state: mask(JSON.stringify(state, null, 2)) };
+  const stateText = JSON.stringify(state, null, 2);
+  const answer = { unreadable, state: readDefaultedUpdatedAt(sourceText) ? maskUpdatedAt(stateText) : stateText };
   try {
     writeState(root, state);
   } catch (error) {
@@ -62,7 +99,7 @@ function run(request) {
     return answer;
   }
   try {
-    answer.written = mask(readFileSync(statePath(root, SESSION_ID), "utf8"));
+    answer.written = maskUpdatedAt(readFileSync(statePath(root, SESSION_ID), "utf8"));
   } catch (error) {
     answer.writeError = error instanceof Error ? error.message : String(error);
   }

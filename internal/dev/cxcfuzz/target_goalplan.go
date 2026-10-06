@@ -38,24 +38,24 @@ func goalplanGo(input any, env Env) (any, error) {
 	read := goalplan.ReadGoalplanDetailed(env.Root, goalplanSlug)
 	answer := goalplanAnswer(read)
 	if read.Plan == nil {
-		return maskTimestamps(answer), nil
+		return maskTimestamps(answer, false), nil
 	}
 	locked, err := goalplan.WithGoalplanWriteLock(env.Root, goalplanSlug, func(plan *goalplan.Goalplan) (struct{}, error) {
 		return struct{}{}, goalplan.WriteGoalplan(env.Root, plan)
 	}, nil)
 	if err != nil {
-		return maskTimestamps(answer.Set("writeError", err.Error())), nil
+		return maskTimestamps(answer.Set("writeError", err.Error()), false), nil
 	}
 	// The lock is an ok/locked/unreadable union: a refusal never reaches the write, so its reason is
 	// the answer rather than the original bytes left on disk.
 	if locked.Kind != "ok" {
-		return maskTimestamps(answer.Set("writeError", locked.Kind+": "+locked.Reason)), nil
+		return maskTimestamps(answer.Set("writeError", locked.Kind+": "+locked.Reason), false), nil
 	}
 	written, err := os.ReadFile(filepath.Join(env.Root, ".crw", "goalplans", goalplanSlug, goalplan.GoalplanFile))
 	if err != nil {
-		return maskTimestamps(answer.Set("writeError", err.Error())), nil
+		return maskTimestamps(answer.Set("writeError", err.Error()), false), nil
 	}
-	return maskTimestamps(answer.Set("written", string(written))), nil
+	return maskTimestamps(answer.Set("written", string(written)), false), nil
 }
 
 // goalplanAnswer is the read half of both sides' answers: the diagnostic kind and field, and the

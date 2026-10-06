@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"encoding/json"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -58,47 +59,122 @@ func stateText(s state.State) string {
 // stateGo is the Go side: ReadStateStrict then WriteState, then the rewritten file bytes. A refused
 // write is reported as writeError, which is an intentionally-changed candidate when it stops a loss.
 func stateGo(input any, env Env) (any, error) {
+	raw, _ := os.ReadFile(state.StatePath(env.Root, stateSessionID))
 	s, unreadable := state.ReadStateStrict(env.Root, stateSessionID)
 	if err := state.WriteState(env.Root, s); err != nil {
-		return maskTimestamps(stateAnswer(unreadable, s, "", err)), nil
+		return maskTimestamps(stateAnswer(unreadable, s, "", err), readDefaultedUpdatedAt(raw)), nil
 	}
 	written, err := os.ReadFile(state.StatePath(env.Root, stateSessionID))
 	if err != nil {
-		return maskTimestamps(stateAnswer(unreadable, s, "", err)), nil
+		return maskTimestamps(stateAnswer(unreadable, s, "", err), readDefaultedUpdatedAt(raw)), nil
 	}
-	return maskTimestamps(stateAnswer(unreadable, s, string(written), nil)), nil
+	return maskTimestamps(stateAnswer(unreadable, s, string(written), nil), readDefaultedUpdatedAt(raw)), nil
 }
 
-// timestampText is an ISO-8601 instant with milliseconds, the shape a defaulted or stamped updatedAt
-// takes. Both sides stamp the wall clock, so the two values can never match; each is rewritten to one
-// placeholder before comparison. A persisted timestamp is identical on both sides, so masking it too
-// hides nothing.
-var timestampText = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`)
+// timestampText is an ISO-8601 instant with milliseconds, the shape a wall-clock stamp takes. Only a
+// value of exactly this shape under a write-stamped key is masked; every other timestamp-shaped value
+// (a persisted updatedAt, a recordedAt, a capturedAt, a review round's openedAt, a plan's
+// finalGate.updatedAt) is compared as stored, because masking it by shape would hide a persisted
+// timestamp the port rewrites to another instant — exactly the difference this target exists to catch
+// (CRW-708 generation 3, c8). The mask is by key, at the document's top level, not by text shape.
+var timestampText = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
 // timestampPlaceholder stands where a write timestamp was. It holds no regexp metacharacter, because
 // ReplaceAllString reads $ in the replacement as a group reference (and ${TS} would expand to
 // nothing); the shim uses the same literal.
 const timestampPlaceholder = "@TS@"
 
-func maskTimestamps(value any) any {
-	switch v := value.(type) {
-	case string:
-		return timestampText.ReplaceAllString(v, timestampPlaceholder)
-	case pyjson.Object:
-		out := make(pyjson.Object, 0, len(v))
-		for _, item := range v {
-			out = append(out, pyjson.Field{Key: item.Key, Value: maskTimestamps(item.Value)})
+// maskTimestamps masks an answer's document texts. "state" (a state answer) and "plan" (a plan
+// answer) are the form the reader rebuilt, and "written" the form the writer published. The write
+// always restamps the document's updatedAt from its own wall clock, so the written form's updatedAt
+// is always masked. The read form's updatedAt is masked only when maskRead says the two sides' readers
+// can disagree there (a state reader whose source carried no updatedAt string defaults it from the
+// clock, so the two sides hold different instants); a value both sides keep as stored is never masked,
+// so a port that drops or rewrites a persisted updatedAt is a difference rather than a Same. createdAt
+// is never masked: the only wall-clock createdAt (buildGoalplan) is on neither path these targets
+// drive, so it is stored data on both sides.
+func maskTimestamps(answer any, maskRead bool) any {
+	object, ok := answer.(pyjson.Object)
+	if !ok {
+		return answer
+	}
+	out := make(pyjson.Object, 0, len(object))
+	for _, item := range object {
+		switch item.Key {
+		case "state", "plan":
+			out = append(out, pyjson.Field{Key: item.Key, Value: maskDocumentText(item.Value, maskRead)})
+		case "written":
+			out = append(out, pyjson.Field{Key: item.Key, Value: maskDocumentText(item.Value, true)})
+		default:
+			out = append(out, item)
 		}
-		return out
-	case []any:
-		out := make([]any, 0, len(v))
-		for _, item := range v {
-			out = append(out, maskTimestamps(item))
-		}
-		return out
-	default:
+	}
+	return out
+}
+
+// maskDocumentText masks the document text when stamp is true; a value that is not text is returned
+// as it is.
+func maskDocumentText(value any, stamp bool) any {
+	text, ok := value.(string)
+	if !ok || !stamp {
 		return value
 	}
+	return maskTopLevelTimestamp(text)
+}
+
+// maskTopLevelTimestamp is text with the value of its top-level updatedAt rewritten to the
+// placeholder, when that value is a wall-clock stamp. The span comes from a token walk of the text,
+// so the replacement cannot touch a nested key or any other byte, and a value that is not a stamp is
+// left as stored.
+func maskTopLevelTimestamp(text string) string {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return text
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return text
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return text
+		}
+		if key != "updatedAt" {
+			continue
+		}
+		var stamp string
+		if json.Unmarshal(raw, &stamp) != nil || !timestampText.MatchString(stamp) {
+			return text
+		}
+		end := int(dec.InputOffset())
+		start := end - len(raw)
+		return text[:start] + "\"" + timestampPlaceholder + "\"" + text[end:]
+	}
+	return text
+}
+
+// readDefaultedUpdatedAt reports whether the reader created the document's updatedAt from the wall
+// clock, which it does when raw, the source file, carries no updatedAt string. Then the two sides'
+// read forms hold two different instants and the value is masked; a persisted updatedAt is kept by
+// both sides and compared as stored.
+func readDefaultedUpdatedAt(raw []byte) bool {
+	value, err := decode(string(raw))
+	if err != nil {
+		return true
+	}
+	object, ok := value.(pyjson.Object)
+	if !ok {
+		return true
+	}
+	stamp, ok := object.Lookup("updatedAt")
+	if !ok {
+		return true
+	}
+	_, isText := stamp.(string)
+	return !isText
 }
 
 // stateCompare compares the answers. A rewritten file that drops a key the oracle kept is a data-loss
