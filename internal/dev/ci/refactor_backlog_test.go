@@ -188,3 +188,33 @@ func TestRefactorBacklogEntryWithoutTrailingNewline(t *testing.T) {
 	}
 	expectEqual(t, "generated", readBacklog(t, r), "## A\n\n- first\n- second\n")
 }
+
+// A committed file that holds an entry no fragment produces is refused rather than rewritten:
+// an entry a branch added before the fragments existed must be moved into a fragment, not deleted.
+func TestRefactorBacklogWriteRefusesToDropEntries(t *testing.T) {
+	r := newRepo(t)
+	backlogTree(t, r)
+	if got := goCheck(t, r.root, nil, "refactor-backlog", "--write"); got.code != 0 {
+		t.Fatalf("--write: %+v", got)
+	}
+	r.write(backlogFile, backlogWant+"\n- [CRW-999] internal/x - an entry from a branch older than the fragments - out-of-scope - evidence: none\n")
+	got := goCheck(t, r.root, nil, "refactor-backlog", "--write")
+	if got.code != 1 || !strings.Contains(got.stderr, "[CRW-999]") {
+		t.Errorf("--write: %+v, want exit 1 naming the dropped entry", got)
+	}
+	if !strings.Contains(readBacklog(t, r), "[CRW-999]") {
+		t.Error("the refused write still rewrote the file")
+	}
+}
+
+// A link in a fragment is checked where its bytes land, in the generated file: a target written
+// relative to docs/port/ is valid there even though the fragment sits in a subdirectory.
+func TestValidateChecksFragmentLinksAgainstTheGeneratedFile(t *testing.T) {
+	r := validateRepo(t)
+	r.write("docs/port/decisions.md", "# Decisions\n")
+	fragment(t, r, "00-head/_section.md", "# Backlog\n\nSee [decisions](decisions.md).\n")
+	if got := goCheck(t, r.root, nil, "refactor-backlog", "--write"); got.code != 0 {
+		t.Fatalf("--write: %+v", got)
+	}
+	expectEqual(t, "valid", validate(t, r), result{0, validated, ""})
+}

@@ -285,6 +285,14 @@ func pythonShebang(path string) bool {
 	return bytes.HasPrefix(line, []byte("#!")) && bytes.Contains(line, []byte("python"))
 }
 
+// refactorBacklogFragment reports whether name is one of the refactor backlog source fragments.
+// A fragment is not a document of its own: its bytes are assembled into
+// docs/port/refactor-backlog.md, which the link check reads with that file directory as the base,
+// so a link written relative to the generated file is checked where it belongs.
+func refactorBacklogFragment(name string) bool {
+	return strings.HasPrefix(name, refactorBacklogSource+"/")
+}
+
 // repositoryRoot is the resolved top level of the checkout holding the working directory.
 func repositoryRoot() (string, error) {
 	out, err := runGit(".", "rev-parse", "--show-toplevel")
@@ -321,7 +329,7 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	count := 0
 	for _, name := range names {
 		path := filepath.Join(root, name)
-		if filepath.Ext(name) == ".md" {
+		if filepath.Ext(name) == ".md" && !refactorBacklogFragment(name) {
 			found, err := LinkErrors(root, name)
 			if err != nil {
 				errs = append(errs, name+": "+err.Error())

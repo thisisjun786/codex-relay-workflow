@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -27,6 +28,10 @@ const (
 	// fragments assemble to.
 	refactorBacklogDrift = "edit the fragments under docs/port/refactor-backlog.d and run crw-dev ci refactor-backlog --write"
 )
+
+// refactorBacklogEntry matches the tag an entry bullet opens with, which is the entry identity:
+// a branch that predates the fragments adds one, and a rename keeps the bullet but changes this.
+var refactorBacklogEntry = regexp.MustCompile(`^- \[[^\]]+\]`)
 
 // RefactorBacklog is the crw-dev ci refactor-backlog check: --write regenerates the committed file
 // from the fragments, --check refuses when the committed file differs from them.
@@ -58,6 +63,10 @@ func RefactorBacklog(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "refactor-backlog: %s", err)
 		}
+		if dropped := refactorBacklogDropped(target, text); len(dropped) > 0 {
+			return failf(stderr, "%s holds entries no fragment produces: %s; move each into the fragment of its section under %s and run --write again",
+				refactorBacklogTarget, strings.Join(dropped, ", "), refactorBacklogSource)
+		}
 		if err := os.WriteFile(target, []byte(text), 0o644); err != nil {
 			return failf(stderr, "refactor-backlog: %s", err)
 		}
@@ -83,6 +92,32 @@ func refactorBacklogPaths(root string) (source, target string, ok bool, err erro
 		return "", "", false, nil
 	}
 	return source, target, true, nil
+}
+
+// refactorBacklogDropped is the entry tags the committed file carries and the assembly does not.
+// Writing the assembly would delete those entries, which is how an entry a branch added before the
+// fragments existed disappears when the generated file is regenerated. The write refuses instead, so
+// the entry is moved into a fragment of its section rather than lost.
+func refactorBacklogDropped(target, assembly string) []string {
+	committed, err := readText(target)
+	if err != nil {
+		return nil
+	}
+	produced := map[string]bool{}
+	for _, line := range lines(assembly) {
+		if tag := refactorBacklogEntry.FindString(line); tag != "" {
+			produced[tag] = true
+		}
+	}
+	var dropped []string
+	seen := map[string]bool{}
+	for _, line := range lines(committed) {
+		if tag := refactorBacklogEntry.FindString(line); tag != "" && !produced[tag] && !seen[tag] {
+			seen[tag] = true
+			dropped = append(dropped, tag)
+		}
+	}
+	return dropped
 }
 
 // refactorBacklogError is the drift refusal for root, or nil when the tree holds no fragments or
