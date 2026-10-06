@@ -13,6 +13,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
+// promptSubmitFailingLock stands in for a session lock that cannot be taken, which the oracle has no
+// counterpart of: its write is unlocked and either lands or throws.
+func promptSubmitFailingLock(cwd, sessionID string, fn func() error) error {
+	return errors.New("lock unavailable")
+}
+
 // promptSubmitHost is the environment the handler reads: a pinned CRW invocation, so an injected
 // directive is byte-comparable, and a goal database directory that does not exist, which reads as
 // "no goal", as the oracle's resolveGoalsDbPath plus existsSync does.
@@ -484,28 +490,17 @@ func TestPromptSubmitLoopArmAnswersWhenTheStateCannotBeRewritten(t *testing.T) {
 	}
 }
 
-// TestPromptSubmitLoopArmIsSilentWhenTheWriteDoesNotLand: the mandate is not emitted unrecorded, so a
-// state this port refuses to rewrite, or a lock it cannot take, answers nothing - which is what the
-// oracle's own throwing writeState produced, since cli.ts catches it as silence.
-func TestPromptSubmitLoopArmIsSilentWhenTheWriteDoesNotLand(t *testing.T) {
+// TestPromptSubmitLoopArmIsSilentWhenTheWriteFails: the mandate is not emitted unrecorded, so a lock
+// this port cannot take, or a write that fails, answers nothing - which is what the oracle's own
+// throwing writeState produced, since cli.ts catches it as silence. A write the port's rewrite guard
+// only skips is the other half, in TestPromptSubmitLoopArmAnswersWhenTheStateCannotBeRewritten.
+func TestPromptSubmitLoopArmIsSilentWhenTheWriteFails(t *testing.T) {
 	cwd := t.TempDir()
 	if answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "Run crw-loop for this task", TurnID: "t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), promptSubmitFailingLock); answer != "" {
 		t.Errorf("a lock that cannot be taken answered %q", answer)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName)); err == nil {
 		t.Error("a failed write created state")
-	}
-	// A state the reader cannot keep whole is left as it is, and the mandate is suppressed with it.
-	promptSubmitStateFile(t, cwd, "s1", func(*state.State) {})
-	const corrupt = "{ not a state\n"
-	if err := os.WriteFile(state.StatePath(cwd, "s1"), []byte(corrupt), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if answer := promptSubmitAnswer(t, cwd, "s1", "t2", "Run crw-loop for this task", true); answer != "" {
-		t.Errorf("a refused write still answered %q", answer)
-	}
-	if after, err := os.ReadFile(state.StatePath(cwd, "s1")); err != nil || string(after) != corrupt {
-		t.Errorf("the refused state was rewritten: %q, %v", after, err)
 	}
 }
 
