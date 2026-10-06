@@ -411,6 +411,11 @@ func (s *Store) Update(ctx context.Context, decisionID string, mutate func(conte
 		// record unanswerable, so the writer validates the record without re-checking the one
 		// field the reader deliberately preserves. Every other field, and any raised_at the
 		// mutation changed, is still checked.
+		// The record keeps the identity Update was asked about: a mutation that returns another
+		// decision_id would otherwise leave the requested row untouched and overwrite another.
+		if updated.DecisionID != stored.DecisionID {
+			return fmt.Errorf("%w: a mutation changed %q to %q", ErrUserDecisionAbsent, stored.DecisionID, updated.DecisionID)
+		}
 		keptRaisedAt := updated.RaisedAt
 		if keptRaisedAt == stored.RaisedAt {
 			updated.RaisedAt = ""

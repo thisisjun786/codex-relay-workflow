@@ -508,3 +508,32 @@ func TestCRW737UpdateKeepsALegacyRaisedAtAndStillChangesTheRecord(t *testing.T) 
 		t.Fatalf("List read back %+v", listed)
 	}
 }
+
+// Independent review on PR #778: a mutation that changes the record identity is refused rather
+// than writing another row.
+func TestCRW737UpdateRefusesAMutationThatChangesTheIdentity(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	ctx := context.Background()
+	for _, record := range []decisions.Record{
+		userDecision("ud-1", "First question?", "PRJ-A", decisions.StateRaised),
+		userDecision("ud-2", "Second question?", "PRJ-B", decisions.StateRaised),
+	} {
+		_, _, err := s.Raise(ctx, record)
+		must(t, err)
+	}
+	if _, err := s.Update(ctx, "ud-1", func(_ context.Context, current decisions.Record) (decisions.Record, error) {
+		current.DecisionID = "ud-2"
+		return current, nil
+	}); err == nil {
+		t.Fatal("a mutation that changed the identity was accepted")
+	}
+	// Both rows are as they were.
+	for id, project := range map[string]string{"ud-1": "PRJ-A", "ud-2": "PRJ-B"} {
+		stored, err := s.Get(ctx, id)
+		must(t, err)
+		if stored.DecisionID != id || stored.Origin.Project != project {
+			t.Fatalf("Get(%s) = %+v", id, stored)
+		}
+	}
+}

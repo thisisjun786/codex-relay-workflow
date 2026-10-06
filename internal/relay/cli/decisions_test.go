@@ -426,3 +426,26 @@ func TestCRW737UnknownDecisionAndUnansweredApplyAreRefused(t *testing.T) {
 	crw737Refused(t, crw737Run(t, "--state", state, "decision-withdraw",
 		"--decision", raised["decisionId"].(string), "--reason", "a\x00b"), "bad_invocation")
 }
+
+// Independent review on PR #778: the event must be the relay's own decision_reply of a relationship
+// the record actually blocks, not one of another relationship.
+func TestCRW737ApplyRefusesAReplyOfAnotherRelationship(t *testing.T) {
+	state := crw737Store(t)
+	crw737SeedRelationship(t, state)
+	// A decision that blocks a relationship nothing answers.
+	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge of another relationship?", "--option", "hold=h:hold it",
+		"--option", "merge=m:merge now", "--blocking", "relationship=rel-other",
+		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
+	decision, _ := raised["decisionId"].(string)
+	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
+		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
+		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	// The seeded reply is the relay's own, answers the right receipt, but belongs to rel-737.
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision,
+		"--event", delivery.DecisionEventID("rel-737", "ev-blocked")), "disposition_conflict")
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
+		t.Fatalf("a reply of another relationship applied the record: %v", record)
+	}
+}
