@@ -184,19 +184,28 @@ type Dir struct {
 // fileID names a directory by device and inode, which two spellings of one path (a case-insensitive volume, a bind mount) share.
 type fileID struct{ dev, ino uint64 }
 
+// dirIdentity reads the identity of an open directory. It is a variable so a test can make one path report another
+// directory's identity, which is what a bind mount does on Linux; no other code replaces it.
+var dirIdentity = func(f *os.File) (fileID, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return fileID{}, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok { // not reachable on Linux or Darwin; a platform without inode identity cannot compare roots, so it refuses
+		return fileID{}, errors.New("this platform reports no inode identity")
+	}
+	return fileID{uint64(st.Dev), uint64(st.Ino)}, nil
+}
+
 func newDir(fd int, path string) (*Dir, error) {
 	f := os.NewFile(uintptr(fd), path)
-	info, err := f.Stat()
+	id, err := dirIdentity(f)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok { // not reachable on Linux or Darwin; a platform without inode identity cannot compare roots, so it refuses
-		_ = f.Close()
-		return nil, errors.New("this platform reports no inode identity")
-	}
-	return &Dir{f, path, fileID{uint64(st.Dev), uint64(st.Ino)}}, nil
+	return &Dir{f, path, id}, nil
 }
 
 // pinned is a root as found on disk: its handle (nil when its last component is absent) and the identity of every directory on
