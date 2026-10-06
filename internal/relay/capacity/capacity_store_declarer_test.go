@@ -1,6 +1,7 @@
 package capacity
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -130,5 +131,42 @@ func TestStoreDeclarerInitiativeKeyedStoreIsRefused(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("a refused declaration left %d execution_limits rows", len(rows))
+	}
+}
+
+// TestStoreDeclarerObservationSharesTheRule: DeclareLimit is not the only caller of checkDeclarer.
+// Capacity.Observe takes the same authority, so a store-scope measurement from a task holding only
+// an initiative seat is refused for the same reason, and the store seat is the one that may record
+// it. This pins the second caller so the narrowing cannot be reasoned about from the declaration
+// path alone.
+func TestStoreDeclarerObservationSharesTheRule(t *testing.T) {
+	e := newEnv(t)
+	measure := func(by string) (contract.OrderedObject, error) {
+		return e.cap.Observe(ctx(), Observation{ScopeKind: "store", ScopeKey: "store", Dimension: "model_cost",
+			Observed: 12.5, ObservedBy: by, Method: "counted"})
+	}
+	answer, err := measure(supervisor)
+	if len(answer) != 0 {
+		t.Fatalf("an initiative-scope supervisor observed the store: %v", answer)
+	}
+	if got := reasonOf(err); got != string(contract.RefusalScopeRoleMismatch) {
+		t.Fatalf("reason %q, want scope_role_mismatch (%v)", got, err)
+	}
+	if detail := storeDeclarerRefusalDetail(t, err); !strings.Contains(detail, storeDeclarerDetail) {
+		t.Fatalf("detail %q does not carry %q", detail, storeDeclarerDetail)
+	}
+	if _, err := e.store.ExecutionUsage(ctx(), "store", "store", "model_cost"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("a refused observation left a row: %v", err)
+	}
+	bindStoreSeat(t, e)
+	if _, err := measure(storeSeatTask); err != nil {
+		t.Fatalf("the store seat observed the store: %v", err)
+	}
+	seen, err := e.store.ExecutionUsage(ctx(), "store", "store", "model_cost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen.Observed != 12.5 || seen.ObservedBy != storeSeatTask {
+		t.Fatalf("execution_usage row %+v", seen)
 	}
 }
