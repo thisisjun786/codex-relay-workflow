@@ -13,8 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// The signal layer is tested through injected seams only: a fake relay executable, replaced gh and
-// status-page seams, and a temporary relay store.
+// The signal layer is tested through injected seams only: a fake relay, replaced gh and status-page
+// seams, and a temporary relay store.
 
 func capacityTestStore(t *testing.T, path string) {
 	db, err := sql.Open("sqlite", "file:"+path)
@@ -40,19 +40,13 @@ func capacityTestRelay(t *testing.T, f *capacityFixture, reading map[string]any)
 		t.Fatal(err)
 	}
 	file := filepath.Join(filepath.Dir(f.env.Executable), "answer.json")
-	if err := os.WriteFile(file, answer, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.WriteFile(file, answer, 0o600))
 	script := "#!/bin/sh\n" + "case \"$*\" in\n" +
 		"  *dag-ready*) cat " + coreShellQuote(file) + " ;;\n" +
 		"  *) echo 'relay: refused' >&2; exit 2 ;;\n" + "esac\n"
-	if err := os.WriteFile(f.env.Executable, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.WriteFile(f.env.Executable, []byte(script), 0o700))
 }
 
-// capacityTestReading is a relay reading: waiting are ready nodes, extraWaiting are nodes
-// deferred for want of capacity, hostMemory the bound's state (empty prints none).
 func capacityTestReading(waiting, extraWaiting []string, held, ceiling int, hostMemory string) map[string]any {
 	nodes := func(keys []string, reason any, disposition string) []any {
 		out := make([]any, len(keys))
@@ -125,9 +119,7 @@ func capacityTestUsageLog(t *testing.T, f *capacityFixture, status int, model st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(log, append(data, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.WriteFile(log, append(data, '\n'), 0o600))
 	capacityTestSection(t, f, "usage_log", log)
 	capacityTestSection(t, f, "child_models", []string{"deepseek-v4.1-flash"})
 }
@@ -149,9 +141,7 @@ func TestCapacityUnreadableSignalsDoNotSuppress(t *testing.T) {
 	}
 
 	log := filepath.Join(t.TempDir(), "usage.jsonl")
-	if err := os.WriteFile(log, []byte("{\"timestamp\":1,\"attempts\":[]}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.WriteFile(log, []byte("{\"timestamp\":1,\"attempts\":[]}\n"), 0o600))
 	capacityTestSection(t, f, "usage_log", log)
 	capacityTestSection(t, f, "child_models", []string{"deepseek-v4.1-flash"})
 	report = capacityTestRun(t, f, false)

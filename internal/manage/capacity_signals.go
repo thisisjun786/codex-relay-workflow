@@ -60,7 +60,6 @@ const (
 	capacityDeferNoCapacity = "defer:no_capacity"
 )
 
-// capacityMergeCount is the merges into the integration branch inside the window.
 func capacityMergeCount(ctx context.Context, cfg *Config, since time.Time) (*int, error) {
 	if cfg.Repository == "" {
 		return nil, nil
@@ -79,8 +78,8 @@ func capacityMergeCount(ctx context.Context, cfg *Config, since time.Time) (*int
 	return &count, nil
 }
 
-// capacityActionsRead reports the first unresolved incident naming Actions. A read that fails, or
-// an answer with no incidents field, is unknown with no incident.
+// capacityActionsRead reports the first unresolved incident naming Actions; a read that fails, or an
+// answer with no incidents field, is unknown with no incident.
 func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 	if url == "" {
 		url = capacityDefaultActionsStatusURL
@@ -229,7 +228,7 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 }
 
 // capacityReceiptWaitFor reads the relay store read-only: the median and count of the acknowledged
-// deliveries that reached one parent inside the window, leaving out the interrupted ones.
+// deliveries that reached one parent in the window, leaving out the interrupted ones.
 func capacityReceiptWaitFor(ctx context.Context, stateDir, parent string, since time.Time) (CapacityReceiptWait, error) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(stateDir, "relay.sqlite3")+"?mode=ro")
 	if err != nil {

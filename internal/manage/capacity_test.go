@@ -12,8 +12,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// The judgement is driven through injected signals only: a fake relay executable, replaced gh and
-// status-page seams, and a temporary relay store.
+// The judgement is driven through injected signals only: a fake relay, replaced gh and status-page
+// seams, and a temporary relay store.
 
 var capacityTestNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 
@@ -35,16 +35,21 @@ func capacityTestPlan(plan, project, parent, family string) map[string]any {
 	return out
 }
 
-// capacityTestFixture wires one scenario: a relay store, the environment, and the configuration.
+func capacityTestMust(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func capacityTestFixture(t *testing.T, plans []map[string]any) *capacityFixture {
 	t.Helper()
 	coreTempHome(t)
 	dir := t.TempDir()
 	f := &capacityFixture{relayDir: filepath.Join(dir, "relay"), stateDir: filepath.Join(dir, "state"),
 		section: map[string]any{"plans": plans}}
-	if err := os.MkdirAll(f.relayDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.MkdirAll(f.relayDir, 0o755))
+	capacityTestMust(t, os.MkdirAll(f.stateDir, 0o755))
 	capacityTestStore(t, filepath.Join(f.relayDir, "relay.sqlite3"))
 	f.env = &Env{Getenv: os.Getenv, Now: func() time.Time { return capacityTestNow }, Executable: filepath.Join(dir, "crw")}
 	capacityTestLoad(t, f)
@@ -63,7 +68,6 @@ func capacityTestLoad(t *testing.T, f *capacityFixture) {
 	f.cfg = cfg
 }
 
-// capacityTestSection replaces one key of the section and reloads the configuration.
 func capacityTestSection(t *testing.T, f *capacityFixture, key string, value any) {
 	t.Helper()
 	f.section[key] = value
@@ -80,12 +84,8 @@ func capacityTestState(t *testing.T, f *capacityFixture, plan string, since time
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(f.stateDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.stateDir, capacityStateFile), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.MkdirAll(f.stateDir, 0o755))
+	capacityTestMust(t, os.WriteFile(filepath.Join(f.stateDir, capacityStateFile), data, 0o600))
 }
 
 func capacityTestRun(t *testing.T, f *capacityFixture, dry bool) CapacityReport {
@@ -99,10 +99,8 @@ func capacityTestRun(t *testing.T, f *capacityFixture, dry bool) CapacityReport 
 	return report
 }
 
-// capacityTestPlans is the one plan the single-plan scenarios configure.
 var capacityTestPlans = []map[string]any{capacityTestPlan("p-crw-129", "P-CRW-129", "parent-1", "P-CRW-129")}
 
-// capacityTestReady wires the plans with every signal clear: free lane, host within, quick receipt.
 func capacityTestReady(t *testing.T, plans []map[string]any) *capacityFixture {
 	f := capacityTestFixture(t, plans)
 	capacityTestRelay(t, f, capacityTestReading([]string{"CRW-1", "CRW-2"}, nil, 12, 12, "within"))
@@ -247,9 +245,7 @@ func TestCapacityStateIsWrittenOnlyByARealRun(t *testing.T) {
 	if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {
 		t.Fatalf("a dry run wrote state: %v %s, want %s", err, after, before)
 	}
-	if err := os.RemoveAll(f.stateDir); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.RemoveAll(f.stateDir))
 	capacityTestRun(t, f, true)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("a dry run created state: %v", err)
@@ -264,9 +260,7 @@ func TestCapacityStateIsWrittenOnlyByARealRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(saved, &doc); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, json.Unmarshal(saved, &doc))
 	state, _ := doc["plans"].(map[string]any)["p-crw-129"].(map[string]any)
 	waiting, _ := state["waiting"].([]any)
 	alerted, _ := state["alerted"].([]any)
@@ -342,9 +336,7 @@ func TestCapacityDocumentTextThresholdsAndExitStatuses(t *testing.T) {
 	if code := capacityCommand.Run(context.Background(), f.env, []string{"--nope"}); code != usageExit {
 		t.Fatalf("an unknown argument: exit %d, want %d", code, usageExit)
 	}
-	if err := os.WriteFile(f.env.Executable, []byte("#!/bin/sh\nexit 2\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, os.WriteFile(f.env.Executable, []byte("#!/bin/sh\nexit 2\n"), 0o700))
 	errOut.Reset()
 	if code := capacityCommand.Run(context.Background(), f.env, nil); code != capacityReadFailureExit {
 		t.Fatalf("a failed relay read: exit %d, want %d (%s)", code, capacityReadFailureExit, errOut.String())

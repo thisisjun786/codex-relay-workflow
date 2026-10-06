@@ -46,13 +46,11 @@ type CapacityLane struct {
 	MergesLastHour *int `json:"merges_last_hour"`
 }
 
-// CapacityActions is the status page's side.
 type CapacityActions struct {
 	State    string  `json:"state"`
 	Incident *string `json:"incident"`
 }
 
-// CapacityChild429 is the child model quota's side.
 type CapacityChild429 struct {
 	State string `json:"state"`
 	Count *int   `json:"count"`
@@ -82,7 +80,6 @@ type CapacityPlan struct {
 	Alert           bool                `json:"alert"`
 }
 
-// capacityPlanRef is one configured plan.
 type capacityPlanRef struct {
 	Plan    string `json:"plan"`
 	Project string `json:"project"`
@@ -112,7 +109,6 @@ type capacityPlanState struct {
 	AlertedAt float64  `json:"alerted_at"`
 }
 
-// capacityState is the state file.
 type capacityState struct {
 	Plans map[string]capacityPlanState `json:"plans"`
 }
