@@ -93,10 +93,10 @@ func keepThreads(k *realKit) *leftovers {
 		}
 		st.mu.Unlock()
 		if drop {
-			// The answer to thread/start was lost with the connection and the host left no thread:
-			// the bridge keeps an outcome_unknown receipt listing thread/start. The create path's
-			// ack bound is 60 s and a fake answer cannot outlast it, so the lost answer is produced
-			// by the transport ending rather than by a delayed reply.
+			// The connection ends with this answer lost and the host leaves no thread: the bridge
+			// keeps an outcome_unknown receipt listing thread/start. The create path's ack bound is
+			// 60 s and a fake answer cannot outlast it, so the lost answer is produced by the
+			// transport ending rather than by a delayed reply.
 			return fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1011, Reason: "host lost the answer"}}
 		}
 		return fakehost.Reply{Result: k.startReply(id)}
@@ -177,8 +177,9 @@ func keepThreads(k *realKit) *leftovers {
 		st.lostFirstTitle = false
 		st.mu.Unlock()
 		if lost {
-			// The answer to thread/start was lost with the connection: the host holds the thread,
-			// and the bridge keeps an outcome_unknown receipt that lists turn/start as attempted.
+			// The connection ends with this answer lost: the host holds the thread it started, and
+			// the bridge keeps an outcome_unknown receipt whose attempted effects are
+			// [thread/start, thread/name/set] (turn/start is never reached).
 			return fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1011, Reason: "host lost the answer"}}
 		}
 		return fakehost.Reply{}
