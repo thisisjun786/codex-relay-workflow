@@ -143,36 +143,38 @@ func supervisorConfigured(e *Env, section supervisorSection) bool {
 var supervisorHostValueOption = map[string]bool{"--cwd": true, "--settings-file": true}
 
 // supervisorRegisterArgs reads register's own arguments: no option at all is the accepted command
-// line, -h and --help report the usage, and an option that names a host value is refused with the
-// note that says where host values come from. The refusal happens here, before any relay call, so a
-// run that passes one neither binds nor records anything.
-func supervisorRegisterArgs(e *Env, args []string) int {
+// line, -h and --help report the usage and stop the run there, and an option that names a host value
+// is refused with the note that says where host values come from. The refusal happens here, before
+// any relay call, so a run that passes one neither binds nor records anything. help is reported
+// separately from the status, because a run that asked for the usage must not fall through to the
+// bind: the caller returns before the configuration is even read.
+func supervisorRegisterArgs(e *Env, args []string) (help bool, code int) {
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
 			fmt.Fprintln(e.Stdout, supervisorRegisterUsage)
-			return 0
+			return true, 0
 		}
 	}
 	for _, arg := range args {
 		if supervisorHostValueOption[arg] {
 			fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
 			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %s\n", supervisorHostValuesNote)
-			return usageExit
+			return false, usageExit
 		}
 	}
 	if len(args) > 0 {
 		fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
 		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: unexpected argument %q\n", args[0])
-		return usageExit
+		return false, usageExit
 	}
-	return 0
+	return false, 0
 }
 
 // supervisorRegister is crw manage supervisor register: the store-scope supervisor binding first,
 // the settings pair second. A refused bind is reported as the relay's own refusal and the pair is
 // not recorded.
 func supervisorRegister(ctx context.Context, e *Env, args []string) int {
-	if code := supervisorRegisterArgs(e, args); code != 0 {
+	if help, code := supervisorRegisterArgs(e, args); help || code != 0 {
 		return code
 	}
 	cfg := supervisorConfig(e)

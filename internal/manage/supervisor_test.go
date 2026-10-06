@@ -248,6 +248,28 @@ func TestSupervisorRegisterRejectsTheRemovedHostValueOptions(t *testing.T) {
 	}
 }
 
+// A help request on register prints the usage and stops there. It must not fall through to the
+// bind: a run that only asked for help never calls the relay.
+func TestSupervisorRegisterHelpDoesNotBind(t *testing.T) {
+	for _, flag := range []string{"-h", "--help"} {
+		t.Run(flag, func(t *testing.T) {
+			record := supervisorFakeProcess(t, 0)
+			section := supervisorTestSection()
+			supervisorUseConfig(t, supervisorTestConfig(&section))
+			code, out, errOut := supervisorRunLine(t, "supervisor", "register", flag)
+			if code != 0 {
+				t.Fatalf("exit %d, want 0 (stderr %q)", code, errOut)
+			}
+			if !strings.Contains(out, supervisorRegisterUsage) {
+				t.Errorf("stdout %q does not carry the usage", out)
+			}
+			if calls := supervisorRecordedCalls(t, record); len(calls) != 0 {
+				t.Errorf("a help request called the relay %q", calls)
+			}
+		})
+	}
+}
+
 // The configuration's cwd reaches the relay as one argv element even when it carries a space, so
 // the argument boundary is preserved rather than the value being split or re-quoted.
 func TestSupervisorRegisterPassesASpacedCwdAsOneArgument(t *testing.T) {
