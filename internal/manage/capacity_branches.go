@@ -3,7 +3,9 @@ package manage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
@@ -13,9 +15,29 @@ import (
 // shares an edit region with, so the bundle could be taken out into a project of its own. Nothing
 // here writes a plan, Linear or the relay: it reads and reports.
 
-// branchAlways is the --branches-always flag: with it a plan whose verdict is hold carries its
-// candidates too, so the bundles of a plan that cannot grow yet are still readable.
-var branchAlways bool
+// branchAlwaysMemoMu guards branchAlwaysMemo, and branchAlwaysMemo is the --branches-always flag
+// each Env was run with. The flag belongs to one command invocation, not to the process: Env is
+// declared in another issue's file and may not gain a field here, and a library caller that runs
+// Capacity twice in one process must not inherit the first call's flag. Run builds one Env per
+// invocation, so the map holds one live entry per run and is bounded in practice.
+var (
+	branchAlwaysMemoMu sync.Mutex
+	branchAlwaysMemo   = map[*Env]bool{}
+)
+
+// branchAlwaysSet records the flag for one Env.
+func branchAlwaysSet(e *Env, always bool) {
+	branchAlwaysMemoMu.Lock()
+	branchAlwaysMemo[e] = always
+	branchAlwaysMemoMu.Unlock()
+}
+
+// branchAlwaysFor is the flag one Env was run with.
+func branchAlwaysFor(e *Env) bool {
+	branchAlwaysMemoMu.Lock()
+	defer branchAlwaysMemoMu.Unlock()
+	return branchAlwaysMemo[e]
+}
 
 const (
 	branchMinNodesDefault = 2
@@ -50,13 +72,15 @@ type branchSettings struct {
 	MaxBranches    *int `json:"max_branches"`
 }
 
-// branchSettingsOf reads the branch keys of the capacity section. A section this product cannot
-// decode is the refusal Capacity itself reports before this runs, so the zero value keeps the
-// defaults here rather than reporting the same error twice.
-func branchSettingsOf(cfg *Config) branchSettings {
+// branchSettingsOf reads the branch keys of the capacity section. A key this build cannot read is
+// refused rather than defaulted, so a threshold nobody can parse never reads as the default and
+// silently reports the wrong bundles.
+func branchSettingsOf(cfg *Config) (branchSettings, error) {
 	settings := branchSettings{}
-	_ = cfg.Section("capacity", &settings)
-	return settings
+	if err := cfg.Section("capacity", &settings); err != nil {
+		return branchSettings{}, fmt.Errorf("capacity: the section: %w", err)
+	}
+	return settings, nil
 }
 
 func branchMinNodes(settings branchSettings) int {
@@ -147,11 +171,14 @@ func branchStoreMarks(ctx context.Context, handle *dagReviewStore, plan string) 
 
 // branchAttach computes the candidates of one plan: nil when the plan carries none at all (a hold
 // plan without --branches-always), otherwise a list, empty when nothing can be detached.
-func branchAttach(ctx context.Context, cfg *Config, stateDir, plan, verdict string, waiting []string) (*BranchCandidates, error) {
-	if verdict == capacityHold && !branchAlways {
+func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waiting []string) (*BranchCandidates, error) {
+	if verdict == capacityHold && !branchAlwaysFor(e) {
 		return nil, nil
 	}
-	settings := branchSettingsOf(cfg)
+	settings, err := branchSettingsOf(cfg)
+	if err != nil {
+		return nil, err
+	}
 	// The store is read through the review's own read-only handle: one no-sidecar open, and the
 	// region reading the scheduler makes (the latest declaration per node, with its hold).
 	handle, err := dagReviewOpenStore(ctx, stateDir)

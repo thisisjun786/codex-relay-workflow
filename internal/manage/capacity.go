@@ -199,7 +199,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
-		if plan.Branches, err = branchAttach(ctx, cfg, stateDir, ref.Plan, plan.Verdict, plan.Waiting); err != nil {
+		if plan.Branches, err = branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, plan.Waiting); err != nil {
 			return CapacityReport{}, err
 		}
 		if plan.Verdict != capacityExpand {
@@ -332,6 +332,7 @@ const capacityUsage = "usage: crw manage capacity [--text] [--dry-run] [--branch
 
 func capacityRun(ctx context.Context, e *Env, args []string) int {
 	asText, dry := false, false
+	branchAlwaysSet(e, false)
 	for _, arg := range args {
 		switch arg {
 		case "--text":
@@ -339,7 +340,7 @@ func capacityRun(ctx context.Context, e *Env, args []string) int {
 		case "--dry-run":
 			dry = true
 		case "--branches-always":
-			branchAlways = true
+			branchAlwaysSet(e, true)
 		case "-h", "--help", "help":
 			fmt.Fprintln(e.Stdout, capacityUsage)
 			return 0

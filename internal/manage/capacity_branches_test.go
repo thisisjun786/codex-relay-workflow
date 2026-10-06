@@ -39,8 +39,10 @@ type branchFixture struct {
 	cfg      *Config
 	section  map[string]any
 	ready    []string
+	waiting  []string
 	store    *store.Store
 	planned  bool
+	kind     string
 }
 
 func branchNewFixture(t *testing.T, ready ...string) *branchFixture {
@@ -122,8 +124,18 @@ func (f *branchFixture) node(id, issue string) *branchFixture {
 // edge adds one live edge of the plan, of a kind that says nothing about the connection.
 func (f *branchFixture) edge(id, from, to string) *branchFixture {
 	f.t.Helper()
-	f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,1,NULL,?,?,?,?,?,0)",
-		branchTestPlan, id, from, to, "artifact_verified", branchTestRepo, "dev")
+	kind := f.kind
+	if kind == "" {
+		kind = "artifact_verified"
+	}
+	switch kind {
+	case "decision":
+		f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, decision_subject, decision_digest, required_authority, pins_code_head) VALUES (?,?,1,NULL,?,?,?,'subject','digest','[\"owner\"]',0)",
+			branchTestPlan, id, from, to, kind)
+	default:
+		f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,1,NULL,?,?,?,?,?,0)",
+			branchTestPlan, id, from, to, kind, branchTestRepo, "dev")
+	}
 	return f
 }
 
@@ -167,8 +179,12 @@ func (f *branchFixture) publish() *branchFixture {
 	if err := os.WriteFile(f.env.Executable, []byte(script), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
+	waiting := f.ready
+	if f.waiting != nil {
+		waiting = f.waiting
+	}
 	state := map[string]any{"plans": map[string]any{branchTestPlan: map[string]any{
-		"since": float64(branchTestNow.Add(-60 * time.Minute).Unix()), "waiting": f.ready}}}
+		"since": float64(branchTestNow.Add(-60 * time.Minute).Unix()), "waiting": waiting}}}
 	branchWriteJSON(f.t, filepath.Join(f.stateDir, capacityStateFile), state)
 	branchSeams(f.t)
 	f.close()
@@ -243,14 +259,14 @@ func branchSummaries(list []BranchCandidate) []string {
 			ids[j] = node.NodeID
 		}
 		out[i] = strings.Join(ids, "+") + " " + strings.Join(c.Regions, ",") +
-			" ready=" + itoa(c.ReadyCount) + " edges=" + itoa(c.EdgesInside)
+			" ready=" + branchItoa(c.ReadyCount) + " edges=" + branchItoa(c.EdgesInside)
 	}
 	return out
 }
 
-// itoa is the small decimal spelling the summaries read, kept here so the assertions carry no
-// dependency beyond the standard library.
-func itoa(n int) string {
+// branchItoa is the small decimal spelling the summaries read, kept here so the assertions carry
+// no dependency beyond the standard library.
+func branchItoa(n int) string {
 	if n == 0 {
 		return "0"
 	}
@@ -266,6 +282,74 @@ func branchWant(t *testing.T, got []string, want ...string) {
 	t.Helper()
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("branches = %v, want %v", got, want)
+	}
+}
+
+// A threshold this build cannot read is a refusal, never a silent fall back to the default: a
+// bundle reported against the wrong floor is a wrong answer, not a missing one.
+func TestBranchCandidatesRefuseAnUnreadableThreshold(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2")
+	f.region("A", "a.go", "file", "", "edit", false)
+	f.region("B", "b.go", "file", "", "edit", false)
+	f.publish()
+	f.section["min_branch_nodes"] = "two"
+	f.load()
+	config := capacityConfig
+	t.Cleanup(func() { capacityConfig = config })
+	capacityConfig = func(*Env) *Config { return f.cfg }
+	if _, err := Capacity(context.Background(), f.env, f.cfg, false); err == nil {
+		t.Fatal("a min_branch_nodes that is not a number judged the plan anyway")
+	}
+}
+
+// The waiting set is the ready nodes plus the ones deferred for want of capacity, so a bundle
+// whose member is only deferred still counts it.
+func TestBranchCandidatesCountADeferredNodeAsWaiting(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1")
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
+	f.edge("e1", "A", "B")
+	for _, node := range []string{"A", "B", "C"} {
+		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+	}
+	f.waiting = []string{"CRW-1", "CRW-2"}
+	// A second node deferred for want of a slot is part of the waiting set, and it is the node the
+	// plan does not list as ready.
+	f.publish()
+	branchWriteJSON(t, filepath.Join(f.dir, "ready.json"), map[string]any{"ok": true, "schema": "dag-ready/1",
+		"pass":  map[string]any{"free_slots": 0, "ceiling": 12, "held": 12, "host_memory": map[string]any{"state": "within"}},
+		"ready": []any{map[string]any{"node_id": "nCRW-1", "issue_key": "CRW-1", "disposition": "ready", "reason": nil}},
+		"nodes": []any{map[string]any{"node_id": "nCRW-2", "issue_key": "CRW-2", "disposition": "defer", "reason": "defer:no_capacity"}}})
+	plan := f.run()
+	candidates := branchList(t, plan)
+	if len(candidates) != 1 {
+		t.Fatalf("branches = %v, want the one bundle", branchSummaries(candidates))
+	}
+	if candidates[0].ReadyCount != 2 {
+		t.Fatalf("ready_count = %d, want 2: one ready node and one deferred for want of capacity", candidates[0].ReadyCount)
+	}
+	for _, node := range candidates[0].Nodes {
+		if !node.Ready {
+			t.Fatalf("node %s reads not waiting, want every member of the waiting set to read waiting", node.NodeID)
+		}
+	}
+}
+
+// Every edge kind connects: the plan's edges are read whatever kind they are, so a bundle joined
+// by an integrated or a decision edge is one bundle.
+func TestBranchCandidatesConnectWhateverTheEdgeKind(t *testing.T) {
+	for _, kind := range []string{"artifact_verified", "integrated", "decision"} {
+		t.Run(kind, func(t *testing.T) {
+			f := branchNewFixture(t, "CRW-1", "CRW-2")
+			f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
+			f.kind = kind
+			f.edge("e1", "A", "B")
+			for _, node := range []string{"A", "B", "C"} {
+				f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+			}
+			plan := f.publish().run()
+			branchWant(t, branchSummaries(branchList(t, plan)), "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+		})
 	}
 }
 
@@ -443,8 +527,8 @@ func TestBranchCandidatesDocumentKeysAndTheAlwaysFlag(t *testing.T) {
 	if hold.Verdict != capacityHold || hold.Branches != nil {
 		t.Fatalf("the hold plan = %+v, want a hold that carries no branches", hold)
 	}
-	branchAlways = true
-	t.Cleanup(func() { branchAlways = false })
+	branchAlwaysSet(f.env, true)
+	t.Cleanup(func() { branchAlwaysSet(f.env, false) })
 	if got := branchSummaries(branchList(t, f.run())); len(got) != 1 {
 		t.Fatalf("with --branches-always the hold plan carries %v, want the one bundle", got)
 	}
