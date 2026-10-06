@@ -383,26 +383,15 @@ func TestGoalGateCompleteGuardFailsOpen(t *testing.T) {
 func goalCompleteTestGitRepo(t *testing.T) string {
 	t.Helper()
 	cwd := t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = cwd
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+cwd,
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	git("init", "-q")
+	goalCompleteTestGit(t, cwd, "init", "-q")
 	if err := os.WriteFile(filepath.Join(cwd, ".gitignore"), []byte(".crw/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "-A")
-	git("commit", "-q", "-m", "initial")
+	goalCompleteTestGit(t, cwd, "add", "-A")
+	goalCompleteTestGit(t, cwd, "commit", "-q", "-m", "initial")
 	return cwd
 }
 
