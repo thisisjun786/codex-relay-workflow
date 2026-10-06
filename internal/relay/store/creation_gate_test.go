@@ -98,11 +98,14 @@ func (h *heldCreationGate) release() {
 	}
 }
 
-// exclusiveGateLock reports whether an exclusive lock of the store's write gate can be taken
-// right now, closing the probe's own description either way.
-func exclusiveGateLock(t *testing.T, path string) (bool, error) {
+// gateLockFree reports whether a lock of the store's write gate can be taken right now from a
+// fresh description, closing the probe's own description either way. A shared probe is the
+// discriminating one: flock refuses a second description's LOCK_SH while any description holds
+// the gate LOCK_EX, so a shared probe that succeeds proves the store holds the gate SH and not
+// EX (the exclusive probe alone cannot tell the two apart).
+func gateLockFree(t *testing.T, path string, exclusive bool) (bool, error) {
 	t.Helper()
-	gate, err := ownership.Lock(filepath.Join(filepath.Dir(path), "write-gate.lock"), true, false)
+	gate, err := ownership.Lock(filepath.Join(filepath.Dir(path), "write-gate.lock"), exclusive, false)
 	if err == nil {
 		return true, gate.Close()
 	}
@@ -110,6 +113,22 @@ func exclusiveGateLock(t *testing.T, path string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// requireGateHeldShared pins that the store holds the gate SH right now: an exclusive lock from a
+// fresh description must fail and a shared one must succeed.
+func requireGateHeldShared(t *testing.T, path string) {
+	t.Helper()
+	if free, err := gateLockFree(t, path, true); err != nil {
+		t.Fatal(err)
+	} else if free {
+		t.Fatal("an exclusive lock of the gate succeeded while the store was open")
+	}
+	if free, err := gateLockFree(t, path, false); err != nil {
+		t.Fatal(err)
+	} else if !free {
+		t.Fatal("a shared lock of the gate failed while the store was open: the store holds it EX, not SH")
+	}
 }
 
 // CRW-853: a creating open keeps the write gate's EX open file description and downgrades that
@@ -151,22 +170,19 @@ func Test853CreatingOpenKeepsItsGateAndDowngradesItInPlace(t *testing.T) {
 					t.Fatalf("socketed creation recorded %q, want %q", stamp.SocketPath, socket)
 				}
 			}
-			// (b) the store holds the gate SH for its lifetime.
-			if free, err := exclusiveGateLock(t, path); err != nil {
-				t.Fatal(err)
-			} else if free {
-				t.Fatal("an exclusive lock of the gate succeeded while the store was open")
-			}
+			// (b) the store holds the gate SH for its lifetime: a fresh shared description is
+			// admitted, a fresh exclusive one is not.
+			requireGateHeldShared(t, path)
 			must(t, db.Close())
 			// (c) the description the store kept is the one the creator placed, and the dup still
 			// holds it: an exclusive lock must keep failing until the dup is released.
-			if free, err := exclusiveGateLock(t, path); err != nil {
+			if free, err := gateLockFree(t, path, true); err != nil {
 				t.Fatal(err)
 			} else if free {
 				t.Fatal("the dup no longer holds the creation description after Close")
 			}
 			held.release()
-			if free, err := exclusiveGateLock(t, path); err != nil {
+			if free, err := gateLockFree(t, path, true); err != nil {
 				t.Fatal(err)
 			} else if !free {
 				t.Fatal("an exclusive lock still fails after every reference was closed")
