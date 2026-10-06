@@ -106,8 +106,8 @@ func agyCalledOf(a *review.Artifact) *bool {
 // never started, so it names no failure), sorted and joined by commas. When no review call failed -- the run is partial because an auxiliary stage failed -- it lists the auxiliary calls that did not
 // end normal the same way. It is empty when no failed call names a reason.
 func ledgerFailureReason(a *review.Artifact) string {
-	if review := nonNormalCallReasons(a.Calls, true); len(review) > 0 {
-		return strings.Join(review, ",")
+	if reviewReasons := nonNormalCallReasons(a.Calls, true); len(reviewReasons) > 0 {
+		return strings.Join(reviewReasons, ",")
 	}
 	return strings.Join(nonNormalCallReasons(a.Calls, false), ",")
 }

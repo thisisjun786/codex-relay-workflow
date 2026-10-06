@@ -389,6 +389,7 @@ func TestFailureRecordOfARunThatDidNotEndComplete(t *testing.T) {
 		{"quota", art(u, "review/unavailable/quota"), "quota", "true"},
 		{"crash", art(u, "review/unavailable/crash"), "crash", "unknown"},
 		{"not started", art(u, "review/unavailable/not_started"), "not_started", "false"},
+		{"two distinct reasons", art(p, "review/normal/", "review/unavailable/quota", "review/invalid/time_limit_exceeded"), "quota,time_limit_exceeded", "true"},
 	} {
 		if got := ledgerFailureReason(c.a); got != c.reason {
 			t.Errorf("%s: ledgerFailureReason = %q, want %q", c.name, got, c.reason)
@@ -502,5 +503,19 @@ func TestUnavailableRunThatClosesAtOnceRecordsTheKnownFailure(t *testing.T) {
 	recs := f.ledger()
 	if last := recs[len(recs)-1]; last.Event != "finished" || last.Status != string(review.StatusUnavailable) || last.Reason != "content_filter" || last.AgyCalled == nil || !*last.AgyCalled {
 		t.Fatalf("the finished line of a content filter run must name the filter and that agy was called: %+v", last)
+	}
+}
+
+// A complete run's line is unchanged: it carries neither a reason nor agyCalled.
+func TestCompleteRunRecordsNoFailure(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", okResult)
+	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != string(review.StatusComplete) {
+		t.Fatalf("a complete run: %d %+v %s", code, sum, errOut)
+	}
+	recs := f.ledger()
+	if last := recs[len(recs)-1]; last.Event != "finished" || last.Status != string(review.StatusComplete) || last.Reason != "" || last.AgyCalled != nil {
+		t.Fatalf("a complete run's line must carry neither a reason nor agyCalled: %+v", last)
 	}
 }
