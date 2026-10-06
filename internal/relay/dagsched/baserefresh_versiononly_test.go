@@ -172,6 +172,60 @@ func TestBaseRefreshVersionOnlyCommitRefusals(t *testing.T) {
 }
 
 // A version-only commit whose parent is not a merge proved in the chain is refused.
+// A chain that alternates a base merge with the version-only re-record of that merge is accepted: each
+// version-only step sits on a merge this chain proved, which is the condition the rule states. The
+// audit of this generation raised this composition, so it is pinned here.
+func TestBaseRefreshVersionOnlyCommitBetweenMerges(t *testing.T) {
+	s := newPluginVersionRefreshScenario(t, false)
+	merge1, _ := s.pluginVersion808Shape(t, nil)
+	r := s.repo
+	// a second base change and a second merge, then the version recorded again for that merge
+	r.git("checkout", "-q", "dev")
+	// the dev side changes a plugin payload file, so the merged payload's version differs and the
+	// second merge must be followed by a version-only commit of its own
+	pluginVersionWrite(t, r, pluginversion.PluginRelative+"/skills/crw-tidy/SKILL.md", pluginVersionSkillText("crw-tidy")+"dev second change."+string(rune(10)))
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", "dev second change")
+	r.git("checkout", "-q", "feature")
+	if _, err := r.tryGit("merge", "-q", "--no-ff", "-m", "Merge branch 'dev' into feature", "dev"); err != nil {
+		t.Fatalf("the second merge was meant to be clean: %v", err)
+	}
+	merge2 := r.git("rev-parse", "HEAD")
+	pluginVersionRecordVersion(t, r)
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", "CRW-808: record the plugin version again")
+	head := r.git("rev-parse", "HEAD")
+	s.head = head
+	r.git("checkout", "-q", "dev")
+	s.forge.by["owner/repo#7"] = openPR("owner/repo", 7, head)
+
+	got, err := s.record()
+	if err != nil || got.HeadSHA != head || len(got.Resolved) != 0 || s.refreshRows() != 1 {
+		t.Fatalf("merge, version-only, merge, version-only = %v %+v rows=%d", err, got, s.refreshRows())
+	}
+	steps := pluginVersionStoredSteps(t, s)
+	if len(steps) != 4 {
+		t.Fatalf("steps = %d, want the two merges and the two version-only commits: %+v", len(steps), steps)
+	}
+	if steps[0].Head != merge1 || steps[0].BaseParent == "" {
+		t.Fatalf("step 0 is not the first merge: %+v", steps[0])
+	}
+	if steps[1].BaseParent != "" || steps[1].Previous != merge1 {
+		t.Fatalf("step 1 is not the first version-only commit: %+v", steps[1])
+	}
+	if steps[2].Head != merge2 || steps[2].BaseParent == "" {
+		t.Fatalf("step 2 is not the second merge: %+v", steps[2])
+	}
+	if steps[3].BaseParent != "" || steps[3].Previous != merge2 || steps[3].Head != head {
+		t.Fatalf("step 3 is not the second version-only commit: %+v", steps[3])
+	}
+	for _, i := range []int{1, 3} {
+		if len(steps[i].Resolved) != 1 || steps[i].Resolved[0].Path != pluginversion.ManifestRepoPath || steps[i].Resolved[0].Rule != BuiltinPluginVersionRule {
+			t.Fatalf("step %d does not carry the built-in rule: %+v", i, steps[i].Resolved)
+		}
+	}
+}
+
 func TestBaseRefreshVersionOnlyCommitNeedsAProvedMerge(t *testing.T) {
 	t.Run("the chain's first commit", func(t *testing.T) {
 		s := newPluginVersionRefreshScenario(t, false)
