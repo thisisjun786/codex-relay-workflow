@@ -25,15 +25,6 @@ func canonical(value any) string {
 	return pyjson.Dumps(value, pyjson.Options{SortKeys: true, Bytes: pyjson.SurrogateEscapes})
 }
 
-// canonicalText is canonical for JSON text, and the text itself when it is not JSON.
-func canonicalText(text string) string {
-	value, err := decode(text)
-	if err != nil {
-		return text
-	}
-	return canonical(value)
-}
-
 // compareJSON is the comparison most targets use: both answers canonicalised, compared as bytes.
 func compareJSON(goOut, oracleOut any) Verdict {
 	if canonical(goOut) == canonical(oracleOut) {
