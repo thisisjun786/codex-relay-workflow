@@ -104,7 +104,7 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 	}
 	held, err := (&registry.Registry{Store: c.Store}).StoreScopeSupervisor(ctx)
 	if err != nil {
-		return nil, err
+		return unreadableReading(err), nil
 	}
 	if len(held) > 1 {
 		candidates := make([]any, len(held))
@@ -127,6 +127,15 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 	}
 	out["levels"] = folded
 	return out, nil
+}
+
+// unreadableReading is the walk's own shape for a store that did not answer: state unreadable,
+// which resolveReading names relation_unreadable. The seat read answers the same way, because a
+// caller that records only named refusals (ReportHolds, staging) would otherwise abort on a raw
+// database error instead of holding the report.
+func unreadableReading(err error) map[string]any {
+	return map[string]any{"state": "unreadable", "readable": false, "levels": []any{},
+		"gaps": []any{}, "contention": []any{}, "detail": store.StoredSQLiteError(err)}
 }
 
 // levelOwner reads the task a linkage level names, whether the walk wrote the owner as a task id
@@ -186,7 +195,12 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 			case "initiative":
 				result.InitiativeKey, result.Recipient = key, owner
 			case scopeKindStore:
-				result.Recipient = owner
+				// The seat is not an initiative's. A walk that named an initiative level nobody
+				// holds still records that level's key, so the key is cleared with the recipient:
+				// a resolution must not pair a store recipient with an initiative that supervises
+				// nothing, and a later change to that non-owning initiative must not read as the
+				// recipient moving.
+				result.Recipient, result.InitiativeKey = owner, ""
 			}
 		}
 	}

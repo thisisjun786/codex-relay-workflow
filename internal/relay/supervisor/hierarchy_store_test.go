@@ -214,3 +214,95 @@ func TestStoreRecipient_TwoSeatsAreRefusedNotPicked(t *testing.T) {
 		t.Fatalf("refusal %q, want duplicate_scope_owner", reason)
 	}
 }
+
+// linkUnsupervisedInitiative gives the project an execution link to an initiative nobody holds:
+// the walk names that initiative level and its owner is empty, which is the other shape of "no
+// initiative supervises the project".
+func (w *storeRecipientWorld) linkUnsupervisedInitiative() {
+	w.t.Helper()
+	if err := storeseed.InsertScopeLink(w.ctx, w.s, store.ScopeLinksRow{LinkID: "lnk-project", LinkKind: "execution",
+		UpperKind: "initiative", UpperKey: storeRecipientInitiative, UpperTaskID: storeRecipientSupervisor,
+		LowerKind: "project", LowerKey: storeRecipientProject, LowerTaskID: storeRecipientParent,
+		Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// notASupervisor registers one live binding at the store scope under another role. The unique
+// index is per role, so the schema admits it; the seat is the supervisor's alone.
+func (w *storeRecipientWorld) notASupervisor() {
+	w.t.Helper()
+	if err := storeseed.InsertScopeBinding(w.ctx, w.s, store.ScopeBindingsRow{BindingID: "bnd-store-parent",
+		Role: "parent", ScopeKind: "store", ScopeKey: "store", TaskID: "01not-a-supervisor",
+		HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// TestStoreRecipient_AStoreBindingThatIsNotASupervisorIsNotASeat: the seat is the store scope's
+// supervisor binding, and the scope's unique index is per role, so a row of another role at the
+// same scope is neither the seat nor a rival owner of it.
+func TestStoreRecipient_AStoreBindingThatIsNotASupervisorIsNotASeat(t *testing.T) {
+	t.Parallel()
+	w := newStoreRecipientWorld(t)
+	w.notASupervisor()
+	if _, err := w.resolve(); err == nil {
+		t.Fatal("a store binding of another role was read as a seat")
+	} else if reason, _ := w.refusal(err); reason != "unregistered_scope" {
+		t.Fatalf("refusal %q, want unregistered_scope", reason)
+	}
+	w.seat("bnd-store", storeRecipientSeatTask)
+	got, err := w.resolve()
+	if err != nil {
+		t.Fatalf("a wrong-role store row turned the seat into a contest: %v", err)
+	}
+	if got.Recipient != storeRecipientSeatTask {
+		t.Fatalf("recipient %q, want the seat", got.Recipient)
+	}
+}
+
+// TestStoreRecipient_TheSeatClearsAnUnsupervisedInitiativeKey: when the walk names an initiative
+// level nobody holds and the seat answers instead, the resolution must not pair the store
+// recipient with that initiative's key. The seat is not an initiative's, and a later change to an
+// initiative that supervises nothing must not read as the recipient moving.
+func TestStoreRecipient_TheSeatClearsAnUnsupervisedInitiativeKey(t *testing.T) {
+	t.Parallel()
+	w := newStoreRecipientWorld(t)
+	w.linkUnsupervisedInitiative()
+	w.seat("bnd-store", storeRecipientSeatTask)
+	got, err := w.resolve()
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.Recipient != storeRecipientSeatTask {
+		t.Fatalf("recipient %q, want the seat", got.Recipient)
+	}
+	if got.InitiativeKey != "" {
+		t.Fatalf("the seat is not an initiative's, but the resolution names initiativeKey %q", got.InitiativeKey)
+	}
+}
+
+// TestStoreRecipient_AStoreThatCannotAnswerTheSeatReadIsUnreadable: a store that fails the seat
+// read is answered the way an unreadable walk is, with the named refusal, so a caller that records
+// only refusals (ReportHolds, staging) keeps its answer instead of aborting on a raw error.
+func TestStoreRecipient_AStoreThatCannotAnswerTheSeatReadIsUnreadable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.DB.ExecContext(ctx, "ALTER TABLE scope_bindings RENAME TO scope_bindings_unreadable"); err != nil {
+		t.Fatal(err)
+	}
+	reading := map[string]any{"state": "resolved", "readable": true, "gaps": []any{}, "contention": []any{},
+		"levels": []any{map[string]any{"scopeKind": "project", "scopeKey": storeRecipientProject,
+			"owner": map[string]any{"taskId": storeRecipientParent}, "depth": 0}}}
+	c := &Channel{Store: s, Linkage: staticLinkage{reading}}
+	_, err = c.Resolve(ctx, storeRecipientRelationship)
+	var refused Refusal
+	if !errors.As(err, &refused) || refused.Reason != "relation_unreadable" {
+		t.Fatalf("a failed seat read answered %v, want the named relation_unreadable refusal", err)
+	}
+}

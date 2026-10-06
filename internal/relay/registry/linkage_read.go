@@ -19,8 +19,23 @@ func unreadableDetail(err error) string { return store.StoredSQLiteError(err) }
 // store itself holds (CRW-450), the one supervisor scope no Linear level owns. The store's kind
 // and key stay in this package, with the other scope constants, so a reader of the walk names the
 // seat without spelling its scope itself.
+//
+// The seat is the scope's SUPERVISOR binding: the store scope's unique index is per role, so a row
+// of another role at the same scope is admitted by the schema and is not an owner of it. This is
+// the same rule the store ceiling's declarer check applies.
 func (r *Registry) StoreScopeSupervisor(ctx context.Context) ([]contract.OrderedObject, error) {
-	return r.Owners(ctx, scopeStore, scopeStore)
+	rows, err := r.Store.All(ctx, "SELECT * FROM scope_bindings"+
+		"  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
+		"    AND status IN ('active','paused') AND superseded_by IS NULL"+
+		"  ORDER BY revision DESC, binding_id", scopeStore, scopeStore, roleSupervisor)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]contract.OrderedObject, len(rows))
+	for i, row := range rows {
+		out[i] = bindingRecord(row)
+	}
+	return out, nil
 }
 
 // raised is the part of a reader's failure Python does not answer as unreadable: the
