@@ -174,5 +174,3 @@ func TestOpenWalksEverySpellingOfADirectory(t *testing.T) {
 	}
 	wantRefusal(t, err, ReasonOverlap)
 }
-
-// A destination that shares a directory with the source tree below its root reaches into the source tree: the same
