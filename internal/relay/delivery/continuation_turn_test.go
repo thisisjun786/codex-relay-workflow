@@ -112,7 +112,11 @@ func TestCRW255_a_later_turn_of_the_child_is_told_how_to_continue_and_is_admitte
 	// An admitted turn needs no claim again within its generation, whatever it emits next.
 	secondFile := filepath.Join(work, "second.txt")
 	mustDo(t, os.WriteFile(secondFile, []byte("a second deliverable"), 0o644))
-	again, code := emit("1", child, "turn-loop-5", "--artifact", secondFile)
+	// CRW-826: a second revision of one generation must name the revision it replaces, or the
+	// generation would read two heads. The claim is what this case is about; the naming keeps the
+	// emit a successor rather than a fork.
+	held, _ := accepted["receipt"].(map[string]any)["revisionHash"].(string)
+	again, code := emit("1", child, "turn-loop-5", "--artifact", secondFile, "--supersedes-revision", held)
 	if code != 0 || again["stage"] != "staged" {
 		t.Fatalf("an admitted turn emitting again: %d %v", code, again)
 	}
