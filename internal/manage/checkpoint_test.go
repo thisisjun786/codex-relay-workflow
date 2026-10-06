@@ -706,6 +706,68 @@ func TestCheckpointRecordClearsTheRunningHoursAndWindowSignals(t *testing.T) {
 	}
 }
 
+// A custom state name that merely contains "done" or "complet" is not a completed state, so it
+// stays in the backlog and does not make a milestone look integrated.
+func TestCheckpointStateMatchingIsNotSubstring(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Incomplete\"},"+
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Not Done\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 2 {
+		t.Fatalf("a name merely containing done/complet was read as completed: %v", report.Counts.BacklogNet4h)
+	}
+}
+
+// A record path that is a symbolic link is refused, so an existing link cannot send the append
+// outside the state directory.
+func TestCheckpointRecordRefusesASymlinkedRecordFile(t *testing.T) {
+	coreTempHome(t)
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	if err := os.WriteFile(outside, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(checkpointManageStateDir(t), "checkpoint")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "project-1.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, code := checkpointRunCommand(t, t.TempDir(), []string{
+		"record", "--project", "project-1", "--summary-file",
+		checkpointWriteInput(t, t.TempDir(), "summary.md", "summary"),
+	}); code == 0 {
+		t.Fatal("record followed a symbolic link")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Errorf("the record was written through the link: %q", data)
+	}
+}
+
+// A broken input file is not unreadable relay state: it exits 2, while a missing store exits 3.
+func TestCheckpointInputErrorExitsTwo(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	missing := filepath.Join(t.TempDir(), "absent.jsonl")
+	stdout, stderr, code := checkpointRunCommand(t, f.dir, []string{"--pair-eval", missing})
+	if code != checkpointInputExit {
+		t.Fatalf("a missing input file exited %d, want %d: %s%s", code, checkpointInputExit, stdout, stderr)
+	}
+	if code == checkpointStoreExit {
+		t.Error("a broken export was reported as unreadable relay state")
+	}
+}
+
 // The thresholds come from the checkpoint settings section.
 func TestCheckpointThresholdsComeFromTheSection(t *testing.T) {
 	f := checkpointNewFixture(t)

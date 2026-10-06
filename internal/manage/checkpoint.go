@@ -8,14 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"modernc.org/sqlite"
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -25,9 +24,13 @@ import (
 // state, which is never the relay zone.
 const (
 	checkpointStoreFile    = "relay.sqlite3"
-	checkpointBusyMillis   = 5000
 	checkpointSummaryLimit = 2000
 	checkpointDirName      = "checkpoint"
+)
+
+// checkpointBusyTimeout is how long a read waits for a writer holding the store.
+const (
+	checkpointBusyTimeout = 5 * time.Second
 )
 
 // The due signals and the one reading that is not a signal. A signal that holds is a reason;
@@ -46,8 +49,23 @@ const (
 // 0 and one that could not read the store exits checkpointStoreExit.
 const (
 	checkpointDueExit   = 1
+	checkpointInputExit = 2
 	checkpointStoreExit = 3
 )
+
+// checkpointInputError is a failure of one of the two exported input files, which is not a
+// failure to read the store: the exit statuses keep them apart so a caller can tell a broken
+// export from unreadable relay state.
+type checkpointInputError struct{ err error }
+
+func (e *checkpointInputError) Error() string { return e.err.Error() }
+func (e *checkpointInputError) Unwrap() error { return e.err }
+
+// checkpointIsInputError reports whether err is that failure.
+func checkpointIsInputError(err error) bool {
+	var input *checkpointInputError
+	return errors.As(err, &input)
+}
 
 // The two rolling windows the signal names carry, and the instant form the relay writes.
 const (
@@ -112,10 +130,13 @@ type CheckpointReport struct {
 	Since      string           `json:"since"`
 }
 
-// checkpointStore is the read-only handle on the relay store: mode=ro with query_only under the
-// store's own no-sidecar rule, so a reading can neither create a table nor write a row, and a
-// table a store predates is an unmeasured reading rather than a repair.
-type checkpointStore struct{ db *sql.DB }
+// checkpointStore is the read-only handle on the relay store. It is opened by the store's own
+// OpenInPlace, which applies the no-sidecar rule (mode=ro, immutable=1 when the write-ahead log
+// holds no frame) AND checks after the open that SQLite's main database is the very file whose
+// sidecars were examined, so a component replaced between the examination and the open cannot be
+// read with the other file's parameters. A reading can neither create a table nor write a row,
+// and a table a store predates is an unmeasured reading rather than a repair.
+type checkpointStore struct{ ro *store.ReadOnly }
 
 // checkpointOpenStore opens the store at state read-only. A missing file is an error, because a
 // reading of nothing is not a clean reading.
@@ -127,39 +148,26 @@ func checkpointOpenStore(ctx context.Context, state string) (*checkpointStore, e
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("relay store: %w", err)
 	}
-	// store.InPlaceRead is the store's own no-sidecar rule: it resolves the path the way SQLite
-	// does and returns immutable=1 when the write-ahead log holds no frame, so a reading never
-	// creates -wal or -shm, and it refuses a log whose index is missing rather than rebuilding it.
-	resolved, params, err := store.InPlaceRead(path)
+	ro, err := store.OpenInPlace(ctx, path, checkpointBusyTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("relay store: %w", err)
 	}
-	u := url.URL{Scheme: "file", Path: resolved}
-	q := params
-	q.Set("_busy_timeout", fmt.Sprint(checkpointBusyMillis))
-	q.Set("_pragma", "query_only(1)")
-	u.RawQuery = q.Encode()
-	connector, err := sqlite.NewConnector(u.String())
-	if err != nil {
-		return nil, fmt.Errorf("relay store: %w", err)
-	}
-	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("relay store: %w", err)
-	}
-	return &checkpointStore{db: db}, nil
+	return &checkpointStore{ro: ro}, nil
 }
 
 // Close releases the read-only handle.
-func (s *checkpointStore) Close() error { return s.db.Close() }
+func (s *checkpointStore) Close() error { return s.ro.Close() }
+
+// checkpointQueryer is the read-only surface a query needs, which store.ReadOnly satisfies.
+type checkpointQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
 
 // checkpointHasTable reports whether the store carries a table. The DAG zone is additive, so a
 // store written before it lacks tables this reading would otherwise read.
 func (s *checkpointStore) checkpointHasTable(ctx context.Context, name string) (bool, error) {
 	var one int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&one)
+	err := s.ro.QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -170,7 +178,7 @@ func (s *checkpointStore) checkpointHasTable(ctx context.Context, name string) (
 }
 
 // checkpointRows runs one query and scans every row through scan.
-func checkpointRows[T any](ctx context.Context, db *sql.DB, query string, args []any, scan func(*sql.Rows) (T, error)) ([]T, error) {
+func checkpointRows[T any](ctx context.Context, db checkpointQueryer, query string, args []any, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -213,7 +221,7 @@ func (s *checkpointStore) checkpointProjects(ctx context.Context) ([]string, err
 	if zoned {
 		query += " UNION SELECT project_key FROM dag_plans WHERE project_key <> ''"
 	}
-	return checkpointRows(ctx, s.db, query+" ORDER BY 1", nil, func(rows *sql.Rows) (string, error) {
+	return checkpointRows(ctx, s.ro, query+" ORDER BY 1", nil, func(rows *sql.Rows) (string, error) {
 		var project string
 		return project, rows.Scan(&project)
 	})
@@ -224,7 +232,7 @@ type checkpointProjectInstant struct{ project, at string }
 
 // checkpointMerges reads the landed merge turns, with the instant each landed.
 func (s *checkpointStore) checkpointMerges(ctx context.Context) ([]checkpointProjectInstant, error) {
-	return checkpointRows(ctx, s.db,
+	return checkpointRows(ctx, s.ro,
 		"SELECT project_key, COALESCE(NULLIF(closed_at, ''), updated_at) FROM merge_turns WHERE state = 'landed' ORDER BY turn_id",
 		nil, func(rows *sql.Rows) (checkpointProjectInstant, error) {
 			var row checkpointProjectInstant
@@ -234,7 +242,7 @@ func (s *checkpointStore) checkpointMerges(ctx context.Context) ([]checkpointPro
 
 // checkpointVerdicts reads the needs_changes rulings, with the instant each was decided.
 func (s *checkpointStore) checkpointVerdicts(ctx context.Context) ([]checkpointProjectInstant, error) {
-	return checkpointRows(ctx, s.db,
+	return checkpointRows(ctx, s.ro,
 		"SELECT s.project_key, v.decided_at FROM verdicts v"+
 			" JOIN events e ON e.event_id = v.event_id"+
 			" JOIN relationship_scope s ON s.relationship_id = e.relationship_id"+
@@ -249,7 +257,7 @@ func (s *checkpointStore) checkpointVerdicts(ctx context.Context) ([]checkpointP
 // instant is the one the receipt recorded.
 func (s *checkpointStore) checkpointSplitDecisions(ctx context.Context) ([]checkpointProjectInstant, error) {
 	type raw struct{ project, receipt, firstSeen string }
-	rows, err := checkpointRows(ctx, s.db,
+	rows, err := checkpointRows(ctx, s.ro,
 		"SELECT s.project_key, e.receipt, e.first_seen_at FROM events e"+
 			" JOIN relationship_scope s ON s.relationship_id = e.relationship_id"+
 			" WHERE e.outcome = 'decision_reply' ORDER BY e.event_id",
@@ -293,7 +301,7 @@ func (s *checkpointStore) checkpointSplitDecisions(ctx context.Context) ([]check
 // the scheduler additionally requires every target of a multi-target node, which this count
 // does not attempt.
 func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpointProjectInstant, error) {
-	return checkpointRows(ctx, s.db,
+	return checkpointRows(ctx, s.ro,
 		"SELECT p.project_key, MIN(o.observed_at) FROM dag_integration_observations o"+
 			" JOIN dag_acceptances a ON a.acceptance_id = o.acceptance_id"+
 			" JOIN dag_plans p ON p.plan_id = a.plan_id"+
@@ -417,11 +425,17 @@ func checkpointReadPairEval(path string) ([]checkpointPairEval, error) {
 	return out, nil
 }
 
+// checkpointCompletedStates is the Linear state types that mean an issue left the backlog: the
+// two completed workflow types, and the two words a Linear export's state name carries for them.
+// Matching a substring would read a custom name such as "Incomplete" or "Not Done" as completed.
+var checkpointCompletedStates = map[string]bool{
+	"completed": true, "complete": true, "done": true, "canceled": true, "cancelled": true,
+}
+
 // checkpointCompletedState reports whether an exported issue state means the issue left the
-// backlog.
+// backlog. The comparison is on the whole state name, case-folded and trimmed.
 func checkpointCompletedState(state string) bool {
-	lower := strings.ToLower(strings.TrimSpace(state))
-	return strings.Contains(lower, "done") || strings.Contains(lower, "complet")
+	return checkpointCompletedStates[strings.ToLower(strings.TrimSpace(state))]
 }
 
 // checkpointCountsAfter counts the instants strictly after a baseline; an empty baseline counts
@@ -558,14 +572,14 @@ func Checkpoint(ctx context.Context, e *Env, cfg *Config, opts CheckpointOptions
 	if opts.LinearExport != "" {
 		read, err := checkpointReadExport(opts.LinearExport)
 		if err != nil {
-			return nil, fmt.Errorf("read the linear export: %w", err)
+			return nil, &checkpointInputError{err: fmt.Errorf("read the linear export: %w", err)}
 		}
 		export = &read
 	}
 	var pairEval []checkpointPairEval
 	if opts.PairEval != "" {
 		if pairEval, err = checkpointReadPairEval(opts.PairEval); err != nil {
-			return nil, fmt.Errorf("read the pair evaluation: %w", err)
+			return nil, &checkpointInputError{err: fmt.Errorf("read the pair evaluation: %w", err)}
 		}
 	}
 
@@ -826,9 +840,19 @@ func checkpointRecord(e *Env, cfg *Config, project, summaryFile string) (string,
 		return "", err
 	}
 	path := filepath.Join(dir, project+".jsonl")
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	// O_NOFOLLOW refuses a record path that is a symbolic link, so an existing link cannot send
+	// the append to a target outside the state directory; the file is then checked to be a regular
+	// one, so a fifo or device at that path is refused too.
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return "", err
+	}
+	if info, err := file.Stat(); err != nil {
+		file.Close()
+		return "", err
+	} else if !info.Mode().IsRegular() {
+		file.Close()
+		return "", fmt.Errorf("the record path %s is not a regular file", path)
 	}
 	runes := []rune(string(summary))
 	if len(runes) > checkpointSummaryLimit {
@@ -879,6 +903,9 @@ func checkpointRun(ctx context.Context, e *Env, args []string) int {
 	reports, err := Checkpoint(ctx, e, coreDefaults(e), opts)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage checkpoint: error: %v\n", err)
+		if checkpointIsInputError(err) {
+			return checkpointInputExit
+		}
 		return checkpointStoreExit
 	}
 	data, err := json.Marshal(reports)
