@@ -19,7 +19,7 @@ import (
 
 // spawnParityNodeError is the oracle's Error.message for err: a filesystem failure whose errno
 // spawnParityErrno names becomes `<NAME>: <description>, <op> '<path>'`, with the path left out for
-// write and close; anything else keeps err.Error().
+// the descriptor-only operations read, write and close; anything else keeps err.Error().
 //
 // Only a direct *os.PathError is converted. errors.As would find one inside a wrapper, but the port
 // wraps some failures with text of its own (a dispatch-lock-clear's "(a dispatch-lock-clear of this
@@ -40,7 +40,7 @@ func spawnParityNodeError(err error) string {
 		return err.Error()
 	}
 	output := name + ": " + desc + ", " + path.Op
-	if path.Op != "write" && path.Op != "close" {
+	if path.Op != "read" && path.Op != "write" && path.Op != "close" {
 		output += " '" + path.Path + "'"
 	}
 	return output

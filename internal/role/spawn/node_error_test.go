@@ -20,6 +20,15 @@ func TestSpawnParityNodeError(t *testing.T) {
 	if got, want := spawnParityNodeError(&os.PathError{Op: "write", Path: "/w/x", Err: syscall.ENOSPC}), "ENOSPC: no space left on device, write"; got != want {
 		t.Errorf("write PathError = %q, want %q", got, want)
 	}
+	// read also leaves the path out: Node's fs.readFileSync on a directory answers
+	// "EISDIR: illegal operation on a directory, read" with no path (checked with Node 24).
+	if got, want := spawnParityNodeError(&os.PathError{Op: "read", Path: "/w/dir", Err: syscall.EISDIR}), "EISDIR: illegal operation on a directory, read"; got != want {
+		t.Errorf("read PathError = %q, want %q", got, want)
+	}
+	// open keeps the path, as Node's readFileSync does for ENOENT.
+	if got, want := spawnParityNodeError(&os.PathError{Op: "open", Path: "/w/nope", Err: syscall.ENOENT}), "ENOENT: no such file or directory, open '/w/nope'"; got != want {
+		t.Errorf("open PathError = %q, want %q", got, want)
+	}
 	// an errno the table does not name keeps Go's wording.
 	unnamed := &os.PathError{Op: "lstat", Path: "/w/x", Err: syscall.E2BIG}
 	if got := spawnParityNodeError(unnamed); got != unnamed.Error() {
