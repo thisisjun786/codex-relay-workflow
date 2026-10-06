@@ -13,6 +13,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
@@ -34,6 +35,10 @@ const (
 	AppliedNeedsAction   = "needs_user_action"
 	AppliedUnverifiable  = "unverifiable"
 	AppliedActionRestart = "restart the relay service so it loads the new policy"
+	// AppliedActionReregister is the repair when the file bytes no longer match the digest the
+	// wiring record names: the bridge launcher refuses those bytes, so the record must be brought up
+	// to date before a new bridge can start under them.
+	AppliedActionReregister = "re-register the execution policy with crw install register-mcp --owner plugin --execution-policy <file>"
 )
 
 // LookupEnv is os.LookupEnv: a test supplies a map through it.
@@ -116,6 +121,21 @@ func Locate(env LookupEnv) Located {
 		return Located{State: Unreadable, Reason: "the record at " + record + " is not an object"}
 	}
 	read := pluginwiring.ReadBridgeRecord(document)
+	if read.Version != 2 {
+		return Located{State: Unreadable, Reason: "the record at " + record + " is version " + pyjson.Dumps(read.VersionValue, pyjson.Options{}) + ", and this reader uses a version 2 record the bridge launcher starts"}
+	}
+	if read.Owner != "plugin" {
+		return Located{State: Unreadable, Reason: "the record at " + record + " names " + pyjson.Dumps(read.Owner, pyjson.Options{}) + " as the owner, and the packaged launcher starts only a plugin-owned record"}
+	}
+	if read.ServerName != nil && read.ServerName != "codex-thread-bridge" {
+		return Located{State: Unreadable, Reason: "the record at " + record + " names another server, and the packaged launcher starts only the declared one"}
+	}
+	if !read.IsString || !strings.HasPrefix(read.Executable, "/") {
+		return Located{State: Unreadable, Reason: "the record at " + record + " does not name bridgeExecutable as an absolute path"}
+	}
+	if !read.ArgsOK {
+		return Located{State: Unreadable, Reason: "the record at " + record + " does not list args as strings"}
+	}
 	if !read.HasPolicy {
 		return Located{State: NotRegistered, Reason: "the record at " + record + " names no execution policy"}
 	}

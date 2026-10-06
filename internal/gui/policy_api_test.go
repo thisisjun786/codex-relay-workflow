@@ -241,8 +241,26 @@ func TestPolicyCheckReportsAStaleDigest(t *testing.T) {
 }
 
 // TestPolicyCheckWritesNothing is C4: both files stay byte-identical and no new file appears.
+// policyWritableText is a policy with an allowlist entry no role uses, so every one of the five
+// change kinds is a legal candidate against it.
+const policyWritableText = "{\n" +
+	"  \"roles\": {\n" +
+	"    \"child\": {\"model\": \"anthropic/opus\", \"reasoningEffort\": \"xhigh\"},\n" +
+	"    \"parent\": {\"pairs\": [{\"model\": \"anthropic/opus\", \"reasoningEffort\": \"xhigh\"}, {\"model\": \"gpt-6.1-sol\", \"reasoningEffort\": \"xhigh\"}]},\n" +
+	"    \"supervisor\": {\"expectation\": \"record\"}\n" +
+	"  },\n" +
+	"  \"allowed\": [\n" +
+	"    {\"model\": \"anthropic/opus\", \"efforts\": [\"xhigh\", \"max\"]},\n" +
+	"    {\"model\": \"gpt-6.1-sol\", \"efforts\": [\"xhigh\"]},\n" +
+	"    {\"model\": \"openai/gpt-5\", \"efforts\": [\"high\"]}\n" +
+	"  ],\n" +
+	"  \"exceptions\": {\n" +
+	"    \"legacy\": {\"role\": \"parent\", \"model\": \"devin/swe-2\", \"reasoningEffort\": \"max\", \"cwd\": [\"/tmp/project\"]}\n" +
+	"  }\n" +
+	"}\n"
+
 func TestPolicyCheckWritesNothing(t *testing.T) {
-	file := policyHost(t, policyText, true)
+	file := policyHost(t, policyWritableText, true)
 	codexHome := os.Getenv("CODEX_HOME")
 	record := filepath.Join(codexHome, "crw-bridge-mcp.json")
 	before := policyListing(t, filepath.Dir(file))
@@ -254,13 +272,19 @@ func TestPolicyCheckWritesNothing(t *testing.T) {
 	for _, change := range []string{
 		"{\"Kind\":\"setRolePairs\",\"Role\":\"child\",\"Pairs\":[{\"Model\":\"anthropic/opus\",\"Effort\":\"xhigh\"}]}",
 		"{\"Kind\":\"removeException\",\"ID\":\"legacy\"}",
-		"{\"Kind\":\"setAllowed\",\"Model\":\"anthropic/opus\",\"Efforts\":[\"max\"]}",
+		"{\"Kind\":\"setAllowed\",\"Model\":\"openai/gpt-5\",\"Efforts\":[\"high\"]}",
 		"{\"Kind\":\"setException\",\"ID\":\"extra\",\"Role\":\"child\",\"Model\":\"anthropic/opus\",\"Effort\":\"xhigh\",\"CWD\":[\"/tmp/project\"]}",
-		"{\"Kind\":\"removeAllowed\",\"Model\":\"gpt-6.1-sol\"}",
+		"{\"Kind\":\"removeAllowed\",\"Model\":\"openai/gpt-5\"}",
 	} {
-		payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":" + change + "}"
-		if code, body := checkResponse(t, server, payload); code != http.StatusOK {
+		payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":" + change + "}"
+		code, body := checkResponse(t, server, payload)
+		if code != http.StatusOK {
 			t.Fatalf("check: %d %v", code, body)
+		}
+		// A check that answered 200 with valid=false would leave the write-nothing claim vacuous, so
+		// every one of the five kinds must actually be a legal candidate.
+		if body["valid"] != true {
+			t.Fatalf("change %s was refused, so this test proves nothing: %v", change, body)
 		}
 	}
 

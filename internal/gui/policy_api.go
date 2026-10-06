@@ -62,7 +62,7 @@ func policyHandler(_ *Env, r *http.Request) (Response, error) {
 		Allowed:          emptyIfNilAllowed(reading.Allowed),
 		Exceptions:       emptyIfNilExceptions(reading.Exceptions),
 		Applied:          applied,
-		Actions:          policystore.AppliedActions(applied),
+		Actions:          policystore.AppliedActions(reading, applied),
 	}
 	if reading.State == policystore.Registered {
 		body.Mode = reading.Mode()
@@ -90,7 +90,7 @@ func policyCheckHandler(_ *Env, r *http.Request) (Response, error) {
 			Errors: []string{"no registered execution policy: " + located.Reason},
 		}}, nil
 	}
-	raw, err := os.ReadFile(located.Path)
+	raw, err := policystore.ReadRaw(located.Path)
 	if err != nil {
 		return Response{Status: http.StatusOK, Body: checkBody{
 			Valid:  false,
