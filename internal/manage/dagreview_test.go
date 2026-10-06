@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -347,4 +348,169 @@ func dagReviewRunCommand(t *testing.T, state string, args []string) (string, str
 	e := &Env{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr, Getenv: os.Getenv, Now: dagReviewNow, Executable: exe}
 	code := dagReviewCommand.Run(context.Background(), e, args)
 	return stdout.String(), stderr.String(), code
+}
+
+// dagReviewSidecars lists the SQLite coordination files beside a store, which a read-only review
+// must never create.
+func dagReviewSidecars(t *testing.T, path string) []string {
+	t.Helper()
+	var found []string
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(path + suffix); err == nil {
+			found = append(found, filepath.Base(path+suffix))
+		}
+	}
+	return found
+}
+
+// A read of a checkpointed store creates no sidecar: the open uses the store's own no-sidecar
+// rule, so a review cannot change relay state even by making SQLite build its index.
+func TestDagReviewReadCreatesNoSidecars(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	f.release("plan-1", "A", "manifest-A", dagReviewAt(5))
+	f.close()
+
+	before := dagReviewSidecars(t, f.path)
+	review, err := DagReview(context.Background(), dagReviewEnv(t), dagReviewConfig(t, f.dir, nil, 0))
+	if err != nil {
+		t.Fatalf("DagReview: %v", err)
+	}
+	if len(review.Plans) != 1 {
+		t.Fatalf("the review did not read the plan: %+v", review.Plans)
+	}
+	if after := dagReviewSidecars(t, f.path); len(after) != len(before) {
+		t.Errorf("the read created SQLite sidecars: before %v, after %v", before, after)
+	}
+}
+
+// A configured plan id the store does not carry is a configuration error, not a clean review.
+func TestDagReviewUnknownConfiguredPlanIsAnError(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	f.close()
+
+	if _, err := DagReview(context.Background(), dagReviewEnv(t), dagReviewConfig(t, f.dir, []string{"plan-typo"}, 0)); err == nil {
+		t.Fatal("a configured plan the store does not carry reviewed as clean")
+	}
+}
+
+// A child another plan of the same project executed is that plan's child, not an unreleased one
+// in this plan; a paused child is still live and is reported.
+func TestDagReviewChildOwnershipAndPausedChildren(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	// Executed by another plan of the same project: not this plan's unreleased child.
+	f.relationship("relationship-other", "CRW-OTHER", dagReviewAt(20))
+	f.scope("relationship-other", "project-1")
+	f.execution("plan-other", "X", "relationship-other")
+	// Paused and never executed: still live, so it is reported.
+	f.relationship("relationship-paused", "CRW-PAUSED", dagReviewAt(21))
+	f.scope("relationship-paused", "project-1")
+	f.exec("UPDATE relationships SET status = 'paused' WHERE relationship_id = 'relationship-paused'")
+	f.close()
+
+	found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindChildWithoutRelease)
+	if len(found) != 1 || found[0].Issue != "CRW-PAUSED" {
+		t.Fatalf("child_without_release = %+v, want only CRW-PAUSED", found)
+	}
+}
+
+// A configured plan list narrows the merge lanes too: another plan's stalled turn is not
+// reported by a review that did not ask for it.
+func TestDagReviewLanesFollowTheConfiguredPlans(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	f.plan("plan-2", "project-2")
+	f.revision("plan-2", 1, dagReviewAt(0))
+	f.node("plan-2", "C", "CRW-C")
+	f.execution("plan-2", "C", "relationship-2")
+	f.laneTurn("turn-2", "owner/repo#dev", "holder-2", "holding", "relationship-2", 9, dagReviewAt(1), dagReviewAt(1), "")
+	f.close()
+
+	if found := dagReviewFind(dagReviewRunReview(t, f, []string{"plan-1"}, 0), dagReviewKindLaneTurnStalled); len(found) != 0 {
+		t.Errorf("a narrowed review reported another plan's lane: %+v", found)
+	}
+	if found := dagReviewFind(dagReviewRunReview(t, f, []string{"plan-2"}, 0), dagReviewKindLaneTurnStalled); len(found) != 1 {
+		t.Errorf("the lane of the selected plan was not reported: %+v", found)
+	}
+}
+
+// An integrated edge is judged in the target it names: an observation in the edge's own
+// repository and base ref satisfies it, and one in another target does not.
+func TestDagReviewEdgeTargetMatters(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	f.node("plan-1", "B", "CRW-B")
+	f.edge("plan-1", "e1", "A", "B", "integrated", 1)
+	f.release("plan-1", "B", "manifest-B", dagReviewAt(5))
+	f.acceptance("plan-1", "A", "acceptance-A", "relationship-A", dagReviewAt(6))
+	f.observation("acceptance-A", dagReviewAt(1), true, "")
+	f.close()
+
+	if found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindReleasedBeforePredecessor); len(found) != 0 {
+		t.Errorf("an observation in the edge's own target did not satisfy it: %+v", found)
+	}
+
+	// The same store, but the edge orders another repository, so the observation above no longer
+	// satisfies it and the release is reported.
+	f2 := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f2, "A")
+	f2.node("plan-1", "B", "CRW-B")
+	f2.edgeTarget("plan-1", "e1", "A", "B", "integrated", 1, "other/repo", "dev")
+	f2.release("plan-1", "B", "manifest-B", dagReviewAt(5))
+	f2.acceptance("plan-1", "A", "acceptance-A", "relationship-A", dagReviewAt(6))
+	f2.observation("acceptance-A", dagReviewAt(1), true, "")
+	f2.close()
+
+	found := dagReviewFind(dagReviewRunReview(t, f2, nil, 0), dagReviewKindReleasedBeforePredecessor)
+	if len(found) != 1 {
+		t.Fatalf("an observation outside the edge's target satisfied it: %+v", found)
+	}
+}
+
+// A node a later revision retired is no longer in the plan, so it is not in flight and cannot
+// overlap a live node.
+func TestDagReviewRetiredNodeIsNotInFlight(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	f.plan("plan-1", "project-1")
+	f.revision("plan-1", 1, dagReviewAt(0))
+	f.node("plan-1", "A", "CRW-A")
+	f.revision("plan-1", 2, dagReviewAt(20))
+	f.exec("UPDATE dag_nodes SET retired_rev = 2 WHERE plan_id = 'plan-1' AND node_id = 'A'")
+	f.node("plan-1", "B", "CRW-B")
+	f.release("plan-1", "A", "manifest-A", dagReviewAt(5))
+	f.release("plan-1", "B", "manifest-B", dagReviewAt(25))
+	f.region("plan-1", "A", "shared.go", "file", "", "delete", true)
+	f.region("plan-1", "B", "shared.go", "file", "", "edit", false)
+	f.close()
+
+	if found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindExclusiveOverlapRunning); len(found) != 0 {
+		t.Errorf("a retired node was reported as in flight: %+v", found)
+	}
+}
+
+// A node with no region declaration at all is skipped by the overlap reading rather than
+// reported with an empty issue.
+func TestDagReviewUndeclaredNodeRaisesNoOverlap(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	f.node("plan-1", "B", "CRW-B")
+	f.release("plan-1", "A", "manifest-A", dagReviewAt(5))
+	f.release("plan-1", "B", "manifest-B", dagReviewAt(6))
+	f.close()
+
+	review := dagReviewRunReview(t, f, nil, 0)
+	for _, anomaly := range dagReviewFind(review, dagReviewKindExclusiveOverlapRunning) {
+		if strings.TrimSpace(anomaly.Issue) == "" {
+			t.Errorf("an overlap anomaly names no issue: %+v", anomaly)
+		}
+	}
+}
+
+// edgeTarget is the edge fixture with the target an integrated edge orders, which is immutable
+// once written.
+func (f *dagReviewFixture) edgeTarget(planID, edgeID, from, to, kind string, introducedRev int, repository, baseRef string) {
+	f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,?,NULL,?,?,?,?,?,0)",
+		planID, edgeID, introducedRev, from, to, kind, repository, baseRef)
 }

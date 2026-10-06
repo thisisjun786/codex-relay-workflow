@@ -127,6 +127,9 @@ func DagReview(ctx context.Context, e *Env, cfg *Config) (Review, error) {
 	if err != nil {
 		return review, fmt.Errorf("read the plans: %w", err)
 	}
+	if err := dagReviewCheckConfigured(section.Plans, plans); err != nil {
+		return review, err
+	}
 	in := &dagReviewInput{store: store, now: e.Now(), stall: time.Duration(stall) * time.Minute, review: &review}
 	for _, plan := range plans {
 		facts, err := store.dagReviewReadFacts(ctx, plan, &review.Checks)
@@ -135,7 +138,7 @@ func DagReview(ctx context.Context, e *Env, cfg *Config) (Review, error) {
 		}
 		in.facts = append(in.facts, facts)
 	}
-	if in.lanes, err = store.dagReviewReadLanes(ctx); err != nil {
+	if in.lanes, err = store.dagReviewReadLanes(ctx, section.Plans); err != nil {
 		return review, fmt.Errorf("read the merge lanes: %w", err)
 	}
 	for _, source := range dagReviewSources {
@@ -153,6 +156,25 @@ func DagReview(ctx context.Context, e *Env, cfg *Config) (Review, error) {
 		return review.Anomalies[i].Node < review.Anomalies[j].Node
 	})
 	return review, nil
+}
+
+// dagReviewCheckConfigured refuses a configured plan id the store does not carry. A scoped
+// review that silently reviewed nothing would read as a clean review of a plan that does not
+// exist, which is the opposite of what the setting asks for.
+func dagReviewCheckConfigured(wanted []string, plans []dagReviewPlanRef) error {
+	if len(wanted) == 0 {
+		return nil
+	}
+	found := map[string]bool{}
+	for _, plan := range plans {
+		found[plan.planID] = true
+	}
+	for _, id := range wanted {
+		if !found[id] {
+			return fmt.Errorf("the configured plan %q is not in the store", id)
+		}
+	}
+	return nil
 }
 
 // dagReviewStoreSources runs the six store readings of this issue.
@@ -174,7 +196,7 @@ func dagReviewStoreSources(ctx context.Context, in *dagReviewInput) error {
 func dagReviewPlanShape(in *dagReviewInput, facts dagReviewFacts) {
 	integrated := 0
 	for _, acceptance := range facts.acceptances {
-		if dagReviewIntegratedAt(facts, acceptance.nodeID) != "" {
+		if dagReviewIntegratedAt(facts, acceptance.nodeID, "", "") != "" {
 			integrated++
 		}
 	}
@@ -210,8 +232,10 @@ func dagReviewFirstRelease(facts dagReviewFacts) map[string]time.Time {
 }
 
 // dagReviewIntegratedAt is the node's earliest effective integration observation, or "" when it
-// has none: an observation that is not an ancestor or that was reverted does not integrate.
-func dagReviewIntegratedAt(facts dagReviewFacts, nodeID string) string {
+// has none: an observation that is not an ancestor or that was reverted does not integrate. An
+// empty repository means any target; a named one narrows the reading to that repository and base
+// ref, which is how an integrated edge is judged, because the edge names the target it orders.
+func dagReviewIntegratedAt(facts dagReviewFacts, nodeID, repository, baseRef string) string {
 	byAcceptance := map[string]string{}
 	for _, acceptance := range facts.acceptances {
 		byAcceptance[acceptance.acceptanceID] = acceptance.nodeID
@@ -222,6 +246,9 @@ func dagReviewIntegratedAt(facts dagReviewFacts, nodeID string) string {
 			continue
 		}
 		if byAcceptance[observation.acceptanceID] != nodeID {
+			continue
+		}
+		if repository != "" && (observation.repository != repository || observation.baseRef != baseRef) {
 			continue
 		}
 		if best == "" || observation.observedAt < best {
@@ -248,7 +275,7 @@ func dagReviewReleasedBeforePredecessor(in *dagReviewInput, facts dagReviewFacts
 		if introduced, ok := dagReviewInstant(edge.introducedAt); ok && introduced.After(releasedAt) {
 			continue
 		}
-		observed := dagReviewIntegratedAt(facts, edge.from)
+		observed := dagReviewIntegratedAt(facts, edge.from, edge.repository, edge.baseRef)
 		instant, ok := dagReviewInstant(observed)
 		if ok && !instant.After(releasedAt) {
 			continue
@@ -288,9 +315,17 @@ func dagReviewReleasedRepeatedly(in *dagReviewInput, facts dagReviewFacts) {
 func dagReviewExclusiveOverlapRunning(in *dagReviewInput, facts dagReviewFacts) {
 	issue := dagReviewIssueByNode(facts)
 	first := dagReviewFirstRelease(facts)
+	live := map[string]bool{}
+	for _, node := range facts.nodes {
+		live[node.nodeID] = true
+	}
 	var inflight []string
 	for node := range first {
-		if dagReviewIntegratedAt(facts, node) == "" {
+		// A node retired by a later revision is no longer in the plan, so it holds nothing.
+		if !live[node] {
+			continue
+		}
+		if dagReviewIntegratedAt(facts, node, "", "") == "" {
 			inflight = append(inflight, node)
 		}
 	}
@@ -354,7 +389,7 @@ func dagReviewLandedNotObserved(in *dagReviewInput, facts dagReviewFacts) {
 			if acceptance.relationshipID != turn.relationshipID {
 				continue
 			}
-			if dagReviewIntegratedAt(facts, acceptance.nodeID) != "" {
+			if dagReviewIntegratedAt(facts, acceptance.nodeID, "", "") != "" {
 				continue
 			}
 			landed[acceptance.nodeID] = turn.turnID

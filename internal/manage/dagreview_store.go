@@ -13,6 +13,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The relay store a review reads: its file name below the state directory and the busy timeout
@@ -38,9 +39,16 @@ func dagReviewOpenStore(ctx context.Context, state string) (*dagReviewStore, err
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("relay store: %w", err)
 	}
-	u := url.URL{Scheme: "file", Path: path}
-	q := u.Query()
-	q.Set("mode", "ro")
+	// store.InPlaceRead is the store's own no-sidecar rule (decision 36): it resolves the path
+	// the way SQLite does and returns immutable=1 when the write-ahead log holds no frame, so a
+	// read never creates -wal or -shm, and it refuses a log whose index is missing rather than
+	// rebuilding it. A plain mode=ro would create both sidecars.
+	resolved, params, err := store.InPlaceRead(path)
+	if err != nil {
+		return nil, fmt.Errorf("relay store: %w", err)
+	}
+	u := url.URL{Scheme: "file", Path: resolved}
+	q := params
 	q.Set("_busy_timeout", fmt.Sprint(dagReviewBusyMillis))
 	q.Set("_pragma", "query_only(1)")
 	u.RawQuery = q.Encode()
@@ -98,12 +106,12 @@ func dagReviewRows[T any](ctx context.Context, db *sql.DB, query string, args []
 type (
 	dagReviewPlanRef     struct{ planID, projectKey, createdAt string }
 	dagReviewNode        struct{ nodeID, issueKey string }
-	dagReviewEdge        struct{ from, to, kind, introducedAt string }
+	dagReviewEdge        struct{ from, to, kind, introducedAt, repository, baseRef string }
 	dagReviewRelease     struct{ nodeID, decidedAt string }
 	dagReviewAcceptance  struct{ acceptanceID, nodeID, relationshipID, acceptedAt string }
 	dagReviewObservation struct {
-		acceptanceID, observedAt, revertedBy string
-		isAncestor                           bool
+		acceptanceID, observedAt, revertedBy, repository, baseRef string
+		isAncestor                                                bool
 	}
 	dagReviewRegion struct {
 		nodeID, repository, path, kind, key, change string
@@ -203,12 +211,13 @@ func (s *dagReviewStore) dagReviewNodes(ctx context.Context, planID string) ([]d
 
 func (s *dagReviewStore) dagReviewEdges(ctx context.Context, planID string) ([]dagReviewEdge, error) {
 	return dagReviewRows(ctx, s.db,
-		"SELECT e.from_node_id, e.to_node_id, e.kind, COALESCE(r.recorded_at, '') FROM dag_edges e"+
+		"SELECT e.from_node_id, e.to_node_id, e.kind, COALESCE(r.recorded_at, ''),"+
+			" COALESCE(e.target_repository, ''), COALESCE(e.target_base_ref, '') FROM dag_edges e"+
 			" LEFT JOIN dag_plan_revisions r ON r.plan_id = e.plan_id AND r.revision_no = e.introduced_rev"+
 			" WHERE e.plan_id = ? AND e.retired_rev IS NULL ORDER BY e.edge_id",
 		[]any{planID}, func(rows *sql.Rows) (dagReviewEdge, error) {
 			var edge dagReviewEdge
-			err := rows.Scan(&edge.from, &edge.to, &edge.kind, &edge.introducedAt)
+			err := rows.Scan(&edge.from, &edge.to, &edge.kind, &edge.introducedAt, &edge.repository, &edge.baseRef)
 			return edge, err
 		})
 }
@@ -235,14 +244,15 @@ func (s *dagReviewStore) dagReviewAcceptances(ctx context.Context, planID string
 
 func (s *dagReviewStore) dagReviewObservations(ctx context.Context, planID string) ([]dagReviewObservation, error) {
 	return dagReviewRows(ctx, s.db,
-		"SELECT o.acceptance_id, o.is_ancestor, o.reverted_by, o.observed_at"+
+		"SELECT o.acceptance_id, o.is_ancestor, o.reverted_by, o.observed_at, o.repository, o.base_ref"+
 			" FROM dag_integration_observations o JOIN dag_acceptances a ON a.acceptance_id = o.acceptance_id"+
 			" WHERE a.plan_id = ? ORDER BY o.observed_at",
 		[]any{planID}, func(rows *sql.Rows) (dagReviewObservation, error) {
 			var observation dagReviewObservation
 			var ancestor int
 			var reverted sql.NullString
-			if err := rows.Scan(&observation.acceptanceID, &ancestor, &reverted, &observation.observedAt); err != nil {
+			if err := rows.Scan(&observation.acceptanceID, &ancestor, &reverted, &observation.observedAt,
+				&observation.repository, &observation.baseRef); err != nil {
 				return observation, err
 			}
 			observation.isAncestor = ancestor == 1
@@ -298,14 +308,18 @@ func (s *dagReviewStore) dagReviewRegions(ctx context.Context, planID string, ch
 	})
 }
 
-// dagReviewChildren reads the plan project's relationships that were opened after the plan was
-// created. A relationship opened before the plan was released by hand on purpose, so it is not
-// a bypass of this plan.
+// dagReviewChildren reads the plan project's live relationships that were opened after the plan
+// was created and that no plan ever executed. A relationship opened before the plan was released
+// by hand on purpose, so it is not a bypass of this plan; one another plan of the same project
+// executed is that plan's child, not an unreleased one here; and a paused relationship is still
+// live (registry.isLive), so it is included.
 func (s *dagReviewStore) dagReviewChildren(ctx context.Context, plan dagReviewPlanRef) ([]dagReviewChild, error) {
 	return dagReviewRows(ctx, s.db,
 		"SELECT r.relationship_id, r.issue_key, r.created_at FROM relationships r"+
 			" JOIN relationship_scope s ON s.relationship_id = r.relationship_id"+
-			" WHERE s.project_key = ? AND r.status = 'active' AND r.created_at > ? ORDER BY r.issue_key",
+			" WHERE s.project_key = ? AND r.status IN ('active', 'paused') AND r.created_at > ?"+
+			" AND NOT EXISTS (SELECT 1 FROM dag_node_executions e WHERE e.relationship_id = r.relationship_id)"+
+			" ORDER BY r.issue_key",
 		[]any{plan.projectKey, plan.createdAt}, func(rows *sql.Rows) (dagReviewChild, error) {
 			var child dagReviewChild
 			err := rows.Scan(&child.relationshipID, &child.issueKey, &child.createdAt)
@@ -313,19 +327,28 @@ func (s *dagReviewStore) dagReviewChildren(ctx context.Context, plan dagReviewPl
 		})
 }
 
-// dagReviewReadLanes reads every merge turn and the number of turns waiting on the same target.
-func (s *dagReviewStore) dagReviewReadLanes(ctx context.Context) ([]dagReviewLaneTurn, error) {
-	return dagReviewRows(ctx, s.db,
-		"SELECT t.turn_id, t.target_key, t.holder_task_id, t.state, COALESCE(t.pr_number, 0), COALESCE(t.relationship_id, ''),"+
-			" COALESCE(t.closed_at, ''), t.updated_at, COALESCE(t.held_at, ''),"+
-			" (SELECT COUNT(*) FROM merge_turns w WHERE w.target_key = t.target_key AND w.state = 'waiting')"+
-			" FROM merge_turns t ORDER BY t.turn_id",
-		nil, func(rows *sql.Rows) (dagReviewLaneTurn, error) {
-			var turn dagReviewLaneTurn
-			err := rows.Scan(&turn.turnID, &turn.targetKey, &turn.holder, &turn.state, &turn.prNumber,
-				&turn.relationshipID, &turn.closedAt, &turn.updatedAt, &turn.heldAt, &turn.waiters)
-			return turn, err
-		})
+// dagReviewReadLanes reads the merge turns and the number of turns waiting on the same target.
+// When the section names plans, a turn is kept only when its relationship executes a node of one
+// of them, so a narrowed review cannot report another plan's lane.
+func (s *dagReviewStore) dagReviewReadLanes(ctx context.Context, plans []string) ([]dagReviewLaneTurn, error) {
+	query := "SELECT t.turn_id, t.target_key, t.holder_task_id, t.state, COALESCE(t.pr_number, 0), COALESCE(t.relationship_id, '')," +
+		" COALESCE(t.closed_at, ''), t.updated_at, COALESCE(t.held_at, '')," +
+		" (SELECT COUNT(*) FROM merge_turns w WHERE w.target_key = t.target_key AND w.state = 'waiting')" +
+		" FROM merge_turns t"
+	var args []any
+	if len(plans) > 0 {
+		query += " WHERE EXISTS (SELECT 1 FROM dag_node_executions e WHERE e.relationship_id = t.relationship_id AND e.plan_id IN (" + dagReviewPlaceholders(len(plans)) + "))"
+		for _, plan := range plans {
+			args = append(args, plan)
+		}
+	}
+	query += " ORDER BY t.turn_id"
+	return dagReviewRows(ctx, s.db, query, args, func(rows *sql.Rows) (dagReviewLaneTurn, error) {
+		var turn dagReviewLaneTurn
+		err := rows.Scan(&turn.turnID, &turn.targetKey, &turn.holder, &turn.state, &turn.prNumber,
+			&turn.relationshipID, &turn.closedAt, &turn.updatedAt, &turn.heldAt, &turn.waiters)
+		return turn, err
+	})
 }
 
 // dagReviewExecutionExists reports whether the plan recorded a DAG execution for a relationship.
