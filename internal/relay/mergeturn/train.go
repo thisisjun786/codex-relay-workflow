@@ -38,6 +38,7 @@ import (
 var TrainExpectedJobs = []string{
 	"validate",
 	"secrets",
+	"skill-scripts-node",
 	"go-product (lint)",
 	"go-product (test-1)",
 	"go-product (test-2)",

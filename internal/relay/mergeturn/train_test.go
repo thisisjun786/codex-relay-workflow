@@ -695,16 +695,16 @@ func TestTrainExpectedJobsMatchCiYml(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := string(data)
+	// every job the workflow declares, and the go-product matrix expanded into its leg names
 	var want []string
-	for _, job := range []string{"validate", "secrets", "dev-gate"} {
-		if !strings.Contains(workflow, "\n  "+job+":\n") {
-			t.Fatalf("ci.yml holds no job %s", job)
+	for _, job := range ciJobNames(t, workflow) {
+		if job == "go-product" {
+			for _, part := range ciMatrixParts(t, workflow) {
+				want = append(want, "go-product ("+part+")")
+			}
+			continue
 		}
 		want = append(want, job)
-	}
-	matrix := ciMatrixParts(t, workflow)
-	for _, part := range matrix {
-		want = append(want, "go-product ("+part+")")
 	}
 	sort.Strings(want)
 	got := append([]string{}, TrainExpectedJobs...)
@@ -966,4 +966,26 @@ func TestTrainReconcileAfterALostLandAnswer(t *testing.T) {
 	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
 		t.Fatalf("reconcile wrote %d landed event(s)", n)
 	}
+}
+
+// ciJobNames reads ci.yml's job headers as text: the two-space-indented keys under the jobs
+// block, the way internal/dev/ci/edit_mirror_test.go already reads this workflow.
+func ciJobNames(t *testing.T, workflow string) []string {
+	t.Helper()
+	_, after, found := strings.Cut(workflow, "\njobs:\n")
+	if !found {
+		t.Fatal("ci.yml holds no jobs block")
+	}
+	var names []string
+	for _, line := range strings.Split(after, "\n") {
+		if line != "" && !strings.HasPrefix(line, " ") {
+			break
+		}
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") && strings.HasSuffix(line, ":") {
+			if name := strings.TrimSuffix(strings.TrimPrefix(line, "  "), ":"); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
 }

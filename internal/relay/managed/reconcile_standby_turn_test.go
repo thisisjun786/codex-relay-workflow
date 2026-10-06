@@ -94,6 +94,9 @@ func TestStandbyTurnReadsBothItemTextShapes(t *testing.T) {
 	}{
 		{"nested content", userText(bootstrap), true},
 		{"text on the item", userTextFlat(bootstrap), true},
+		// CRW-842: CRW-748's recorded message, one text part with the host's empty text_elements
+		// beside the text, is still the standby the creation sent.
+		{"one part with text_elements", crw842CRW748UserMessage(), true},
 		{"text on the item, one character off", userTextFlat(bootstrap + "!"), false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -119,7 +122,14 @@ func TestStandbyTurnReadsBothItemTextShapes(t *testing.T) {
 func TestStandbyTurnACompletedTurnTheCreationSentIsAdopted(t *testing.T) {
 	t.Parallel()
 	turn := "01a10ff9-a5e8-7c61-a08c-0ac0508eadb4"
-	k, _ := standbyKit(t, "turn-timeout", listing([]any{summaryRow(turn, "completed", userText(bootstrap))}, ""))
+	// The repeat meets a host that has moved on: the business turn this run went on to send is
+	// listed beside the standby turn, so the two-turn listing must not talk the engine out of the
+	// identity its own reservation recorded (CRW-842).
+	flip := &crw842ListingFlip{
+		first: listing([]any{summaryRow(turn, "completed", userText(bootstrap))}, ""),
+		then:  listing([]any{summaryRow("business-B", "completed", userText("assignment")), summaryRow(turn, "completed", userText(bootstrap))}, ""),
+	}
+	k, _ := standbyKit(t, "turn-timeout", flip.summary)
 	got := k.run()
 	k.expect(got, "admitted", "", "adopted")
 	if got["standbyTurnId"] != turn || got["childTaskId"] != "t-1" {
@@ -130,13 +140,16 @@ func TestStandbyTurnACompletedTurnTheCreationSentIsAdopted(t *testing.T) {
 	}
 	k.noSecondTurn()
 	k.effects(1, 1) // the creation, then the business turn only
-	// A repeat reaches the same thread and recognises the same turn: the engine never rewrites the host's
-	// receipt, so it still says outcome_unknown and nothing may depend on an earlier run having changed it.
-	// The child and the standby turn stay the same and no further host effect is taken.
+	// A repeat reaches the same thread: the engine never rewrites the host's receipt, so it still
+	// says outcome_unknown and nothing may depend on an earlier run having changed it. The identity
+	// the reservation recorded is what the repeat converges on, and no further host effect is taken.
 	again := k.run()
 	k.expect(again, "admitted", "", "adopted")
 	if again["standbyTurnId"] != turn || again["childTaskId"] != "t-1" {
 		t.Fatalf("a repeat changed the child or the standby turn: %v %v", again["childTaskId"], again["standbyTurnId"])
+	}
+	if detail := pyjson.Text(recon(again)["detail"]); !strings.Contains(detail, "reservation recorded") {
+		t.Fatalf("the repeat did not adopt the recorded identity: %q", detail)
 	}
 	k.noSecondTurn()
 	k.effects(1, 1)
@@ -171,6 +184,11 @@ func TestStandbyTurnAnythingElseKeepsTodaysAnswer(t *testing.T) {
 		{"interrupted", "turn-timeout", listing([]any{summaryRow("a", "interrupted", userText(bootstrap))}, ""), "thread_has_turn"},
 		{"no user message", "turn-timeout", listing([]any{summaryRow("a", "completed", map[string]any{"type": "agentMessage", "id": "m1"})}, ""), "thread_has_turn"},
 		{"input it cannot read", "turn-timeout", listing([]any{summaryRow("a", "completed", map[string]any{"type": "userMessage", "id": "u1", "content": []any{}})}, ""), "thread_has_turn"},
+		// CRW-842: the standby is the whole first user message, not its first text part.
+		{"a second text part beside the bootstrap", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserParts(crw842TextPart(bootstrap), crw842TextPart("!")))}, ""), "thread_has_turn"},
+		{"a part that is not text", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserParts(crw842TextPart(bootstrap), map[string]any{"type": "image"}))}, ""), "thread_has_turn"},
+		{"the item text differs from the content", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserTextAndContent(bootstrap, crw842TextPart(bootstrap+"!")))}, ""), "thread_has_turn"},
+		{"the item text with two content parts", "turn-timeout", listing([]any{summaryRow("a", "completed", crw842UserTextAndContent(bootstrap, crw842TextPart(bootstrap), crw842TextPart("!")))}, ""), "thread_has_turn"},
 		{"a next page", "turn-timeout", listing([]any{summaryRow("a", "completed", userText(bootstrap))}, "more"), "thread_has_turn"},
 		{"the listing fails", "turn-timeout", func(string) (map[string]any, error) { return nil, errors.New("host unavailable") }, "unobservable"},
 		{"a scan found the thread", "lost-applied", listing([]any{summaryRow("a", "completed", userText(bootstrap))}, ""), "thread_has_turn"},
