@@ -675,7 +675,10 @@ client already loaded the child under other MCP settings, the relay's `settings_
 names recovery: only after a completed durable turn and a confirmed resumable rollout, release all
 subscriptions and observe `notLoaded` (an operator can use `thread/archive` then `thread/unarchive`
 if it remains loaded); the next relay delivery resumes under the recorded profile. Never unload a
-never-run root. This advice performs no automatic recovery.
+never-run root. This advice performs no automatic recovery, with one narrow exception: a managed
+resend lowers an idle child whose immediately preceding business failure is the structured
+`settings_not_preserved` refusal, once per business attempt, and resends only after the child is
+`notLoaded` again.
 
 ## The four readers a candidate pass also uses
 
