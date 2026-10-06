@@ -18,7 +18,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
@@ -119,6 +121,36 @@ func TestHarnessOptionsExplicitEmptyPluginKeyIsNotReplacedByTheSingleCandidate(t
 	nilCheck := HarnessHookTrustCheck(plugin, HarnessOptions{CodexHome: harnessOptionsPtr(home)}, harnessOptionsEnv(nil))
 	if nilCheck.Evidence == empty.Evidence || !strings.Contains(nilCheck.Evidence, "crw@local") {
 		t.Fatalf("nil pluginKey = %+v, want the single-candidate path", nilCheck)
+	}
+}
+
+// TestHarnessOptionsExplicitEmptyCodexHomeReachesTheHookExecutionCheck covers the other reader of
+// the same option (harness_hooks.go:62-66, doctor.ts:452): the observation query reads the store
+// under the option verbatim, so an explicitly empty value reads the relative layout and finds no
+// records where nil reads CODEX_HOME.
+func TestHarnessOptionsExplicitEmptyCodexHomeReachesTheHookExecutionCheck(t *testing.T) {
+	plugin, home := harnessOptionsPlugin(t)
+	t.Chdir(t.TempDir())
+	session := "rec-s1"
+	env := map[string]string{"CODEX_HOME": home, "PLUGIN_ROOT": plugin}
+	// The Go writer lays one invocation record under CODEX_HOME; only the nil option finds it.
+	if !harness.RecordInvocation(`{"session_id":"rec-s1"}`, "cxc-ops", "session-start", harnessOptionsEnv(env)) {
+		t.Fatal("the invocation record was not written")
+	}
+
+	nilCheck := HarnessHookExecutionCheck(plugin, HarnessOptions{SessionID: &session}, harnessOptionsEnv(env), time.Now())
+	emptyCheck := HarnessHookExecutionCheck(plugin, HarnessOptions{CodexHome: harnessOptionsPtr(""), SessionID: &session}, harnessOptionsEnv(env), time.Now())
+	if nilCheck.Evidence == emptyCheck.Evidence {
+		t.Fatalf("an explicitly empty codexHome read the same store as nil: %q", nilCheck.Evidence)
+	}
+	if nilCheck.Severity != HarnessPass {
+		t.Fatalf("nil codexHome = %q, want the recorded invocation", nilCheck.Evidence)
+	}
+	if !strings.Contains(emptyCheck.Evidence, "no invocation records") {
+		t.Fatalf("explicit empty codexHome = %q, want the relative store to hold no records", emptyCheck.Evidence)
+	}
+	if strings.Contains(emptyCheck.Evidence, home) {
+		t.Fatalf("explicit empty codexHome reached CODEX_HOME: %q", emptyCheck.Evidence)
 	}
 }
 
