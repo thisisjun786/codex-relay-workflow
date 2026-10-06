@@ -123,11 +123,69 @@ func manifestTargetsCommandText(s string) string {
 	return b.String()
 }
 
+// manifestTargetsRealpath is fs.realpathSync(path) as the oracle's escapesRoot calls it. Go's
+// filepath.EvalSymlinks answers the name the directory entry carries, while Node's JavaScript
+// implementation resolves the symlinks and keeps the spelling every other component was given; the two
+// differ exactly when the caller spelled a component with a lone surrogate, which Node encodes to U+FFFD
+// for the system call and returns as the character it was given. The containment judgement compares those
+// two answers, so the spelling has to survive (CRW-652).
+func manifestTargetsRealpath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return manifestTargetsFollow(abs, 0)
+}
+
+// manifestTargetsFollow is one walk of manifestTargetsRealpath: the components before the first symlink
+// keep their spelling, that symlink is replaced by its target resolved against the directory reached so
+// far, and the walk restarts there with the components still left. A component that cannot be read, and a
+// link chain past the depth a realpath follows, answer an error, which sends both paths to the caller's
+// lexical fallback as the oracle's throw does.
+func manifestTargetsFollow(path string, depth int) (string, error) {
+	if depth > 40 {
+		return "", errors.New("ELOOP: too many levels of symbolic links")
+	}
+	sep := string(filepath.Separator)
+	volume := filepath.VolumeName(path)
+	parts := strings.Split(strings.TrimPrefix(path[len(volume):], sep), sep)
+	dir := volume
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		next := dir + sep + part
+		info, err := os.Lstat(targetNodeText(next))
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			dir = next
+			continue
+		}
+		target, err := os.Readlink(targetNodeText(next))
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(dir+sep, target)
+		}
+		if rest := strings.Join(parts[i+1:], sep); rest != "" {
+			target = filepath.Join(target, rest)
+		}
+		return manifestTargetsFollow(filepath.Clean(target), depth+1)
+	}
+	if dir == "" {
+		return sep, nil
+	}
+	return dir, nil
+}
+
 // targetEscapesRoot keeps the paired realpath fallback exact: either failure
 // makes BOTH paths lexical. A missing leaf below a link is a missing target.
 func targetEscapesRoot(root, target string) bool {
-	r, e1 := filepath.EvalSymlinks(targetNodeText(root))
-	p, e2 := filepath.EvalSymlinks(targetNodeText(target))
+	r, e1 := manifestTargetsRealpath(root)
+	p, e2 := manifestTargetsRealpath(target)
 	if e1 != nil || e2 != nil {
 		r, _ = filepath.Abs(root)
 		p, _ = filepath.Abs(target)
@@ -262,7 +320,7 @@ func targetString(v any) string {
 func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 	issues := []TargetIssue{}
 	path := filepath.Join(pluginRoot, ".codex-plugin/plugin.json")
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(targetNodeText(path)); err != nil {
 		return issues, nil
 	}
 	manifest, err := targetReadJSON(TargetHook, path)
