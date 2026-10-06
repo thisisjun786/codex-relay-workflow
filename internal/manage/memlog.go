@@ -54,7 +54,11 @@ type memlogProc struct {
 	PPID  int
 	RSSKB int64
 	Argv0 string
-	Cmd   string
+	// Args is the command line as the kernel kept it, one string per argument. The
+	// recorded line is joined from it, so a value the kernel holds as one argument - a
+	// passphrase with a space in it, for instance - stays one token and is masked whole.
+	Args []string
+	Cmd  string
 }
 
 // memlogSnapshot is one consistent pass over a procfs tree, before grouping.
@@ -177,12 +181,23 @@ func memlogReadProc(dir string, pid int) (memlogProc, error) {
 	// The name the process was started with is the first NUL-separated field of the
 	// command line, kept beside the joined line because a substring search over the whole
 	// line cannot tell the program from an argument that happens to spell the same word.
+	args := memlogSplitCmdline(cmdline)
 	argv0 := ""
-	if first, _, ok := strings.Cut(string(cmdline), "\x00"); ok && first != "" {
-		argv0 = filepath.Base(first)
+	if len(args) > 0 {
+		argv0 = filepath.Base(args[0])
 	}
-	return memlogProc{PID: pid, PPID: ppid, RSSKB: rss, Argv0: argv0,
-		Cmd: strings.TrimSpace(strings.ReplaceAll(string(cmdline), "\x00", " "))}, nil
+	return memlogProc{PID: pid, PPID: ppid, RSSKB: rss, Argv0: argv0, Args: args,
+		Cmd: strings.Join(args, " ")}, nil
+}
+
+// memlogSplitCmdline splits a NUL-separated /proc/<pid>/cmdline into its arguments. The
+// kernel ends the file with a NUL, and a kernel thread has none at all.
+func memlogSplitCmdline(cmdline []byte) []string {
+	trimmed := strings.TrimSuffix(string(cmdline), "\x00")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\x00")
 }
 
 // memlogGroupRule is one rule of the list: the first rule that claims a process names its
@@ -194,6 +209,33 @@ type memlogGroupRule struct {
 	Match         []string `json:"match"`
 	Argv0         []string `json:"argv0"`
 	DescendantsOf string   `json:"descendants_of"`
+}
+
+// memlogRules is the group list the command runs with: the configuration's memlog section
+// when it carries one, the built-in list otherwise. An absent section or an absent groups
+// key means the defaults; a section that is present but malformed, an explicitly null list
+// included, is an error rather than a silent fallback to the defaults, because a configured
+// list is meant to decide the assignment and a run that quietly ignores it reports groups
+// the operator did not ask for. An empty list is a real configuration: it replaces the
+// built-in list whole, so every process is other.
+func memlogRules(cfg *Config) ([]memlogGroupRule, error) {
+	var section struct {
+		Groups json.RawMessage `json:"groups"`
+	}
+	if err := cfg.Section("memlog", &section); err != nil {
+		return nil, err
+	}
+	if len(section.Groups) == 0 {
+		return memlogDefaultGroups(), nil
+	}
+	if string(section.Groups) == "null" {
+		return nil, errors.New("groups is null; give a list of rules or leave the key out")
+	}
+	var rules []memlogGroupRule
+	if err := json.Unmarshal(section.Groups, &rules); err != nil {
+		return nil, fmt.Errorf("groups: %w", err)
+	}
+	return rules, nil
 }
 
 // memlogDefaultGroups is the built-in list, with no private path or host name in it.
@@ -279,12 +321,13 @@ var memlogRedactNames = []string{"token", "secret", "password", "passwd",
 // memlogRedacted is what a masked value reads as.
 const memlogRedacted = "***"
 
-// memlogRedactCommand masks the value of every credential-shaped argument and then cuts
-// the line to memlogCommandLimit runes. It reads the joined command line only for what is
-// written down; the group assignment keeps the unmasked line, so a mask never changes
-// which group a process is counted in.
-func memlogRedactCommand(cmd string) string {
-	tokens := strings.Fields(cmd)
+// memlogRedactCommand masks the value of every credential-shaped argument of a process and
+// then cuts the joined line to memlogCommandLimit runes. It works on the arguments the
+// kernel kept apart, not on the joined line, so a value that carries a space is masked
+// whole. The group assignment keeps the unmasked arguments, so a mask never changes which
+// group a process is counted in.
+func memlogRedactCommand(args []string) string {
+	tokens := append([]string(nil), args...)
 	for i := 0; i < len(tokens); i++ {
 		name, _, hasValue := strings.Cut(tokens[i], "=")
 		switch {
@@ -297,11 +340,15 @@ func memlogRedactCommand(cmd string) string {
 			i++
 		}
 	}
-	redacted := strings.Join(tokens, " ")
-	if runes := []rune(redacted); len(runes) > memlogCommandLimit {
+	return memlogShorten(strings.Join(tokens, " "))
+}
+
+// memlogShorten keeps the first memlogCommandLimit runes of a line.
+func memlogShorten(line string) string {
+	if runes := []rune(line); len(runes) > memlogCommandLimit {
 		return string(runes[:memlogCommandLimit])
 	}
-	return redacted
+	return line
 }
 
 // memlogNamesACredential reports whether an argument name holds one of the fragments.
@@ -335,7 +382,7 @@ func memlogBuildRecord(now time.Time, snapshot memlogSnapshot, rules []memlogGro
 	top := make([]memlogTopEntry, 0, len(ranked))
 	for _, p := range ranked {
 		top = append(top, memlogTopEntry{PID: p.PID, RSSKB: p.RSSKB, Group: groups[p.PID],
-			Cmd: memlogRedactCommand(p.Cmd)})
+			Cmd: memlogRedactCommand(p.Args)})
 	}
 	return memlogRecord{At: now.UTC().Format(time.RFC3339Nano), MemAvailableKB: snapshot.MemAvailableKB,
 		SwapUsedKB: snapshot.SwapTotalKB - snapshot.SwapFreeKB, PSI: snapshot.PSI, Groups: sums, Top: top}
@@ -413,16 +460,10 @@ func memlogRunWith(ctx context.Context, e *Env, cfg *Config, args []string, samp
 		fmt.Fprintf(e.Stderr, "crw manage memlog: error: unexpected argument %q\n", flags.Arg(0))
 		return usageExit
 	}
-	rules := memlogDefaultGroups()
-	var section struct {
-		Groups []memlogGroupRule `json:"groups"`
-	}
-	if err := cfg.Section("memlog", &section); err != nil {
+	rules, err := memlogRules(cfg)
+	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage memlog: error: the memlog section: %v\n", err)
 		return 1
-	}
-	if section.Groups != nil {
-		rules = section.Groups
 	}
 	dir := filepath.Join(cfg.StateDir, "memlog")
 	for {

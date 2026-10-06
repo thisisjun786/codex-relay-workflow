@@ -20,6 +20,9 @@ type memlogProcSpec struct {
 	pid, ppid int
 	rss       int64
 	cmd       string
+	// args is the command line as the kernel keeps it, one string per argument. When it
+	// is set it wins over cmd, so a test can put a space inside one argument.
+	args []string
 }
 
 // memlogWriteTree writes a fake /proc tree: the two host files and one directory per
@@ -42,7 +45,11 @@ func memlogWriteTree(t *testing.T, root string, procs []memlogProcSpec) {
 		// The command name carries a ")" on purpose: the parent is the field after the last one.
 		write(filepath.Join(dir, "stat"), fmt.Sprintf("%d (pr)oc) S %d 1 1 0\n", p.pid, p.ppid))
 		write(filepath.Join(dir, "status"), fmt.Sprintf("Name:\tproc\nVmRSS:\t%d kB\n", p.rss))
-		write(filepath.Join(dir, "cmdline"), strings.ReplaceAll(p.cmd, " ", "\x00")+"\x00")
+		args := p.args
+		if args == nil {
+			args = strings.Split(p.cmd, " ")
+		}
+		write(filepath.Join(dir, "cmdline"), strings.Join(args, "\x00")+"\x00")
 	}
 }
 
@@ -286,7 +293,7 @@ func TestMemlogRedactsEachCredentialShape(t *testing.T) {
 		{"a bare name with no value", "/usr/bin/svc --password", "/usr/bin/svc --password"},
 		{"no argument at all", "/usr/bin/svc", "/usr/bin/svc"},
 	} {
-		if got := memlogRedactCommand(tc.cmd); got != tc.want {
+		if got := memlogRedactCommand(strings.Fields(tc.cmd)); got != tc.want {
 			t.Errorf("%s: %q became %q, want %q", tc.name, tc.cmd, got, tc.want)
 		}
 	}
@@ -294,9 +301,48 @@ func TestMemlogRedactsEachCredentialShape(t *testing.T) {
 
 // C3: the mask is applied before the 120-rune cut, so a long value cannot push the mask
 // out of the record and the masked line still fits the limit.
+// C3: a value that carries a space is masked whole, because the redaction works on the
+// arguments the kernel kept apart rather than on the joined line.
+func TestMemlogRedactsAValueThatCarriesASpace(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{{pid: 7, ppid: 1, rss: 4096,
+		args: []string{"/usr/bin/svc", "--password=my secret phrase", "--socket", "/run/x"}}})
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	if len(record.Top) != 1 {
+		t.Fatalf("top holds %d entries, want 1", len(record.Top))
+	}
+	cmd := record.Top[0].Cmd
+	if strings.Contains(cmd, "secret") || strings.Contains(cmd, "phrase") {
+		t.Errorf("the recorded cmd %q still carries the value", cmd)
+	}
+	if want := "/usr/bin/svc --password=*** --socket /run/x"; cmd != want {
+		t.Errorf("the recorded cmd is %q, want %q", cmd, want)
+	}
+}
+
+// C3: the same holds for a value passed as the next argument.
+func TestMemlogRedactsASpacedValuePassedAsTheNextArgument(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{{pid: 7, ppid: 1, rss: 4096,
+		args: []string{"/usr/bin/svc", "--token", "first second", "--socket", "/run/x"}}})
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	if len(record.Top) != 1 {
+		t.Fatalf("top holds %d entries, want 1", len(record.Top))
+	}
+	cmd := record.Top[0].Cmd
+	if strings.Contains(cmd, "first") || strings.Contains(cmd, "second") {
+		t.Errorf("the recorded cmd %q still carries the value", cmd)
+	}
+	if want := "/usr/bin/svc --token *** --socket /run/x"; cmd != want {
+		t.Errorf("the recorded cmd is %q, want %q", cmd, want)
+	}
+}
+
 func TestMemlogRedactsBeforeItCuts(t *testing.T) {
 	cmd := "/usr/bin/svc --token " + strings.Repeat("s", 400) + " --socket x"
-	got := memlogRedactCommand(cmd)
+	got := memlogRedactCommand(strings.Fields(cmd))
 	if runes := []rune(got); len(runes) > memlogCommandLimit {
 		t.Errorf("the masked line is %d runes, want at most %d", len(runes), memlogCommandLimit)
 	}
@@ -357,6 +403,39 @@ func TestMemlogKeepsAnInheritedXDGStateHomeUntouched(t *testing.T) {
 
 // A memlog section that is present but malformed is refused instead of silently falling
 // back to the built-in groups.
+// An explicitly null group list is a malformed configuration, not an absent one: it is
+// refused rather than read as "no configuration" and silently grouped by the defaults.
+func TestMemlogRefusesANullGroupList(t *testing.T) {
+	_, cfg := memlogState(t)
+	cfg.raw = map[string]json.RawMessage{"memlog": json.RawMessage(`{"groups":null}`)}
+	root := t.TempDir()
+	memlogWriteTree(t, root, nil)
+	var out, errOut strings.Builder
+	env := memlogEnv(memlogFixedClock(time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)), &out, &errOut)
+	if code := memlogRunWith(context.Background(), env, cfg, []string{"--once"}, memlogNewProcSampler(root)); code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "memlog section") {
+		t.Errorf("stderr %q does not name the section", errOut.String())
+	}
+	if _, err := os.Stat(memlogSampleDir(cfg.StateDir)); !os.IsNotExist(err) {
+		t.Errorf("the refused run wrote a sample directory: %v", err)
+	}
+}
+
+// An empty configured list is a real configuration: it replaces the defaults whole, so
+// every process is other.
+func TestMemlogAcceptsAnEmptyGroupList(t *testing.T) {
+	_, cfg := memlogState(t)
+	cfg.raw = map[string]json.RawMessage{"memlog": json.RawMessage(`{"groups":[]}`)}
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{{pid: 7, ppid: 1, rss: 4096, cmd: "/usr/bin/codex app-server --socket x"}})
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	if want := (map[string]int64{"other": 4096}); !maps.Equal(record.Groups, want) {
+		t.Errorf("groups = %v, want %v", record.Groups, want)
+	}
+}
+
 func TestMemlogRefusesAMalformedSection(t *testing.T) {
 	_, cfg := memlogState(t)
 	cfg.raw = map[string]json.RawMessage{"memlog": json.RawMessage(`{"groups":"nope"}`)}
