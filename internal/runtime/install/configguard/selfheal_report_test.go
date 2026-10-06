@@ -2,6 +2,8 @@ package configguard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -91,7 +95,8 @@ func selfHealReportEnv(home string) host.LookupEnv {
 	}
 }
 
-// selfHealReportListing is every path under dir with its mode and size, so a write of any kind shows.
+// selfHealReportListing is every path under dir with its mode, size and content digest, so a write
+// of any kind shows: a new file, a mode change, and a rewrite that keeps the length the same.
 func selfHealReportListing(t *testing.T, dir string) []string {
 	t.Helper()
 	var out []string
@@ -107,7 +112,16 @@ func selfHealReportListing(t *testing.T, dir string) []string {
 		if ierr != nil {
 			return ierr
 		}
-		out = append(out, rel+" "+info.Mode().String()+" "+strconv.FormatInt(info.Size(), 10))
+		digest := "-"
+		if d.Type().IsRegular() {
+			raw, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return rerr
+			}
+			sum := sha256.Sum256(raw)
+			digest = hex.EncodeToString(sum[:])
+		}
+		out = append(out, rel+" "+info.Mode().String()+" "+strconv.FormatInt(info.Size(), 10)+" "+digest)
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
@@ -159,7 +173,8 @@ func selfHealReportWriteConfig(t *testing.T, home string) string {
 }
 
 // selfHealReportFakeCodex puts a fake codex on PATH: "features list" answers with listing, anything
-// else exits 1, and every invocation is appended to the log this returns.
+// else exits 1, and every invocation is appended to the log this returns. It uses shell builtins
+// only, because the caller's PATH becomes the temporary directory that holds it.
 func selfHealReportFakeCodex(t *testing.T, listing string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -167,7 +182,7 @@ func selfHealReportFakeCodex(t *testing.T, listing string) string {
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> \"" + log + "\"\n" +
 		"if [ \"$1\" = features ] && [ \"$2\" = list ]; then\n" +
-		"cat <<'SELFHEALLISTING'\n" + listing + "SELFHEALLISTING\n" +
+		"printf '%s' '" + listing + "'\n" +
 		"exit 0\n" +
 		"fi\n" +
 		"exit 1\n"
@@ -188,6 +203,82 @@ func selfHealReportCalls(t *testing.T, log string) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+}
+
+// selfHealReportFakeCodexAt makes a directory that shadows the real PATH, so a codex written into it
+// is the one the hook finds while the script may still use the ordinary utilities.
+func selfHealReportFakeCodexAt(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
+func selfHealReportWriteFakeCodex(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSelfHealReportCancellationStopsTheProbe is the first red finding of the pull request's
+// review: a stalled "codex features list" must not outlive the hook's context. The hook answers
+// Interrupted as the other component hooks do, rather than waiting for the child.
+func TestSelfHealReportCancellationStopsTheProbe(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	dir := selfHealReportFakeCodexAt(t)
+	started := filepath.Join(dir, "started")
+	selfHealReportWriteFakeCodex(t, dir, "printf started > \""+started+"\"\nsleep 300\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var out strings.Builder
+	done := make(chan int, 1)
+	go func() {
+		done <- RunSelfHealReportHook(ctx, strings.NewReader(selfHealReportSessionStart), &out, selfHealReportEnv(home))
+	}()
+	// Cancel once the child is up; a hook that never checks its context would block here.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != harness.Interrupted {
+			t.Fatalf("exit = %d, want %d after cancellation", code, harness.Interrupted)
+		}
+		if out.String() != "" {
+			t.Fatalf("a cancelled run wrote %q, want nothing", out.String())
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the hook did not return after its context was cancelled")
+	}
+}
+
+// TestSelfHealReportOutputBudgetEndsTheProbe is the second red finding: a probe that keeps writing
+// past the shared 1 MiB budget is ended rather than drained forever, and the round is unavailable
+// (silent, exit 0).
+func TestSelfHealReportOutputBudgetEndsTheProbe(t *testing.T) {
+	home := selfHealReportTempHome(t)
+	selfHealReportWriteConfig(t, home)
+	// A 4 KiB line printed without end: the shared budget is crossed after ~256 of them.
+	dir := selfHealReportFakeCodexAt(t)
+	selfHealReportWriteFakeCodex(t, dir, "while :; do printf '%s' \"hooks stable true \"; done\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	var out strings.Builder
+	code := RunSelfHealReportHook(ctx, strings.NewReader(selfHealReportSessionStart), &out, selfHealReportEnv(home))
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if out.String() != "" {
+		t.Fatalf("an overflowing probe wrote %q, want silence", out.String())
+	}
 }
 
 // TestSelfHealReportOffSoftKeyWarns is the J4 core case end to end: a fake codex reports the soft

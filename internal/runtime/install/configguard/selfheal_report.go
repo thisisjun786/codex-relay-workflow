@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -174,7 +176,11 @@ func RunSelfHealReportHook(ctx context.Context, in io.Reader, out io.Writer, env
 	if err != nil {
 		return 0
 	}
-	context := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: SelfHealReportRunner(env)}))
+	context := RenderSelfHealReportContext(SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: SelfHealReportRunner(ctx, env)}))
+	if ctx.Err() != nil {
+		// The probe was cancelled while it ran: nothing is rendered or written after cancellation.
+		return harness.Interrupted
+	}
 	if context == "" {
 		return 0
 	}
@@ -202,14 +208,21 @@ func selfHealReportHome(env host.LookupEnv) (string, error) {
 	return filepath.Join(base, ".codex"), nil
 }
 
-// selfHealReportMtimeMs is statSync(path).mtimeMs; nil when the path does not exist.
+// selfHealReportMtimeMs is statSync(path).mtimeMs; nil when the path does not exist. Node adds the
+// seconds and the nanoseconds apart, so the port does too: a single float64(UnixNano()) loses
+// precision above 2^53 ns (1970 + about 104 days) and the last bit decides this equality.
 func selfHealReportMtimeMs(path string) *float64 {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil
 	}
-	ms := float64(info.ModTime().UnixNano()) / 1e6
+	ms := selfHealReportMsOf(info.ModTime())
 	return &ms
+}
+
+// selfHealReportMsOf is msOf (internal/relay/job/store.go:418): mtimeMs with the fractions kept.
+func selfHealReportMsOf(t time.Time) float64 {
+	return float64(t.Unix())*1e3 + float64(t.Nanosecond())/1e6
 }
 
 // selfHealReportCovers is the cache guard's "cachedKeys covers every soft key" test.
@@ -236,19 +249,26 @@ func selfHealReportContains(list []string, want string) bool {
 // one that overflows the budget, answers exit 1, which ReadDeclaredState turns into an error and the
 // hook turns into silence. package install's featureRunner has the same semantics; it cannot be
 // reused here because it takes a scope.Env and this package is below install.
-func SelfHealReportRunner(env host.LookupEnv) CodexRunner {
+func SelfHealReportRunner(ctx context.Context, env host.LookupEnv) CodexRunner {
 	return func(args []string) CodexRunResult {
 		file, err := selfHealReportBinary(env)
 		if err != nil {
 			return CodexRunResult{Stderr: err.Error(), ExitCode: 1}
 		}
 		var out, errOut selfHealReportCapture
-		budget := &selfHealReportBudget{}
+		run, cancel := context.WithCancel(ctx)
+		defer cancel()
+		budget := &selfHealReportBudget{cancel: cancel}
 		out.budget, errOut.budget = budget, budget
-		cmd := exec.Command(file, args...)
+		cmd := exec.CommandContext(run, file, args...)
 		// spawnSync inherits process.env, so the child sees every variable the hook does (the
 		// corpus stubs read their own control variables from it). Env stays nil: inherited.
 		cmd.Stdout, cmd.Stderr = &out, &errOut
+		// A cancelled invocation ends the probe and its descendants, and the answer is not held open
+		// by a grandchild that inherited the pipe (skill/merge_build_check_go.go's pattern).
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.WaitDelay = selfHealReportWaitDelay
 		runErr := cmd.Run()
 		result := CodexRunResult{Stdout: source.DecodeUTF8(out.buffer.Bytes()), Stderr: source.DecodeUTF8(errOut.buffer.Bytes()), ExitCode: 1}
 		if !budget.overflow && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
@@ -295,10 +315,18 @@ type errSelfHealReport string
 func (e errSelfHealReport) Error() string { return string(e) }
 
 // selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
+// selfHealReportWaitDelay bounds how long a probe's output may be held open after it exited or was
+// killed, the same bound internal/runtime/doctor's commandWaitDelay gives its codex probe: a
+// descendant that inherited the pipe would otherwise hold the hook (and the session start) until it
+// exits.
+const selfHealReportWaitDelay = 5 * time.Second
+
+// selfHealReportBudget is spawnSync's default 1 MiB, shared across stdout and stderr.
 type selfHealReportBudget struct {
 	mu       sync.Mutex
 	used     int
 	overflow bool
+	cancel   context.CancelFunc
 }
 
 type selfHealReportCapture struct {
@@ -315,6 +343,8 @@ func (w *selfHealReportCapture) Write(p []byte) (int, error) {
 	w.budget.used += len(p)
 	if w.budget.used > limit {
 		w.budget.overflow = true
+		// A probe that keeps writing is ended here rather than drained forever (featureCapture).
+		w.budget.cancel()
 	}
 	return len(p), nil
 }
