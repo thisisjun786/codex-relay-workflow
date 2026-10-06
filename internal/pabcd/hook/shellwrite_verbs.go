@@ -55,7 +55,7 @@ func shellVerbNested(command string, budget *int) []string {
 			out = append(out, shellVerbSegment(shellString(segment), budget)...)
 		}
 	}
-	return shellVerbAppendNew(out, literalRedirectDestinations(command))
+	return shellVerbAppendNew(shellVerbAppendNew(out, literalRedirectDestinations(command)), shellWriteHeredocDestinations(command, 1))
 }
 
 // shellVerbNestedBoth reads a command string as the token holds it and again with its shell escapes removed (the token does not
@@ -1829,4 +1829,238 @@ func shellWriteEscapeJS(body string, template bool) (string, bool) {
 		}
 	}
 	return shellString(units), true
+}
+
+// shellWriteHeredocMaxDepth bounds the here-document nesting the reader follows: a program nested deeper is unreadable,
+// so the memory gate fails closed rather than read a program it cannot finish (CRW-765, criterion c1).
+const shellWriteHeredocMaxDepth = 8
+
+// shellWriteHeredocUnreadableWhat is the what shellWriteHeredocUnreadable reports for a program it cannot read (the deny
+// reason names it as "(a program the gate cannot read: " + what + ")"; CRW-765, criterion c1).
+const shellWriteHeredocUnreadableWhat = "an interpreter program read from a here-document"
+
+// shellWriteHeredocKind is the interpreter a here-document feeds, when it reads its program from standard input.
+type shellWriteHeredocKind int
+
+const (
+	shellWriteHeredocPython shellWriteHeredocKind = iota + 1
+	shellWriteHeredocNode
+	shellWriteHeredocShell
+)
+
+// shellWriteHeredocKindOf reports the interpreter a command runs and whether it reads its program from standard input,
+// so a here-document attached to it is program text rather than data. It reads the command words the way the verb step
+// does (through shellVerbSkipWrappers and shellVerbName): python/python3/py/versioned read stdin when no script operand
+// and no -c, --command or -m is present, or the operand is -; node/nodejs when no script operand and no -e, --eval, -p
+// or --print is present, or the operand is -; sh, bash, dash, ash, zsh or ksh when no -c and no script operand is
+// present, or -s forces stdin. Every other command reads no program from its standard input.
+func shellWriteHeredocKindOf(words []string) (shellWriteHeredocKind, bool) {
+	if len(words) == 0 {
+		return 0, false
+	}
+	verb, args := shellVerbName(words[0]), words[1:]
+	switch {
+	case verb == "python" || verb == "python3" || verb == "py" || shellVerbVersioned(verb):
+		if shellWriteHeredocPythonStdin(args) {
+			return shellWriteHeredocPython, true
+		}
+	case verb == "node" || verb == "nodejs":
+		if shellWriteHeredocNodeStdin(args) {
+			return shellWriteHeredocNode, true
+		}
+	case shellWriteHeredocIsShell(verb):
+		if shellWriteHeredocShellStdin(args) {
+			return shellWriteHeredocShell, true
+		}
+	}
+	return 0, false
+}
+
+// shellWriteHeredocIsShell is the issue's shell set: the POSIX shells whose program may come from standard input. It is
+// narrower than shellVerbIsShell, which also lists mksh and fish (CRW-765, criterion c1).
+func shellWriteHeredocIsShell(verb string) bool {
+	switch verb {
+	case "sh", "bash", "dash", "ash", "zsh", "ksh":
+		return true
+	}
+	return false
+}
+
+// shellWriteHeredocPythonStdin reports whether the python command words read their program from standard input. A -c
+// (or a bundle carrying c) or -m gives the program inline or from a module, so a heredoc then feeds the program's own
+// stdin, which this issue leaves unread; the first non-option word is a script operand, and - alone is stdin.
+func shellWriteHeredocPythonStdin(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-":
+			return true
+		case a == "--":
+			return i+1 >= len(args)
+		case a == "-c" || a == "--command" || a == "-m" || strings.HasPrefix(a, "-c") && len(a) > 2 || strings.HasPrefix(a, "-m") && len(a) > 2:
+			return false
+		case a == "-W" || a == "-X" || a == "--check-hash-based-pycs":
+			i++ // takes the next word as its value
+		case len(a) > 1 && a[0] == '-':
+			if shellVerbBundleHas(a, 'c', false) {
+				return false
+			}
+		default:
+			return false // a script operand
+		}
+	}
+	return true
+}
+
+// shellWriteHeredocNodeStdin reports whether the node command words read their program from standard input. -e/--eval,
+// -p/--print and a bundled -pe give the program inline; the first non-option word is a script operand, and - alone is
+// stdin.
+func shellWriteHeredocNodeStdin(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-":
+			return true
+		case a == "--":
+			return i+1 >= len(args)
+		case a == "-e" || a == "--eval" || a == "-p" || a == "--print" || a == "-pe",
+			strings.HasPrefix(a, "--eval=") || strings.HasPrefix(a, "--print="),
+			strings.HasPrefix(a, "-e") && len(a) > 2 && !strings.HasPrefix(a, "--"),
+			strings.HasPrefix(a, "-p") && len(a) > 2 && !strings.HasPrefix(a, "--"):
+			return false
+		case a == "-r" || a == "--require" || a == "--loader" || a == "--experimental-loader" || a == "--input-type":
+			i++ // takes the next word as its value
+		case len(a) > 1 && a[0] == '-':
+			// another option; the program is still read from standard input
+		default:
+			return false // a script operand
+		}
+	}
+	return true
+}
+
+// shellWriteHeredocShellStdin reports whether a shell reads its program from standard input. -c (a bundle carrying c)
+// gives the program inline, so it wins; -s forces standard input; otherwise a script operand is the program, and its
+// absence means the shell reads standard input.
+func shellWriteHeredocShellStdin(args []string) bool {
+	sawC, sawS, sawScript := false, false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			sawScript = i+1 < len(args)
+			i = len(args)
+		case a == "-o" || a == "+o" || a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
+			i++ // takes the next word as its value
+		case len(a) > 1 && a[0] == '-' && a[1] == '-':
+			// a long option; no program is named
+		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
+			if a[0] == '-' && strings.ContainsRune(a[1:], 'c') {
+				sawC = true
+			}
+			if a[0] == '-' && strings.ContainsRune(a[1:], 's') {
+				sawS = true
+			}
+		default:
+			sawScript = true
+		}
+	}
+	if sawC {
+		return false
+	}
+	if sawS {
+		return true
+	}
+	return !sawScript
+}
+
+// shellWriteHeredocBodyExpands reports whether an unquoted here-document body holds a shell expansion the reader cannot
+// evaluate: a dollar sign or a backtick that the outer shell would substitute. A backslash escapes the character after
+// it in a here-document body, so \$ and \` are literal.
+func shellWriteHeredocBodyExpands(body []uint16) bool {
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '\\':
+			i++
+		case '$', '\x60':
+			return true
+		}
+	}
+	return false
+}
+
+// shellWriteHeredocProgramWrites reads one interpreter here-document as program text and returns the destinations it
+// names plus the what of a program the reader cannot finish. A quoted delimiter makes the body literal; an unquoted one
+// lets the outer shell expand it, so a body holding an expansion is unreadable, and one without is read like the quoted
+// case. Past shellWriteHeredocMaxDepth the program is not read. Python goes through the CRW-741/CRW-754 walk, node
+// through the Node reader, and a shell body through ShellWriteDestinations one level deeper.
+func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocKind, depth int) ([]string, string) {
+	if depth > shellWriteHeredocMaxDepth {
+		return nil, shellWriteHeredocUnreadableWhat
+	}
+	if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
+		return nil, shellWriteHeredocUnreadableWhat
+	}
+	body := shellString(h.body)
+	switch kind {
+	case shellWriteHeredocPython:
+		what, _ := shellWriteFStringUnreadableProgram(body)
+		return shellVerbScriptWritesIn(body, true, true), what
+	case shellWriteHeredocNode:
+		return shellVerbScriptWritesIn(body, true, false), ""
+	case shellWriteHeredocShell:
+		return shellWriteDestinationsIn(body, depth+1), ""
+	}
+	return nil, ""
+}
+
+// shellWriteHeredocDestinations reads every here-document of a command that feeds an interpreter's program and returns
+// the destinations its body names. It is the verb step's addition after the oracle's own answer, so a command whose
+// here-document feeds no interpreter is read exactly as before (CRW-765, criterion c1).
+func shellWriteHeredocDestinations(command string, depth int) []string {
+	out := []string{}
+	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
+		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellTokenize(shellString(h.command))))
+		if !ok {
+			continue
+		}
+		dests, _ := shellWriteHeredocProgramWrites(h, kind, depth)
+		out = append(out, dests...)
+	}
+	return out
+}
+
+// shellWriteHeredocUnreadable reports whether a command holds a here-document that feeds an interpreter's program and
+// that the reader cannot finish: an unquoted body with a shell expansion, a program past the depth limit, or a Python
+// body the f-string and exec walks cannot read. It returns the what the deny reason names (CRW-765, criterion c1).
+func shellWriteHeredocUnreadable(command string) (string, bool) {
+	return shellWriteHeredocUnreadableIn(command, 0)
+}
+
+// shellWriteHeredocUnreadableIn scans one command at one nesting depth, the way shellWriteHeredocDestinations reads it.
+func shellWriteHeredocUnreadableIn(command string, depth int) (string, bool) {
+	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
+		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellTokenize(shellString(h.command))))
+		if !ok {
+			continue
+		}
+		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
+			return shellWriteHeredocUnreadableWhat, true
+		}
+		// A here-document nested past the reader's depth limit is a program it cannot finish.
+		if depth > shellWriteHeredocMaxDepth {
+			return shellWriteHeredocUnreadableWhat, true
+		}
+		switch kind {
+		case shellWriteHeredocPython:
+			if what, bad := shellWriteFStringUnreadableProgram(shellString(h.body)); bad {
+				return what, true
+			}
+		case shellWriteHeredocShell:
+			if what, bad := shellWriteHeredocUnreadableIn(shellString(h.body), depth+1); bad {
+				return what, true
+			}
+		}
+	}
+	return "", false
 }

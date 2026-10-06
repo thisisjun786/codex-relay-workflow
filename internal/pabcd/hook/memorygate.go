@@ -188,6 +188,12 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		if what, ok := shellWriteFStringUnreadable(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
+		// A here-document that feeds an interpreter's program may hold a write the reader never sees: an unquoted
+		// body the outer shell expands, or a program nested past the reader's depth limit, is a write attempt of its
+		// own and the gate fails closed (CRW-765).
+		if what, ok := shellWriteHeredocUnreadable(command); ok {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		}
 	}
 	return MemoryWriteAttempt{}
 }

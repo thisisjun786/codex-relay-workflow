@@ -13,6 +13,12 @@ import (
 // This is a lexical detector, not a shell evaluator. At the string boundary,
 // lone UTF-16 units become U+FFFD, as Node's UTF-8 encoding does.
 func ShellWriteDestinations(command string) []string {
+	return shellWriteDestinationsIn(command, 0)
+}
+
+// shellWriteDestinationsIn is ShellWriteDestinations with the here-document nesting depth carried, so a shell body read
+// as program text stops at shellWriteHeredocMaxDepth instead of recursing without bound.
+func shellWriteDestinationsIn(command string, depth int) []string {
 	dests := []string{}
 	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
 		dests = append(dests, shellStrings(redirectDestinations(segment))...)
@@ -23,7 +29,136 @@ func ShellWriteDestinations(command string) []string {
 			dests = append(dests, dest)
 		}
 	}
-	return dests
+	return shellVerbAppendNew(dests, shellWriteHeredocDestinations(command, depth))
+}
+
+// shellWriteHeredoc is one here-document of a command: the words of the command line that owns the operator (so
+// shellWriteHeredocKindOf can tell which interpreter, if any, reads the body), the delimiter word, whether that word
+// was quoted (a quoted word makes the body literal; the outer shell expands an unquoted one), whether the operator was
+// <<- (leading tabs are stripped, as the shell does), and the body text.
+type shellWriteHeredoc struct {
+	command []uint16
+	delim   []uint16
+	body    []uint16
+	quoted  bool
+	tabs    bool
+}
+
+// shellWriteHeredocs enumerates the here-documents of a command without changing the oracle's own stripHeredocBodies:
+// it walks the same text with the same quote, operator and line helpers (skipQuoted, skipHeredoc, shellNewline) and
+// records each body instead of deleting it. The command text is the words from the start of the command that owns the
+// operator to the operator itself. One here-document per << operator is recorded, matching how stripHeredocBodies
+// consumes them (a second operator on one line keeps its body in the text).
+func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
+	out := []shellWriteHeredoc{}
+	start := 0
+	for i := 0; i < len(command); {
+		ch := command[i]
+		if ch == '\'' || ch == '"' {
+			i = skipQuoted(command, i)
+			continue
+		}
+		if ch == '<' && shellAt(command, i+1) == '<' && shellAt(command, i+2) != '<' {
+			tabs := shellAt(command, i+2) == '-'
+			after := skipHeredoc(command, i)
+			delim, quoted := shellWriteHeredocDelimiter(command, i)
+			if len(delim) == 0 {
+				i = after
+				continue
+			}
+			eol := shellNewline(command, after)
+			if eol == -1 {
+				break
+			}
+			j, end := eol+1, eol+1
+			for {
+				nl := shellNewline(command, j)
+				line := command[j:len(command)]
+				if nl != -1 {
+					line = command[j:nl]
+				}
+				if tabs {
+					line = shellWriteHeredocTrimTabs(line)
+				}
+				if slices.Equal(line, delim) {
+					end = j
+					if nl == -1 {
+						j = len(command)
+					} else {
+						j = nl + 1
+					}
+					break
+				}
+				if nl == -1 {
+					end, j = len(command), len(command)
+					break
+				}
+				j = nl + 1
+			}
+			out = append(out, shellWriteHeredoc{command: command[start:i], delim: delim, body: command[eol+1 : end], quoted: quoted, tabs: tabs})
+			i, start = j, j
+			continue
+		}
+		if ch == '\n' || ch == ';' || ch == '|' && shellAt(command, i-1) != '>' || ch == '&' && shellAt(command, i-1) != '>' && shellAt(command, i-1) != '<' && shellAt(command, i+1) != '>' {
+			start = i + 1
+		}
+		i++
+	}
+	return out
+}
+
+// shellWriteHeredocDelimiter reads the delimiter word at a << operator, removing its quoting and reporting whether the
+// word was quoted. It is the collector's reader; the oracle's heredocDelimiter keeps its own answer for the recorded
+// corpus, where a backslash-escaped delimiter reads as absent.
+func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool) {
+	i += 2
+	if shellAt(s, i) == '-' {
+		i++
+	}
+	for i < len(s) && shellSpace(s[i]) {
+		i++
+	}
+	out := []uint16{}
+	for i < len(s) {
+		c := s[i]
+		if shellSpace(c) || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' || c == '<' || c == '>' {
+			break
+		}
+		switch c {
+		case '\'', '"':
+			quoted = true
+			q := c
+			i++
+			for i < len(s) && s[i] != q {
+				out = append(out, s[i])
+				i++
+			}
+			if shellAt(s, i) == q {
+				i++
+			}
+		case '\\':
+			quoted = true
+			i++
+			if i < len(s) {
+				out = append(out, s[i])
+				i++
+			}
+		default:
+			out = append(out, c)
+			i++
+		}
+	}
+	return out, quoted
+}
+
+// shellWriteHeredocTrimTabs removes the leading tabs of one here-document body line, as <<- does before the terminator
+// is matched and before the interpreter reads the line.
+func shellWriteHeredocTrimTabs(line []uint16) []uint16 {
+	i := 0
+	for i < len(line) && line[i] == '\t' {
+		i++
+	}
+	return line[i:]
 }
 
 // verbDestinations is the verb step: shellwrite_verbs.go reads the destinations of tee, sed -i, cp, mv, perl, ruby, python
