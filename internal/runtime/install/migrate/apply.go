@@ -3,15 +3,19 @@ package migrate
 // apply.go is the M3 write step of docs/port-cxc/state-migration.md: it publishes the plan classify() produced, in
 // dependency order, through M1's Publisher, and never changes a payload byte. It creates the destination directories
 // first, each at the private marker mode below, then publishes the files in rank order (artifacts and plans before the
-// records that reference them), and finishes the directories' modes deepest first. Every source is rechecked against the
-// preflight inventory immediately before its own write and every published file is verified afterwards, so a source that
-// moved stops the run. A refusal or an error stops the run and leaves every published file whole, so a rerun skips what
-// is already equal. No hook, installer, activation or startup path calls this.
+// records that reference them, and inside a rank the artifacts an evidence manifest names and the config backups before
+// the record that refers to them), and finishes the directories' modes deepest first. Every source is rechecked against
+// the preflight inventory immediately before its own write and again after its own publication, and every copied file's
+// source is checked once more when the run has finished, so a source that moved stops the run. A refusal or an error
+// stops the run and leaves every published file whole, so a rerun skips what is already equal. No hook, installer,
+// activation or startup path calls this.
 
 import (
 	"cmp"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"slices"
 	"strings"
@@ -141,7 +145,10 @@ func (a *applyRun) run() error {
 	if err := a.writeFiles(); err != nil {
 		return err
 	}
-	return a.finishModes()
+	if err := a.finishModes(); err != nil {
+		return err
+	}
+	return a.migrateApplyReviewVerifySources()
 }
 
 func (a *applyRun) close() {
@@ -216,9 +223,10 @@ func (a *applyRun) rootItem(scope Scope) (Item, bool) {
 }
 
 // ensureRoots rechecks each source root, then creates and pins the destination root of every scope the plan covers before
-// any state is written. The root is made at the private marker mode first, because EnsureProjectRoot creates it 0777
-// subject to umask and only a root this call made may be chmodded afterwards; EnsureProjectRoot also publishes CRW's
-// canonical .gitignore no-replace and refuses a conflicting initialization race. The Codex scope maps its files in place.
+// any state is written. The project root is created by EnsureProjectRoot, which must decide the initialization itself
+// before anything has made the root: it captures whether .gitignore was already there when its call began, and a root
+// this run creates cannot have a retained one, so a racer's differing .gitignore is refused instead of swallowed. Only a
+// root this call made is chmodded to the private marker mode afterwards. The Codex scope maps its files in place.
 func (a *applyRun) ensureRoots() error {
 	if a.plan == nil {
 		return nil
@@ -244,9 +252,12 @@ func (a *applyRun) ensureRoots() error {
 			}
 		}
 		made := pair.Dest == nil
-		root, err := pair.EnsureDest(applyTempRaw)
-		if err == nil && scope == ScopeProject {
+		var root *Dir
+		var err error
+		if scope == ScopeProject {
 			root, err = a.pub.EnsureProjectRoot(pair)
+		} else {
+			root, err = pair.EnsureDest(applyTempRaw)
 		}
 		if err != nil {
 			return err
@@ -320,7 +331,8 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 
 // writeFiles publishes every file item in rank order, keeping plan order inside a rank, and rechecks each source against
 // the preflight inventory immediately before its own write, so a source that moved stops the run instead of publishing
-// other bytes.
+// other bytes. Inside a rank a file another item's evidence manifest names, and a Codex config backup, come first, so a
+// record is never published before the artifact or the backup it refers to.
 func (a *applyRun) writeFiles() error {
 	order := make([]int, 0, len(a.plan.Items))
 	for i, it := range a.plan.Items {
@@ -328,8 +340,13 @@ func (a *applyRun) writeFiles() error {
 			order = append(order, i)
 		}
 	}
+	refs := a.migrateApplyReviewReferences()
 	slices.SortStableFunc(order, func(x, y int) int {
-		return cmp.Compare(applyRank(a.plan.Items[x]), applyRank(a.plan.Items[y]))
+		ix, iy := a.plan.Items[x], a.plan.Items[y]
+		if c := cmp.Compare(applyRank(ix), applyRank(iy)); c != 0 {
+			return c
+		}
+		return cmp.Compare(migrateApplyReviewSubRank(ix, refs), migrateApplyReviewSubRank(iy, refs))
 	})
 	for _, i := range order {
 		if err := a.publishFile(i, a.plan.Items[i]); err != nil {
@@ -337,6 +354,67 @@ func (a *applyRun) writeFiles() error {
 		}
 	}
 	return nil
+}
+
+// migrateApplyReviewReferences returns the source paths another plan item's evidence manifest names: the artifactManifest[]
+// entries of a QA receipt, each resolved against the receipt's own directory, whose kinds are the verdict and
+// artifact-identity files the receipt is judged with (internal/pabcd/gate/receipt.go:35-36, gate/manifest.go:89-143). A
+// record that cannot be read or decoded contributes nothing: this key only orders publications and never decides what is
+// copied, so a receipt this run cannot read is reported by attention, not refused here.
+func (a *applyRun) migrateApplyReviewReferences() map[string]bool {
+	refs := map[string]bool{}
+	for _, it := range a.plan.Items {
+		if !applyWrites(it) || applyDir(it) || !strings.HasSuffix(it.Source, "qa-receipt.json") {
+			continue
+		}
+		dir := classifyDirPart(it.Source)
+		src, err := a.open(it.Scope, dir, false)
+		if err != nil {
+			continue
+		}
+		_, base := applySplit(it.Source)
+		f, _, err := src.OpenRegular(base)
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(f, attentionReadCap+1))
+		_ = f.Close()
+		if err != nil || len(data) > attentionReadCap {
+			continue
+		}
+		var view struct {
+			ArtifactManifest []struct {
+				Path string `json:"path"`
+				Kind string `json:"kind"`
+			} `json:"artifactManifest"`
+		}
+		if json.Unmarshal(data, &view) != nil {
+			continue
+		}
+		for _, e := range view.ArtifactManifest {
+			if e.Kind != "verdict" && e.Kind != "artifact-identity" {
+				continue
+			}
+			p := e.Path
+			if dir != "" {
+				p = dir + "/" + p
+			}
+			refs[p] = true
+		}
+	}
+	return refs
+}
+
+// migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
+// Codex config backups, so they publish before the receipt or the install record that refers to them, and 1 for the rest.
+func migrateApplyReviewSubRank(it Item, refs map[string]bool) int {
+	if it.Scope == ScopeCodex && strings.HasPrefix(it.Source, backupSource) && strings.HasSuffix(it.Source, backupSuffix) {
+		return 0
+	}
+	if refs[it.Source] {
+		return 0
+	}
+	return 1
 }
 
 func (a *applyRun) publishFile(i int, it Item) error {
@@ -368,11 +446,22 @@ func (a *applyRun) publishFile(i int, it Item) error {
 	res, err := a.pub.Publish(parent, leaf, f, it.Size, it.Mode.Perm())
 	a.result.Items[i].Result = res
 	if err != nil {
-		// A failure after the no-replace rename leaves a whole final file, which the report must count.
-		if res == ResultFailed && a.checkDest(parent, leaf, it) == nil {
+		switch {
+		case res == ResultAlreadyEqual:
+			// The destination already held the plan's bytes, so this run wrote nothing: only the directory sync failed, and
+			// the file must not be counted as a write of this run.
+			a.result.Items[i].Note = "the destination was already equal; its directory sync failed"
+			if got, derr := a.destMode(parent, leaf); derr == nil && got != it.Mode.Perm() {
+				a.result.Items[i].Note += "; destination kept its mode " + got.String()
+			}
+		case res == ResultFailed && a.checkDest(parent, leaf, it) == nil:
+			// A failure after the no-replace rename leaves a whole final file, which the report must count.
 			a.result.WritesCompleted++
 			a.result.Items[i].Note = "the final file is whole but its directory sync failed"
 		}
+		return err
+	}
+	if err := a.migrateApplyReviewRecheckSource(i, it); err != nil {
 		return err
 	}
 	switch res {
@@ -383,6 +472,59 @@ func (a *applyRun) publishFile(i int, it Item) error {
 		// Nothing was written, and equality never changes a destination's mode or times, so a difference is reported.
 		if got, err := a.destMode(parent, leaf); err == nil && got != it.Mode.Perm() {
 			a.result.Items[i].Note = "destination kept its mode " + got.String()
+		}
+	}
+	return nil
+}
+
+// migrateApplyReviewRecheckSource re-reads an item's source after its publication and compares it with the plan, so a
+// source that moved while its bytes were being published is reported as that file rather than only as the bytes that
+// landed. The item is set to refused here because stop() never overwrites the result the publication already assigned.
+func (a *applyRun) migrateApplyReviewRecheckSource(i int, it Item) error {
+	src, err := a.open(it.Scope, classifyDirPart(it.Source), false)
+	if err != nil {
+		a.result.Items[i].Result = ResultRefused
+		return err
+	}
+	_, base := applySplit(it.Source)
+	f, info, err := src.OpenRegular(base)
+	if err != nil {
+		a.result.Items[i].Result = ResultRefused
+		return err
+	}
+	defer f.Close()
+	if info.Size() != it.Size || info.Mode().Perm() != it.Mode.Perm() {
+		return a.migrateApplyReviewChanged(i, it, "the source changed after its publication")
+	}
+	got, err := sum(f)
+	if err != nil {
+		a.result.Items[i].Result = ResultRefused
+		return refuse(ReasonUnreadable, it.Source, err.Error())
+	}
+	if got != it.Digest {
+		return a.migrateApplyReviewChanged(i, it, "the source bytes changed after its publication")
+	}
+	return nil
+}
+
+// migrateApplyReviewChanged records that an item's source moved and returns the refusal that stops the run.
+func (a *applyRun) migrateApplyReviewChanged(i int, it Item, detail string) error {
+	a.result.Items[i].Result = ResultRefused
+	return refuse(applyReasonChanged, it.Source, detail)
+}
+
+// migrateApplyReviewVerifySources re-reads every source this run copied or transformed once the run has finished, so a
+// source that moved while a later file was publishing is still reported instead of passing as a successful copy.
+func (a *applyRun) migrateApplyReviewVerifySources() error {
+	if a.plan == nil {
+		return nil
+	}
+	for i, it := range a.plan.Items {
+		if !applyWrites(it) || applyDir(it) {
+			continue
+		}
+		if err := a.migrateApplyReviewRecheckSource(i, it); err != nil {
+			return err
 		}
 	}
 	return nil
