@@ -37,7 +37,7 @@ const (
 // raw is the stdin text already decoded as Node decodes it, so len(raw) is Buffer.byteLength(raw).
 func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if len(raw) > spawnHookRouteMaxInput {
-		return DenyEnvelope("crw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary")
+		return DenyEnvelope(spawnHookOversizedInputReason)
 	}
 	defer func() {
 		if recover() != nil {
