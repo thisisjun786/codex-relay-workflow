@@ -17,7 +17,7 @@ import (
 // crw manage audit drafts turns the defects a graded audit recorded into follow-up issue
 // draft files below the state directory, one per defect, so a management session can read
 // them and open the issues itself. The product never writes to Linear: the draft file is the
-// whole product surface, and the management session posts it through its own connector.
+// whole surface, and the management session posts it through its own connector.
 
 // The schemas this surface writes: one follow-up issue draft, and the index that lists the
 // fingerprints the drafts directory holds.
@@ -162,7 +162,7 @@ func auditDraftSectionOf(cfg *Config) (auditDraftSection, error) {
 	return section, nil
 }
 
-// auditDraftWherePath is the path part of a defect's where: the grader appends a line number
+// auditDraftWherePath is the path part of a defect's where: a grader appends a line number
 // after a colon, and the owners map and the fingerprint are about the file, not the line.
 func auditDraftWherePath(where string) string {
 	path := strings.TrimSpace(where)
@@ -171,8 +171,7 @@ func auditDraftWherePath(where string) string {
 		if cut < 0 {
 			return path
 		}
-		tail := path[cut+1:]
-		if tail == "" || !auditDraftAllDigits(tail) {
+		if !auditDraftAllDigits(path[cut+1:]) {
 			return path
 		}
 		path = path[:cut]
@@ -199,7 +198,7 @@ func auditDraftNormalizeWhat(what string) string {
 }
 
 // auditDraftFingerprint is the first 16 hex characters of the digest over the where's path
-// and the normalized what, so the same defect reported by two audits is one draft.
+// and the normalized what, so the same defect two audits report is one draft.
 func auditDraftFingerprint(where, what string) string {
 	sum := sha256.Sum256([]byte(auditDraftWherePath(where) + auditDraftNormalizeWhat(what)))
 	return hex.EncodeToString(sum[:])[:auditDraftFingerprintChars]
@@ -226,8 +225,7 @@ func auditDraftTitle(severity, what string) string {
 	if text == "" {
 		text = "audit defect"
 	}
-	title := severity + ": " + text
-	return auditDraftTruncateRunes(title, auditDraftTitleLimit)
+	return auditDraftTruncateRunes(severity+": "+text, auditDraftTitleLimit)
 }
 
 // auditDraftTruncateRunes cuts s to at most limit characters, marking a cut with three dots.
@@ -279,7 +277,7 @@ func auditDraftCriterionLines(criteria []auditGradeCriterion) string {
 }
 
 // auditDraftBody is the draft's body: what the defect is, where it is, how to reproduce it,
-// which audit reported it, and the criteria that grade judged.
+// which audit reported it, and the criteria that audit judged.
 func auditDraftBody(c *auditDraftCandidate) string {
 	var b strings.Builder
 	b.WriteString("## What\n\n")
@@ -360,17 +358,8 @@ func auditDraftLoad(path string) (*auditDraft, error) {
 	return &doc, nil
 }
 
-// auditDraftSave writes one draft file atomically: a temporary file beside it, fsynced, then
-// renamed over it, so a reader never sees a half-written draft.
-func auditDraftSave(path string, doc *auditDraft) error {
-	data, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	return auditDraftWriteFile(path, append(data, '\n'))
-}
-
-// auditDraftWriteFile is the atomic write both the drafts and the index use.
+// auditDraftWriteFile writes one file atomically: a temporary file beside it, fsynced, then
+// renamed over it, so a reader never sees a half-written document.
 func auditDraftWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -402,6 +391,15 @@ func auditDraftWriteFile(path string, data []byte) error {
 	return nil
 }
 
+// auditDraftSave writes one draft file atomically.
+func auditDraftSave(path string, doc *auditDraft) error {
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return auditDraftWriteFile(path, append(data, '\n'))
+}
+
 // auditDraftIndexLoad reads the drafts index. A missing index lists nothing.
 func auditDraftIndexLoad(dir string) (auditDraftIndex, error) {
 	data, err := os.ReadFile(filepath.Join(dir, auditDraftIndexFile))
@@ -418,8 +416,8 @@ func auditDraftIndexLoad(dir string) (auditDraftIndex, error) {
 	return index, nil
 }
 
-// auditDraftIndexSave rewrites the index from the draft files the directory actually holds,
-// so the listing and the artifacts never drift apart.
+// auditDraftIndexSave rewrites the index from the draft files the directory actually holds, so
+// the listing and the artifacts never drift apart.
 func auditDraftIndexSave(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -460,7 +458,8 @@ func auditDraftFingerprintName(fingerprint string) error {
 	return nil
 }
 
-// auditDraftScopeMatches reports whether one ledger row is inside the run's range.
+// auditDraftScopeMatches reports whether one ledger row is inside the run's range. Only an ok
+// row carries a usable grade.json, so every other status is out of the range.
 func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, error) {
 	if row.Status != auditStatusOK {
 		return false, nil
@@ -471,7 +470,7 @@ func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, er
 	if scope.HasSince {
 		at, err := time.Parse(auditTimeFormat, row.GradedAt)
 		if err != nil {
-			return false, fmt.Errorf("the ledger row for %s at %s carries no usable %s: %w", row.Subject, row.Head, "graded_at", err)
+			return false, fmt.Errorf("the ledger row for %s at %s carries no usable graded_at: %w", row.Subject, row.Head, err)
 		}
 		if at.Before(scope.Since) {
 			return false, nil
@@ -530,18 +529,19 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 			return report, fmt.Errorf("the ok ledger row for %s at %s carries no usable %s", row.Subject, row.Head, auditGradeFile)
 		}
 		for _, defect := range doc.Defects {
-			rank, ok := auditDraftSeverityRank[defect.Severity]
-			if !ok || rank > thresholdRank {
+			rank, knownSeverity := auditDraftSeverityRank[defect.Severity]
+			if !knownSeverity || rank > thresholdRank {
 				continue
 			}
 			fingerprint := auditDraftFingerprint(defect.Where, defect.What)
 			entry := auditDraftSeen{Mode: row.Mode, Subject: row.Subject, Head: row.Head, At: row.GradedAt}
-			candidate, ok := candidates[fingerprint]
-			if !ok {
+			candidate, seen := candidates[fingerprint]
+			if !seen {
 				path := auditDraftWherePath(defect.Where)
 				candidate = &auditDraftCandidate{
-					fingerprint: fingerprint, severity: defect.Severity, project: auditDraftOwner(section.Owners, path),
-					path: path, defect: defect, criteria: doc.Criteria, order: len(order),
+					fingerprint: fingerprint, severity: defect.Severity,
+					project: auditDraftOwner(section.Owners, path), path: path,
+					defect: defect, criteria: doc.Criteria, order: len(order),
 				}
 				candidates[fingerprint] = candidate
 				order = append(order, fingerprint)
@@ -557,12 +557,11 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	var fresh, existing []*auditDraftCandidate
 	for _, fingerprint := range order {
 		candidate := candidates[fingerprint]
-		path := filepath.Join(dir, fingerprint+".json")
 		if known[fingerprint] {
 			existing = append(existing, candidate)
 			continue
 		}
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, fingerprint+".json")); err == nil {
 			existing = append(existing, candidate)
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -570,8 +569,8 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		}
 		fresh = append(fresh, candidate)
 	}
-	// The cap holds back new drafts only, and it keeps the most severe first and then the
-	// ones the audits reported most often, so what a later run creates is what matters most.
+	// The cap holds back new drafts only, and it keeps the most severe first and then the ones
+	// the audits reported most often, so what a later run creates is what matters most.
 	sort.SliceStable(fresh, func(i, j int) bool {
 		left, right := auditDraftSeverityRank[fresh[i].severity], auditDraftSeverityRank[fresh[j].severity]
 		if left != right {
@@ -590,8 +589,8 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		doc := &auditDraft{
 			Schema: auditDraftSchema, Fingerprint: candidate.fingerprint, Source: auditDraftSource,
 			Project: candidate.project, Title: auditDraftTitle(candidate.severity, candidate.defect.What),
-			Severity: candidate.severity, Body: auditDraftBody(candidate), Labels: auditDraftLabels(candidate.severity),
-			Seen: candidate.seen, State: auditDraftStateDraft,
+			Severity: candidate.severity, Body: auditDraftBody(candidate),
+			Labels: auditDraftLabels(candidate.severity), Seen: candidate.seen, State: auditDraftStateDraft,
 		}
 		if err := auditDraftSave(filepath.Join(dir, candidate.fingerprint+".json"), doc); err != nil {
 			return report, err
@@ -666,8 +665,7 @@ func auditRunDrafts(_ context.Context, e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts: error: %v\n", err)
 		return usageExit
 	}
-	cfg := coreDefaults(e)
-	report, err := auditDraftsRun(e, cfg, scope)
+	report, err := auditDraftsRun(e, coreDefaults(e), scope)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts: error: %v\n", err)
 		return 1
@@ -699,8 +697,7 @@ func auditDraftRunMark(e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)
 		return usageExit
 	}
-	cfg := coreDefaults(e)
-	path := filepath.Join(auditDraftDir(e, cfg), values["fingerprint"]+".json")
+	path := filepath.Join(auditDraftDir(e, coreDefaults(e)), values["fingerprint"]+".json")
 	doc, err := auditDraftLoad(path)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)
