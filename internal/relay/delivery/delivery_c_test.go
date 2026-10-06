@@ -11,6 +11,7 @@ import (
 // test_delivery.py properties DEL-21..DEL-30.
 
 func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it(t *testing.T) {
+	t.Parallel()
 	t.Run("reported while a busy backoff runs, never shortened", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del21", "running")
@@ -52,6 +53,7 @@ func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it
 }
 
 func TestDEL22_a_superseded_relationship_is_left_to_the_supersession_path(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del22", "superseded")
 	f := newFixture(t, tree)
@@ -67,6 +69,7 @@ func TestDEL22_a_superseded_relationship_is_left_to_the_supersession_path(t *tes
 }
 
 func TestDEL23_a_resume_racing_the_withhold_leaves_the_delivery_alone(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del22", "race")
 	f := newFixture(t, tree)
@@ -84,6 +87,7 @@ func TestDEL23_a_resume_racing_the_withhold_leaves_the_delivery_alone(t *testing
 }
 
 func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
+	t.Parallel()
 	t.Run("a stale busy observation cannot overwrite a dispatch", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del24", "busy")
@@ -127,6 +131,7 @@ func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 }
 
 func TestDEL25_receipt_recovery_keeps_the_dispatch_turn_and_its_provenance(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del25")
 	f := newFixture(t, tree)
@@ -148,6 +153,7 @@ func TestDEL25_receipt_recovery_keeps_the_dispatch_turn_and_its_provenance(t *te
 }
 
 func TestDEL26_a_later_turn_needs_an_explicit_continuation_admission(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ mode, reason, detail string }{
 		{"none", "unassigned_turn", "explicit continuation admission"},
 		{"valid", "", ""},
@@ -202,6 +208,7 @@ func TestDEL26_a_later_turn_needs_an_explicit_continuation_admission(t *testing.
 }
 
 func TestDEL27_the_completion_message_is_a_verification_request_with_the_ack_instruction(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del27", "completion")
 	f := newFixture(t, tree)
@@ -239,6 +246,7 @@ func revisionFixture(t *testing.T, tree string) (*fixture, *Ack, string, string,
 }
 
 func TestDEL28_the_revision_message_asks_for_no_acknowledgement_and_says_what_to_change(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del27", "revision")
 	f, _, source, revision, acked, verdict := revisionFixture(t, tree)
@@ -260,6 +268,7 @@ func TestDEL28_the_revision_message_asks_for_no_acknowledgement_and_says_what_to
 }
 
 func TestDEL29_the_instruction_each_side_is_given_is_the_one_that_works(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del27", "revision")
 	f, ack, source, revision, _, _ := revisionFixture(t, tree)

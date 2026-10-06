@@ -59,11 +59,16 @@ a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
 A required check that is not a success has two readings, and they call for different
 actions. `checks_not_run` is the reading for a check that did not succeed because its
-workflow run holds a job that concluded cancelled without beginning a step: no runner ever
-picked it up, so the commit was never tested. `merge-evidence` names the run and the jobs
-that did not run in the problem's detail, so a rerun can be aimed at them. `checks_stale` is
-the reading for every other non-success, a real failure, and the lane returns its turn as
-before.
+workflow run holds a job that concluded `cancelled`, `failure` or `timed_out` without beginning a
+step: no runner ever picked it up, so the commit was never tested. `merge-evidence` names the run
+and the jobs that did not run in the problem's detail, so a rerun can be aimed at them.
+`checks_stale` is the reading for every other non-success, a real failure, and the lane returns
+its turn as before.
+
+A `go-product (test-*)` leg that concluded `success` while its test step did not run (the temporary
+CI light mode of CRW-790, where a pull request without the `crw-lane` label skips the legs' work)
+is `checks_stale` too, never a pass and never a rerun: the run tested nothing, so the lane labels
+the pull request `crw-lane` and judges the full run.
 
 What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
 judge owns it, the lane reruns the failed jobs of that run once on the same head
@@ -1157,7 +1162,7 @@ among its commands, the parent does not settle a conflict either.
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
    is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below). The one
-   exception is the plugin manifest's version line, which no declaration has to cover: settle it as the
+   exception is the plugin manifest's version line, which no declaration has to settle with one agreed rule: settle it as the
    paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
@@ -1170,17 +1175,29 @@ among its commands, the parent does not settle a conflict either.
      <path>`) and run the declared command on the merged tree, from the repository root. For
      `plugins/crw/.codex-plugin/plugin.json` that is `go run -tags dev ./cmd/crw-dev ci plugin
      --record-version`, after the merge of the skills has settled, because the suffix digests the whole
-     payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
+     payload. For `docs/port/refactor-backlog.md` that is `go run -tags dev ./cmd/crw-dev ci
+     refactor-backlog --write`, after the merge of the fragment tree `docs/port/refactor-backlog.d/` has
+     settled (entry files both sides add merge as the union), because the file is assembled from those
+     fragments. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
+     For the generated case sections of `plugins/crw/skills/crw-run/references/dispatch-verification.md` it is
+     `go run -tags dev ./cmd/crw-dev ci dispatch-cases --write`, which rebuilds that document from the row and
+     block files under `docs/crw-run/dispatch-cases/`. A case is authored in those files, never in the
+     generated document: a change made only in the document drifts from its inputs and `crw-dev ci validate` refuses it.
 
-The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
-`plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
-file in the same mode in both parents and in the head, the check settles it by the built-in rule
+The one file no declaration has to settle with one agreed rule is the plugin manifest's version line. When the
+file is in play (a conflict in `plugins/crw/.codex-plugin/plugin.json`, or a clean merge whose head re-recorded it), no
+declaration given has to touch it at all, and the file is the same regular file in the same mode in both parents and
+in the head, the check settles it by the built-in rule
 `regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
 that version must keep the release component both parents record (the release is the owner's choice, not the
 payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
-(`crw-dev ci plugin` computes it from the payload). A declaration that touches the file keeps its say, even when it
-does not establish one mechanical rule for it. Any other difference in that file, a version that is not the derived
+(`crw-dev ci plugin` computes it from the payload). A declaration that settles the file with one
+rule agreed by every declaration given keeps its say; a declaration that merely touches the file does not take the
+built-in rule's place, because the rule already holds the manifest to both parents apart from the version line and
+to the version the head's own payload derives. The rule applies whether the manifest conflicted or merged cleanly
+and was recorded again at the head, which is the shape a parent's own update leaves when only one side re-recorded
+the version. Any other difference in that file, a version that is not the derived
 one, and every other path keep the refusal they have today, and the proof prints
 `applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
 
@@ -1232,13 +1249,13 @@ one, and every other path keep the refusal they have today, and the proof prints
 **The evidence.** The merged mark and the merge record name the rule applied in plain words, say that the check
 passed, and carry the check's output as printed:
 
-    base refresh by mechanical resolution, check passed: append-only union of docs/port/refactor-backlog.md; plugin.json version regenerated
+    base refresh by mechanical resolution, check passed: docs/port/refactor-backlog.md regenerated by go run -tags dev ./cmd/crw-dev ci refactor-backlog --write; plugin.json version regenerated
     evidence: previous=<P> dev_tip=<D> head=<N> tree=<N's tree> rule=mechanical_resolution
-    applied: union path=docs/port/refactor-backlog.md base_lines=<n> previous_added=<n> dev_added=<n> result_lines=<n>
+    applied: regenerate path=docs/port/refactor-backlog.md command="go run -tags dev ./cmd/crw-dev ci refactor-backlog --write" runs=2 identical=yes matches_head=yes
     applied: regenerate path=plugins/crw/.codex-plugin/plugin.json command="<command>" runs=2 identical=yes matches_head=yes
 
-The words for the two usual rules are "append-only union of <path>" and "plugin.json version regenerated"; any other
-regeneration reads "<path> regenerated by <command>". Copy the `evidence:` and `applied:` lines, do not retype them, and
+The words are "append-only union of <path>" for a list both sides add lines to, "<path> regenerated by <command>" for a
+regeneration, and "plugin.json version regenerated" for the manifest. Copy the `evidence:` and `applied:` lines, do not retype them, and
 add the `merge-evidence` verdict on N, as for any refresh. A pass is a fact about the resolution: it does not say that a
 job, a review or a merge happened on N.
 
@@ -1287,7 +1304,7 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
        codex-session-relay --state "$RELAY_STATE" dag-base-refresh --plan <plan> --node <node> \
          --actor <the parent's task id> --checkout <checkout> --expect-epoch <the epoch you hold>
 
-   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. Every conflict file retains its blob in `steps`; an optional `rule` names a mechanical resolution proved by the refreshed node's declaration, every identifiable contributing node's agreeing declaration, and the shared checker. An unidentified path-changing base landing or a missing/disagreeing declaration requires the exact `--resolved` name. `resolved_paths` contains only files still requiring a manual name (if any hop needs one, that path stays in the set). Name exactly that set, including no rule-proved extra files. A rule mismatch is `tree_differs` naming the file and rule and cannot be overridden by naming it; an evaluator error is `merge_target_unreadable`. `renumber` is unchecked and refused. Automatic regeneration additionally requires two independent absent-output reconstructions of each original tree (previous head, base parent and new head). All candidate-declared regeneration outputs are removed and Git metadata is replaced by an input-only repository before each witness; this excludes HEAD/history recovery and circular output copies. Any reconstruction failure makes that path manual, including partly generated files such as the version-only `plugin.json`. Eligible paths still pass the existing head evaluator. Commands run each tree's own code with the caller's rights and the existing per-run timeout, not in a sandbox. See [the exact rule](region-grades.md#record-an-accepted-nodes-base-refresh). A build without the linked checker requires manual names; a valid older record replays its stored names without evaluating again. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names a missing commit or an evaluator failure: fetch and retry only for a missing commit; for a command error or timeout, address the stated evaluation failure before retrying. Calling again with the same facts is a replay.
+   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. Every conflict file retains its blob in `steps`; an optional `rule` names a mechanical resolution proved by the refreshed node's declaration, every identifiable contributing node's agreeing declaration, and the shared checker. An unidentified path-changing base landing or a missing/disagreeing declaration requires the exact `--resolved` name. `resolved_paths` contains only files still requiring a manual name (if any hop needs one, that path stays in the set). Name exactly that set, including no rule-proved extra files. A rule mismatch is `tree_differs` naming the file and rule and cannot be overridden by naming it; an evaluator error is `merge_target_unreadable`. `renumber` is unchecked and refused. Automatic regeneration additionally requires two independent absent-output reconstructions of each original tree (previous head, base parent and new head). All candidate-declared regeneration outputs are removed and Git metadata is replaced by an input-only repository before each witness; this excludes HEAD/history recovery and circular output copies. Any reconstruction failure makes that path manual, including partly generated files such as the version-only `plugin.json` (the plugin manifest's version line is the exception named above: when no declaration settles it with one agreed rule, the built-in `regenerate:plugin-version` rule proves it from the head's own payload and the file is not in `resolved_paths`). Eligible paths still pass the existing head evaluator. Commands run each tree's own code with the caller's rights and the existing per-run timeout, not in a sandbox. See [the exact rule](region-grades.md#record-an-accepted-nodes-base-refresh). A build without the linked checker requires manual names; a valid older record replays its stored names without evaluating again. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names a missing commit or an evaluator failure: fetch and retry only for a missing commit; for a command error or timeout, address the stated evaluation failure before retrying. Calling again with the same facts is a replay.
 5. **Merge through the lane**, as for any accepted candidate, at the head the record names. `dag-merge-judge` and `dag-merge-request` compare the pull request with the head the acceptance stands on, which after the record is that head, so the refreshed pull request is judged (the jobs on it are read there, `checks_pending` is waited on, the first failure is the `retry_same_sha` above) and gets its turn for that head. Then the lane's own steps, unchanged: acknowledge the grant, `merge-turn-check` on that head, the merge on the forge (`gh pr merge --match-head-commit <head>`), `merge-turn-land`, and the merge marked on that generation's event:
 
        codex-session-relay --state "$RELAY_STATE" assignment-mark --relationship <rel> --mark merged \

@@ -9,8 +9,6 @@
 package hook
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -115,60 +113,7 @@ func sessionHookStateRewritable(raw []byte, next state.State) bool {
 // absent known/unknown array becomes empty, an unrecognised level becomes low), so a value comparison would refuse every write
 // and silently stop the recovery. A tracker the file does not hold, or holds as null, holds no entry to lose.
 func sessionHookInterviewKeepsStored(raw []byte, kept *interview.Tracker) bool {
-	stored, ok := sessionHookJSONField(raw, "interview")
-	if !ok {
-		return false
-	}
-	object, _ := stored.(map[string]any)
-	contradictions, _ := object["contradictions"].([]any)
-	assumptions, _ := object["assumptions"].([]any)
-	ontology, _ := object["ontologySchema"].([]any)
-	if kept == nil {
-		return len(contradictions) == 0 && len(assumptions) == 0 && len(ontology) == 0
-	}
-	if len(contradictions) > len(kept.Contradictions) || len(assumptions) > len(kept.Assumptions) || len(ontology) > len(kept.OntologySchema) {
-		return false
-	}
-	for i, entity := range ontology {
-		record, _ := entity.(map[string]any)
-		relationships, _ := record["relationships"].([]any)
-		if len(relationships) > len(kept.OntologySchema[i].Relationships) {
-			return false
-		}
-	}
-	return true
-}
-
-// sessionHookJSONField is the value of one top-level key of a state document, decoded as the reader decodes it: numbers stay
-// json.Number. A document that is not one JSON object is refused; a key the document does not hold is the nil value.
-func sessionHookJSONField(doc []byte, key string) (any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(doc))
-	dec.UseNumber()
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, false
-	}
-	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-		return nil, false
-	}
-	for dec.More() {
-		name, err := dec.Token()
-		if err != nil {
-			return nil, false
-		}
-		if field, ok := name.(string); ok && field == key {
-			var value any
-			if dec.Decode(&value) != nil {
-				return nil, false
-			}
-			return value, true
-		}
-		var skip json.RawMessage
-		if dec.Decode(&skip) != nil {
-			return nil, false
-		}
-	}
-	return nil, true
+	return state.RewriteKeepsInterview(raw, kept)
 }
 
 // SessionHookPostToolUse is handlePostToolUse (hook.ts:1951-1992): a request_user_input round is

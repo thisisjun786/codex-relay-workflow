@@ -24,9 +24,11 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
 | `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
 | `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate; what it still does is named under [Installing the runtime](#installing-the-runtime)) | OPS-2.1, OPS-2.2, OPS-6.1 |
+| `crw install migrate-state` | Copy CXC state to its CRW locations, byte for byte, and refuse rather than replace ([copying CXC state](#copying-cxc-state)) | none (design J2) |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
-Every `crw install` and `crw doctor` command prints one JSON document. Runtime installation is never
+Every `crw install` and `crw doctor` command prints one JSON document, except `crw install features`,
+`crw install config` and `crw install migrate-state`, which keep their own surfaces. Runtime installation is never
 folded into the skill links: `crw-dev skills link` belongs to the repository's development binary
 because it links a checkout, and a release archive has none. It stays idempotent, it refuses to
 replace an existing directory or a foreign link, and its `LINKED`, `MISSING` and `CONFLICT` words
@@ -39,6 +41,39 @@ Moving a host from the Python runtime to this one was [the cutover](port/cutover
 alone: it moved the store's ownership. It ran at todos 42 and 43; the Python runtime left the
 repository in todo 44 (decision 48) and the takeover controller in refactor R1 (decision 54), so no
 order between `crw install install`, which moves the pointer, and a takeover is left to settle.
+
+## Copying CXC state
+
+`crw install migrate-state` is the explicit, repeatable copy of CXC v0.2.40 state to the CRW
+locations of the same data. It reads the stores [the state-migration design](port-cxc/state-migration.md)
+lists, copies each payload byte for byte, changes only the mapped root and basename names, and
+refuses the whole selected scope before any write when a destination exists with other bytes, when a
+lock is present, or when an input is a link, a hard-linked file or otherwise unsafe. It writes no
+configuration, activation, registration or source metadata, and nothing calls it implicitly: no
+hook, installer, activation path or startup task runs it, and when to run it is the operator's
+decision (the design's J2).
+
+```text
+crw install migrate-state [--scope project|user|codex|all] [--cwd <workspace>]
+                          [--from-home <old-user-root>] [--to-home <new-user-root>]
+                          [--codex-home <codex-root>] [--dry-run] [--json] [--report <absent-file>]
+```
+
+The default scope is project (the workspace's `.codexclaw` to its `.crw`); `--from-home` and
+`--to-home` are read only with `user` or `all`, and `--codex-home` only with `codex` or `all`. Roots
+default to `CODEXCLAW_HOME`/`CRW_HOME`/`CODEX_HOME`, then to `~/.codexclaw`, `~/.crw` and `~/.codex`.
+`--dry-run` performs the same reads, classification and conflict checks and writes nothing at all,
+including no report file and no `.gitignore`. `--report` publishes the JSON report no-replace after
+the run verified the copied data, so the destination must be an absent file outside the source and
+destination trees. Text output names the result and scope, the root mappings, the copied,
+already-equal and excluded counts, and every refusal and attention entry; `--json` writes the
+`crw-state-migration/1` document instead.
+
+Exit 0 is a verified copy, an already-equal run or a dry run (attention may remain); exit 1 is a
+conflict, unsafe input, a source that changed, an interruption, or an I/O or unsupported-filesystem
+failure, with the writes the run completed reported; exit 2 is a usage error. Cancellation follows
+the install mode's signal handling and returns a failed or partial report. Exit 0 is not proof of
+activation or of a session that can continue unchanged.
 
 ## What an installation is
 
@@ -382,8 +417,18 @@ operator's acknowledgement, and under it the command itself takes the OPS-4.5 ba
 anyone's memory. Inside the promotion lock, after the daemon-stopped and no-open-attempt cells have answered and before anything is promoted,
 it copies the whole state directory the gate read to `DIR`: copy only, byte for byte, the source opened read-only and nothing moved, recreated
 or deleted, here or on a failure. Directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits, each synced after its mode is set so the mode and not only the bytes survives a power loss (the directory the backup is made in stays 0700, and a copy always keeps its owner able to open it: a source the installer could read only through its group gets the owner's read bit, and the manifest records both modes); a symbolic link to a regular file is copied as the
-file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal` and `-shm`
-are copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. Each file is
+file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal`
+is copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. The store's two
+sidecars follow SQLite's WAL mode: `relay.sqlite3-shm` is never listed, copied or compared, because SQLite rebuilds that index from the log on
+open, and `relay.sqlite3-wal` is copied when it is there at its copy, while an empty one that goes or appears between the listing and the copy is
+not a refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which
+of the four happened). An empty log is the case this route exists for: a read-only open of a store no connection holds leaves one. A log that was
+not copied and holds frames in the second listing refuses instead, because a commit that stays in the log does not touch `relay.sqlite3` until a
+checkpoint, so the digest check alone would not see it and the backup would claim success while the live store held a row the copy lacks.
+`relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses, and a copied `-wal` that
+is still there at the verification must digest to what was copied: one that a checkpoint has taken away by then is not a refusal either, and
+`relay.sqlite3` is the consistency the verification keeps.
+Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
 the copy is of one moment or it is not made. The backup, its manifest and the directories made for them are synced in their parents after the manifest is written, so a power loss cannot keep the files and lose the names that reach them. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie

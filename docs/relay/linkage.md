@@ -87,6 +87,35 @@ A project has at most one live `execution` edge, whichever initiative or parent 
 other initiative uses a `reference`, and a reference must agree about who the parent is. That is
 what stops a shared project from acquiring a second execution parent.
 
+## The store seat
+
+A supervisor's own level is an initiative. `linkage-bind --role supervisor --scope-kind store
+--scope store` claims the store instead: one key, one live owner, and the same identity rule, so
+the binding is `bindingID("supervisor","store","store",task)`. The store is the one scope no
+Linear level owns, so a task bound there holds a seat that is not an initiative execution
+binding. `--scope-kind` is accepted for that one combination and no other: another role, or
+another key, is a named refusal rather than a second scope, and the seat writes no `scope_links`
+row, because a supervision edge joins an initiative to a project and the store has no initiative
+above it.
+
+The seat is for a session that manages the store rather than one project. The management session
+holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
+store — so neither is tied to a single initiative's execution. One task holds one supervisor
+seat, so a session registered here cannot also supervise an initiative; that is the rule the role
+model already had, not a limit of the command. The seat is also what such a session needs to
+speak for the store scope: `limit-declare --scope-kind store` reads its declarer from a live
+supervisor binding, and the seat is the binding a session that manages the store holds.
+
+The seat changes hands like any other: `linkage-handover --role supervisor --scope-kind store
+--scope store --expect-task <incumbent> --task <successor> ...` archives the incumbent's binding
+and binds the successor. The scope kind is the same `--scope-kind` decision `linkage-bind` makes,
+so it is accepted for the supervisor's store seat and no other combination; the handover rules are
+the ordinary ones, which is what makes the seat recoverable when the management session is
+replaced. `--expect-task` must name the live owner, and a successor that already supervises an
+initiative is refused `role_already_bound`, because one task holds one supervisor seat. Without
+`--scope-kind` the handover takes the role's own level as it always did, so `--role supervisor
+--scope store` still looks for an initiative named `store` and refuses `unregistered_scope`.
+
 ## The transaction protocol
 
 Every write path validates completely before its first mutation:
