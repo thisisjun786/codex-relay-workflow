@@ -12,7 +12,18 @@
 # A pull request compares its base with its head, a push to dev the commit it replaced with the
 # one it added. Neither base is a manual dispatch, and a push that created the branch carries the
 # all-zeros before, which is not a commit: both run in full.
+#
+# The answer travels in $GITHUB_OUTPUT, and the job's later steps run only on `changed == 'true'`.
+# A gate that cannot write that answer would therefore skip the whole screen verification while
+# its job still concluded success, so a missing or unwritable output path is refused here rather
+# than passed over.
 set -euo pipefail
+
+output=${GITHUB_OUTPUT:-}
+if [[ -z $output ]]; then
+  echo 'gui_paths.sh: GITHUB_OUTPUT is not set, so the decision cannot be recorded; refusing to end without an answer' >&2
+  exit 1
+fi
 
 # The watched paths. web/ is the screen source, internal/gui/assets/ is what is committed and
 # embedded, and the last four are the gui definition: the job itself, the Makefile target, this
@@ -41,9 +52,7 @@ if [[ -n $base ]]; then
   fi
 fi
 
-if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-  printf 'changed=%s\n' "$changed" >>"$GITHUB_OUTPUT"
-fi
+printf 'changed=%s\n' "$changed" >>"$output"
 
 if [[ $changed == true ]]; then
   echo 'the screens run in full: a watched path changed, the changed list could not be read, or this run has no base to compare with'

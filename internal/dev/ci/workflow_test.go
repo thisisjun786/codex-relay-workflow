@@ -195,7 +195,7 @@ func TestWorkflow_the_gui_job_gates_the_screen_verification(t *testing.T) {
 			t.Errorf("step %d (%q) installs a toolchain before the path gate", i, step["name"])
 		}
 	}
-	built := ""
+	built, drift := "", ""
 	for i, step := range steps[gate+1:] {
 		if !strings.Contains(step["if"], guard) {
 			t.Errorf("step %d (%q) after the gate runs if %q, which does not carry %q", gate+1+i, step["name"], step["if"], guard)
@@ -209,20 +209,40 @@ func TestWorkflow_the_gui_job_gates_the_screen_verification(t *testing.T) {
 				t.Errorf("the build does not write a temporary tree: %q", step["run"])
 			}
 		}
-	}
-	if built == "" {
-		t.Error("the gui job never builds the screens")
-	}
-	// The drift check reads the tree that build wrote, not the working tree.
-	drift := ""
-	for _, step := range steps {
 		if strings.Contains(step["run"], "ci gui-drift") {
 			drift = step["run"]
 		}
 	}
-	if !strings.Contains(drift, `--built "$RUNNER_TEMP/gui-built"`) {
-		t.Errorf("the drift check does not read the built tree: %q", drift)
+	if built == "" {
+		t.Error("the gui job never builds the screens")
 	}
+	// The drift check must read the very directory the build wrote: a typo in either the --outDir
+	// or the --built value would otherwise compare something else and still pass this test.
+	builtDir := workflowFlagValue(t, built, "--outDir")
+	driftDir := workflowFlagValue(t, drift, "--built")
+	if builtDir == "" || builtDir != driftDir {
+		t.Errorf("the build writes %q but the drift check reads %q", builtDir, driftDir)
+	}
+}
+
+// workflowFlagValue reads the value a shell command passes to a flag, quoted or bare, up to the
+// next blank. It is how a test holds two steps to the same directory without matching prose.
+func workflowFlagValue(t *testing.T, command, flag string) string {
+	t.Helper()
+	for _, field := range strings.Fields(command) {
+		if rest, ok := strings.CutPrefix(field, flag+"="); ok {
+			return strings.Trim(rest, `"'`)
+		}
+	}
+	for i, field := range strings.Fields(command) {
+		if field != flag {
+			continue
+		}
+		if i+1 < len(strings.Fields(command)) {
+			return strings.Trim(strings.Fields(command)[i+1], `"'`)
+		}
+	}
+	return ""
 }
 
 var (

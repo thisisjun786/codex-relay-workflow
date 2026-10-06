@@ -152,6 +152,9 @@ func guiDriftWorkingTree(root string) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink, which is not a regular file", path)
+		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
@@ -210,6 +213,12 @@ func guiDriftCommitted(root, revision string) (map[string]guiDriftEntry, error) 
 		fields := strings.Fields(meta)
 		if len(fields) != 4 || fields[1] != "blob" {
 			return nil, fmt.Errorf("%s is not a regular file in %s", path, revision)
+		}
+		// A symlink is recorded as mode 120000 with a blob holding its target's text. Reading that
+		// blob as file content would compare the target's spelling, and `//go:embed all:assets` does
+		// not follow the link either, so a link is refused rather than resolved.
+		if !strings.HasPrefix(fields[0], "100") {
+			return nil, fmt.Errorf("%s has mode %s in %s, not a regular file (a symlink or submodule is refused)", path, fields[0], revision)
 		}
 		size, err := strconv.ParseInt(fields[3], 10, 64)
 		if err != nil {
@@ -282,6 +291,9 @@ func guiDriftFresh(built string) (map[string][]byte, error) {
 		}
 		if d.IsDir() {
 			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink, which is not a regular file", path)
 		}
 		rel, err := filepath.Rel(built, path)
 		if err != nil {

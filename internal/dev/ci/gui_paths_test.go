@@ -177,3 +177,19 @@ func TestGUIPathsWatchesExistingFiles(t *testing.T) {
 		}
 	}
 }
+
+// A gate that cannot record its answer must fail, not end quietly: the job's later steps run only
+// on `changed == 'true'`, so a missing output would skip the whole screen verification while the
+// job still concluded success. The script therefore refuses to finish without an output path.
+func TestGUIPathsRefusesWithoutAnOutputPath(t *testing.T) {
+	r, base, head := guiPathsRepo(t, "web/src/App.tsx")
+	for _, output := range []string{"", "/nonexistent-dir/does-not-exist/github-output"} {
+		script := filepath.Join(repoRoot(), "scripts", "ci", "gui_paths.sh")
+		got := runEnv(t, r.root, append(os.Environ(),
+			"GITHUB_EVENT_NAME=pull_request", "PR_BASE_SHA="+base, "PR_HEAD_SHA="+head,
+			"GITHUB_OUTPUT="+output), "bash", script)
+		if got.code == 0 {
+			t.Errorf("GITHUB_OUTPUT=%q: the gate succeeded without recording an answer", output)
+		}
+	}
+}

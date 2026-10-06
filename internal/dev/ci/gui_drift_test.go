@@ -205,18 +205,18 @@ func TestGUIDriftRequiresTheBuiltFlag(t *testing.T) {
 	}
 }
 
-// A path whose name carries a space, a tab or a newline is compared like any other: the committed
-// side is read with `git ls-tree -z`, whose NUL records and single metadata tab make such a name
-// unambiguous, and the built side is walked as bytes. Without that, a hostile name could make the
-// two sides disagree on which file is which and hide a real difference.
+// A path whose name carries a space, a tab or a newline, or begins with a dash, is compared like
+// any other: the committed side is read with `git ls-tree -z`, whose NUL records and single
+// metadata tab make such a name unambiguous, and the built side is walked as bytes. Without that,
+// a hostile name could make the two sides disagree on which file is which and hide a difference.
 func TestGUIDriftHandlesHostileAssetNames(t *testing.T) {
-	for _, name := range []string{"index-with space.js", "index-with\ttab.js", "index-with\nnewline.js", "index-leading-dash.js"} {
+	for _, name := range []string{"with space.js", "with\ttab.js", "with\nnewline.js", "-leading-dash.js"} {
 		t.Run(name, func(t *testing.T) {
 			r := guiDriftRepo(t)
-			r.write("internal/gui/assets/assets/"+name, "console.log('odd')\n")
+			r.write("internal/gui/assets/"+name, "console.log('odd')\n")
 			r.commit()
 			built := guiDriftBuild(t, r)
-			guiDriftBuildWrite(t, built, "assets/"+name, "console.log('odd')\n")
+			guiDriftBuildWrite(t, built, name, "console.log('odd')\n")
 			problems, err := guiDriftRun(t, r, built)
 			if err != nil {
 				t.Fatalf("a matching tree with a hostile name was refused: %v", err)
@@ -225,7 +225,7 @@ func TestGUIDriftHandlesHostileAssetNames(t *testing.T) {
 				t.Fatalf("a matching tree with a hostile name reported drift:\n%s", strings.Join(problems, "\n"))
 			}
 			// And a byte difference in that same file is still caught.
-			guiDriftBuildWrite(t, built, "assets/"+name, "console.log('odd?')\n")
+			guiDriftBuildWrite(t, built, name, "console.log('odd?')\n")
 			problems, err = guiDriftRun(t, r, built)
 			if err != nil {
 				t.Fatal(err)
@@ -236,6 +236,53 @@ func TestGUIDriftHandlesHostileAssetNames(t *testing.T) {
 			guiDriftWants(t, problems, name)
 		})
 	}
+}
+
+// A symlink is not a regular file: `//go:embed all:assets` does not follow one, so a link that
+// aliases another file must not be read as that file's bytes. The committed side, the built tree
+// and the working tree each refuse a link rather than resolving it.
+func TestGUIDriftRejectsSymlinks(t *testing.T) {
+	t.Run("a symlink in the built tree", func(t *testing.T) {
+		r := guiDriftRepo(t)
+		built := guiDriftBuild(t, r)
+		if err := os.Symlink(filepath.Join(built, "assets", "index-AAAA.js"), filepath.Join(built, "index-linked.html")); err != nil {
+			t.Skipf("symlinks are unavailable: %v", err)
+		}
+		if _, err := guiDriftRun(t, r, built); err == nil {
+			t.Fatal("a symlink in the built tree passed")
+		}
+	})
+	t.Run("a symlink in the working tree", func(t *testing.T) {
+		r := guiDriftRepo(t)
+		built := guiDriftBuild(t, r)
+		committed := filepath.Join(r.root, "internal/gui/assets/assets/index-AAAA.js")
+		if err := os.Remove(committed); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(built, "assets", "index-AAAA.js"), committed); err != nil {
+			t.Skipf("symlinks are unavailable: %v", err)
+		}
+		problems, err := guiDriftRun(t, r, built)
+		if err == nil && len(problems) == 0 {
+			t.Fatal("a symlink in the working tree passed")
+		}
+	})
+	t.Run("a committed symlink", func(t *testing.T) {
+		r := guiDriftRepo(t)
+		built := guiDriftBuild(t, r)
+		committed := filepath.Join(r.root, "internal/gui/assets/assets/index-AAAA.js")
+		if err := os.Remove(committed); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../index.html", committed); err != nil {
+			t.Skipf("symlinks are unavailable: %v", err)
+		}
+		r.git("add", "-A")
+		r.git("commit", "-qm", "a committed symlink")
+		if _, err := guiDriftRun(t, r, built); err == nil {
+			t.Fatal("a committed symlink passed")
+		}
+	})
 }
 
 // The command line reports drift on stderr and exits non-zero, and a clean tree on stdout.
