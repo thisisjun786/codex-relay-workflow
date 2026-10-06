@@ -41,6 +41,49 @@ type GoalplanLockStatusOptions struct {
 	Stat  func(string) (float64, error)
 }
 
+// goalplanLockVanishedAfterHeldOpen is a test seam. It runs inside the acquisition path's
+// held-open, between the openat and boundFile's descriptor check, so a test can order the
+// holder's release into that window without sleeping. Production leaves it nil.
+var goalplanLockVanishedAfterHeldOpen func()
+
+// goalplanLockVanished reports whether a refused held-open is the lock directory the holder
+// released and removed between the openat and boundFile's descriptor check. The descriptor is
+// re-read while it is still open, so the answer comes from the kernel rather than from
+// boundFile's message: exactly the expected path plus the Linux " (deleted)" suffix is a
+// released lock. Any other path (a rename, a swap) stays refused.
+func goalplanLockVanished(f *os.File, dir string) bool {
+	if f == nil {
+		return false
+	}
+	actual, err := descriptorPath(f)
+	if err != nil {
+		return false
+	}
+	return actual == dir+" (deleted)"
+}
+
+// goalplanLockVanishedOpenHeld opens the extant lock directory the way openAt does, so the
+// acquisition loop keeps openAt's flag discipline and boundFile's path-swap refusal.
+func goalplanLockVanishedOpenHeld(parent *os.File, dir string) (*os.File, error) {
+	fd, err := unix.Openat(int(parent.Fd()), GoalplanLockDir, directoryOpenFlags()|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: dir, Err: err}
+	}
+	f := os.NewFile(uintptr(fd), dir)
+	if goalplanLockVanishedAfterHeldOpen != nil {
+		goalplanLockVanishedAfterHeldOpen()
+	}
+	if e := boundFile(f, dir, true); e != nil {
+		if goalplanLockVanished(f, dir) {
+			_ = f.Close()
+			return nil, nil
+		}
+		_ = f.Close()
+		return nil, e
+	}
+	return f, nil
+}
+
 func sleepGoalplanLock(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
 
 // GoalplanWriteLockDir is the lexical path (:769-771), with an added secure
@@ -191,7 +234,7 @@ func WithGoalplanWriteLock[T any](cwd, slug string, fn func(*Goalplan) (T, error
 		if err != unix.EEXIST {
 			return result, err
 		}
-		held, e := openAt(parent, GoalplanLockDir, dir, directoryOpenFlags(), true, 0)
+		held, e := goalplanLockVanishedOpenHeld(parent, dir)
 		if e != nil && !pathAbsent(e) {
 			return result, e
 		}
