@@ -86,6 +86,7 @@ type script struct {
 	hold         chan struct{}                  // when set, a call waits until it is closed
 	entered      chan struct{}                  // when set, a call announces itself here
 	answer       func(prompt []byte) agy.Result // when set, every call is answered from the prompt (stageAnswers) instead of result
+	err          error                          // when set, every call fails at the runner, as a runner-side failure does
 }
 
 func (s *script) run(ctx context.Context, _ agy.Config, req agy.Request) (agy.Result, error) {
@@ -93,7 +94,7 @@ func (s *script) run(ctx context.Context, _ agy.Config, req agy.Request) (agy.Re
 	s.calls++
 	s.active++
 	s.peak = max(s.peak, s.active)
-	hold, entered := s.hold, s.entered
+	hold, entered, runErr := s.hold, s.entered, s.err
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); s.active--; s.mu.Unlock() }()
 	if entered != nil {
@@ -108,6 +109,9 @@ func (s *script) run(ctx context.Context, _ agy.Config, req agy.Request) (agy.Re
 	}
 	if s.answer != nil {
 		return s.answer(req.Prompt), nil
+	}
+	if runErr != nil {
+		return agy.Result{}, runErr
 	}
 	return s.result, nil
 }
@@ -188,10 +192,10 @@ func TestSamePatchIDIsReviewedOnce(t *testing.T) {
 	}
 }
 
-// An unavailable artifact whose reason is not a problem of the account or the configuration is a result: it closes the patch (TestRetryRule has the rest).
+// An unavailable artifact whose reason is neither a problem of the account or the configuration nor a runner-side failure is a result: it closes the patch (TestRetryRule has the rest).
 func TestUnavailableArtifactOfAnotherReasonStillCountsAsReviewed(t *testing.T) {
 	f := newFixture(t)
-	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonCrash}
+	f.s.result = agy.Result{Class: agy.ClassUnavailable, Reason: agy.ReasonContentFilter}
 	h := f.repo.change(f.base, 2)
 	if code, first, errOut := f.run(h); code != 0 || first.Status != string(review.StatusUnavailable) {
 		t.Fatalf("unavailable review: %d %+v %s", code, first, errOut)
@@ -202,6 +206,48 @@ func TestUnavailableArtifactOfAnotherReasonStillCountsAsReviewed(t *testing.T) {
 	}
 	if n := runsOn(f.ledger(), "2026-10-04"); n != 1 {
 		t.Fatalf("the unavailable run counts once toward the cap, got %d", n)
+	}
+}
+
+// A runner-side failure the pipeline reports as runner_error is retryable exactly like a crash, and the ledger records that the case is a runner error and that the agy call state is unknown.
+func TestRunnerErrorIsRetryableAndRecorded(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", okResult)
+	f.s.err = errors.New("host failure")
+	if _, sum, _ := f.run(head); sum.Outcome != OutcomeReviewed || sum.Status != string(review.StatusUnavailable) || sum.RetryNotBefore != "2026-10-05" {
+		t.Fatalf("a runner error must leave the patch open for one more attempt: %+v", sum)
+	}
+	recs := f.ledger()
+	if r := recs[len(recs)-1]; r.Event != "unavailable" || r.Reason != reasonRunnerError || r.AgyCalled != nil {
+		t.Fatalf("the runner error record must name the case and leave the agy call unknown: %+v", r)
+	}
+	f.s.err = nil
+	f.on("2026-10-05", okResult)
+	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" {
+		t.Fatalf("the retry after a runner error: %d %+v %s", code, sum, errOut)
+	}
+}
+
+// The failure record says which case it was and whether agy was called when that can be told.
+func TestTheLedgerRecordsTheCaseAndWhetherAgyWasCalled(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", quotaResult)
+	if _, sum, _ := f.run(head); sum.Outcome != OutcomeReviewed {
+		t.Fatalf("quota: %+v", sum)
+	}
+	if recs := f.ledger(); recs[len(recs)-1].Event != "unavailable" || recs[len(recs)-1].Reason != "quota" || recs[len(recs)-1].AgyCalled == nil || !*recs[len(recs)-1].AgyCalled {
+		t.Fatalf("a quota run must record the case and that agy was called: %+v", recs[len(recs)-1])
+	}
+	g := newFixture(t)
+	ghead := g.repo.change(g.base, 2)
+	g.on("2026-10-04", lockWaitResult)
+	if code, sum, _ := g.run(ghead); code != 3 || sum.Outcome != OutcomeLockWaitExpired {
+		t.Fatalf("lock wait: %d %+v", code, sum)
+	}
+	if recs := g.ledger(); recs[len(recs)-1].Event != "lock_wait" || recs[len(recs)-1].Reason != "lock_wait_expired" || recs[len(recs)-1].AgyCalled == nil || *recs[len(recs)-1].AgyCalled {
+		t.Fatalf("a lock wait must record the case and that agy was not called: %+v", recs[len(recs)-1])
 	}
 }
 
