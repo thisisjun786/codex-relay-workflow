@@ -95,6 +95,12 @@ func Load(getenv func(string) string, flagPath string) (*File, error) {
 		if err := json.Unmarshal(raw, &overrides); err != nil {
 			return nil, fmt.Errorf("%s: paths is not an object of paths: %v", path, err)
 		}
+		// A present paths key that is JSON null decodes without an error and leaves the
+		// map nil, which would silently read as no overrides at all: refuse it as the
+		// section that is not an object of paths, while an absent key keeps the defaults.
+		if overrides == nil {
+			return nil, fmt.Errorf("%s: paths is not an object of paths", path)
+		}
 	}
 	roots, err := Resolve(getenv, overrides)
 	if err != nil {
@@ -189,10 +195,16 @@ func parseConfigFlag(args []string) (string, []string, error) {
 			if i+1 >= len(args) {
 				return "", nil, errors.New("argument --config: expected one argument")
 			}
+			if args[i+1] == "" {
+				return "", nil, errors.New("argument --config: expected a non-empty path")
+			}
 			path = args[i+1]
 			i++
 		case strings.HasPrefix(args[i], "--config="):
 			path = strings.TrimPrefix(args[i], "--config=")
+			if path == "" {
+				return "", nil, errors.New("argument --config: expected a non-empty path")
+			}
 		default:
 			rest = append(rest, args[i])
 		}

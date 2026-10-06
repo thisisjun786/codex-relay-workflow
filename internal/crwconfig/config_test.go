@@ -319,3 +319,34 @@ func TestRunAcceptsTheEqualsSpelling(t *testing.T) {
 		t.Errorf("crw config paths --config=: exit %d stdout %q stderr %q", code, out, errOut)
 	}
 }
+
+// C2: an explicitly empty --config value is refused rather than silently read as no flag,
+// which would report another file's configuration.
+func TestRunRefusesAnEmptyConfigValue(t *testing.T) {
+	_, env := rootsHome(t)
+	for _, args := range [][]string{{"paths", "--config", ""}, {"paths", "--config="}} {
+		code, out, errOut := configRun(t, env, args...)
+		if code != usageExit || out != "" || !strings.Contains(errOut, "non-empty path") {
+			t.Errorf("%v: exit %d stdout %q stderr %q", args, code, out, errOut)
+		}
+	}
+}
+
+// C1: a present paths key that is JSON null is refused as a section that is not an object
+// of paths, while an absent key and an empty object both keep the defaults.
+func TestANullPathsSectionIsRefused(t *testing.T) {
+	home, env := rootsHome(t)
+	code, out, errOut := configRun(t, env, "paths", "--config", configWrite(t, `{"paths": null}`))
+	if code != usageExit || out != "" || !strings.Contains(errOut, "paths is not an object of paths") {
+		t.Errorf("a null paths section: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	for _, document := range []string{`{}`, `{"paths": {}}`} {
+		code, out, errOut = configRun(t, env, "paths", "--config", configWrite(t, document))
+		if code != 0 || errOut != "" {
+			t.Errorf("%s: exit %d stderr %q", document, code, errOut)
+		}
+		if !strings.Contains(out, rootsDefaults(home)[RootTools]) {
+			t.Errorf("%s: the report does not carry the default tools root", document)
+		}
+	}
+}
