@@ -70,10 +70,11 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 			if eol == -1 {
 				break
 			}
-			j, end := eol+1, eol+1
+			var end int
+			j := eol + 1
 			for {
 				nl := shellNewline(command, j)
-				line := command[j:len(command)]
+				line := command[j:]
 				if nl != -1 {
 					line = command[j:nl]
 				}
@@ -90,7 +91,8 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 					break
 				}
 				if nl == -1 {
-					end, j = len(command), len(command)
+					end = len(command)
+					j = len(command)
 					break
 				}
 				j = nl + 1
