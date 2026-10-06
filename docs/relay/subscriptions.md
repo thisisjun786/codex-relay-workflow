@@ -149,7 +149,9 @@ after a completed durable turn and confirmation that its rollout is resumable, r
 subscriptions and observe `thread/read` reporting `notLoaded`. Other clients may retain subscriptions,
 and unloading is the host's decision. If it remains loaded, an operator can use `thread/archive` then
 `thread/unarchive`; the next relay delivery resumes under the recorded MCP profile. Never unload a
-never-run root. The relay performs no automatic archive or recovery operation.
+never-run root. The relay performs no automatic archive or recovery operation beyond the one
+narrow case the managed resend gate owns below, where it lowers an idle child it may then resend
+to under the recorded profile.
 
 A managed start can retry the same complete request after a recorded business send
 failed before `turn/start`. It retains that failure under its original bridge operation
@@ -166,12 +168,26 @@ An explicit pre-turn effect trace must be empty or contain exactly one `thread/r
 unknown, misspelled, duplicate or contradictory effects do not qualify.
 
 Before a resend, the host must list exactly the recorded standby turn with no continuation
-cursor, then report the same child as `notLoaded`. A loaded child returns incomplete
-`recipient_not_idle` without consuming a successor operation, even if its status is
-`idle` and its profile happens to match: this recovery gate conservatively waits for
-unloading. Empty, missing-rollout or unreadable history stays held as `lifecycle_unknown`;
-another turn refuses as `business_identity_unobserved`. The final business guard repeats
-the standby-only check after the recorded-profile resume.
+cursor, then report the same child as `notLoaded`. A child the host holds loaded under other MCP
+settings is lowered once instead of waiting, but only when its immediately preceding business
+failure is the structured `settings_not_preserved` refusal and the same read reports it `idle`:
+the gate rechecks that idle state, calls `thread/archive` then `thread/unarchive`, requires
+`notLoaded` and the standby-only history again, and only then resends with the recorded profile.
+That unload is the one automatic archive the relay performs, and it is bounded to one lowering per
+business attempt inside the existing successor chain: a replay reconstructs the same attempt from
+the retained failure, so the journal row an earlier lowering wrote is what stops the next one. An
+`active` child, one whose history shows a foreign turn and one whose preceding failure is not that
+refusal are never archived and hold as before.
+An archive error answers incomplete `recipient_not_idle` with no unarchive and no send; an
+unarchive that fails twice answers incomplete `lifecycle_unknown`, naming the archived thread for
+an operator in the journal; a child still loaded afterwards answers `recipient_not_idle`. Every
+unload writes one `managed_resend_unloaded` journal row naming the thread, the archive and
+unarchive results and the load state observed afterwards; once the archive has succeeded the row
+is written with a context that survives the caller's cancellation, because an archived child with
+no row would leave an operator nothing to read. Empty, missing-rollout or unreadable
+history stays held as `lifecycle_unknown`; another turn refuses as
+`business_identity_unobserved`. The final business guard repeats the standby-only check after
+the recorded-profile resume.
 The recovery guard retains the complete archived scan and positive thread/goal reads,
 and skips the unnecessary unarchived listing, so its history check fits the existing
 ten-request deadline budget (at most seven calls).
