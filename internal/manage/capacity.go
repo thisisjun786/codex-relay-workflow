@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// The vocabulary of the judgement, its windows, and the status a relay read failure carries.
+// The judgement's vocabulary, its windows, and the status a relay read failure carries.
 const (
 	capacityWithin, capacityUnknown             = "within", "unknown"
 	capacityMeasured, capacityUnmeasured        = "measured", "unmeasured"
@@ -90,8 +90,8 @@ type capacityPlanRef struct {
 	Family  string `json:"family"`
 }
 
-// capacitySettings is the Section "capacity" document. The thresholds are pointers, so a key the
-// document does not carry keeps its default rather than reading as zero.
+// capacitySettings is the Section "capacity" document; the thresholds are pointers, so an omitted
+// key keeps its default.
 type capacitySettings struct {
 	Plans               []capacityPlanRef `json:"plans"`
 	ActionsStatusURL    string            `json:"actions_status_url"`
@@ -145,10 +145,10 @@ func capacityFamilyOf(ref capacityPlanRef) string {
 	return ref.Project
 }
 
-// Capacity judges whether there is room to add a parent, and why not. It emits the judgement
-// and its evidence and changes nothing outside its own state file; creating projects and
-// starting parents is the management session's work. dry judges without writing that state,
-// and a relay read failure is an error the command reports as exit 3.
+// Capacity judges whether there is room to add a parent, and why not. It emits the judgement and
+// its evidence and changes nothing outside its own state file; creating projects and starting
+// parents is the management session's work. dry judges without writing that state, and a relay
+// read failure is an error the command reports as exit 3.
 func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, error) {
 	settings := capacitySettings{}
 	if err := cfg.Section("capacity", &settings); err != nil {
@@ -180,9 +180,14 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 	statePath := filepath.Join(cfg.StateDir, capacityStateFile)
 	previous := capacityReadState(statePath)
 	next := capacityState{Plans: map[string]capacityPlanState{}}
-	stateDir, err := e.relayHelperState(ctx, cfg)
-	if err != nil {
-		return CapacityReport{}, err
+	// With no configured plan there is nothing to read from the relay, so a host whose relay state
+	// cannot be resolved still gets an empty judgement rather than a read failure.
+	stateDir := ""
+	if len(settings.Plans) > 0 {
+		stateDir, err = e.relayHelperState(ctx, cfg)
+		if err != nil {
+			return CapacityReport{}, err
+		}
 	}
 
 	for _, ref := range settings.Plans {
@@ -221,9 +226,9 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 	return report, nil
 }
 
-// capacityPersist records this run's waiting set and reports how long it has waited and whether
-// the alert may fire again: the start is kept while the same min_waiting nodes still wait, and
-// the alert is suppressed while the same set was alerted inside the realert window.
+// capacityPersist records this run's waiting set and reports how long it has waited and whether the
+// alert may fire again: the start is kept while the same min_waiting nodes wait, and the alert is
+// suppressed while the same set was alerted inside the realert window.
 func capacityPersist(next *capacityState, before capacityPlanState, plan CapacityPlan, limits CapacityLimits, now time.Time) (float64, bool) {
 	same := 0
 	for _, key := range plan.Waiting {
@@ -245,10 +250,10 @@ func capacityPersist(next *capacityState, before capacityPlanState, plan Capacit
 	}
 	alert := !slices.Equal(before.Alerted, plan.Waiting) || before.AlertedAt == 0 ||
 		now.Sub(time.Unix(int64(before.AlertedAt), 0)) >= time.Duration(limits.RealertHours*float64(time.Hour))
-	entry := capacityPlanState{Since: since, Waiting: append([]string(nil), plan.Waiting...)}
-	if !alert {
-		entry.Alerted, entry.AlertedAt = append([]string(nil), before.Alerted...), before.AlertedAt
-	}
+	// The last alert is carried forward whether or not this run may alert again, so a hold that
+	// sees a different waiting set does not erase the suppression of the set that was alerted.
+	entry := capacityPlanState{Since: since, Waiting: append([]string(nil), plan.Waiting...),
+		Alerted: append([]string(nil), before.Alerted...), AlertedAt: before.AlertedAt}
 	next.Plans[plan.Plan] = entry
 	return waitingMinutes, alert
 }
@@ -293,7 +298,7 @@ func capacityReadState(path string) capacityState {
 	return stored
 }
 
-// capacityWriteState writes the state file atomically: a temp file beside it, then a rename.
+// capacityWriteState writes the state file atomically: a temp file, then a rename.
 func capacityWriteState(path string, state capacityState) error {
 	if state.Plans == nil {
 		state.Plans = map[string]capacityPlanState{}
@@ -329,8 +334,8 @@ var capacityCommand = Command{Name: "capacity", Summary: "judge whether a parent
 
 func init() { Register(capacityCommand) }
 
-// capacityConfig is the configuration the command judges with: the defaults, as crw manage config
-// prints them. Reading the management session's file is a later issue's job (config.go).
+// capacityConfig is the configuration the command judges with: the defaults, because reading the
+// management session's file is a later issue's job (config.go).
 var capacityConfig = func(e *Env) *Config { return coreDefaults(e) }
 
 const capacityUsage = "usage: crw manage capacity [--text] [--dry-run]"

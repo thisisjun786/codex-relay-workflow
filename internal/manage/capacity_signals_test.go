@@ -14,7 +14,7 @@ import (
 )
 
 // The signal layer is tested through injected seams only: a fake relay executable, replaced gh and
-// status-page seams, and a temporary relay store for the receipt wait.
+// status-page seams, and a temporary relay store.
 
 func capacityTestStore(t *testing.T, path string) {
 	db, err := sql.Open("sqlite", "file:"+path)
@@ -90,8 +90,8 @@ func capacityTestReceipt(t *testing.T, f *capacityFixture, event, parent string,
 	exec("INSERT INTO events (event_id, outcome) VALUES (?,?)", event, outcome)
 }
 
-// capacityTestSeams replaces the gh and status-page seams for one test: merges is the lane
-// count, a nil status makes gh fail and a non-nil statusErr makes the status read fail.
+// capacityTestSeams replaces the gh and status-page seams for one test: merges is the lane count,
+// a nil status makes gh fail and a non-nil statusErr makes the status read fail.
 func capacityTestSeams(t *testing.T, merges int, status []byte, statusErr error) {
 	t.Helper()
 	exec, get := capacityExec, capacityHTTPGet

@@ -13,7 +13,7 @@ import (
 )
 
 // The judgement is driven through injected signals only: a fake relay executable, replaced gh and
-// status-page seams, and a temporary relay store for the receipt wait.
+// status-page seams, and a temporary relay store.
 
 var capacityTestNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 
@@ -35,8 +35,7 @@ func capacityTestPlan(plan, project, parent, family string) map[string]any {
 	return out
 }
 
-// capacityTestFixture wires one scenario: a temporary relay store, the environment, and the
-// configuration whose Section "capacity" carries the plans.
+// capacityTestFixture wires one scenario: a relay store, the environment, and the configuration.
 func capacityTestFixture(t *testing.T, plans []map[string]any) *capacityFixture {
 	t.Helper()
 	coreTempHome(t)
@@ -103,8 +102,7 @@ func capacityTestRun(t *testing.T, f *capacityFixture, dry bool) CapacityReport 
 // capacityTestPlans is the one plan the single-plan scenarios configure.
 var capacityTestPlans = []map[string]any{capacityTestPlan("p-crw-129", "P-CRW-129", "parent-1", "P-CRW-129")}
 
-// capacityTestReady wires the plans with every signal clear: free lane, host within, one quick
-// receipt and an hour of waiting.
+// capacityTestReady wires the plans with every signal clear: free lane, host within, quick receipt.
 func capacityTestReady(t *testing.T, plans []map[string]any) *capacityFixture {
 	f := capacityTestFixture(t, plans)
 	capacityTestRelay(t, f, capacityTestReading([]string{"CRW-1", "CRW-2"}, nil, 12, 12, "within"))

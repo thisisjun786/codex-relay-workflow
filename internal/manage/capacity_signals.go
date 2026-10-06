@@ -19,8 +19,7 @@ import (
 )
 
 // The seams every signal reads through: package variables, so this issue adds no field to a type
-// another issue's file declares. A test replaces them; a failed command is unknown or unmeasured
-// to the caller, never a value.
+// another issue's file declares. A test replaces them; a failed command is unknown or unmeasured.
 var (
 	capacityExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, err := exec.CommandContext(ctx, name, args...).Output()
@@ -50,6 +49,9 @@ const (
 	// capacitySignalBodyLimit bounds an HTTP answer; capacitySignalTimeout bounds one read.
 	capacitySignalBodyLimit = 8 << 20
 	capacitySignalTimeout   = 30 * time.Second
+	// capacityMergePage asks gh for more merges than any lane threshold is likely to name: its
+	// default page is 30, and a short answer would understate the lane.
+	capacityMergePage = "1000"
 	// capacityIntegrationBranch is the branch a merge counts against; the status page URL is the
 	// public default the section overrides.
 	capacityIntegrationBranch       = "dev"
@@ -65,7 +67,7 @@ func capacityMergeCount(ctx context.Context, cfg *Config, since time.Time) (*int
 	}
 	out, err := capacityExec(ctx, "gh", "pr", "list", "--repo", cfg.Repository, "--state", "merged",
 		"--base", capacityIntegrationBranch, "--search", "merged:>="+since.UTC().Format(time.RFC3339),
-		"--json", "number,mergedAt")
+		"--limit", capacityMergePage, "--json", "number,mergedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -77,8 +79,8 @@ func capacityMergeCount(ctx context.Context, cfg *Config, since time.Time) (*int
 	return &count, nil
 }
 
-// capacityActionsRead reports the first unresolved incident naming Actions. A read that fails is
-// unknown with no incident, which suppresses nothing.
+// capacityActionsRead reports the first unresolved incident naming Actions. A read that fails, or
+// an answer with no incidents field, is unknown with no incident.
 func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 	if url == "" {
 		url = capacityDefaultActionsStatusURL
@@ -88,7 +90,7 @@ func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 		return capacityUnknown, nil
 	}
 	var doc struct {
-		Incidents []struct {
+		Incidents *[]struct {
 			Name       string `json:"name"`
 			Components []struct {
 				Name string `json:"name"`
@@ -98,7 +100,12 @@ func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return capacityUnknown, nil
 	}
-	for _, incident := range doc.Incidents {
+	// An answer with no incidents field is not the status document this reads, so it is unknown
+	// rather than a report of no outage.
+	if doc.Incidents == nil {
+		return capacityUnknown, nil
+	}
+	for _, incident := range *doc.Incidents {
 		names := []string{incident.Name}
 		for _, component := range incident.Components {
 			names = append(names, component.Name)
@@ -114,7 +121,7 @@ func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 }
 
 // capacityChild429Count counts the attempts whose status is 429 and whose model contains one of the
-// child model strings. A log that is not configured, or cannot be read, is unmeasured with no count.
+// child model strings. A log that is absent, unreadable or undecodable is unmeasured.
 func capacityChild429Count(logPath string, models []string, since time.Time) (string, *int) {
 	if logPath == "" {
 		return capacityUnmeasured, nil
@@ -135,7 +142,13 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 			} `json:"attempts"`
 		}
 		if err := decoder.Decode(&record); err != nil {
-			break
+			// Only a clean end of file completes the count: a record that cannot be decoded, or a
+			// partially written tail, leaves the log unmeasured rather than reporting a partial
+			// count as if the whole window had been read.
+			if err == io.EOF {
+				break
+			}
+			return capacityUnmeasured, nil
 		}
 		if record.Timestamp < since.UnixMilli() {
 			continue
@@ -215,8 +228,8 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 	return out, nil
 }
 
-// capacityReceiptWaitFor reads the relay store read-only: the median and count of the deliveries
-// that reached one parent inside the window, leaving out the interrupted ones.
+// capacityReceiptWaitFor reads the relay store read-only: the median and count of the acknowledged
+// deliveries that reached one parent inside the window, leaving out the interrupted ones.
 func capacityReceiptWaitFor(ctx context.Context, stateDir, parent string, since time.Time) (CapacityReceiptWait, error) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(stateDir, "relay.sqlite3")+"?mode=ro")
 	if err != nil {
