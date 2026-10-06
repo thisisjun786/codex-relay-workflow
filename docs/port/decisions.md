@@ -5698,7 +5698,9 @@ every attempt.
   branch: `observation := Observe(...)`, then `if observation.IsBusy() { return nil,
   d.deferBusy(ctx, eventID, row, at) }` (`service.go:925-926`). A busy answer never reaches
   `claim`, so no attempt row is written and the recipient is never asked to interrupt: I-30
-  holds unchanged.
+  holds unchanged. The transport carries the same rule as a second guard: a thread that reports
+  `active` immediately before the resume is refused `thread_busy` and nothing is sent
+  (`internal/relay/adapter/transport.go:312`).
 
 The wait is a doubling timer whose ceiling is five minutes.
 
