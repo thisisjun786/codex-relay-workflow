@@ -1155,7 +1155,9 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int, bool)
 }
 
 // worktreeDelBraceEnd is the length of the text up to and including the } that closes a ${...} parameter expansion, whose
-// body may hold nested braces, quotes and backslashes; an unterminated one runs to the end.
+// body may hold nested braces, quotes and backslashes; an unterminated one runs to the end. A substitution nested in the
+// expansion is read whole, so a } inside it is data and does not close the expansion early (CRW-726: a # after such a }
+// would otherwise open a comment and hide the program that follows).
 func worktreeDelBraceEnd(rest string) int {
 	depth := 1
 	r := worktreeDelQuoteReader{prev: ' ', brace: true}
@@ -1165,6 +1167,21 @@ func worktreeDelBraceEnd(rest string) int {
 			i++
 			r.pair()
 			continue
+		}
+		if r.state == worktreeDelQuotePlain || r.state == worktreeDelQuoteDouble {
+			if c == '$' && i+1 < len(rest) && rest[i+1] == '(' {
+				_, n, _ := worktreeDelSubstitutionBody(rest[i+2:], false)
+				i += n + 1 // the nested $(...) is part of the expansion: a } inside it is data
+				r.prev = 'x'
+				continue
+			}
+			if c == '`' {
+				if _, n, closed := worktreeDelSubstitutionBody(rest[i+1:], true); closed {
+					i += n // a nested backtick pair is part of the expansion too
+					r.prev = 'x'
+					continue
+				}
+			}
 		}
 		if r.state == worktreeDelQuotePlain {
 			switch c {

@@ -377,3 +377,24 @@ func TestWorktreeDelPipeBraceHashAfterPipe(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeBraceNestedSubstitution pins the substitution nested inside a ${...} expansion: a } that stands in
+// the nested substitution's own text is data, so it does not close the expansion early and the # after the expansion
+// opens no comment. worktreeDelBraceEnd reads the nested $(...) whole for every reader that ends an expansion.
+func TestWorktreeDelPipeBraceNestedSubstitution(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' ${x:-$(echo }) #} | bash",
+		"printf 'rm -rf ../repo' ${x:-$(echo })} | bash",
+		"printf x | printf 'rm -rf ../repo' ${x:-$(echo }) #} | bash",
+		"printf 'rm -rf ../repo' ${x:-$(echo }) #} |& bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A nested substitution whose text runs no shell on a pipe stays allowed.
+	r.allowed(t,
+		"echo ${x:-$(echo hi)}",
+		"echo ${x:- $(echo })}",
+	)
+	r.intact(t)
+}
