@@ -124,7 +124,8 @@ type (
 		closedAt, updatedAt, heldAt                      string
 		waiters                                          int
 	}
-	dagReviewChild struct{ relationshipID, issueKey, createdAt string }
+	dagReviewChild     struct{ relationshipID, issueKey, createdAt string }
+	dagReviewExecution struct{ nodeID, relationshipID string }
 )
 
 // dagReviewFacts is everything one plan's review needs.
@@ -138,6 +139,10 @@ type dagReviewFacts struct {
 	observations []dagReviewObservation
 	regions      []dagReviewRegion
 	children     []dagReviewChild
+	executions   []dagReviewExecution
+	// liveRelationships is the relationship ids whose status is active or paused, which is the
+	// registry's own isLive: a closed or cancelled relationship holds no edit regions.
+	liveRelationships map[string]bool
 }
 
 // dagReviewReadPlans reads the plan refs the review covers: the configured ids, or every plan.
@@ -187,7 +192,43 @@ func (s *dagReviewStore) dagReviewReadFacts(ctx context.Context, plan dagReviewP
 	if facts.children, err = s.dagReviewChildren(ctx, plan); err != nil {
 		return facts, err
 	}
+	if facts.executions, err = s.dagReviewExecutions(ctx, plan.planID); err != nil {
+		return facts, err
+	}
+	if facts.liveRelationships, err = s.dagReviewLiveRelationships(ctx); err != nil {
+		return facts, err
+	}
 	return facts, nil
+}
+
+// dagReviewExecutions reads which relationship each node of the plan was released to.
+func (s *dagReviewStore) dagReviewExecutions(ctx context.Context, planID string) ([]dagReviewExecution, error) {
+	return dagReviewRows(ctx, s.db,
+		"SELECT node_id, relationship_id FROM dag_node_executions WHERE plan_id = ? ORDER BY node_id",
+		[]any{planID}, func(rows *sql.Rows) (dagReviewExecution, error) {
+			var execution dagReviewExecution
+			err := rows.Scan(&execution.nodeID, &execution.relationshipID)
+			return execution, err
+		})
+}
+
+// dagReviewLiveRelationships reads the relationship ids the registry counts as live.
+func (s *dagReviewStore) dagReviewLiveRelationships(ctx context.Context) (map[string]bool, error) {
+	rows, err := dagReviewRows(ctx, s.db,
+		"SELECT relationship_id FROM relationships WHERE status IN ('active', 'paused')",
+		nil, func(rows *sql.Rows) (string, error) {
+			var id string
+			err := rows.Scan(&id)
+			return id, err
+		})
+	if err != nil {
+		return nil, err
+	}
+	live := map[string]bool{}
+	for _, id := range rows {
+		live[id] = true
+	}
+	return live, nil
 }
 
 func (s *dagReviewStore) dagReviewHead(ctx context.Context, planID string) (int, error) {

@@ -319,10 +319,25 @@ func dagReviewExclusiveOverlapRunning(in *dagReviewInput, facts dagReviewFacts) 
 	for _, node := range facts.nodes {
 		live[node.nodeID] = true
 	}
+	landed := map[string]bool{}
+	for _, turn := range in.lanes {
+		if turn.state == "landed" {
+			landed[turn.relationshipID] = true
+		}
+	}
+	relationship := map[string]string{}
+	for _, execution := range facts.executions {
+		relationship[execution.nodeID] = execution.relationshipID
+	}
 	var inflight []string
 	for node := range first {
 		// A node retired by a later revision is no longer in the plan, so it holds nothing.
 		if !live[node] {
+			continue
+		}
+		// A node whose relationship is closed or cancelled no longer holds its regions, and one
+		// whose lane already landed released them at the landing (the scheduler's bound state).
+		if id := relationship[node]; id != "" && (!facts.liveRelationships[id] || landed[id]) {
 			continue
 		}
 		if dagReviewIntegratedAt(facts, node, "", "") == "" {

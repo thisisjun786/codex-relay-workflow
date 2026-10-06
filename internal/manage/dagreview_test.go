@@ -514,3 +514,37 @@ func (f *dagReviewFixture) edgeTarget(planID, edgeID, from, to, kind string, int
 	f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,?,NULL,?,?,?,?,?,0)",
 		planID, edgeID, introducedRev, from, to, kind, repository, baseRef)
 }
+
+// A node whose relationship is closed no longer holds its regions, so a later release on the same
+// exclusive place is not an overlap; a node whose lane already landed released them at the landing.
+func TestDagReviewClosedAndLandedNodesAreNotInFlight(t *testing.T) {
+	// The relationship closed: not in flight.
+	closed := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, closed, "A")
+	closed.node("plan-1", "B", "CRW-B")
+	closed.release("plan-1", "A", "manifest-A", dagReviewAt(5))
+	closed.release("plan-1", "B", "manifest-B", dagReviewAt(6))
+	closed.execution("plan-1", "A", "relationship-A")
+	closed.exec("UPDATE relationships SET status = 'closed' WHERE relationship_id = 'relationship-A'")
+	closed.region("plan-1", "A", "shared.go", "file", "", "delete", true)
+	closed.region("plan-1", "B", "shared.go", "file", "", "edit", false)
+	closed.close()
+	if found := dagReviewFind(dagReviewRunReview(t, closed, nil, 0), dagReviewKindExclusiveOverlapRunning); len(found) != 0 {
+		t.Errorf("a closed relationship's node was reported in flight: %+v", found)
+	}
+
+	// The lane landed: the scheduler released the regions at the landing.
+	landed := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, landed, "A")
+	landed.node("plan-1", "B", "CRW-B")
+	landed.release("plan-1", "A", "manifest-A", dagReviewAt(5))
+	landed.release("plan-1", "B", "manifest-B", dagReviewAt(6))
+	landed.execution("plan-1", "A", "relationship-A")
+	landed.laneTurn("turn-A", "owner/repo#dev", "holder-A", "landed", "relationship-A", 1, dagReviewAt(5), dagReviewAt(5), dagReviewAt(6))
+	landed.region("plan-1", "A", "shared.go", "file", "", "delete", true)
+	landed.region("plan-1", "B", "shared.go", "file", "", "edit", false)
+	landed.close()
+	if found := dagReviewFind(dagReviewRunReview(t, landed, nil, 0), dagReviewKindExclusiveOverlapRunning); len(found) != 0 {
+		t.Errorf("a landed node was reported in flight: %+v", found)
+	}
+}
