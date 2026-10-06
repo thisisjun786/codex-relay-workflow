@@ -5458,9 +5458,11 @@ live turn per target, and a second request naming another pull request is refuse
   while a train is forming waits for the next train, because inserting it would change the
   prefix trees already being verified.
 - The parent holding the head-of-line turn is the train's leader. It does the mechanical work
-  the lane already gives it for its own candidate — build the prefix commits, push them to a
-  staging ref, dispatch `ci.yml` on each — because it already holds the target's turn and
-  lands first.
+  the lane already gives it for its own candidate — build the prefix commits and dispatch
+  `ci.yml` on each — because it already holds the target's turn and lands first. Each prefix
+  goes to its own staging ref (`refs/crw-train/<train_id>/<seq>`), not one shared ref: the
+  workflow's concurrency group is keyed on `github.ref` for a push, so two prefixes on one
+  ref would cancel each other's run (`.github/workflows/ci.yml:13-17`).
 - Every member's own parent still runs its own `merge-turn-check` and `merge-turn-land` on
   its own head. The train is a shared verification record, not an owner; it neither merges
   nor speaks for another parent's pull request.
@@ -5476,7 +5478,7 @@ whose base a landing outside the lane moved, `merge_target_unreadable` for a pre
 its tree the relay cannot read, `merge_candidate_moved` for a member head whose tree is not
 the proved tree, and `merge_currency_stale` for a base that is no longer the tip.
 
-Two appended tables record a train. Both are new `CREATE` statements at the end of the
+Three appended tables record a train. All are new `CREATE` statements at the end of the
 additive zone ledger (`internal/relay/store/dag_zone.go`), whose rule is that a shipped
 statement is never edited and a new table arrives as an appended `CREATE`; the swap gate
 admits them as `EXTENDS_ZONE` and releases them with `--backup-state-to`
@@ -5487,32 +5489,50 @@ stretches that name; the alternative, a table in the frozen v1 script, is refuse
 swap gate without an OPS-4.5 decision, so this decision appends to the existing ledger and
 leaves a second zone route out of scope.
 
-- `merge_trains(train_id, target_key, repository, base_ref, base_sha, leader_task_id, state,
-  created_at, closed_at)`: one row per train, `base_sha` the tip the prefixes were built on,
-  `state` one of `open`, `proving`, `landing`, `abandoned`, `done`.
-- `merge_train_members(train_id, seq, turn_id, pr_number, relationship_id, member_head,
-  prefix_head, prefix_tree, run_id, verified_at)`: one row per member, `seq` its FIFO place,
-  `member_head` the head its pull request showed when the train formed, `prefix_head` the
-  staging commit and `prefix_tree` the tree the run proved, and `run_id` the run that proved
-  it. `UNIQUE (train_id, seq)`.
+Every train row is written once and every later step is an appended event, because the zone's
+append-only triggers abort an `UPDATE` and a `DELETE`, and a train that had to update its own
+state would be impossible under them. The current state is derived from the event log, the
+way a plan's head revision is `MAX(revision_no)` of its log and never a column
+(`internal/relay/store/dag_zone.go`).
 
-`merge-turn-check` and `merge-turn-land` gain the per-member proof:
+- `merge_trains(train_id, target_key, repository, base_ref, base_sha, leader_task_id,
+  created_at)`: one row per train, written once by `merge-train-open`, `base_sha` the tip the
+  prefixes were built on. No state column.
+- `merge_train_members(train_id, seq, turn_id, pr_number, relationship_id, member_head)`: one
+  row per member, written once by `merge-train-open`, `seq` its FIFO place and `member_head`
+  the head its pull request showed when the train formed. `UNIQUE (train_id, seq)`.
+- `merge_train_events(train_id, seq, kind, actor, detail_json, recorded_at)`: append-only,
+  `UNIQUE (train_id, seq)`, with the zone's `BEFORE UPDATE` and `BEFORE DELETE` triggers as
+  `dag_base_refreshes` has them. `kind` is one of `opened`, `verified`, `landed`,
+  `abandoned`, `done`; the current state is the newest event's kind. A `verified` event's
+  `detail_json` carries the member `seq`, `check_id`, `prefix_head`, `prefix_tree` and
+  `run_id`; a `landed` event's carries the member `seq` and `landed_sha`.
+
+`merge-turn-check` and `merge-turn-land` gain the per-member proof, and neither writes to a
+frozen table or updates an immutable row:
 
 - `Check(ctx context.Context, turn, actor, head, base string, checkList, review any, required
   []string, reader Reader) (map[string]any, error)` keeps its signature. When the turn is a
   member of a live train, the check reads the member's head from the forge, reads that
-  commit's tree, and requires it to equal the member's `prefix_tree`; a mismatch is
-  `merge_candidate_moved`. The check records the train id and the proved tree on
-  `merge_turn_checks`, and the answer gains `trainId` and `provedTree`.
+  commit's tree, and requires it to equal the `prefix_tree` of the train's `verified` event
+  for that member; a mismatch is `merge_candidate_moved`. The check writes its own
+  `merge_turn_checks` row exactly as built, with no new column — `merge_turn_checks` is a
+  frozen v1 table and the proof lives in the train's event log, not on it — and the answer
+  gains `trainId` and `provedTree`.
 - `Land(ctx context.Context, turn, actor, landed, stated, evidence string, reader Reader)
   (map[string]any, error)` keeps its signature. It reads the landed commit's tree and
-  requires it to equal the member's `prefix_tree` before recording `landed_sha`; a mismatch
-  is `disposition_conflict` and writes nothing. The expected-head guard is unchanged.
-- New commands, one per step the leader takes: `merge-train-open --turn <the leader's turn>
-  --actor --base-sha <D> --member <pr>...`, `merge-train-verify --train --seq --prefix-head
-  --prefix-tree --run`, `merge-train-close --train --actor --state <landed|abandoned>
-  --reason`, and `merge-train-show --train`. Each is registered in
-  `internal/relay/argparse/specs.json` beside `merge-turn-request` (`specs.json:594`).
+  requires it to equal the `prefix_tree` of that member's `verified` event before recording
+  `landed_sha`; a mismatch is `disposition_conflict` and writes nothing. The expected-head
+  guard is unchanged.
+- New commands, one per step the leader takes, each registered in
+  `internal/relay/argparse/specs.json` beside `merge-turn-request` (`specs.json:594`):
+  `merge-train-open --turn <the leader's turn> --actor --base-sha <D> --member <pr>...`;
+  `merge-train-verify --train --actor --seq --check <check_id> --prefix-head --prefix-tree
+  --run`, which requires `--actor` to equal the train's `leader_task_id` and is refused
+  `disposition_conflict` otherwise, so only the head-of-line parent advances the shared
+  record; `merge-train-close --train --actor --state <done|abandoned> --reason`, whose
+  `--state` is the event kind it appends and not a column; and `merge-train-show --train`,
+  which derives the state from the newest event.
 
 The DAG lane is unchanged: `dag-accept` still records the head the forge shows, the merge
 judge still reads the member's jobs on that head (green by reuse, so `eligible` rather than
@@ -5544,14 +5564,15 @@ No signature, reason registry, output field, CLI, SQL or golden changes in this 
 request. Each slice is one region and about 600 lines or less, and each is proved red before
 it is built.
 
-1. **The train record** (`internal/relay/store`). The two appended `CREATE` statements and
-   their `testdata` snapshot entries, the row types and their readers beside
-   `MergeTurnsRow` (`internal/relay/store/domain_rows.go:277`), and the insert. Red first:
-   the zone inventory and the frozen-text tests fail until the tables and their snapshot
-   entries exist; a swap-gate test reads the new tables as `ExtendsZone` and releases them
-   only with `--backup-state-to`; an `UPDATE` and a `DELETE` of a train row abort, as they do
-   for `dag_base_refreshes`. No shipped statement is edited and the install zone route is
-   unchanged.
+1. **The train record** (`internal/relay/store`). The three appended `CREATE` statements and
+  their `testdata` snapshot entries, the row types and their readers beside
+  `MergeTurnsRow` (`internal/relay/store/domain_rows.go:277`), and the insert. Red first:
+  the zone inventory and the frozen-text tests fail until the tables and their snapshot
+  entries exist; a swap-gate test reads the new tables as `ExtendsZone` and releases them
+  only with `--backup-state-to`; an `UPDATE` and a `DELETE` of a train, member or event row
+  abort, as they do for `dag_base_refreshes`, and a train that opens, verifies and lands
+  appends three events with the derived state `done` and no row rewritten. No shipped
+  statement is edited and the install zone route is unchanged.
 2. **The train commands and the per-member proof** (`internal/relay/mergeturn`,
    `internal/relay/argparse/specs.json`). Red first: a member head whose tree differs from
    `prefix_tree` is `merge_candidate_moved` and writes no check row; a landing whose tree
