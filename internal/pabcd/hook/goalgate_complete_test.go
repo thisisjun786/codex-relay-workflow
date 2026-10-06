@@ -141,6 +141,21 @@ func TestGoalGateCompleteGuardBoundGoalplan(t *testing.T) {
 		}
 	}
 
+	// The reason the recorded fixture freezes: a bound plan with one open work phase at IDLE.
+	openPhaseCwd := t.TempDir()
+	openPhase := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
+	openPhase.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp1", Title: "Exporter", Status: goalplan.WorkPhasePending, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}}}
+	goalCompleteTestWritePlan(t, openPhaseCwd, "rec-s1", openPhase, func(s *state.State) { s.Phase = state.PhaseIdle; s.OrchestrationActive = false })
+	phaseReason, _ := goalGateTestDeny(t, goalCompleteTestGuard(t, openPhaseCwd, "rec-s1", true, map[string]any{"status": "complete"}))
+	for _, want := range []string{"the session-bound goalplan 'ship-the-export-feature' fails the E8 quality/integrity gate: 1 work phase(s) not done: wp1.", "pabcd loop validate --session rec-s1 --slug \"ship-the-export-feature\""} {
+		if !strings.Contains(phaseReason, want) {
+			t.Errorf("the open-work-phase denial does not name %q: %q", want, phaseReason)
+		}
+	}
+	if strings.Contains(phaseReason, "\"\"") {
+		t.Errorf("the open-work-phase denial left an unresolved invocation: %q", phaseReason)
+	}
+
 	// An empty registered plan denies.
 	emptyCwd := t.TempDir()
 	empty := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Shell only"})
