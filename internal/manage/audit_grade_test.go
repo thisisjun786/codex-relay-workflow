@@ -232,8 +232,13 @@ func TestAuditGradeRefusesAnUnconfiguredGrader(t *testing.T) {
 	e, _, _ := auditTestEnv(t)
 	state := t.TempDir()
 	cfg := auditSectionConfig(t, state, nil)
-	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: auditGoodBundle(t, auditModePR)}}); !errors.Is(err, auditErrGraderUnconfigured) {
+	_, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: auditGoodBundle(t, auditModePR)}})
+	var unconfigured auditGraderUnconfiguredError
+	if !errors.As(err, &unconfigured) {
 		t.Fatalf("err = %v, want grader_unconfigured", err)
+	}
+	if err.Error() != "grader_unconfigured" {
+		t.Errorf("err = %q, want the refusal name the command line prints", err)
 	}
 	if _, err := os.Stat(filepath.Join(state, "audit", auditLedgerFile)); !os.IsNotExist(err) {
 		t.Errorf("a ledger was written for an unconfigured grader: %v", err)

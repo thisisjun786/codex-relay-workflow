@@ -15,9 +15,13 @@ import (
 	"time"
 )
 
-// auditErrGraderUnconfigured is what AuditGrade reports when the audit section carries no
-// grader command; the command line turns it into exit 2.
-var auditErrGraderUnconfigured = errors.New("grader_unconfigured")
+// auditGraderUnconfiguredError is what AuditGrade reports when the audit section carries no
+// grader command; the command line turns it into exit 2. It is a type rather than a sentinel
+// variable because every package-level name this issue adds starts with audit, and the
+// err-prefixed variable name staticcheck reserves for a sentinel would break that.
+type auditGraderUnconfiguredError struct{}
+
+func (auditGraderUnconfiguredError) Error() string { return "grader_unconfigured" }
 
 // auditSection is the audit section of the configuration: the grader command, how long
 // one run may take and how many run at once. The product carries no default grader,
@@ -101,7 +105,7 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		return nil, err
 	}
 	if len(section.Grader) == 0 {
-		return nil, auditErrGraderUnconfigured
+		return nil, auditGraderUnconfiguredError{}
 	}
 	bundles := make([]*auditBundle, len(jobs))
 	seen := make(map[string]int, len(jobs))
@@ -206,7 +210,7 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 	result.Score = *doc.Score
 	result.Criteria = make([]AuditCriterion, 0, len(doc.Criteria))
 	for _, criterion := range doc.Criteria {
-		result.Criteria = append(result.Criteria, AuditCriterion{ID: criterion.ID, Verdict: criterion.Verdict, Note: criterion.Note})
+		result.Criteria = append(result.Criteria, AuditCriterion(criterion))
 	}
 	result.Defects = doc.Defects
 	return result
