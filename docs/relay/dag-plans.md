@@ -191,6 +191,16 @@ tables (decision D-01):
   `dag_passes`, `dag_node_regions`, `dag_node_region_grades`, `dag_node_region_holds`, `dag_release_requests`, `dag_conflict_observations`, `dag_conflict_observation_files`, `dag_tip_conflict_observations`, `dag_tip_conflict_observation_files`, `dag_conflict_drift`, `dag_conflict_sweeps`, `dag_conflict_sweep_members`, `dag_release_recoveries`, `dag_release_policy`, `dag_landing_results`, `dag_pass_release_policy`, `dag_generation_withdrawals`, `dag_pass_host_memory`; see [the scheduler's store](dag-scheduler.md#the-store)), and one for the project's
   Linear summary queue (`dag_summary_outbox`, with an index and five triggers: [the summary outbox](dag-outbox.md)). Node-keyed
   tables carry `plan_id`, so node ids need only be unique within a plan;
+* three tables the merge train appends, whose names carry no `dag_` prefix because the decision names them so
+  (`docs/port/decisions.md` section 79): `merge_trains` (one row per train, written once, no state column),
+  `merge_train_members` (one row per member, `UNIQUE (train_id, seq)`, `turn_id` a plain column because the zone
+  forbids a key into a v1 table) and `merge_train_events` (append-only, `UNIQUE (train_id, seq)`, `kind` one of
+  `opened`, `verified`, `landed`, `abandoned`, `done`), each with the zone's `BEFORE UPDATE` and `BEFORE DELETE`
+  triggers as `dag_base_refreshes` has them. A train's state is the newest event's `kind` and never a column, the
+  way a plan's head revision is `MAX(revision_no)` of its log. Zone membership is the statements' and not a name
+  prefix: the gate derives the zone by applying them (`swapgate.zoneObjects`), so these tables arrive as
+  `EXTENDS_ZONE` and leave as `NARROWS_ZONE` like the `dag_` ones. The train commands that write them ship
+  separately; nothing in this build writes them yet;
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
   later issue needs arrives as an appended `ALTER TABLE ... ADD COLUMN` that every open runs, so a fresh store and an upgraded store read the

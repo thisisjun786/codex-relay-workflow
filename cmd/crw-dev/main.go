@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/ci"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxcfuzz"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skills"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/stopevents"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/trialledger"
@@ -22,6 +23,7 @@ import (
 var commands = map[string]func(args []string, stdout, stderr io.Writer) int{
 	"ci":           ci.Run,
 	"cxc":          cxccorpus.Run,
+	"fuzz":         cxcfuzz.Run,
 	"skills":       skills.Run,
 	"stop-events":  stopevents.Run,
 	"trial-ledger": trialledger.Run,
@@ -32,7 +34,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev {ci,cxc,skills,stop-events,trial-ledger} ..."
+	const usage = "usage: crw-dev {ci,cxc,fuzz,skills,stop-events,trial-ledger} ..."
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev: error: the following arguments are required: command")

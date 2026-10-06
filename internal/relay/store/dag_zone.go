@@ -709,4 +709,97 @@ BEGIN SELECT RAISE(ABORT, 'dag_generation_withdrawals rows are append-only: neve
     PRIMARY KEY (plan_id, pass_seq),
     FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
 )`,
+	// CRW-728: the proof dag-accept records when it accepts a head the parent's ruling verified (CRW-666, the second slice of the decision in docs/port/decisions.md section 78). The acceptance row keeps its own
+	// identity and the accepted head stays the one the relay reads from the forge; this record is the evidence of how that head was produced: the head the ruling named, and the base the merge came from, with the
+	// proof_json and resolved_paths_json bodies dag_base_refreshes already carries (dagsched/baserefresh.go). It is deliberately outside the acceptance's identity, so a deleted row could not be told from an
+	// acceptance that never needed one: the table is append-only and its id is the digest of its content, so a row written by hand is ignored by every reader.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_refreshes (
+    refresh_id           TEXT PRIMARY KEY CHECK (refresh_id <> ''),
+    acceptance_id        TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    refresh_seq          INTEGER NOT NULL CHECK (refresh_seq >= 1),
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 1),
+    event_id             TEXT NOT NULL CHECK (event_id <> ''),
+    revision_hash        TEXT NOT NULL CHECK (revision_hash <> ''),
+    head_sha             TEXT NOT NULL CHECK (head_sha <> ''),
+    verified_head_sha    TEXT NOT NULL CHECK (verified_head_sha <> ''),
+    base_repository      TEXT NOT NULL CHECK (base_repository <> ''),
+    base_ref             TEXT NOT NULL CHECK (base_ref <> ''),
+    base_tip_sha         TEXT NOT NULL CHECK (base_tip_sha <> ''),
+    proof_json           TEXT NOT NULL CHECK (proof_json <> ''),
+    resolved_paths_json  TEXT NOT NULL,
+    recorded_by_task_id  TEXT NOT NULL,
+    coordinator_epoch    INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at          TEXT NOT NULL,
+    UNIQUE (acceptance_id, refresh_seq),
+    UNIQUE (acceptance_id, head_sha)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_no_update BEFORE UPDATE ON dag_acceptance_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_no_delete BEFORE DELETE ON dag_acceptance_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes rows are append-only: never deleted'); END`,
+
+	// CRW-728: the head a verdict turn verified, fixed when the ruling is recorded so dag-accept can prove a parent-made refresh against it instead of trusting the head the forge shows at accept time (the
+	// post-merge finding P1-1 of the CRW-666 pull request, the parent's decision of 2026-10-06). One event has one verified head; the record keys nothing outside the zone, so it is written on its own.
+	`CREATE TABLE IF NOT EXISTS dag_verified_heads (
+    event_id             TEXT PRIMARY KEY CHECK (event_id <> ''),
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 1),
+    verdict_turn_id      TEXT NOT NULL CHECK (verdict_turn_id <> ''),
+    head_sha             TEXT NOT NULL CHECK (head_sha <> ''),
+    recorded_by_task_id  TEXT NOT NULL,
+    recorded_at          TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_no_update BEFORE UPDATE ON dag_verified_heads
+BEGIN SELECT RAISE(ABORT, 'dag_verified_heads rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_no_delete BEFORE DELETE ON dag_verified_heads
+BEGIN SELECT RAISE(ABORT, 'dag_verified_heads rows are append-only: never deleted'); END`,
+
+	// CRW-767: the merge train. One CI run of a two-member prefix stands for both members (the decision in
+	// docs/port/decisions.md section 79, CRW-725 option (a)); these three tables are its relay record, and the
+	// train commands that write them (a later issue) ship separately. A train row and a member row are written
+	// once and an event is appended, because the zone's triggers abort an UPDATE and a DELETE, and the train's
+	// state is the newest event's kind rather than a column, as a plan's head revision is MAX(revision_no) of
+	// its log. The names carry no dag_ prefix because the decision names them so; the zone is derived from
+	// these statements and not from a name prefix (swapgate.zoneObjects), so a merge-lane table belongs to it
+	// exactly as the DAG tables do. turn_id is a plain column: the zone forbids a key into a v1 table.
+	`CREATE TABLE IF NOT EXISTS merge_trains (
+    train_id       TEXT PRIMARY KEY CHECK (train_id <> ''),
+    target_key     TEXT NOT NULL CHECK (target_key <> ''),
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    base_ref       TEXT NOT NULL CHECK (base_ref <> ''),
+    base_sha       TEXT NOT NULL CHECK (base_sha <> ''),
+    leader_task_id TEXT NOT NULL CHECK (leader_task_id <> ''),
+    created_at     TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_no_update BEFORE UPDATE ON merge_trains
+BEGIN SELECT RAISE(ABORT, 'merge_trains rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_no_delete BEFORE DELETE ON merge_trains
+BEGIN SELECT RAISE(ABORT, 'merge_trains rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS merge_train_members (
+    train_id        TEXT NOT NULL REFERENCES merge_trains (train_id),
+    seq             INTEGER NOT NULL CHECK (seq >= 1),
+    turn_id         TEXT NOT NULL CHECK (turn_id <> ''),
+    pr_number       INTEGER NOT NULL CHECK (pr_number >= 1),
+    relationship_id TEXT NOT NULL CHECK (relationship_id <> ''),
+    member_head     TEXT NOT NULL CHECK (member_head <> ''),
+    PRIMARY KEY (train_id, seq)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_no_update BEFORE UPDATE ON merge_train_members
+BEGIN SELECT RAISE(ABORT, 'merge_train_members rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_no_delete BEFORE DELETE ON merge_train_members
+BEGIN SELECT RAISE(ABORT, 'merge_train_members rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS merge_train_events (
+    train_id    TEXT NOT NULL REFERENCES merge_trains (train_id),
+    seq         INTEGER NOT NULL CHECK (seq >= 1),
+    kind        TEXT NOT NULL CHECK (kind IN ('opened','verified','landed','abandoned','done')),
+    actor       TEXT NOT NULL CHECK (actor <> ''),
+    detail_json TEXT NOT NULL CHECK (detail_json <> ''),
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (train_id, seq)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_no_update BEFORE UPDATE ON merge_train_events
+BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_no_delete BEFORE DELETE ON merge_train_events
+BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never deleted'); END`,
 }
