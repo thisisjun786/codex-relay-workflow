@@ -382,8 +382,13 @@ operator's acknowledgement, and under it the command itself takes the OPS-4.5 ba
 anyone's memory. Inside the promotion lock, after the daemon-stopped and no-open-attempt cells have answered and before anything is promoted,
 it copies the whole state directory the gate read to `DIR`: copy only, byte for byte, the source opened read-only and nothing moved, recreated
 or deleted, here or on a failure. Directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits, each synced after its mode is set so the mode and not only the bytes survives a power loss (the directory the backup is made in stays 0700, and a copy always keeps its owner able to open it: a source the installer could read only through its group gets the owner's read bit, and the manifest records both modes); a symbolic link to a regular file is copied as the
-file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal` and `-shm`
-are copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. Each file is
+file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal`
+is copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. The store's two
+sidecars follow SQLite's WAL mode: `relay.sqlite3-shm` is never listed, copied or compared, because SQLite rebuilds that index from the log on
+open, and `relay.sqlite3-wal` is copied when it is there at its copy, while one that goes or appears between the listing and the copy is not a
+refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which of
+the four happened); `relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses.
+Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
 the copy is of one moment or it is not made. The backup, its manifest and the directories made for them are synced in their parents after the manifest is written, so a power loss cannot keep the files and lose the names that reach them. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie

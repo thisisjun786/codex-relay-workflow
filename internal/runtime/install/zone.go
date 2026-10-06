@@ -38,6 +38,12 @@ import (
 // its verification. It is called with "copied".
 var stateBackupStep = func(step string) error { return nil }
 
+// stateBackupListed is a seam: it is called after the first listing of the state directory and before anything
+// is copied, which is where another connection to the store makes SQLite's sidecars appear or go. It is a seam
+// of its own and not stateBackupStep: the tests that replace that one act after the copy, and calling the same
+// one twice would change them.
+var stateBackupListed = func() error { return nil }
+
 // syncDirectory makes a directory's entries durable; a seam so a test can see which directories were synced and when.
 var syncDirectory = syncPath
 
@@ -49,6 +55,61 @@ var syncAfterMode = syncPath
 // ManifestSuffix names the record written beside a backup (not inside it, so the backup holds exactly what the
 // state directory held).
 const ManifestSuffix = ".manifest.json"
+
+// The store's two sidecars. SQLite keeps a write-ahead log beside the database while a connection is open, and a
+// shared-memory index beside that; the last connection to close deletes them. The index is an accelerator SQLite
+// rebuilds from the log when it next opens the file, so a backup never carries it. The log holds the commits, so a
+// backup carries it when it is there at the copy and neither refuses nor invents one that goes or arrives while the
+// copy is being made: the store's own file has to be what was read either way, and that check stays.
+const (
+	walSidecar = "relay.sqlite3-wal"
+	shmSidecar = "relay.sqlite3-shm"
+)
+
+// The four readings the manifest records for the store's write-ahead log.
+const (
+	sidecarAbsent   = "absent"
+	sidecarCopied   = "copied"
+	sidecarGone     = "gone before its copy"
+	sidecarAppeared = "appeared after the listing, not copied"
+)
+
+// storeSidecarWal is the manifest's reading of the store's write-ahead log from what happened to it while the backup
+// was made: its bytes were copied, it was listed and had gone by its copy, it was absent from the first listing and
+// appeared in the second so it was not copied, or it was absent from both listings. The appeared reading cannot be
+// reached end to end — the swap gate's own read of the store leaves an empty log in the state directory before the
+// first listing — so it is pinned by the white-box test that calls this through export_test.go.
+func storeSidecarWal(copied, gone, appeared bool) string {
+	switch {
+	case gone:
+		return sidecarGone
+	case copied:
+		return sidecarCopied
+	case appeared:
+		return sidecarAppeared
+	default:
+		return sidecarAbsent
+	}
+}
+
+// isStoreShm is whether a listing's path is the store's shared-memory index, which a listing leaves out entirely: it
+// comes and goes with any other connection to the store, and SQLite rebuilds it from the log on open.
+func isStoreShm(path string) bool { return path == shmSidecar }
+
+// isStoreSidecar is whether a listing's path is one of the store's two sidecars, which the comparison of two listings
+// leaves out: neither is a fact about the state directory, and a log that a checkpoint rewrote is caught by the store's
+// own file, which stays in the comparison.
+func isStoreSidecar(path string) bool { return path == walSidecar || path == shmSidecar }
+
+// listingHas is whether a listing holds path.
+func listingHas(entries []backedUp, path string) bool {
+	for _, e := range entries {
+		if e.Path == path {
+			return true
+		}
+	}
+	return false
+}
 
 type backedUp struct {
 	Path       string `json:"path"`
@@ -140,6 +201,9 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	if err != nil {
 		return failure(false, "%v", err)
 	}
+	if err := stateBackupListed(); err != nil {
+		return failure(false, "%v", err)
+	}
 	var total int64
 	for _, e := range entries {
 		total += e.Size
@@ -162,6 +226,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		return failure(false, "the backup directory could not be created: %v", err)
 	}
 	copied := make([]backedUp, 0, len(entries))
+	var walCopied, walGone bool
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			return failure(true, "interrupted while copying: %v", err)
@@ -174,11 +239,22 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			copied = append(copied, e)
 			continue
 		}
-		digest, err := copyFile(ctx, e.source, target)
+		digest, size, err := copyFile(ctx, e.source, target)
 		if err != nil {
+			// The store's log was checkpointed away between the listing and this copy: the store's own file still has
+			// to be what was read, and that check is kept, so a log that went is not a refusal. Every other file that
+			// goes between the two readings still refuses.
+			if e.Path == walSidecar && errors.Is(err, fs.ErrNotExist) {
+				walGone = true
+				continue
+			}
 			return failure(true, "%s could not be copied: %v", e.Path, err)
 		}
 		e.SHA256 = digest
+		e.Size = size
+		if e.Path == walSidecar {
+			walCopied = true
+		}
 		copied = append(copied, e)
 	}
 	for _, e := range copied {
@@ -200,6 +276,8 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	if err != nil {
 		return failure(true, "the state directory could not be read again: %v", err)
 	}
+	// The appeared reading is the log absent from the first listing and present in the second, so it was not copied.
+	walAppeared := !walCopied && !walGone && !listingHas(entries, walSidecar) && listingHas(again, walSidecar)
 	if diff := listingDiff(copied, skipped, again, againSkipped); diff != "" {
 		return failure(true, "the state directory changed under the copy (%s), so the backup is not a copy of any one moment", diff)
 	}
@@ -209,6 +287,11 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		}
 		now, err := digestOf(e.source)
 		if err != nil {
+			// A log that was checkpointed away by the time of the verification is not a refusal, for the same reason
+			// as above; one still there must digest to what was copied.
+			if e.Path == walSidecar && errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
 			return failure(true, "%s could not be read again: %v", e.Path, err)
 		}
 		if now != e.SHA256 {
@@ -255,7 +338,8 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	manifest := map[string]any{
 		"schema": "crw-state-backup/1", "source": source, "destination": dest, "issue": o.Issue, "at": o.stamp(),
 		"files": files, "bytes": bytes, "aggregateDigest": aggregate, "skipped": skipped, "entries": copied,
-		"meaning": "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte",
+		"storeSidecars": map[string]string{shmSidecar: "not copied: the WAL index SQLite rebuilds from the log on open", walSidecar: storeSidecarWal(walCopied, walGone, walAppeared)},
+		"meaning":       "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte",
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -371,9 +455,10 @@ func enoughRoom(parent string, need int64) error {
 
 // listState walks the state directory without following links: directories, regular files, and symbolic links to
 // regular files (whose bytes are copied under the link's name, since a link alone would back up nothing). The store's
-// own files are named as SQLite resolves them: when relay.sqlite3 is a link, the real file's -wal and -shm are
-// copied beside it as relay.sqlite3-wal and -shm, so a restore opens with the commits only the log held. A socket,
-// a FIFO or a device is listed as skipped. A link to anything else is a refusal.
+// own files are named as SQLite resolves them: when relay.sqlite3 is a link, the real file's -wal is copied beside it
+// as relay.sqlite3-wal, so a restore opens with the commits only the log held. Its -shm is not listed at all: SQLite
+// rebuilds that index from the log on open, so a backup neither copies it nor refuses when one appears or goes. A
+// socket, a FIFO or a device is listed as skipped. A link to anything else is a refusal.
 func listState(source, dbPath string) ([]backedUp, []string, error) {
 	var entries []backedUp
 	var skipped []string
@@ -387,6 +472,9 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if rel == "." {
+			return nil
+		}
+		if isStoreShm(rel) {
 			return nil
 		}
 		info, err := d.Info()
@@ -420,13 +508,13 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// the store's log files, when its database is a link to a file elsewhere
+	// the store's log file, when its database is a link to a file elsewhere (its -shm is never listed)
 	if resolved, _, err := store.InPlaceRead(dbPath); err == nil && resolved != filepath.Join(source, "relay.sqlite3") {
 		have := map[string]bool{}
 		for _, e := range entries {
 			have[e.Path] = true
 		}
-		for _, suffix := range []string{"-wal", "-shm"} {
+		for _, suffix := range []string{"-wal"} {
 			info, err := os.Lstat(resolved + suffix)
 			if err != nil {
 				continue
@@ -471,6 +559,20 @@ func kindOf(mode fs.FileMode) string {
 
 // listingDiff is how two readings of the state directory differ, or "".
 func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []string) string {
+	// The store's two sidecars are out of the comparison: they come and go with any other connection to the store,
+	// and neither is a fact about the state directory. relay.sqlite3 itself stays in, so a checkpoint that rewrote
+	// it under the copy is still a change.
+	drop := func(entries []backedUp) []backedUp {
+		kept := make([]backedUp, 0, len(entries))
+		for _, e := range entries {
+			if isStoreSidecar(e.Path) {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		return kept
+	}
+	a, b = drop(a), drop(b)
 	// the resolved file the bytes come from is part of what a reading says: a link in the chain that was pointed
 	// elsewhere between the two readings is a change, even where the new file is the same size
 	key := func(e backedUp) string {
@@ -517,49 +619,52 @@ func aggregateOf(entries []backedUp) (string, int, int64) {
 	return hex.EncodeToString(h.Sum(nil)), files, bytes
 }
 
-// copyFile copies source to target (created, never replaced) and returns the digest of what it read; the file is
-// synced before it is closed.
-func copyFile(ctx context.Context, source, target string) (string, error) {
+// copyFile copies source to target (created, never replaced) and returns the digest of what it read and how many
+// bytes that was; the file is synced before it is closed. The size is the one actually copied, which is what the
+// manifest records for a store log another connection may be rewriting under the copy.
+func copyFile(ctx context.Context, source, target string) (string, int64, error) {
 	in, err := os.Open(source)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer in.Close()
 	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	h := sha256.New()
 	buf := make([]byte, 1<<20)
+	var size int64
 	for {
 		if err := ctx.Err(); err != nil {
 			_ = out.Close()
-			return "", err
+			return "", 0, err
 		}
 		n, readErr := in.Read(buf)
 		if n > 0 {
 			if _, err := out.Write(buf[:n]); err != nil {
 				_ = out.Close()
-				return "", err
+				return "", 0, err
 			}
 			h.Write(buf[:n])
+			size += int64(n)
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
 		if readErr != nil {
 			_ = out.Close()
-			return "", readErr
+			return "", 0, readErr
 		}
 	}
 	if err := out.Sync(); err != nil {
 		_ = out.Close()
-		return "", err
+		return "", 0, err
 	}
 	if err := out.Close(); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hex.EncodeToString(h.Sum(nil)), size, nil
 }
 
 func digestOf(path string) (string, error) {
