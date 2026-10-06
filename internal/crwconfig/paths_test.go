@@ -1,6 +1,7 @@
 package crwconfig
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -175,5 +176,102 @@ func TestARelativePathIsRefused(t *testing.T) {
 		if !strings.Contains(err.Error(), "absolute") || !strings.Contains(err.Error(), test.names) {
 			t.Errorf("%s: error %q does not name %q and say the path is not absolute", test.name, err, test.names)
 		}
+	}
+}
+
+// rootsLinkAndRawBase builds a real temporary tree with a symlink and returns a
+// base directory text that mixes that link with "..", so the text means a
+// different directory once it is resolved than it does once it is cleaned. The
+// cleaned form is returned too, so a test can show the two disagree.
+func rootsLinkAndRawBase(t *testing.T) (raw, cleaned string) {
+	t.Helper()
+	root := t.TempDir()
+	inner := filepath.Join(root, "real", "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatalf("create the link target: %v", err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(inner, link); err != nil {
+		t.Fatalf("create the symlink: %v", err)
+	}
+	raw = link + "/../" + "raw"
+	cleaned = filepath.Clean(raw)
+	if cleaned == raw {
+		t.Fatalf("the fixture does not exercise the defect: %q is already clean", raw)
+	}
+	return raw, cleaned
+}
+
+// C1: an override whose raw text mixes a real symlink and ".." is kept as written,
+// and scratch_root is that same raw text plus "/scratch". Cleaning the text would
+// place the scratch root under %q instead, outside the directory the link resolves
+// to.
+func TestARawCacheOverrideKeepsTheScratchRootUnderIt(t *testing.T) {
+	_, env := rootsHome(t)
+	cache, cleaned := rootsLinkAndRawBase(t)
+	roots, err := Resolve(env, map[string]string{RootCache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roots[RootCache]; got.Path != cache || got.Source != SourceConfig {
+		t.Errorf("cache_root = %+v, want the raw text %q from config", got, cache)
+	}
+	want := cache + "/scratch"
+	if got := roots[RootScratch]; got.Path != want || got.Source != SourceConfig {
+		t.Errorf("scratch_root = %+v, want %q from config (the cleaned text would give %q)", got, want, cleaned+"/scratch")
+	}
+}
+
+// C2: a base directory the host names through an XDG variable keeps its raw text,
+// so every root below it chains under that text rather than a cleaned spelling.
+func TestARawXdgBaseTextIsKeptUnderEveryRoot(t *testing.T) {
+	home := t.TempDir()
+	data, cleaned := rootsLinkAndRawBase(t)
+	env := rootsEnv("HOME", home, "XDG_DATA_HOME", data)
+	roots, err := Resolve(env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, rel := range map[string]string{
+		RootTools:    "crw/tools",
+		RootWorktree: "crw/worktrees",
+		RootData:     "crw/data",
+	} {
+		want := data + "/" + rel
+		if got := roots[name]; got.Path != want || got.Source != SourceEnv {
+			t.Errorf("%s = %+v, want %q from env (the cleaned text would give %q)", name, got, want, cleaned+"/"+rel)
+		}
+	}
+}
+
+// A base directory whose value ends in separators keeps exactly one separator in
+// the joined text, and the derived scratch root keeps the same raw expression.
+func TestATrailingSeparatorInABaseDirectoryIsCollapsed(t *testing.T) {
+	home := t.TempDir()
+	base := filepath.Join(home, "c") + "///"
+	env := rootsEnv("HOME", home, "XDG_CACHE_HOME", base)
+	roots, err := Resolve(env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(home, "c") + "/crw"
+	if got := roots[RootCache]; got.Path != cache || got.Source != SourceEnv {
+		t.Errorf("cache_root = %+v, want %q from env", got, cache)
+	}
+	want := cache + "/scratch"
+	if got := roots[RootScratch]; got.Path != want || got.Source != SourceEnv {
+		t.Errorf("scratch_root = %+v, want %q from env", got, want)
+	}
+}
+
+// An empty HOME leaves the fallback relative, so the absolute-path check still
+// refuses it instead of resolving the roots against the filesystem root.
+func TestAnEmptyHomeIsStillRefused(t *testing.T) {
+	roots, err := Resolve(rootsEnv("HOME", ""), nil)
+	if err == nil {
+		t.Fatalf("an empty HOME was accepted as %+v", roots)
+	}
+	if !strings.Contains(err.Error(), "absolute") || !strings.Contains(err.Error(), RootTools) {
+		t.Errorf("error %q does not name %q and say the path is not absolute", err, RootTools)
 	}
 }
