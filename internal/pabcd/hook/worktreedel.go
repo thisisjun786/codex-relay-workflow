@@ -136,23 +136,52 @@ func isAssignment(token string) bool {
 	return true
 }
 
-// stripPrefixes drops leading sudo, command and builtin, and env with the NAME=value words that follow it. A prefix is
-// recognised by its basename; sudo's and env's own options are not understood (known defect).
-func stripPrefixes(tokens []string) []string {
-	for len(tokens) > 0 {
-		switch basename(tokens[0]) {
-		case "sudo", "command", "builtin":
-			tokens = tokens[1:]
-		case "env":
-			tokens = tokens[1:]
-			for len(tokens) > 0 && isAssignment(tokens[0]) {
-				tokens = tokens[1:]
-			}
-		default:
-			return tokens
+// worktreeDelCommandPrefix is the index of the word that names the command, from i on: it steps over the wrapper words
+// worktreeDelQuoteWrappers lists, and over the options, assignments, numbers and option arguments that may stand before
+// the command, the way the walk's own program reader does. ok is false when every word from i on is a prefix. Every
+// reader that has to find a command word shares this one walk, so no reader keeps a second wrapper list (CRW-726,
+// c15(c)).
+func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
+	for ; i < len(words); i++ {
+		word := words[i]
+		if !(strings.Contains(worktreeDelQuoteWrappers, " "+basename(word)+" ") ||
+			strings.HasPrefix(word, "-") || isAssignment(word) ||
+			word != "" && word[0] >= '0' && word[0] <= '9') {
+			return i, true
 		}
 	}
-	return tokens
+	return i, false
+}
+
+// worktreeDelCommandPrefixEnv is worktreeDelCommandPrefix with env's own NAME=value operands consumed, so that
+// `env FOO=1 rm -rf x` names rm. The wrapper table and the option rules stay in one place.
+func worktreeDelCommandPrefixEnv(words []string, i int) (next int, ok bool) {
+	for i < len(words) {
+		name := basename(words[i])
+		if name != "env" && name != "sudo" && name != "command" && name != "builtin" {
+			break
+		}
+		i++
+		if name == "env" {
+			for i < len(words) && (isAssignment(words[i]) || strings.HasPrefix(words[i], "-")) {
+				i++
+			}
+		}
+	}
+	return worktreeDelCommandPrefix(words, i)
+}
+
+// stripPrefixes drops the wrappers that stand before a command: the wrapper words worktreeDelQuoteWrappers lists, each
+// with its own options and arguments, and env's NAME=value operands. The oracle strips only sudo, command, builtin and
+// env (worktree-guard.ts:262-267), so a removal behind nohup, timeout, nice, setsid or stdbuf was never named and was
+// allowed; the shared prefix walk names it (CRW-726, c15(d); port: fixed, a security fix). It can only add denies: a
+// word it now skips was a verb the walk never reached.
+func stripPrefixes(tokens []string) []string {
+	i, ok := worktreeDelCommandPrefixEnv(tokens, 0)
+	if !ok {
+		return nil
+	}
+	return tokens[i:]
 }
 
 // resolveFrom is path.resolve(base, target) for two segments: an empty target is the base, an absolute one stands alone, a
@@ -1805,17 +1834,10 @@ func worktreeDelUnreadableCommandWord(words []string) int {
 			i++ // a leading assignment is no part of the command word (Y=1 $X -rf ../repo runs $X)
 			continue
 		}
-		switch basename(words[i]) {
-		case "sudo", "command", "builtin":
-			i++
-		case "env":
-			i++
-			for i < len(words) && isAssignment(words[i]) {
-				i++
-			}
-		default:
-			return i
+		if next, ok := worktreeDelCommandPrefixEnv(words, i); ok {
+			return next
 		}
+		return -1
 	}
 	return -1
 }
@@ -1927,24 +1949,46 @@ func worktreeDelUnreadableStdinShell(name string, operands []string) bool {
 	return worktreeDelUnreadableScriptOperand(args) < 0
 }
 
-// worktreeDelUnreadableStdinRedirected says whether a shell's operands replace its standard input with a file, so that a
-// pipe on its left is not its program: `bash </dev/null` reads /dev/null. A here-document and a here-string do feed it a
-// program and are not this case (CRW-726).
+// worktreeDelUnreadableStdinFile says whether a redirection word (with the next word when the operator stands alone)
+// opens a FILE on descriptor 0, so that a pipe on the command's left is not its program: `bash </dev/null` reads
+// /dev/null. A descriptor duplication (`<&0`, `<&2`) or a close (`<&-`) does not: bash still reads the piped program,
+// so those keep the refusal (fail closed). A here-document and a here-string feed the shell a program of their own and
+// are not this case (CRW-726, c15(a)).
+func worktreeDelUnreadableStdinFile(word, next string, hasNext bool) bool {
+	i := strings.IndexByte(word, '<')
+	if i < 0 {
+		return false
+	}
+	if descriptor := word[:i]; descriptor != "" && descriptor != "0" { // a descriptor other than 0 is not stdin
+		return false
+	}
+	if strings.HasPrefix(word[i:], "<<") { // a here-document or a here-string feeds the shell a program of its own
+		return false
+	}
+	rest := word[i+1:]
+	if rest == "" { // the operator is a word of its own: its target is the next word
+		if !hasNext {
+			return false
+		}
+		rest = next
+	}
+	return !strings.HasPrefix(rest, "&") // <&N and <&- duplicate or close the descriptor, they open no file
+}
+
+// worktreeDelUnreadableStdinRedirected says whether a shell's operands replace its standard input with a file, so that
+// a pipe on its left is not its program.
 func worktreeDelUnreadableStdinRedirected(operands []string) bool {
 	for i := 0; i < len(operands); i++ {
 		word := operands[i]
-		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) {
-			if word != "0" { // only descriptor 0 replaces the standard input: 2</dev/null leaves the pipe on stdin
-				i++
-				continue
-			}
-			word = operands[i+1]
-			i++
+		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) && strings.HasPrefix(operands[i+1], "<") {
+			word, i = word+operands[i+1], i+1 // a descriptor before the operator belongs to it
 		}
-		if !strings.HasPrefix(word, "<") || strings.HasPrefix(word, "<<") {
-			continue
+		if worktreeDelUnreadableStdinFile(word, "", false) {
+			return true
 		}
-		return true
+		if i+1 < len(operands) && worktreeDelUnreadableStdinFile(word, operands[i+1], true) {
+			return true
+		}
 	}
 	return false
 }
@@ -2232,6 +2276,11 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 	if refusal, ok := s.heredocs(text, cwd, depth, named); ok {
 		return refusal, true
 	}
+	// The pipe rule reads the whole text, because a subshell or a brace group keeps the pipe that fed it and the
+	// segment cut splits at the parentheses inside it (CRW-726, c15(b)).
+	if what, ok := worktreeDelUnreadablePipes(text); ok {
+		return worktreeDelUnreadableRefusal{what: what}, true
+	}
 	for _, reading := range worktreeDelReadings(worktreeDelUnreadableDataMask(text)) {
 		segCwd := cwd
 		for _, cut := range worktreeDelUnreadableCuts(reading) {
@@ -2283,16 +2332,6 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 // right of a single pipe, whose left side the guard can never read, or it takes a here-string, whose word is judged as a
 // -c program is. The shell must have no -c program and no script operand.
 func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDelUnreadableWord, plain []string) (string, bool) {
-	// A subshell keeps the pipe that fed it: `printf ... | (bash)` runs bash with the pipe on its standard input, and the
-	// cut keeps the parentheses, so they are stripped before the command word is read (CRW-726).
-	if strings.HasPrefix(cut.text, "(") && strings.HasSuffix(cut.text, ")") {
-		inner := strings.TrimSpace(cut.text[1 : len(cut.text)-1])
-		if inner != "" {
-			cut.text = inner
-			words = worktreeDelUnreadableWords(inner)
-			plain = worktreeDelUnreadablePlainTexts(words)
-		}
-	}
 	i := worktreeDelUnreadableCommandWord(plain)
 	if i < 0 {
 		return "", false
@@ -2301,11 +2340,141 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
 		return "", false
 	}
-	if cut.sep == "|" && !worktreeDelUnreadableStdinRedirected(plain[i+1:]) {
-		return "a shell program read from a pipe", true
-	}
 	if j := worktreeDelUnreadableHereString(plain[i+1:]); j >= 0 && worktreeDelUnreadableOuter(words[i+1+j].raw) {
 		return "a shell program read from a here-string", true
+	}
+	return "", false
+}
+
+// worktreeDelUnreadablePipes is the pipe rule of the whole text: a listed shell that stands to the right of a single |
+// and has no -c program, no script operand and no file replacing its own standard input reads its program from that
+// pipe. The right side is read whole to the next separator at its own depth, so a subshell or a brace group keeps the
+// pipe: every simple command inside one of those is read too (CRW-726, c15(b)).
+func worktreeDelUnreadablePipes(text string) (string, bool) {
+	r := worktreeDelQuoteReader{prev: ' '}
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if r.escapes(text, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(c)
+		if state != worktreeDelQuotePlain {
+			continue
+		}
+		switch c {
+		case '(', '{':
+			depth++
+			continue
+		case ')', '}':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		case '|':
+		default:
+			continue
+		}
+		if i+1 < len(text) && text[i+1] == '|' { // a logical or, not a pipe
+			i++
+			continue
+		}
+		end := worktreeDelUnreadablePipeEnd(text, i+1)
+		if what, ok := worktreeDelUnreadablePipeRegion(strings.TrimSpace(text[i+1 : end])); ok {
+			return what, true
+		}
+		i = end - 1
+	}
+	return "", false
+}
+
+// worktreeDelUnreadablePipeEnd is the byte that ends the command a pipe feeds, from the byte after the operator: the next
+// separator that stands at the same depth.
+func worktreeDelUnreadablePipeEnd(text string, from int) int {
+	r := worktreeDelQuoteReader{prev: ' '}
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if r.escapes(text, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(c)
+		if state != worktreeDelQuotePlain {
+			continue
+		}
+		switch c {
+		case '(', '{':
+			depth++
+		case ')', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ';', '&', '\n':
+			if i >= from && depth == 0 {
+				return i
+			}
+		case '|':
+			if i >= from && depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(text)
+}
+
+// worktreeDelUnreadablePipeRegion is the pipe rule for the text one | feeds: the text itself when it is one simple
+// command, or every simple command inside a subshell or a brace group.
+func worktreeDelUnreadablePipeRegion(text string) (string, bool) {
+	if !worktreeDelUnreadableCompound(text) {
+		return worktreeDelUnreadablePipeShell(text)
+	}
+	for _, inner := range worktreeDelUnreadableCuts(worktreeDelUnreadableCompoundText(text)) {
+		if inner.text == "(" || inner.text == ")" || inner.text == "{" || inner.text == "}" {
+			continue
+		}
+		if what, ok := worktreeDelUnreadablePipeShell(inner.text); ok {
+			return what, true
+		}
+	}
+	return "", false
+}
+
+// worktreeDelUnreadableCompound says whether a command text is a subshell or a brace group: it opens with ( or { and
+// closes with the matching ) or }.
+func worktreeDelUnreadableCompound(text string) bool {
+	text = strings.TrimSpace(text)
+	return len(text) > 1 && (text[0] == '(' && text[len(text)-1] == ')' || text[0] == '{' && text[len(text)-1] == '}')
+}
+
+// worktreeDelUnreadableCompoundText is the inside of a subshell or a brace group, without its delimiters.
+func worktreeDelUnreadableCompoundText(text string) string {
+	text = strings.TrimSpace(text)
+	if !worktreeDelUnreadableCompound(text) {
+		return text
+	}
+	return strings.TrimSpace(text[1 : len(text)-1])
+}
+
+// worktreeDelUnreadablePipeShell is the pipe rule for one simple command: a listed shell with no -c program, no script
+// operand and no file replacing its own standard input reads its program from the pipe that feeds it.
+func worktreeDelUnreadablePipeShell(text string) (string, bool) {
+	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
+	i := worktreeDelUnreadableCommandWord(plain)
+	if i < 0 {
+		return "", false
+	}
+	name := basename(plain[i])
+	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
+		return "", false
+	}
+	if !worktreeDelUnreadableStdinRedirected(plain[i+1:]) {
+		return "a shell program read from a pipe", true
 	}
 	return "", false
 }
