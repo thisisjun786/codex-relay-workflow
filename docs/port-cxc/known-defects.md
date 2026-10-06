@@ -1286,3 +1286,19 @@ Source: `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts` at v0
 ## Found by the metric lock-wait cancellation port (CRW-637)
 
 - The lock wait only read the context where it slept: `metricLockWait` returned `ctx.Err()` from the select's `ctx.Done()` case alone, so when the select took its timer branch — Go picks any ready case, so a timer that wins the race against a done context is ordinary — the loop called `Flock(LOCK_NB)` again, and the holder releasing the lock in that moment handed it to a waiter that had already been cancelled; `appendRow` then wrote the row without looking at the context. A cancelled `metric ingest` whose ledger lock another writer held therefore left a row that did not exist at the interrupt, where the oracle's process dies at the signal and writes none (the oracle has no lock and no signal handler, `pabcd-state/src/metrics.ts:119-137` and `pabcd-state/src/metric-cli.ts:92-151` at v0.2.40; no corpus fixture drives an interrupt); port: fixed (port-introduced, not an upstream defect — the ledger lock is this port's): `metricLockWait` reads `ctx.Err()` after the select and before its next attempt and reports whether it had to wait, and `appendRow` reads `ctx.Err()` once more after a lock taken that way, before the write, closing the file without a write and returning the context's own error as it is; the first attempt and the `context.Background` path are unchanged, so a free lock is still taken when the context has ended since the caller looked (`TestRecordMetricsFromTextContextCancelledAfterTheTimerBranchWritesNoRow` and `TestRecordMetricsFromTextContextCancelledAfterTheLockIsTakenWritesNoRow`, red on the base with a row written, plus CRW-627's five cases unchanged).
+
+## Found by the steering op port (CRW-376)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering_ops.go`; the ported ranges are `:39-63,72-153,182-239`.
+
+- The minted criterion id is the highest stored `c-N` plus one in float64, so at or above 2^53 the increment is
+  lost and the new id repeats or falls below the highest stored one: on a plan holding `c-9007199254740993` the
+  next criterion is minted as `c-9007199254740992`, where the comment at `:199-201` promises a dense monotonic
+  sequence (source `steering.ts:199-204`; recorded case `mint-2pow53` in the port's differential, and the plan
+  holding that id is refused by the definition integrity rather than corrupted, so nothing is lost);
+  port: kept.
+- An op that is an array passes the op object test (`:90` is a `typeof` test, and an array is an object) and
+  fails the kind read instead, so the refusal names the missing kind of a value that is not an object at all
+  (source `steering.ts:90-92`; the batch is still rejected whole); port: kept.
+

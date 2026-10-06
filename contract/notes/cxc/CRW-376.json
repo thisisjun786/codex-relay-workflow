@@ -1,0 +1,10 @@
+{
+  "issue": "CRW-376",
+  "pending": [
+    "cli__loop__criteria_questions_and_steer",
+    "cli-help__loop__steer_dashdash_help"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
+
