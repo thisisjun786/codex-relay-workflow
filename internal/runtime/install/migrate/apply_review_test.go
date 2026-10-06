@@ -65,6 +65,8 @@ func TestMigrateApplyReviewRefusesASourceThatMovedAfterItsPublish(t *testing.T) 
 
 // F1: a file published early that moves while a later file publishes is caught by the end-of-run recheck.
 func TestMigrateApplyReviewRefusesASourceThatMovedDuringTheRun(t *testing.T) {
+	// Both bodies are session records the state reader reads: CRW-682 judges every retained record during the preflight,
+	// and a body it refuses stops the run before the recheck under test is reached.
 	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}", "sessions/b.json": "{\"phase\":\"B\"}"}, nil)
 	src := filepath.Join(ws, ProjectSourceName, "sessions", "a.json")
 	pub := newPub(t)
@@ -200,6 +202,7 @@ func TestMigrateApplyReviewPublishesTheInstallRecordLast(t *testing.T) {
 
 // F4: a copied file is counted even when its own source recheck fails, so a moved source never erases a completed write.
 func TestMigrateApplyReviewCountsAWriteWhoseSourceThenMoved(t *testing.T) {
+	// As above: the state reader must accept both bodies, so only the recheck below can fail the run.
 	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}", "sessions/b.json": "{\"phase\":\"B\"}"}, nil)
 	src := filepath.Join(ws, ProjectSourceName, "sessions", "a.json")
 	pub := newPub(t)
