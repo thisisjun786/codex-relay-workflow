@@ -25,6 +25,7 @@ func TestWorktreeDelOperandSubstitutions(t *testing.T) {
 	// close the substitution, and a quote inside the body does not end the outer double quote.
 	r.denied(t, "cd \"$(rm -rf ../repo; pwd)\"", "rm -r ../repo")
 	r.denied(t, "echo `true`#`rm -rf ../repo`", "rm -r ../repo")
+	r.denied(t, "echo \"`# '`\"; rm -rf ../repo", "rm -r ../repo") // a # in a backtick body still ends at the closing backtick
 	r.denied(t, "echo \"$(echo ${x:-)}; rm -rf ../repo)\"", "rm -r ../repo")
 	r.denied(t, "bash -c 'echo OK' \"$(echo \")\"; rm -rf ../repo)\"", "rm -r ../repo")
 	r.denied(t, "echo \"$(case x in x) : ;; esac; rm -rf ../repo)\"", "rm -r ../repo") // the rest of the segment is judged with the body

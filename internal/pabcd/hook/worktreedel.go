@@ -947,7 +947,8 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 			continue
 		}
 		if backtick {
-			if c == '`' && r.state == worktreeDelQuotePlain {
+			if c == '`' && (r.state == worktreeDelQuotePlain || r.state == worktreeDelQuoteComment) {
+				// a # in a backtick body opens a comment, but the closing backtick still ends the substitution (echo "`# '`" runs nothing)
 				return string(out), i + 1
 			}
 		} else {
