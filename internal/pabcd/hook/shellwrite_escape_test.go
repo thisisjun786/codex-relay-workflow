@@ -76,7 +76,8 @@ func TestShellWriteEscapePathJoin(t *testing.T) {
 		{command: path("Path(f'/review/memories/{name}\\x2f..\\x2f..\\x2fa', name).write_text('x')"), has: []string{"/review/memories/{name}\\x2f..\\x2f..\\x2fa"}},
 		{command: path("Path('/review/memories/\\N{LATIN SMALL LETTER A}').write_text('x')"), has: []string{"/review/memories/\\N{LATIN SMALL LETTER A}"}},
 		{command: path("Path('\\x2fm', name).write_text('x')"), has: []string{"/m", "\\x2fm"}},
-		{command: path("Path('/m', f'a{{b}}').write_text('x')"), has: []string{"/m/a{{b}}"}, lacks: []string{"/m", "/m/a{b}"}},
+		{command: path("Path('/m', f'a{{b}}').write_text('x')"), has: []string{"/m/a{b}"}, lacks: []string{"/m", "/m/a{{b}}"}},
+		{command: `python3 -c 'from pathlib import Path; Path("/tmp", """review""", "memories", "a").write_text("x")'`, has: []string{"/tmp/review/memories/a"}},
 		{command: path("Path(name, 'a').write_text('x')"), same: true},
 		{command: path("Path(base, '/m/a').write_text('x')"), has: []string{"/m/a"}},
 		{command: path("Path('/m', *parts).write_text('x')"), has: []string{"/m"}},
@@ -113,6 +114,12 @@ func TestShellWriteEscapePythonPaths(t *testing.T) {
 		{command: "python3 -c 'open(\"/m/\\d\",\"w\")'", has: []string{"/m/\\d"}, same: true},
 		{command: "python3 -c 'from pathlib import Path; Path(\"\\x2fm/a\").write_text(\"x\")'", has: []string{"/m/a"}},
 		{command: "python3 -c 'open(\"/m/\\\na\",\"w\")'", has: []string{"/m/a"}},
+		{command: "python3 -c 'open(\"\"\"\\x2fm/a\"\"\",\"w\")'", has: []string{"/m/a"}},
+		{command: "python3 -c \"open('''/m/b''','w')\"", has: []string{"/m/b"}},
+		{command: "python3 -c 'open(r\"\"\"\\x2fm\"\"\",\"w\")'", has: []string{"\\x2fm"}, lacks: []string{"/m"}},
+		{command: "python3 -c 'open(\"\"\"abc\",\"w\")'", same: true},
+		{command: "python3 -c 'open(\"\"\"a\"\"\"x\",\"w\")'", same: true},
+		{command: "python3 -c 'open(\"\"\"/m/a\"\"\",\"\\x77\")'", has: []string{"/m/a"}},
 	})
 }
 
@@ -136,6 +143,10 @@ func TestShellWriteEscapePythonLiteral(t *testing.T) {
 		{"'\\U00110000'", "", false}, {"'\\N{SOLIDUS}'", "", false}, {"'\\N'", "", false}, {"b'\\x2'", "", false},
 		{"'\\0'", "", false}, {"'\\x00'", "", false}, {"'\\u0000'", "", false}, {"'a\\000'", "", false}, {"b'\\400'", "", false},
 		{"'a' 'b'", "", false}, {"'abc", "", false}, {"name", "", false},
+		{"\"\"\"review\"\"\"", "review", true}, {"'''/m/b'''", "/m/b", true}, {"r'''\\x2fm'''", "\\x2fm", true},
+		{"\"\"\"a\\x2fm\"\"\"", "a/m", true}, {"\"\"\"abc", "", false}, {"\"\"\"a\"\"\"x", "", false},
+		{"f'a{{b}}'", "a{b}", true}, {"rf'a{{b}}'", "a{b}", true}, {"r'a{{b}}'", "a{{b}}", true},
+		{"f'\\x7b\\x7b'", "{{", true}, {"f'a{b}'", "a{b}", true},
 		{"'/h/\\udcc3\\udca9/m'", "/h/\u00e9/m", true}, {"'\\U0000dcc3'", "\xc3", true}, {"'\\udc80'", "\x80", true}, {"b'\\udcc3'", "\\udcc3", true},
 		{"'\\ud83d'", "", false}, {"'\\ud83d\\ude00'", "", false}, {"'\\udc7f'", "", false}, {"'\\udd00'", "", false}, {"'\\ud800'", "", false},
 	} {
