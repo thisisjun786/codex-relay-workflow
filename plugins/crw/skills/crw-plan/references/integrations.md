@@ -249,12 +249,16 @@ preserving product labels, context links, unrelated fields and history.
 
 ### Issue-to-PR mapping
 
-One implementation issue corresponds to one PR, and that PR delivers one
-implementation issue. Split work requiring several PRs into separate issues
-with explicit dependencies, even within one repository. Keep a multi-repository
+Today's operation is one implementation issue per packet and PR, and that PR delivers that
+one issue: several PRs for one issue, or one PR delivering several issues, are reconciled
+through `crw-plan` before new dispatch. Split work requiring several PRs into separate
+issues with explicit dependencies, even within one repository. Keep a multi-repository
 outcome in one project when appropriate, with one issue per repository PR.
 Batches coordinate separate issue/PR pairs; they do not combine issues into one
-PR. Referencing a related issue is not claiming to deliver or close it.
+PR. Referencing a related issue is not claiming to deliver or close it. This is today's
+operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
+not a standing one-to-one rule: several packets for one feature are allowed by policy and
+switch on when their support lands.
 
 Keep review fixes on the same issue and PR. A necessary replacement PR retains
 the superseded link and names the one current delivery PR; it does not create a
@@ -1097,8 +1101,10 @@ Keep its source baseline and delivered output identity under the non-PR evidence
 
 ### Implementation Done
 
-For the current one-issue/one-PR model, an implementation issue is Done when its
-one current delivery PR is actually merged into the intended integration target. Read GitHub's current PR identity,
+An implementation issue is Done when every accepted criterion maps to a commit that actually merged into the
+intended integration target, and a partial implementation never closes it. In today's operation one issue runs as
+one packet and one PR, so that mapping is its one current delivery PR's landing
+([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)). Read GitHub's current PR identity,
 repository, base branch, merged state and landing commit against the issue's
 accepted scope. A related/reference PR, superseded replacement, approval, green
 CI, merge-ready flag or closed-but-unmerged PR is not that evidence. Merging a
@@ -1326,11 +1332,11 @@ Where publication IS in scope, draft marks an implementation not yet worth readi
 
 Each step below is a separate recorded fact, in this order: implement with the local validation the change actually needs; open the PR non-draft or transition the existing draft to Ready for review; request the review the repository requires and the assignment's authorization covers, and confirm it actually started, because a request that never started is not a review; reproduce, fix, reply to and resolve findings, refreshing only the review evidence invalidated by a changed head, under the [reviewer policy](../../crw-run/references/merge-readiness.md#reviewer-policy); report `ready_for_parent_review` only once the relevant review, check, and finding gates are met. The coordinator then compares the issue's criteria against the current diff, base, head, checks, and reviews, and may merge under existing authorization. Release and deployment need Jun's approval.
 
-Where the child's workflow runs an independent review of its candidate, that review belongs to the first step above, implementing with the local validation the change needs: it ends on the head the pull request is opened from, and the hosted review in the steps after it follows on the open pull request. They are different reviews, so this does not move the order above, and the child's handoff says whether the head it reviewed is the one published and lists the commits made after it ([what a handoff discloses](../../crw-run/references/task-packet.md#what-a-handoff-discloses)).
+Where the child's workflow runs an independent review of its candidate, that review belongs to the first step above, implementing with the local validation the change needs: it ends on a head, and the hosted review follows on the open pull request. They are different reviews and may overlap, so this does not move the order above, and the child's handoff says which head it reviewed and lists the commits made after it ([what a handoff discloses](../../crw-run/references/task-packet.md#what-a-handoff-discloses)).
 
 Which of those findings has to be fixed before that report, and which may be left with a recorded acceptance, is decided by [impact](../../crw-run/references/merge-readiness.md#judge-a-finding-by-its-impact) rather than by how a reviewer labelled it or how many rounds have already run. A conditional acceptance there belongs to the parent that owns the criteria, and it is recorded as an acceptance carrying its follow-up rather than as a fix.
 
-An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. The first run Devin and Codex each make on the pull request is the exception: it is awaited to its end before the receipt ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). A required review gate is not waivable that way.
+An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. The first run Devin and Codex each make on the pull request is the exception: it is awaited within the [waiting budget](../../crw-run/references/merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) before the receipt, and a run still going when the budget ends is recorded as pending rather than complete ([Devin and Codex reviews are references, not merge gates](../../crw-run/references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). A required review gate is not waivable that way.
 
 Review findings, pending CI, and ordinary revision pushes never send a pull request back to draft. Re-draft only when the implementation itself stops being reviewable.
 
