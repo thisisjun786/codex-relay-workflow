@@ -691,6 +691,8 @@ set in force at that moment, and a managed assignment refuses a verdict that is 
 Editing a criterion's text afterwards, even keeping its id, invalidates that review rather than
 passing it, and the assignment reports `re_review_needed` instead of `verified`.
 
+There is no parameter that turns any of this off.
+
 ## Fixing the head a verified ruling handled
 
 A `verified` ruling may carry the head it handled:
@@ -722,8 +724,6 @@ records; it does not write a second row, because one event has one verified head
 
 A value that is not 40 lowercase hex digits is a usage error (exit 4), like any other option value
 this command refuses.
-
-There is no parameter that turns any of this off.
 
 ## Ruling an event that is already ruled
 

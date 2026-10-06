@@ -185,6 +185,43 @@ func TestVerdictVerifiedHeadCannotBeAddedByAReplay(t *testing.T) {
 	}
 }
 
+// A re-review ruled verified under a re-registered criteria set keeps the head the event already
+// records: it writes no second row, and it is refused for another head.
+func TestVerdictVerifiedHeadOnAReReviewKeepsTheRecordedHead(t *testing.T) {
+	t.Parallel()
+	v := newVH(t)
+	rid, event := v.ruled()
+	criteria := v.ack.Criteria
+	first, err := criteria.Register(v.ctx, rid, []any{
+		Obj{{Key: "id", Value: "c1"}, {Key: "title", Value: "the endpoint returns the agreed shape"}, {Key: "required", Value: false}},
+	}, nil)
+	mustDo(t, err)
+	if _, err := v.ack.RecordVerdict(v.ctx, event, "verified", "verdict-turn-1", nil, nil, nil, first.Get("setDigest"), vhHead); err != nil {
+		t.Fatal(err)
+	}
+	// the criteria set moves, so the next ruling is a re-review, and it is still a verified ruling
+	moved, err := criteria.Register(v.ctx, rid, []any{
+		Obj{{Key: "id", Value: "c1"}, {Key: "title", Value: "the endpoint returns the agreed shape"}, {Key: "required", Value: false}},
+		Obj{{Key: "id", Value: "c2"}, {Key: "title", Value: "a malformed request is refused"}, {Key: "required", Value: false}},
+	}, nil)
+	mustDo(t, err)
+	if _, err := v.ack.RecordVerdict(v.ctx, event, "verified", "verdict-turn-2", nil, nil, nil, moved.Get("setDigest"), vhHead); err != nil {
+		t.Fatal(err)
+	}
+	rows := v.heads(event)
+	if len(rows) != 1 {
+		t.Fatalf("a re-review wrote %d heads, want the one the first ruling fixed", len(rows))
+	}
+	if got := rows[0].S("verdict_turn_id"); got != "verdict-turn-1" {
+		t.Fatalf("verdict_turn_id = %q, want the turn that fixed the head", got)
+	}
+	_, err = v.ack.RecordVerdict(v.ctx, event, "verified", "verdict-turn-3", nil, nil, nil, nil, vhOther)
+	requireReason(t, err, DispositionConflict)
+	if rows := v.heads(event); len(rows) != 1 || rows[0].S("head_sha") != vhHead {
+		t.Fatalf("a refused re-review changed the head: %v", rows)
+	}
+}
+
 // The flag is on the command line: verdict's help names it, and a value that is not 40 lowercase hex
 // characters ends in the option-value rejection path this command already uses (the usage envelope,
 // exit 4), never in the writer.
