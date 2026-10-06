@@ -98,6 +98,10 @@ type Check struct {
 	// Stamp is when the forge last changed the check (a commit status has no attempt, so this is what tells a status that failed again from the same status read twice).
 	Stamp   string
 	Attempt int64
+	// NotRun is the collector's mark that the job began no step: a cancelled job the runner never
+	// picked up. It is read as a strict boolean and written back into the restated rows only when
+	// it is true, so a row without it gains no field (CRW-676).
+	NotRun bool
 }
 
 // Problem is one problem code of a merge-evidence snapshot.

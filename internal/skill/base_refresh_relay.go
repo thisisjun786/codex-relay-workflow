@@ -60,7 +60,8 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 		}
 	}
 	facts := refreshFacts{parents: []string{st.Previous, st.BaseParent}, mergeTree: merged.tree, headTree: st.Tree}
-	_, why, err := g.settleMechanical(ctx, facts, st.Previous, st.Head, st.BaseParent, cov, eligible, merged, defaultRegenerateTimeout)
+	// The relay classifies only the paths a declaration covers, so no built-in rule applies here.
+	_, why, err := g.settleMechanical(ctx, facts, st.Previous, st.Head, st.BaseParent, cov, eligible, merged, nil, defaultRegenerateTimeout)
 	if err != nil {
 		return nil, err
 	}
