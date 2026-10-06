@@ -866,6 +866,48 @@ func TestRelayReadUnreadableItemKeepsItsPlace(t *testing.T) {
 
 // ---------------------------------------------------------------- C6
 
+// The two list predicates this command restates from the relay's own rules — which relationships
+// are live and which merge turns have not closed — are pinned to the shipped schema's guard-index
+// predicates, so a change to the relay's live or open vocabulary cannot silently narrow this
+// projection: the constants stop matching the shipped schema and this test fails.
+func TestRelayReadPredicatesMatchTheShippedSchema(t *testing.T) {
+	_, guards, err := store.SchemaStatements()
+	if err != nil {
+		t.Fatalf("read the shipped schema: %v", err)
+	}
+	wanted := map[string]string{
+		"scope_bindings_one_live_owner": relayReadLiveRelationshipFilter,
+		"merge_turns_one_live_claim":    relayReadOpenTurnFilter,
+	}
+	found := map[string]bool{}
+	for _, statement := range guards {
+		for index, predicate := range wanted {
+			if !strings.Contains(statement, "CREATE UNIQUE INDEX IF NOT EXISTS "+index+" ") {
+				continue
+			}
+			found[index] = true
+			if got, want := relayReadNormalizePredicate(statement), relayReadNormalizePredicate(predicate); got != want {
+				t.Errorf("%s: the shipped predicate is %q and this command's is %q; the projection would silently narrow",
+					index, got, want)
+			}
+		}
+	}
+	for index := range wanted {
+		if !found[index] {
+			t.Errorf("the shipped schema carries no guard index %s; this command's predicate is no longer pinned", index)
+		}
+	}
+}
+
+// relayReadNormalizePredicate is the WHERE clause of a guard index or a bare predicate with its
+// spacing made uniform, so a formatting difference is not read as a vocabulary difference.
+func relayReadNormalizePredicate(statement string) string {
+	if at := strings.Index(statement, " WHERE "); at >= 0 {
+		statement = statement[at+len(" WHERE "):]
+	}
+	return strings.Join(strings.Fields(strings.ReplaceAll(statement, "','", "', '")), " ")
+}
+
 // C6: the marker strings a settings record, a delivery body and a verdict memo carry never reach
 // the projection.
 func TestRelayReadHidesSettingsAndDeliveryBodies(t *testing.T) {
