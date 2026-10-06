@@ -736,18 +736,38 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 			continue
 		}
 		j := i - n - 1
-		if j < 0 || rs[j] != '.' {
-			return true // a plain call: nothing, or a character that is no identifier, stands before the name
-		}
-		for _, module := range []string{"builtins", "__builtins__"} {
-			m := len(module)
-			if j < m || string(rs[j-m:j]) != module || ident(j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
-				continue
+		if j >= 0 && rs[j] == '.' {
+			for _, module := range []string{"builtins", "__builtins__"} {
+				m := len(module)
+				if j < m || string(rs[j-m:j]) != module || ident(j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
+					continue
+				}
+				return true
 			}
-			return true
+			continue
 		}
+		if shellWriteExecDefHeader(rs, j) {
+			continue // a def or async def header binds a name; the parenthesis opens its parameters, not a call
+		}
+		return true // a plain call: nothing, or a character that is no identifier, stands before the name
 	}
 	return false
+}
+
+// shellWriteExecDefHeader reports whether the name that ends just before rs[j] is the one a def or async def header binds, so
+// the parenthesis that follows opens a parameter list and runs nothing (CRW-754 review: a definition is no call).
+func shellWriteExecDefHeader(rs []rune, j int) bool {
+	k := j
+	for k >= 0 && (rs[k] == ' ' || rs[k] == '\t') {
+		k--
+	}
+	if k < 2 || string(rs[k-2:k+1]) != "def" {
+		return false
+	}
+	b := func(p int) bool {
+		return p >= 0 && (rs[p] >= 128 || rs[p] == '_' || shellVerbLetter(byte(rs[p]), true))
+	}
+	return !b(k - 3)
 }
 
 // shellWriteFStringOpenWritesRunes is shellVerbOpenWritesIn over an already comment-stripped program: the destinations the
@@ -1350,17 +1370,20 @@ func shellWriteFStringNestedScript(tokens []string) (string, bool) {
 	return strings.Join(args, " "), true
 }
 
-// shellWriteFStringUnreadableProgram scans a Python program and its shell-unescaped reading for an unreadable f-string.
+// shellWriteFStringUnreadableProgram reports the what of a Python program the reader cannot finish: an f-string replacement
+// field it cannot read (CRW-741) in either reading, and a program passed to exec, eval or compile whose first argument is no
+// string literal (CRW-754) in every reading the token allows.
 func shellWriteFStringUnreadableProgram(script string) (string, bool) {
 	if what, bad := shellWriteFStringProgramUnreadable(script); bad {
 		return what, true
 	}
-	if un := shellVerbUnescape(script); un != script {
+	un := shellVerbUnescape(script)
+	if un != script {
 		if what, bad := shellWriteFStringProgramUnreadable(un); bad {
 			return what, true
 		}
 	}
-	return "", false
+	return shellWriteExecUnreadableProgram(script, un)
 }
 
 // shellWriteFStringPythonScript is the program of a python -c/--command command, as shellVerbPythonNode reads it: a bundled
@@ -1396,8 +1419,8 @@ func shellWriteFStringPythonScript(tokens []string) (string, bool) {
 // shellWriteFStringProgramUnreadable reports the what of one Python program the reader cannot finish: an f-string
 // replacement field it cannot read (CRW-741), or a program passed to exec, eval or compile whose first argument is no
 // string literal, or one nested deeper than shellWriteExecMaxDepth (CRW-754). The f-string scan keeps CRW-741's own rule -
-// every quote position of the program is examined - and the exec walk (shellWriteExecScan) adds the programs a literal
-// passed to exec, eval or compile names.
+// every quote position of the program is examined - and the exec check (shellWriteExecUnreadableProgram) adds the programs a
+// literal passed to exec, eval or compile names.
 func shellWriteFStringProgramUnreadable(program string) (string, bool) {
 	rs := shellVerbWithoutComments(program, true)
 	for i := 0; i < len(rs); i++ {
@@ -1409,10 +1432,27 @@ func shellWriteFStringProgramUnreadable(program string) (string, bool) {
 			i = end - 1
 		}
 	}
-	if _, what := shellWriteExecScan(rs, true, 0); what != "" {
+	return "", false
+}
+
+// shellWriteExecUnreadableProgram is the exec fail-closed reason of one Python program: the reason only when every reading
+// the reader considers - the program as the token holds it (program) and again with its shell escapes removed (unescaped) -
+// reports it. A reading that reads the call's first argument as a string literal names the writes inside it, so a reason
+// taken from the other reading alone would deny a program this reader can read (CRW-754 review: shellVerbUnescape turns a
+// valid literal with an escaped quote into a reading whose quotes no longer pair, so only the unescaped reading looks
+// unreadable).
+func shellWriteExecUnreadableProgram(program, unescaped string) (string, bool) {
+	_, what := shellWriteExecScan(shellVerbWithoutComments(program, true), true, 0)
+	if what == "" {
+		return "", false
+	}
+	if unescaped == program {
 		return what, true
 	}
-	return "", false
+	if _, other := shellWriteExecScan(shellVerbWithoutComments(unescaped, true), true, 0); other == "" {
+		return "", false
+	}
+	return what, true
 }
 
 // shellWriteTripleFold is the body of a field-free f-string literal with its doubled braces folded to single ones, as Python folds

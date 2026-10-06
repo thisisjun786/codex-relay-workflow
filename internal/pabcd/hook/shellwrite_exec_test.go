@@ -211,6 +211,49 @@ func TestShellWriteExecGateDeniesAndSpends(t *testing.T) {
 	}
 }
 
+// TestShellWriteExecReviewCases pins the two findings of this pull request's Devin review, both over-blocking in this
+// issue's own new code: a definition of one of the three names is no call, and the shell-unescaped reading of a program this
+// reader can read must not turn it into an unreadable one.
+func TestShellWriteExecReviewCases(t *testing.T) {
+	// A def or async def header binds a name; its parameter list runs nothing.
+	for _, c := range []struct{ name, program string }{
+		{"def compile", "def compile(source, filename, mode): return source"},
+		{"def exec", "def exec(x): pass"},
+		{"async def eval", "async def eval(x): pass"},
+		{"def on the next line", "x = 1\ndef compile(source, filename, mode):\n    return source"},
+		{"def with a blank before the paren", "def compile (source, filename, mode): return source"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got, ok := shellWriteFStringUnreadableProgram(c.program); ok {
+				t.Errorf("%q reported unreadable %q", c.program, got)
+			}
+		})
+	}
+	// A real call in the same program is still read.
+	if got := shellVerbOpenWrites("def compile(x): return x\ncompile('open(\"/m/a\", \"w\")', 'f', 'exec')"); !slices.Contains(got, "/m/a") {
+		t.Errorf("a call beside a definition named %q, want /m/a", got)
+	}
+	// The unescaped reading of a readable program must not report a reason.
+	for _, command := range []string{
+		"python3 -c 'exec(\"x = \\\"a\\\"\")'",
+		"python3 -c 'exec(\"print(\\\"hi\\\")\")'",
+	} {
+		if got, ok := shellWriteFStringUnreadable(command); ok {
+			t.Errorf("%q reported unreadable %q", command, got)
+		}
+	}
+	// An exec whose first argument really is no literal is still unreadable, whatever the escaping.
+	for _, command := range []string{
+		"python3 -c 'exec(src)'",
+		"python3 -c \"exec(src)\"",
+		"python3 -c \"exec(open('x.py').read())\"",
+	} {
+		if got, ok := shellWriteFStringUnreadable(command); !ok || got != shellWriteExecWhatWant {
+			t.Errorf("%q: got %q, %v; want %q, true", command, got, ok, shellWriteExecWhatWant)
+		}
+	}
+}
+
 // TestShellWriteExecDepthStaysBounded is the bound case: a program nested far past the limit is refused at the limit
 // instead of walked to the bottom. The chain grows by a constant amount per level (each level writes the quote and
 // backslash characters of the level below as hex escapes), so a 200-level input is a few kilobytes and the reader
