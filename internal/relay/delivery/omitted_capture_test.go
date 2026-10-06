@@ -187,58 +187,75 @@ func plainOmitted(v any) any {
 }
 
 func Test24_OMI_1_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_actual_omission_plus_independent_settlement_is_unreported_and_read_only")
 }
 func Test24_OMI_4_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_empty_queue_is_not_a_stop_observation")
 }
 func Test24_OMI_5_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_stop_is_not_terminal_evidence")
 }
 func Test24_OMI_6_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_duplicate_stop_and_later_declaration_preserve_original_warning")
 }
 func Test24_OMI_9_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_foreign_global_observation_does_not_settle_this_assignment")
 }
 func Test24_OMI_11_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_legacy_admission_needs_fresh_binding_before_omission_is_proven")
 }
 func Test24_OMI_12_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_paused_relationship_is_preserved_without_writes")
 }
 func Test24_OMI_13_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_marker_absent_is_unmanaged")
 }
 func Test24_OMI_17_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_conflicting_terminal_observations_remain_unknown")
 }
 func Test24_OMI_20_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_unregistered_warning_is_visible_without_claiming_omitted_assignment")
 }
 func Test24_OMI_21_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_reader_requires_actual_omission_not_only_an_ended_turn")
 }
 func Test24_OMI_22_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_more_than_bounded_stop_history_does_not_pick_a_convenient_subset")
 }
 
 func Test24_OMI_2_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_a_registration_naming_another_generation_is_not_read_as_receipted")
 }
 func Test24_OMI_7_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_staged_ready_stays_staged")
 }
 
 // A frozen copy nested past json.loads's depth leaves guard.deliverable_state as a
 // RecursionError, which the reader answers as unreadable evidence with the exception's words.
 func Test24_OMI_7b_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_a_frozen_copy_nested_past_the_decoder_is_unreadable_evidence")
 }
 func Test24_OMI_8_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_failed_settlement_without_receipt_is_not_a_report")
 }
 func Test24_OMI_10_WholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{
 		"test_wrong_dispatch_claim_on_bound_session_is_unmeasured",
 		"test_exact_assignment_does_not_switch_to_more_recent_claim",
@@ -249,6 +266,7 @@ func Test24_OMI_10_WholeOutput(t *testing.T) {
 	}
 }
 func Test24_OMI_14_WholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{
 		"test_bad_stop_identity_is_not_an_omission",
 		"test_symlink_to_foreign_marker_file_is_unmeasured",
@@ -260,15 +278,19 @@ func Test24_OMI_14_WholeOutput(t *testing.T) {
 	}
 }
 func Test24_OMI_15_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_changed_registry_during_read_does_not_mix_facts")
 }
 func Test24_OMI_16_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_missing_managed_schema_is_not_absence_of_bootstrap")
 }
 func Test24_OMI_18_WholeOutput(t *testing.T) {
+	t.Parallel()
 	replayOmittedCalls(t, "test_normal_managed_start_standby_is_not_business")
 }
 func Test24_OMI_19_WholeOutput(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{
 		"test_store_and_issue_provenance_are_independent_of_same_session",
 		"test_missing_selected_database_stays_missing",

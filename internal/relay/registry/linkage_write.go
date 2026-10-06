@@ -255,11 +255,17 @@ func (r *Registry) ContestedDirectives(ctx context.Context, kind, key string) ([
 
 // ------------------------------------------------------------------ binding
 
-// BindScopeAs is bind_scope with its status argument.
+// BindScopeAs is bind_scope with its status argument, on the role's own level.
 func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
-	kind, known := roleScope[role]
-	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", strconv.Quote(role))
+	return r.bindScopeKind(ctx, role, "", key, endpoint, status)
+}
+
+// bindScopeKind is bind_scope with the scope kind named: --scope-kind store moves the supervisor
+// seat off its own Linear level onto the store, and no other binding may name one (CRW-450).
+func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
+	kind, err := bindingScopeKind(role, requested, key)
+	if err != nil {
+		return nil, err
 	}
 	if status != Active && status != "paused" && status != "cancelled" && status != statusArchived {
 		return nil, refuse(contract.RefusalLinkNotActive, "bad status %s", strconv.Quote(status))
@@ -278,7 +284,7 @@ func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint E
 	defer release()
 	var refused *linkRefusal
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		plan, refusal, err := l.bindingPlan(ctx, role, key, endpoint, "")
+		plan, refusal, err := l.bindingPlanKind(ctx, role, kind, key, endpoint, "")
 		if err != nil {
 			return err
 		}
@@ -759,9 +765,17 @@ func (r *Registry) Attached(ctx context.Context, project string, task, otherThan
 
 // Handover is Linkage.handover.
 func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpoint Endpoint, acknowledged []string, evidence, actor string) (contract.OrderedObject, error) {
-	kind, known := roleScope[role]
-	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "unknown role %s", strconv.Quote(role))
+	return r.HandoverScopeKind(ctx, role, "", key, expect, endpoint, acknowledged, evidence, actor)
+}
+
+// HandoverScopeKind is Handover with the scope kind named: --scope-kind store moves the supervisor's
+// store seat, the one scope no Linear level owns, and no other handover may name one (CRW-450). The
+// kind is decided by bindingScopeKind, the same rule linkage-bind uses, so the accepted combination
+// lives in one place; every other handover keeps the role's own level.
+func (r *Registry) HandoverScopeKind(ctx context.Context, role, requested, key, expect string, endpoint Endpoint, acknowledged []string, evidence, actor string) (contract.OrderedObject, error) {
+	kind, err := bindingScopeKind(role, requested, key)
+	if err != nil {
+		return nil, err
 	}
 	if role == roleChild {
 		return nil, refuse(contract.RefusalScopeRoleMismatch, "a child is replaced by registering its successor with supersedes, which moves "+
@@ -861,7 +875,7 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 		}
 		var plan *bindingPlan
 		if refusal == nil {
-			if plan, refusal, err = l.bindingPlan(ctx, role, key, endpoint, expect); err != nil {
+			if plan, refusal, err = l.bindingPlanKind(ctx, role, kind, key, endpoint, expect); err != nil {
 				return err
 			}
 		}

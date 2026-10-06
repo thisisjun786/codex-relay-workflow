@@ -67,6 +67,7 @@ func (k *laneKit) request(node string) (JudgeResult, map[string]any, error) {
 // Criterion c8 with D-16: a pull request that is not eligible never gets a merge turn (a stale base, a failing required check, a retry still open), the two that are eligible queue in the
 // order they asked, and the lane's own check and landing run unchanged on the eligible head. Afterwards every landed tree has a judgement of eligibility for the very head that landed.
 func TestMergeLaneStaysFIFOAndLandsOnlyJudgedTrees(t *testing.T) {
+	t.Parallel()
 	k := newLaneKit(t)
 	repo := k.repo
 	// S: the head was cut before the base moved

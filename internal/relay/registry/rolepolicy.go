@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -22,6 +23,34 @@ const RoleRecovery = "Re-record this task's authorized settings from a source at
 
 // roleScope is linkage.ROLE_SCOPE.
 var roleScope = map[string]string{"supervisor": "initiative", "parent": "project", "child": "issue"}
+
+// storeScopeRoles is linkage.STORE_SCOPE_ROLES: the roles that may name the store scope with
+// --scope-kind. The store is the one scope no Linear level owns, and it is the supervisor's alone,
+// so a task bound there holds a seat that is not an initiative execution binding: the initiative
+// supervisors stay one per initiative, while a session that manages the store itself still has a
+// seat. One task holds one supervisor seat, so the seat is not additive.
+var storeScopeRoles = map[string]bool{"supervisor": true}
+
+// bindingScopeKind is the scope kind a binding of role takes: the role's own level unless the
+// caller names one, and the store seat is the only kind a caller may name.
+func bindingScopeKind(role, requested, key string) (string, error) {
+	kind, known := roleScope[role]
+	if !known {
+		return "", refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", strconv.Quote(role))
+	}
+	if requested == "" {
+		return kind, nil
+	}
+	if requested == scopeStore && storeScopeRoles[role] {
+		if key != scopeStore {
+			return "", refuse(contract.RefusalScopeRoleMismatch, "the store seat has one key, %s, not %s; a seat under any other key would be recorded and never read",
+				pyvalue.StrRepr(scopeStore), pyvalue.StrRepr(key))
+		}
+		return scopeStore, nil
+	}
+	return "", refuse(contract.RefusalScopeRoleMismatch, "--scope-kind %s is not a scope a %s takes; the store seat is the supervisor's and goes with --scope store",
+		pyvalue.StrRepr(requested), pyvalue.StrRepr(role))
+}
 
 // RolePolicy is rolepolicy.Declared or Unresolved: Declared is true when a policy declaring roles
 // was read. Detail is the Unresolved detail.

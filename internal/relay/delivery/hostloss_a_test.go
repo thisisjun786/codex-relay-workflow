@@ -16,6 +16,7 @@ import (
 const hlt = "test_host_lost_turn"
 
 func Test21_HLT01_a_lost_accepted_turn_is_redelivered_once_under_the_next_attempt(t *testing.T) {
+	t.Parallel()
 	t.Run("turn missing from the list", func(t *testing.T) {
 		mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_the_daemon_redelivers_the_same_event_once_under_the_next_attempt", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -78,6 +79,7 @@ func sendIDs(h *hl) []any {
 }
 
 func Test21_HLT02_a_second_loss_holds_the_obligation_under_its_name(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_a_second_loss_holds_the_obligation_under_its_name_instead_of_a_third_send", func(h *hl) {
 		event, _, turn := h.dispatched()
 		h.hostLoses(turn, true)
@@ -97,6 +99,7 @@ func Test21_HLT02_a_second_loss_holds_the_obligation_under_its_name(t *testing.T
 }
 
 func Test21_HLT03_a_token_confirmed_completion_is_checked_like_an_accepted_one(t *testing.T) {
+	t.Parallel()
 	t.Run("checked for host loss", func(t *testing.T) {
 		mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_a_completion_confirmed_by_its_token_is_checked_like_an_accepted_one", func(h *hl) {
 			h.parentHistory()
@@ -152,6 +155,7 @@ func Test21_HLT03_a_token_confirmed_completion_is_checked_like_an_accepted_one(t
 }
 
 func Test21_HLT05_a_tick_whose_only_change_is_the_loss_is_not_quiet(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_a_tick_whose_only_change_is_the_loss_is_not_quiet", func(h *hl) {
 		event, _, turn := h.dispatched()
 		h.hostLoses(turn, true)
@@ -183,6 +187,7 @@ func Test21_HLT05_a_tick_whose_only_change_is_the_loss_is_not_quiet(t *testing.T
 }
 
 func Test21_HLT06_a_send_too_recent_to_judge_is_unknown_until_the_allowance_has_passed(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_a_send_too_recent_to_judge_is_unknown_until_the_allowance_has_passed", func(h *hl) {
 		event, first, turn := h.dispatched()
 		h.hostLoses(turn, true)
@@ -195,6 +200,7 @@ func Test21_HLT06_a_send_too_recent_to_judge_is_unknown_until_the_allowance_has_
 }
 
 func Test21_HLT07_the_turn_check_budget_reaches_every_delivery_and_reads_finished_turns_once(t *testing.T) {
+	t.Parallel()
 	t.Run("budget 2 per tick over 5 deliveries", func(t *testing.T) {
 		mirror(t, hlt, "TheHostLostTheAcceptedTurn.test_the_budget_bounds_lookups_and_every_delivery_is_reached", func(h *hl) {
 			h.parentHistory()
