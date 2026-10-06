@@ -242,8 +242,8 @@
   {"flag":"--restoration","help":"the criterion id whose finding carries this correction's restoration block. The verdict is refused if that finding would not reach the child."},
   {"flag":"--reason","help":"why an aborted or unverified verdict could not conclude"},
   {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"}]},
-{"name":"decision-reply","summary":"record the parent's decision on a child's blocked_needs_input receipt and queue it to the child. answer and stop keep the generation; split_approval and scope_change open the next one and name the criteria digest registered for the relationship","options":[
-  {"flag":"--event","required":true,"help":"the blocked_needs_input receipt this answers"},
+{"name":"decision-reply","summary":"record the parent's decision on a child's blocked_needs_input receipt, or an answer on a receipt the relay itself observed ending interrupted or failed, and queue it to the child. answer and stop keep the generation; split_approval and scope_change open the next one and name the criteria digest registered for the relationship","options":[
+  {"flag":"--event","required":true,"help":"the blocked_needs_input receipt this answers, or a receipt the relay itself observed ending interrupted or failed, which answer alone answers"},
   {"flag":"--decision","required":true,"choices":["answer","stop","split_approval","scope_change"]},
   {"flag":"--decision-turn","required":true,"help":"the parent turn the decision was made in"},
   {"flag":"--note","required":true,"help":"what the child is told, or @path to a file holding it"},

@@ -28,7 +28,8 @@ const (
 	OutcomeAlreadyReviewed = "already_reviewed"
 	OutcomeDailyCap        = "daily_cap_reached"
 	OutcomeRetryDeferred   = "retry_deferred"
-	OutcomeRecorded        = "recorded" // --post-only: the recorded result of the patch, nothing ran
+	OutcomeLockWaitExpired = "lock_wait_expired" // agy was not started because the host-wide lock was not free: nothing counted, nothing closed, try again
+	OutcomeRecorded        = "recorded"          // --post-only: the recorded result of the patch, nothing ran
 )
 
 // Exit statuses besides usageExit.
@@ -122,7 +123,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	case postErr != nil:
 		fmt.Fprintf(stderr, "crw review: error: the summary comment was not posted: %v\n", postErr)
 		return exitError
-	case sum.Outcome == OutcomeDailyCap || sum.Outcome == OutcomeRetryDeferred:
+	case sum.Outcome == OutcomeDailyCap || sum.Outcome == OutcomeRetryDeferred || sum.Outcome == OutcomeLockWaitExpired:
 		return exitRefused
 	}
 	return 0
@@ -232,6 +233,12 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if lockWaitExpired(a) { // agy was never started (the host-wide lock was not free within the wait): this is not a review of the patch, so nothing is counted, closed, kept or written and the same patch may be tried again at once
+		wait := entry(eventLockWait)
+		wait.Reason, wait.AgyCalled = string(agy.ReasonLockWaitExpired), agyCalledOf(a)
+		sum.Outcome, sum.Reason = OutcomeLockWaitExpired, fmt.Sprintf("agy was not started: the host-wide lock was not free within %s; nothing counted and nothing closed, try again", cfg.LockWait)
+		return sum, l.append(wait)
+	}
 	data, err := a.Marshal(m.Head)
 	if err != nil {
 		return fail(err)
@@ -240,8 +247,8 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	result := entry("finished")
 	result.Time = e.now().UTC().Format(time.RFC3339) // the day the attempt ended, maybe after the one it began on: the ledger line and retryNotBefore must agree on it
 	result.Artifact, result.SHA256, result.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
-	if reasons, ok := accountUnavailable(a); ok {
-		result.Reason = reasons
+	if reasons, ok := retryableUnavailable(a); ok {
+		result.Reason, result.AgyCalled = reasons, agyCalledOf(a)
 		if st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
 			result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
 		}
