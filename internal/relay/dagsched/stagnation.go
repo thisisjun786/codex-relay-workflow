@@ -213,9 +213,9 @@ func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, n
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
+	// Close's own error is not read, as the deferred Close above never was: iterating the rows is
+	// what rows.Err reports, and the answer this function returns is what it returned before.
+	_ = rows.Close()
 	var runs []correctionRun
 	for _, g := range collected {
 		// the generation this one follows: the nearest one below it that was not withdrawn
