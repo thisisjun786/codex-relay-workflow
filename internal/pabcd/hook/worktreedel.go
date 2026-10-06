@@ -671,8 +671,10 @@ const (
 // &>f, >'a b'): the shell's own reading of its options picks one of them, and reading one that was an argument can only deny too
 // much. After eval the program is its operands joined by blanks, as given and after the options up to --. The inner shell reads
 // a program as a command of its own, so the walk judges it as one: this shell's single quotes keep a backslash-newline pair that
-// the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm).
-func worktreeDelQuoteProgram(words []string) []string {
+// the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm). atDepth also returns a program that holds no
+// blank, which the walk judges only to deny it at the reading depth limit: a program string still unread there is denied
+// whether or not it holds a blank (CRW-670).
+func worktreeDelQuoteProgram(words []string, atDepth bool) []string {
 	for i, word := range words {
 		name := basename(word)
 		var programs []string
@@ -696,7 +698,7 @@ func worktreeDelQuoteProgram(words []string) []string {
 					}
 				}
 				for _, candidate := range candidates {
-					if strings.ContainsAny(candidate, " \t\r\n;&|()") {
+					if atDepth || strings.ContainsAny(candidate, " \t\r\n;&|()") { // a blank-less program is read only at the depth limit
 						programs = append(programs, candidate)
 					}
 				}
@@ -735,10 +737,11 @@ func worktreeDelOptionWord(word string) bool {
 // worktreeDelShellProgramEnd is how many of a shell's operands the walk reads as programs: the words from there on are $0, $1
 // and so on, which the shell does not read (bash -c 'echo OK' 'rm -rf x' runs echo). It is every operand, the reading that
 // CRW-611 left, unless the program is certain, and it holds back wherever the option parse could be wrong or the words after the
-// program could matter: a redirection word anywhere (a quoted > looks like one), a program that is a bare option or can name its
-// operands (a dollar sign, BASH_ARGV, argv: bash -c 'eval "$0"' 'rm -rf x' runs rm), and any option-like word after the program.
-// A later program needs a -c or --command of its own, which is such a word, so without one no later operand is a program,
-// however the options before it were read.
+// program could matter: a redirection word anywhere (a quoted > looks like one) and a program that is a bare option or can name
+// its operands (a dollar sign, BASH_ARGV, argv: bash -c 'eval "$0"' 'rm -rf x' runs rm). For sh, bash, dash and ash the operands
+// after the program are the inner shell's $0, $1 and so on whatever they look like, so a later option-like word is not a program
+// (bash -c 'echo OK' -c 'rm -rf x' runs echo, CRW-670); su, whose last -c is its program, and every other shell keep the reading
+// of every later option-like word, because the walk does not tell those shells apart.
 func worktreeDelShellProgramEnd(name string, operands []string) int {
 	program := -1
 	switch name {
@@ -760,12 +763,25 @@ func worktreeDelShellProgramEnd(name string, operands []string) int {
 		worktreeDelOptionWord(word) && !strings.ContainsAny(word, " \t\r\n;&|()") {
 		return len(operands)
 	}
-	for _, later := range operands[program+1:] {
-		if worktreeDelOptionWord(later) {
-			return len(operands)
+	if !worktreeDelShellDataOperands(name) {
+		for _, later := range operands[program+1:] {
+			if worktreeDelOptionWord(later) {
+				return len(operands)
+			}
 		}
 	}
 	return program + 1
+}
+
+// worktreeDelShellDataOperands says whether a shell reads the operands after its -c program as data, its $0, $1 and so on,
+// whatever they look like: sh, bash, dash and ash do, so a later option-like word is not a program for them. su, whose last
+// -c is its program, and every other shell do not, so the walk keeps reading every later option-like word for them.
+func worktreeDelShellDataOperands(name string) bool {
+	switch name {
+	case "sh", "bash", "dash", "ash":
+		return true
+	}
+	return false
 }
 
 // worktreeDelSuProgram is the index of the operand that holds su's -c program, -1 when it finds none. su reads its options with
@@ -881,6 +897,84 @@ func worktreeDelQuoteDropRedirects(words []string) []string {
 	return out
 }
 
+// worktreeDelSubstitutionBody is the text inside the substitution whose opener the caller has read: the body of $(...),
+// <(...) or >(...) (backtick false) or of a backtick pair (backtick true), and how many bytes it spans up to and including
+// the closing ) or backtick. It tracks the quotes, backslashes and comments inside the way the reader does, so a ) inside a
+// quote or a comment does not close the substitution and a nested ( counts. An unterminated substitution runs to the end.
+func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
+	var out []byte
+	depth := 1
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if r.escapes(rest, i) {
+			out = append(out, c, rest[i+1])
+			i++
+			r.pair()
+			continue
+		}
+		if backtick {
+			if c == '`' && r.state == worktreeDelQuotePlain {
+				return string(out), i + 1
+			}
+		} else {
+			switch {
+			case c == '(' && r.state == worktreeDelQuotePlain:
+				depth++
+			case c == ')' && r.state == worktreeDelQuotePlain:
+				if depth--; depth == 0 {
+					return string(out), i + 1
+				}
+			}
+		}
+		out = append(out, c)
+		r.step(c)
+	}
+	return string(out), len(rest)
+}
+
+// worktreeDelSubstitutions is the programs a segment runs before it runs: the body of every command substitution, $(...) and
+// backtick, and of every process substitution, <(...) and >(...), that stands in plain text or inside double quotes, because
+// the outer shell reads and runs each of them first (CRW-670). A substitution inside single quotes, inside $'...' or inside a
+// comment is data, and so is a $, < or backtick that a backslash escapes.
+func worktreeDelSubstitutions(segment string) []string {
+	var out []string
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(segment); i++ {
+		c := segment[i]
+		if r.escapes(segment, i) {
+			r.pair()
+			i++
+			continue
+		}
+		if r.state == worktreeDelQuoteSingle || r.state == worktreeDelQuoteANSIC || r.state == worktreeDelQuoteComment {
+			r.step(c)
+			continue
+		}
+		var body string
+		var n int
+		switch {
+		case c == '$' && i+1 < len(segment) && segment[i+1] == '(':
+			body, n = worktreeDelSubstitutionBody(segment[i+2:], false)
+			n += 2
+		case c == '`':
+			body, n = worktreeDelSubstitutionBody(segment[i+1:], true)
+			n++
+		case (c == '<' || c == '>') && i+1 < len(segment) && segment[i+1] == '(':
+			body, n = worktreeDelSubstitutionBody(segment[i+2:], false)
+			n += 2
+		default:
+			r.step(c)
+			continue
+		}
+		if strings.TrimSpace(body) != "" {
+			out = append(out, body)
+		}
+		i += n - 1
+	}
+	return out
+}
+
 // walk judges a command: the oracle's walk reads it as it is, the extended walk reads each of its readings, where the
 // shell has removed the backslash-newline pairs it removes, and denies when any reading denies. It judges every reading twice,
 // over the grammar the extended walk had and over bash's own quoting, comments and backslashes (worktreeDelQuoteSegments), the
@@ -894,7 +988,7 @@ func walk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict 
 }
 
 // worktreeDelQuoteDepth is how many program strings deep the walk follows a shell's program (sh -c 'sh -c ...'). A program
-// that is still unread there is denied: the walk cannot tell what it runs.
+// that is still unread there is denied, whether or not it holds a blank: the walk cannot tell what it runs.
 const worktreeDelQuoteDepth = 8
 
 // worktreeDelQuoteJudge is the extended walk of one text, depth program strings down: every reading over the old grammar and
@@ -919,7 +1013,7 @@ func worktreeDelWalk(command, cwd string, id WorktreeIdentity, extended bool) Gu
 // worktreeDelQuoteWalk is the loop over one text: the segments in order, a cd moving the directory later segments run in, and
 // the conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
 // quoting reads the text over bash's own quotes, backslashes and comments instead, and judges the program string that a shell
-// word hands to -c (depth says how many programs deep this text is).
+// word hands to -c and the program a substitution runs (depth says how many programs deep this text is).
 func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
 	hint := destructiveHint(extended)
 	segCwd, destructiveSeen := cwd, false
@@ -943,11 +1037,16 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 			continue
 		}
 		if quoting {
-			programs := worktreeDelQuoteProgram(tokens)
+			programs := worktreeDelQuoteProgram(tokens, depth >= worktreeDelQuoteDepth)
 			if depth >= worktreeDelQuoteDepth && len(programs) > 0 {
 				return GuardVerdict{Deny: true, Reason: denyReason("a shell program nested past the reading depth", id)}
 			}
 			for _, program := range programs {
+				if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
+					return verdict
+				}
+			}
+			for _, program := range worktreeDelSubstitutions(segment) {
 				if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
 					return verdict
 				}
