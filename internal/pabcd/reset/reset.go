@@ -270,7 +270,6 @@ func resetLinkWalkTarget(root *os.Root, target string) (exists, dotEnding, insid
 	return true, dotEnding, true
 }
 
-// resetLinkWalkDotEnding reports whether the last component still to walk is "." or "..", ignoring
 // resetLinkWalkSearchable reports whether the kernel could look a name up inside the directory the
 // walked components name, which is what resolving a final "." or ".." relative to that directory
 // needs. It asks through the pinned root's own descriptor, where a name inside the directory
@@ -298,6 +297,7 @@ func resetLinkWalkSearchable(root *os.Root, walked []string) bool {
 // is only whether the kernel may look it up, which it answers with ENOENT or EACCES.
 const resetLinkWalkSearchProbe = ".crw822searchprobe"
 
+// resetLinkWalkDotEnding reports whether the last component still to walk is "." or "..", ignoring
 // trailing separators. It is read at the top of each step so it survives both a spliced link target
 // and an early exit.
 func resetLinkWalkDotEnding(remaining []string) bool {
