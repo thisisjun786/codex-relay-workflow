@@ -708,6 +708,21 @@ func TestSupervisorRegisterReportsAWriteFailure(t *testing.T) {
 	}
 }
 
+// C3: a value that cannot be encoded is a failure of the run rather than a success with an
+// ok:false line on stdout. json.Marshal fails on a json.RawMessage that is not JSON, which is the
+// one way a report this command builds can fail to encode, so the failure is pinned directly on the
+// writer: it reports the error and the caller exits 1.
+func TestSupervisorWriteReportsAnEncodeFailure(t *testing.T) {
+	var out strings.Builder
+	err := supervisorWrite(&out, supervisorRefusal{OK: false, Reason: "binding_ambiguous", Detail: json.RawMessage("{not json")})
+	if err == nil {
+		t.Fatalf("supervisorWrite returned no error for a value it could not encode; stdout %q", out.String())
+	}
+	if !strings.Contains(out.String(), "encode_failed") {
+		t.Errorf("stdout %q does not carry the encode failure", out.String())
+	}
+}
+
 // The command line: -h is usage exit 0, an unknown subcommand and an unknown flag are exit 2, and a
 // section that names no settings file is refused before any relay call.
 func TestSupervisorCommandLine(t *testing.T) {

@@ -418,8 +418,13 @@ func supervisorRefuse(e *Env, reason string, linkage []byte) int {
 func supervisorWrite(w io.Writer, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil {
-		_, werr := fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error())
-		return werr
+		// The value could not be encoded, so what is written is the encode failure itself: the
+		// caller must still learn that its report was not the one it meant to send, so the error is
+		// returned whether or not that fallback line reached the writer.
+		if _, werr := fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error()); werr != nil {
+			return werr
+		}
+		return err
 	}
 	_, err = fmt.Fprintf(w, "%s\n", data)
 	return err
