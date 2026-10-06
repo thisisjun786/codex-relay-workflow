@@ -47,8 +47,12 @@ func classify(r *Roots) (*Plan, error) {
 			return c.plan, err
 		}
 	}
-	if u := r.User; u != nil && u.Source != nil {
-		if err := c.classifyUser(u); err != nil {
+	if u := r.User; u != nil {
+		if u.Source != nil {
+			if err := c.classifyUser(u); err != nil {
+				return c.plan, err
+			}
+		} else if err := c.classifyUserFallback(u); err != nil { // an absent source copies nothing but still reports the literal fallback home
 			return c.plan, err
 		}
 	}
@@ -89,6 +93,7 @@ func (c *classifier) classifyProject(p *Pair) error {
 	}
 	c.add(Item{Scope: ScopeProject, Source: ".", Destination: ".", Disposition: DispTransform,
 		Reason: "container to " + crwdir.DirName + "; created only after the preflight", Mode: mode})
+	c.noteDest(ScopeProject, "") // the destination root itself, whatever the source root holds
 	return c.classifyTree(ScopeProject, p.Source, "", inventoryProjectRows, nil)
 }
 
@@ -98,6 +103,7 @@ func (c *classifier) classifyUser(u *Pair) error {
 		return err
 	}
 	c.add(Item{Scope: ScopeUser, Source: ".", Destination: ".", Disposition: DispCopy, Reason: "user root container", Mode: mode})
+	c.noteDest(ScopeUser, "") // the destination root itself, whatever the source root holds
 	if err := c.classifyTree(ScopeUser, u.Source, "", inventoryUserRows, nil); err != nil {
 		return err
 	}
@@ -287,7 +293,8 @@ func (c *classifier) classifyBranch(scope Scope, dir *Dir, childPath, name strin
 }
 
 // emitDir records a directory item. A copied directory's mode is what M3 applies after its children are published; a skip row
-// writes nothing and takes no destination check.
+// writes nothing, takes no destination check and is not registered as a destination directory, so a container that holds only
+// skip rows never refuses on what lies at its nominal destination.
 func (c *classifier) emitDir(scope Scope, dir *Dir, childPath, name string, disp Disposition, reason string) error {
 	if disp != DispSkip {
 		if err := inventoryNameSupported(dir.join(name), name); err != nil {
@@ -296,12 +303,12 @@ func (c *classifier) emitDir(scope Scope, dir *Dir, childPath, name string, disp
 		if err := c.checkDestDir(c.destRoot(scope), childPath); err != nil {
 			return err
 		}
+		c.noteDest(scope, childPath)
 	}
 	st, err := classifyLstat(dir, name)
 	if err != nil {
 		return err
 	}
-	c.noteDest(scope, childPath)
 	c.add(Item{Scope: scope, Source: childPath, Destination: childPath, Disposition: disp, Reason: reason, Mode: fs.FileMode(st.Mode).Perm()})
 	return nil
 }
@@ -384,9 +391,11 @@ func (c *classifier) classifyDestTemps() error {
 	for _, d := range c.dests {
 		dir, opened, err := classifyOpenDest(d.root, d.path)
 		if err != nil {
+			classifyCloseAll(opened)
 			return err
 		}
 		if dir == nil {
+			classifyCloseAll(opened)
 			continue
 		}
 		names, err := dir.Names()
