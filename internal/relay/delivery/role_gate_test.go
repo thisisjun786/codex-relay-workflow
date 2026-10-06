@@ -13,6 +13,7 @@ import (
 // was started with. Until 2026-10-01 it refused every bound task as if no policy were readable,
 // so a completion event addressed to a parent bound with linkage-bind was withheld forever as
 // role_policy_unconfigured even by a relay service started with its policy.
+// sequential: t.Setenv(execution.EnvPolicy) is process-wide.
 func TestTheDefaultRoleGateAuthorizesABoundTaskUnderThisProcessesPolicy(t *testing.T) {
 	f := newFixture(t, "")
 	const task = "01parent-bound"

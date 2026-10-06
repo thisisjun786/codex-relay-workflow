@@ -37,6 +37,7 @@ func reconcile(t *testing.T, f *fixture, id, doc string) SummaryReconciliation {
 
 // A summary is a function of the progress it states: the same store state renders to the same bytes, and the text names the plan, the revision, the counts, each stage and each node.
 func TestSummaryTextStatesTheProgress(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	f.acceptNode("p1", "research", acceptOpts{})
 	f.startNode("p1", "design")
@@ -62,6 +63,7 @@ func TestSummaryTextStatesTheProgress(t *testing.T) {
 
 // What a document says of an entry. Each outcome is a case a lost response or a concurrent writer produces, and the parent's next move depends on which.
 func TestSummaryReconcileReadsTheDocument(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	e1, op, _ := claimedEntry(t, f, "doc-1")
 	page := "# Coordination\n\nSome text before.\n\n"
@@ -126,6 +128,7 @@ func reTokenFor(t *testing.T, f *fixture, id string) string {
 // A document that holds a summary of another entry of the stream: an older one (the entry still has to be written), a newer one (it must not be written: the newest entry is the one
 // to take), and the entry's own once it is confirmed.
 func TestSummaryReconcileComparesEntriesOfOneStream(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	e1, op1, _ := claimedEntry(t, f, "doc-1")
 	f.bump(1)
@@ -150,6 +153,7 @@ func TestSummaryReconcileComparesEntriesOfOneStream(t *testing.T) {
 // Two plans of one project may write one document: each has its own container, so a readback that carries both containers confirms the entry whose block sits in its own, and a block of
 // the other plan is no problem of this one.
 func TestSummaryContainersOfTwoPlansDoNotMix(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	f.putPlan("p2", 0, "p2-r1", addNode("a", dag.NodeNonPR))
 	ctx := context.Background()
@@ -186,6 +190,7 @@ func TestSummaryContainersOfTwoPlansDoNotMix(t *testing.T) {
 
 // A summary whose text holds backtick fences (a node title) still sits in a fence of its own that it cannot close, and reads back as itself.
 func TestSummaryTextWithFencesStaysInsideItsBlock(t *testing.T) {
+	t.Parallel()
 	bt := "```"
 	f := newFixture(t)
 	node := addNode("evil", dag.NodeNonPR)

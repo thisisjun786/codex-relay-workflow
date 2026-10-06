@@ -241,7 +241,7 @@ func TestScanRecordLockAndConcurrentUpdates(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			a := ScanCliArgs{Action: ScanActionRecord, SessionID: "s1", Cwd: cwd, Known: []ScanDimensionText{{Dimension: interview.DimensionGoal, Text: fmt.Sprintf("fact-%d", i)}}}
-			results <- RunScanCli(a)
+			results <- scanRecordRunRetryingLock(a)
 		}(i)
 	}
 	wg.Wait()
@@ -260,6 +260,37 @@ func TestScanRecordLockAndConcurrentUpdates(t *testing.T) {
 			t.Fatal("nonmonotonic scan ledger")
 		}
 	}
+}
+
+// scanRecordLockRetryLimit is how often a concurrent writer re-invokes the command after the session
+// lock gave up. The lock's wait budget is the oracle's (state.WithSessionLock's LOCK_RETRY_DELAYS_MS,
+// 5+10+15+20+25+30+35+40+35+35 ms = 250 ms in all) and giving up after it is deliberate, so the four
+// writers below would otherwise be decided by how long one fsync takes on the machine running the
+// test: on a slow CI disk the last writer exceeds the budget and the record fails with EEXIST (run
+// 37434547376 attempt 1, job go-product (test-rest)). A give-up wrote nothing (the lock function is
+// never entered), so re-invoking the command is the whole retry; the property under test (concurrent
+// updates are not lost) is unchanged, and a lock that is genuinely stuck still fails after the limit.
+const scanRecordLockRetryLimit = 50
+
+// scanRecordRunRetryingLock returns the result of RunScanCli, calling it again while the answer is the
+// session lock giving up. Any other failure is returned at once.
+func scanRecordRunRetryingLock(a ScanCliArgs) CliResult {
+	r := RunScanCli(a)
+	for attempt := 0; attempt < scanRecordLockRetryLimit && scanRecordLockGaveUp(a, r); attempt++ {
+		r = RunScanCli(a)
+	}
+	return r
+}
+
+// scanRecordLockGaveUp reports whether the result is the session lock giving up rather than a real
+// failure: RunScanCli answers Code 1 with the error of the last exclusive create of the session's
+// lock file, which cliErrorMessage renders as
+// "EEXIST: file already exists, open '<state file>.lock'". The path is checked as well as the errno,
+// so an EEXIST from another open — a temp file of the state write, say — fails the test at once
+// instead of being retried into a passing run.
+func scanRecordLockGaveUp(a ScanCliArgs, r CliResult) bool {
+	return r.Code == 1 && strings.Contains(r.Output, "EEXIST") &&
+		strings.Contains(r.Output, state.StatePath(a.Cwd, a.SessionID)+".lock")
 }
 
 func scanRecordWorkspace(t *testing.T) string {

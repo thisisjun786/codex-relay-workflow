@@ -159,6 +159,7 @@ func (s *refreshScenario) slotHeld() bool {
 // integrated false and mark_present false, holds its slot, and the hand-opened generation is refused by dag-correct because the result is current. Nothing here is a defect to fix by itself: the
 // relay does not integrate a node on a generation's mark until a base refresh is recorded.
 func TestWithoutARecordTheRefreshGenerationLeavesTheNodeUnintegrated(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()

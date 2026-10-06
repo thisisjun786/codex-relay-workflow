@@ -19,6 +19,7 @@ func resumeOf(c lifecycleCase) doc {
 // An abandoned release of a node the plan holds: the close is still allowed and returns the slot, the release that follows it is refused until the node resumes, and the resume releases it
 // once, under the successor request.
 func TestAnAbandonedReleaseOfAHeldNodeIsClosedButNotReleasedAgainUntilResumed(t *testing.T) {
+	t.Parallel()
 	for _, c := range lifecycleCases() {
 		if c.archived {
 			continue
@@ -62,6 +63,7 @@ func TestAnAbandonedReleaseOfAHeldNodeIsClosedButNotReleasedAgainUntilResumed(t 
 // A recovered release (the successor request of a closed intent) whose child was never created is a continuation like any other: the hold stops the replay, the resume lets the same
 // successor request continue, and exactly one child is created.
 func TestARecoveredReleaseIsNotContinuedForAHeldNode(t *testing.T) {
+	t.Parallel()
 	for _, c := range lifecycleCases() {
 		if c.archived || c.reason == "skip:node_cancelled" {
 			continue

@@ -10,6 +10,7 @@ import (
 // Criteria c1 and c2 through the release path itself, not only the reading: the release judges again under its lock, with the managed engine, a held slot and an intent per node. Two nodes whose
 // regions overlap only in mechanical or local grades are both released; an exclusive overlap refuses the second with the reason the release already had, and writes nothing for it.
 func TestReleaseFollowsTheGradeOfAnOverlap(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		p, q         Region
