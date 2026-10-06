@@ -1,0 +1,20 @@
+{
+  "issue": "CRW-662",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__orchestrate__attest_and_attest_file_together_rejected",
+    "cli__orchestrate__attest_file_form",
+    "cli__orchestrate__bound_c_to_d_requires_test_receipt",
+    "cli__orchestrate__bound_goalplan_requires_work_phase_id",
+    "cli__orchestrate__full_cycle_idle_p_a_b_c_d_idle",
+    "cli__orchestrate__malformed_attest_json",
+    "cli__orchestrate__p_to_a_without_attest_refused",
+    "cli__orchestrate__p_to_a_without_plan_unit_refused",
+    "cli__orchestrate__split_cwd_cycle_closes_on_real_commit_receipt",
+    "cli__receipt__failing_command_recorded",
+    "cli__review-round__open_signoff_and_binding_verdict",
+    "cli__review-round__unparsed_signoff_noted_and_abort",
+    "cli__session__source_binds_linked_worktree"
+  ]
+}
