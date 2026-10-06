@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -153,7 +154,7 @@ func TestWriteDivergenceModeRemovesItsTempFileWhenTheRenameFails(t *testing.T) {
 	_, err := WriteDivergenceMode(cwd, ModeInput{SessionID: "s", Active: true, CollapsePoint: CollapseD})
 	metricsMust(t, err)
 	before, _ := os.ReadFile(modePath(cwd, "s"))
-	_, err = writeDivergenceMode(cwd, ModeInput{SessionID: "s", CollapsePoint: CollapseP}, time.Now(), func(string, string) error { return boom })
+	_, err = writeDivergenceMode(context.Background(), cwd, ModeInput{SessionID: "s", CollapsePoint: CollapseP}, time.Now(), func(string, string) error { return boom })
 	left, _ := filepath.Glob(filepath.Join(divergenceDir(cwd), "*.tmp"))
 	if after, _ := os.ReadFile(modePath(cwd, "s")); !errors.Is(err, boom) || len(left) != 0 || string(after) != string(before) {
 		t.Errorf("err %v, temp files %v, final file now %q", err, left, after)
@@ -234,7 +235,7 @@ func TestWriteDivergenceModeDoesNotFollowASymlinkAtItsTempName(t *testing.T) {
 	metricsMust(t, os.MkdirAll(divergenceDir(cwd), 0o777))
 	tmp := fmt.Sprintf("%s.%d.%d.tmp", modePath(cwd, "s"), os.Getpid(), wall.UnixMilli())
 	metricsMust(t, os.Symlink(victim, tmp))
-	_, err := writeDivergenceMode(cwd, ModeInput{SessionID: "s", CollapsePoint: CollapseD}, wall, crwdir.Rename)
+	_, err := writeDivergenceMode(context.Background(), cwd, ModeInput{SessionID: "s", CollapsePoint: CollapseD}, wall, crwdir.Rename)
 	if got, _ := os.ReadFile(victim); err == nil || string(got) != "keep" {
 		t.Errorf("write error %v, the file the link points at now holds %q", err, got)
 	}

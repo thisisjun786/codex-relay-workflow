@@ -1,0 +1,24 @@
+{
+  "name": "@crw/gui",
+  "private": true,
+  "type": "module",
+  "description": "CRW local GUI (Vite + React): relay, parents, children, merge lanes, capacity and the execution policy.",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.4.3"
+  }
+}

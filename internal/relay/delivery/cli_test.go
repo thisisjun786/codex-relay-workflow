@@ -86,6 +86,7 @@ func (s *cliSide) normal(text string) string {
 }
 
 func TestCLI_every_delivery_command_answers_byte_for_byte_like_python(t *testing.T) {
+	t.Parallel()
 	work := filepath.Join(parityTree(t), "work")
 	side := newSide(t, work)
 	mustDo(t, os.WriteFile(filepath.Join(work, "out.txt"), []byte("the deliverable"), 0o644))

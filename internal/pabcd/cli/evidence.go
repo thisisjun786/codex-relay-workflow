@@ -104,6 +104,10 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
+		// Intentionally changed: publishing a capped/repaired read loses interview records too.
+		if !cliInterviewIntact(a.Cwd, a.SessionID) {
+			return errors.New(cliInterviewRefusalReason)
+		}
 		target := s.UnverifiedSubagents[index]
 		turn := target.TurnID
 		if turn == "" {
