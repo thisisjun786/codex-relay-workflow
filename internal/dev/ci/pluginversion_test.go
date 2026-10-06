@@ -13,7 +13,7 @@ import (
 // The version internal/pluginversion recomputes from a commit is the version crw-dev ci plugin
 // reports for that commit's work tree, so the base-refresh check and the packaging check cannot
 // disagree about the same head.
-func Test47_PLG_17_VersionOfTreeMatchesThePackagingCheck(t *testing.T) {
+func Test47_PLG_20_VersionOfTreeMatchesThePackagingCheck(t *testing.T) {
 	r := pluginRepo(t, goodFiles(t))
 	got := pluginCLI(t, r.root, "--json")
 	if got.code != 0 {
