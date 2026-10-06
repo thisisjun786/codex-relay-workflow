@@ -4419,6 +4419,13 @@
      "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
     },
     {
+     "note": "the host redelivers the original payload with the same tool_use_id: idempotent",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_use_id\":\"native-1\",\"tool_input\":{\"agent_type\":\"executor\",\"model\":\"wrong-caller\",\"reasoning_effort\":\"low\",\"message\":\"[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-primary\",\"reasoning_effort\":\"high\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
      "note": "re-issued with the same tool_use_id: idempotent",
      "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_use_id\":\"native-1\",\"tool_input\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-primary\",\"reasoning_effort\":\"high\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}",
      "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-primary\",\"reasoning_effort\":\"high\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}}\n",

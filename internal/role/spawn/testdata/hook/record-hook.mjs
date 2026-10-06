@@ -620,6 +620,7 @@ const ledgerFiles = body => ({ '.codexclaw/dispatches/rec-s1/one.json': body });
   const M1 = '[CXC-DISPATCH:one:att-1]';
   recordManaged('issue once', 'spawn-items-managed.test.ts:27-44; fallback-dispatch.test.ts', { store: S }, [
     rs(T({ agent_type: 'executor', model: 'wrong-caller', reasoning_effort: 'low', message: M1 + '\nTASK: locate the owner' }, { tool_use_id: 'native-1' }), { files: ledgerFiles(ledger(ledgerAttempt())), note: 'managed allow: the candidate model and effort replace the caller fields' }),
+    rs(T({ agent_type: 'executor', model: 'wrong-caller', reasoning_effort: 'low', message: M1 + '\nTASK: locate the owner' }, { tool_use_id: 'native-1' }), { note: 'the host redelivers the original payload with the same tool_use_id: idempotent' }),
     rr(T({}, { tool_use_id: 'native-1' }), { note: 're-issued with the same tool_use_id: idempotent' }),
     rs(T({ agent_type: 'executor', message: M1 + '\nTASK: locate the owner' }, { tool_use_id: 'native-2' }), { note: 'a different tool_use_id is refused' }),
   ]);
