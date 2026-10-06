@@ -6,6 +6,9 @@ package goalplan
 // applied, duplicate, locked and rejected. goalplan.json is the commit point, because it is what
 // idempotency reads; a ledger append that fails after it answers applied with a warning instead
 // of pretending nothing happened.
+// A plan write that published and then failed to sync the plan's directory is the same shape one
+// level down (CRW-793): the key is recorded, so the batch is answered applied with a durability
+// warning and its ledger rows are written rather than lost.
 //
 // The op grammar, its validation and the pure fold are in steering_ops.go (B15a / CRW-376) and
 // are called, never copied. The oracle's own comment there says this half is B15b.
@@ -22,6 +25,11 @@ import (
 type SteeringBatchOptions struct {
 	Now  func() string
 	Lock *GoalplanWriteLockOptions
+
+	// publish is the CRW-793 durability seam of the plan write this batch performs. It is an
+	// argument, never package state, so a test can drive the published-but-unsynced path without
+	// changing what any other caller does.
+	publish *goalplanPublishedOptions
 }
 
 // steeringBatchSummary is the oracle's entry summary (:275): how many ops the batch carried and
@@ -63,14 +71,16 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 	}
 	now := writeTimestamp
 	var lockOptions *GoalplanWriteLockOptions
+	var publish *goalplanPublishedOptions
 	if o != nil {
 		if o.Now != nil {
 			now = o.Now
 		}
 		lockOptions = o.Lock
+		publish = o.publish
 	}
 	locked, err := WithGoalplanWriteLock(cwd, slug, func(plan *Goalplan) (SteerResult, error) {
-		return steeringApplyLocked(cwd, slug, plan, batch, now)
+		return steeringApplyLocked(cwd, slug, plan, batch, now, publish)
 	}, lockOptions)
 	if err != nil {
 		return SteerResult{}, err
@@ -98,7 +108,7 @@ func ApplySteeringBatch(cwd, slug string, rawBatch any, o *SteeringBatchOptions)
 // steeringApplyLocked is the oracle's callback (:264-320): the whole read-modify-write, run while
 // the shared goalplan write lock is held. The duplicate scan comes first, so an injected clock is
 // not consulted for a batch that will not be recorded.
-func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string) (SteerResult, error) {
+func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now func() string, publish *goalplanPublishedOptions) (SteerResult, error) {
 	for i := range plan.SteeringLog {
 		if plan.SteeringLog[i].IdempotencyKey == batch.IdempotencyKey {
 			existing := plan.SteeringLog[i]
@@ -119,7 +129,7 @@ func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now
 	// The commit point: a fresh slice, so the plan the lock read is never mutated in place.
 	next := *applied
 	next.SteeringLog = append(append([]SteeringEntry{}, plan.SteeringLog...), entry)
-	if err := WriteGoalplan(cwd, &next); err != nil {
+	if err := goalplanPublishedWriteGoalplan(cwd, &next, publish); err != nil {
 		return SteerResult{}, err
 	}
 	if err := AppendGoalplanLedger(cwd, slug, GoalplanLedgerEntry{
