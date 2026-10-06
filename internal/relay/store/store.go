@@ -134,6 +134,10 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err != nil {
 		return nil, err
 	}
+	// The registry records the resolved database path this process is opening, without opening
+	// anything (CRW-880): the artifact reader refuses a store file this process holds or opened,
+	// and this record is what lets it recognise the database and its sidecars by identity.
+	recordStoreFilePath(resolved)
 	d := &sqlite.Driver{}
 	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
 		if options.OnConnect != nil {
