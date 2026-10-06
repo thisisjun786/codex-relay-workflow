@@ -237,6 +237,40 @@ func TestOrchestrateCommitBusyGoalplanRefuses(t *testing.T) {
 	}
 }
 
+// TestOrchestrateCommitRefusalKeepsTheRound is the P>A housekeeping order: the stale-round cleanup runs
+// inside the same goalplan lock as the binding revalidation and after it, so an edge the rebind refuses
+// closes no round. The oracle closes the rounds before the state write; the port keeps that order and puts
+// both inside one lock.
+func TestOrchestrateCommitRefusalKeepsTheRound(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "commit-round-refusal"
+	unit := orchestrateTransitionSeedPlanUnit(t, cwd)
+	orchestrateCommitPlan(t, cwd, id)
+	plan := goalplan.ReadGoalplan(cwd, id)
+	plan.ReviewRounds = []goalplan.ReviewRoundState{{
+		RoundID: "r1", Purpose: goalplan.PurposePlanAudit, PlanPath: unit, PlanSha256: strings.Repeat("a", 64),
+		Status: goalplan.ReviewInFlight, Lane: goalplan.ReviewLane{LaunchID: "r1-launch"}, OpenedAt: "2026-08-28T00:00:00.000Z",
+		OwnerSessionID: id, WorkPhaseID: "wp1", PlanUnit: unit, PlanEpoch: "e-old",
+	}}
+	plan.ActivePlanAuditRoundID = new("r1")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	orchestrateTransitionSession(t, cwd, id, `{"phase":"P","slug":"`+id+`"}`)
+	seams := &orchestrateCommitSeams{lockGoalplan: orchestrateCommitRebindLock}
+	got := orchestrateCommitRunOK(t, cwd, seams, "A", "--session", id, "--attest",
+		`{"from":"P","to":"A","did":"audited the plan","planUnit":"`+unit+`","workPhaseId":"wp1"}`)
+	if got.Code != 1 || !strings.Contains(got.Output, "LOOP-UNIT-CHAIN-01") {
+		t.Fatalf("a rebound plan must refuse the stale binding: %+v", got)
+	}
+	if after := state.ReadState(cwd, id); after.Phase != state.PhaseP {
+		t.Fatalf("the refused transition moved the session: %+v", after)
+	}
+	saved := goalplan.ReadGoalplan(cwd, id)
+	if saved == nil || len(saved.ReviewRounds) != 1 || saved.ReviewRounds[0].Status != goalplan.ReviewInFlight {
+		t.Fatalf("a refused edge must not close its round: %+v", saved)
+	}
+}
+
 // TestOrchestrateCommitFailOpenWithoutPlan keeps the fail-open the gate had: an absent or unreadable
 // goalplan never blocks a bound session's gated edge.
 func TestOrchestrateCommitFailOpenWithoutPlan(t *testing.T) {
