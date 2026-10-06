@@ -522,12 +522,12 @@ func TestResumeDryRunReportsUnverifiedSettings(t *testing.T) {
 // The admit-turn line names the program this runtime is reached by, not a bare crw that an
 // installation does not put on PATH.
 func TestResumeAdmitTurnNamesTheResolvedProgram(t *testing.T) {
-	line := resumeAdmitTurn(&Config{Relay: coreRelay{State: "/s", Socket: "/k"}}, "rel-1", 3, "turn-1", "01parent")
-	if strings.HasPrefix(line, "crw ") {
-		t.Fatalf("the line names a bare crw: %q", line)
+	line := resumeAdmitTurn(resumeProgram(&Env{Executable: "/opt/crw/bin/crw"}), &Config{Relay: coreRelay{State: "/s", Socket: "/k"}}, "rel-1", 3, "turn-1", "01parent")
+	if strings.HasPrefix(line, "crw ") || !strings.Contains(line, "/opt/crw/bin/crw relay --state /s --socket /k admit-turn") {
+		t.Fatalf("the line does not name the resolved runtime: %q", line)
 	}
-	if !strings.Contains(line, "relay") || !strings.Contains(line, "--state /s --socket /k admit-turn") {
-		t.Fatalf("the line is not the relay's own invocation: %q", line)
+	if got := resumeProgram(&Env{}); len(got) != 1 || got[0] != "codex-session-relay" {
+		t.Fatalf("an unnamed executable falls back to %q", got)
 	}
 }
 

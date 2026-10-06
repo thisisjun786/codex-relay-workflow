@@ -10,7 +10,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // resumeUsage is the one line crw manage child-resume prints for its help and its refusals.
@@ -376,7 +375,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return nil, uncertain("turn/start answered with no turn id")
 	}
 	report.TurnID = turn.Turn.ID
-	report.AdmitTurn = resumeAdmitTurn(cfg, opts.relationship, generation, turn.Turn.ID, parent)
+	report.AdmitTurn = resumeAdmitTurn(resumeProgram(e), cfg, opts.relationship, generation, turn.Turn.ID, parent)
 	return report, nil
 }
 
@@ -395,15 +394,23 @@ func resumeCompare(settings *resumeSettings, model, effort string) string {
 	return ""
 }
 
+// resumeProgram is how the line names the runtime that produced this result: the executable this
+// command runs as, then the relay mode — the same argv the relay helper builds in relay.go. A
+// bare crw is not on PATH after an install, so a line the parent has to paste cannot name it; an
+// executable this process could not name falls back to the installed link, as the relay's own
+// recovery lines do.
+func resumeProgram(e *Env) []string {
+	if e != nil && e.Executable != "" {
+		return []string{e.Executable, "relay"}
+	}
+	return []string{"codex-session-relay"}
+}
+
 // resumeAdmitTurn is the line the parent runs next: the relay's own admission of the turn this
 // command started, with the state and the socket the relay helper resolved. A value the
 // configuration did not name is left out, and the helper resolves it again.
-func resumeAdmitTurn(cfg *Config, relationship string, generation int64, turn, actor string) string {
-	// The program is the one this runtime is reached by, resolved as the relay's own recovery
-	// lines resolve it (internal/relay/registry.RelayProgram): the codex-session-relay link beside
-	// the binary, else the binary itself with the relay mode. A bare crw is not on PATH after an
-	// install, so a line the parent has to paste cannot name it.
-	argv := append([]string{}, registry.RelayProgram()...)
+func resumeAdmitTurn(program []string, cfg *Config, relationship string, generation int64, turn, actor string) string {
+	argv := append([]string{}, program...)
 	if cfg.Relay.State != "" {
 		argv = append(argv, "--state", cfg.Relay.State)
 	}
