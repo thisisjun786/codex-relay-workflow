@@ -26,7 +26,11 @@ func DispatchCommand(_ []string, in io.Reader, out io.Writer, env host.LookupEnv
 		var cwd string
 		cwd, err = os.Getwd()
 		if err == nil {
-			result, err = CheckedDispatch(context.Background(), cwd, input, env, nil)
+			// The stopped close reads the child's newest turn through a host when one is there;
+			// without a reachable App Server socket the CLI runs on the native database as before.
+			h, closeHost := dispatchHostOpen(context.Background(), env)
+			defer closeHost()
+			result, err = CheckedDispatch(context.Background(), cwd, input, env, h)
 		}
 	}
 	var answer any = result
