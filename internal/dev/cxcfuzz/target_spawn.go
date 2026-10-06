@@ -63,11 +63,12 @@ const (
 	charTab            = "\t"
 )
 
-// spawnLoneSurrogates are two lone surrogates as the three WTF-8 bytes a Go string holds them in:
-// the harness writes each back as its \udXXX escape and the oracle's reader makes it a JavaScript
-// lone surrogate code unit, while the port's own CRW-543 test pins that two folder names differing
-// only in which surrogate they hold stay apart.
-var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81"}
+// spawnLoneSurrogates are lone surrogates as the three WTF-8 bytes a Go string holds them in: two
+// high (U+D800, U+D801) and one low (U+DC00), which the issue's generator list asks for. The
+// harness writes each back as its \udXXX escape and the oracle's reader makes it a JavaScript lone
+// surrogate code unit, while the port's own CRW-543 test pins that two folder names differing only
+// in which surrogate they hold stay apart.
+var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80"}
 
 // spawnWords are the message pieces the generator assembles: the role-like spellings, the mention
 // shapes, the header lines, and the characters that make the classifiers' folding and scanning
@@ -160,6 +161,11 @@ func spawnMessage(rng *rand.Rand, n int) string {
 	parts := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		parts = append(parts, words[rng.Intn(len(words))])
+	}
+	// A long message now and then, so a case can reach the length the issue's generator names
+	// without a case ever holding more than a few hundred kilobytes.
+	if rng.Intn(32) == 0 {
+		parts = append(parts, strings.Repeat(words[rng.Intn(len(words))], 1+rng.Intn(4096)))
 	}
 	return strings.Join(parts, " ")
 }
