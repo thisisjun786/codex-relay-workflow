@@ -208,6 +208,12 @@ and until it is given the declared hooks are inert. That is why installation act
 nothing on its own, and why the installation flow has to say so rather than leave an
 operator waiting for a hook that is working exactly as installed.
 
+Nothing automatic changes the user's Codex configuration. Only a command the user runs
+explicitly does: `crw doctor retrust` records hook trust in `config.toml`, and `crw
+install` and its subcommands write the settings they manage, including the subagent role
+files under `~/.codex/agents/<role>.toml`. Each of those writes leaves a timestamped
+backup first and restores it when the write or its verification fails.
+
 ## Install
 
 ```sh
@@ -291,8 +297,12 @@ not carry, and each needs a step the installation cannot take for you.
    44), whose `register-mcp` also probed the enabled package's cached launcher before it wrote a
    policy record. `crw install register-mcp` probes nothing: the launcher it would probe is the runtime
    itself.
-3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
-   grants that: installing writes no trust, and a session without it runs the hook zero
+3. Trust the hook. Until it is trusted nothing fires, and installing writes no trust. The
+   command that records it is `crw doctor retrust`, which the user runs explicitly: it
+   backs up `config.toml` before it writes and restores that backup when the write or its
+   verification fails. `crw install` and its subcommands are the other explicit writers
+   of the Codex configuration, the subagent role files under `~/.codex/agents/<role>.toml`
+   among them, and each leaves a backup too. A session without trust runs the hook zero
    times and says so nowhere.
 
 Step 3 is what makes an installed hook look broken while it is working exactly as

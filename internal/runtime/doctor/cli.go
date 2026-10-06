@@ -29,6 +29,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		case "harness":
 			// The CXC plugin-health report (doctor.ts runDoctor), text or --json, exit 1 on FAIL.
 			return RunHarnessDoctorCLI(args[1:], stdout, stderr, host.LookupEnv(os.LookupEnv), os.Getwd, harnessRunExec, time.Now())
+		case "retrust":
+			// The CXC hook trust rewrite (decision 8, J4): a command only the user runs, never a
+			// hook, the installer or SessionStart. Its plugin package is the host's PLUGIN_ROOT.
+			pluginRoot, _ := host.LookupEnv(os.LookupEnv)("PLUGIN_ROOT")
+			return HookTrustRetrustCLI(args[1:], stdout, stderr, host.LookupEnv(os.LookupEnv), hookTrustRetrustExec, pluginRoot, time.Now())
 		}
 	}
 	flags := flag.NewFlagSet("crw doctor", flag.ContinueOnError)
