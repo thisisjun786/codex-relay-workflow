@@ -7,6 +7,8 @@ package delivery
 // writer and never appends or edits a zone statement.
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,6 +59,16 @@ func (v *vh) heads(event string) []Row {
 	rows, err := all(v.ctx, v.store, "SELECT * FROM dag_verified_heads WHERE event_id = ?", event)
 	mustDo(v.t, err)
 	return rows
+}
+
+// advance opens the next execution generation, so the event is no longer the head of the one the
+// relationship stands on and the currency check refuses a verified ruling.
+func (v *vh) advance() {
+	v.t.Helper()
+	mustDo(v.t, v.store.Transaction(v.ctx, func(ctx context.Context, _ *sql.Conn) error {
+		_, err := OpenGenerationIn(ctx, v.store, v.clock, v.rid, "vh-newer-execution", "needs_changes_revision", "vh-newer-turn")
+		return err
+	}))
 }
 
 // A verified ruling given a head records exactly one dag_verified_heads row, in the ruling's own
@@ -134,18 +146,46 @@ func TestVerdictVerifiedHeadAnotherHeadIsRefusedAndTheRowStays(t *testing.T) {
 }
 
 // The flag with a verdict that is not verified is refused disposition_conflict, and neither a verdict
-// nor a row is recorded.
+// nor a row is recorded. Every other verdict of the frozen enum is covered, not only the one that
+// would otherwise open a correction.
 func TestVerdictVerifiedHeadOnlyWithAVerifiedRuling(t *testing.T) {
+	t.Parallel()
+	for _, verdict := range []string{"needs_changes", "unverified", "aborted"} {
+		t.Run(verdict, func(t *testing.T) {
+			t.Parallel()
+			v := newVH(t)
+			_, event := v.ruled()
+			var findings []any
+			var reason any
+			if verdict == "needs_changes" {
+				findings = []any{finding("c1", "needs_changes", "fix it")}
+			} else {
+				reason = "the check could not conclude"
+			}
+			_, err := v.ack.RecordVerdict(v.ctx, event, verdict, "verdict-turn-1", nil, findings, reason, nil, vhHead)
+			requireReason(t, err, DispositionConflict)
+			if n := v.count("SELECT COUNT(*) AS c FROM verdicts WHERE event_id = ?", event); n != 0 {
+				t.Fatalf("a refused %s ruling recorded %d verdicts, want 0", verdict, n)
+			}
+			if rows := v.heads(event); len(rows) != 0 {
+				t.Fatalf("a refused %s ruling recorded %d heads, want 0", verdict, len(rows))
+			}
+		})
+	}
+}
+
+// A ruling the existing currency check refuses records no head either: the row is written with the
+// ruling that stands, not with one that was turned away.
+func TestVerdictVerifiedHeadIsNotRecordedWhenTheRulingIsRefused(t *testing.T) {
 	t.Parallel()
 	v := newVH(t)
 	_, event := v.ruled()
-	_, err := v.ack.RecordVerdict(v.ctx, event, "needs_changes", "verdict-turn-1", nil, []any{finding("c1", "needs_changes", "fix it")}, nil, nil, vhHead)
-	requireReason(t, err, DispositionConflict)
-	if n := v.count("SELECT COUNT(*) AS c FROM verdicts WHERE event_id = ?", event); n != 0 {
-		t.Fatalf("a refused ruling recorded %d verdicts, want 0", n)
-	}
+	// a newer generation makes the event not the head, so a verified ruling is refused
+	v.advance()
+	_, err := v.ack.RecordVerdict(v.ctx, event, "verified", "verdict-turn-1", nil, nil, nil, nil, vhHead)
+	requireReason(t, err, StaleGeneration)
 	if rows := v.heads(event); len(rows) != 0 {
-		t.Fatalf("a refused ruling recorded %d heads, want 0", len(rows))
+		t.Fatalf("a ruling refused for currency recorded %d heads, want 0", len(rows))
 	}
 }
 
