@@ -289,13 +289,13 @@ Execution:
   to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
-- Finish your own independent review before you open the pull request. The review meant here is the
-  one your workflow runs on the candidate inside this task; whether and how often it runs is that
-  workflow's decision, which this packet does not change. Where one runs, it ends on the head the
-  pull request is opened from, and the hosted review then follows on the open pull request, so the
-  hosted review reads a change your review has already answered instead of overlapping it on one
-  head. The handoff says which head your review covered and lists the commits made after it ([what a
-  handoff discloses](#what-a-handoff-discloses)).
+- Run your own independent review and open the pull request in the order your workflow chooses; the
+  two may overlap, because preparation and review are parallel. The review meant here is the one your
+  workflow runs on the candidate inside this task; whether and how often it runs is that workflow's
+  decision, which this packet does not change. Where one runs, it ends on a head and the hosted
+  review follows on the open pull request. The handoff says which head your review covered and lists
+  the commits made after it, so a hosted review that reads a later head is still read against the
+  revision your own review actually answered ([what a handoff discloses](#what-a-handoff-discloses)).
 - A finding of your own review that you reject is not yours to close. When the review rated a
   finding High or blocker and you would not apply it, because you rebutted it or place it outside
   this issue, list it in the handoff as a decision request, or ask your parent first when the answer
@@ -884,17 +884,19 @@ host values filled in.
    on a correction that asks only for the base ([Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)
    says why the coordinator refreshes only the candidate about to merge). The exception for a reported conflict is new here.
 5. **Reviews.** Where you open a pull request (with no pull request there is no review to wait for), Devin and GitHub Codex each review it once (Codex when it is opened, Devin when it becomes ready for
-   review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit: a
-   notice that a review was skipped (no credits, a usage limit) means skipped, and with no signal of any kind 30 minutes after the pull
+   review) and neither is a merge gate; you never request or re-request one. Wait for that one run of each to end before you emit, within the
+   [waiting budget](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt): a
+   notice that a review was skipped (no credits, a usage limit) means skipped; past the budget a review still running is recorded as
+   pending, not complete; and with no signal of any kind 30 minutes after the pull
    request is open and ready you record "review unavailable (no signal)" and go on. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names the independent code review for this task (this rule and that bullet mention it in every packet and are not such a naming), once per pull request after every CI job is green on the head you hand off. A Devin red, a Codex P0 or P1 and any security
    finding is fixed, or refuted from the code in a reply, and checked again on the new head. Devin yellow and Codex P2 and P3 get your
    reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed
    to the parent, not accepted by you, unless SCOPE grants that standing decision. Your own independent review, where your workflow runs
-   one, ends on the head you open the pull request from, and a High finding of it that you would not apply is not yours to close: list it
+   one, ends on a head and the handoff names it, and a High finding of it that you would not apply is not yours to close: list it
    in the handoff as a decision request, or ask first and end the turn blocked. A required check that is not green, a mandatory review
    that has not finished or a blocking finding left open is BLOCKED: report it as blocked, never as complete with a note.
 
-   Source: the `Execution:` bullets "Finish your own independent review ...", "A finding of your own review that you reject is not
+   Source: the `Execution:` bullets "Run your own independent review ...", "A finding of your own review that you reject is not
    yours to close", "Open that pull request non-draft ..." (which waits for the one run each of Devin and Codex makes), "Where the assignment names the independent code review ..." (the condition of the independent-review sentence) and "Finishing the
    review is part of finishing the work", OPS-9.2, and in [Merge readiness](merge-readiness.md) the
    [reviewer policy](merge-readiness.md#reviewer-policy),
@@ -1441,7 +1443,7 @@ not checked.
   disposition: `applied` with the commit that applied it, `rebutted` with the evidence that it is
   not a defect, or `out_of_scope` with the boundary that excludes it and where it goes instead. A
   review that ran and raised no such finding says so, and a task that ran none says `ran: false`.
-  The internal independent review ends on the head the pull request is opened from and the hosted
+  The internal independent review ends on a head and the hosted
   review follows on the open pull request, so `commitsAfter` lists what the review did not see: the
   commits after `reviewedHead` on the branch's first-parent line that are not merges of the base,
   each with its cause, such as a hosted-review fix or a digest re-record. Where `reviewedHead` is

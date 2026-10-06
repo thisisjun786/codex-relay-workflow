@@ -339,11 +339,13 @@ owner that could not be proved from two the store reports, and a disposition tha
 read from one the store holds as contested. It carries no escalation value, because a review
 round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
 increase concurrency; an issue the [size check](#check-the-size-before-dispatch) flags is reconciled through `crw-plan`'s boundary rules before dispatch, when the concept boundary separates it and a useful split fits the authorized scope.
-Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
-one implementation issue per PR, with one issue/PR pair per implementation
-packet. A batch retains those separate pairs. If one issue needs several PRs,
-or a proposed PR would deliver several issues, reconcile the plan through
-`crw-plan` before new dispatch; preserve existing owners and active work.
+One issue runs as one packet and one pull request today, and a batch keeps those
+separate pairs, under the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping)
+and the [work-unit rules](../../../../POLICY.md#work-units-review-and-integration). Several
+packets for one feature are allowed by policy but are not switched on until their
+support lands. If one issue needs several PRs, or a proposed PR would deliver
+several issues, reconcile the plan through `crw-plan` before new dispatch;
+preserve existing owners and active work.
 
 Keep the human-readable coordination record in the project's linked Linear
 document as part of the management assignment, without a separate recording request.

@@ -27,7 +27,7 @@ Neither the GitHub Codex review nor Devin Review is a CRW completion or merge ga
 request either one, re-request it after a push, or wait for a fresh-head review or a settling
 period. Jun's decision of 2026-10-03 lets each run once per pull request, Codex when the pull
 request is opened and Devin when it becomes ready for review, and that one run of each is
-awaited to its end before the child's receipt, as
+awaited within the waiting budget below before the child's receipt, as
 [Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)
 says. Anything beyond that run requires a new explicit user decision; an old assignment, review comment, or pending check
 does not supply one. Record a skipped or absent run as such, never as a successful review.
@@ -154,8 +154,8 @@ to its expected runtime. If unavailable or stalled, use sufficient independent
 review already available or obtain a permitted local review. Record the gap and
 continue when the repository's requirements and relevant review coverage are met.
 Do not wait for every historical or possible future reviewer. The one run each of Devin
-and Codex makes on a pull request is the exception: it is awaited to its end before the
-child's receipt
+and Codex makes on a pull request is the exception: it is awaited within the waiting
+budget below before the child's receipt
 ([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
 Fallback review cannot replace required CI, a required review source, or mandatory formal approval.
 Inspection does not authorize enabling integrations, new paid usage, or sending
@@ -186,9 +186,10 @@ A pull request merges when all three hold on one and the same head:
    counts only where the repository's gate semantics make it legitimate); here `dev-gate` needs every other
    job, so that is every job of the CI workflow, all of them on the head the merge names and not on a mix of
    heads;
-2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and reran the
-   tests the criteria rest on (a result it already holds for this same head, criteria and environment is not
-   run twice);
+2. the coordinator verified the candidate by its usual procedure: it read the diff and the code, checked the
+   integration part ([Build and vet the merged tree before the verdict](#build-and-vet-the-merged-tree-before-the-verdict)),
+   and reran the tests the criteria rest on; it reuses valid evidence rather than rerunning everything without
+   reason, and a result it already holds for this same head, criteria and environment is not run twice;
 3. the local gates pass: the checks the repository names for the change, run through the repository's
    permitted local validation route.
 
@@ -227,7 +228,7 @@ Pull requests that change activation wiring, manifest declarations, the installe
 | | Devin Review | Codex review |
 | --- | --- | --- |
 | Runs | once, when the pull request becomes ready | once, when the pull request is opened: a code review and a security review |
-| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, with no time limit | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
+| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, up to the waiting budget | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
 | Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone and each of its two reviews, the code review and the security review, is either `Completed` in its summary comment or skipped by the bot's notice that names it; a thumbs-up counts for both when no row contradicts it |
 | Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's issue comment that it skipped for limits, for the review it names (observed: `You have reached your Codex usage limits for security reviews. Please try again later.`, which ended the security review only) |
 | Findings | a review and inline threads by `devin-ai-integration` | a review by `chatgpt-codex-connector[bot]` whose inline comments start with a `P0` to `P3` badge |
@@ -247,11 +248,19 @@ Devin skipped, and `Completed analysis in 4s` stays a completion when the state 
 seconds on a head that only merged the base is still a completion; such a head carries no review object of its
 own, which is normal.
 
+**The waiting budget.** For the optional external reviewers the fixed time is a waiting budget, never
+evidence that a review stalled or finished ([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)).
+It runs 45 minutes from the review's first signal; a skip ends the wait at once. When the budget is used up
+and the review is still running, the child records it as **pending (not complete)** in the handoff and goes on.
+The wait is released that way only where the candidate's required independent review has already read the
+current head and every important finding it raised has a recorded disposition; where that independent review
+is missing, the child obtains it through the existing approved path before it hands off. Never record a pending
+review as done, skipped or passed.
+
 When neither reviewer shows a signal of any kind (no status, no comment, no reaction) 30 minutes after the
 pull request became ready (Devin) or was opened (Codex), the handoff says `review unavailable (no signal)`
-and the child goes on. A reviewer that has shown a signal is waited for to its end or its skip, however long.
-A description or row status that is not in the table is such a signal: record it exactly as read and keep
-waiting. The skill does not guess its meaning; a child that cannot tell whether the run is still going asks
+and the child goes on. A description or row status that is not in the table is a signal: record it exactly as read and keep
+waiting, inside the same budget. The skill does not guess its meaning; a child that cannot tell whether the run is still going asks
 through the usual `blocked_needs_input` route, as for any question only a person can answer. When only one
 reviewer is silent while the other has run, the child applies the same 30 minutes to the silent one, records
 it as `no signal by <time>`, goes on, and says in the handoff that it applied the rule to one reviewer. The
@@ -753,7 +762,7 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
 
 ### Build and vet the merged tree before the verdict
 
-Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
+This is the integration part of gate 2, and it is kept. Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
 conflict when they add different files, yet two of them can declare one identifier in one Go
 package (on 2026-10-04 two pairs did: `tokenize` in one package, `ChatOrder` in another). Only a
 build of the merge shows it, and found in the merge lane it costs a whole lane turn. So building the
