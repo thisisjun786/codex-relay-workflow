@@ -254,6 +254,75 @@ func improveProposeTestReport(t *testing.T, stdout string) improveProposeReport 
 	return report
 }
 
+// TestImproveProposeRendersASightingOnAnAuditDraft covers the review finding that a draft the
+// audit wrote must show the improve sightings in its body too, because the body is what the
+// management session reads to post the issue.
+func TestImproveProposeRendersASightingOnAnAuditDraft(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, improveProposeTestEightCases())
+	// A draft the audit already wrote at the same fingerprint.
+	dir := filepath.Join(w.stateDir, "drafts")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := auditDraftFingerprint(improveKindSplit, improveProposeTestFriction)
+	audit := &auditDraft{
+		Schema: auditDraftSchema, Fingerprint: key, Source: auditDraftSource,
+		Title: "audit draft", Severity: "P1", State: auditDraftStateDraft,
+		Body: "## What\n\na defect\n\n## Source audit\n\n- mode=pr subject=s head=h at=2026-10-01T00:00:00Z\n\n## Criteria\n\n- C1: pass\n",
+		Seen: []auditDraftSeen{{Mode: auditModePR, Subject: "s", Head: "h", At: "2026-10-01T00:00:00Z"}},
+	}
+	if err := auditDraftSave(filepath.Join(dir, key+".json"), audit); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want one", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, key)
+	if doc.Source != auditDraftSource {
+		t.Errorf("the draft source = %q, want it kept as %q", doc.Source, auditDraftSource)
+	}
+	if !strings.Contains(doc.Body, "mode=improve") {
+		t.Errorf("the audit draft body does not name the improve sighting:\n%s", doc.Body)
+	}
+}
+
+// TestImproveProposeFaultDoesNotClaimTheScopeKeyAsAProject covers the review finding that a
+// fault record's where is the composite fault scope key (for example crw:CRW or a bare
+// product name), not a project, so the draft must not name it as its owner.
+func TestImproveProposeFaultDoesNotClaimTheScopeKeyAsAProject(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "crw:CRW", "a signature", 5, "fault:f1"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one", report.Created)
+	}
+	doc := improveProposeTestDraft(t, w, report.Created[0].Fingerprint)
+	if doc.Project != "" {
+		t.Errorf("the fault draft project = %q, want empty (the scope key is not a project)", doc.Project)
+	}
+	if len(report.Candidates) == 1 {
+		for _, project := range report.Candidates[0].Projects {
+			if project.Project != auditDraftOwnerUnknown {
+				t.Errorf("the fault candidate claims the project %q, want only the owner-unknown marker", project.Project)
+			}
+		}
+	}
+}
+
 // TestImproveProposeWritesNothingWhenTheContextEnds covers the cancellation rule: a context
 // that ended before the drafts were written produces no draft at all.
 func TestImproveProposeWritesNothingWhenTheContextEnds(t *testing.T) {

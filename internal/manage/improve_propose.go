@@ -158,16 +158,15 @@ func improveProposeTitleOf(record improveRecord) string {
 func improveProposeProjectOf(record improveRecord) string {
 	switch record.Kind {
 	// A split record's key is the project key the issue belongs to (721's improveSplitKey),
-	// falling back to the issue key when the scope is absent; a fault's where is its scope
-	// key, which is a project key.
+	// falling back to the issue key when the scope is absent.
 	case improveKindSplit:
 		return strings.TrimSpace(record.Key)
-	case improveKindFault:
-		return strings.TrimSpace(record.Where)
 	}
-	// A refusal's key is its reason, a generation's where is its relationship id, and an
-	// intervention carries neither, so none of them names a project. Such a candidate stays
-	// owner-unknown rather than claiming another field as an owner.
+	// No other friction kind names a project honestly: a fault's where is the composite fault
+	// scope key (a product name, product:project, or a workspace|product|workspace|project
+	// tuple), a refusal's key is its reason, a generation's where is its relationship id, and
+	// an intervention carries neither. Such a candidate stays owner-unknown rather than
+	// claiming a field that is not a project.
 	return ""
 }
 
@@ -606,6 +605,11 @@ func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bo
 			}
 			doc.Project = improveProposeOwner(merged.Projects)
 			doc.Body = improveProposeDraftBody(merged)
+		} else {
+			// A draft the audit wrote keeps its own body, and only its sighting section is
+			// advanced, so the management session reading the body sees the sighting this run
+			// recorded rather than a body that contradicts the file.
+			doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
 		}
 		if err := auditDraftSave(path, doc); err != nil {
 			return report, err
