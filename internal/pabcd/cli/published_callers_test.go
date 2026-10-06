@@ -26,13 +26,16 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// cliPublishedRealHomeIsUntouched captures the real ~/.codex and ~/.crw listings before HOME is
-// repointed and fails the test if a run created or removed anything there. It must be called
-// before any helper that sets HOME.
-func cliPublishedRealHomeIsUntouched(t *testing.T) {
+// cliPublishedIsolatedHome captures the real ~/.codex and ~/.crw listings, repoints HOME, CODEX_HOME
+// and CRW_HOME into temporary directories for this test, and fails it if the run created or removed
+// anything under the real ones. It must be called before any helper that reads a home.
+func cliPublishedIsolatedHome(t *testing.T) {
 	t.Helper()
 	home, _ := os.UserHomeDir()
 	before := cliPublishedListing(t, filepath.Join(home, ".codex"), filepath.Join(home, ".crw"))
+	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
+		t.Setenv(name, t.TempDir())
+	}
 	t.Cleanup(func() {
 		if after := cliPublishedListing(t, filepath.Join(home, ".codex"), filepath.Join(home, ".crw")); before != after {
 			t.Errorf("the run changed real state:\nbefore %s\nafter  %s", before, after)
@@ -101,7 +104,7 @@ func cliPublishedWantGoalplanWarning(slug string) string {
 // success with the warning appended and leaves exactly one grant. On dev the write error is
 // reported as a plain failure.
 func TestPublishedCallersMemoryAllowWriteReportsThePublishedGrant(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd, _, _ := cliSeed(t)
 	out, code := cliPublishedMemoryAllowWrite(MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd}, cliPublishedStateWrite())
 	if code != 0 {
@@ -120,7 +123,7 @@ func TestPublishedCallersMemoryAllowWriteReportsThePublishedGrant(t *testing.T) 
 
 // A failure before publication is unchanged: the existing failure text and code, and no grant.
 func TestPublishedCallersMemoryAllowWriteKeepsPrePublicationFailure(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd, _, _ := cliSeed(t)
 	out, code := cliPublishedMemoryAllowWrite(MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd}, cliPublishedPlainWrite())
 	if code != 1 || !strings.HasPrefix(out, "memory allow-write: could not record the grant (") {
@@ -135,7 +138,7 @@ func TestPublishedCallersMemoryAllowWriteKeepsPrePublicationFailure(t *testing.T
 // success with the warning appended, and writes exactly one round and one ledger row. On dev the
 // write error is reported as a failure and a retry appends a second row.
 func TestPublishedCallersScanRecordReportsThePublishedRound(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd := scanRecordWorkspace(t)
 	a := *ParseScanCliArgs([]string{"record", "--session", "s1", "--known", "goal=fact"}, cwd).Args
 	res := cliPublishedScanRecordRun(a, state.AppendInterviewEvent, cliPublishedStateWrite())
@@ -158,7 +161,7 @@ func TestPublishedCallersScanRecordReportsThePublishedRound(t *testing.T) {
 }
 
 func TestPublishedCallersScanRecordKeepsPrePublicationFailure(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd := scanRecordWorkspace(t)
 	a := *ParseScanCliArgs([]string{"record", "--session", "s1"}, cwd).Args
 	res := cliPublishedScanRecordRun(a, state.AppendInterviewEvent, cliPublishedPlainWrite())
@@ -177,7 +180,7 @@ func TestPublishedCallersScanRecordKeepsPrePublicationFailure(t *testing.T) {
 // with the warning appended, and leaves the round in flight. On dev the error is returned and the
 // packet is never rendered.
 func TestPublishedCallersReviewRoundOpenReportsThePublishedPlan(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd := reviewRoundRunSeed(t)
 	res, err := RunReviewRoundCli(*ParseReviewRoundCliArgs([]string{"open", "--session", "rb", "--plan-path", reviewRoundRunDoc}, cwd).Args,
 		&ReviewRoundRunOptions{WriteGoalplan: cliPublishedGoalplanWrite()})
@@ -202,7 +205,7 @@ func TestPublishedCallersReviewRoundOpenReportsThePublishedPlan(t *testing.T) {
 // The abort side: a published plan write answers the existing success with the warning appended
 // and the round is closed.
 func TestPublishedCallersReviewRoundAbortReportsThePublishedPlan(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd := reviewRoundRunSeed(t)
 	if res := reviewRoundRunOpenDoc(t, cwd); res.Code != 0 {
 		t.Fatalf("seed open: %+v", res)
@@ -228,7 +231,7 @@ func TestPublishedCallersReviewRoundAbortReportsThePublishedPlan(t *testing.T) {
 func TestPublishedCallersReviewRoundKeepsPreRenameFailure(t *testing.T) {
 	for _, verb := range []string{"open", "abort"} {
 		t.Run(verb, func(t *testing.T) {
-			cliPublishedRealHomeIsUntouched(t)
+			cliPublishedIsolatedHome(t)
 			cwd := reviewRoundRunSeed(t)
 			argv := []string{"open", "--session", "rb", "--plan-path", reviewRoundRunDoc}
 			if verb == "abort" {
@@ -256,7 +259,7 @@ func TestPublishedCallersReviewRoundKeepsPreRenameFailure(t *testing.T) {
 // The seams are arguments, not package state: the production entry points keep their signatures
 // and use the real writers, so a clean write carries no warning.
 func TestPublishedCallersDefaultSeamsAreTheRealWriters(t *testing.T) {
-	cliPublishedRealHomeIsUntouched(t)
+	cliPublishedIsolatedHome(t)
 	cwd, _, _ := cliSeed(t)
 	if out, code := RunMemoryCLI(MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd}); code != 0 || strings.Contains(out, "published but") {
 		t.Fatalf("RunMemoryCLI: %d %q", code, out)
