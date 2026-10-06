@@ -69,19 +69,23 @@ type hostReadFailure struct {
 }
 
 // hostReadWrite writes one JSON value and a newline to w.
-func hostReadWrite(w io.Writer, value any) {
+// hostReadWrite writes one JSON value and a newline to w. It reports a write failure, so a
+// command whose report never left can end with a failure rather than a silent success.
+func hostReadWrite(w io.Writer, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil {
-		fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"host_error\",\"detail\":%q}\n", err.Error())
-		return
+		_, werr := fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"host_error\",\"detail\":%q}\n", err.Error())
+		return werr
 	}
-	fmt.Fprintf(w, "%s\n", data)
+	_, err = fmt.Fprintf(w, "%s\n", data)
+	return err
 }
 
 // hostReadWriteResult writes a read the host answered, splicing the result bytes in unchanged.
-func hostReadWriteResult(w io.Writer, method string, result json.RawMessage) {
+func hostReadWriteResult(w io.Writer, method string, result json.RawMessage) error {
 	quoted, _ := json.Marshal(method)
-	fmt.Fprintf(w, "{\"ok\":true,\"method\":%s,\"result\":%s}\n", quoted, result)
+	_, err := fmt.Fprintf(w, "{\"ok\":true,\"method\":%s,\"result\":%s}\n", quoted, result)
+	return err
 }
 
 // hostReadParse reads "--flag value" pairs, refusing anything else; help reports -h/--help.
@@ -135,12 +139,21 @@ func hostReadRunCommand(ctx context.Context, e *Env, args []string) int {
 	if err != nil {
 		reason, detail := hostReadReason(err)
 		if reason == hostReadMethodNotReadOnly {
-			hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Method: method})
+			if werr := hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Method: method}); werr != nil {
+				fmt.Fprintf(e.Stderr, "crw manage host-read: error: write output: %v\n", werr)
+				return 1
+			}
 			return usageExit
 		}
-		hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Detail: detail})
+		if werr := hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Detail: detail}); werr != nil {
+			fmt.Fprintf(e.Stderr, "crw manage host-read: error: write output: %v\n", werr)
+			return 1
+		}
 		return 3
 	}
-	hostReadWriteResult(e.Stdout, method, result)
+	if werr := hostReadWriteResult(e.Stdout, method, result); werr != nil {
+		fmt.Fprintf(e.Stderr, "crw manage host-read: error: write output: %v\n", werr)
+		return 1
+	}
 	return 0
 }

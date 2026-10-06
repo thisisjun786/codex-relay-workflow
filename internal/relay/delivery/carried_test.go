@@ -63,6 +63,7 @@ func emitArgs(rid, turn, status, artifact string, extra ...string) []string {
 }
 
 func Test25_CLI05_emit_stages_an_unconfirmed_claim_and_status_lists_nothing(t *testing.T) {
+	t.Parallel()
 	t.Run("completed turn offline, then status", func(t *testing.T) {
 		side, rid := seededSide(t, parityTree(t))
 		mustDo(t, os.WriteFile(filepath.Join(side.work, "out.txt"), []byte("the deliverable"), 0o644))
@@ -89,6 +90,7 @@ func Test25_CLI05_emit_stages_an_unconfirmed_claim_and_status_lists_nothing(t *t
 }
 
 func Test25_CLI07_a_later_turn_needs_a_continuation(t *testing.T) {
+	t.Parallel()
 	side, rid := seededSide(t, parityTree(t))
 	mustDo(t, os.WriteFile(filepath.Join(side.work, "out.txt"), []byte("finished later"), 0o644))
 	refused, code := sameCLI(t, side, emitArgs(rid, "turn-loop-5", "completed", "<work>/out.txt")...)
@@ -103,6 +105,7 @@ func Test25_CLI07_a_later_turn_needs_a_continuation(t *testing.T) {
 }
 
 func Test25_CLI09_a_command_needing_the_host_says_so(t *testing.T) {
+	t.Parallel()
 	side, _ := seededSide(t, t.TempDir())
 	result, code := sameCLI(t, side, "deliver")
 	if code != 4 || result["error"] != "usage" || !strings.Contains(result["detail"].(string), "--socket") {
@@ -111,6 +114,7 @@ func Test25_CLI09_a_command_needing_the_host_says_so(t *testing.T) {
 }
 
 func Test25_CLI38_a_malformed_criteria_entry_with_restoration_is_refused(t *testing.T) {
+	t.Parallel()
 	side, _ := seededSide(t, t.TempDir())
 	for _, criteria := range []string{"[null]", `["c1"]`} {
 		result, code := sameCLI(t, side, "verdict", "--event", strings.Repeat("e", 32), "--verdict", "needs_changes", "--verdict-turn", "v1", "--criteria", criteria, "--restoration", "c1")
@@ -126,6 +130,7 @@ func Test25_CLI38_a_malformed_criteria_entry_with_restoration_is_refused(t *test
 // golden. The side stages an acknowledged completion through this package's services first, as
 // the Python test staged it through its own.
 func Test25_CLI21_the_verdict_command_is_wired_to_the_outbox(t *testing.T) {
+	t.Parallel()
 	side, rid := seededSide(t, parityTree(t))
 	event := stageAcknowledgedCompletion(t, side, rid)
 	side.expect("stage acknowledged completion", event)
@@ -188,6 +193,7 @@ func stageAcknowledgedCompletion(t *testing.T, side *cliSide, rid string) string
 // registration, leave the marker facts the fold reads: one claim, one bound identity, the
 // registration, and the derived state moving from claimed-unbound to registered. The Stop
 // decisions and hold files around it are guard.evaluate (todo 33).
+// sequential: t.Setenv("HOME") is process-wide.
 func Test25_RCT01_a_late_bind_lands_on_the_claimed_assignment(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(),
@@ -210,6 +216,7 @@ func Test25_RCT01_a_late_bind_lands_on_the_claimed_assignment(t *testing.T) {
 // RCT-4: two concurrent binds on one assignment, from two goroutines released together: one
 // bound and one conflict, one recorded conflict naming the loser, the loser told the winner,
 // state identity_bound and contested until a resolution naming the winner.
+// sequential: t.Setenv(MarkerEnv) is process-wide.
 func Test25_RCT04_two_concurrent_binds_leave_one_winner_and_one_recorded_conflict(t *testing.T) {
 	// The sequential shape of the same outcome, checked whole against the golden.
 	sameOps(t, nil,

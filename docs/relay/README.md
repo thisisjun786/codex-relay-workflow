@@ -647,6 +647,16 @@ to pass. With `--socket` the relay reads the status from the host and ignores `-
 live turn reads `inProgress` there: such an emit is made without `--socket`, with `--state` naming the
 store this emit used. `blocked_needs_input` takes no `--turn-status` and stays staged.
 
+A `ready_for_review` receipt is also judged on its lineage, inside the transaction that stores it:
+the relay reads the generation with the receipt and without it, and refuses `revision_ambiguous`,
+writing no event and no lineage row, when the generation reads one head without the receipt and no
+single head with it (a second root, a cycle, an unknown predecessor or a disconnected revision).
+The refusal's detail names the revision the generation reads now, so the child fixes it in the same
+turn by naming that revision with `--supersedes-revision`. A first receipt, a duplicate, and a
+generation that already reads no single head are answered as they were; recovering such a generation
+is the route the refusal table of [Ruling an event that is already ruled](#ruling-an-event-that-is-already-ruled)
+records for a plan node.
+
 A loop spanning several turns completes on a turn that is not the anchor, and says so in the same
 call:
 
@@ -708,6 +718,38 @@ passing it, and the assignment reports `re_review_needed` instead of `verified`.
 
 There is no parameter that turns any of this off.
 
+## Fixing the head a verified ruling handled
+
+A `verified` ruling may carry the head it handled:
+
+    codex-session-relay --socket $SOCK verdict --event <eventId> --verdict verified --verdict-turn <my turn id> --verified-head <40-hex commit id>
+
+`--verified-head` takes the 40 lowercase hex digits of one commit id and is optional. When it is
+given with `--verdict verified`, the ruling writes one `dag_verified_heads` row — the event, the
+relationship, the generation the event belongs to, the verdict turn, the head, the recorder and the
+time — in the same transaction that writes the ruling, so the two cannot disagree and a failure of
+either rolls both back. The recorder is the relationship's registered parent, which is the only task
+that can rule the event. This is the head a later `dag-accept` starts its parent-made-refresh proof
+from, instead of the head the forge shows at accept time.
+
+The ruling's own answer does not change: the record is read back from `dag_verified_heads`, never
+returned, so no output field and no refusal reason is added.
+
+| Case | Answer |
+| --- | --- |
+| `verified` with `--verified-head H`, first ruling | the ruling is recorded and one row holds `H` |
+| `verified` with `--verified-head H` again | the replay of the recorded ruling: nothing is written, and the row still holds `H` |
+| `verified` with `--verified-head H` after a `verified` ruling that fixed no head | refused `disposition_conflict`: the head is recorded with the ruling that fixes it, and a replay writes nothing |
+| `verified` with `--verified-head H2` when the event already records `H` | refused `disposition_conflict`, and the row still holds `H`: one event keeps the head its verified ruling fixed |
+| a verdict other than `verified` with `--verified-head` | refused `disposition_conflict`, and neither a verdict nor a row is written: a verified head is recorded only with a verified ruling |
+| `verified` without `--verified-head` | exactly what it was before, and no row |
+
+A re-review ruled `verified` under a re-registered criteria set keeps the head the event already
+records; it does not write a second row, because one event has one verified head.
+
+A value that is not 40 lowercase hex digits is a usage error (exit 4), like any other option value
+this command refuses.
+
 ## Ruling an event that is already ruled
 
 An event has one standing ruling, and a second `verdict` call on it is never answered with a ruling it was not asked for. What the call does depends on the verdict already recorded and the verdict asked:
@@ -725,7 +767,7 @@ No refusal reason is added: `disposition_conflict` already means a ruling that c
 
 1. An open re-review is decided first, exactly as above (a criteria set that moved since the ruling), whether or not the head was accepted.
 2. The transition table above.
-3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head, because no head of an event is recorded.
+3. Nothing may rest on the verified ruling: no plan acceptance of the event (`dag_acceptances`, whatever its state), no merged mark of it (`assignment_marks`), and no merge turn of the assignment that is merging, of unknown effect or landed. A turn that only waits for the lane or holds it does not count, because the parent that found the base conflict holds that very turn. The turn is read per assignment and not per head: a merge turn is recorded per assignment (`merge_turns`), while the head an event's verified ruling fixed is the head an acceptance proves against ([Fixing the head a verified ruling handled](#fixing-the-head-a-verified-ruling-handled)), which is a different question from whether a turn of the assignment is merging. A head recorded by a ruling that was later replaced stays as the record of what that ruling handled, so a reader of it checks the event's standing ruling before trusting it.
 4. The existing path of a first `needs_changes` ruling: the event is the head of the generation the relationship stands on and the relationship is active (`stale_generation`, `superseded_revision`, `revision_ambiguous`, `relationship_not_active`), the finding marked `needs_changes` carries a note and the criteria set is the one the review is bound to, the child is an allowed recipient, and a declared restoration block can be carried.
 
 When all four hold, the writer replaces the ruling in the transaction that opens the next generation and queues the revision request to the same child, exactly as a first `needs_changes` ruling does. The replaced record stays: the journal records `verdict_superseded` with the replaced record and `reason: ruling_changed` (a re-review's entry has no reason). The answer is the new ruling plus `_supersedes`, the verdict, verdict turn and time of the ruling it replaced; like `_replay` it is an annotation of the answer and is not stored. The summary owed to the coordination document is a new job, because its identity carries the verdict, and it counts the rulings (`ruling 2`).
@@ -741,7 +783,7 @@ When a step refuses, the refusal names what to do:
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
-| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node whose result is not accepted yet, the generation opened by hand: `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened under that id (`generation-open`), the instruction line is sent to the child, the turn that carried it is bound (`generation-bind`) and `dag-correct --manifest-digest` records it as a correction, after which the child emits one receipt in that generation; a plan node whose accepted result is stale has its own route above (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.

@@ -269,6 +269,30 @@ func metricWrites(args []string) bool {
 	return false
 }
 
+// loopVerb is the loop row (cli.ts:169-180): the parser and the runner this repository ports, driven exactly
+// as the oracle's branch does. The oracle labels a parse refusal with the kind ("loop: "), which is why an
+// unknown flag reads "loop: init: unknown flag '--help'"; a library error is the oracle's uncaught throw and
+// answers the generic "crw cli failed: " prefix; every result goes to stdout with its own code.
+func loopVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	parsed, err := cli.ParseLoopCliArgs(args, cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "loop: "+err.Error())
+		return 1
+	}
+	result, err := cli.RunLoopCli(parsed)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
+}
+
 // divergenceVerb is the divergence row (cli.ts:183-189). The library's error is the oracle's one
 // uncaught path (the mode write), reported as "crw cli failed: "; every result goes to stdout with
 // its code. It takes the invocation's context like the metric row does (CRW-632): a writing run

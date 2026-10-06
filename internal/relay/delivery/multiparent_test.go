@@ -89,6 +89,7 @@ func (f *fixture) inParallel(work map[string]func(*Ack) (Obj, error)) (map[strin
 }
 
 func TestMPI01_each_parent_keeps_its_scope_reference_and_project_key(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "mpi", "scope")
 	f := newFixture(t, tree)
@@ -176,6 +177,7 @@ func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each
 }
 
 func TestMPI04_each_outbox_job_names_its_document_and_one_claim_cannot_complete_another(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "mpi", "outbox")
 	f := newFixture(t, tree)

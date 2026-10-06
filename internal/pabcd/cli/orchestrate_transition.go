@@ -25,9 +25,10 @@ import (
 // (:466-548) is that library's; this file starts at the state it reads. Ported as-is, texts with the
 // authorized name substitution only (.codexclaw -> .crw, cxc orchestrate -> crw pabcd orchestrate).
 //
-// Three pieces belong to other issues: the A>B review binding (:49-92) and the B>C source gate (:701-717) are
-// pass-throughs CRW-755 fills, and the D close (:725-1064) is a refusal CRW-756 and CRW-757 fill. No verb row
-// reaches this code yet, so nothing user-visible depends on those gaps (CRW-758 connects it).
+// Two pieces belong to other issues: the D close (:725-1064) is a refusal CRW-756 and CRW-757 fill, and the
+// verb row that reaches this code is CRW-758's. No verb row reaches it yet, so nothing user-visible depends on
+// those gaps. The A>B review binding (:49-95, called at :688-691) and the B>C source gate (:701-717) are ported
+// in orchestrate_review_binding.go (CRW-755).
 
 // orchestrateTransitionTimestampLayout is Date.prototype.toISOString, as a ledger or goalplan row prints a time.
 const orchestrateTransitionTimestampLayout = "2006-01-02T15:04:05.000Z"
@@ -153,22 +154,11 @@ func orchestrateCommitSupersedeStaleRounds(cwd, slug, sessionID, epoch string, p
 	return nil
 }
 
-// orchestrateTransitionReviewBinding is the A>B review binding check (validateReviewBinding, :49-92, :688-691),
-// which CRW-755 ports; until then it passes.
-func orchestrateTransitionReviewBinding(cur state.State, a OrchestrateCliArgs, sessionID string) *CliResult {
-	return nil
-}
-
-// orchestrateTransitionSourceGate is the B>C source gate (:701-717): the B entry snapshot must exist and the
-// source must have changed during B. CRW-755 ports it; until then it passes.
-func orchestrateTransitionSourceGate(cwd, sessionID string, cur state.State) *CliResult {
-	return nil
-}
-
-// orchestrateTransitionDClose is the D close (:725-1064), which CRW-756 and CRW-757 port. This issue refuses
-// the edge rather than half-close a cycle.
+// orchestrateTransitionDClose is the D close (:725-1064), ported in orchestrate_dclose.go. This body stays a
+// one-line call so a sibling issue's rewrite of the ordinary edge of this file merges without touching the D
+// place, and the commit-hook seam lives on the inner function the D close tests call directly.
 func orchestrateTransitionDClose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
-	return CliResult{}, errors.New("orchestrate D close is not ported yet")
+	return orchestrateDclose(cwd, sessionID, closePhaseID, cur, att, recovering, orchestrateDcloseSeam{})
 }
 
 // orchestrateTransitionStateWritable is this writer's half of the port's data-loss rule for the session file
@@ -510,12 +500,16 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 	}
 	// LEAN-REVIEW-01: an open round is honoured, never required; the B>C source gates follow, then the D close.
 	if cur.Phase == state.PhaseA && to == state.PhaseB && cur.Slug != "" {
-		if refusal := orchestrateTransitionReviewBinding(cur, a, sessionID); refusal != nil {
+		if refusal := orchestrateReviewBindingCheck(cur, a, sessionID); refusal != nil {
 			return *refusal, nil
 		}
 	}
 	if cur.Phase == state.PhaseB && to == state.PhaseC {
-		if refusal := orchestrateTransitionSourceGate(cwd, sessionID, cur); refusal != nil {
+		refusal, err := orchestrateReviewBindingSourceGate(cwd, sessionID, cur)
+		if err != nil {
+			return CliResult{}, err
+		}
+		if refusal != nil {
 			return *refusal, nil
 		}
 	}

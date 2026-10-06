@@ -59,11 +59,16 @@ a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
 A required check that is not a success has two readings, and they call for different
 actions. `checks_not_run` is the reading for a check that did not succeed because its
-workflow run holds a job that concluded cancelled without beginning a step: no runner ever
-picked it up, so the commit was never tested. `merge-evidence` names the run and the jobs
-that did not run in the problem's detail, so a rerun can be aimed at them. `checks_stale` is
-the reading for every other non-success, a real failure, and the lane returns its turn as
-before.
+workflow run holds a job that concluded `cancelled`, `failure` or `timed_out` without beginning a
+step: no runner ever picked it up, so the commit was never tested. `merge-evidence` names the run
+and the jobs that did not run in the problem's detail, so a rerun can be aimed at them.
+`checks_stale` is the reading for every other non-success, a real failure, and the lane returns
+its turn as before.
+
+A `go-product (test-*)` leg that concluded `success` while its test step did not run (the temporary
+CI light mode of CRW-790, where a pull request without the `crw-lane` label skips the legs' work)
+is `checks_stale` too, never a pass and never a rerun: the run tested nothing, so the lane labels
+the pull request `crw-lane` and judges the full run.
 
 What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
 judge owns it, the lane reruns the failed jobs of that run once on the same head

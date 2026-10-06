@@ -237,6 +237,13 @@ func NativeObservationLedgerMalformed(cwd string) bool {
 	if err != nil {
 		return !errors.Is(err, os.ErrNotExist)
 	}
+	return RenderObsLedgerMalformed(data)
+}
+
+// RenderObsLedgerMalformed is NativeObservationLedgerMalformed over bytes a caller already holds, so a second reader of
+// the same ledger (the state-copy preflight, internal/runtime/install/migrate) decides it by this rule rather than by one
+// of its own. The oracle's Stop hook asks the same question before it trusts the ledger (hook.ts:1910).
+func RenderObsLedgerMalformed(data []byte) bool {
 	for _, line := range text.SplitLines(string(data)) {
 		if text.Trim(line) == "" {
 			continue

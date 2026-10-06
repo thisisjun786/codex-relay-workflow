@@ -73,7 +73,10 @@ func (c reconciliation) stopped(state, format string, args ...any) decision {
 type decision struct {
 	action string // "continue", "recreate" or "stop"
 	thread string
-	rec    reconciliation
+	// turn is the standby turn the decision recognised on that thread (reconcile.go observe); empty
+	// when the thread's turn, if any, was not recognised as this creation's.
+	turn string
+	rec  reconciliation
 }
 
 // attemptID is the bridge operation id of creation attempt n of a request: attempt 0 is the request's own id, and each later one derives from
@@ -149,6 +152,18 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 	if !unknownCreation(r.receipt) {
 		return nil, nil
 	}
+	// A repeat whose reservation already recorded the accepted child and standby turn adopts that
+	// recorded identity and never reads the host: the identity was published by a run that observed
+	// it, and a host that has moved on since (the business turn beside the standby turn, or the
+	// standby turn gone from a shorter listing) must not talk the engine out of it.
+	if child, standby, ok := r.reservationRecordedIdentity(); ok {
+		base := reconciliation{attempt: r.attempt, attemptID: r.attemptIdentity().CreateRequestID}
+		base.state, base.thread = reconAdopted, child
+		base.detail = fmt.Sprintf("the reservation recorded standby turn %s for thread %s", standby, child)
+		r.receipt, r.adopted = adopted(r.receipt, child, standby), true
+		r.reconciled = &base
+		return nil, nil
+	}
 	d, err := r.decide(ctx)
 	if err != nil {
 		return nil, err
@@ -160,7 +175,7 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 				return nil, err
 			}
 		}
-		r.receipt, r.adopted = adopted(r.receipt, d.thread), true
+		r.receipt, r.adopted = adopted(r.receipt, d.thread, d.turn), true
 	case "recreate":
 		r.projectLock()
 		r.attempt++
@@ -195,9 +210,32 @@ func (r *startRun) holdProject(ctx context.Context) error {
 	return r.m.scopeRefusal(ctx, r.attemptIdentity(), r.req)
 }
 
+// reservationRecordedIdentity is the child and standby turn the reservation already published for this
+// creation, when it published them for the very thread the unknown receipt names.
+//
+// Reservation.Receipt records an accepted row only with a non-blank child and turn
+// (reservation.go), so a row that says accepted always carries both; the equality against the
+// receipt's own thread is what keeps the recorded identity from being adopted for a thread the
+// creation did not leave (a receipt that names none, or a newer attempt whose receipt names
+// another thread, falls through to decide() unchanged).
+func (r *startRun) reservationRecordedIdentity() (string, string, bool) {
+	child, standby := r.row.ChildTaskID.String, r.row.StandbyTurnID.String
+	receiptThread := pyjson.Text(r.receipt["threadId"])
+	if !r.row.ReceiptStatus.Valid || r.row.ReceiptStatus.String != "accepted" || !delivery.ValidSegment(child) || !delivery.ValidSegment(standby) || !delivery.ValidSegment(receiptThread) || child != receiptThread {
+		return "", "", false
+	}
+	return child, standby, true
+}
+
 // adopted is the unknown receipt as a creation that reached its thread: the thread is the one observed and thread/start is among the effects,
 // which is what the standby recovery asks of a receipt. The receipt the host kept is not changed.
-func adopted(receipt map[string]any, thread string) map[string]any {
+//
+// turn is the standby turn this creation sent, when observe() recognised it on the thread. A receipt that carries no turnId is one the standby
+// recovery would send to, so the recognised turn is recorded exactly as the standby recovery records the turn it sent: creationStatus keeps the
+// unknown status, the receipt becomes accepted, and turnId names the turn. Nothing else would make the receipt accepted - recoverStandby returns
+// early on a turnId - and without an accepted receipt verifyCreation cannot take the child's identity from it, so the recognised turn could never
+// become the standbyTurnId the reservation records.
+func adopted(receipt map[string]any, thread, turn string) map[string]any {
 	out := make(map[string]any, len(receipt)+2)
 	for k, v := range receipt {
 		out[k] = v
@@ -205,6 +243,11 @@ func adopted(receipt map[string]any, thread string) map[string]any {
 	out["threadId"] = thread
 	if _, ok := out["attemptedEffects"].([]any); !ok {
 		out["attemptedEffects"] = []any{"thread/start"}
+	}
+	if turn != "" && out["turnId"] == nil {
+		out["creationStatus"] = receipt["status"]
+		out["status"] = "accepted"
+		out["turnId"] = turn
 	}
 	return out
 }
@@ -227,7 +270,7 @@ func (r *startRun) decide(ctx context.Context) (decision, error) {
 		}
 	}
 	if thread := pyjson.Text(r.receipt["threadId"]); delivery.ValidSegment(thread) {
-		return r.observe(ctx, base, thread)
+		return r.observe(ctx, base, thread, true)
 	}
 	return r.scan(ctx, base)
 }
@@ -425,7 +468,10 @@ func noTurnAnswer(err error) bool {
 
 // observe reads a thread the creation named or the scan found: whether it has a turn decides, and the receipt decides whether the standby
 // turn/start may have been sent. Neither is concluded from the other.
-func (r *startRun) observe(ctx context.Context, base reconciliation, thread string) (decision, error) {
+//
+// fromReceipt says the thread is the one the creation receipt itself named, not a thread the scan found. Only then can a turn the host lists
+// be this creation's standby turn, so only then is it recognised (standbyTurnDecision).
+func (r *startRun) observe(ctx context.Context, base reconciliation, thread string, fromReceipt bool) (decision, error) {
 	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": thread, "includeTurns": false})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -441,10 +487,15 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 	}
 	facts := pyjson.Map(read["thread"])
 	hasTurn := pyjson.Text(pyjson.Map(facts["status"])["type"]) == "active" || strings.TrimSpace(pyjson.Text(facts["preview"])) != ""
-	turns, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": thread, "limit": 1, "itemsView": "summary"})
+	// Two turns are asked for rather than one: whether the thread has a turn is still read from the first, and a thread that holds exactly
+	// the standby turn this creation sent is told from one that holds more (standbyTurnDecision). One call serves both readings.
+	turns, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": thread, "limit": 2, "itemsView": "summary"})
+	var rows []any
+	var nextPage string
 	switch {
 	case err == nil:
-		rows, _ := turns["data"].([]any)
+		rows, _ = turns["data"].([]any)
+		nextPage = pyjson.Text(turns["nextCursor"])
 		hasTurn = hasTurn || len(rows) > 0
 	case ctx.Err() != nil:
 		return decision{}, ctx.Err()
@@ -455,13 +506,18 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 	}
 	base.thread = thread
 	if hasTurn {
+		if fromReceipt {
+			// The receipt cannot say whether its turn/start reached the host, and the thread shows a turn. The host's history decides whether
+			// that turn is the standby this creation sent; when it is, the creation continues on it exactly as a receipt that named its turnId.
+			if recognised, ok := r.standbyTurnDecision(base, thread, rows, nextPage); ok {
+				return recognised, nil
+			}
+		}
 		return base.stopped(reconHasTurn, "thread %s already has a turn, so it cannot be told from a standby turn this creation sent", thread), nil
 	}
-	if effects, ok := r.receipt["attemptedEffects"].([]any); ok {
-		for _, effect := range effects {
-			if effect == "turn/start" {
-				return base.stopped(reconTurnUnknown, "the creation sent turn/start and no answer came back (attemptedEffects); it is not sent again (I-473)"), nil
-			}
+	if _, recorded := r.receipt["attemptedEffects"].([]any); recorded {
+		if attemptedTurnStart(r.receipt) {
+			return base.stopped(reconTurnUnknown, "the creation sent turn/start and no answer came back (attemptedEffects); it is not sent again (I-473)"), nil
 		}
 	} else if r.receipt["title"] != nil {
 		// The bridge saves the title after thread/name/set and sends turn/start next without another save: a receipt that stopped here may have sent it.
@@ -469,6 +525,140 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 	}
 	base.state, base.detail = reconAdopted, fmt.Sprintf("thread %s exists and has no turn", thread)
 	return decision{action: "continue", thread: thread, rec: base}, nil
+}
+
+// attemptedTurnStart reports whether the creation's receipt recorded turn/start among the effects it tried. A receipt that kept no list has
+// not recorded it, which is what observe() reads as the title-only case.
+func attemptedTurnStart(receipt map[string]any) bool {
+	effects, ok := receipt["attemptedEffects"].([]any)
+	if !ok {
+		return false
+	}
+	for _, effect := range effects {
+		if effect == "turn/start" {
+			return true
+		}
+	}
+	return false
+}
+
+// standbyTurnDecision recognises the standby turn this creation sent on a thread the receipt names, under every condition at once:
+//
+//   - the receipt recorded turn/start among the effects it tried;
+//   - thread/turns/list (limit 2, itemsView summary) answers exactly one turn and no next page, so the thread holds that turn and nothing else;
+//   - that turn's first user message text is byte for byte the bootstrap this creation sends.
+//
+// A completed turn then continues exactly as a creation receipt that carried its turnId does: reconAdopted, with the turn recorded as the
+// standby turn (adopted). An inProgress turn is reconPending, re-read after the same repeatAfter a thread that has not shown up yet is.
+// Everything else keeps observe()'s existing answer - two or more turns, other text, failed or interrupted, input it cannot read, a listing
+// error - and turn/start is never sent again (I-473): recognising a turn reads it, it sends nothing.
+func (r *startRun) standbyTurnDecision(base reconciliation, thread string, rows []any, nextPage string) (decision, bool) {
+	if !attemptedTurnStart(r.receipt) {
+		return decision{}, false
+	}
+	if len(rows) != 1 || nextPage != "" {
+		return decision{}, false
+	}
+	row := pyjson.Map(rows[0])
+	turn := pyjson.Text(row["id"])
+	if turn == "" || standbyTurnInput(row) != bootstrap {
+		return decision{}, false
+	}
+	switch pyjson.Text(row["status"]) {
+	case "completed":
+		base.state, base.detail = reconAdopted, fmt.Sprintf("thread %s holds the standby turn %s this creation sent", thread, turn)
+		return decision{action: "continue", thread: thread, turn: turn, rec: base}, true
+	case "inProgress":
+		after, ok := r.standbyRecheck()
+		if !ok {
+			// The engine's clock does not read as a time, so there is no window to name; the turn keeps today's answer.
+			return decision{}, false
+		}
+		base.state, base.repeatAfter = reconPending, after
+		base.detail = fmt.Sprintf("thread %s holds the standby turn %s this creation sent, still in progress", thread, turn)
+		return decision{action: "stop", rec: base}, true
+	}
+	return decision{}, false
+}
+
+// standbyTurnInput is the text of a summary turn's first user message, and only when that message
+// is the whole of what this creation sent: the standby is recognised on the message, not on a
+// fragment of it, so a message that carries anything besides the bootstrap is not it.
+//
+// A summary item may state the text directly on the item or nest it in content, and the bridge's
+// own reads accept both (delivery.itemText reads an item's text first). Either way the whole
+// message has to be one text part: an item's own text is read only when the content beside it is
+// absent, empty, or that same single text part, and a message without its own text is read only
+// when the content is exactly one text part. The part's other keys are the host's (text_elements
+// and the like) and are not read. Two or more parts, a part that is not text, or an item text that
+// differs from the content answer "", which never equals the bootstrap.
+func standbyTurnInput(row map[string]any) string {
+	items, _ := row["items"].([]any)
+	for _, item := range items {
+		message := pyjson.Map(item)
+		if pyjson.Text(message["type"]) != "userMessage" {
+			continue
+		}
+		return standbyMessageText(message)
+	}
+	return ""
+}
+
+// standbyMessageText is one user message's standby text, or "" when the message is not the
+// bootstrap alone (standbyTurnInput).
+func standbyMessageText(message map[string]any) string {
+	parts := standbyMessageParts(message)
+	if text := pyjson.Text(message["text"]); text != "" {
+		if len(parts) == 0 {
+			return text
+		}
+		if len(parts) == 1 && pyjson.Text(parts[0]["type"]) == "text" && pyjson.Text(parts[0]["text"]) == text {
+			return text
+		}
+		return ""
+	}
+	if len(parts) == 1 && pyjson.Text(parts[0]["type"]) == "text" {
+		return pyjson.Text(parts[0]["text"])
+	}
+	return ""
+}
+
+// standbyMessageParts is a message's content as a list of parts; a message that carries none reads as no
+// parts, whatever shape the host left behind.
+func standbyMessageParts(message map[string]any) []map[string]any {
+	content, _ := message["content"].([]any)
+	parts := make([]map[string]any, 0, len(content))
+	for _, part := range content {
+		parts = append(parts, pyjson.Map(part))
+	}
+	return parts
+}
+
+// standbyRecheck is when a recognised standby turn that is still in progress is looked at again: the grace period after the later of the
+// receipt's own creation times, which is the window the scan's pending answer gives a thread that has not shown up yet. That instant can
+// already be past when a repeat reaches a creation made long before, and a past instant would read as "look again now" and spend a repeat
+// on a turn that is still running, so the window is measured from the engine's clock when the creation's own has closed. A receipt that
+// records no creation time still gets the clock's window; a clock that does not read as a time gives none.
+func (r *startRun) standbyRecheck() (string, bool) {
+	now, err := time.Parse(time.RFC3339Nano, r.m.now())
+	if err != nil {
+		return "", false
+	}
+	at := now.Add(r.m.grace())
+	started, hasStart := epoch(r.receipt["startedAt"])
+	updated, hasUpdate := epoch(r.receipt["updatedAt"])
+	if hasStart || hasUpdate {
+		if !hasStart {
+			started = updated
+		}
+		if !hasUpdate {
+			updated = started
+		}
+		if later := time.Unix(int64(math.Max(started, updated)), 0).Add(r.m.grace()); later.After(at) {
+			at = later
+		}
+	}
+	return at.UTC().Format(time.RFC3339), true
 }
 
 func uuidV7Millis(id string) (int64, bool) {
@@ -600,7 +790,7 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 	}
 	switch len(matches) {
 	case 1:
-		return r.observe(ctx, base, matches[0])
+		return r.observe(ctx, base, matches[0], false)
 	case 0:
 		after := time.Unix(int64(ended), 0).Add(r.m.grace())
 		if now.Before(after) {

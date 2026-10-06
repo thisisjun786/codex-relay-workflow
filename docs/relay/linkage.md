@@ -106,13 +106,15 @@ model already had, not a limit of the command. The seat is also what such a sess
 speak for the store scope: `limit-declare --scope-kind store` reads its declarer from a live
 supervisor binding, and the seat is the binding a session that manages the store holds.
 
-The seat has no handover yet. `linkage-handover` maps its role back to the role's own level, so
-`--role supervisor --scope store` looks for an initiative named `store` and refuses
-`unregistered_scope`; the incumbent re-binding is a no-op, and no other command archives a
-binding. A second task asking for a seat that is already held is therefore told to hand it over
-deliberately, which for this one scope no command yet does. Replacing the store-scope owner needs
-either `linkage-handover` to select the scope kind or a lifecycle operation of its own, and that
-is a decision this command does not make.
+The seat changes hands like any other: `linkage-handover --role supervisor --scope-kind store
+--scope store --expect-task <incumbent> --task <successor> ...` archives the incumbent's binding
+and binds the successor. The scope kind is the same `--scope-kind` decision `linkage-bind` makes,
+so it is accepted for the supervisor's store seat and no other combination; the handover rules are
+the ordinary ones, which is what makes the seat recoverable when the management session is
+replaced. `--expect-task` must name the live owner, and a successor that already supervises an
+initiative is refused `role_already_bound`, because one task holds one supervisor seat. Without
+`--scope-kind` the handover takes the role's own level as it always did, so `--role supervisor
+--scope store` still looks for an initiative named `store` and refuses `unregistered_scope`.
 
 ## The transaction protocol
 
