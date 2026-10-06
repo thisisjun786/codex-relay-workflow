@@ -103,25 +103,23 @@ type githubPostScan struct {
 
 // githubPostInput is tool_input's command or cmd: an argv array is already split, a string is shell text.
 func githubPostInput(input map[string]any) ([]githubPostWord, string, bool) {
-	var value any
 	for _, key := range [...]string{"command", "cmd"} {
-		if value == nil {
-			value = input[key]
-		}
-	}
-	if items, ok := value.([]any); ok {
-		words := make([]githubPostWord, 0, len(items))
-		for _, item := range items {
-			s, ok := item.(string)
-			if !ok {
-				return nil, "", false
+		if items, ok := input[key].([]any); ok {
+			words := make([]githubPostWord, 0, len(items))
+			for _, item := range items {
+				s, ok := item.(string)
+				if !ok {
+					return nil, "", false
+				}
+				words = append(words, githubPostWord{text: s})
 			}
-			words = append(words, githubPostWord{text: s})
+			return words, "", true
 		}
-		return words, "", true
+		if shell, ok := input[key].(string); ok {
+			return nil, shell, false
+		}
 	}
-	shell, _ := value.(string)
-	return nil, shell, false
+	return nil, "", false
 }
 
 // text reads one shell text: every simple command it holds, with its own line's bodies and writes. A text
@@ -266,17 +264,17 @@ func (s *githubPostScan) api(args []githubPostWord) (githubPostSite, bool) {
 	first, denied := githubPostSite{}, false
 	for _, o := range githubPostOptions(args, "fF") {
 		site, no := githubPostSite{}, false
-		switch {
-		case o.name == "--input":
+		if o.name == "--input" {
 			site, no = s.file(o.value)
-		case o.name == "-f" || o.name == "--raw-field" || o.name == "-F" || o.name == "--field":
+		} else if o.name == "-f" || o.name == "--raw-field" || o.name == "-F" || o.name == "--field" {
 			key, value, ok := strings.Cut(o.value.text, "=")
 			if !ok {
 				continue
 			}
+			file := o.name == "-F" || o.name == "--field"
 			for _, field := range githubPostFieldKeys(key) {
 				switch {
-				case field == "body" && (o.name == "-F" || o.name == "--field") && strings.HasPrefix(value, "@"):
+				case field == "body" && file && strings.HasPrefix(value, "@"):
 					site, no = s.file(githubPostWord{text: strings.TrimPrefix(value, "@")})
 				case field == "body":
 					site, no = s.inline(o.value, true)
@@ -319,12 +317,9 @@ func githubPostOptions(args []githubPostWord, short string) []githubPostOption {
 		case w.text == "--":
 			return out
 		case strings.HasPrefix(w.text, "--"):
-			name, value, attached := strings.Cut(w.text, "=")
-			if attached {
+			if name, value, attached := strings.Cut(w.text, "="); attached {
 				out = append(out, githubPostOption{name, githubPostWord{text: value, raw: w.raw}})
-				continue
-			}
-			if i+1 < len(args) {
+			} else if i+1 < len(args) {
 				out, i = append(out, githubPostOption{name, args[i+1]}), i+1
 			} else {
 				out = append(out, githubPostOption{name: name})
@@ -336,8 +331,10 @@ func githubPostOptions(args []githubPostWord, short string) []githubPostOption {
 					letter, value = string(c), w.text[j+1:]
 				}
 			}
+			if letter == "" {
+				continue
+			}
 			switch {
-			case letter == "":
 			case value != "":
 				out = append(out, githubPostOption{"-" + letter, githubPostWord{text: strings.TrimPrefix(value, "="), raw: w.raw}})
 			case i+1 < len(args):
@@ -381,8 +378,13 @@ func (s *githubPostScan) file(w githubPostWord) (githubPostSite, bool) {
 		}
 		return githubPostSite{}, false
 	}
-	if name == "" || githubPostExpands(w.raw, false) || s.rewritten(name) {
+	if name == "" || githubPostExpands(w.raw, false) {
 		return githubPostSite{githubPostRuleUnread, name}, true
+	}
+	for _, write := range s.writes {
+		if write == name || filepath.Clean(write) == filepath.Clean(name) {
+			return githubPostSite{githubPostRuleUnread, name}, true
+		}
 	}
 	content, ok := githubPostReadFile(name, s.cwd)
 	if !ok {
@@ -394,17 +396,6 @@ func (s *githubPostScan) file(w githubPostWord) (githubPostSite, bool) {
 	return githubPostSite{}, false
 }
 
-// rewritten is whether the same command line writes the file a post reads, so the bytes the guard
-// validated are not the bytes gh would consume.
-func (s *githubPostScan) rewritten(name string) bool {
-	for _, w := range s.writes {
-		if w == name || filepath.Clean(w) == filepath.Clean(name) {
-			return true
-		}
-	}
-	return false
-}
-
 // githubPostReadFile reads the text a post names: a regular file of at most 1 MiB, ~ expanded.
 func githubPostReadFile(name, cwd string) (string, bool) {
 	path := name
@@ -414,11 +405,11 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 		}
 	}
 	if !filepath.IsAbs(path) {
-		base := cwd
-		if base == "" {
-			base, _ = os.Getwd()
+		if base := cwd; base != "" {
+			path = filepath.Join(base, path)
+		} else if wd, err := os.Getwd(); err == nil {
+			path = filepath.Join(wd, path)
 		}
-		path = filepath.Join(base, path)
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -437,37 +428,30 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 }
 
 // githubPostLines is a shell text as its command lines, each with the quoted heredocs it introduces, and
-// whether every quote closes: a newline inside quotes is not a line end, and a text the guard cannot split
-// is judged by the fail-closed rule.
+// whether every quote closes: a newline inside quotes is not a line end, a text the guard cannot split is
+// judged by the fail-closed rule, and a heredoc body belongs to the line that introduces it.
 func githubPostLines(command string) ([]githubPostLine, bool) {
 	rs := []rune(githubPostUncontinued(command))
 	out := []githubPostLine{}
 	for i := 0; i < len(rs); {
 		start := i
-		for i < len(rs) {
-			if c := rs[i]; c == '\'' || c == '"' {
-				end, closed := githubPostQuotedEnd(rs, i)
-				if !closed {
-					return nil, false
-				}
-				i = end
+		for i < len(rs) && rs[i] != '\n' {
+			if rs[i] != '\'' && rs[i] != '"' {
+				i++
 				continue
 			}
-			if rs[i] == '\n' {
-				break
+			end, closed := githubPostQuotedEnd(rs, i)
+			if !closed {
+				return nil, false
 			}
-			i++
+			i = end
 		}
-		line := githubPostLine{text: string(rs[start:i])}
-		next := i
-		if next < len(rs) {
-			next++
-		}
+		line, from := githubPostLine{text: string(rs[start:i])}, i+1
 		for _, delim := range githubPostHeredocDelimiters(rs[start:i]) {
-			body, after := githubPostHeredocBody(rs, next, delim)
-			line.bodies, next = append(line.bodies, body), after
+			body, after := githubPostHeredocBody(rs, from, delim)
+			line.bodies, from = append(line.bodies, body), after
 		}
-		i = next
+		i = from
 		out = append(out, line)
 	}
 	return out, true
@@ -475,41 +459,34 @@ func githubPostLines(command string) ([]githubPostLine, bool) {
 
 // githubPostHeredocDelimiters is the quoted heredoc delimiters the line introduces, in the order the shell
 // consumes their bodies; githubPostHeredocBody is the body of the heredoc whose quoted delimiter is delim,
-// with the index just past the delimiter line. An unquoted delimiter is not read, because the shell
-// expands that body.
+// with the index just past the delimiter line. An unquoted delimiter is not read, because the shell expands
+// that body.
 func githubPostHeredocDelimiters(line []rune) []string {
-	delimiter := func(i int) (string, bool) {
-		j := i + 2
-		if j < len(line) && line[j] == '-' {
-			j++
-		}
-		for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
-			j++
-		}
-		if j >= len(line) || line[j] != '\'' && line[j] != '"' {
-			return "", false
-		}
-		quote, start := line[j], j+1
-		for j = start; j < len(line) && line[j] != quote; j++ {
-		}
-		if j >= len(line) || j == start {
-			return "", false
-		}
-		return string(line[start:j]), true
-	}
 	out := []string{}
-	for i := 0; i < len(line); i++ {
+	for i := 0; i+1 < len(line); i++ {
 		switch line[i] {
 		case '\\':
 			i++
 		case '\'', '"':
-			end, _ := githubPostQuotedEnd(line, i)
-			i = end - 1
+			i, _ = githubPostQuotedEnd(line, i)
+			i--
 		case '<':
-			if i+1 < len(line) && line[i+1] == '<' && (i+2 >= len(line) || line[i+2] != '<') {
-				if delim, ok := delimiter(i); ok {
-					out = append(out, delim)
-				}
+			if line[i+1] != '<' || i+2 < len(line) && line[i+2] == '<' {
+				continue
+			}
+			j := i + 2
+			if j < len(line) && line[j] == '-' {
+				j++
+			}
+			for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
+				j++
+			}
+			if j+1 >= len(line) || line[j] != '\'' && line[j] != '"' {
+				continue
+			}
+			end, _ := githubPostQuotedEnd(line, j)
+			if end > j+1 {
+				out = append(out, string(line[j+1:end-1]))
 			}
 		}
 	}
@@ -589,18 +566,6 @@ func githubPostQuotedEnd(rs []rune, i int) (int, bool) {
 // githubPostWords splits one simple command into its words, keeping each word's written form too: a quoted
 // region is one word, read as the shell reads it, and a backslash escapes what follows.
 func githubPostWords(segment string) []githubPostWord {
-	unquote := func(quoted []rune) string {
-		out := strings.Builder{}
-		for i := 1; i < len(quoted)-1; i++ {
-			c := quoted[i]
-			if quoted[0] == '"' && c == '\\' && i+1 < len(quoted)-1 && githubPostEscapable(quoted[i+1]) {
-				i++
-				c = quoted[i]
-			}
-			out.WriteRune(c)
-		}
-		return out.String()
-	}
 	rs, out := []rune(segment), []githubPostWord{}
 	raw, spelled, started := strings.Builder{}, strings.Builder{}, false
 	flush := func() {
@@ -618,7 +583,7 @@ func githubPostWords(segment string) []githubPostWord {
 			end, _ := githubPostQuotedEnd(rs, i)
 			started = true
 			raw.WriteString(string(rs[i:end]))
-			spelled.WriteString(unquote(rs[i:end]))
+			spelled.WriteString(githubPostUnquoted(rs[i:end]))
 			i = end - 1
 		case c == '\\' && i+1 < len(rs):
 			started = true
@@ -635,6 +600,20 @@ func githubPostWords(segment string) []githubPostWord {
 	return out
 }
 
+// githubPostUnquoted is a quoted region as the shell reads it: quotes off, escapes inside double quotes.
+func githubPostUnquoted(quoted []rune) string {
+	out := strings.Builder{}
+	for i := 1; i < len(quoted)-1; i++ {
+		c := quoted[i]
+		if quoted[0] == '"' && c == '\\' && i+1 < len(quoted)-1 && githubPostEscapable(quoted[i+1]) {
+			i++
+			c = quoted[i]
+		}
+		out.WriteRune(c)
+	}
+	return out.String()
+}
+
 // githubPostEscapable is what a backslash escapes inside double quotes; every other backslash stands.
 func githubPostEscapable(c rune) bool {
 	return c == '"' || c == '\\' || c == '$' || c == 0x60 || c == '\n'
@@ -647,8 +626,7 @@ func githubPostEscapable(c rune) bool {
 func githubPostExpands(raw string, unreadable bool) bool {
 	rs, mode := []rune(raw), rune(0)
 	for i := 0; i < len(rs); i++ {
-		c := rs[i]
-		switch {
+		switch c := rs[i]; {
 		case mode == '\'':
 			if c == '\'' {
 				mode = 0
@@ -668,11 +646,9 @@ func githubPostExpands(raw string, unreadable bool) bool {
 		case c == 0x60:
 			return true
 		case c == '$' && i+1 < len(rs):
-			next := rs[i+1]
-			if next == '(' {
+			if next := rs[i+1]; next == '(' {
 				return true
-			}
-			if !unreadable && (next == '{' || next == '_' || strings.ContainsRune("0123456789@*#?$!-", next) ||
+			} else if !unreadable && (next == '{' || next == '_' || strings.ContainsRune("0123456789@*#?$!-", next) ||
 				next >= 'a' && next <= 'z' || next >= 'A' && next <= 'Z') {
 				return true
 			}
@@ -687,7 +663,7 @@ func githubPostExpands(raw string, unreadable bool) bool {
 
 // githubPostStripPrefixes is the command a simple command starts with: grouping words, wrappers and
 // assignments. A post in (gh ...), { gh ...; } or ! gh ... is still read, and each wrapper's own options,
-// option values and numbers go with it, so a post behind a runner prefix is read too.
+// option values and numbers go with it, so a post behind a runner prefix (timeout, xargs) is read too.
 func githubPostStripPrefixes(words []githubPostWord) []githubPostWord {
 	out := []githubPostWord{}
 	for _, w := range words {
@@ -720,19 +696,7 @@ func githubPostStripPrefixes(words []githubPostWord) []githubPostWord {
 	return words[head:]
 }
 
-// githubPostWrapper is a command that runs the rest of the line, so the post behind it is read.
-func githubPostWrapper(name string) bool {
-	for _, w := range [...]string{"env", "sudo", "doas", "command", "builtin", "nohup", "setsid", "time",
-		"nice", "ionice", "stdbuf", "timeout", "chrt", "taskset", "xargs"} {
-		if name == w {
-			return true
-		}
-	}
-	return false
-}
-
-// githubPostWrapperWord is a word belonging to the wrapper: an assignment, an option, or a number;
-// githubPostWrapperValue is one of its options that takes the next word as its value.
+// githubPostWrapperWord is a word belonging to the wrapper: an assignment, an option, or a number.
 func githubPostWrapperWord(word string) bool {
 	if word == "" {
 		return false
@@ -751,6 +715,19 @@ func githubPostWrapperWord(word string) bool {
 	return true
 }
 
+// githubPostWrapper is a command that runs the rest of the line, so the post behind it is read.
+func githubPostWrapper(name string) bool {
+	for _, w := range [...]string{"env", "sudo", "doas", "command", "builtin", "nohup", "setsid", "time",
+		"nice", "ionice", "stdbuf", "timeout", "chrt", "taskset", "xargs"} {
+		if name == w {
+			return true
+		}
+	}
+	return false
+}
+
+// githubPostWrapperValue is a wrapper option that takes the next word as its value, as githubPostWrapperValues
+// lists them for its own help: a function, not a package-level table, so nothing is initialized at start.
 func githubPostWrapperValue(name, option string) bool {
 	for _, v := range strings.Fields(githubPostWrapperValues(name)) {
 		if option == v || strings.HasPrefix(option, v+"=") {
@@ -760,8 +737,6 @@ func githubPostWrapperValue(name, option string) bool {
 	return false
 }
 
-// githubPostWrapperValues is a wrapper's value-taking options, as its own help lists them. It is a function
-// rather than a package-level table, so nothing is initialized at program start.
 func githubPostWrapperValues(name string) string {
 	for _, row := range [...]string{
 		"env -u --unset -C --chdir -S --split-string",
