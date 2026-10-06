@@ -180,6 +180,33 @@ func crw842ContainsAll(text string, want ...string) bool {
 	return true
 }
 
+// A receipt that names no thread at all is never matched to the recorded identity, however
+// accepted the row is: the row is adopted only for the very thread the unknown receipt names.
+func TestRecordedIdentityThreadlessReceiptIsNotAdopted(t *testing.T) {
+	t.Parallel()
+	turn := "01a10ff9-a5e8-7c61-a08c-0ac0508eadb4"
+	k, _ := crw842RecordedIdentityKit(t, crw842OneStandbyTurn(turn), crw842TwoTurns(turn))
+	k.expect(k.run(), "admitted", "", "adopted")
+	k.effects(1, 1)
+
+	// The host's creation receipt loses the thread it named, as the scan-found shape has it.
+	create, _ := OperationIDs("managed-1")
+	delete(k.host.operations[create], "threadId")
+
+	got := k.run()
+	if detail := pyjson.Text(recon(got)["detail"]); strings.Contains(detail, "reservation recorded") {
+		t.Fatalf("a threadless receipt adopted the recorded identity: %q", detail)
+	}
+	if got["state"] != "incomplete" || pyjson.Text(got["reason"]) != "creation_unknown" {
+		t.Fatalf("a threadless receipt did not fall through to today's answer: %v/%v", got["state"], got["reason"])
+	}
+	if got["standbyTurnId"] != turn || got["childTaskId"] != "t-1" {
+		t.Fatalf("the reported identity changed: %v %v", got["childTaskId"], got["standbyTurnId"])
+	}
+	k.noSecondTurn()
+	k.effects(1, 1)
+}
+
 // crw842UserParts is a userMessage item whose content is exactly the parts given: the shape a message
 // with more than one text part, or with a part that is not text, reaches the recogniser in.
 func crw842UserParts(parts ...map[string]any) map[string]any {
