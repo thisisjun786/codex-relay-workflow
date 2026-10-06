@@ -26,6 +26,24 @@ func configLockWritersHold(t *testing.T, path string) *crwdir.ConfigLock {
 	return held
 }
 
+// configLockWritersTempHomes points HOME, CODEX_HOME and CRW_HOME at temporary directories: this
+// code can reach config and self-heal state, so no test here may touch the real homes.
+func configLockWritersTempHomes(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	home := filepath.Join(root, "codex")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for key, dir := range map[string]string{"HOME": root, "CODEX_HOME": home, "CRW_HOME": filepath.Join(root, "crw")} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(key, dir)
+	}
+	return home
+}
+
 // configLockWritersRefused reports whether the command answered the shared busy refusal.
 func configLockWritersRefused(t *testing.T, err error) {
 	t.Helper()
@@ -100,7 +118,7 @@ func TestConfigSetReadsTheManifestInsideTheLock(t *testing.T) {
 // config.toml are under the lock; the CLI calls that follow rewrite the file themselves and stay
 // outside it.
 func TestDeactivateTakesTheConfigLock(t *testing.T) {
-	home := activationHome(t)
+	home := configLockWritersTempHomes(t)
 	path := filepath.Join(home, "config.toml")
 	activationWrite(t, path, deactivationConfig)
 	deactivationManifest(t, home, map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}, nil)
@@ -167,7 +185,7 @@ func TestMultiAgentV2SetTakesTheConfigLock(t *testing.T) {
 // CRW enabled, the injected CLI has nothing to disable and no config.toml write to serialize, so a
 // busy lock must not fail the command.
 func TestDeactivateWithNothingToWriteTakesNoLock(t *testing.T) {
-	home := activationHome(t)
+	home := configLockWritersTempHomes(t)
 	path := filepath.Join(home, "config.toml")
 	activationWrite(t, path, deactivationConfig)
 	m := deactivationManifest(t, home, nil, map[string]FlagRecord{"hooks": {PriorEnabled: true}})
@@ -194,6 +212,7 @@ func TestDeactivateWithNothingToWriteTakesNoLock(t *testing.T) {
 func TestEmptyConfigPathTakesNoLock(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	home := configLockWritersTempHomes(t)
 
 	empty := ""
 	change, err := SetMultiAgentV2State(MultiAgentV2Deps{ConfigPath: &empty, Run: func([]string) CodexRunResult {
@@ -204,7 +223,6 @@ func TestEmptyConfigPathTakesNoLock(t *testing.T) {
 		t.Fatalf("the empty override no-op changed: %+v, %v", change, err)
 	}
 
-	home := t.TempDir()
 	m := deactivationManifest(t, home, nil, nil)
 	m.ConfigPath = ""
 	deactivationSaveManifest(t, home, m)
