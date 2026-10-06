@@ -249,7 +249,7 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 				// restated record that marks any other job could steer the lane toward treating an
 				// untested head as tested (CRW-824). The comparison is exact, as stepLessConclusion's
 				// is: the collector emits the forge's canonical spelling.
-				if !strings.HasPrefix(textField(entry, "name"), lightLegPrefix) {
+				if !isLightLegName(entry) {
 					bad(where + " states testSkipped true on " + quote.Value(o.Get("name")) + ", and only a " + lightLegPrefix + "*) leg concluded success without running its tests; another job name cannot be one")
 				} else if o.Get("conclusion") != "success" {
 					bad(where + " states testSkipped true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a leg whose tests were skipped concluded success; another conclusion cannot be a leg whose tests were skipped")
@@ -320,6 +320,13 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 	return names
 }
 
+// isLightLegName reports whether a check entry names a go-product test leg: the only job name the
+// collector marks testSkipped and the only one the reading accepts (CRW-824). The comparison is a
+// prefix on the ci.yml matrix spelling, so a restated record cannot claim a leg it is not.
+func isLightLegName(entry any) bool {
+	return strings.HasPrefix(textField(entry, "name"), lightLegPrefix)
+}
+
 // testSkippedJobs lists the names of the entries of one workflow run that the collector marked
 // testSkipped: go-product test legs that concluded success without running their test step
 // (CRW-824). The flag is read as a strict boolean and the name must be a test leg, so a restated
@@ -342,7 +349,7 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 			// An entry the same job superseded is not the job's result: its newest attempt is.
 			continue
 		}
-		if !strings.HasPrefix(textField(entry, "name"), lightLegPrefix) {
+		if !isLightLegName(entry) {
 			continue
 		}
 		o, _ := Object(entry)
