@@ -221,9 +221,9 @@ func (d *Daemon) read(ctx context.Context, until time.Time, r delivery.Relations
 	return &store.TurnReference{ThreadID: r.Child.TaskID, TurnID: turnID, Status: final}, nil
 }
 
-// errNotSilenced is what the settlement transaction answers when the later receipt that silenced the end of a turn
+// errNotSilenced is what the settlement transaction answers when the receipt that silenced the end of a turn
 // no longer does by the time the settlement commits.
-var errNotSilenced = errors.New("the later receipt that silenced the end of the turn no longer holds")
+var errNotSilenced = errors.New("the receipt that silenced the end of the turn no longer holds")
 
 var errManagedStandby = errors.New("the turn is the inert original managed standby")
 
@@ -240,20 +240,26 @@ WHERE r.relationship_id=? AND r.child_task_id=? AND g.dispatch_turn_id=?
 }
 
 func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store.TurnReference, report *Report) {
-	synthesized, laterTurn, laterEvent := "", "", ""
+	synthesized, laterTurn, laterEvent, ownEvent := "", "", "", ""
 	observationDeferred := false
 	ended := turn.Status == "failed" || turn.Status == "interrupted"
 	if ended {
 		var err error
-		if laterTurn, laterEvent, err = d.laterReceipt(ctx, r.ID, turn); err != nil {
-			report.Notes = append(report.Notes, "later receipt lookup failed for "+turn.TurnID+": "+err.Error())
+		if ownEvent, err = d.ownReceipt(ctx, r.ID, turn); err != nil {
+			report.Notes = append(report.Notes, "own receipt lookup failed for "+turn.TurnID+": "+err.Error())
 			return
 		}
+		if ownEvent == "" {
+			if laterTurn, laterEvent, err = d.laterReceipt(ctx, r.ID, turn); err != nil {
+				report.Notes = append(report.Notes, "later receipt lookup failed for "+turn.TurnID+": "+err.Error())
+				return
+			}
+		}
 	}
-	// When a later turn of this generation holds a final child receipt whose delivery the parent is owed, the
-	// end of this one is not news: the turn is settled below with no event, so it is not read again. That
-	// rests on the lookup above, which was made before the settlement transaction opens, so the transaction
-	// makes it again.
+	// When this turn already holds its own final child receipt whose delivery the parent is owed, or a later
+	// turn of this generation holds one, the end of this turn is not news: the turn is settled below with no
+	// event, so it is not read again. That rests on the lookups above, which were made before the settlement
+	// transaction opens, so the transaction makes them again.
 	commit := func(queue bool, refusal error) error {
 		return d.Store.Compose(ctx, func(tx context.Context, conn *sql.Conn) error {
 			standby, err := d.isManagedStandby(tx, r.ID, turn)
@@ -263,10 +269,20 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			if standby {
 				return errManagedStandby
 			}
-			if laterEvent != "" {
+			if ownEvent != "" {
 				// The transaction holds the writer lock until it commits, so what it finds is what the
-				// settlement is written on. A generation opened or a relationship paused since the first
-				// lookup leaves nothing to silence the end, and the turn is not settled.
+				// settlement is written on. A generation opened, a relationship paused or a delivery
+				// superseded since the first lookup leaves nothing to silence the end, and the turn is
+				// not settled.
+				eventNow, err := d.ownReceipt(tx, r.ID, turn)
+				if err != nil {
+					return fmt.Errorf("own receipt lookup failed: %w", err)
+				}
+				if eventNow == "" {
+					return errNotSilenced
+				}
+				ownEvent = eventNow
+			} else if laterEvent != "" {
 				turnNow, eventNow, err := d.laterReceipt(tx, r.ID, turn)
 				if err != nil {
 					return fmt.Errorf("later receipt lookup failed: %w", err)
@@ -279,7 +295,7 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			// New binds Intake to this same Store, so its nested transaction joins
 			// Compose. Synthesis, settlement and enqueue now commit or roll back together.
 			synthesized = ""
-			if laterEvent == "" && ended {
+			if laterEvent == "" && ownEvent == "" && ended {
 				receipt, err := d.Intake.DaemonObservation(tx, r.ID, turn)
 				if err != nil {
 					if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
@@ -330,9 +346,14 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			if _, err = conn.ExecContext(tx, "INSERT OR IGNORE INTO assignment_settlements(relationship_id,thread_id,turn_id,terminal_status,settled_at) VALUES(?,?,?,?,?)", r.ID, turn.ThreadID, turn.TurnID, turn.Status, now); err != nil {
 				return err
 			}
-			if laterEvent != "" {
-				detail := pyjson.Dumps(contract.OrderedObject{{Key: "status", Value: turn.Status}, {Key: "laterTurn", Value: laterTurn}, {Key: "laterEvent", Value: laterEvent}}, pyjson.Options{})
-				if _, err = conn.ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES (?,'observation_not_asserted',?,?)", now, turn.TurnID, detail); err != nil {
+			if ownEvent != "" || laterEvent != "" {
+				detail := contract.OrderedObject{{Key: "status", Value: turn.Status}}
+				if ownEvent != "" {
+					detail = append(detail, contract.OrderedObject{{Key: "ownEvent", Value: ownEvent}}...)
+				} else {
+					detail = append(detail, contract.OrderedObject{{Key: "laterTurn", Value: laterTurn}, {Key: "laterEvent", Value: laterEvent}}...)
+				}
+				if _, err = conn.ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES (?,'observation_not_asserted',?,?)", now, turn.TurnID, pyjson.Dumps(detail, pyjson.Options{})); err != nil {
 					return err
 				}
 			}
@@ -385,7 +406,10 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 		report.Notes = append(report.Notes, "settlement rolled back for "+turn.TurnID+": "+err.Error())
 		return
 	}
-	if laterEvent != "" {
+	switch {
+	case ownEvent != "":
+		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: the turn holds its own final child receipt "+ownEvent+", which is owed to the parent")
+	case laterEvent != "":
 		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, holds the final child receipt "+laterEvent+", which is owed to the parent")
 	}
 	report.Observed++
@@ -433,20 +457,70 @@ func (d *Daemon) laterReceipt(ctx context.Context, relationshipID string, turn s
 	if err != nil {
 		return "", "", err
 	}
+	row, err := d.owedReceipt(ctx, rows)
+	if err != nil || row == nil {
+		return "", "", err
+	}
+	return row.Get("turn_id").(string), row.Get("event_id").(string), nil
+}
+
+// ownReceiptQuery finds the final, unsuppressed child receipt of the observed turn itself, in the
+// relationship's current generation, while the parent is still owed its delivery. It answers the
+// other half of the question laterReceiptQuery answers (CRW-668): a turn that already reported and
+// then died is not news either, and the observation the daemon would synthesize for it is a second
+// word on a turn the parent has already been told about, which would hide the child's own receipt
+// from the decision path. The delivery-owed test is the same one laterReceiptQuery uses, and for the
+// same reason: a final receipt owed nothing (emitted with --no-enqueue, or left behind by a refused
+// enqueue) leaves the parent unaware, so the end of the turn is still reported.
+//
+// The observed turn is not required to be an admitted turn: intake refuses a receipt from a turn the
+// generation does not hold, so a final child receipt on the observed turn already means the turn is
+// the anchor or an admitted one. The relationship and its generation are read here, not taken from
+// the pass's earlier load, and the settlement transaction asks again, so a generation opened or a
+// relationship stopped since the load matches nothing and the end is judged again on the next pass.
+const ownReceiptQuery = `SELECT e.event_id, d.state AS delivery_state
+FROM relationships rel
+JOIN generations g ON g.relationship_id=rel.relationship_id AND g.execution_generation=rel.execution_generation
+JOIN events e ON e.relationship_id=rel.relationship_id AND e.execution_generation=g.execution_generation AND e.turn_thread_id=rel.child_task_id AND e.turn_id=?
+LEFT JOIN deliveries d ON d.event_id=e.event_id
+WHERE rel.relationship_id=? AND rel.child_task_id=? AND rel.status='active' AND rel.superseded_by IS NULL
+  AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
+  AND e.producer='child' AND e.stage='final' AND e.suppressed_reason IS NULL
+  AND ((d.event_id IS NOT NULL AND d.state<>'superseded') OR EXISTS (SELECT 1 FROM delivery_intent i WHERE i.event_id=e.event_id))
+ORDER BY e.first_seen_at DESC, e.rowid DESC`
+
+// ownReceipt names the final, unsuppressed child receipt the observed turn itself holds while the
+// parent is still owed its delivery, and "" when there is none.
+func (d *Daemon) ownReceipt(ctx context.Context, relationshipID string, turn store.TurnReference) (string, error) {
+	rows, err := d.Store.All(ctx, ownReceiptQuery, turn.TurnID, relationshipID, turn.ThreadID)
+	if err != nil {
+		return "", err
+	}
+	row, err := d.owedReceipt(ctx, rows)
+	if err != nil || row == nil {
+		return "", err
+	}
+	return row.Get("event_id").(string), nil
+}
+
+// owedReceipt picks the first of the rows whose receipt the parent is still owed, in the order the
+// query gave them: a receipt already sent stands whatever replaced it, since the parent has its
+// content, and any other counts only while no newer revision has replaced it.
+func (d *Daemon) owedReceipt(ctx context.Context, rows []store.Row) (store.Row, error) {
 	for _, row := range rows {
 		candidate := row.Get("event_id").(string)
 		if state, _ := row.Get("delivery_state").(string); state == delivery.Dispatched || state == delivery.Acknowledged || state == delivery.InboxOnly {
-			return row.Get("turn_id").(string), candidate, nil
+			return row, nil
 		}
 		replaced, err := d.Delivery.SupersessionReason(ctx, candidate)
 		if err != nil {
-			return "", "", err
+			return nil, err
 		}
 		if replaced == "" {
-			return row.Get("turn_id").(string), candidate, nil
+			return row, nil
 		}
 	}
-	return "", "", nil
+	return nil, nil
 }
 
 // statusText is the host turn status when it is a string; 28's lazy host
