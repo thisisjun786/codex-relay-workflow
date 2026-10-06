@@ -131,6 +131,7 @@ func invAssertReasons(t *testing.T, r Reading) {
 // Criterion c1 (contract E-18, E-24): the seeds are what the revision changed and only their descendants can go stale. Over the shared-root DAG every case revises one node; the nodes it
 // cannot reach keep reading done:accepted, so a revision never invalidates a sibling or an ancestor.
 func TestSharedRootInvalidationMarksOnlyDescendants(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		revised string
@@ -182,6 +183,7 @@ func TestSharedRootInvalidationMarksOnlyDescendants(t *testing.T) {
 
 // Criterion c1: an edge added or retired changes the slice digest of the node it points to, so that node is the seed. Its siblings and its ancestors are untouched, and what it reaches follows it.
 func TestEdgeChangesSeedTheNodeTheyPointTo(t *testing.T) {
+	t.Parallel()
 	t.Run("an edge added into C", func(t *testing.T) {
 		k := newReleaseKit(t)
 		invSharedRoot(k)
@@ -230,6 +232,7 @@ func TestEdgeChangesSeedTheNodeTheyPointTo(t *testing.T) {
 // re-verified against them the node reads stale, and the node built on it with it; the re-verification (dag_acceptance_revalidations) resolves it with no new generation (E-21), and the
 // stale mark goes away because it is derived, not stored.
 func TestCriteriaChangeIsStaleUntilTheOutputIsReverified(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	accepted := invSharedRoot(k)
 	other := dig("other criteria")
@@ -261,6 +264,7 @@ func TestCriteriaChangeIsStaleUntilTheOutputIsReverified(t *testing.T) {
 // A change that is both a slice change and a criteria change: the node below it is stale although its edge reads blocked:stale_criteria (the criteria predicate comes first on the edge), and
 // what is built on that node is held back too (the judgement of the predecessor is asked directly, not read from the reason the edge shows).
 func TestSliceAndCriteriaChangedTogetherStillHoldsBackTheNodesBelow(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	invSharedRoot(k)
 	k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", addRelNode("D", dag.NodeNonPR), addEdge("cd", "C", "D", dag.EdgeArtifactVerified, nil))
@@ -285,6 +289,7 @@ func TestSliceAndCriteriaChangedTogetherStillHoldsBackTheNodesBelow(t *testing.T
 // disappeared with the seed would show C as current while it still rests on a version of A that is no longer accepted. The second acceptance consumed the inputs the product builds for the
 // revised A (invRealInputs), and the test checks that it is whole before reading.
 func TestStaleSurvivesTheRepairOfItsSeed(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	accepted := invSharedRoot(k)
 	k.invRevise("sr", "A", "sr-r2", invTitle("a changed title"))
@@ -312,6 +317,7 @@ func TestStaleSurvivesTheRepairOfItsSeed(t *testing.T) {
 
 // Contract 8.2 and E-25: a stale result never opens an edge. D is built on C; once A changes, C is stale, so D does not become ready and a release of it is refused and creates no child.
 func TestStalePredecessorOpensNoEdge(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	invSharedRoot(k)
 	k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", addRelNode("D", dag.NodeNonPR), addEdge("cd", "C", "D", dag.EdgeArtifactVerified, nil))
@@ -335,6 +341,7 @@ func TestStalePredecessorOpensNoEdge(t *testing.T) {
 
 // Two readings of one store state are equal byte for byte (no clock, no map order), stale nodes included.
 func TestStaleReadingIsDeterministic(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	invSharedRoot(k)
 	k.invRevise("sr", "R", "sr-r2", invTitle("a changed title"))
@@ -349,6 +356,7 @@ func TestStaleReadingIsDeterministic(t *testing.T) {
 
 // A consumed manifest that cannot be read is not judged (the edges out of the node already report it as blocked:manifest_tampered): the node reads as before, never stale without a reason.
 func TestUnreadableConsumedManifestIsNotJudged(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	accepted := invSharedRoot(k)
 	var manifest string
@@ -468,6 +476,7 @@ func invAssertWhole(k *releaseKit, plan, node string) {
 // Observing the integration again after dev moved must change nothing K consumed: the same edge evidence, the same manifest digest, no stale node. Q is then revised to show the judgement
 // still names the real seed (the edge qk) and not the integrated edge.
 func TestUnrelatedDevMoveChangesNothing(t *testing.T) {
+	t.Parallel()
 	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("Q", dag.NodeNonPR), addEdge("qk", "Q", "K", dag.EdgeArtifactVerified, nil))
@@ -541,6 +550,7 @@ func TestUnrelatedDevMoveChangesNothing(t *testing.T) {
 // Contract E-20: a node that landed is never invalidated: its result is in dev, and what rests on the landing keeps resting on it however the plan above it moves. U is the plan's node above I;
 // revising it makes U stale and reaches I (a descendant), which has landed, and K (built on the landing), whose consumed manifest is the one rebuilt now.
 func TestIntegratedNodeIsNeverStale(t *testing.T) {
+	t.Parallel()
 	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeNonPR), addEdge("ui", "U", "I", dag.EdgeArtifactVerified, nil))
@@ -578,6 +588,7 @@ func TestIntegratedNodeIsNeverStale(t *testing.T) {
 // the newest observation (what the older choice would rebuild) as well as from the earliest (what the product builds now); below a seed (S, by a decision edge that did not change) it must stay
 // current. A landed commit that no observation of the current run names is another landing, and K reads stale because of the edge ik.
 func TestALandedTipOfTheSameRunIsNotAChangedInput(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T, landed func(middle string) string) *integrationKit {
 		k := newLegacyLocalIntegrationKit(t)
 		repo := k.repo
@@ -644,6 +655,7 @@ func TestALandedTipOfTheSameRunIsNotAChangedInput(t *testing.T) {
 // The same run means the same containment: positive, then reverted, then positive again is two landings. K consumed the tip of the first one; the head is contained again after a negative
 // observation, so that tip belongs to an earlier run and is not named by any observation of the current one.
 func TestALandingOfAnEarlierRunIsAChangedInput(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, landed string
 		stale        []string
@@ -691,6 +703,7 @@ func TestALandingOfAnEarlierRunIsAChangedInput(t *testing.T) {
 // sees: E rests on B's landing and is not marked either. Only the closure over the consumed acceptances finds that G would be built from two acceptances of A: E rests on B, which consumed the
 // first, and C consumed the second (A is a non_pr node, so accepting it again is allowed; a landed node would get a follow-up node instead, E-25).
 func TestMixedAcceptancesBehindALandedNodeAreStillInconsistentInputs(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("fk", 0, "fk-r1", addNode("A", dag.NodeNonPR), addNode("B", dag.NodeImplementation), addNode("E", dag.NodeNonPR), addNode("C", dag.NodeNonPR), addNode("G", dag.NodeNonPR),
@@ -717,6 +730,7 @@ func TestMixedAcceptancesBehindALandedNodeAreStillInconsistentInputs(t *testing.
 // another decision id and revision, which the manifest names as the value T consumed (contract 4.2): once T is below a seed it reads stale because of the edge sd. Without a seed above it nothing
 // is judged, so the same re-approval marks nothing.
 func TestDecisionEdgeBelowASeed(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) (*releaseKit, DecisionInput) {
 		k := newReleaseKit(t)
 		k.putPlan("dd", 0, "dd-r1", addRelNode("S", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR), addEdge("sd", "S", "T", dag.EdgeDecision, nil))
@@ -775,6 +789,7 @@ func TestDecisionEdgeBelowASeed(t *testing.T) {
 
 // The scheduler page describes the stale reading as built: its section, the parameterised reason, every cause and every field of the structured object the reading prints.
 func TestSchedulerPageDescribesTheInvalidationReading(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)
@@ -799,6 +814,7 @@ func TestSchedulerPageDescribesTheInvalidationReading(t *testing.T) {
 
 // An edge retired from T names the version T consumed over it; over a decision edge that version is the decision and its revision, not an acceptance.
 func TestRetiredDecisionEdgeNamesTheDecisionItConsumed(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("dd", 0, "dd-r1", addRelNode("S", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR), addEdge("sd", "S", "T", dag.EdgeDecision, nil))
 	k.invSettle("dd", "S")
@@ -823,6 +839,7 @@ func TestRetiredDecisionEdgeNamesTheDecisionItConsumed(t *testing.T) {
 // T consumed S's decision and U's artifact; S changes and the decision is approved again, so T is stale because of the edge sd and is rebuilt completely. U's receipt declares no size, and the file
 // grows between two readings: the rebuilt manifest digest the reading prints stays as it was.
 func TestAnArtifactSizeThatChangesDoesNotMoveTheRebuiltDigest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("sz", 0, "sz-r1", addRelNode("S", dag.NodeNonPR), addRelNode("U", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR),
 		addEdge("sd", "S", "T", dag.EdgeDecision, nil), addEdge("ut", "U", "T", dag.EdgeArtifactVerified, nil))

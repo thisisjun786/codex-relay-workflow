@@ -1,0 +1,28 @@
+{
+  "issue": "CRW-362",
+  "pending": [
+    "cli__hooks__retrust_needs_bootstrap_then_writes"
+  ],
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli-help__hooks__retrust_dashdash_help",
+      "reason": "R29 renames the component word in the catch prefix and the CLI table maps the step to crw doctor retrust; a rewrite rule cannot be applied to the expectation, so the claim names the port's text. The refusal itself (--help is not help) and the exit status are unchanged.",
+      "set": {
+        "steps/0/stderr": "crw doctor retrust: unknown hooks option: --help\n"
+      }
+    },
+    {
+      "id": "cli__hooks__retrust_without_install_key_fails",
+      "reason": "The same refusal (0 enabled install keys, nothing written). The catch prefix follows the CLI table (cxc-ops hooks retrust -> crw doctor retrust), and the port reads the plugin package from the host PLUGIN_ROOT, which the claim's given supplies.",
+      "given": {
+        "env": {
+          "PLUGIN_ROOT": "${PLUGIN_ROOT}"
+        }
+      },
+      "set": {
+        "steps/0/stderr": "crw doctor retrust: enabled install key is ambiguous (0); candidates: (none); pass --key <plugin@marketplace>\n"
+      }
+    }
+  ]
+}

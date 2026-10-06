@@ -69,6 +69,7 @@ func readyIDs(r Reading) []string {
 // c1: while any of the three readings is over its threshold every candidate is deferred with the host memory reason and the measured values ride with the reading; once the readings are
 // back within their thresholds the same nodes are ready again.
 func TestReadyDefersEveryCandidateWhileHostMemoryIsShort(t *testing.T) {
+	t.Parallel()
 	for _, c := range shortHosts {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -116,6 +117,7 @@ func TestReadyDefersEveryCandidateWhileHostMemoryIsShort(t *testing.T) {
 
 // c2: children already running are untouched; only the candidates are held.
 func TestHostMemoryLeavesRunningChildrenAlone(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("hm", 0, "hm-r1", addNode("run", dag.NodeNonPR), addNode("next", dag.NodeNonPR))
@@ -134,6 +136,7 @@ func TestHostMemoryLeavesRunningChildrenAlone(t *testing.T) {
 
 // A host that is short outranks a full ceiling in the reason, and a bound that is not there changes nothing: no key, no limit, the digest of a plan read without a host.
 func TestHostMemoryPrecedenceAndAbsence(t *testing.T) {
+	t.Parallel()
 	t.Run("a full ceiling and a short host: the host memory reason", func(t *testing.T) {
 		f := newFixture(t)
 		f.threeNodes("hm")
@@ -157,6 +160,7 @@ func TestHostMemoryPrecedenceAndAbsence(t *testing.T) {
 
 // The digest says what the reading depended on, the host sample included.
 func TestHostMemoryIsInTheInputDigest(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.threeNodes("hm")
 	f.sched.Host = hostBound(healthyHost())
@@ -188,6 +192,7 @@ func TestHostMemoryIsInTheInputDigest(t *testing.T) {
 
 // dag-progress is a function of the store alone: a host that is short does not move a node out of the ready stage.
 func TestHostMemoryDoesNotReachTheProgressProjection(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.threeNodes("hm")
 	f.sched.Host = hostBound(shortHosts[0].sample)
@@ -200,6 +205,7 @@ func TestHostMemoryDoesNotReachTheProgressProjection(t *testing.T) {
 
 // c1 at the release: a short host refuses a new release with the existing capacity reason and leaves no row; the same call binds once the host recovers; a decided release is replayed whatever the host says.
 func TestReleaseRefusedWhileHostMemoryIsShort(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.sched.Host = hostBound(shortHosts[0].sample)
@@ -266,6 +272,7 @@ func (f *fixture) hostRows(plan string) map[int64]hostRow {
 
 // c2: the decided bound is recorded with each recorded pass, the way the release policy is, and the measurements count the passes the host decided.
 func TestPassRecordsTheHostMemoryBound(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.threeNodes("hm")
 
@@ -309,6 +316,7 @@ func TestPassRecordsTheHostMemoryBound(t *testing.T) {
 
 // A read-only command never creates the zone, so a store that predates the side table is measured as it always was and is left as it is.
 func TestMeasurementsReadAStoreWithoutTheHostMemoryTable(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.threeNodes("hm")
 	f.sched.Host = hostBound(shortHosts[0].sample)
@@ -325,6 +333,7 @@ func TestMeasurementsReadAStoreWithoutTheHostMemoryTable(t *testing.T) {
 }
 
 // The commands: the built binary reads the host through the environment. A fake proc root stands for the host.
+// sequential: t.Setenv(EnvHostProcRoot) is process-wide.
 func TestCLIReadyAndRecordUnderAFakeHost(t *testing.T) {
 	state, _ := cliState(t)
 	t.Setenv(EnvHostProcRoot, fakeProc(t, memInfo(9*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("7.00", "0.00")))
@@ -364,6 +373,7 @@ func TestCLIReadyAndRecordUnderAFakeHost(t *testing.T) {
 }
 
 // A threshold that is not usable is a usage error of the two commands that read the host, and of no other.
+// sequential: t.Setenv(EnvHostMinAvailableGiB) is process-wide.
 func TestCLIInvalidHostThresholdIsAUsageError(t *testing.T) {
 	state, _ := cliState(t)
 	t.Setenv(EnvHostMinAvailableGiB, "plenty")

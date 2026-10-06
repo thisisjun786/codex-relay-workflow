@@ -168,6 +168,20 @@ func textField(entry any, name string) string {
 	return pyvalue.Str(v)
 }
 
+// providerField is the integration a check entry names, with both an absent field and a JSON null
+// read as unknown (""): the collector records a job entry's provider as nil when the check-run
+// listing it read, which is filtered to the latest run, does not hold that job's check-run, so an
+// older run's entry carries a null rather than a value. textField would render that null as the
+// string "None", which would read as a known integration and make two unknown ones look different.
+func providerField(entry any) string {
+	o, _ := Object(entry)
+	v, present := o.Lookup("provider")
+	if !present || v == nil {
+		return ""
+	}
+	return pyvalue.Str(v)
+}
+
 // ShapeProblems is mergeevidence.shape_problems. It must run before semantic predicates.
 func ShapeProblems(review, checks, required any, head *string) []Problem {
 	var problems []Problem
@@ -216,12 +230,50 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 			bad(where + " states attempt " + quote.Value(value) + ", and attempts are counted from one; a lower value is read as the first attempt and hides the newest one")
 		}
 		if value, present := o.Lookup("notRun"); present {
-			if _, isBool := value.(bool); !isBool {
+			flag, isBool := value.(bool)
+			if !isBool {
 				bad(where + " states notRun as " + quote.Kind(value) + ", not true or false; the collector sets it to say a job began no step, and a value of another type cannot say that")
+			} else if flag && !stepLessConclusion(o.Get("conclusion")) {
+				// A job that began no step concluded cancelled, failure or timed_out, so a restated
+				// record that marks any other conclusion could steer the lane toward a rerun on a
+				// job the collector never produces that way (CRW-681).
+				bad(where + " states notRun true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a job that began no step concluded cancelled, failure or timed_out; another conclusion cannot be a job whose runner never picked it up")
+			}
+		}
+		if value, present := o.Lookup("testSkipped"); present {
+			flag, isBool := value.(bool)
+			if !isBool {
+				bad(where + " states testSkipped as " + quote.Kind(value) + ", not true or false; the collector sets it to say a test leg concluded success without running its test step, and a value of another type cannot say that")
+			} else if flag {
+				// Only a go-product test leg concluded success without running its tests, so a
+				// restated record that marks any other job could steer the lane toward treating an
+				// untested head as tested (CRW-824). The comparison is exact, as stepLessConclusion's
+				// is: the collector emits the forge's canonical spelling.
+				if !isLightLegName(entry) {
+					bad(where + " states testSkipped true on " + quote.Value(o.Get("name")) + ", and only a " + lightLegPrefix + "*) leg concluded success without running its tests; another job name cannot be one")
+				} else if o.Get("conclusion") != "success" {
+					bad(where + " states testSkipped true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a leg whose tests were skipped concluded success; another conclusion cannot be a leg whose tests were skipped")
+				}
 			}
 		}
 	}
 	return problems
+}
+
+// stepLessConclusion reports whether a conclusion is exactly one a job that began no step can
+// carry: cancelled, failure or timed_out. The comparison is exact rather than normalized, because
+// the collector emits the forge's canonical spelling and a restated record that spells one of these
+// another way must be refused rather than read as one of them (CRW-681).
+func stepLessConclusion(conclusion any) bool {
+	s, ok := conclusion.(string)
+	if !ok {
+		return false
+	}
+	switch s {
+	case "cancelled", "failure", "timed_out":
+		return true
+	}
+	return false
 }
 
 // workflowRun is the workflow run a check entry belongs to, read from the collector's
@@ -252,9 +304,10 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 			continue
 		}
 		o, _ := Object(entry)
-		// Only a cancelled job can be one that began no step: the collector marks nothing else,
-		// and a restated record that says otherwise cannot steer the lane toward a rerun.
-		if o.Get("conclusion") != "cancelled" {
+		// A job that began no step concluded cancelled, failure or timed_out: the collector marks
+		// nothing else, and a restated record that says otherwise cannot steer the lane toward a
+		// rerun (CRW-661, CRW-681).
+		if !stepLessConclusion(o.Get("conclusion")) {
 			continue
 		}
 		flag, isBool := o.Get("notRun").(bool)
@@ -267,29 +320,140 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 	return names
 }
 
+// isLightLegName reports whether a check entry names a go-product test leg: the only job name the
+// collector marks testSkipped and the only one the reading accepts (CRW-824). The comparison is a
+// prefix on the ci.yml matrix spelling, so a restated record cannot claim a leg it is not.
+func isLightLegName(entry any) bool {
+	return strings.HasPrefix(textField(entry, "name"), lightLegPrefix)
+}
+
+// testSkippedJobs lists the names of the entries of one workflow run that the collector marked
+// testSkipped: go-product test legs that concluded success without running their test step
+// (CRW-824). The flag is read as a strict boolean and the name must be a test leg, so a restated
+// record that states anything else cannot make the lane treat an untested head as tested. Each leg
+// is read at its OWN newest attempt within the run rather than at the judged check's attempt: a
+// rerun of the failed jobs leaves the successful skipped legs at an earlier attempt than the
+// rerun's dev-gate, and that leg still says the head's tests did not run. Reading it at its own
+// newest attempt only ever refuses more, so it cannot widen what merges.
+func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []string {
+	if run == "" {
+		return nil
+	}
+	var names []string
+	for _, entry := range checks {
+		runId := textField(entry, "runId")
+		if workflowRun(runId) != run {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			// An entry the same job superseded is not the job's result: its newest attempt is.
+			continue
+		}
+		if !isLightLegName(entry) {
+			continue
+		}
+		o, _ := Object(entry)
+		if o.Get("conclusion") != "success" {
+			continue
+		}
+		flag, isBool := o.Get("testSkipped").(bool)
+		if !isBool || !flag {
+			continue
+		}
+		names = append(names, textField(entry, "name"))
+	}
+	slices.Sort(names)
+	return names
+}
+
+// testedElsewhere reports whether another workflow run on this head answered the same required
+// check, for the same integration the branch rule names, successfully and with its tests actually
+// run: the lane's own repair for a light run is to label the pull request crw-lane, which starts a
+// full run on the same head, and that run's evidence is what the head should be judged on. Without
+// this the earlier light run's entry would refuse the head forever, and the documented repair could
+// never produce merge evidence (CRW-824).
+//
+// The substitute must be a workflow run: a published check run or a commit status holds no jobs at
+// all, so reading either as the evidence that repaired a light run would let an untested head
+// through. It must also not be known to come from another integration than the judged entry, since a
+// namesake from elsewhere does not answer this branch's gate. The provider is read leniently on
+// purpose: the collector fills it from the check-run listing filtered to the LATEST run, so an older
+// workflow run whose check-run a newer one replaced carries none, and a strict equality would refuse
+// the labeled full run that is the documented repair. Two known, differing providers are a refusal; an
+// unknown one on either side is not evidence of a different integration. A candidate that holds a
+// skipped leg of its own is not the evidence either, and a leg whose step list the collector could
+// not read leaves its own unreadable problem, which refuses the whole reading before this predicate
+// is consulted.
+func testedElsewhere(checks []any, head, name, provider, run string, highest map[string]*big.Int) bool {
+	for _, entry := range checks {
+		runId := textField(entry, "runId")
+		candidate := workflowRun(runId)
+		if candidate == "" || candidate == run || textField(entry, "name") != name {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			continue
+		}
+		o, _ := Object(entry)
+		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
+			continue
+		}
+		if candidateProvider := providerField(entry); provider != "" && candidateProvider != "" && candidateProvider != provider {
+			continue
+		}
+		if len(testSkippedJobs(checks, candidate, highest)) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // beganFailureBeside reports whether the same workflow run and attempt as a required check holds a
 // job other than that check which began a step (the collector did not mark it notRun) and concluded
-// failure. Such a job says the commit was tested and failed, so a not-run sibling cannot make the
-// required failure read as a runner problem (CRW-676). The judged check is excluded by its own run
-// identity, which the collector makes unique per job entry within a run attempt.
-func beganFailureBeside(checks []any, run string, at *big.Int, requiredRunId string) bool {
+// failure or timed_out. Such a job says the commit was tested and failed, so a not-run sibling
+// cannot make the required failure read as a runner problem (CRW-676, CRW-681). The judged check is
+// excluded by its own run identity, which the collector makes unique per job entry within a run
+// attempt. A sibling is read at its own newest attempt, so an older failure the same job later
+// replaced by a success is not a failure standing beside the required check (CRW-681).
+func beganFailureBeside(checks []any, run string, at *big.Int, requiredRunId string, highest map[string]*big.Int) bool {
 	if run == "" {
 		return false
 	}
 	for _, entry := range checks {
-		if textField(entry, "runId") == requiredRunId {
+		runId := textField(entry, "runId")
+		if runId == requiredRunId {
 			continue
 		}
-		if workflowRun(textField(entry, "runId")) != run || attempt(entry).Cmp(at) != 0 {
+		if workflowRun(runId) != run || attempt(entry).Cmp(at) != 0 {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			// An entry the same job superseded is not the job's result: its newest attempt is.
 			continue
 		}
 		o, _ := Object(entry)
-		if o.Get("conclusion") != "failure" {
+		if !failureConclusion(o.Get("conclusion")) {
 			continue
 		}
 		if flag, isBool := o.Get("notRun").(bool); isBool && flag {
 			continue
 		}
+		return true
+	}
+	return false
+}
+
+// failureConclusion reports whether a sibling conclusion is exactly a real failure: failure or
+// timed_out. A cancelled, skipped or neutral job is not a failure standing beside the required
+// check, and a restated record that spells a real failure another way cannot make the lane treat
+// the run as tested (CRW-681).
+func failureConclusion(conclusion any) bool {
+	s, ok := conclusion.(string)
+	if !ok {
+		return false
+	}
+	switch s {
+	case "failure", "timed_out":
 		return true
 	}
 	return false
@@ -362,6 +526,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 	var notRunKey, notRunRun, notRunName string
 	var notRunConclusion any
 	var notRunNames []string
+	var lightKey, lightRun, lightName string
 	for _, entry := range checks {
 		run := textField(entry, "runId")
 		if attempt(entry).Cmp(highest[run]) != 0 {
@@ -372,7 +537,25 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 			return stale("check run "+pyvalue.StrRepr(run)+" reports head "+pyvalue.Repr(o.Get("headSha"))+", not "+pyvalue.StrRepr(head), run)
 		}
 		name := textField(entry, "name")
-		if !isRequired(name) || !answers(entry, name) || o.Get("conclusion") == "success" {
+		if !isRequired(name) || !answers(entry, name) {
+			continue
+		}
+		// A required check whose own run attempt holds a go-product test leg that concluded
+		// success without running its tests is not evidence, even when the required check itself
+		// succeeded -- which is the shape CI light mode produces, where dev-gate is green and the
+		// five test legs skipped their work (CRW-824). The answer is the existing checks_stale: a
+		// light leg makes the run no merge evidence, never a rerun. The lowest (run, name) pair is
+		// kept, so the detail does not move with the enumeration (CRW-661).
+		if skipped := testSkippedJobs(checks, workflowRun(run), highest); len(skipped) > 0 {
+			// Another run of the same required check on this head that ran its tests is the
+			// evidence: the lane's repair for a light run is a labeled full run on the same head.
+			if !testedElsewhere(checks, head, name, providerField(entry), workflowRun(run), highest) {
+				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
+					lightKey, lightRun, lightName = key, run, skipped[0]
+				}
+			}
+		}
+		if o.Get("conclusion") == "success" {
 			continue
 		}
 		if firstRun == "" {
@@ -390,13 +573,16 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// A job that began a step and failed for real, in the same run attempt, is the commit
 		// being tested and failing: a not-run sibling cannot make the required failure read as a
 		// runner problem, or the lane reruns a real test failure once as if it were one (CRW-676).
-		if beganFailureBeside(checks, workflowRun(run), attempt(entry), run) {
+		if beganFailureBeside(checks, workflowRun(run), attempt(entry), run, highest) {
 			unexplained = true
 			continue
 		}
 		if key := run + "\x00" + name; notRunKey == "" || key < notRunKey {
 			notRunKey, notRunRun, notRunName, notRunConclusion, notRunNames = key, run, name, o.Get("conclusion"), jobs
 		}
+	}
+	if lightRun != "" {
+		return []Problem{{Code: ChecksStale, Detail: pyvalue.Repr(lightName) + " skipped its tests (CI light mode); label the pull request crw-lane and judge the full run", Incumbent: lightRun}}
 	}
 	if notRunRun != "" && !unexplained {
 		return []Problem{{Code: ChecksNotRun, Detail: "required check " + pyvalue.Repr(notRunName) + " (run " + pyvalue.StrRepr(notRunRun) + ") concluded " + pyvalue.Repr(notRunConclusion) + " on its newest attempt, and workflow run " + pyvalue.StrRepr(workflowRun(notRunRun)) + " holds jobs that began no step, so no runner picked them up rather than the code failing: " + pyvalue.Repr(notRunNames) + ". Rerun the failed jobs of that run once on the same head", Incumbent: notRunRun}}

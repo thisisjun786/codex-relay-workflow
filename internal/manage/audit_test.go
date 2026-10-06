@@ -267,24 +267,24 @@ func TestAuditPromptNamesNoPrivateRootAndNoModel(t *testing.T) {
 // the files the mode's bundle holds.
 func TestAuditPromptAsksForTheResultFormatAndTheModeFiles(t *testing.T) {
 	pr := auditPrompt(&auditBundle{Mode: auditModePR})
-	for _, needle := range []string{auditGradeFile, auditResultSchema, "PASS", "PARTIAL", "FAIL", "P0", "P3", "score", "candidate/diff.patch", "candidate/tree/"} {
+	for _, needle := range []string{auditGradeFile, auditResultSchema, "PASS", "PARTIAL", "FAIL", "P0", "P3", "score", auditPRDiffFile, auditPRTaskFile, auditPRFilesDir + "/"} {
 		if !strings.Contains(pr, needle) {
 			t.Errorf("the pull request prompt does not mention %q", needle)
 		}
 	}
 	pkg := auditPrompt(&auditBundle{Mode: auditModePackage})
-	if !strings.Contains(pkg, "candidate/tree/") || strings.Contains(pkg, "candidate/diff.patch") {
+	if !strings.Contains(pkg, "src/") || !strings.Contains(pkg, auditPkgCriteriaFile) || strings.Contains(pkg, auditPRDiffFile) {
 		t.Errorf("the package prompt does not describe a package audit: %q", pkg)
 	}
 	prNoCriteria := auditPrompt(&auditBundle{Mode: auditModePR, CriteriaUnavailable: true})
-	if !strings.Contains(prNoCriteria, "criteria_unavailable") || !strings.Contains(prNoCriteria, "candidate/pr.md") {
+	if !strings.Contains(prNoCriteria, "criteria_unavailable") || !strings.Contains(prNoCriteria, auditPRTaskFile) {
 		t.Errorf("a pull request bundle without criteria is not told how to judge: %q", prNoCriteria)
 	}
 	pkgNoCriteria := auditPrompt(&auditBundle{Mode: auditModePackage, CriteriaUnavailable: true})
-	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, "the tree itself") {
+	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, auditPkgTaskFile) {
 		t.Errorf("a package bundle without criteria is not told how to judge: %q", pkgNoCriteria)
 	}
-	if strings.Contains(pkgNoCriteria, "candidate/pr.md") {
+	if strings.Contains(pkgNoCriteria, auditPRDiffFile) {
 		t.Error("a package bundle without criteria is sent to a description file it does not have")
 	}
 }

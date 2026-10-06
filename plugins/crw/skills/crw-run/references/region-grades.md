@@ -41,10 +41,10 @@ Declare before the release, with the grade of each region:
     codex-session-relay --state "$RELAY_STATE" dag-region-declare --plan <plan> --node <node> --actor <you> --regions @regions.json
 
     [{"repository": "owner/name", "path": "plugins/crw/.codex-plugin/plugin.json", "kind": "file", "grade": "mechanical", "rule": "regenerate:go run -tags dev ./cmd/crw-dev ci plugin --record-version"},
-     {"repository": "owner/name", "path": "docs/port/refactor-backlog.md", "kind": "file", "grade": "mechanical", "rule": "union"},
+     {"repository": "owner/name", "path": "docs/port/refactor-backlog.md", "kind": "file", "grade": "mechanical", "rule": "regenerate:go run -tags dev ./cmd/crw-dev ci refactor-backlog --write"},
      {"repository": "owner/name", "path": "internal/relay/dagsched/ready.go", "kind": "symbol", "key": "Ready", "grade": "local"}]
 
-The parent's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
+The parent's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to, and for a generated file the command that rebuilds it. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
 head lands, and a node that holds them may declare again only to narrow them ([Keep optimism honest](#keep-optimism-honest)). A node with no declaration is unknown, and an unknown node overlaps every other.
 
 ## Read the judgement
@@ -123,7 +123,7 @@ whose landing the conflict comes from, and the rule counts only where all of the
 
 Automatic regeneration is narrower here: the file must be entirely generated independently in the previous head, base parent and new head. In two fresh checkouts of each tree, remove all tracked paths covered by any candidate regeneration declaration, then replace Git metadata with a fresh input-only repository. The command must recreate the tested file's original bytes and mode in both runs. This excludes recovery from original HEAD/history and circular copies between declared outputs. A failed command, timeout, missing/unreadable output or mismatch makes the file manual; commands depending on original history or another generated intermediate also fall back. The proof trusts declared code and remaining inputs, rather than inferring generated ownership.
 
-A partly generated `plugin.json` whose updater needs the existing file always requires `--resolved` in this route. This chooses entirely-generated automatic eligibility to prevent a head-only regeneration check from hiding a lost handwritten parent change. The separate merge-lane version regeneration above keeps its existing procedure. Eligible files still pass the existing evaluator, and older valid records replay their stored classification.
+A partly generated `plugin.json` whose updater needs the existing file requires `--resolved` in this route, with one exception: when no declaration given settles the plugin manifest's version line with one agreed rule, the built-in `regenerate:plugin-version` rule proves it from the head's own payload, the file carries that `rule` and needs no `--resolved` name. This chooses entirely-generated automatic eligibility to prevent a head-only regeneration check from hiding a lost handwritten parent change. The separate merge-lane version regeneration above keeps its existing procedure. Eligible files still pass the existing evaluator, and older valid records replay their stored classification.
 
 ### Send a candidate back to its child
 

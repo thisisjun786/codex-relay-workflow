@@ -26,6 +26,7 @@ func local(path string) Region {
 // The latest measurement of a pair decides: a clean one clears the constraint, and the conflicting heads measured again (a replay of the first observation row, which is older than the clean one) constrain
 // again, because the member of the latest sweep is what orders the measurements.
 func TestMergeOrderFollowsTheLatestMeasurementOfAPair(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	w.running("D", "E")
 	first := w.measure(w.heads("D", "E"))
@@ -51,6 +52,7 @@ func TestMergeOrderFollowsTheLatestMeasurementOfAPair(t *testing.T) {
 
 // The node that lands first no longer holds its regions once it landed: the constraint is gone from both.
 func TestMergeOrderDropsOutWhenTheEarlierNodeLands(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	k := w.k
 	k.exec("INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at)" +
@@ -77,6 +79,7 @@ func TestMergeOrderDropsOutWhenTheEarlierNodeLands(t *testing.T) {
 // Which node lands first is the merge lane's order: an open merge turn by requested_at and turn id, then an accepted result by the time it was accepted, then everything else that holds regions by when its work
 // began, or for a node with no child yet by the time its release was decided. A paused accepted node is not in the lane.
 func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
+	t.Parallel()
 	turn := func(w *sweepWorld, id, node, requested string) { turnOf(w, id, "rel-g-"+node, w.head[node], requested) }
 	first := func(w *sweepWorld, nodes ...string) []string { // the node every other is After, from the reading
 		w.measure(w.heads(nodes...))
@@ -218,6 +221,7 @@ func TestMergeOrderFollowsTheMergeLane(t *testing.T) {
 
 // Three nodes that conflict pairwise are ordered by one key, so the constraints cannot form a cycle: the last one lists the two before it, in landing order.
 func TestMergeOrderOfThreeNodesIsAcyclic(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	for _, node := range []string{"D", "E", "I"} {
 		w.declareRegions(node, local("c.txt"))
@@ -242,6 +246,7 @@ func TestMergeOrderOfThreeNodesIsAcyclic(t *testing.T) {
 
 // A head's own conflict with the tip is the base refresh it needs whatever lands first; the latest measurement decides, and a clean head has none.
 func TestMergeOrderCarriesTheHeadsConflictWithTheTip(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	w.running("D", "E")
 	w.measureAt(map[string]string{"D": w.head["D"], "E": w.head["F"]})
@@ -268,6 +273,7 @@ func (w *sweepWorld) measureAt(heads map[string]string) SweepResult {
 
 // heads_current says whether the measurement was made at the heads the store holds now: yes for two accepted results measured as accepted, no when a stored head differs, unknown when a head is not stored.
 func TestMergeOrderSaysWhetherTheMeasurementIsAtTheCurrentHeads(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	w.accept("D", "E")
 	w.measure(nil)
@@ -282,6 +288,7 @@ func TestMergeOrderSaysWhetherTheMeasurementIsAtTheCurrentHeads(t *testing.T) {
 
 // A store whose zone predates the tables (a read-only open of an older store is that state) reads without a constraint and without an error.
 func TestMergeOrderReadsAStoreWithoutTheSweepTables(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	w.running("D", "E")
 	w.measure(w.heads("D", "E"))
@@ -299,6 +306,7 @@ func TestMergeOrderReadsAStoreWithoutTheSweepTables(t *testing.T) {
 
 // A constraint does not get in the way of a release: the release path asks for the reading under its lock and the node released is not the constrained one.
 func TestReleaseWorksWhileAConstraintExists(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	k := w.k
 	k.sched.Tips = k.tips
@@ -323,6 +331,7 @@ func turnOf(w *sweepWorld, id, relationship, head, requested string) {
 // A region the declarer states as holding the whole repository makes a conflict anywhere in it exclusive for that node's hold, whether or not the node declared the path; whether it declared the path is what
 // drift says, and stays by path. A rename, a delete or a hotspot that is not stated as such holds its own place only (CRW-431), so a conflict elsewhere in the repository is local and drift.
 func TestMergeOrderGradeFollowsARepositoryWideHold(t *testing.T) {
+	t.Parallel()
 	rename := Region{Repository: "owner/repo", Path: "old.go", Kind: "file", Change: "rename"}
 	statedRename := rename
 	statedRename.Exclusive = true
@@ -358,6 +367,7 @@ func TestMergeOrderGradeFollowsARepositoryWideHold(t *testing.T) {
 
 // The latest tip measurement says which head it was made at and whether the store still holds that head; a measurement at another head than the node's accepted one is labelled and the reason says to measure again.
 func TestMergeOrderTipRowSaysWhetherItsHeadIsCurrent(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	w.accept("D")
 	// D measured at E's head (the parent's word): that head conflicts with the tip, and it is not D's accepted head
@@ -378,6 +388,7 @@ func TestMergeOrderTipRowSaysWhetherItsHeadIsCurrent(t *testing.T) {
 
 // A node is named once in the drift of a tip, however many paths drifted: the rows come sorted by path.
 func TestMergeOrderTipDriftNamesEachNodeOnce(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	k := w.k
 	w.running("D")

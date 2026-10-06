@@ -38,6 +38,7 @@ func cooperatingWriter(t *testing.T, path, text string) (func(string), *bool) {
 // cooperating writer's document, saved between the decision and the lock, answers
 // config_changed_underneath with its repair, and stays exactly as that writer saved it.
 func TestHookNeverWritesOverADocumentThatChangedAfterItWasRead(t *testing.T) {
+	// sequential: replaces the before-write-lock seam.
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 	path := filepath.Join(h.codex, install.SettingsName)
@@ -65,6 +66,7 @@ func TestHookNeverWritesOverADocumentThatChangedAfterItWasRead(t *testing.T) {
 // writer creates between the decision and the lock answers record_changed_underneath, and that
 // record stays as it was written.
 func TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead(t *testing.T) {
+	// sequential: replaces the before-write-lock seam.
 	h := newHost(t)
 	path := filepath.Join(h.codex, install.BridgeRecordName)
 	theirs := string(record.Encode(install.BridgeDocument("/opt/elsewhere/bin/codex-thread-bridge", nil, install.ServerName, "CRW-200", nil)))
@@ -81,6 +83,7 @@ func TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead(t *testing.T
 // bridge runs out of a directory, so it keeps refusing, and says so plainly with the recovery by
 // hand; the directory is left in place.
 func TestRemoveWithoutAProcessTableSaysWhyAndHowToRecover(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)

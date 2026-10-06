@@ -164,7 +164,19 @@ var (
 	// validate.go): a step cannot run a skill's script without naming where it lives, in a
 	// working-directory or a cd as well as in the command.
 	skillStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]`)
+	// skillRootValue matches an assignment whose value is exactly a skills root, quoted or not:
+	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
+	// path (a listing names them), but a job that carries one as a value names where the skill
+	// scripts live, so it is the other shape this detector has to see (CRW-353).
+	skillRootValue = regexp.MustCompile(`^\s*[A-Za-z_][A-Za-z0-9_-]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:\s|$)`)
 )
+
+// skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
+// 2026-10-06 decision, CRW-353). A skill-path line is admitted only inside it.
+const skillScriptsNodeJob = "skill-scripts-node"
+
+// jobHeaderLine is a job header: two spaces, the name, a colon. workflowJobs reads the same shape.
+var jobHeaderLine = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
 
 // alternation is words as a regular expression alternative, each taken literally.
 func alternation(words []string) string {
@@ -178,21 +190,45 @@ func alternation(words []string) string {
 // pythonInWorkflow is the lines of a workflow, numbered, that install or run Python or name a
 // path below a skills directory. A line that starts with # is a comment and is skipped; a trailing
 // # is read as part of the line, because a # inside quotes hides nothing from the shell.
+//
+// The staged skills' Node tests run in one named job, and a skill-path line is admitted only
+// inside it: the job names its root once and runs the tests it finds there, so neither the root
+// value nor a path below it is a skill script running anywhere else. The Python rule is unchanged
+// in every job, that one included. A job header is the shape workflowJobs reads, so a job cannot
+// be added in a form this detector misses.
 func pythonInWorkflow(text string) []string {
 	var found []string
+	inSkillScriptsNode := false
 	for number, line := range lines(text) {
+		if name, ok := workflowJobHeader(line); ok {
+			inSkillScriptsNode = name == skillScriptsNodeJob
+			continue
+		}
 		code := strings.TrimSpace(line)
-		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || skillStep.MatchString(code)) {
+		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code)
+		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || (skillPath && !inSkillScriptsNode)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
 	}
 	return found
 }
 
-// CI installs no Python and runs no skill script (CRW-483): the checks are Go only, so no workflow
-// sets up an interpreter, calls python or pip, or names a path below a skills directory, whose
-// helper scripts are original assets an agent runs and no CI step does. Whether CI should test
-// skill scripts is a decision of its own; it starts by changing this test.
+// workflowJobHeader is a job's name when line is a job header: two spaces, the name, a colon.
+func workflowJobHeader(line string) (string, bool) {
+	m := jobHeaderLine.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// CI installs no Python (CRW-483), and the only skill scripts it runs are the staged skills' Node
+// tests in the one skill-scripts-node job (the 2026-10-06 decision, CRW-353): the checks are Go
+// only, so no workflow sets up an interpreter or calls python or pip, and a helper script in a
+// skill's scripts/ or examples/ stays an original asset an agent runs. The job names its root once
+// and runs the tests it finds below it, so pythonInWorkflow admits a skill-path line only inside
+// that job — a skill path or a skills-root value in any other job is still refused, which is what
+// stops a job from reaching a skill script by moving the path into a variable.
 func TestWorkflow_installs_no_python(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(repoRoot(), ".github", "workflows", "*.y*ml"))
 	if err != nil || len(files) < 2 {
@@ -240,7 +276,13 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      # python is installed by nobody", false},
 		{"          set -euo pipefail", false},
 		{"      - run: echo pipeline cpython", false},
-		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false}, // the roots themselves are no skill path
+		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false},   // the roots themselves are no skill path
+		{"      SKILLS_ROOT: port/cxc/skills", true},                                            // a value that is exactly a skills root, outside the one job allowed to name it
+		{"jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", false}, // inside that job it is the job's own root
+		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true},               // the same value in another named job
+		{"      SKILLS_ROOT: 'port/cxc/skills'", true},                                          // the quoted form is the same value
+		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                        // and so is the form a trailing blank ends
+		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                   // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
 		if got := pythonInWorkflow(row.line + "\n"); (len(got) > 0) != row.found {
@@ -304,7 +346,8 @@ func TestWorkflow_parallel_legs_cover_the_whole_run(t *testing.T) {
 			t.Fatalf("go-product has %d steps named %q, want one", len(index[name]), name)
 		}
 		// A body-only edit that mirrors this leg stands these two steps down with the rest.
-		want := "matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'"
+		// CRW-790 appends the light guard to every go-product step, so a light leg does no work.
+		want := "matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'"
 		if got := steps[index[name][0]]["if"]; got != want {
 			t.Errorf("%q runs if %q, want %q", name, got, want)
 		}
