@@ -38,6 +38,7 @@ type Pool struct {
 	argv    []string
 	env     []string
 	timeout time.Duration
+	startup time.Duration
 	slots   chan *worker
 	mu      sync.Mutex
 	seq     int
@@ -50,8 +51,10 @@ type worker struct {
 }
 
 // NewPool resolves the oracle command and prepares the slots. It starts no worker: the first
-// request starts one. A command that is not on PATH is NoCommand.
-func NewPool(oracle Oracle, workers int, timeout time.Duration, env []string) (*Pool, error) {
+// request starts one and waits, under startup, until that worker has answered a handshake, so the
+// per-request timeout is charged only to a request a ready worker receives. A command that is not
+// on PATH is NoCommand.
+func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []string) (*Pool, error) {
 	command, err := exec.LookPath(oracle.Command)
 	if err != nil {
 		return nil, NoCommand{Command: oracle.Command, Err: err}
@@ -66,11 +69,14 @@ func NewPool(oracle Oracle, workers int, timeout time.Duration, env []string) (*
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	if startup <= 0 {
+		startup = DefaultStartupTimeout
+	}
 	workerEnv := append([]string{}, env...)
 	if oracle.Root != "" {
 		workerEnv = append(workerEnv, "ORACLE_ROOT="+oracle.Root)
 	}
-	pool := &Pool{argv: argv, env: workerEnv, timeout: timeout, slots: make(chan *worker, workers)}
+	pool := &Pool{argv: argv, env: workerEnv, timeout: timeout, startup: startup, slots: make(chan *worker, workers)}
 	for i := 0; i < workers; i++ {
 		pool.slots <- nil
 	}
@@ -131,26 +137,70 @@ func (p *Pool) acquire() (*worker, error) {
 		p.slots <- nil
 		return nil, err
 	}
+	// A freshly started worker is not ready yet: its interpreter is still booting and its shim is
+	// still importing its modules. Wait for a handshake reply under the startup deadline, so the
+	// per-request timeout below is charged only to an exchange with a ready worker. A worker that
+	// never becomes ready is killed and its slot returned, exactly as a failed start.
+	if err := p.ready(w); err != nil {
+		w.kill()
+		p.slots <- nil
+		return nil, err
+	}
 	return w, nil
 }
 
-func (p *Pool) exchange(w *worker, input, root string) (string, error) {
+// nextID is the id of the next request. One sequence serves every worker, so a reply is matched to
+// its request even across a worker replacement.
+func (p *Pool) nextID() int {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.seq++
-	id := p.seq
-	p.mu.Unlock()
+	return p.seq
+}
+
+// ready waits until a freshly started worker answers one handshake request. The handshake carries
+// a null input and an empty root, which every shim answers inertly without reading the homes a case
+// declares, so it is a pure readiness probe: a reply exists only after the worker has booted, run
+// its top-level imports and started reading its stdin. The reply's content is discarded -- it never
+// reaches a target's Compare -- but its envelope is validated, so a worker that answers garbage is
+// not treated as ready. An error envelope counts as a reply: the worker is up and answering.
+func (p *Pool) ready(w *worker) error {
+	id := p.nextID()
+	request := fmt.Sprintf("{\"id\":%d,\"input\":null,\"root\":\"\"}\n", id)
+	line, err := p.roundTrip(w, request, p.startup)
+	if err != nil {
+		if errors.Is(err, Timeout{}) {
+			return fmt.Errorf("the oracle worker did not become ready in time: %w", err)
+		}
+		return err
+	}
+	_, err = answer(id, line)
+	return err
+}
+
+func (p *Pool) exchange(w *worker, input, root string) (string, error) {
+	id := p.nextID()
 	encoded, err := json.Marshal(root)
 	if err != nil {
 		return "", err
 	}
 	request := fmt.Sprintf("{\"id\":%d,\"input\":%s,\"root\":%s}\n", id, input, encoded)
+	line, err := p.roundTrip(w, request, p.timeout)
+	if err != nil {
+		return "", err
+	}
+	return answer(id, line)
+}
+
+// roundTrip writes one request line and reads one reply line, both inside one deadline: a worker
+// that stops reading leaves the write blocked once its pipe fills, and only killing the worker
+// unblocks it, so the write and the read share the timer. The reply line is returned unread; the
+// caller matches it to its request with answer.
+func (p *Pool) roundTrip(w *worker, request string, timeout time.Duration) (string, error) {
 	type read struct {
 		line string
 		err  error
 	}
-	// The write and the read share one deadline: a worker that stops reading leaves the write
-	// blocked once its pipe fills, and only killing the worker unblocks it. Call does that on
-	// the Timeout this returns.
 	done := make(chan read, 1)
 	go func() {
 		if _, err := io.WriteString(w.stdin, request); err != nil {
@@ -160,14 +210,14 @@ func (p *Pool) exchange(w *worker, input, root string) (string, error) {
 		line, err := w.stdout.ReadString('\n')
 		done <- read{line, err}
 	}()
-	timer := time.NewTimer(p.timeout)
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case got := <-done:
 		if got.err != nil {
 			return "", got.err
 		}
-		return answer(id, got.line)
+		return got.line, nil
 	case <-timer.C:
 		return "", Timeout{}
 	}
