@@ -411,6 +411,203 @@ func TestDagHostNormalStateRaisesNothing(t *testing.T) {
 	}
 }
 
+// dagHostSeedOffsets writes an offset file that already knows path at byte 0, so a test's rollout
+// is scanned from its start as a known rollout rather than treated as first-seen.
+func dagHostSeedOffsets(t *testing.T, stateDir, path string) {
+	t.Helper()
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{"offsets": map[string]int64{path: 0}}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, dagHostStateFile), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dagHostRelayRefusal is a rollout holding one relay dag- call and the refusal envelope the relay
+// itself writes (internal/relay/dispatch/answer.go emit: {"error":"refused","reason":...}).
+func dagHostRelayRefusal(t *testing.T, callID string) []string {
+	t.Helper()
+	return []string{
+		dagHostToolCall(t, callID, "crw relay dag-release --plan p1"),
+		dagHostToolOutput(t, callID, `{"error":"refused","reason":"stale_coordinator_epoch","detail":"epoch 0"}`),
+	}
+}
+
+// The relay's own refusal envelope is reported, and a dag- word that is not a relay invocation is
+// not.
+func TestDagHostRefusalEnvelopeAndCommandMatching(t *testing.T) {
+	cases := []struct {
+		name       string
+		lines      []string
+		wantRaised bool
+	}{
+		{"the relay refusal envelope", dagHostRelayRefusal(t, "call-1"), true},
+		{"a dag- word that is not a relay call", []string{
+			dagHostToolCall(t, "call-1", "cat notes/dag-plan.md"),
+			dagHostToolOutput(t, "call-1", `{"error":"refused","reason":"not_found"}`),
+		}, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			f := dagReviewNewFixture(t)
+			rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", test.lines...)
+			f.close()
+			stateDir := t.TempDir()
+			dagHostSeedOffsets(t, stateDir, rollout)
+			host := fakehost.Start(t)
+			host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+				"status": map[string]any{"type": "idle"}, "path": rollout,
+			}}})
+			cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+			found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+			if test.wantRaised {
+				if len(found) != 1 || !strings.Contains(found[0].Detail, "stale_coordinator_epoch") {
+					t.Fatalf("parent_dag_refusals = %+v, want one for the relay envelope", found)
+				}
+			} else if len(found) != 0 {
+				t.Fatalf("a non-relay dag- word was reported: %+v", found)
+			}
+		})
+	}
+}
+
+// An unreadable offset file leaves the refusal reading unmeasured rather than replaying every
+// historical refusal as a new anomaly.
+func TestDagHostUnreadableOffsetsDoNotReplay(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateDir, dagHostStateFile), []byte("{\"offsets\":{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostRelayRefusal(t, "call-1")...)
+	f.close()
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "idle"}, "path": rollout,
+	}}})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+	review := dagHostRun(t, context.Background(), f, cfg)
+	if found := dagReviewFind(review, dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("an unreadable offset file replayed historical refusals: %+v", found)
+	}
+	if !dagHostUnmeasured(review, "parent_refusals:parent-1") {
+		t.Fatalf("the refusal reading was not unmeasured: %+v", review.Checks)
+	}
+}
+
+// A relay call whose output has not been written yet stays pending, so the next check still pairs
+// the call with its refusal.
+func TestDagHostPendingCallIsNotSkipped(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostResponseItem(t, map[string]any{"type": "message", "role": "user"}))
+	f.close()
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "idle"}, "path": rollout,
+	}}})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+	// The first check records the offset at the rollout's end.
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("the first check raised an anomaly: %+v", found)
+	}
+	// A relay call is written; its output is not there yet.
+	dagHostAppendRollout(t, rollout, dagHostToolCall(t, "call-1", "crw relay dag-release --plan p1"))
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("a call with no output raised an anomaly: %+v", found)
+	}
+	// An unrelated line follows the call before its output, so a resume that only remembered the
+	// last line would start after the call and lose it.
+	dagHostAppendRollout(t, rollout, dagHostResponseItem(t, map[string]any{"type": "message", "role": "user"}))
+	// A check runs with the call still pending and the unrelated line after it: the offset must not
+	// advance past the call.
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("a pending call followed by another line raised an anomaly: %+v", found)
+	}
+	// The output arrives later; the pending call is still paired with it.
+	dagHostAppendRollout(t, rollout, dagHostToolOutput(t, "call-1", `{"error":"refused","reason":"stale_coordinator_epoch"}`))
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("a pending call was not paired with its later output: %+v", found)
+	}
+}
+
+// A rollout shorter than its saved offset was replaced: it is read from its start rather than
+// skipped.
+func TestDagHostShrunkenRolloutIsReadFromTheStart(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostResponseItem(t, map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": strings.Repeat("x", 4000)}}}))
+	f.close()
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "idle"}, "path": rollout,
+	}}})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+	// The first check records an offset at the large rollout's end.
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("the first check raised an anomaly: %+v", found)
+	}
+	// The rollout is replaced by a much shorter one that already holds a refusal.
+	dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostRelayRefusal(t, "call-1")...)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 1 {
+		t.Fatalf("a replaced rollout was skipped instead of read: %+v", found)
+	}
+}
+
+// A rollout line over the limit is an unmeasured reading rather than an unbounded allocation.
+func TestDagHostOversizeLineIsUnmeasured(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostToolOutput(t, "call-1", strings.Repeat("z", dagHostLineLimit+1024)))
+	f.close()
+	stateDir := t.TempDir()
+	dagHostSeedOffsets(t, stateDir, rollout)
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "idle"}, "path": rollout,
+	}}})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+	review := dagHostRun(t, context.Background(), f, cfg)
+	if found := dagReviewFind(review, dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("an oversize line raised an anomaly: %+v", found)
+	}
+	if !dagHostUnmeasured(review, "parent_refusals:parent-1") {
+		t.Fatalf("an oversize line was not unmeasured: %+v", review.Checks)
+	}
+}
+
+// A review narrowed to one plan reads only that plan's children.
+func TestDagHostPlanScopedChildren(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	dagReviewOnePlan(t, f, "A")
+	dagHostRelationship(f, "relationship-in", "CRW-IN", "child-in", 1)
+	dagHostRelationship(f, "relationship-out", "CRW-OUT", "child-out", 1)
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES ('plan-1','A','relationship-in',1,'manifest','initial')")
+	f.close()
+	host := fakehost.Start(t)
+	dagHostTurnPage(host, dagReviewNow().Add(-30*time.Minute))
+	cfg := dagHostConfig(t, f, host.SocketPath, nil, "", 0)
+	cfg.raw["dag_review"] = json.RawMessage(`{"plans":["plan-1"]}`)
+
+	found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindChildTurnWithoutReceipt)
+	if len(found) != 1 || found[0].Issue != "CRW-IN" {
+		t.Fatalf("a plan-scoped review reported another plan's child: %+v", found)
+	}
+}
+
 // A context cancelled while the review reads the host writes no offset: the offset file is a
 // durable effect, and a cancelled review produces none.
 func TestDagHostCancelledContextWritesNoOffset(t *testing.T) {
