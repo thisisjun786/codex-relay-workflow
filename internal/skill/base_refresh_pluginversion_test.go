@@ -123,7 +123,13 @@ func (f *pluginVersionFixture) finish() string {
 // the merged tree.
 func (f *pluginVersionFixture) resolve() string {
 	f.t.Helper()
-	f.put(pluginversion.ManifestRepoPath, pluginManifestText("0.4.0", "d"))
+	return f.resolveWith("0.4.0")
+}
+
+// resolveWith is the same resolution with the release the head records chosen by the resolver.
+func (f *pluginVersionFixture) resolveWith(release string) string {
+	f.t.Helper()
+	f.put(pluginversion.ManifestRepoPath, pluginManifestText(release, "d"))
 	f.record()
 	return f.finish()
 }
@@ -239,5 +245,45 @@ func TestMechanicalPluginVersionLineRefusals(t *testing.T) {
 		head := f.resolve()
 		regions := f.regionsFile(mechanical(pluginversion.ManifestRepoPath, "regenerate:false"))
 		wantMechRefused(t, f.run(head, regions), "regeneration_failed")
+	})
+	t.Run("a declaration that covers the file without a mechanical rule", func(t *testing.T) {
+		f := newPluginVersionFixture(t)
+		f.standard()
+		f.startMerge()
+		head := f.resolve()
+		local := mechanical(pluginversion.ManifestRepoPath, "")
+		local.Grade = "local"
+		wantMechRefused(t, f.run(head, f.regionsFile(local)), "conflict_outside_mechanical", pluginversion.ManifestRepoPath)
+	})
+	t.Run("the parents record two releases", func(t *testing.T) {
+		f := newPluginVersionFixture(t)
+		f.previous = f.commitOn("feature", "previous work", map[string]string{
+			pluginversion.PluginRelative + "/skills/crw-plan/SKILL.md": pluginSkill("crw-plan") + "previous paragraph.\n"}, true)
+		f.r.git("checkout", "-q", "dev")
+		f.put(pluginversion.ManifestRepoPath, pluginManifestText("0.5.0", "d"))
+		f.devTip = f.commitOn("dev", "dev work", map[string]string{
+			pluginversion.PluginRelative + "/skills/crw-run/SKILL.md": pluginSkill("crw-run") + "dev paragraph.\n"}, true)
+		f.startMerge()
+		// the head keeps the previous head's release and records the payload it has, so only the
+		// release the base chose stands in the way
+		wantMechRefused(t, f.run(f.resolveWith("0.4.0")), "conflict_outside_mechanical", pluginversion.ManifestRepoPath)
+	})
+	t.Run("the head records a release neither parent has", func(t *testing.T) {
+		f := newPluginVersionFixture(t)
+		f.standard()
+		f.startMerge()
+		wantMechRefused(t, f.run(f.resolveWith("1.0.0")), "conflict_outside_mechanical", pluginversion.ManifestRepoPath)
+	})
+	t.Run("the head makes the manifest executable", func(t *testing.T) {
+		f := newPluginVersionFixture(t)
+		f.standard()
+		f.startMerge()
+		// the version is recorded for the executable payload, so the mode is the only difference
+		f.put(pluginversion.ManifestRepoPath, pluginManifestText("0.4.0", "d"))
+		if err := os.Chmod(filepath.Join(f.r.path, filepath.FromSlash(pluginversion.ManifestRepoPath)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		f.record()
+		wantMechRefused(t, f.run(f.finish()), "conflict_outside_mechanical", pluginversion.ManifestRepoPath)
 	})
 }

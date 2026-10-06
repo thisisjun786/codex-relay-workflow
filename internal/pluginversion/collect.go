@@ -16,10 +16,23 @@ import (
 	"unicode/utf8"
 )
 
+// GitRunner runs git and answers its standard output; stdin is fed to the command when it is not
+// nil. It is how a caller keeps the reads of a version on the same view of the objects as the rest
+// of its proof: the check that proves a base refresh passes a runner over its own throwaway
+// repository, which borrows the objects and has no configuration or replace refs of its own.
+type GitRunner func(ctx context.Context, stdin []byte, args ...string) ([]byte, error)
+
 // RevisionPayload is the files a revision ships under the plugin package, by package-relative name,
 // with what the installer could not copy faithfully. It reads the revision's tree, never a work tree.
 func RevisionPayload(ctx context.Context, repo, revision string) (Payload, []string, error) {
-	listing, err := gitText(ctx, repo, "ls-tree", "-r", "-z", revision, "--", PluginRelative)
+	return RevisionPayloadWith(ctx, repoRunner(repo), revision)
+}
+
+// RevisionPayloadWith is RevisionPayload read through run.
+func RevisionPayloadWith(ctx context.Context, run GitRunner, revision string) (Payload, []string, error) {
+	// --full-tree keeps every path relative to the tree root, so a repository read from a
+	// subdirectory names the package's files the same way.
+	listing, err := gitText(ctx, run, "ls-tree", "-r", "-z", "--full-tree", revision, "--", PluginRelative)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -56,7 +69,7 @@ func RevisionPayload(ctx context.Context, repo, revision string) (Payload, []str
 		for i, r := range requests {
 			shas[i] = r.sha
 		}
-		batch, err := gitRun(ctx, repo, []byte(strings.Join(shas, "\n")), "cat-file", "--batch")
+		batch, err := run(ctx, []byte(strings.Join(shas, "\n")), "cat-file", "--batch")
 		if err != nil {
 			return nil, nil, fmt.Errorf("git cat-file --batch: %w", err)
 		}
@@ -148,22 +161,51 @@ func regularBytes(path string) ([]byte, error) {
 	return io.ReadAll(file)
 }
 
-// VersionOfTree answers the version that names the plugin payload of a commit's tree: the release the
-// manifest records, plus the digest of that payload with the recorded suffix elided. It is the
-// version crw-dev ci plugin computes for that commit's work tree and --record-version writes.
-func VersionOfTree(ctx context.Context, repo, commit string) (string, error) {
-	p, errs, err := RevisionPayload(ctx, repo, commit)
+// TreeVersion derives the version that names a commit's plugin payload: the release the manifest
+// records, plus the digest of that payload with the recorded suffix elided.
+//
+// A non-empty reason says the commit's payload cannot name a version at all (the manifest is missing
+// or unreadable, or the package holds something the installer could not copy) - a fact about the
+// commit, not a failure to read it. err is only a failure to read: git could not answer. A caller
+// that decides what to do with such a commit uses reason; one that only wants the version uses
+// VersionOfTree.
+func TreeVersion(ctx context.Context, run GitRunner, commit string) (version, reason string, err error) {
+	p, errs, err := RevisionPayloadWith(ctx, run, commit)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(errs) > 0 {
-		return "", errors.New(strings.Join(errs, "; "))
+		return "", strings.Join(errs, "; "), nil
 	}
-	version, err := ManifestVersion(p)
+	recorded, err := ManifestVersion(p)
+	if err != nil {
+		return "", err.Error(), nil
+	}
+	derived, err := PayloadVersion(p, recorded)
+	if err != nil {
+		return "", err.Error(), nil
+	}
+	return derived, "", nil
+}
+
+// VersionOfTree is the version that names the plugin payload of a commit's tree: the version
+// crw-dev ci plugin computes for that commit's work tree and --record-version writes.
+func VersionOfTree(ctx context.Context, repo, commit string) (string, error) {
+	version, reason, err := TreeVersion(ctx, repoRunner(repo), commit)
 	if err != nil {
 		return "", err
 	}
-	return PayloadVersion(p, version)
+	if reason != "" {
+		return "", errors.New(reason)
+	}
+	return version, nil
+}
+
+// repoRunner runs git in repo.
+func repoRunner(repo string) GitRunner {
+	return func(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
+		return gitRun(ctx, repo, stdin, args...)
+	}
 }
 
 // pathParts is a slash-separated relative path's components, without empty and "." ones.
@@ -177,9 +219,9 @@ func pathParts(text string) []string {
 	return parts
 }
 
-// gitText runs git in repo and answers its standard output as UTF-8 text.
-func gitText(ctx context.Context, repo string, args ...string) (string, error) {
-	out, err := gitRun(ctx, repo, nil, args...)
+// gitText runs git through run and answers its standard output as UTF-8 text.
+func gitText(ctx context.Context, run GitRunner, args ...string) (string, error) {
+	out, err := run(ctx, nil, args...)
 	if err != nil {
 		return "", err
 	}

@@ -301,7 +301,10 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 		}
 		// The plugin manifest's version line is the one place no declaration has to cover: the line
 		// is derived from the payload, and the check can recompute it from the head itself (CRW-664).
-		if p == pluginversion.ManifestRepoPath {
+		// A declaration that names the place keeps its say even when it does not establish one
+		// mechanical rule for it: the built-in rule stands in for a declaration, and does not
+		// override one.
+		if p == pluginversion.ManifestRepoPath && !cov.coversPath(p) {
 			resolution, settled, err := g.pluginVersionResolution(ctx, previous, head, tip)
 			if err != nil {
 				return nil, nil, err
@@ -461,12 +464,16 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 }
 
 // pluginVersionResolution decides whether the plugin manifest is settled by the built-in rule
-// regenerate:plugin-version: the head's manifest equals both parents' byte for byte but for the
-// version it records, and that version is the one the head's payload derives. It answers the
-// resolution and true, or false when the file is anything else and keeps the judgment it has today.
+// regenerate:plugin-version. The head's manifest must equal both parents' byte for byte but for the
+// version it records, hold the same file mode as both parents, keep the release component both
+// parents record, and record the version the head's own payload derives. It answers the resolution
+// and true, or false when the file is anything else and keeps the judgment it has today: a missing
+// or unreadable manifest, a parent that differs outside the version line, a mode change, a release
+// change, a payload that cannot name a version, and a version that is not the derived one.
 func (g *refreshGit) pluginVersionResolution(ctx context.Context, previous, head, tip string) (builtinResolution, bool, error) {
 	elided := [3][]byte{}
 	versions := [3]string{}
+	modes := [3]string{}
 	for i, commit := range []string{previous, head, tip} {
 		entries, err := g.treeEntries(ctx, commit)
 		if err != nil {
@@ -476,6 +483,7 @@ func (g *refreshGit) pluginVersionResolution(ctx context.Context, previous, head
 		if !ok || manifest.kind != "blob" || (manifest.mode != "100644" && manifest.mode != "100755") {
 			return builtinResolution{}, false, nil
 		}
+		modes[i] = manifest.mode
 		content, err := g.blob(ctx, manifest.oid)
 		if err != nil {
 			return builtinResolution{}, false, err
@@ -484,18 +492,38 @@ func (g *refreshGit) pluginVersionResolution(ctx context.Context, previous, head
 			return builtinResolution{}, false, nil
 		}
 	}
+	if modes[1] != modes[0] || modes[1] != modes[2] {
+		return builtinResolution{}, false, nil
+	}
 	if !bytes.Equal(elided[1], elided[0]) || !bytes.Equal(elided[1], elided[2]) {
 		return builtinResolution{}, false, nil
 	}
-	want, err := pluginversion.VersionOfTree(ctx, g.checkout, head)
+	// The release component is the owner's, not the payload's: the rule settles the version line the
+	// payload derives, and it may not choose or drop a release. Both parents have to record one
+	// release and the head has to keep it.
+	release := releaseOf(versions[1])
+	for _, version := range versions {
+		if releaseOf(version) != release {
+			return builtinResolution{}, false, nil
+		}
+	}
+	// The payload is read through the same isolated repository the rest of the proof reads, so a
+	// replace ref or an inherited GIT_* variable cannot make this digest a different tree's.
+	want, reason, err := pluginversion.TreeVersion(ctx, g.isoRun, head)
 	if err != nil {
 		return builtinResolution{}, false, err
 	}
-	if versions[1] != want {
+	if reason != "" || versions[1] != want {
 		return builtinResolution{}, false, nil
 	}
 	return builtinResolution{rule: pluginVersionRule,
 		applied: fmt.Sprintf("applied: regenerate path=%s rule=%s version=%s", pluginversion.ManifestRepoPath, pluginVersionRule, versions[1])}, true, nil
+}
+
+// releaseOf is a version's release component.
+func releaseOf(version string) string {
+	release, _ := pluginversion.SplitVersion(version)
+	return release
 }
 
 func sortedCommands(m map[string][]string) []string {

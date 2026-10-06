@@ -1156,7 +1156,9 @@ among its commands, the parent does not settle a conflict either.
    with a merge commit: `git merge --no-ff -m "Merge branch 'dev' into <branch>" <D>`. `git diff --name-only
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
-   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below).
+   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below). The one
+   exception is the plugin manifest's version line, which no declaration has to cover: settle it as the
+   paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
      :1:<path>` is the base, `:2:<path>` the candidate and `:3:<path>` the dev tip. When both sides only
@@ -1172,11 +1174,14 @@ among its commands, the parent does not settle a conflict either.
      check runs it there.
 
 The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
-`plugins/crw/.codex-plugin/plugin.json` and no declared region covers it, the check settles it by the built-in rule
+`plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
+file in the same mode in both parents and in the head, the check settles it by the built-in rule
 `regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
-and that version must be the one the head's payload derives (`crw-dev ci plugin` computes it from the payload). Any other
-difference in that file, a version that is not the derived one, and every other path keep the refusal they have
-today, and the proof prints
+that version must keep the release component both parents record (the release is the owner's choice, not the
+payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
+(`crw-dev ci plugin` computes it from the payload). A declaration that touches the file keeps its say, even when it
+does not establish one mechanical rule for it. Any other difference in that file, a version that is not the derived
+one, and every other path keep the refusal they have today, and the proof prints
 `applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
 
 3. Add the settled files and commit; the merge commit has the parents P and D in that order. Before pushing
