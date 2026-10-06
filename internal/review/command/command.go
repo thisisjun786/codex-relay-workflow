@@ -247,11 +247,11 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	result := entry("finished")
 	result.Time = e.now().UTC().Format(time.RFC3339) // the day the attempt ended, maybe after the one it began on: the ledger line and retryNotBefore must agree on it
 	result.Artifact, result.SHA256, result.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
-	if reasons, ok := retryableUnavailable(a); ok {
-		result.Reason, result.AgyCalled = reasons, agyCalledOf(a)
-		if st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
-			result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
-		}
+	if _, ok := retryableUnavailable(a); ok && st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
+		result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
+	}
+	if a.Status != review.StatusComplete { // the failure record of a run that did not end complete, written apart from the retry decision above
+		result.Reason, result.AgyCalled = ledgerFailureReason(a), agyCalledOf(a)
 	}
 	// The result is kept before the review is recorded, so that a record always has its copy; if it cannot be kept, the review is recorded and published all the same (a second model call is what this order exists to avoid) and the failure is reported at the end.
 	keepErr := l.keep(result.SHA256, data)
