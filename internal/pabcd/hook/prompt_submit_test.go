@@ -516,3 +516,26 @@ func TestPromptSubmitMarkerFailureIsDropped(t *testing.T) {
 		t.Error("a failed marker write created state")
 	}
 }
+
+// TestPromptSubmitStampDoesNotOverwriteTheSameTurnsStamp is the re-check inside the lock: a
+// participating writer that stamped this same turn between the handler's read and its write keeps its
+// stamp, because the turn is judged again on the state the lock found.
+func TestPromptSubmitStampDoesNotOverwriteTheSameTurnsStamp(t *testing.T) {
+	cwd := t.TempDir()
+	promptSubmitStateFile(t, cwd, "rec-s1", func(*state.State) {})
+	writer := func(cwd, sessionID string, fn func() error) error {
+		s := state.ReadState(cwd, sessionID)
+		turn := "rec-t1"
+		s.StopBlockTurnID, s.StopBlockTotal = &turn, 3
+		if err := state.WriteState(cwd, s); err != nil {
+			return err
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+	if answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "rec-s1", Prompt: "Summarise the README.", TurnID: "rec-t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), writer); answer != "" {
+		t.Errorf("answer %q", answer)
+	}
+	if s := state.ReadState(cwd, "rec-s1"); s.StopBlockTotal != 3 {
+		t.Errorf("the participating writer's stamp was overwritten: %+v", s)
+	}
+}

@@ -73,6 +73,9 @@ func Legs() []Leg {
 			if p.TurnID != nil {
 				turn = *p.TurnID
 			}
+			// The platform argument stays empty: LoopArmDirective resolves this host's platform when
+			// it is not given, which is the oracle's default (process.platform). The handler answers
+			// the context, and ContextOutput is the port of buildContextOutput that wraps it.
 			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandle(pabcdhook.PromptSubmitPayload{
 				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
 		}},
