@@ -254,15 +254,18 @@ func overlapByIdentity(trees []pinned, codex *pinned) error {
 	return nil
 }
 
-// overlapWalkLimit bounds one tree's identity walk. A tree that holds more directories than this, or a directory the walk
-// cannot open or read, refuses: the comparison against the other trees cannot be proven, and a run must not guess.
-const overlapWalkLimit = 200000
+// overlapWalkLimit bounds one tree's identity walk. A tree that holds more directories than this, a walk that nests deeper
+// than this, or a directory the walk cannot open or read refuses: the comparison against the other trees cannot be proven,
+// and a run must not guess.
+const overlapWalkLimit = 100000
 
 // overlapByContents refuses a tree, or the Codex home, that reaches another selected tree through a second spelling of a
 // directory. A bind mount gives one directory a second name whose identity (device and inode) is unchanged, so the aliased
 // directory's identity lies inside the other tree while the two paths differ; neither the lexical check nor
-// overlapByIdentity can see that, because the alias is not the other tree's root. The walk fails closed: a tree it cannot
-// read refuses rather than passing an unproven comparison.
+// overlapByIdentity can see that, because the alias is not the other tree's root. A bind mount below a selected root is
+// invisible to the root chains, so two trees that hold one directory below both roots are refused as well: the same
+// directory is reachable under each of them, and a write under one lands in the other. The walk fails closed: a tree it
+// cannot read refuses rather than passing an unproven comparison.
 func overlapByContents(trees []pinned, codex *pinned) error {
 	sets := make([]map[fileID]struct{}, len(trees))
 	for i, t := range trees {
@@ -280,7 +283,7 @@ func overlapByContents(trees []pinned, codex *pinned) error {
 			if i == j || set == nil {
 				continue
 			}
-			if chainHits(a.chain, set) {
+			if chainHits(a.chain, set) || setsShare(sets[i], set) {
 				return refuse(ReasonOverlap, a.path, "reaches "+trees[j].path+" through another spelling (a bind mount)")
 			}
 		}
@@ -309,70 +312,67 @@ func chainHits(chain []fileID, set map[fileID]struct{}) bool {
 	return false
 }
 
-// identitySet collects the identity of root and of every directory below it, walking from the pinned handle with Child
-// only, so a link entry is skipped and never opened. A directory already in the set is not walked a second time, so a
-// mount that points back into the tree terminates instead of looping.
+// setsShare reports whether two identity sets hold one directory in common.
+func setsShare(a, b map[fileID]struct{}) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	for id := range a {
+		if _, ok := b[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// identitySet collects the identity of root and of every directory reachable below it, walking from the pinned handle
+// with Child only, so a link entry is skipped and never opened. Every spelling is walked: two names of one directory can
+// show different submounts, so a directory already seen is visited again under its second name, and only the walk's depth
+// or the tree's size stops it. Recursion bounds the open descriptors by the tree's depth, so a directory holding many
+// children cannot exhaust them.
 func identitySet(path string, root *Dir) (map[fileID]struct{}, error) {
 	set := map[fileID]struct{}{root.id: {}}
-	stack := []*Dir{root}
-	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		children, err := identityChildren(path, cur, set)
-		if cur != root {
-			_ = cur.Close()
-		}
-		if err != nil {
-			for _, d := range stack {
-				_ = d.Close()
-			}
-			return nil, err
-		}
-		stack = append(stack, children...)
+	if err := walkIdentity(path, root, set, 0); err != nil {
+		return nil, err
 	}
 	return set, nil
 }
 
-// identityChildren opens the subdirectories of cur that are not yet in set, records them, and returns them for the walk
-// to visit; the caller closes each one. A name that is not a directory is skipped, so a link is never opened.
-func identityChildren(path string, cur *Dir, set map[fileID]struct{}) ([]*Dir, error) {
+// walkIdentity adds every directory below cur to set, at most overlapWalkLimit levels down. cur stays open for the whole
+// call and each child is closed before the next sibling is opened, so a directory holding many children costs two
+// descriptors rather than one per child.
+func walkIdentity(path string, cur *Dir, set map[fileID]struct{}, depth int) error {
+	if depth >= overlapWalkLimit {
+		return refuse(ReasonOverlap, path, "nests more than "+strconv.Itoa(overlapWalkLimit)+" directories deep")
+	}
 	names, err := cur.Names()
 	if err != nil {
-		return nil, refuse(ReasonOverlap, path, "cannot be read to compare identities: "+err.Error())
-	}
-	var children []*Dir
-	closeAll := func() {
-		for _, d := range children {
-			_ = d.Close()
-		}
+		return refuse(ReasonOverlap, path, "cannot be read to compare identities: "+err.Error())
 	}
 	for _, name := range names {
 		typ, err := cur.typeOf(name)
 		if err != nil {
-			closeAll()
-			return nil, refuse(ReasonOverlap, path, "cannot be inspected to compare identities: "+err.Error())
+			return refuse(ReasonOverlap, path, "cannot be inspected to compare identities: "+err.Error())
 		}
 		if typ != unix.S_IFDIR {
 			continue
 		}
 		child, err := cur.Child(name)
 		if err != nil {
-			closeAll()
-			return nil, refuse(ReasonOverlap, path, "cannot be opened to compare identities: "+err.Error())
-		}
-		if _, seen := set[child.id]; seen {
-			_ = child.Close()
-			continue
+			return refuse(ReasonOverlap, path, "cannot be opened to compare identities: "+err.Error())
 		}
 		if len(set) >= overlapWalkLimit {
 			_ = child.Close()
-			closeAll()
-			return nil, refuse(ReasonOverlap, path, "holds more than "+strconv.Itoa(overlapWalkLimit)+" directories")
+			return refuse(ReasonOverlap, path, "holds more than "+strconv.Itoa(overlapWalkLimit)+" directories")
 		}
 		set[child.id] = struct{}{}
-		children = append(children, child)
+		err = walkIdentity(path, child, set, depth+1)
+		_ = child.Close()
+		if err != nil {
+			return err
+		}
 	}
-	return children, nil
+	return nil
 }
 
 // Close closes the directory; a nil Dir is an absent root and closing it is a no-op.

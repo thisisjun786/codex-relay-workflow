@@ -137,3 +137,42 @@ func TestOpenRefusesAnUnreadableTreeDirectory(t *testing.T) {
 	_, err := Open(Options{Scope: ScopeUser, FromHome: src, ToHome: dst})
 	wantRefusal(t, err, ReasonOverlap)
 }
+
+// A destination that holds a directory of the source tree below its own root reaches into the source tree: the same
+// directory is reachable below both roots, so a write under the destination would land inside the source tree. A bind
+// mount below a selected root is invisible to the root chains, so the two trees' identity sets must be compared too.
+func TestOpenRefusesASharedDescendantBetweenTrees(t *testing.T) {
+	base := isolate(t)
+	src, dst := base+"/src", base+"/dst"
+	mkdirs(t, src+"/sub", dst+"/inside")
+	put(t, src+"/sub/keep", "keep", 0o600)
+	aliasIdentity(t, dst+"/inside", src+"/sub")
+	before := tree(t, src)
+	r, err := Open(Options{Scope: ScopeUser, FromHome: src, ToHome: dst})
+	if err == nil {
+		r.Close()
+		t.Fatalf("Open accepted a destination holding %s, the identity of %s inside the source tree", dst+"/inside", src+"/sub")
+	}
+	wantRefusal(t, err, ReasonOverlap)
+	if got := tree(t, src); !reflect.DeepEqual(before, got) {
+		t.Errorf("a refused Open changed the source tree: %v", got)
+	}
+}
+
+// Two spellings of one directory can show different submounts, so the walk must visit every spelling instead of
+// deduplicating on identity alone: a mount below the second spelling is still inside the source tree.
+func TestOpenWalksEverySpellingOfADirectory(t *testing.T) {
+	base := isolate(t)
+	src, dst := base+"/src", base+"/dst"
+	mkdirs(t, src+"/plan/first", src+"/plan/second/mounted", dst)
+	aliasIdentity(t, src+"/plan/first", src+"/plan/second")
+	aliasIdentity(t, dst, src+"/plan/second/mounted")
+	r, err := Open(Options{Scope: ScopeUser, FromHome: src, ToHome: dst})
+	if err == nil {
+		r.Close()
+		t.Fatalf("Open accepted a destination reachable below the source tree through the second spelling %s", src+"/plan/second")
+	}
+	wantRefusal(t, err, ReasonOverlap)
+}
+
+// A destination that shares a directory with the source tree below its root reaches into the source tree: the same
