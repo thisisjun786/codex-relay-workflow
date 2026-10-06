@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	_ "modernc.org/sqlite"
@@ -53,6 +54,13 @@ func TestSessionHookPostCompactKeepsAParticipatingWritersUpdate(t *testing.T) {
 func TestSessionHookPostCompactRefusesALossyOrLockedState(t *testing.T) {
 	cwd := t.TempDir()
 	phase := state.PhaseB
+	tracker := func(n int) *interview.Tracker {
+		t := &interview.Tracker{Contradictions: []interview.Contradiction{}, Assumptions: []interview.Assumption{}}
+		for i := 0; i < n; i++ {
+			t.Contradictions = append(t.Contradictions, interview.Contradiction{ContradictionID: fmt.Sprintf("c%d", i), Summary: "s", Severity: interview.SeverityHigh})
+		}
+		return t
+	}
 	lossy := sessionHookStateFile(t, cwd, "pc4", func(s *state.State) {
 		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase
 		for i := 0; i <= state.MaxUnverifiedSubagents; i++ { // one past the cap: the reader would drop the last
@@ -67,6 +75,28 @@ func TestSessionHookPostCompactRefusesALossyOrLockedState(t *testing.T) {
 	SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "pc4"})
 	if after, err := os.ReadFile(lossy); err != nil || string(after) != string(before) {
 		t.Errorf("a lossy state was rewritten: %v", err)
+	}
+	// A stored interview tracker one past the reader's cap is not shortened by a write that only clears the cursor.
+	capped := sessionHookStateFile(t, cwd, "pc6", func(s *state.State) {
+		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase
+		s.Interview = tracker(interview.MaxTrackerArray + 1)
+	})
+	before, err = os.ReadFile(capped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "pc6"})
+	if after, err := os.ReadFile(capped); err != nil || string(after) != string(before) {
+		t.Errorf("a capped interview tracker was shortened: %v", err)
+	}
+	// A tracker within the cap round-trips, so the reset still happens and the tracker is kept.
+	sessionHookStateFile(t, cwd, "pc7", func(s *state.State) {
+		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase
+		s.Interview = tracker(2)
+	})
+	SessionHookPostCompact(SessionHookPostCompactPayload{Cwd: cwd, SessionID: "pc7"})
+	if s := state.ReadState(cwd, "pc7"); s.LastInjectedPhase != nil || s.Interview == nil || len(s.Interview.Contradictions) != 2 {
+		t.Errorf("a within-cap tracker: %+v", s)
 	}
 	locked := sessionHookStateFile(t, cwd, "pc5", func(s *state.State) {
 		s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseB, true, &phase

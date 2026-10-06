@@ -9,7 +9,12 @@
 package hook
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
@@ -49,8 +54,9 @@ func SessionHookSessionStart(p SessionHookSessionStartPayload) string {
 // The oracle reads the state and writes it back with no lock, so an update a participating writer
 // lands between the two is lost (a data-loss defect, fixed here by decision, as the idle-edit counter
 // is): the eligibility is judged again inside the session lock and the file is written from that read.
-// A state whose stored records the reader cannot keep is left alone rather than rewritten from a lossy
-// read, and a lock that cannot be taken or a write that fails leaves the file as it was.
+// A state whose stored records the reader or the writer would change is left alone rather than
+// rewritten from a lossy read, and a lock that cannot be taken or a write that fails leaves the file
+// as it was.
 func SessionHookPostCompact(p SessionHookPostCompactPayload) string {
 	return sessionHookPostCompact(p, state.WithSessionLock)
 }
@@ -64,10 +70,17 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 	}
 	_ = lock(p.Cwd, p.SessionID, func() error {
 		fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
-		if unreadable || unsafeCounterWrite(fresh) || rewriteGuardLossy(p.Cwd, p.SessionID, fresh.UnverifiedSubagents) || !sessionHookPostCompactEligible(fresh) {
+		if unreadable || !sessionHookPostCompactEligible(fresh) {
+			return nil
+		}
+		raw, err := os.ReadFile(state.StatePath(p.Cwd, p.SessionID))
+		if err != nil {
 			return nil
 		}
 		fresh.LastInjectedPhase = nil
+		if !sessionHookStateRewritable(raw, fresh) {
+			return nil
+		}
 		return state.WriteState(p.Cwd, fresh)
 	})
 	return ""
@@ -77,6 +90,85 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 // reinjection cursor still holds a phase, so there is something to reset.
 func sessionHookPostCompactEligible(s state.State) bool {
 	return s.OrchestrationActive && s.Phase != state.PhaseIdle && s.LastInjectedPhase != nil
+}
+
+// sessionHookStateRewritable says whether writing next back over the file's raw bytes would keep every record the file
+// stores. The reader and the writer normalise what they handle, so a write-back that only means to clear the reinjection
+// cursor can still drop or change records: ReconstructUnverified stops at the cap, cuts a long receiptClaimed and replaces a
+// field of the wrong type (state.RewriteKeepsUnverified), ReconstructInterview caps every tracker array at
+// interview.MaxTrackerArray and repairs or drops malformed entries, and a legacy D-close marker loses its distinction. The
+// state is written back only when all three keep what is stored; otherwise the file is left as it was.
+func sessionHookStateRewritable(raw []byte, next state.State) bool {
+	if next.DcloseRecovery != nil && next.DcloseRecovery.Legacy {
+		return false
+	}
+	if !state.RewriteKeepsUnverified(raw, next.UnverifiedSubagents) {
+		return false
+	}
+	return sessionHookInterviewKeepsStored(raw, next.Interview)
+}
+
+// sessionHookInterviewKeepsStored says whether the interview tracker the write would publish still holds every entry the file
+// stores. ReconstructInterview caps contradictions and assumptions at interview.MaxTrackerArray, dropping the oldest, and drops
+// an ontology entity with no name and a relationship with no target, so a stored array longer than the rebuilt one is a record
+// the write-back would lose. The two values cannot be compared instead: the reader's rebuild always normalises a dimension (an
+// absent known/unknown array becomes empty, an unrecognised level becomes low), so a value comparison would refuse every write
+// and silently stop the recovery. A tracker the file does not hold, or holds as null, holds no entry to lose.
+func sessionHookInterviewKeepsStored(raw []byte, kept *interview.Tracker) bool {
+	stored, ok := sessionHookJSONField(raw, "interview")
+	if !ok {
+		return false
+	}
+	object, _ := stored.(map[string]any)
+	contradictions, _ := object["contradictions"].([]any)
+	assumptions, _ := object["assumptions"].([]any)
+	ontology, _ := object["ontologySchema"].([]any)
+	if kept == nil {
+		return len(contradictions) == 0 && len(assumptions) == 0 && len(ontology) == 0
+	}
+	if len(contradictions) > len(kept.Contradictions) || len(assumptions) > len(kept.Assumptions) || len(ontology) > len(kept.OntologySchema) {
+		return false
+	}
+	for i, entity := range ontology {
+		record, _ := entity.(map[string]any)
+		relationships, _ := record["relationships"].([]any)
+		if len(relationships) > len(kept.OntologySchema[i].Relationships) {
+			return false
+		}
+	}
+	return true
+}
+
+// sessionHookJSONField is the value of one top-level key of a state document, decoded as the reader decodes it: numbers stay
+// json.Number. A document that is not one JSON object is refused; a key the document does not hold is the nil value.
+func sessionHookJSONField(doc []byte, key string) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(doc))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, false
+	}
+	for dec.More() {
+		name, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		if field, ok := name.(string); ok && field == key {
+			var value any
+			if dec.Decode(&value) != nil {
+				return nil, false
+			}
+			return value, true
+		}
+		var skip json.RawMessage
+		if dec.Decode(&skip) != nil {
+			return nil, false
+		}
+	}
+	return nil, true
 }
 
 // SessionHookPostToolUse is handlePostToolUse (hook.ts:1951-1992): a request_user_input round is
