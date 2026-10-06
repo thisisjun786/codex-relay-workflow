@@ -367,6 +367,20 @@ func worktreeDelQuoteSegments(command string) []string {
 			r.pair()
 			continue
 		}
+		if r.state == worktreeDelQuoteDouble && (c == '`' || c == '$' && i+1 < len(command) && command[i+1] == '(') {
+			// an outer double quote keeps a substitution together: a quote, a separator or a parenthesis inside it is not this shell's
+			if c == '`' {
+				_, n := worktreeDelSubstitutionBody(command[i+1:], true)
+				cur = append(cur, command[i:i+1+n]...)
+				i += n
+			} else {
+				_, n := worktreeDelSubstitutionBody(command[i+2:], false)
+				cur = append(cur, command[i:i+2+n]...)
+				i += n + 1
+			}
+			r.prev = 'x'
+			continue
+		}
 		if r.state == worktreeDelQuoteComment && opened && c == '`' && worktreeDelQuoteBackslashes(command[:i])%2 == 0 {
 			r.state, r.prev, opened = worktreeDelQuotePlain, '`', false // a comment in a backtick body ends at the closing backtick
 			cur = append(cur, c)
@@ -741,7 +755,9 @@ func worktreeDelOptionWord(word string) bool {
 // its operands (a dollar sign, BASH_ARGV, argv: bash -c 'eval "$0"' 'rm -rf x' runs rm). For sh, bash, dash and ash the operands
 // after the program are the inner shell's $0, $1 and so on whatever they look like, so a later option-like word is not a program
 // (bash -c 'echo OK' -c 'rm -rf x' runs echo, CRW-670); su, whose last -c is its program, and every other shell keep the reading
-// of every later option-like word, because the walk does not tell those shells apart.
+// of every later option-like word, because the walk does not tell those shells apart. A backtick in the program is a command
+// substitution that can synthesize a positional reference the program then evaluates (bash -c 'eval `printf "\x24\x31"`' -c
+// 'rm -rf x' runs rm), so the program is not certain either.
 func worktreeDelShellProgramEnd(name string, operands []string) int {
 	program := -1
 	switch name {
@@ -759,7 +775,7 @@ func worktreeDelShellProgramEnd(name string, operands []string) int {
 		}
 	}
 	word := operands[program]
-	if strings.Contains(word, "$") || strings.Contains(word, "BASH_ARG") || strings.Contains(word, "argv") ||
+	if strings.Contains(word, "$") || strings.Contains(word, "BASH_ARG") || strings.Contains(word, "argv") || strings.Contains(word, "`") ||
 		worktreeDelOptionWord(word) && !strings.ContainsAny(word, " \t\r\n;&|()") {
 		return len(operands)
 	}
@@ -913,6 +929,12 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 			r.pair()
 			continue
 		}
+		if !backtick && c == '$' && i+1 < len(rest) && rest[i+1] == '{' && r.state == worktreeDelQuotePlain {
+			end := worktreeDelBraceEnd(rest[i+2:]) // a parameter expansion: its own ) does not close the substitution
+			out = append(out, rest[i:i+2+end]...)
+			i += 1 + end
+			continue
+		}
 		if backtick {
 			if c == '`' && r.state == worktreeDelQuotePlain {
 				return string(out), i + 1
@@ -931,6 +953,33 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 		r.step(c)
 	}
 	return string(out), len(rest)
+}
+
+// worktreeDelBraceEnd is the length of the text up to and including the } that closes a ${...} parameter expansion, whose
+// body may hold nested braces, quotes and backslashes; an unterminated one runs to the end.
+func worktreeDelBraceEnd(rest string) int {
+	depth := 1
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if r.escapes(rest, i) {
+			i++
+			r.pair()
+			continue
+		}
+		if r.state == worktreeDelQuotePlain {
+			switch c {
+			case '{':
+				depth++
+			case '}':
+				if depth--; depth == 0 {
+					return i + 1
+				}
+			}
+		}
+		r.step(c)
+	}
+	return len(rest)
 }
 
 // worktreeDelSubstitutions is the programs a segment runs before it runs: the body of every command substitution, $(...) and
@@ -971,6 +1020,7 @@ func worktreeDelSubstitutions(segment string) []string {
 			out = append(out, body)
 		}
 		i += n - 1
+		r.prev = 'x' // the substitution is part of the word it stands in: a # after it does not open a comment
 	}
 	return out
 }
@@ -1013,7 +1063,8 @@ func worktreeDelWalk(command, cwd string, id WorktreeIdentity, extended bool) Gu
 // worktreeDelQuoteWalk is the loop over one text: the segments in order, a cd moving the directory later segments run in, and
 // the conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
 // quoting reads the text over bash's own quotes, backslashes and comments instead, and judges the program string that a shell
-// word hands to -c and the program a substitution runs (depth says how many programs deep this text is).
+// word hands to -c and the program a substitution runs, before the cd branch, because the outer shell runs a substitution
+// before it runs cd (depth says how many programs deep this text is).
 func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
 	hint := destructiveHint(extended)
 	segCwd, destructiveSeen := cwd, false
@@ -1032,10 +1083,6 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 			continue
 		}
 		tokens := worktreeDelQuoteTokens(segment, quoting)
-		if len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
-			segCwd = resolveFrom(segCwd, tokens[1])
-			continue
-		}
 		if quoting {
 			programs := worktreeDelQuoteProgram(tokens, depth >= worktreeDelQuoteDepth)
 			if depth >= worktreeDelQuoteDepth && len(programs) > 0 {
@@ -1046,11 +1093,15 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 					return verdict
 				}
 			}
-			for _, program := range worktreeDelSubstitutions(segment) {
+			for _, program := range worktreeDelSubstitutions(segment) { // the outer shell runs a substitution before it runs cd
 				if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
 					return verdict
 				}
 			}
+		}
+		if len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
+			segCwd = resolveFrom(segCwd, tokens[1])
+			continue
 		}
 		if hint.MatchString(foldASCII(segment)) {
 			destructiveSeen = true

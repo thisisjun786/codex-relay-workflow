@@ -1281,19 +1281,31 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
   `$(...)` and backtick, and every process substitution, `<(...)` and `>(...)`, that stands in plain text or inside double
   quotes in a segment, and its body is judged as a program of the outer shell at the next depth; a substitution inside single
   quotes, `$'...'` or a comment stays data, so `bash -c 'echo OK' '$(rm -rf ../repo)'` is still allowed). This fixes the
-  command-substitution part of the follow-up line in the CRW-611 section above, whose here-document-body part is still kept.
+  command-substitution part of the follow-up line in the CRW-611 section above, whose here-document-body part is still kept. The
+  body reader follows the whole body, not up to the first parenthesis it meets: a substitution in a `cd` argument is judged
+  before the `cd` moves the directory, a `#` after a backtick substitution does not open a comment, a `${...}` parameter
+  expansion does not close the substitution, and a quote inside the body does not end the outer double quote (all four found
+  by the pull request's reviews).
 - The reader read every operand that holds a blank after a shell word as a program whenever an option-like word stood after
   the program, a rule CRW-639 kept for `su`, whose last `-c` is its program, so `bash -c 'echo OK' -c 'rm -rf ../repo'`, which
   runs only echo because the two words are the shell's `$0` and `$1`, was denied (source `internal/pabcd/hook/worktreedel.go`
   before this change); port: fixed by CRW-670 for sh, bash, dash and ash (`worktreeDelShellDataOperands`: the operands after
   their `-c` program are data, option-like ones included, so a later `-c` is not read for them; a redirection word among the
   operands and a program that can name its operands still read them all, and `su`, zsh and every other shell keep the reading
-  of every later option-like word, so no other row or fixture changes).
+  of every later option-like word, so no other row or fixture changes). A program that holds a backtick can synthesize a
+  positional reference it then evaluates, so such a program is not certain either and the operands after it are read too
+  (found by the pull request's reviews).
 - At the reading depth of 8 program strings the reader denied only a program that held a blank, so a nest of nine `sh -c`
   wrappers around `true` was allowed although the innermost program string was still unread, while the same nest around
   `rm -rf ../repo` was denied (source `internal/pabcd/hook/worktreedel.go` before this change); port: fixed by CRW-670 (a
   program string still unread at the depth limit is denied whether or not it holds a blank; eight levels are still read and
   an innermost command that is no program still passes).
+
+- A process substitution that stands inside double quotes is read although bash treats it as literal text, so a harmless
+  `echo "<(rm -rf ../repo)"` is denied. The answer this issue carries names a process substitution inside double quotes among
+  what the outer shell runs, so the reading keeps it and the deny is accepted as a false positive in the over-denying
+  direction (found by the pull request's reviews); port: kept (a false positive; follow-up proposal: read `<(...)` and `>(...)`
+  only in plain text, where bash performs them).
 
 ## CRW-649 — the review-round working-directory boundary and the plan key
 
