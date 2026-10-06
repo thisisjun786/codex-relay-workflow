@@ -293,7 +293,7 @@ func TestRemoveSeesAScriptStartedByARelativePath(t *testing.T) {
 	old := runtimeDir(h, "0.9.0", first, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
-	write(t, filepath.Join(old, "bin", "run.sh"), "sleep 30; true\n")
+	writeExecutable(t, filepath.Join(old, "bin", "run.sh"), []byte("sleep 30; true\n"), 0o644)
 	process := exec.Command(sh, filepath.Join(filepath.Base(old), "bin", "run.sh"))
 	process.Dir = h.dest
 	if err := process.Start(); err != nil {
