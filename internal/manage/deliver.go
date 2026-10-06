@@ -94,14 +94,25 @@ func deliverClassify(tool string, reply deliverReply) string {
 	if reply.Err != nil {
 		return deliverClassUnknown
 	}
+	// An isError result is not a refusal. The bridge writes the operation with Ledger.Begin before
+	// any turn/start or turn/steer and the final receipt with Ledger.Save afterwards, so a failure
+	// while saving that receipt arrives as an isError result after the host already took the
+	// message. Validation and lookup errors come before Begin and are told apart by get_operation
+	// on the request id, never by this text.
 	if reply.IsError || strings.HasPrefix(strings.TrimSpace(reply.Text), "Error") {
-		return deliverClassRefused
+		return deliverClassUnknown
 	}
 	if reply.Payload == nil {
 		return deliverClassUnknown
 	}
 	delivery, _ := reply.Payload["delivery"].(string)
 	status, _ := reply.Payload["status"].(string)
+	// Uncertainty is read before acceptance: an undetermined status stays unknown whatever the
+	// delivery field claims, because a receipt this code cannot place is a delivery nobody has
+	// evidence for.
+	if status == "outcome_unknown" || status == "in_progress_or_unknown" || delivery == "outcome_unknown" {
+		return deliverClassUnknown
+	}
 	switch {
 	case delivery == "not_delivered" || delivery == "rejected":
 		return deliverClassRefused
@@ -109,9 +120,9 @@ func deliverClassify(tool string, reply deliverReply) string {
 		return deliverClassRefused
 	case deliverRefusalCodes[deliverRPCErrorCode(reply.Payload)]:
 		return deliverClassRefused
-	case tool == deliverToolSend && delivery == "turn_started":
+	case tool == deliverToolSend && status == "accepted" && delivery == "turn_started":
 		return deliverClassAccepted
-	case tool == deliverToolSteer && delivery == "accepted_not_applied":
+	case tool == deliverToolSteer && status == "accepted" && delivery == "accepted_not_applied":
 		return deliverClassAccepted
 	default:
 		return deliverClassUnknown

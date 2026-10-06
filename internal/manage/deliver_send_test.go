@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -202,6 +203,120 @@ func deliverSendRequestIDOf(t *testing.T, call map[string]any) string {
 	return id
 }
 
+// A receipt the bridge could not save arrives as an isError result after the host already took
+// the message, so it is undetermined: the record is neither deleted nor settled, and the next
+// attempt reconciles the same request id with get_operation instead of sending again.
+func TestDeliverTreatsAReceiptSaveFailureAsUnknownThenReconciles(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, firstLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"isError": true, "text": "Error executing tool send_message_to_thread: save receipt: database or disk is full"},
+	})
+	cfg := deliverSendConfig(t, bridge)
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || out.Class != deliverClassUnknown || out.RequestID != "m1" {
+		t.Fatalf("Deliver: %q %q %v, want unknown under m1", out.Class, out.RequestID, err)
+	}
+	record := deliverRecordOf(t, cfg, "m1")
+	if record.State != deliverStateUnknown || record.Received || record.RequestID != "m1" {
+		t.Fatalf("the save failure recorded %+v", record)
+	}
+	if len(record.Attempts) != 1 || record.Attempts[0].Class != deliverClassUnknown {
+		t.Errorf("the attempt was not preserved: %+v", record.Attempts)
+	}
+	if tools := deliverSendToolsOf(t, firstLog); len(tools) != 2 || tools[1] != deliverToolSend {
+		t.Fatalf("the first call saw %v, want one get_active_turn and one send", tools)
+	}
+	// The restart reads the bridge's own receipt for the SAME id before anything else.
+	restarted, restartLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg.Bridge.Binary = restarted
+	again, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || again.Class != deliverClassAccepted || again.RequestID != "m1" {
+		t.Fatalf("the restart: %q %q %v, want accepted under m1", again.Class, again.RequestID, err)
+	}
+	if tools := deliverSendToolsOf(t, restartLog); len(tools) != 1 || tools[0] != deliverToolOperation {
+		t.Fatalf("the restart saw %v, want only get_operation", tools)
+	}
+	if id := deliverSendRequestIDOf(t, deliverSendCallsOf(t, restartLog)[0]); id != "m1" {
+		t.Errorf("the restart reconciled %q, want m1", id)
+	}
+}
+
+// The resend cap counts a new id minted by a reconciliation too: a message that reconciles into a
+// resend and then keeps refusing gets one more new id, never an unbounded run of them.
+func TestDeliverReconcileResendCountsAgainstTheRetryCap(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	refusing := []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "failed", "delivery": "not_delivered"}},
+	}
+	steps := append([]map[string]any{{
+		"isError": true, "text": "Error executing tool get_operation: Unknown request_id"}},
+		append(append(append(append([]map[string]any{}, refusing...), refusing...), refusing...), refusing...)...)
+	bridge, log := deliverFakeBridge(t, steps)
+	cfg := deliverSendConfig(t, bridge)
+	if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || out.Class != deliverClassRefused {
+		t.Fatalf("Deliver: %q %v, want refused", out.Class, err)
+	}
+	var ids []string
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSend {
+			ids = append(ids, deliverSendRequestIDOf(t, call))
+		}
+	}
+	want := []string{"m1-r1", "m1-r2"}
+	if len(ids) != len(want) {
+		t.Fatalf("the sends were %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("send %d used %q, want %q", i, ids[i], want[i])
+		}
+	}
+}
+
+// A refusal the bridge made before it recorded the request leaves no receipt, so get_operation
+// answers Unknown request_id. That is a pre-dispatch refusal, not an undetermined outcome: the
+// record goes to refused and the message may be sent under a new request id, like not_delivered.
+// It holds whatever the record shows locally, because the bridge writes the operation before any
+// turn starts, so an id it never recorded proves nothing was sent.
+func TestDeliverReconcilesAPreDispatchRefusalIntoAResendUnderANewID(t *testing.T) {
+
+	for _, state := range []string{deliverStatePending, deliverStateUnknown} {
+		t.Run(state, func(t *testing.T) {
+			e := deliverSendTestEnv(t)
+			bridge, log := deliverFakeBridge(t, []map[string]any{
+				{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"},
+				{"payload": map[string]any{"observation": "idle"}},
+				{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+			})
+			cfg := deliverSendConfig(t, bridge)
+			if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: state}); err != nil {
+				t.Fatal(err)
+			}
+			out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+			if err != nil || out.Class != deliverClassAccepted || out.RequestID != "m1-r1" {
+				t.Fatalf("Deliver: %q %q %v, want accepted under m1-r1", out.Class, out.RequestID, err)
+			}
+			if tools := deliverSendToolsOf(t, log); len(tools) != 3 || tools[0] != deliverToolOperation {
+				t.Fatalf("the fake bridge saw %v, want get_operation first", tools)
+			}
+			if id := deliverSendRequestIDOf(t, deliverSendCallsOf(t, log)[0]); id != "m1" {
+				t.Errorf("get_operation asked for %q, want m1", id)
+			}
+			if id := deliverSendRequestIDOf(t, deliverSendCallsOf(t, log)[2]); id != "m1-r1" {
+				t.Errorf("the resend used %q, want m1-r1", id)
+			}
+		})
+	}
+}
+
 // The contract inputs of the issue body's table classify as the allowlist says, and an unknown
 // response neither deletes the record nor confirms that it was sent.
 func TestDeliverClassifiesTheContractInputs(t *testing.T) {
@@ -297,10 +412,10 @@ func TestDeliverLostResponseIsUnknown(t *testing.T) {
 	}
 }
 
-// An unsettled record is reconciled with get_operation before anything else, whatever state it
-// was left in, and that reconciliation never mints a new request id. The first case is the process
-// that died after the ledger write and before the call; the second is the one whose response was
-// lost; the third is a receipt the bridge already holds.
+// An unsettled record is reconciled with get_operation before anything else, whatever state it was
+// left in. A get_operation answer this code cannot place leaves the attempt undetermined and mints
+// no new request id; an answer the bridge places settles the record. The cases are a lookup that
+// failed without a verdict, a receipt the bridge left undetermined, and a receipt it holds.
 func TestDeliverReconcilesAnUnsettledRecordFirst(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -308,9 +423,10 @@ func TestDeliverReconcilesAnUnsettledRecordFirst(t *testing.T) {
 		answer map[string]any
 		class  string
 	}{
-		{"died before the call", deliverStatePending, map[string]any{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"}, deliverClassUnknown},
+		{"a lookup that failed without a verdict", deliverStatePending, map[string]any{"isError": true, "text": "Error executing tool get_operation: connection reset"}, deliverClassUnknown},
 		{"response lost after the call", deliverStateUnknown, map[string]any{"payload": map[string]any{"status": "outcome_unknown"}}, deliverClassUnknown},
-		{"already accepted on the bridge", deliverStateUnknown, map[string]any{"payload": map[string]any{"status": "accepted"}}, deliverClassAccepted},
+		{"already accepted on the bridge", deliverStateUnknown, map[string]any{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}}, deliverClassAccepted},
+		{"an accepted status without a delivery is not acceptance", deliverStateUnknown, map[string]any{"payload": map[string]any{"status": "accepted"}}, deliverClassUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -566,7 +682,7 @@ func TestDeliverRetriesPersistTheNewRequestIDBeforeTheRetry(t *testing.T) {
 		t.Fatalf("the sends were %v, want m1 then m1-r1", ids)
 	}
 	// A restart reconciles the id the retry actually used, and sends nothing new.
-	restarted, restartLog := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"status": "accepted"}}})
+	restarted, restartLog := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}}})
 	cfg.Bridge.Binary = restarted
 	again, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
 	if err != nil || again.Class != deliverClassAccepted {
@@ -596,6 +712,138 @@ func TestDeliverRefusesTextThatIsNotUTF8(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(filepath.Join(cfg.StateDir, "outbox")); err == nil && len(entries) != 0 {
 		t.Errorf("an untransmittable message wrote %v", entries)
+	}
+}
+
+// The ledger names the retry's request id before the retry goes out, and it must stay
+// reconcilable there: nothing has answered for the new id yet, so a record that claimed a
+// terminal refusal would lose the retry entitlement for a message that was never delivered.
+func TestDeliverRetryLeavesTheRecordReconcilable(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	cfg := deliverSendConfig(t, "unused")
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "failed", "delivery": "not_delivered"}},
+		{"payload": map[string]any{"observation": "idle"}},
+		{"read": deliverOutboxPath(cfg, "m1")},
+	})
+	cfg.Bridge.Binary = bridge
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || out.RequestID != "m1-r1" {
+		t.Fatalf("Deliver: %q %v", out.RequestID, err)
+	}
+	if state, _ := out.Receipt["state"].(string); state == deliverStateRefused {
+		t.Fatalf("the ledger claimed a terminal refusal while the retry went out: %v", out.Receipt)
+	}
+	// A restart reconciles the persisted retry id and makes the attempt it never got to make.
+	restarted, restartLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "not_attempted", "retrySafe": true}},
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg.Bridge.Binary = restarted
+	again, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || again.Class != deliverClassAccepted || again.RequestID != "m1-r1" {
+		t.Fatalf("the restart: %q %q %v, want accepted under m1-r1", again.Class, again.RequestID, err)
+	}
+	for _, call := range deliverSendCallsOf(t, restartLog) {
+		if id := deliverSendRequestIDOf(t, call); id != "" && id != "m1-r1" {
+			t.Errorf("the restart saw request id %q, want m1-r1", id)
+		}
+	}
+}
+
+// A dial that failed because the delivery was cancelled is not a refusal the bridge made: no
+// bridge answered and nothing was sent, so the attempt stays undetermined.
+func TestDeliverDialClassifiesACancelledDialAsUnknown(t *testing.T) {
+	live := context.Background()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	cases := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want string
+	}{
+		{"a dial that could not start the bridge", live, errors.New("start the bridge: no such file"), deliverClassRefused},
+		{"a context that ended during the dial", cancelled, errors.New("start the bridge: broken pipe"), deliverClassUnknown},
+		{"a transport failure that is a cancellation", live, context.Canceled, deliverClassUnknown},
+		{"a transport failure that is a deadline", live, context.DeadlineExceeded, deliverClassUnknown},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := deliverDialClass(c.ctx, c.err); got != c.want {
+				t.Errorf("deliverDialClass = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A record already settled as refused is answered from the record, exactly as an accepted one is:
+// the refusal is terminal, no bridge process is started for it, and the class does not decay into
+// an undetermined outcome on every replay.
+func TestDeliverSettledRefusedRecordReplaysAsRefused(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, log := deliverFakeBridge(t, nil)
+	cfg := deliverSendConfig(t, bridge)
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: deliverStateRefused,
+		Attempts: []deliverAttempt{{At: "2026-10-06T00:00:00Z", Class: deliverClassRefused, ReceiptExcerpt: "rejected"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || out.Class != deliverClassRefused || out.RequestID != "m1" {
+		t.Fatalf("Deliver: %q %q %v, want refused under m1", out.Class, out.RequestID, err)
+	}
+	if calls := deliverSendCallsOf(t, log); len(calls) != 0 {
+		t.Errorf("a settled refusal started the bridge again: %v", calls)
+	}
+	if record := deliverRecordOf(t, cfg, "m1"); record.State != deliverStateRefused || record.Received {
+		t.Errorf("the replay rewrote the record: %+v", record)
+	}
+}
+
+// A delivery whose context ends while the bridge is being started is not a refusal: nothing was
+// sent and no bridge answered, so the record stays unsettled rather than settling as terminal.
+func TestDeliverCancelledDialStaysUnsettled(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	dir := t.TempDir()
+	bridge := filepath.Join(dir, "slow-bridge")
+	// A bridge that never answers initialize and exits on its own a moment later.
+	if err := os.WriteFile(bridge, []byte("#!/bin/sh\nsleep 2\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := deliverSendConfig(t, bridge)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	out, err := Deliver(ctx, e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err == nil {
+		t.Fatal("a cancelled dial reported no error")
+	}
+	if out.Class == deliverClassRefused {
+		t.Errorf("a cancelled dial settled as a terminal refusal: %+v", out)
+	}
+	if record := deliverRecordOf(t, cfg, "m1"); record.State == deliverStateRefused {
+		t.Errorf("a cancelled dial recorded a terminal refusal: %+v", record)
+	}
+}
+
+// The logical id names a file and travels as a request id, so a value that is not valid UTF-8
+// would make the file name and the id the bridge sees disagree.
+func TestDeliverRefusesALogicalIDThatIsNotUTF8(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, log := deliverFakeBridge(t, nil)
+	cfg := deliverSendConfig(t, bridge)
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m\xff", Thread: "thread-1", Text: "hello"})
+	if err == nil || out.Class != "" {
+		t.Fatalf("Deliver: %q %v, want a refusal", out.Class, err)
+	}
+	if calls := deliverSendCallsOf(t, log); len(calls) != 0 {
+		t.Errorf("the bridge was started for an untransmittable logical id: %v", calls)
+	}
+	if entries, err := os.ReadDir(filepath.Join(cfg.StateDir, "outbox")); err == nil && len(entries) != 0 {
+		t.Errorf("an untransmittable logical id wrote %v", entries)
 	}
 }
 
