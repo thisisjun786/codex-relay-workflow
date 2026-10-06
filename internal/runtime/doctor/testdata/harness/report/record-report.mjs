@@ -134,7 +134,12 @@ const featuresCases = [
   { name: "nonzero_without_stderr", run: { status: 2, stdout: "", stderr: "" } },
 ].map((testCase) => {
   const result = buildDeclaredFeaturesCheck(testCase.run);
-  return { ...testCase, severity: result.severity, evidence: result.evidence.toWellFormed(), repair: result.repair?.toWellFormed() ?? null };
+  // The check strings are recorded as the oracle's JSON strings, NOT through toWellFormed(): a
+  // stderr cut inside a surrogate pair keeps the lone high surrogate in evidence, which
+  // JSON.stringify writes as the \\ud83d escape. The render group below keeps toWellFormed()
+  // because it records the bytes the UTF-8 encoder writes to a terminal, where that surrogate
+  // is U+FFFD.
+  return { ...testCase, severity: result.severity, evidence: result.evidence, repair: result.repair ?? null };
 });
 
 // detectCodexVersion (doctor.ts:89-98) through runDoctor's codexVersion field: the first
@@ -174,7 +179,7 @@ writeFileSync(out, JSON.stringify({
   oracle: "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
   dist: "plugins/codexclaw/components/cxc-ops/dist/doctor.js",
   node: process.version,
-  note: "Each group holds the oracle answer for the inputs beside it, with every recorded string passed through toWellFormed(): that is what the UTF-8 encoder does to a lone surrogate on the way to stdout, and the corpus fixtures hold the printed bytes. codexVersion cases are runDoctor(pluginRoot, stubRunner, {codexHome, wslDeps}) calls whose codexVersion field is detectCodexVersion, which doctor.ts does not export; the stub runner answers `codex features list` with all four declared flags true and the case `codex --version` behaviour.",
+  note: "Each group holds the oracle answer for the inputs beside it. The render group records toWellFormed() text: that is what the UTF-8 encoder does to a lone surrogate on the way to stdout. The featuresCheck group records the oracle's JSON strings instead, so the lone high surrogate a stderr cut keeps is held as the \\ud83d escape JSON.stringify writes (doctor.ts:137). codexVersion cases are runDoctor(pluginRoot, stubRunner, {codexHome, wslDeps}) calls whose codexVersion field is detectCodexVersion, which doctor.ts does not export; the stub runner answers `codex features list` with all four declared flags true and the case `codex --version` behaviour.",
   rollup: rollupCases,
   render: renderCases,
   featuresParsed: parseCases,

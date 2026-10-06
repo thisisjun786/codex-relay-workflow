@@ -289,7 +289,7 @@ func preFenceFixture(t *testing.T, src, dst, socket string, statements ...string
 	}
 	defer to.Close()
 	names := []string{}
-	rows, err := from.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_meta' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
+	rows, err := from.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_meta' AND "+testsupport.V1ObjectPredicateFor(t)+" ORDER BY name")
 	if err != nil {
 		t.Fatal(err)
 	}

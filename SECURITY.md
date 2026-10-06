@@ -36,5 +36,5 @@ component's maintainer unless the problem is in this repository's instructions
 or installer. CXC v0.2.40 is being self-ported into this repository's Go runtime:
 report a defect in the ported code here. A defect in the installed upstream CXC
 plugin goes to its maintainer, and one the port reproduces on purpose is listed in
-[known defects](docs/port-cxc/known-defects.md). Offline fixtures do not prove that
+[known defects](docs/port-cxc/known-defects.md), one file per issue in [docs/port-cxc/known-defects/](docs/port-cxc/known-defects/). Offline fixtures do not prove that
 a live host integration is safe or compatible.
