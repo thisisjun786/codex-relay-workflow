@@ -5112,6 +5112,15 @@ artifact. The input cannot become an accepted head: a false `P` makes the proof
 refuse or proves a chain the relay checks itself, and the accepted head is still
 `N` read from the forge.
 
+What the input does not prove is that the ruling was made on that head: the relay
+records what a ruling names — an event, a revision hash, a criteria set
+(`accept.go:98-101`) — and none of them is a commit, so the guarantee is narrower
+than "the accepted head is the verified head". It is "the accepted head is the head
+the parent names as verified, plus merges of the base and nothing else", which is
+the fact the acceptance needs and the strongest one its records can support. The
+proving slices write that limit into the command's help and into
+`docs/relay/dag-scheduler.md` with the rule.
+
 ### The proof runs inside the acceptance transaction, not in the lane
 
 | Option for where the proof runs | What the code says |
