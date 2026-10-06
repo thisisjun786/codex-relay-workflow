@@ -1,0 +1,731 @@
+package manage
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+)
+
+// improveBundleSchema names the document crw manage improve collect writes.
+const improveBundleSchema = "crw-improve-bundle/1"
+
+// The source kinds of a bundle, and the two states a source row carries. A source the
+// configuration does not name is missing; a configured path that cannot be read is the
+// named error improveReasonSourceUnreadable.
+const (
+	improveKindRelay        = "relay"
+	improveKindRefusal      = "refusal"
+	improveKindFault        = "fault"
+	improveKindGeneration   = "generation"
+	improveKindSplit        = "split"
+	improveKindCriteria     = "criteria"
+	improveKindDag          = "dag"
+	improveKindAudit        = "audit"
+	improveKindDraft        = "draft"
+	improveKindIntervention = "intervention"
+	improveKindIssue        = "issue"
+)
+
+const (
+	improveStateRead    = "read"
+	improveStateMissing = "missing"
+)
+
+// improveReasonSourceUnreadable is the named error of a configured source whose path
+// cannot be read. A source the configuration does not name is not an error: it stays in
+// the bundle as missing.
+const improveReasonSourceUnreadable = "improve_source_unreadable"
+
+// improveStoreFile is the relay store's file name inside a state directory.
+const improveStoreFile = "relay.sqlite3"
+
+// improveStoreTimeout bounds the read-only store open.
+const improveStoreTimeout = 5 * time.Second
+
+// improveSection is the configuration section of this feature: the per-kind sources and
+// the path of the issue list a management session exported.
+type improveSection struct {
+	Sources   map[string]improveSourceConfig `json:"sources"`
+	IssueList string                         `json:"issue_list"`
+}
+
+// improveSourceConfig is one configured source: a path and, where the source needs it, a
+// pattern naming what to read from it.
+type improveSourceConfig struct {
+	Path    string `json:"path"`
+	Pattern string `json:"pattern"`
+}
+
+// improveBundle is the crw-improve-bundle/1 document: where the evidence came from, and
+// the normalized records read out of it.
+type improveBundle struct {
+	Schema  string             `json:"schema"`
+	Sources []improveSourceRow `json:"sources"`
+	Records []improveRecord    `json:"records"`
+}
+
+// improveSourceRow is one source: its kind, the path it was read from, its state, and how
+// many raw rows it contributed.
+type improveSourceRow struct {
+	Kind  string `json:"kind"`
+	Path  string `json:"path"`
+	State string `json:"state"`
+	Rows  int    `json:"rows"`
+}
+
+// improveRecord is one normalized record: what kind of friction it is, its identity, where
+// it happened, what it was, how many rows it merges, the first and last time it was seen,
+// and the origin locations of the rows behind it.
+type improveRecord struct {
+	Kind     string   `json:"kind"`
+	Key      string   `json:"key"`
+	Where    string   `json:"where"`
+	What     string   `json:"what"`
+	Count    int      `json:"count"`
+	FirstAt  string   `json:"first_at"`
+	LastAt   string   `json:"last_at"`
+	Evidence []string `json:"evidence"`
+}
+
+// improveAccumulator merges records that share a (kind, key, where) identity, so the same
+// friction seen many times is one record with a count rather than many records.
+type improveAccumulator struct {
+	index   map[string]int
+	records []improveRecord
+}
+
+// improveNewAccumulator is an empty accumulator.
+func improveNewAccumulator() *improveAccumulator {
+	return &improveAccumulator{index: map[string]int{}}
+}
+
+// improveAdd merges one record. A record's what is kept from the first row of its identity,
+// so the value does not depend on which row a later read happened to reach first. The
+// identity is a JSON array rather than joined text, so a key that carries a delimiter
+// cannot make two different identities read as one.
+func (a *improveAccumulator) improveAdd(r improveRecord) {
+	identity := improveIdentity(r.Kind, r.Key, r.Where)
+	if at, ok := a.index[identity]; ok {
+		current := &a.records[at]
+		current.Count += r.Count
+		if r.FirstAt != "" && (current.FirstAt == "" || r.FirstAt < current.FirstAt) {
+			current.FirstAt = r.FirstAt
+		}
+		if r.LastAt > current.LastAt {
+			current.LastAt = r.LastAt
+		}
+		if current.What == "" {
+			current.What = r.What
+		}
+		current.Evidence = append(current.Evidence, r.Evidence...)
+		return
+	}
+	a.index[identity] = len(a.records)
+	a.records = append(a.records, r)
+}
+
+// improveIdentity is the merge key of a record: the three fields as a JSON array, which is
+// unambiguous whatever characters the fields carry.
+func improveIdentity(kind, key, where string) string {
+	data, err := json.Marshal([]string{kind, key, where})
+	if err != nil {
+		return kind + "\n" + key + "\n" + where
+	}
+	return string(data)
+}
+
+// improveFinish sorts the records by (kind, key, where) and each record's evidence, and
+// removes duplicate evidence, so the same input always writes the same bytes.
+func (a *improveAccumulator) improveFinish() []improveRecord {
+	records := a.records
+	if records == nil {
+		records = []improveRecord{}
+	}
+	for i := range records {
+		records[i].Evidence = improveSortedEvidence(records[i].Evidence)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Kind != records[j].Kind {
+			return records[i].Kind < records[j].Kind
+		}
+		if records[i].Key != records[j].Key {
+			return records[i].Key < records[j].Key
+		}
+		return records[i].Where < records[j].Where
+	})
+	return records
+}
+
+// improveSortedEvidence is the evidence of one record, deduplicated and sorted.
+func improveSortedEvidence(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, item := range in {
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// improveRunCollect is crw manage improve collect. It reads every configured source and
+// writes one bundle: to --out FILE, or to stdout when the option is absent.
+func improveRunCollect(ctx context.Context, e *Env, args []string) int {
+	out, help, err := improveParseArgs(args)
+	if help {
+		fmt.Fprintln(e.Stdout, improveUsage)
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(e.Stderr, improveUsage)
+		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+		return usageExit
+	}
+	section, err := improveLoadSection(e)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+		return 1
+	}
+	bundle, err := improveCollect(ctx, e, section)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+		return 1
+	}
+	data, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+		return 1
+	}
+	data = append(data, '\n')
+	// A context that ended while the sources were read produces no bundle at all, so an
+	// interrupted run cannot look like a completed one.
+	if err := ctx.Err(); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+		return 1
+	}
+	if out == "" {
+		if _, err := e.Stdout.Write(data); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if err := improveWriteFile(out, data); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// improveWriteFile writes the bundle beside its destination and renames it into place, so a
+// crash leaves either no bundle or the whole one, never a half-written document.
+func improveWriteFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, "improve-bundle-*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Chmod(name, 0o600); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
+}
+
+// improveParseArgs reads --out FILE and the help flags.
+func improveParseArgs(args []string) (out string, help bool, err error) {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "-h" || args[i] == "--help":
+			return "", true, nil
+		case args[i] == "--out":
+			if i+1 >= len(args) {
+				return "", false, errors.New("the option --out needs a value")
+			}
+			i++
+			out = args[i]
+		case strings.HasPrefix(args[i], "--out="):
+			out = strings.TrimPrefix(args[i], "--out=")
+			if out == "" {
+				return "", false, errors.New("the option --out needs a value")
+			}
+		default:
+			return "", false, fmt.Errorf("unexpected argument %q", args[i])
+		}
+	}
+	return out, false, nil
+}
+
+// improveLoadSection reads this feature's configuration. The accepted decision puts it in
+// the crw configuration file's manage section, key improve; the issue body names the
+// section improve, so a file that carries no manage section is read at the top level.
+func improveLoadSection(e *Env) (improveSection, error) {
+	file, err := crwconfig.Load(e.Getenv, "")
+	if err != nil {
+		return improveSection{}, err
+	}
+	var manage map[string]json.RawMessage
+	if err := file.Section("manage", &manage); err != nil {
+		return improveSection{}, err
+	}
+	var section improveSection
+	if raw, ok := manage["improve"]; ok {
+		if err := json.Unmarshal(raw, &section); err != nil {
+			return improveSection{}, err
+		}
+		return section, nil
+	}
+	if err := file.Section("improve", &section); err != nil {
+		return improveSection{}, err
+	}
+	return section, nil
+}
+
+// improveCollect reads every source and returns the bundle.
+func improveCollect(ctx context.Context, e *Env, section improveSection) (improveBundle, error) {
+	acc := improveNewAccumulator()
+	sources := []improveSourceRow{}
+
+	relayPath := section.Sources[improveKindRelay].Path
+	if relayPath == "" {
+		sources = append(sources, improveSourceRow{Kind: improveKindRelay, State: improveStateMissing})
+	} else {
+		dbPath, err := improveStorePath(relayPath)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindRelay, relayPath, err)
+		}
+		rows, err := improveReadRelay(ctx, dbPath, acc)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindRelay, relayPath, err)
+		}
+		sources = append(sources, improveSourceRow{Kind: improveKindRelay, Path: relayPath, State: improveStateRead, Rows: rows})
+	}
+
+	dagSource := section.Sources[improveKindDag]
+	if dagSource.Path == "" {
+		sources = append(sources, improveSourceRow{Kind: improveKindDag, State: improveStateMissing})
+	} else {
+		rows, err := improveReadDag(ctx, e, dagSource, acc)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindDag, dagSource.Path, err)
+		}
+		sources = append(sources, improveSourceRow{Kind: improveKindDag, Path: dagSource.Path, State: improveStateRead, Rows: rows})
+	}
+
+	auditPath := section.Sources[improveKindAudit].Path
+	if auditPath == "" {
+		sources = append(sources, improveSourceRow{Kind: improveKindAudit, State: improveStateMissing})
+	} else {
+		rows, err := improveReadAudit(auditPath, acc)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindAudit, auditPath, err)
+		}
+		sources = append(sources, improveSourceRow{Kind: improveKindAudit, Path: auditPath, State: improveStateRead, Rows: rows})
+	}
+
+	interventionPath := section.Sources[improveKindIntervention].Path
+	if interventionPath == "" {
+		sources = append(sources, improveSourceRow{Kind: improveKindIntervention, State: improveStateMissing})
+	} else {
+		rows, err := improveReadInterventions(interventionPath, acc)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindIntervention, interventionPath, err)
+		}
+		sources = append(sources, improveSourceRow{Kind: improveKindIntervention, Path: interventionPath, State: improveStateRead, Rows: rows})
+	}
+
+	draftPath := section.Sources[improveKindDraft].Path
+	if draftPath == "" {
+		sources = append(sources, improveSourceRow{Kind: improveKindDraft, State: improveStateMissing})
+	} else {
+		rows, err := improveReadDrafts(draftPath, acc)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindDraft, draftPath, err)
+		}
+		sources = append(sources, improveSourceRow{Kind: improveKindDraft, Path: draftPath, State: improveStateRead, Rows: rows})
+	}
+
+	if section.IssueList == "" {
+		sources = append(sources, improveSourceRow{Kind: improveKindIssue, State: improveStateMissing})
+	} else {
+		rows, err := improveReadIssues(section.IssueList, acc)
+		if err != nil {
+			return improveBundle{}, improveUnreadable(improveKindIssue, section.IssueList, err)
+		}
+		sources = append(sources, improveSourceRow{Kind: improveKindIssue, Path: section.IssueList, State: improveStateRead, Rows: rows})
+	}
+
+	return improveBundle{Schema: improveBundleSchema, Sources: sources, Records: acc.improveFinish()}, nil
+}
+
+// improveUnreadable is the named error of a configured source whose path cannot be read.
+func improveUnreadable(kind, path string, err error) error {
+	return fmt.Errorf("%s: %s %s: %w", improveReasonSourceUnreadable, kind, path, err)
+}
+
+// improveStorePath is the relay store file a configured source names: the path itself when
+// it is a file, or the store inside it when it is a directory.
+func improveStorePath(configured string) (string, error) {
+	info, err := os.Stat(configured)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return filepath.Join(configured, improveStoreFile), nil
+	}
+	return configured, nil
+}
+
+// improveReadRelay reads the relay store read-only and normalizes its refusal, fault,
+// generation and split rows. The store is opened with store.OpenInPlace, which never
+// creates a -wal or -shm sidecar, and read through ReadSnapshot's one deferred snapshot.
+func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulator) (int, error) {
+	read, err := store.OpenInPlace(ctx, dbPath, improveStoreTimeout)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = read.Close() }()
+	rows := 0
+	err = read.ReadSnapshot(ctx, func(ctx context.Context, s *store.Store) error {
+		refusals, err := s.All(ctx, "SELECT id, at, relationship_id, reason, detail FROM refusals ORDER BY id")
+		if err != nil {
+			return err
+		}
+		rows += len(refusals)
+		for _, row := range refusals {
+			reason := row.Text("reason")
+			acc.improveAdd(improveRecord{Kind: improveKindRefusal, Key: reason, What: reason, Count: 1,
+				FirstAt: row.Text("at"), LastAt: row.Text("at"),
+				Evidence: []string{fmt.Sprintf("refusals:%d", improveRowInt(row, "id"))}})
+		}
+
+		faults, err := s.All(ctx, "SELECT fault_id, fault_class, signature, scope_key, occurrence_count, first_seen_at, last_seen_at FROM fault_ledger ORDER BY fault_id")
+		if err != nil {
+			return err
+		}
+		rows += len(faults)
+		for _, row := range faults {
+			acc.improveAdd(improveRecord{Kind: improveKindFault, Key: row.Text("fault_class"), Where: row.Text("scope_key"),
+				What: row.Text("signature"), Count: improveRowInt(row, "occurrence_count"),
+				FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
+				Evidence: []string{"fault:" + row.Text("fault_id")}})
+		}
+
+		generations, err := s.All(ctx, "SELECT relationship_id, execution_generation, reason, opened_at FROM generations ORDER BY relationship_id, execution_generation")
+		if err != nil {
+			return err
+		}
+		rows += len(generations)
+		for _, row := range generations {
+			reason := row.Text("reason")
+			acc.improveAdd(improveRecord{Kind: improveKindGeneration, Key: reason, Where: row.Text("relationship_id"),
+				What: reason, Count: 1, FirstAt: row.Text("opened_at"), LastAt: row.Text("opened_at"),
+				Evidence: []string{fmt.Sprintf("generations:%s:%d", row.Text("relationship_id"), improveRowInt(row, "execution_generation"))}})
+		}
+
+		criteria, err := s.All(ctx, "SELECT relationship_id, set_digest, COUNT(*) AS criteria_count, MIN(recorded_at) AS first_at, MAX(recorded_at) AS last_at FROM canonical_criteria GROUP BY relationship_id, set_digest ORDER BY relationship_id, set_digest")
+		if err != nil {
+			return err
+		}
+		rows += len(criteria)
+		for _, row := range criteria {
+			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: row.Text("relationship_id"), Where: row.Text("set_digest"),
+				What: "criteria_set", Count: improveRowInt(row, "criteria_count"),
+				FirstAt: row.Text("first_at"), LastAt: row.Text("last_at"),
+				Evidence: []string{"canonical_criteria:" + row.Text("relationship_id") + ":" + row.Text("set_digest")}})
+		}
+
+		splits, err := s.All(ctx, "SELECT e.event_id, e.relationship_id, COALESCE(r.issue_key,'') AS issue_key, e.outcome, e.receipt, e.first_seen_at, e.last_seen_at, COALESCE(s.project_key,'') AS project_key FROM events e LEFT JOIN relationships r ON r.relationship_id = e.relationship_id LEFT JOIN relationship_scope s ON s.relationship_id = e.relationship_id WHERE e.stage = 'final' AND e.outcome IN ('blocked_needs_input','decision_reply') ORDER BY e.event_id")
+		if err != nil {
+			return err
+		}
+		rows += len(splits)
+		for _, row := range splits {
+			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
+			if outcome == "decision_reply" {
+				decision := improveStringField(receipt, "decision")
+				if decision != "split_approval" && decision != "scope_change" {
+					continue
+				}
+			}
+			project := row.Text("project_key")
+			issue := row.Text("issue_key")
+			reason := improveStringField(receipt, "reason", "detail", "note", "question", "summary")
+			if reason == "" {
+				reason = improveStringField(receipt, "outcome", "decision")
+			}
+			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: improveSplitKey(project, issue), Where: row.Text("relationship_id"),
+				What: reason, Count: 1, FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
+				Evidence: []string{"events:" + row.Text("event_id")}})
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
+// improveSplitKey is a split record's identity: the project key the issue belongs to. The
+// relationship it happened at stays in the record's where, so one issue is one record and
+// the project key is on every one of them.
+func improveSplitKey(project, issue string) string {
+	if project != "" {
+		return project
+	}
+	return issue
+}
+
+// improveReadDag runs the relay's dag-measurements for each plan the source's pattern
+// names and normalizes each metric of the document into one record.
+func improveReadDag(ctx context.Context, e *Env, source improveSourceConfig, acc *improveAccumulator) (int, error) {
+	cfg := coreDefaults(e)
+	cfg.Relay.State = source.Path
+	plans := improvePatterns(source.Pattern)
+	rows := 0
+	for _, plan := range plans {
+		stdout, code, err := e.Relay(ctx, cfg, "dag-measurements", "--plan", plan)
+		if err != nil {
+			return 0, err
+		}
+		if code != 0 {
+			return 0, fmt.Errorf("relay dag-measurements --plan %s exited with status %d", plan, code)
+		}
+		doc := improveParseJSONObject(string(stdout))
+		if doc == nil {
+			return 0, errors.New("relay dag-measurements printed no JSON document")
+		}
+		planID := improveStringField(doc, "plan_id")
+		if planID == "" {
+			planID = plan
+		}
+		names := make([]string, 0, len(doc))
+		for name := range doc {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			metric, ok := doc[name].(map[string]any)
+			if !ok {
+				continue
+			}
+			samples, ok := improveNumberField(metric, "samples")
+			if !ok {
+				continue
+			}
+			rows++
+			acc.improveAdd(improveRecord{Kind: improveKindDag, Key: planID + ":" + name, Where: planID,
+				What: name, Count: samples,
+				Evidence: []string{"relay:dag-measurements --plan " + plan}})
+		}
+	}
+	return rows, nil
+}
+
+// improvePatterns splits a source pattern into the names it carries.
+func improvePatterns(pattern string) []string {
+	var out []string
+	for _, part := range strings.Split(pattern, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// improveReadAudit reads the audit ledger, one JSON line per graded result, and normalizes
+// it by issue.
+func improveReadAudit(path string, acc *improveAccumulator) (int, error) {
+	lines, err := improveReadJSONLines(path)
+	if err != nil {
+		return 0, err
+	}
+	for i, line := range lines {
+		acc.improveAdd(improveRecord{Kind: improveKindAudit, Key: improveStringField(line, "issue"),
+			Where: improveStringField(line, "subject"), What: improveStringField(line, "status"), Count: 1,
+			FirstAt: improveStringField(line, "graded_at"), LastAt: improveStringField(line, "graded_at"),
+			Evidence: []string{fmt.Sprintf("%s:%d", path, i+1)}})
+	}
+	return len(lines), nil
+}
+
+// improveReadInterventions reads the management intervention records, one JSON line per
+// intervention, and normalizes them by the signal they observed.
+func improveReadInterventions(path string, acc *improveAccumulator) (int, error) {
+	lines, err := improveReadJSONLines(path)
+	if err != nil {
+		return 0, err
+	}
+	for i, line := range lines {
+		signal := improveStringField(line, "signal", "kind", "case")
+		acc.improveAdd(improveRecord{Kind: improveKindIntervention, Key: signal, What: signal, Count: 1,
+			FirstAt: improveStringField(line, "at", "date", "recorded_at"), LastAt: improveStringField(line, "at", "date", "recorded_at"),
+			Evidence: []string{fmt.Sprintf("%s:%d", path, i+1)}})
+	}
+	return len(lines), nil
+}
+
+// improveReadDrafts reads the audit drafts a management session keeps: one JSON file per
+// draft, under a directory or a single file, and normalizes each by the issue it drafts.
+func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	var files []string
+	if info.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return 0, err
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+				files = append(files, filepath.Join(path, entry.Name()))
+			}
+		}
+		sort.Strings(files)
+	} else {
+		files = []string{path}
+	}
+	rows := 0
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return 0, err
+		}
+		draft := improveParseJSONObject(string(data))
+		if draft == nil {
+			return 0, fmt.Errorf("%s: not a JSON object", file)
+		}
+		rows++
+		acc.improveAdd(improveRecord{Kind: improveKindDraft, Key: improveStringField(draft, "issue", "identifier"),
+			Where: improveStringField(draft, "project", "project_key"), What: improveStringField(draft, "title", "summary"), Count: 1,
+			FirstAt: improveStringField(draft, "created_at", "recorded_at", "graded_at"), LastAt: improveStringField(draft, "created_at", "recorded_at", "graded_at"),
+			Evidence: []string{file}})
+	}
+	return rows, nil
+}
+
+// improveReadIssues reads the issue list a management session exported: an array of issues,
+// or an object carrying them under issues.
+func improveReadIssues(path string, acc *improveAccumulator) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	issues, err := improveDecodeIssues(data)
+	if err != nil {
+		return 0, err
+	}
+	for _, issue := range issues {
+		key := improveStringField(issue, "identifier", "key", "id")
+		acc.improveAdd(improveRecord{Kind: improveKindIssue, Key: key, Where: improveStringField(issue, "state"),
+			What: improveStringField(issue, "title"), Count: 1,
+			FirstAt: improveStringField(issue, "createdAt", "created_at"), LastAt: improveStringField(issue, "updatedAt", "updated_at"),
+			Evidence: []string{path + ":" + key}})
+	}
+	return len(issues), nil
+}
+
+// improveDecodeIssues accepts the two shapes an exported issue list may carry.
+func improveDecodeIssues(data []byte) ([]map[string]any, error) {
+	var list []map[string]any
+	if err := json.Unmarshal(data, &list); err == nil {
+		return list, nil
+	}
+	var wrapped struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		return nil, err
+	}
+	return wrapped.Issues, nil
+}
+
+// improveReadJSONLines reads a JSON-lines file, refusing a line that is not a JSON object.
+func improveReadJSONLines(path string) ([]map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []map[string]any
+	for i, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var object map[string]any
+		if err := json.Unmarshal([]byte(line), &object); err != nil {
+			return nil, fmt.Errorf("line %d: %w", i+1, err)
+		}
+		out = append(out, object)
+	}
+	return out, nil
+}
+
+// improveParseJSONObject decodes a JSON object, or returns nil when the text is not one.
+func improveParseJSONObject(text string) map[string]any {
+	var object map[string]any
+	if err := json.Unmarshal([]byte(text), &object); err != nil {
+		return nil
+	}
+	return object
+}
+
+// improveStringField is the first named field that is a non-empty string.
+func improveStringField(object map[string]any, names ...string) string {
+	for _, name := range names {
+		if value, ok := object[name].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// improveNumberField is the named field as an int, and whether it was a number.
+func improveNumberField(object map[string]any, name string) (int, bool) {
+	switch value := object[name].(type) {
+	case float64:
+		return int(value), true
+	case int:
+		return value, true
+	case json.Number:
+		if n, err := value.Int64(); err == nil {
+			return int(n), true
+		}
+	}
+	return 0, false
+}
+
+// improveRowInt is a store row's integer column, or zero.
+func improveRowInt(row store.Row, name string) int {
+	if value, ok := row.Get(name).(int64); ok {
+		return int(value)
+	}
+	return 0
+}
