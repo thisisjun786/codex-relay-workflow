@@ -1130,12 +1130,6 @@ func (s *worktreeDelWalkState) judgeReadings(command, cwd string, id WorktreeIde
 	return GuardVerdict{}
 }
 
-// worktreeDelQuoteJudge judges one text on its own, for a caller that does not carry a state (the tests): it makes a fresh
-// one. The walk itself uses the state's judge.
-func worktreeDelQuoteJudge(command, cwd string, id WorktreeIdentity, depth int) GuardVerdict {
-	return newWorktreeDelWalkState().judge(command, cwd, id, depth)
-}
-
 // worktreeDelWalk is the single-use form of walk's loop over one text in the grammar of the oracle (and of the extended
 // walk before CRW-611), for a caller that does not carry a state (the tests).
 func worktreeDelWalk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
