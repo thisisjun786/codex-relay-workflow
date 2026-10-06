@@ -202,6 +202,65 @@ func TestLightMode_the_ten_check_names_are_unchanged(t *testing.T) {
 	}
 }
 
+// lightLeg is the light condition of the four terms above, evaluated rather than matched: the
+// event, the repository variable, the pull request's labels and the leg's part. GitHub evaluates
+// the same four terms in the same order, so this is what makes the claim that only an unlabeled
+// pull request's five test legs can be light a behavioural check rather than a reading of text.
+func lightLeg(event, mode string, labels []string, part string) bool {
+	if event != "pull_request" {
+		return false
+	}
+	if mode != "light" {
+		return false
+	}
+	for _, label := range labels {
+		if label == "crw-lane" {
+			return false
+		}
+	}
+	return strings.HasPrefix(part, "test-")
+}
+
+// The four terms evaluate to light for exactly the five test legs of an unlabeled pull request,
+// and never for a dev push, a manual dispatch, a labeled pull request, lint or dist. Each term is
+// also held to the workflow's own expression, so this evaluator cannot drift from ci.yml.
+func TestLightMode_the_condition_evaluates_to_light_only_for_unlabeled_test_legs(t *testing.T) {
+	for _, term := range []string{
+		"github.event_name == 'pull_request'",
+		"vars.CRW_CI_MODE == 'light'",
+		"!contains(github.event.pull_request.labels.*.name, 'crw-lane')",
+		"startsWith(matrix.part, 'test-')",
+	} {
+		if !strings.Contains(lightExpression, term) {
+			t.Errorf("the evaluator term %s is not in the workflow's expression", term)
+		}
+	}
+	legs := []string{"lint", "test-1", "test-2", "test-3", "test-4", "test-rest", "dist"}
+	for _, row := range []struct {
+		event, mode string
+		labels      []string
+		wantLight   []string
+	}{
+		{"pull_request", "light", nil, []string{"test-1", "test-2", "test-3", "test-4", "test-rest"}},
+		{"pull_request", "light", []string{"crw-lane"}, nil},
+		{"pull_request", "light", []string{"crw-lane", "other"}, nil},
+		{"pull_request", "light", []string{"other"}, []string{"test-1", "test-2", "test-3", "test-4", "test-rest"}},
+		{"pull_request", "", nil, nil},
+		{"pull_request", "full", nil, nil},
+		{"push", "light", nil, nil},
+		{"workflow_dispatch", "light", nil, nil},
+		{"schedule", "light", nil, nil},
+	} {
+		var got []string
+		for _, part := range legs {
+			if lightLeg(row.event, row.mode, row.labels, part) {
+				got = append(got, part)
+			}
+		}
+		expectEqual(t, row.event+" mode="+row.mode+" labels="+strings.Join(row.labels, ","), got, row.wantLight)
+	}
+}
+
 // edit_mirror.sh looks for the leg's test step by name, so the name it builds from its own prefix
 // and the leg's part has to be the name ci.yml gives that step. A rename on either side is a red
 // test here rather than a leg mirrored without its tests.
