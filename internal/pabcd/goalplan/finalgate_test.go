@@ -790,3 +790,27 @@ func TestFinalGateMissingQaRequiredIsDroppedNotHalfTrusted(t *testing.T) {
 		t.Fatalf("reasons = %q", why)
 	}
 }
+
+// A callback that panics with an empty value is still a failed read: the oracle takes its catch arm on any throw, so empty
+// panic text must not read as a success (Devin review finding on this pull request).
+func TestFinalGateEmptyPanicIsStillAFailure(t *testing.T) {
+	dir := t.TempDir()
+	p := finalGatePlanFixture(func(p *Goalplan) {
+		p.SchemaVersion = finalGateNum(2)
+		g := finalGateGateFixture(nil)
+		p.FinalGate = &g
+		p.ReviewRounds = []ReviewRoundState{finalGateRoundFixture(nil)}
+	})
+
+	captureBroken := *finalGateCtx(dir, finalGateHere, nil)
+	captureBroken.CaptureSourceIdentity = func(string) SourceIdentity { panic("") }
+	if got := finalGateReasons(p, &captureBroken); len(got) != 1 || !strings.HasPrefix(got[0], "could not capture the current source identity: ") {
+		t.Fatalf("reasons = %#v", got)
+	}
+
+	readBroken := *finalGateCtx(dir, finalGateHere, nil)
+	readBroken.ReadReceipt = func(string, gate.ReceiptKind) (GoalplanReceiptEvidence, error) { panic("") }
+	if got := finalGateReasons(p, &readBroken); len(got) != 1 || !strings.HasPrefix(got[0], "the test receipt could not be read: ") {
+		t.Fatalf("reasons = %#v", got)
+	}
+}

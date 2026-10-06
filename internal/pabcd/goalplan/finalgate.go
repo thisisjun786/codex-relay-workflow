@@ -129,8 +129,8 @@ func finalGateHasArtifactIdentityForCriterion(manifest []gate.ArtifactDigest, cr
 // every structural reason precedes every "different source" reason.
 func finalGateIdentityReasons(plan *Goalplan, g *FinalGateState, ctx *GoalplanValidationCtx) []string {
 	out := []string{}
-	current, captureReason := finalGateCaptureCurrent(ctx)
-	if captureReason != "" {
+	current, captureReason, capturePanicked := finalGateCaptureCurrent(ctx)
+	if capturePanicked {
 		return []string{captureReason}
 	}
 	if g.SourceIdentity == nil {
@@ -167,9 +167,9 @@ func finalGateIdentityReasons(plan *Goalplan, g *FinalGateState, ctx *GoalplanVa
 			out = append(out, slot.label+" path is missing")
 			continue
 		}
-		evidence, err, panicked := finalGateReadReceipt(ctx, *slot.path, slot.kind)
-		if panicked != "" {
-			out = append(out, fmt.Sprintf("%s could not be read: %s", slot.label, panicked))
+		evidence, err, panicked, panicText := finalGateReadReceipt(ctx, *slot.path, slot.kind)
+		if panicked {
+			out = append(out, fmt.Sprintf("%s could not be read: %s", slot.label, panicText))
 			continue
 		}
 		if err != nil {
@@ -205,11 +205,13 @@ func finalGateIdentityReasons(plan *Goalplan, g *FinalGateState, ctx *GoalplanVa
 	return out
 }
 
-// finalGateCaptureCurrent runs the ctx capture, turning the oracle's thrown exception into its catch-arm reason.
-func finalGateCaptureCurrent(ctx *GoalplanValidationCtx) (id SourceIdentity, reason string) {
+// finalGateCaptureCurrent runs the ctx capture, turning the oracle's thrown exception into its catch-arm reason. The
+// panicked flag is separate from the text because the oracle takes its catch arm on any throw, including an empty value.
+func finalGateCaptureCurrent(ctx *GoalplanValidationCtx) (id SourceIdentity, reason string, panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			reason = "could not capture the current source identity: " + finalGatePanicText(r)
+			panicked = true
 		}
 	}()
 	id = ctx.CaptureSourceIdentity(ctx.Cwd)
@@ -217,10 +219,11 @@ func finalGateCaptureCurrent(ctx *GoalplanValidationCtx) (id SourceIdentity, rea
 }
 
 // finalGateReadReceipt runs the ctx reader, separating a thrown exception (panicked) from the oracle's {error} alternative.
-func finalGateReadReceipt(ctx *GoalplanValidationCtx, path string, kind gate.ReceiptKind) (evidence GoalplanReceiptEvidence, err error, panicked string) {
+func finalGateReadReceipt(ctx *GoalplanValidationCtx, path string, kind gate.ReceiptKind) (evidence GoalplanReceiptEvidence, err error, panicked bool, panicText string) {
 	defer func() {
 		if r := recover(); r != nil {
-			panicked = finalGatePanicText(r)
+			panicked = true
+			panicText = finalGatePanicText(r)
 		}
 	}()
 	evidence, err = ctx.ReadReceipt(path, kind)
