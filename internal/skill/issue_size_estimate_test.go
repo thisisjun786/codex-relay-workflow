@@ -224,3 +224,30 @@ func TestIssueSizeCalibrateIsDeterministic(t *testing.T) {
 		t.Errorf("two runs differ: exit %d/%d\n%s\n---\n%s", code1, code2, out1, out2)
 	}
 }
+
+// The shipped table's eight rows are the issue's measured nodes: each row's actual is the issue
+// body's recorded actual (implementation plus test lines). This pins the data, so a later edit that
+// mistypes a row is caught even though the ratio distribution is recomputed from the table.
+func TestIssueSizeCalibrationRowsMatchTheRecordedActuals(t *testing.T) {
+	want := map[string]int64{
+		"CRW-624": 1473, "CRW-369": 1082, "CRW-376": 924, "CRW-378": 788,
+		"CRW-382": 784, "CRW-664": 1269, "CRW-685": 960, "CRW-716": 840,
+	}
+	rows, err := sizeEstimateReadCalibration(sizeEstimateCalibration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("%d rows, want %d", len(rows), len(want))
+	}
+	for _, row := range rows {
+		recorded, ok := want[row.issue]
+		if !ok {
+			t.Errorf("unexpected row %q", row.issue)
+			continue
+		}
+		if row.actual != recorded {
+			t.Errorf("%s actual %d, recorded %d", row.issue, row.actual, recorded)
+		}
+	}
+}
