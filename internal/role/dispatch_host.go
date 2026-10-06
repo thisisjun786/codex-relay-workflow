@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
@@ -39,13 +40,27 @@ func dispatchHostSocket(env host.LookupEnv) (string, error) {
 	}
 	codexHome, _ := env("CODEX_HOME")
 	if codexHome == "" {
-		home, err := host.Home(env)
+		home, err := dispatchHostHome(env)
 		if err != nil {
 			return "", err
 		}
-		codexHome = filepath.Join(home, ".codex")
+		codexHome = strings.TrimSuffix(home, "/") + "/.codex"
 	}
 	return filepath.Join(codexHome, "app-server-control", "app-server-control.sock"), nil
+}
+
+// dispatchHostHome is Path.home() as the bridge and the relay read it (internal/bridge/mcp Home and
+// internal/relay/store ownership.UserHome): HOME whenever it is set, with trailing slashes dropped
+// and an empty home or one of slashes being the root, else this user's passwd entry.
+func dispatchHostHome(env host.LookupEnv) (string, error) {
+	home, set := env("HOME")
+	if !set {
+		return host.Home(env)
+	}
+	if home = strings.TrimRight(home, "/"); home == "" {
+		return "/", nil
+	}
+	return home, nil
 }
 
 // dispatchHostOpen opens the read-only host for one dispatch command and returns the close the

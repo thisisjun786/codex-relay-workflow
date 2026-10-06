@@ -227,3 +227,33 @@ func TestDispatchHostDialIsBounded(t *testing.T) {
 		t.Fatalf("the dial took %v", elapsed)
 	}
 }
+
+// dispatchHostSocket resolves the same default socket the bridge and the relay use: CODEX_HOME
+// when it is set and non-empty, else Path.home()/.codex, with an empty home or one of slashes
+// being the root and trailing slashes dropped (internal/bridge/mcp Defaults and its own pin,
+// internal/relay/store DefaultSocket).
+func TestDispatchHostSocketMatchesTheBridgeDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		vars map[string]string
+		want string
+	}{
+		{"home", map[string]string{"HOME": "/h"}, "/h/.codex/app-server-control/app-server-control.sock"},
+		{"codex-home", map[string]string{"HOME": "/h", "CODEX_HOME": "/c"}, "/c/app-server-control/app-server-control.sock"},
+		{"empty codex-home is unset", map[string]string{"HOME": "/h", "CODEX_HOME": ""}, "/h/.codex/app-server-control/app-server-control.sock"},
+		{"empty home is the root", map[string]string{"HOME": ""}, "/.codex/app-server-control/app-server-control.sock"},
+		{"slashes are the root", map[string]string{"HOME": "///"}, "/.codex/app-server-control/app-server-control.sock"},
+		{"trailing slashes are dropped", map[string]string{"HOME": "/h//"}, "/h/.codex/app-server-control/app-server-control.sock"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := func(key string) (string, bool) { v, ok := tc.vars[key]; return v, ok }
+			got, err := dispatchHostSocket(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("socket %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
