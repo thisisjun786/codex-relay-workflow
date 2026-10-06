@@ -731,7 +731,7 @@ func TestPromptDcloseSeamsStopAfterEachWrite(t *testing.T) {
 		{name: "afterGoalplanCommit", seams: &promptDcloseSeams{afterGoalplanCommit: promptDcloseStop()},
 			phase: state.PhaseC, marker: true, planClosed: true, pabcdRows: 0, goalplanRows: 0},
 		{name: "afterStateWrite", seams: &promptDcloseSeams{afterStateWrite: promptDcloseStop()},
-			phase: state.PhaseIdle, marker: true, planClosed: true, pabcdRows: 0, goalplanRows: 2},
+			phase: state.PhaseIdle, marker: true, planClosed: true, pabcdRows: 0, goalplanRows: 0},
 		{name: "afterPabcdLedgerAppend", seams: &promptDcloseSeams{afterPabcdLedgerAppend: promptDcloseStop()},
 			phase: state.PhaseIdle, marker: true, planClosed: true, pabcdRows: 1, goalplanRows: 2},
 	}
@@ -862,13 +862,165 @@ func TestPromptDcloseRefusesARewriteTheReaderWouldLose(t *testing.T) {
 	promptDclosePlan(t, cwd, slug, nil)
 	promptDcloseSeedState(t, cwd, "s1", slug, "c-lossy")
 	receipt := promptDcloseReceipt(t, cwd, "s1", "c-lossy")
-	// A stored marker without the successor field reads back as legacy, a record the write-back
-	// would publish without its distinction.
-	promptDcloseWrite(t, cwd, ".crw/sessions/s1.json", `{"phase":"C","sessionId":"s1","slug":"`+slug+`","orchestrationActive":true,"checkEpoch":"c-lossy","dcloseRecovery":{"sessionId":"s1","checkEpoch":"c-lossy","closedWorkPhaseId":"wp-0"}}`)
+	promptDcloseWrite(t, cwd, ".crw/sessions/s1.json", promptDcloseLossyState(slug, "c-lossy"))
 	before := promptDcloseSnapshot(t, cwd, "s1", slug)
 	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt))
 	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
 		t.Errorf("the data-loss refusal: %q", answer)
 	}
 	promptDcloseUnchanged(t, before, promptDcloseSnapshot(t, cwd, "s1", slug), "a lossy-state refusal")
+}
+
+// promptDcloseLossyState is a bound C session whose stored unverified-subagent record carries a
+// receiptClaimed longer than the reader keeps, so a write-back would publish it truncated. No
+// recovery marker is present, so the refusal comes from the rewrite guard rather than from a gate
+// that runs earlier.
+func promptDcloseLossyState(slug, epoch string) string {
+	claim := strings.Repeat("x", state.MaxReceiptClaimLen+1)
+	return `{"phase":"C","sessionId":"s1","slug":"` + slug + `","orchestrationActive":true,"checkEpoch":"` + epoch +
+		`","unverifiedSubagents":[{"agentId":"a1","turnId":"t1","agentType":"worker","attempts":1,"receiptClaimed":"` + claim +
+		`","recordedAt":"2026-01-01T00:00:00.000Z","resolvable":false}]}`
+}
+
+// TestPromptDcloseKeepsAParticipatingWritersUpdate is the port's own data-loss rule on this path
+// (found by the Codex review of this pull request): the close is judged on the state the leading
+// section read, but the resting state must be built from the state the session lock found, or a
+// field a participating writer landed in between is overwritten by the stale copy.
+func TestPromptDcloseKeepsAParticipatingWritersUpdate(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-participant"
+	promptDclosePlan(t, cwd, slug, nil)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-participant")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-participant")
+	// A participating writer (the memory gate) records a grant after the leading section's read and
+	// before the close takes the session lock, which the lock seam stages exactly.
+	answer, _ := promptDcloseRunLocked(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), promptDcloseGrantingLock(t, cwd, "s1"))
+	if strings.Contains(answer, "refused") {
+		t.Fatalf("the close refused: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); !s.MemoryWriteGrant {
+		t.Errorf("the close dropped a participating writer's update: %+v", s)
+	}
+}
+
+// TestPromptDcloseRefusesAReceiptOfAnEarlierCheckCycle is the CHECK-BINDING-01 rule the receipt
+// gate exists for (found by the Codex review of this pull request): the gate runs before the
+// session lock, so a session that rotated through a reset and re-entered C while the gate was
+// running must not spend the earlier cycle's receipt on the new epoch.
+func TestPromptDcloseRefusesAReceiptOfAnEarlierCheckCycle(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-epoch-rotation"
+	promptDclosePlan(t, cwd, slug, nil)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-old")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-old")
+	// The session re-enters C with a fresh epoch before the close takes the lock, the way a
+	// reset followed by B>C does. The receipt still names the old cycle.
+	before := promptDcloseSnapshot(t, cwd, "s1", slug)
+	answer, _ := promptDcloseRunLocked(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), promptDcloseRotatingLock(t, cwd, "s1"))
+	if !strings.Contains(answer, "the session state changed") {
+		t.Errorf("a rotated epoch accepted the earlier cycle's receipt: %q", answer)
+	}
+	promptDcloseUnchanged(t, before, promptDcloseSnapshot(t, cwd, "s1", slug), "a rotated check epoch")
+}
+
+// TestPromptDcloseDoesNotOverwriteAnOutstandingMarker is the data-loss rule (found by the Codex
+// review of this pull request): a request that does not match the recovery marker the session
+// carries must not take the fresh-close path, because that path overwrites the marker and the
+// close the marker describes can then never be finalized.
+func TestPromptDcloseDoesNotOverwriteAnOutstandingMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-outstanding-marker"
+	// The first attempt closed wp-1 and committed the plan; the close of wp-2 is requested next.
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "outstanding marker"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-2")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+		s.Phase, s.Slug, s.OrchestrationActive = state.PhaseC, slug, true
+		s.CheckEpoch = promptDcloseStr("c-outstanding")
+		s.Flags = state.Flags{AuditPassed: true, CheckPassed: true}
+		s.DcloseRecovery = &state.DcloseRecoveryMarker{SessionID: "s1", CheckEpoch: "c-outstanding", ClosedWorkPhaseID: "wp-1", NextWorkPhaseID: promptDcloseStr("wp-2")}
+	})
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-outstanding")
+	before := promptDcloseSnapshot(t, cwd, "s1", slug)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-2", receipt))
+	if !strings.Contains(answer, "refused") || !strings.Contains(answer, "wp-1") {
+		t.Errorf("a mismatched request was not refused by the outstanding marker: %q", answer)
+	}
+	promptDcloseUnchanged(t, before, promptDcloseSnapshot(t, cwd, "s1", slug), "a mismatched request with an outstanding marker")
+}
+
+// TestPromptDcloseAllDoneRowFollowsTheStateWrite is the commit order on the all-done path (found
+// by the Codex review and the Devin review of this pull request): the row is written inside the
+// first goalplan lock so a failed second lock cannot lose it, but a state the close cannot publish
+// must not leave that row behind, because the session then stays in C with a C-to-IDLE row.
+func TestPromptDcloseAllDoneRowFollowsTheStateWrite(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-all-done-lossy"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "all done lossy"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp-finished", Title: "finished", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}}}
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	// An unverified-subagent record whose receiptClaimed is past the reader's cap: the write-back
+	// would publish it truncated, so the rewrite guard refuses the resting state.
+	promptDcloseWrite(t, cwd, ".crw/sessions/s1.json", promptDcloseLossyState(slug, "c-all-done-lossy"))
+	before := promptDcloseSnapshot(t, cwd, "s1", slug)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-finished", promptDcloseReceipt(t, cwd, "s1", "c-all-done-lossy")))
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Errorf("the data-loss refusal: %q", answer)
+	}
+	promptDcloseUnchanged(t, before, promptDcloseSnapshot(t, cwd, "s1", slug), "a refused all-done close")
+}
+
+// TestPromptDcloseTreatsAPublishedWriteAsLanded pins the commit-order decision the reviews asked
+// for: state.WriteState reports a *state.PublishedError when the file reached its final path but
+// the directory could not be synced, which is a durability warning on a write that happened, not
+// a write that did not.
+func TestPromptDcloseTreatsAPublishedWriteAsLanded(t *testing.T) {
+	if landed, _ := promptDcloseWriteLanded(nil); !landed {
+		t.Error("a clean write did not land")
+	}
+	if landed, warning := promptDcloseWriteLanded(&state.PublishedError{Err: errors.New("sync")}); !landed || warning == "" {
+		t.Errorf("a published write with a sync failure: landed=%v warning=%q", landed, warning)
+	}
+	if landed, _ := promptDcloseWriteLanded(errors.New("before the rename")); landed {
+		t.Error("a write that never reached its final path landed")
+	}
+}
+
+// promptDcloseGrantingLock grants the leading section's lock and, on the close's own acquisition,
+// records a participating writer's update first: the memory gate's grant, landed between the
+// leading section's read and the close's lock.
+func promptDcloseGrantingLock(t *testing.T, cwd, sessionID string) func(cwd, sessionID string, fn func() error) error {
+	t.Helper()
+	granted := 0
+	return func(lockCwd, lockSession string, fn func() error) error {
+		granted++
+		if granted == 2 {
+			promptSubmitStateFile(t, cwd, sessionID, func(s *state.State) { s.MemoryWriteGrant = true })
+		}
+		return state.WithSessionLock(lockCwd, lockSession, fn)
+	}
+}
+
+// promptDcloseRotatingLock grants the leading section's lock and, on the close's own acquisition,
+// moves the session to a fresh check cycle first: a reset followed by a re-entered C.
+func promptDcloseRotatingLock(t *testing.T, cwd, sessionID string) func(cwd, sessionID string, fn func() error) error {
+	t.Helper()
+	granted := 0
+	return func(lockCwd, lockSession string, fn func() error) error {
+		granted++
+		if granted == 2 {
+			promptSubmitStateFile(t, cwd, sessionID, func(s *state.State) { s.CheckEpoch = promptDcloseStr("c-new") })
+		}
+		return state.WithSessionLock(lockCwd, lockSession, fn)
+	}
 }

@@ -50,7 +50,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -77,14 +76,28 @@ type promptDcloseSeams struct {
 type promptDcloseOutcome struct {
 	refusal string
 	pending string
+	// warning is a durability warning on a close that did happen: the state reached its final path
+	// but the directory could not be synced. It is reported on the success answer, as the CLI
+	// writers report one (CRW-744/793).
+	warning string
 }
 
 // promptDclosePlanOutcome is what the first goalplan lock answered: the text to inject when it
-// refused, the all-done discriminant, and the successor a fresh close recorded in the marker.
+// refused, the all-done discriminant, the successor a fresh close recorded in the marker, and the
+// goalplan ledger rows the close still owes. The rows travel back rather than being appended inside
+// the lock, because the session state is published before them: a state the close cannot write must
+// not leave a ledger row describing a transition that did not happen.
 type promptDclosePlanOutcome struct {
 	output     string
 	allDone    bool
 	markerNext *string
+	rows       []promptDcloseGoalplanRow
+}
+
+// promptDcloseGoalplanRow is one goalplan ledger row the close owes, in the oracle's order.
+type promptDcloseGoalplanRow struct {
+	event  goalplan.GoalplanLedgerEvent
+	detail string
 }
 
 // promptDcloseCloseResult is the oracle's AdvanceResult as the shared tail reads it.
@@ -104,26 +117,13 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 	}
 	recovering := command.Verb == fsm.VerbD && state.MatchesDcloseRecovery(current, closePhaseID)
 
-	// The transition: a retry replays the close the marker already describes, a fresh close is the
-	// human free pass C>D. Both build the row the finalization appends.
-	var result fsm.ApplyResult
-	if recovering {
-		result = promptDcloseRecoveredTransition(current, command)
-	} else {
-		result = fsm.ApplyHumanTransition(current, fsm.VerbD, command.Attest)
-	}
-	if !result.OK {
-		return promptOrchestrateRefusal(result.Reason), true
-	}
-
-	// CHECK-BINDING-01 (075): the same receipt requirement as the CLI, checked here so a chat
-	// D-close cannot be the way around it. A marker-matched retry already spent its receipt in the
-	// first attempt, and re-requiring it would refuse a repair for a gate it cannot satisfy twice.
-	if !recovering {
-		receiptCheck := gate.ValidateCheckReceipt(current, p.SessionID, promptDcloseTestReceipt(command), p.Cwd)
-		if !receiptCheck.OK {
-			return promptOrchestrateRefusal(receiptCheck.Reason + " Nothing was written."), true
-		}
+	// The transition the request asks for, judged on the state the leading section read. This copy
+	// fixes the oracle's refusal order - an illegal adjacency first, the receipt gate second - and is
+	// not the state that gets written: the close applies the same transition again to the state the
+	// session lock finds, so a participating writer's update survives the write.
+	pre := promptDcloseTransition(current, command, recovering)
+	if !pre.OK {
+		return promptOrchestrateRefusal(pre.Reason), true
 	}
 
 	outcome := promptDcloseOutcome{}
@@ -133,24 +133,56 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 			outcome.refusal = promptDcloseStateRefusal()
 			return nil
 		}
-		// The recovery decision and the receipt gate were judged on the state the leading section
-		// read, before this lock. The close runs on the state the lock found, so the two must agree:
-		// a close that would be judged twice by different rules writes nothing (the oracle holds no
-		// lock and would have overwritten the participating writer outright).
-		if held.Phase != current.Phase || held.Slug != current.Slug || state.MatchesDcloseRecovery(held, closePhaseID) != recovering {
+		// The close is judged on the state the lock found, not on the one the leading section read: a
+		// session that moved - a phase change, a rebind, another close's marker - writes nothing. The
+		// check epoch is part of that judgement (found by the Codex review of this pull request): a
+		// session that rotated through a reset and re-entered C carries a new epoch, and a receipt
+		// validated against the old one must not close the new cycle.
+		if held.Phase != current.Phase || held.Slug != current.Slug ||
+			!promptDcloseSameOptionalText(held.CheckEpoch, current.CheckEpoch) ||
+			state.MatchesDcloseRecovery(held, closePhaseID) != recovering {
 			outcome.refusal = promptDcloseStateMovedRefusal()
 			return nil
 		}
-		// The rewrite guard runs where a write is about to happen rather than here, so a refusal the
-		// oracle answers earlier - the legacy marker, the integrity check, an empty plan - keeps the
-		// oracle's own text. A close that writes nothing never consults it.
+		// An outstanding marker this request does not match belongs to a close that is still
+		// half-finished. A fresh close would overwrite that marker, and the rows the close it
+		// describes still owes could then never be written, which loses the session's own record of
+		// the half-finished close (found by the Codex review of this pull request). The oracle
+		// overwrites it; the port fixes it as the data-loss class the parity revision of 2026-10-03
+		// fixes during the port.
+		if !recovering && held.DcloseRecovery != nil {
+			outcome.refusal = promptDcloseOutstandingMarkerRefusal(p.SessionID, held.DcloseRecovery.ClosedWorkPhaseID)
+			return nil
+		}
+		// CHECK-BINDING-01 (075): the same receipt requirement as the CLI, checked on the state the
+		// lock found so a chat D-close cannot be the way around it. A marker-matched retry already
+		// spent its receipt in the first attempt, and re-requiring it would refuse a repair for a
+		// gate it cannot satisfy twice.
+		if !recovering {
+			receiptCheck := gate.ValidateCheckReceipt(held, p.SessionID, promptDcloseTestReceipt(command), p.Cwd)
+			if !receiptCheck.OK {
+				outcome.refusal = promptOrchestrateRefusal(receiptCheck.Reason + " Nothing was written.")
+				return nil
+			}
+		}
+		// The transition is re-applied to the locked state, so the write carries every field that
+		// state holds. The leading section already accepted it on a state of the same phase, so a
+		// refusal here means the session moved between the two reads.
+		fresh := promptDcloseTransition(held, command, recovering)
+		if !fresh.OK || fresh.State == nil {
+			outcome.refusal = promptDcloseStateMovedRefusal()
+			return nil
+		}
+		// The rewrite guard runs where a write is about to happen, so a refusal the oracle answers
+		// earlier - the legacy marker, the integrity check, an empty plan, an open task - keeps the
+		// oracle's own text, and a close that writes nothing never consults the guard.
 		guard := func() string {
 			if !promptSubmitRewritable(p.Cwd, p.SessionID, held) {
 				return promptDcloseStateRefusal()
 			}
 			return ""
 		}
-		outcome = promptDcloseClose(p, held, turn, closePhaseID, recovering, result, command, seams, guard)
+		outcome = promptDcloseClose(p, held, turn, closePhaseID, recovering, fresh, command, seams, guard)
 		return nil
 	})
 	if err != nil {
@@ -165,8 +197,22 @@ func promptOrchestrateBoundDclose(p PromptSubmitPayload, current state.State, tu
 		return outcome.pending, true
 	}
 	// done: the chat D-close. Inject the DONE summary directive this turn; the resting state is
-	// already IDLE, so the footer surfaces IDLE.
-	return WithFooter(PhaseDirective(state.PhaseD, nil), state.PhaseIdle), true
+	// already IDLE, so the footer surfaces IDLE. A durability warning on a close that did happen is
+	// reported on the success answer, as the CLI writers report one (CRW-744/793).
+	answer := WithFooter(PhaseDirective(state.PhaseD, nil), state.PhaseIdle)
+	if outcome.warning != "" {
+		answer += "\n" + outcome.warning
+	}
+	return answer, true
+}
+
+// promptDcloseTransition applies the D-close this request asks for to s: the close the marker
+// already describes for a marker-matched retry, the human free pass C>D otherwise.
+func promptDcloseTransition(s state.State, command *fsm.OrchestrateCommand, recovering bool) fsm.ApplyResult {
+	if recovering {
+		return promptDcloseRecoveredTransition(s, command)
+	}
+	return fsm.ApplyHumanTransition(s, fsm.VerbD, command.Attest)
 }
 
 // promptDcloseRecoveredTransition is the recoveringDclose ApplyResult (:881-896): the resting
@@ -184,15 +230,23 @@ func promptDcloseRecoveredTransition(current state.State, command *fsm.Orchestra
 	return fsm.ApplyResult{OK: true, Control: fsm.ControlDone, State: &next, Ledger: row}
 }
 
-// promptDcloseClose runs the bound close on the state the session lock found. It is the body of
-// the oracle's handler from the first goalplan lock to the finalization.
+// promptDcloseClose runs the bound close on the state the session lock found. It is the body of the
+// oracle's handler from the first goalplan lock to the finalization.
+//
+// Commit order. The oracle appends its goalplan rows and its PABCD close row inside the goalplan
+// lock, before the resting state is written. A state the close then refuses to write, or a write
+// that never reaches the file, would leave a ledger row describing a close the session never made
+// (found by the Devin review and the Codex review of this pull request). The port keeps the
+// oracle's row order and text and appends them after the state publication, which is the order
+// every other writer of this repository uses (CRW-744/793/811). The session lock the caller holds
+// serialises the whole sequence, so no second close can observe the rows half-written.
 func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhaseID string, recovering bool, result fsm.ApplyResult, command *fsm.OrchestrateCommand, seams *promptDcloseSeams, guard func() string) promptDcloseOutcome {
 	slug := held.Slug
 
 	// The marker and the plan commit are one critical section, and the integrity check runs inside
 	// it, before either write.
 	locked, err := goalplan.WithGoalplanWriteLock(p.Cwd, slug, func(plan *goalplan.Goalplan) (promptDclosePlanOutcome, error) {
-		return promptDclosePlanWork(p, held, plan, closePhaseID, recovering, result, seams, guard), nil
+		return promptDclosePlanWork(p, held, plan, closePhaseID, recovering, command, seams, guard)
 	}, nil)
 	if err != nil {
 		return promptDcloseOutcome{refusal: promptDcloseGoalplanUnreadable(err.Error())}
@@ -209,56 +263,75 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	if locked.Value.output != "" {
 		return promptDcloseOutcome{refusal: locked.Value.output}
 	}
-	allDoneClose := locked.Value.allDone
+	plan := locked.Value
 
 	// §40 Z3: the bound D-close owns its own state write. The write keeps every field the ordinary
 	// D-close write sets - dropping injectedTurns would break same-turn dedup and dropping the
 	// stopBlock reset would leave C stagnation state on an IDLE session - and layers the recovery
-	// fields on top. It is written over the state the lock found, so a participating writer's
-	// update survives.
-	entrySource, planBinding, keepBinding := promptDcloseBindings(p, held, result, command)
-	next := *result.State
-	next.PhaseEntrySource = entrySource
-	next.PlanUnit, next.PlanEpoch = promptDclosePlanBindingOf(planBinding, held, keepBinding)
+	// fields on top. ClearedIdle is applied to the state the session lock found, not to the one the
+	// leading section read, so a field a participating writer landed in between survives the write
+	// (found by the Codex review of this pull request).
+	next := fsm.ClearedIdle(held)
 	next.OrchestrationActive, next.LastInjectedPhase = false, nil
 	next.InjectedTurns = promptDcloseInjectedTurns(turn, held.InjectedTurns)
 	next.StopBlockPhase, next.StopBlockWorkPhaseID, next.StopBlockCount = nil, nil, 0
 	switch {
-	case allDoneClose:
-		// §40 Z2: all-done wrote its close row inside the first lock and has no marker to clear.
+	case plan.allDone:
+		// §40 Z2: an all-done close leaves no marker to clear.
 		next.CheckEpoch, next.DcloseRecovery = nil, nil
 	case recovering:
 		next.CheckEpoch, next.DcloseRecovery = held.CheckEpoch, held.DcloseRecovery
 	default:
 		next.CheckEpoch = held.CheckEpoch
-		next.DcloseRecovery = promptDcloseMarker(held, closePhaseID, locked.Value.markerNext)
+		next.DcloseRecovery = promptDcloseMarker(held, closePhaseID, plan.markerNext)
 	}
 	if refusal := guard(); refusal != "" {
 		return promptDcloseOutcome{refusal: refusal}
 	}
-	if writeErr := state.WriteState(p.Cwd, next); writeErr != nil {
+	landed, warning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
+	if !landed {
 		return promptDcloseOutcome{refusal: promptDcloseStateRefusal()}
 	}
 	promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterStateWrite })
 
-	// §40 Z2: all-done wrote its close row inside the first lock, so it skips this second critical
-	// section entirely. For everything else the row and the marker cleanup are one section, so two
-	// recoveries cannot both observe an absent row.
-	if allDoneClose {
-		return promptDcloseOutcome{}
+	// The goalplan rows follow the state publication, in the oracle's order.
+	for _, row := range plan.rows {
+		if promptDcloseHasGoalplanRow(p.Cwd, slug, string(row.event), row.detail) {
+			continue
+		}
+		if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
+			Ts: promptDcloseTimestamp(), Slug: slug, Event: row.event, Detail: row.detail,
+		}); rowErr != nil {
+			return promptDcloseOutcome{refusal: promptOrchestrateRefusal("the goalplan ledger row could not be written: " + rowErr.Error() + " Nothing was written.")}
+		}
 	}
+
+	// §40 Z2: an all-done close leaves no marker for a failed second lock to resume, so it writes no
+	// recovery marker and has nothing to clean up; its close row carries a null closed work phase.
 	closeCheckEpoch, closedWorkPhaseID := held.CheckEpoch, closePhaseID
+	if plan.allDone {
+		closedWorkPhaseID = ""
+	}
+	// The PABCD close row lands inside the second goalplan lock for a cycle close, so two recoveries
+	// cannot both observe an absent row; an all-done close takes the same lock with no marker to
+	// clean up.
 	finalize, finalizeErr := goalplan.WithGoalplanWriteLock(p.Cwd, slug, func(*goalplan.Goalplan) (struct{}, error) {
 		if result.Ledger != nil && !promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID) {
 			row := *result.Ledger
-			row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch, ClosedWorkPhaseID: &closedWorkPhaseID}
-			// The hook's close rows spread the transition row, evidence included, before the close
-			// key (hook.ts:1335 through orchestrate-apply.ts:111-118).
+			row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch}
+			if closedWorkPhaseID != "" {
+				row.Close.ClosedWorkPhaseID = &closedWorkPhaseID
+			}
+			// The hook's close rows spread the transition row, evidence included, before the close key
+			// (hook.ts:1147 and :1335 through orchestrate-apply.ts:111-118).
 			row.EvidenceAfterReason = true
 			if rowErr := state.AppendLedger(p.Cwd, row); rowErr != nil {
 				return struct{}{}, rowErr
 			}
 			promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterPabcdLedgerAppend })
+		}
+		if plan.allDone {
+			return struct{}{}, nil
 		}
 		current, _ := state.ReadStateStrict(p.Cwd, p.SessionID)
 		if state.MatchesDcloseRecovery(current, closePhaseID) {
@@ -269,8 +342,15 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 				return struct{}{}, errors.New("the recovery marker cannot be cleared without losing a stored record")
 			}
 			current.CheckEpoch, current.DcloseRecovery = nil, nil
-			if writeErr := state.WriteState(p.Cwd, current); writeErr != nil {
-				return struct{}{}, writeErr
+			// A rename that landed but whose directory sync failed is a committed cleanup with a
+			// durability warning: the marker is gone from every reader's view, so a retry could no
+			// longer match it (found by the Codex review of this pull request).
+			cleanupLanded, cleanupWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, current))
+			if !cleanupLanded {
+				return struct{}{}, errors.New("the recovery marker could not be cleared")
+			}
+			if cleanupWarning != "" {
+				warning = cleanupWarning
 			}
 		}
 		return struct{}{}, nil
@@ -282,22 +362,24 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		}
 		return promptDcloseOutcome{pending: promptDcloseFinalizePending(reason)}
 	}
-	return promptDcloseOutcome{}
+	return promptDcloseOutcome{warning: warning}
 }
 
 // promptDclosePlanWork is the body of the first goalplan lock (:956-1266). It answers the text to
-// inject when it refuses, or the all-done discriminant when it does not.
-func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalplan.Goalplan, closePhaseID string, recovering bool, result fsm.ApplyResult, seams *promptDcloseSeams, guard func() string) promptDclosePlanOutcome {
+// inject when it refuses, or the all-done discriminant, the successor a fresh close recorded in the
+// marker, and the goalplan ledger rows the close still owes. The rows travel back rather than being
+// appended here, because the session state is published before them.
+func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalplan.Goalplan, closePhaseID string, recovering bool, command *fsm.OrchestrateCommand, seams *promptDcloseSeams, guard func() string) (promptDclosePlanOutcome, error) {
 	slug := held.Slug
 
 	// §5: integrity is checked inside the lock, before marker or any write.
 	integrityReasons := goalplan.GoalplanDefinitionIntegrityReasons(plan)
 	integrityReasons = append(integrityReasons, goalplan.GoalplanDependencyCompletionReasons(plan)...)
 	if len(integrityReasons) > 0 {
-		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("invalid goalplan: " + strings.Join(integrityReasons, "; ") + ". Nothing was written.")}
+		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("invalid goalplan: " + strings.Join(integrityReasons, "; ") + ". Nothing was written.")}, nil
 	}
 	if len(plan.WorkPhases) == 0 {
-		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the bound goalplan " + promptDcloseQuote(slug) + " has no active work-phase to close (CYCLE-COMPLETION-01). Nothing was written.")}
+		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the bound goalplan " + promptDcloseQuote(slug) + " has no active work-phase to close (CYCLE-COMPLETION-01). Nothing was written.")}, nil
 	}
 
 	// §39 Y2: recovery is checked BEFORE all-done, in the same order as the CLI path. Crashing
@@ -310,7 +392,7 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	if recovering {
 		out, refusal, refused := promptDcloseRecoveryClose(p, held, plan, closePhaseID)
 		if refused {
-			return promptDclosePlanOutcome{output: refusal}
+			return promptDclosePlanOutcome{output: refusal}, nil
 		}
 		closeResult, writeClosedPlan = out.result, out.writePlan
 	} else {
@@ -318,70 +400,55 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 		// recovery marker or goalplan row. This sits inside the non-recovery branch so a matching
 		// marker always wins.
 		if promptDcloseAllDone(plan) {
-			// §40 Z2: the close row lands inside this first lock, because all-done leaves no marker
-			// for a failed second lock to resume.
-			if result.Ledger != nil && held.Phase == state.PhaseC && !promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, held.CheckEpoch, "") {
-				row := *result.Ledger
-				row.Close = &state.CloseKey{CheckEpoch: held.CheckEpoch}
-				if rowErr := state.AppendLedger(p.Cwd, row); rowErr != nil {
-					return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the PABCD close row could not be written: " + rowErr.Error() + " Nothing was written.")}
-				}
-				promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterPabcdLedgerAppend })
-			}
-			return promptDclosePlanOutcome{allDone: true}
+			return promptDclosePlanOutcome{allDone: true}, nil
 		}
 		// §35-5: target validation follows empty-plan, all-done and recovery.
 		if closePhaseID == "" {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("bound chat D-close requires attest.workPhaseId. Nothing was written.")}
+			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("bound chat D-close requires attest.workPhaseId. Nothing was written.")}, nil
 		}
 		if promptDcloseFindWorkPhase(plan, closePhaseID) == nil {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("work-phase " + closePhaseID + " is not in the bound goalplan. Nothing was written.")}
+			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("work-phase " + closePhaseID + " is not in the bound goalplan. Nothing was written.")}, nil
 		}
 		advanced := goalplan.AdvanceWorkPhase(plan)
 		switch advanced.Kind {
 		case goalplan.WorkPhaseAdvanceTasksPending:
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("work-phase " + promptDcloseString(advanced.WorkPhaseID) + " still has " + promptDcloseCount(len(advanced.Pending)) + " open task(s), so this cycle cannot close (CYCLE-COMPLETION-01): " + promptDclosePendingText(advanced.Pending) + ". Nothing was written.")}
+			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("work-phase " + promptDcloseString(advanced.WorkPhaseID) + " still has " + promptDcloseCount(len(advanced.Pending)) + " open task(s), so this cycle cannot close (CYCLE-COMPLETION-01): " + promptDclosePendingText(advanced.Pending) + ". Nothing was written.")}, nil
 		case goalplan.WorkPhaseAdvanceNoActive:
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal(promptDcloseNoActive(slug, plan))}
+			return promptDclosePlanOutcome{output: promptOrchestrateRefusal(promptDcloseNoActive(slug, plan))}, nil
 		}
 		closeResult = promptDcloseCloseResult{kind: "ok", closedID: promptDcloseString(advanced.ClosedID), plan: advanced.Plan}
 		writeClosedPlan = true
 	}
 
-	// The shared tail of both branches: the target check, the C epoch requirement, the marker, the
-	// plan commit and the two goalplan ledger rows.
+	// The shared tail of both branches: the target check, the C epoch requirement, the marker and
+	// the plan commit. The ledger rows travel back to the caller.
 	if !recovering && closeResult.closedID != closePhaseID {
-		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("fixed close target " + closePhaseID + " does not match active work-phase " + closeResult.closedID + ". Nothing was written.")}
+		return promptDclosePlanOutcome{output: promptOrchestrateRefusal("fixed close target " + closePhaseID + " does not match active work-phase " + closeResult.closedID + ". Nothing was written.")}, nil
 	}
 	markerNext := (*string)(nil)
 	if !recovering {
 		if held.Phase != state.PhaseC || held.CheckEpoch == nil {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("current C check epoch is required. Nothing was written.")}
+			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("current C check epoch is required. Nothing was written.")}, nil
 		}
 		// §48: the successor this close chose is recorded before the plan commit, so a retry never
 		// has to infer it from the file.
 		markerNext = closeResult.plan.ActiveWorkPhaseID
 		if refusal := guard(); refusal != "" {
-			return promptDclosePlanOutcome{output: refusal}
+			return promptDclosePlanOutcome{output: refusal}, nil
 		}
 		if markerErr := promptDcloseWriteMarker(p.Cwd, held, closePhaseID, markerNext); markerErr != nil {
-			return promptDclosePlanOutcome{output: promptDcloseStateRefusal()}
+			return promptDclosePlanOutcome{output: promptDcloseStateRefusal()}, nil
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterRecoveryMarkerWrite })
 	}
 	if writeClosedPlan {
 		if planErr := goalplan.WriteGoalplan(p.Cwd, closeResult.plan); planErr != nil {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the goalplan could not be written: " + planErr.Error() + " Nothing was written.")}
+			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the goalplan could not be written: " + planErr.Error() + " Nothing was written.")}, nil
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterGoalplanCommit })
 	}
-	if !promptDcloseHasGoalplanRow(p.Cwd, slug, "workphase_done", "closed "+closePhaseID) {
-		if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
-			Ts: promptDcloseTimestamp(), Slug: slug, Event: goalplan.EventWorkphaseDone, Detail: "closed " + closePhaseID,
-		}); rowErr != nil {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the goalplan ledger row could not be written: " + rowErr.Error() + " Nothing was written.")}
-		}
-	}
+
+	rows := []promptDcloseGoalplanRow{{event: goalplan.EventWorkphaseDone, detail: "closed " + closePhaseID}}
 	// §52: a resume names the marker successor, a fresh close names the cursor it just computed.
 	startedID := ""
 	if recovering {
@@ -389,14 +456,48 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 	} else {
 		startedID = promptDcloseString(closeResult.plan.ActiveWorkPhaseID)
 	}
-	if startedID != "" && !promptDcloseHasGoalplanRow(p.Cwd, slug, "workphase_started", "started "+startedID) {
-		if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
-			Ts: promptDcloseTimestamp(), Slug: slug, Event: goalplan.EventWorkphaseStarted, Detail: "started " + startedID,
-		}); rowErr != nil {
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the goalplan ledger row could not be written: " + rowErr.Error() + " Nothing was written.")}
-		}
+	if startedID != "" {
+		rows = append(rows, promptDcloseGoalplanRow{event: goalplan.EventWorkphaseStarted, detail: "started " + startedID})
 	}
-	return promptDclosePlanOutcome{markerNext: markerNext}
+	return promptDclosePlanOutcome{markerNext: markerNext, rows: rows}, nil
+}
+
+// promptDcloseWriteLanded says whether a state write reached the file. state.WriteState reports a
+// *state.PublishedError when the rename succeeded but the directory could not be synced: the new
+// state is visible to every reader, so the write landed and only its durability is in question
+// (the CRW-744/793 rule the CLI writers follow). The second answer is that warning, empty when
+// there is none. A write that never reached its final path did not land.
+func promptDcloseWriteLanded(err error) (bool, string) {
+	switch {
+	case err == nil:
+		return true, ""
+	case state.Published(err):
+		return true, "the session state was published but its directory could not be synced: " + err.Error()
+	}
+	return false, ""
+}
+
+// promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any
+// present one.
+func promptDcloseSameOptionalText(a, b *string) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	}
+	return *a == *b
+}
+
+// promptDcloseOutstandingMarkerRefusal is the refusal for a session that still carries a D-close
+// marker this request does not match. The oracle overwrites that marker and the rows the close it
+// describes still owes can then never be written, which loses the session's own record of the
+// half-finished close (found by the Codex review of this pull request); the port asks for the exact
+// retry or an explicit reset instead.
+func promptDcloseOutstandingMarkerRefusal(sessionID, closedWorkPhaseID string) string {
+	return promptOrchestrateRefusal("this session still carries the D-close recovery marker of work-phase " + closedWorkPhaseID +
+		", which this request does not match. Finish that close by repeating its own D request, or clear the marker with " +
+		promptDcloseResetCommand(sessionID) + ". Nothing was written.")
 }
 
 // promptDcloseRecoveryOutcome is what the recovery arm answered when it did not refuse.
@@ -629,38 +730,6 @@ func promptDcloseTestReceipt(command *fsm.OrchestrateCommand) string {
 		return ""
 	}
 	return command.Attest.TestReceiptPath
-}
-
-// promptDcloseBindings is the entrySource / planBinding / keepBinding triple the oracle computes
-// once for both the bound D-close write and the ordinary edge (:1290-1296). A D-close never enters
-// B and never leaves P, so all three are empty here; they are ported because the write they feed is
-// shared with the forward edges, and leaving them out would make this write a different one.
-func promptDcloseBindings(p PromptSubmitPayload, held state.State, result fsm.ApplyResult, command *fsm.OrchestrateCommand) (*state.SourceIdentity, *promptOrchestrateBinding, bool) {
-	var entrySource *state.SourceIdentity
-	if result.State != nil && result.State.Phase == state.PhaseB {
-		if id, err := session.Capture(p.Cwd, p.SessionID, session.CaptureOptions{ExcludeStateArtifacts: promptOrchestrateBoolPtr(true)}); err == nil {
-			stored := promptOrchestrateStoredIdentity(id)
-			entrySource = &stored
-		}
-	}
-	var binding *promptOrchestrateBinding
-	if held.Phase == state.PhaseP && result.State != nil && result.State.Phase == state.PhaseA {
-		binding = promptOrchestrateChatPlanBinding(p.Cwd, held.Slug, command.Attest)
-	}
-	return entrySource, binding, result.State != nil && result.State.Phase == state.PhaseA && held.Phase == state.PhaseA
-}
-
-// promptDclosePlanBindingOf is the binding half of the write: the binding this edge minted, or the
-// session's own when the write stays in A, or neither.
-func promptDclosePlanBindingOf(binding *promptOrchestrateBinding, held state.State, keepBinding bool) (*string, *string) {
-	if binding != nil {
-		unit, epoch := binding.unit, binding.epoch
-		return &unit, &epoch
-	}
-	if keepBinding {
-		return held.PlanUnit, held.PlanEpoch
-	}
-	return nil, nil
 }
 
 // promptDcloseInjectedTurns is the oracle's turn ? appendTurn(state.injectedTurns, turn) :
