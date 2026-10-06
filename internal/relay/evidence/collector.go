@@ -373,6 +373,50 @@ func jobNeverRan(j map[string]any) bool {
 	return true
 }
 
+// lightLegPrefix is the name every go-product test leg carries (ci.yml's matrix part). It is the
+// only job name the collector marks testSkipped and the only one the reading accepts (CRW-824).
+const lightLegPrefix = "go-product (test-"
+
+// lightTestStepPrefix is the step every go-product test leg runs. CRW-790's temporary light mode
+// skips its work (the step's if excludes CRW_LIGHT_LEG) while the job still concludes success, so a
+// leg that did not run its tests is told from one that did by this step's conclusion.
+const lightTestStepPrefix = "Test and replay the contract corpus ("
+
+// jobTestSkipped reports whether a go-product test leg concluded success while its test step did
+// not: CRW-790's light mode leaves the job success and skips the step, so the leg says nothing
+// about the commit (CRW-824). A job whose steps the collector cannot read is not called a skipped
+// leg: the returned detail names it and the caller records the existing unreadable problem
+// instead, so a success leg whose test run cannot be confirmed is never merge evidence either way.
+// The detail is empty when the job is not this at all. The conclusion is read through outcome, the
+// same read the entry's own conclusion uses, so the mark can never disagree with the entry.
+func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail string) {
+	name := strOf(j["name"])
+	if !strings.HasPrefix(name, lightLegPrefix) || outcome(j) != "success" {
+		return false, ""
+	}
+	unreadable := name + " of workflow run " + runText + " came back without a readable step list, so whether it ran its tests cannot be told"
+	steps, ok := List(j["steps"])
+	if !ok {
+		return false, unreadable
+	}
+	for _, raw := range steps {
+		step, isObject := Object(raw)
+		if !isObject {
+			return false, unreadable
+		}
+		if !strings.HasPrefix(strOf(step.Get("name")), lightTestStepPrefix) {
+			continue
+		}
+		conclusion, isString := step.Get("conclusion").(string)
+		if !isString {
+			return false, unreadable
+		}
+		return conclusion != "success", ""
+	}
+	// The test step is absent from a readable list: the leg's test run did not conclude success.
+	return true, ""
+}
+
 func provider(n map[string]any) any {
 	id := mapOf(n["app"])["id"]
 	if id == nil {
@@ -464,6 +508,14 @@ func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, conn
 			if jobNeverRan(j) {
 				entry["notRun"] = true
 				detailEntry["notRun"] = true
+			}
+			// The same value on the check entry and on the detail entry: a leg that concluded
+			// success without running its tests is told from one that ran them (CRW-824).
+			if skipped, detail := jobTestSkipped(j, runText); skipped {
+				entry["testSkipped"] = true
+				detailEntry["testSkipped"] = true
+			} else if detail != "" {
+				*problems = append(*problems, Problem{Code: UnreadableCode, Detail: detail})
 			}
 			if !replaced {
 				entries = append(entries, entry)

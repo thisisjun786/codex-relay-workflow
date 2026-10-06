@@ -226,6 +226,22 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 				bad(where + " states notRun true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a job that began no step concluded cancelled, failure or timed_out; another conclusion cannot be a job whose runner never picked it up")
 			}
 		}
+		if value, present := o.Lookup("testSkipped"); present {
+			flag, isBool := value.(bool)
+			if !isBool {
+				bad(where + " states testSkipped as " + quote.Kind(value) + ", not true or false; the collector sets it to say a test leg concluded success without running its test step, and a value of another type cannot say that")
+			} else if flag {
+				// Only a go-product test leg concluded success without running its tests, so a
+				// restated record that marks any other job could steer the lane toward treating an
+				// untested head as tested (CRW-824). The comparison is exact, as stepLessConclusion's
+				// is: the collector emits the forge's canonical spelling.
+				if !strings.HasPrefix(textField(entry, "name"), lightLegPrefix) {
+					bad(where + " states testSkipped true on " + quote.Value(o.Get("name")) + ", and only a " + lightLegPrefix + "*) leg concluded success without running its tests; another job name cannot be one")
+				} else if o.Get("conclusion") != "success" {
+					bad(where + " states testSkipped true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a leg whose tests were skipped concluded success; another conclusion cannot be a leg whose tests were skipped")
+				}
+			}
+		}
 	}
 	return problems
 }
@@ -281,6 +297,42 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 			continue
 		}
 		flag, isBool := o.Get("notRun").(bool)
+		if !isBool || !flag {
+			continue
+		}
+		names = append(names, textField(entry, "name"))
+	}
+	slices.Sort(names)
+	return names
+}
+
+// testSkippedJobs lists the names of the entries of one workflow run, at one attempt, that the
+// collector marked testSkipped: go-product test legs that concluded success without running their
+// test step (CRW-824). The flag is read as a strict boolean, the entry must be at its own newest
+// attempt, and the name must be a test leg, so a restated record that states anything else cannot
+// make the lane treat an untested head as tested.
+func testSkippedJobs(checks []any, run string, at *big.Int, highest map[string]*big.Int) []string {
+	if run == "" {
+		return nil
+	}
+	var names []string
+	for _, entry := range checks {
+		runId := textField(entry, "runId")
+		if workflowRun(runId) != run || attempt(entry).Cmp(at) != 0 {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			// An entry the same job superseded is not the job's result: its newest attempt is.
+			continue
+		}
+		if !strings.HasPrefix(textField(entry, "name"), lightLegPrefix) {
+			continue
+		}
+		o, _ := Object(entry)
+		if o.Get("conclusion") != "success" {
+			continue
+		}
+		flag, isBool := o.Get("testSkipped").(bool)
 		if !isBool || !flag {
 			continue
 		}
@@ -408,6 +460,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 	var notRunKey, notRunRun, notRunName string
 	var notRunConclusion any
 	var notRunNames []string
+	var lightKey, lightRun, lightName string
 	for _, entry := range checks {
 		run := textField(entry, "runId")
 		if attempt(entry).Cmp(highest[run]) != 0 {
@@ -418,7 +471,21 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 			return stale("check run "+pyvalue.StrRepr(run)+" reports head "+pyvalue.Repr(o.Get("headSha"))+", not "+pyvalue.StrRepr(head), run)
 		}
 		name := textField(entry, "name")
-		if !isRequired(name) || !answers(entry, name) || o.Get("conclusion") == "success" {
+		if !isRequired(name) || !answers(entry, name) {
+			continue
+		}
+		// A required check whose own run attempt holds a go-product test leg that concluded
+		// success without running its tests is not evidence, even when the required check itself
+		// succeeded -- which is the shape CI light mode produces, where dev-gate is green and the
+		// five test legs skipped their work (CRW-824). The answer is the existing checks_stale: a
+		// light leg makes the run no merge evidence, never a rerun. The lowest (run, name) pair is
+		// kept, so the detail does not move with the enumeration (CRW-661).
+		if skipped := testSkippedJobs(checks, workflowRun(run), attempt(entry), highest); len(skipped) > 0 {
+			if key := run + "\x00" + name; lightKey == "" || key < lightKey {
+				lightKey, lightRun, lightName = key, run, skipped[0]
+			}
+		}
+		if o.Get("conclusion") == "success" {
 			continue
 		}
 		if firstRun == "" {
@@ -443,6 +510,9 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		if key := run + "\x00" + name; notRunKey == "" || key < notRunKey {
 			notRunKey, notRunRun, notRunName, notRunConclusion, notRunNames = key, run, name, o.Get("conclusion"), jobs
 		}
+	}
+	if lightRun != "" {
+		return []Problem{{Code: ChecksStale, Detail: pyvalue.Repr(lightName) + " skipped its tests (CI light mode); label the pull request crw-lane and judge the full run", Incumbent: lightRun}}
 	}
 	if notRunRun != "" && !unexplained {
 		return []Problem{{Code: ChecksNotRun, Detail: "required check " + pyvalue.Repr(notRunName) + " (run " + pyvalue.StrRepr(notRunRun) + ") concluded " + pyvalue.Repr(notRunConclusion) + " on its newest attempt, and workflow run " + pyvalue.StrRepr(workflowRun(notRunRun)) + " holds jobs that began no step, so no runner picked them up rather than the code failing: " + pyvalue.Repr(notRunNames) + ". Rerun the failed jobs of that run once on the same head", Incumbent: notRunRun}}
