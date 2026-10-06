@@ -1,7 +1,7 @@
 [
   {
     "name": "redirect",
-    "input": "{\"command\": \"echo hi \u003e /m/n.md\"}",
+    "input": "{\"command\": \"echo hi > /m/n.md\"}",
     "oracle": "[\"/m/n.md\"]",
     "go": "[\"/m/n.md\"]",
     "tag": "identical",
@@ -9,7 +9,7 @@
   },
   {
     "name": "append-and-clobber",
-    "input": "{\"command\": \"echo hi \u003e\u003e /m/n.md; echo hi \u003e| /m/o.md\"}",
+    "input": "{\"command\": \"echo hi >> /m/n.md; echo hi >| /m/o.md\"}",
     "oracle": "[\"/m/n.md\", \"/m/o.md\"]",
     "go": "[\"/m/n.md\", \"/m/o.md\"]",
     "tag": "identical",
@@ -17,7 +17,7 @@
   },
   {
     "name": "stderr-is-not-a-write",
-    "input": "{\"command\": \"rg foo /m/M.md 2\u003e/dev/null\"}",
+    "input": "{\"command\": \"rg foo /m/M.md 2>/dev/null\"}",
     "oracle": "[]",
     "go": "[]",
     "tag": "identical",
@@ -25,7 +25,7 @@
   },
   {
     "name": "heredoc-body-is-not-a-write",
-    "input": "{\"command\": \"cat \u003c\u003cEOF \u003e /w/x.md\\n/memories/n.md\\nEOF\"}",
+    "input": "{\"command\": \"cat <<EOF > /w/x.md\\n/memories/n.md\\nEOF\"}",
     "oracle": "[\"/w/x.md\"]",
     "go": "[\"/w/x.md\"]",
     "tag": "identical",
@@ -57,7 +57,7 @@
   },
   {
     "name": "quoted-operand",
-    "input": "{\"command\": \"echo hi \u003e '/m/a b.md'\"}",
+    "input": "{\"command\": \"echo hi > '/m/a b.md'\"}",
     "oracle": "[\"/m/a b.md\"]",
     "go": "[\"/m/a b.md\"]",
     "tag": "identical",
@@ -97,7 +97,7 @@
   },
   {
     "name": "campaign-stderr-target",
-    "input": "{\"command\": \"echo hi \u003e /m/n.md 2\u003e /m/err\"}",
+    "input": "{\"command\": \"echo hi > /m/n.md 2> /m/err\"}",
     "oracle": "[\"/m/n.md\"]",
     "go": "[\"/m/n.md\", \"/m/err\"]",
     "tag": "open",
@@ -105,7 +105,7 @@
   },
   {
     "name": "campaign-readwrite-target",
-    "input": "{\"command\": \"cat \u003c\u003e /m/a\"}",
+    "input": "{\"command\": \"cat <> /m/a\"}",
     "oracle": "[]",
     "go": "[\"/m/a\"]",
     "tag": "open",
@@ -113,7 +113,7 @@
   },
   {
     "name": "campaign-nested-shell",
-    "input": "{\"command\": \"bash -c 'echo x \u003e /m/a'\"}",
+    "input": "{\"command\": \"bash -c 'echo x > /m/a'\"}",
     "oracle": "[]",
     "go": "[\"/m/a\"]",
     "tag": "open",
@@ -166,5 +166,109 @@
     "go": "[\"/m/a\\\\nb\", \"/m/a\\nb\"]",
     "tag": "open",
     "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "crw857-rename-destination",
+    "input": "{\"command\": \"'import os; os.rename(\\\"/w/old.md\\\", r'/m/a\\r\\nb')'\\n2> /\"}",
+    "oracle": "[]",
+    "go": "[\"/\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the destination of os.rename is its second argument; the port reads it, the oracle reads neither argument, so the port names a write the oracle misses"
+  },
+  {
+    "name": "crw857-copyfile-destination",
+    "input": "{\"command\": \"> /m/a\\\"b & python3 -c 'import shutil; shutil.copyfile(\\\"\"}",
+    "oracle": "[\"/m/a\\\"b\"]",
+    "go": "[\"/m/a\\\"b\", \"/m/ab & python3 -c 'import shutil; shutil.copyfile(\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the destination of shutil.copyfile is its second argument; the port reads it and the oracle does not"
+  },
+  {
+    "name": "crw857-copy-destination",
+    "input": "{\"command\": \"> /m/a\\\"b | python3 -c 'import shutil; shutil.copy(\\\"\"}",
+    "oracle": "[\"/m/a\\\"b\"]",
+    "go": "[\"/m/a\\\"b\", \"/m/ab | python3 -c 'import shutil; shutil.copy(\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the destination of shutil.copy is its second argument; the port reads it and the oracle does not"
+  },
+  {
+    "name": "crw857-escape-x2f-destination",
+    "input": "{\"command\": \"python3 -c 'open(\\\"~\\\\x2fx\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"~\\\\x2fx\"]",
+    "go": "[\"~\\\\x2fx\", \"~/x\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\x2f in a destination and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-escape-octal-destination",
+    "input": "{\"command\": \"python3 -c 'open(\\\"~\\\\057x\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"~\\\\057x\"]",
+    "go": "[\"~\\\\057x\", \"~/x\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\057 and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-escape-unicode-destination",
+    "input": "{\"command\": \"'open(\\\"\\\\u002fm/a.md\\\",\\\"w\\\")'\\ntee /\"}",
+    "oracle": "[]",
+    "go": "[\"/\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\u002f and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-escape-named-destination",
+    "input": "{\"command\": \"'open(\\\"\\\\N{SOLIDUS}m/a\\\\b\\\",\\\"w\\\")'; >/m/a\\r\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[\"/m/a\", \"/m/a\\r\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\N{SOLIDUS} and names the real path, which the oracle misses"
+  },
+  {
+    "name": "crw857-fstring-brace-destination",
+    "input": "{\"command\": \"'import os; os.rename(\\\"/w/old.md\\\", f'{{/m/a;b}}')' && env -i tee /\"}",
+    "oracle": "[]",
+    "go": "[\"/\"]",
+    "tag": "open",
+    "record": "known-defects CRW-741/CRW-857 (port: fixed, security): the port reads a destination inside an f-string with doubled braces, which the oracle misses"
+  },
+  {
+    "name": "crw857-subshell-write",
+    "input": "{\"command\": \"a#b & (echo hi > ~/x)\"}",
+    "oracle": "[\"~/x)\"]",
+    "go": "[\"~/x)\", \"~/x\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a subshell group, which the oracle misses"
+  },
+  {
+    "name": "crw857-brace-group-write",
+    "input": "{\"command\": \"\\\"a > b\\\" >>../rel | { echo hi > /m/a)\"}",
+    "oracle": "[\"../rel\", \"/m/a)\"]",
+    "go": "[\"../rel\", \"/m/a)\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a brace group, which the oracle misses"
+  },
+  {
+    "name": "crw857-command-substitution-write",
+    "input": "{\"command\": \"a#b && x=$(echo hi > /m/a)\"}",
+    "oracle": "[\"/m/a)\"]",
+    "go": "[\"/m/a)\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a command substitution, which the oracle misses"
+  },
+  {
+    "name": "crw857-backtick-write",
+    "input": "{\"command\": \"a#b || y=`echo hi > /m/a)\"}",
+    "oracle": "[\"/m/a)\"]",
+    "go": "[\"/m/a)\", \"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a backtick substitution, which the oracle misses"
+  },
+  {
+    "name": "crw857-triple-quoted-destination",
+    "input": "{\"command\": \"\\\"/w/old.md\\\", '''/m/n''')' | bash -c 'echo hi > /m/a\\r\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[\"/m/a\", \"/m/a\\r\"]",
+    "tag": "open",
+    "record": "known-defects CRW-650/CRW-857 (port: fixed, security): the port reads a destination in a triple-quoted Python literal, which the oracle misses"
   }
 ]

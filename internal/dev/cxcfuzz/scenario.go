@@ -152,16 +152,16 @@ func confine(root, path string) (string, error) {
 		return "", fmt.Errorf("the fs path %q is absolute", path)
 	}
 	joined := filepath.Join(root, path)
-	if err := contained(root, joined); err != nil {
+	if err := confineInside(root, joined); err != nil {
 		return "", fmt.Errorf("the fs path %q %w", path, err)
 	}
 	return joined, nil
 }
 
-// contained refuses a joined path that is lexically outside root or whose existing part resolves
-// outside it. The lexical check is the one that decides a path a symlink cannot carry away, and the
-// resolve is what refuses a path that reaches out through a link standing under the root.
-func contained(root, joined string) error {
+// confineInside refuses a joined path that is lexically outside root or whose existing part
+// resolves outside it. The lexical check is the one that decides a path a symlink cannot carry away,
+// and the resolve is what refuses a path that reaches out through a link standing under the root.
+func confineInside(root, joined string) error {
 	rel, err := filepath.Rel(root, joined)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return errors.New("leaves the case root")
@@ -207,7 +207,7 @@ func linkTarget(root string, entry Entry) (string, error) {
 	if filepath.IsAbs(joined) {
 		// An absolute target is the case's own root: confine keeps refusing every absolute path for
 		// an fs entry, so the containment check is made here instead of routing it through confine.
-		if err := contained(root, joined); err != nil {
+		if err := confineInside(root, joined); err != nil {
 			return "", fmt.Errorf("the symlink %s target %q leaves the case root", entry.Path, entry.Target)
 		}
 		return joined, nil
