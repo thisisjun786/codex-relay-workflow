@@ -12,12 +12,13 @@
 // loop-arm branches. Texts are frozen byte for byte after contract/schema/cxc/name-substitution.json,
 // and a backticked command is resolved at emission, never in a constant.
 //
-// Both state writes differ from the oracle in the way the memory gate, the idle-edit counter and
-// handlePostCompact already differ: the oracle reads the session state, changes a field and writes
-// the whole state back with no lock, so an update a participating writer lands between the read and
-// the write is lost, and the write-back rebuilds the state from the reader's normalised value, so a
-// stored record the reader cannot keep is lost with it. Each write here re-reads inside the session
-// lock and refuses a rewrite the reader would not keep whole (docs/port-cxc/known-defects.md).
+// All three state writes differ from the oracle in the way the memory gate, the idle-edit counter
+// and handlePostCompact already differ: the oracle reads the session state, changes a field and
+// writes the whole state back with no lock, so an update a participating writer lands between the
+// read and the write is lost, and the write-back rebuilds the state from the reader's normalised
+// value, so a stored record the reader cannot keep is lost with it. Each write here re-reads inside
+// the session lock and refuses a rewrite the reader would not keep whole
+// (docs/port-cxc/known-defects.md).
 //
 // The handler answers the context to hand the model, not the envelope: harness.ContextOutput wraps
 // it (hook.ts:583-597 buildContextOutput), which is where the CRLF normalisation, the trim and the
@@ -78,14 +79,10 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	// `crw recall memory allow-write`; it must never break prompt handling, so a failed or
 	// refused write is dropped as the oracle's catch drops one.
 	if DetectMemoryWriteRequest(p.Prompt) {
-		_ = lock(p.Cwd, p.SessionID, func() error {
-			fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
-			if unreadable || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
-				return nil
-			}
+		_ = promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			fresh.MemoryWriteRequested = true
 			fresh.MemoryWriteTurn = promptSubmitTurn(turn)
-			return state.WriteState(p.Cwd, fresh)
+			return true
 		})
 	}
 	if !p.PabcdEnabled {
@@ -93,20 +90,17 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	}
 	current := state.ReadState(p.Cwd, p.SessionID)
 	if turn != "" && promptSubmitStateExists(p.Cwd, p.SessionID) && (current.StopBlockTurnID == nil || *current.StopBlockTurnID != turn) {
-		_ = lock(p.Cwd, p.SessionID, func() error {
-			fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
-			if unreadable || (fresh.StopBlockTurnID != nil && *fresh.StopBlockTurnID == turn) {
-				return nil
+		// The turn is judged again on the state the lock found, so a participating writer that
+		// stamped this same turn between the read above and the lock is not overwritten.
+		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
+			if fresh.StopBlockTurnID != nil && *fresh.StopBlockTurnID == turn {
+				return false
 			}
-			if !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
-				return nil
-			}
-			fresh.StopBlockTotal = 0
-			fresh.StopBlockTurnID = &turn
-			fresh.StopBlockCapNotified = false
-			current = fresh
-			return state.WriteState(p.Cwd, fresh)
-		})
+			fresh.StopBlockTotal, fresh.StopBlockTurnID, fresh.StopBlockCapNotified = 0, &turn, false
+			return true
+		}) == promptSubmitFailed {
+			return ""
+		}
 	}
 	if turn != "" && slices.Contains(current.InjectedTurns, turn) {
 		return ""
@@ -117,7 +111,7 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	// edges advance without --attest. The loose detectTrigger heuristic below runs ONLY when this
 	// returns null.
 	if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil {
-		if out, handled := promptSubmitOrchestrateCommand(p, current, turn, command); handled {
+		if out, handled := promptSubmitOrchestrateCommand(command); handled {
 			return out
 		}
 		// not handled => fall through to the loose path (e.g. suppressed interview).
@@ -162,17 +156,22 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	if !current.OrchestrationActive && loopArmRequested {
 		// 260714 wp3 (audit decision a): persist loopArmSeen OUTSIDE the turn guard - a turnless
 		// payload must not lose the flag; injectedTurns stays turn-guarded.
-		_ = lock(p.Cwd, p.SessionID, func() error {
-			fresh, unreadable := state.ReadStateStrict(p.Cwd, p.SessionID)
-			if unreadable || !promptSubmitRewritable(p.Cwd, p.SessionID, fresh) {
-				return nil
-			}
+		// The turn is appended only when the state the lock found does not already hold it: two
+		// concurrent invocations for one turn both pass the unlocked guard at hook.ts:691 and both
+		// answer the mandate, as the oracle's do, and the stored list then holds the turn once, as the
+		// oracle's does. A write that failed ends the hook in silence, as the oracle's own writeState
+		// throwing does (cli.ts's generic catch answers nothing); a write this port's rewrite guard
+		// skipped still answers the mandate, because the oracle has no such guard and would have
+		// written and answered there.
+		if promptSubmitWriteState(lock, p.Cwd, p.SessionID, func(fresh *state.State) bool {
 			fresh.LoopArmSeen = true
-			if turn != "" {
+			if turn != "" && !slices.Contains(fresh.InjectedTurns, turn) {
 				fresh.InjectedTurns = promptSubmitAppendTurn(fresh.InjectedTurns, turn)
 			}
-			return state.WriteState(p.Cwd, fresh)
-		})
+			return true
+		}) == promptSubmitFailed {
+			return ""
+		}
 		parts := []string{ResolveCRWInDirective(LoopArmDirective(platform), env)}
 		if agbrowseRequested {
 			parts = append(parts, AgbrowseSearchDirective)
@@ -197,6 +196,49 @@ func promptSubmitTurn(turn string) *string {
 func promptSubmitStateExists(cwd, sessionID string) bool {
 	_, err := os.Stat(state.StatePath(cwd, sessionID))
 	return err == nil
+}
+
+// promptSubmitWriteOutcome is what one of this unit's state writes did.
+type promptSubmitWriteOutcome int
+
+const (
+	// promptSubmitWrote: the change was applied to the state read inside the lock and the file was written.
+	promptSubmitWrote promptSubmitWriteOutcome = iota
+	// promptSubmitSkipped: nothing was written, because the file cannot be read, because the reader would
+	// not keep a stored record whole, or because the change found nothing to do. The oracle has no guard
+	// for the first two: its unlocked write would have replaced the file.
+	promptSubmitSkipped
+	// promptSubmitFailed: the session lock could not be taken, or the write itself failed. The oracle's own
+	// writeState would have thrown out of the handler, which cli.ts catches as silence.
+	promptSubmitFailed
+)
+
+// promptSubmitWriteState applies change to the session state and writes it back, reporting what it did.
+// The oracle's writes in this range read the state, change a field and write the whole state back with no
+// lock, so an update a participating writer (another hook of the same session, the memory gate, the
+// idle-edit counter) lands between the read and the write is overwritten by the stale copy and lost, and
+// the write-back rebuilds the state from the reader's normalised value, so a stored record the reader
+// cannot keep is lost with it. This writer re-reads inside the session lock, so the change lands on the
+// state a participating writer left, and it refuses to rewrite a file the reader would not keep whole
+// (the judgement handlePostCompact, the memory gate and the idle-edit counter already use). change
+// returns false to leave the state as it is.
+func promptSubmitWriteState(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) promptSubmitWriteOutcome {
+	outcome := promptSubmitSkipped
+	err := lock(cwd, sessionID, func() error {
+		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
+		if unreadable || !promptSubmitRewritable(cwd, sessionID, fresh) || !change(&fresh) {
+			return nil
+		}
+		if writeErr := state.WriteState(cwd, fresh); writeErr != nil {
+			return writeErr
+		}
+		outcome = promptSubmitWrote
+		return nil
+	})
+	if err != nil {
+		return promptSubmitFailed
+	}
+	return outcome
 }
 
 // promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores: each
@@ -226,11 +268,10 @@ func promptSubmitAppendTurn(turns []string, turn string) []string {
 
 // promptSubmitOrchestrateCommand is the seam for handleOrchestrateCommand (hook.ts:860+), the chat
 // command handler of the L3b free-pass path. That handler belongs to the issue that ports the chat
-// orchestrate command (CRW-385), so this unit only parses the command and leaves the seam: it reports
-// whether the command was handled and, when it was, the context to inject. Unhandled means control
-// falls through to the loose path, exactly as the oracle's `null` return does, which is why the
-// command fixtures of the corpus stay pending until that unit lands.
-func promptSubmitOrchestrateCommand(p PromptSubmitPayload, current state.State, turn string, command *fsm.OrchestrateCommand) (string, bool) {
-	_, _, _ = p, current, turn
+// orchestrate command, so this unit only parses the command and leaves the seam: it reports whether
+// the command was handled and, when it was, the context to inject. Unhandled means control falls
+// through to the loose path, exactly as the oracle's null return does, which is why the command
+// fixtures of the corpus stay pending until that unit lands.
+func promptSubmitOrchestrateCommand(_ *fsm.OrchestrateCommand) (string, bool) {
 	return "", false
 }

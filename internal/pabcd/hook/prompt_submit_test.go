@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,5 +413,111 @@ func TestPromptSubmitLoopArmKeepsAParticipatingWritersUpdate(t *testing.T) {
 	}
 	if !s.LoopArmSeen {
 		t.Errorf("loopArmSeen was not recorded: %+v", s)
+	}
+}
+
+// TestPromptSubmitLoopArmStoresTheTurnOnce is the concurrent case the unlocked guard cannot separate
+// (hook.ts:691 is read before the lock in both invocations): both answer the mandate, as the oracle's
+// do, and the turn is stored once, as the oracle's own write also ends up storing it.
+func TestPromptSubmitLoopArmStoresTheTurnOnce(t *testing.T) {
+	cwd := t.TempDir()
+	promptSubmitStateFile(t, cwd, "rec-s1", func(*state.State) {})
+	writer := func(cwd, sessionID string, fn func() error) error {
+		s := state.ReadState(cwd, sessionID)
+		s.InjectedTurns = []string{"rec-t1"}
+		if err := state.WriteState(cwd, s); err != nil {
+			return err
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+	answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "rec-s1", Prompt: "Run crw-loop for this task", TurnID: "rec-t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), writer)
+	if answer == "" {
+		t.Fatal("the mandate was not answered")
+	}
+	if s := state.ReadState(cwd, "rec-s1"); len(s.InjectedTurns) != 1 || s.InjectedTurns[0] != "rec-t1" {
+		t.Errorf("the turn was stored %d times: %+v", len(s.InjectedTurns), s.InjectedTurns)
+	}
+}
+
+// TestPromptSubmitLoopArmFailsSilentOnAWriteFailure is one half of the write decision: a write that
+// failed ends the hook in silence, as the oracle's own writeState throwing does, so an unrecorded
+// mandate is never answered.
+func TestPromptSubmitLoopArmFailsSilentOnAWriteFailure(t *testing.T) {
+	cwd := t.TempDir()
+	promptSubmitStateFile(t, cwd, "rec-s1", func(*state.State) {})
+	calls := 0
+	lock := func(cwd, sessionID string, fn func() error) error {
+		calls++
+		if calls == 2 {
+			return errors.New("lock unavailable")
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+	answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "rec-s1", Prompt: "Run crw-loop for this task", TurnID: "rec-t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), lock)
+	if answer != "" {
+		t.Errorf("a failed loop-arm write answered %q", answer)
+	}
+	if calls != 2 {
+		t.Errorf("the lock was taken %d times, want 2", calls)
+	}
+}
+
+// TestPromptSubmitLoopArmAnswersWhenTheStateCannotBeRewritten is the other half: the port's rewrite
+// guard skips the write of a state the reader would not keep whole, and the mandate is still
+// answered, because the oracle has no such guard and would have written and answered there.
+func TestPromptSubmitLoopArmAnswersWhenTheStateCannotBeRewritten(t *testing.T) {
+	cwd := t.TempDir()
+	if _, err := state.EnsureState(cwd, "rec-s1"); err != nil {
+		t.Fatal(err)
+	}
+	path := state.StatePath(cwd, "rec-s1")
+	const corrupt = "{ not a state\n"
+	if err := os.WriteFile(path, []byte(corrupt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptSubmitAnswer(t, cwd, "rec-s1", "rec-t1", "Run crw-loop for this task", true)
+	if !strings.HasPrefix(answer, "[crw: LOOP — orchestrate arming mandate (ORCH-MANDATE-01)]") {
+		t.Errorf("the mandate was not answered: %q", answer)
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != corrupt {
+		t.Errorf("the unreadable state was rewritten: %q, %v", after, err)
+	}
+}
+
+// TestPromptSubmitLoopArmIsSilentWhenTheWriteDoesNotLand: the mandate is not emitted unrecorded, so a
+// state this port refuses to rewrite, or a lock it cannot take, answers nothing - which is what the
+// oracle's own throwing writeState produced, since cli.ts catches it as silence.
+func TestPromptSubmitLoopArmIsSilentWhenTheWriteDoesNotLand(t *testing.T) {
+	cwd := t.TempDir()
+	if answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "Run crw-loop for this task", TurnID: "t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), promptSubmitFailingLock); answer != "" {
+		t.Errorf("a lock that cannot be taken answered %q", answer)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName)); err == nil {
+		t.Error("a failed write created state")
+	}
+	// A state the reader cannot keep whole is left as it is, and the mandate is suppressed with it.
+	promptSubmitStateFile(t, cwd, "s1", func(*state.State) {})
+	const corrupt = "{ not a state\n"
+	if err := os.WriteFile(state.StatePath(cwd, "s1"), []byte(corrupt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if answer := promptSubmitAnswer(t, cwd, "s1", "t2", "Run crw-loop for this task", true); answer != "" {
+		t.Errorf("a refused write still answered %q", answer)
+	}
+	if after, err := os.ReadFile(state.StatePath(cwd, "s1")); err != nil || string(after) != corrupt {
+		t.Errorf("the refused state was rewritten: %q, %v", after, err)
+	}
+}
+
+// TestPromptSubmitMarkerFailureIsDropped: the marker write is the one the oracle wraps in try/catch,
+// so a lock that cannot be taken records nothing and the prompt still works.
+func TestPromptSubmitMarkerFailureIsDropped(t *testing.T) {
+	cwd := t.TempDir()
+	answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "Remember this: the deploy key lives in the vault.", TurnID: "t1"}, "", promptSubmitHost(cwd), promptSubmitFailingLock)
+	if answer != "" {
+		t.Errorf("answer %q", answer)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName)); err == nil {
+		t.Error("a failed marker write created state")
 	}
 }
