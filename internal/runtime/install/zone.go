@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,8 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -43,6 +46,19 @@ var stateBackupStep = func(step string) error { return nil }
 // of its own and not stateBackupStep: the tests that replace that one act after the copy, and calling the same
 // one twice would change them.
 var stateBackupListed = func() error { return nil }
+
+// stateBackupVerified is a seam: it is called once every byte of the copy is in place and verified, and before the
+// integrity gate opens its scratch duplicate. A test damages the copy here to prove the gate refuses it (CRW-862).
+var stateBackupVerified = func() error { return nil }
+
+// integrityCheckPath is a seam: it opens the scratch duplicate and returns SQLite's PRAGMA integrity_check answer.
+// nil runs the real check. A test that cannot corrupt a real store substitutes the answer instead.
+var integrityCheckPath = sqliteIntegrityCheck
+
+// stateBackupWalk is a seam: it is called for each entry of a listing after the directory was read and before the
+// entry's own information is asked, which is where another connection to the store makes a sidecar go. It is called
+// with the entry's path.
+var stateBackupWalk = func(path string) error { return nil }
 
 // syncDirectory makes a directory's entries durable; a seam so a test can see which directories were synced and when.
 var syncDirectory = syncPath
@@ -98,19 +114,31 @@ func storeSidecarWal(copied, gone, appeared bool) string {
 	}
 }
 
-// isStoreShm is whether a listing's path is the store's shared-memory index, which a listing leaves out entirely: it
-// comes and goes with any other connection to the store, and SQLite rebuilds it from the log on open.
-func isStoreShm(path string) bool { return path == shmSidecar }
+// storeSidecars are the store's two sidecars as SQLite resolves them: the path store.InPlaceRead
+// resolves the database to, with -wal and -shm appended. A store whose database is a link has its
+// sidecars beside the file the link names, wherever that lies, so every reading recognises them by
+// this resolved path and never by the top-level name alone (CRW-862, PR #735 P1 2). When the store's
+// path cannot be resolved the state directory's own two names are used, which is what a listing did
+// before the identity was resolved.
+type storeSidecars struct{ wal, shm string }
 
-// isStoreSidecar is whether a listing's path is one of the store's two sidecars, which the comparison of two listings
-// leaves out: neither is a fact about the state directory, and a log that a checkpoint rewrote is caught by the store's
-// own file, which stays in the comparison.
-func isStoreSidecar(path string) bool { return path == walSidecar || path == shmSidecar }
+// sidecarsFor is the store's sidecars: the resolved database path's -wal and -shm, or the state
+// directory's own two names when the store's path cannot be resolved.
+func sidecarsFor(source, dbPath string) storeSidecars {
+	if resolved, _, err := store.InPlaceRead(dbPath); err == nil {
+		return storeSidecars{wal: resolved + "-wal", shm: resolved + "-shm"}
+	}
+	return storeSidecars{wal: filepath.Join(source, walSidecar), shm: filepath.Join(source, shmSidecar)}
+}
 
-// listingHas is whether a listing holds path.
-func listingHas(entries []backedUp, path string) bool {
+func (s storeSidecars) isWal(path string) bool { return path == s.wal }
+func (s storeSidecars) isShm(path string) bool { return path == s.shm }
+func (s storeSidecars) is(path string) bool    { return s.isWal(path) || s.isShm(path) }
+
+// listingHasWal is whether a listing holds the store's write-ahead log.
+func listingHasWal(entries []backedUp) bool {
 	for _, e := range entries {
-		if e.Path == path {
+		if e.storeWal {
 			return true
 		}
 	}
@@ -126,6 +154,8 @@ type backedUp struct {
 	SHA256     string `json:"sha256,omitempty"`
 	LinkTarget string `json:"linkTarget,omitempty"`
 	source     string // where the bytes are read from
+	storeWal   bool   // the store's write-ahead log, whichever path it was resolved to (CRW-862)
+	vanished   bool   // the store's log went between the walk's read and its own information (CRW-862, PR #735 P1 3)
 }
 
 // swapGate is OPS-4.4 asked of the relay the record selects now (the candidate's own on a
@@ -237,6 +267,11 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		if err := ctx.Err(); err != nil {
 			return failure(true, "interrupted while copying: %v", err)
 		}
+		if e.vanished {
+			// the log went between the listing's read and its own information: it is recorded as gone before its copy
+			walGone = true
+			continue
+		}
 		target := filepath.Join(dest, filepath.FromSlash(e.Path))
 		if e.Kind == "dir" {
 			if err := os.Mkdir(target, 0o700); err != nil {
@@ -250,14 +285,14 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			// The store's log was checkpointed away between the listing and this copy: the store's own file still has
 			// to be what was read, and that check is kept, so a log that went is not a refusal. Every other file that
 			// goes between the two readings still refuses.
-			if e.Path == walSidecar && errors.Is(err, fs.ErrNotExist) {
+			if e.storeWal && errors.Is(err, fs.ErrNotExist) {
 				walGone = true
 				continue
 			}
 			return failure(true, "%s could not be copied: %v", e.Path, err)
 		}
 		e.SHA256 = digest
-		if e.Path == walSidecar {
+		if e.storeWal {
 			// Only the log's entry takes the size of the bytes copied. Every other file keeps the size of the first
 			// listing, so a file that changed size between that listing and its copy is still a change the comparison
 			// below catches: the store's log is the one file another connection may rewrite under the copy, and its
@@ -287,7 +322,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		return failure(true, "the state directory could not be read again: %v", err)
 	}
 	// The appeared reading is the log absent from the first listing and present in the second, so it was not copied.
-	walAppeared := !walCopied && !walGone && !listingHas(entries, walSidecar) && listingHas(again, walSidecar)
+	walAppeared := !walCopied && !walGone && !listingHasWal(entries) && listingHasWal(again)
 	// A log that was not copied but holds frames in the second listing is a commit the copy does not hold. Another
 	// connection wrote it while the copy was being made, and a commit that stays in the log does not touch
 	// relay.sqlite3 until a checkpoint, so the digest check below would not see it: the backup would report success
@@ -295,7 +330,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	// tolerated, which is the case this route exists for: a read-only open of a store no connection holds leaves one.
 	if !walCopied {
 		for _, e := range again {
-			if e.Path == walSidecar && e.Size > walHeaderBytes {
+			if e.storeWal && e.Size > walHeaderBytes {
 				return failure(true, "relay.sqlite3-wal holds commits that were not copied (%d bytes appeared or were left after the first listing), so the backup is not a copy of any one moment", e.Size)
 			}
 		}
@@ -309,7 +344,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		}
 		now, err := digestOf(e.source)
 		switch {
-		case err != nil && e.Path == walSidecar && errors.Is(err, fs.ErrNotExist):
+		case err != nil && e.storeWal && errors.Is(err, fs.ErrNotExist):
 			// The log was checkpointed away by the time of the verification, so the source cannot be compared; that is
 			// not a refusal. The copy is still read below: skipping the whole entry would let a copy that was damaged
 			// while its source went pass as a good backup.
@@ -355,12 +390,25 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			}
 		}
 	}
+	if err := stateBackupVerified(); err != nil {
+		return failure(true, "%v", err)
+	}
+	// The integrity gate (CRW-862, docs/port/decisions.md section 83 item 4 and slice S7): the copy is only a
+	// restore candidate when PRAGMA integrity_check passes on it. The check runs on a scratch duplicate beside the
+	// copy, never on the copy itself, because opening a database checkpoints its write-ahead log and would change the
+	// bytes the backup holds. The duplicate is removed either way.
+	integrity, err := integrityCheckPath(dest, copied)
+	restoreCandidate := err == nil
+	if err != nil && integrity == "" {
+		integrity = err.Error()
+	}
 	aggregate, files, bytes := aggregateOf(copied)
 	manifest := map[string]any{
 		"schema": "crw-state-backup/1", "source": source, "destination": dest, "issue": o.Issue, "at": o.stamp(),
 		"files": files, "bytes": bytes, "aggregateDigest": aggregate, "skipped": skipped, "entries": copied,
-		"storeSidecars": map[string]string{shmSidecar: "not copied: the WAL index SQLite rebuilds from the log on open", walSidecar: storeSidecarWal(walCopied, walGone, walAppeared)},
-		"meaning":       "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte",
+		"storeSidecars":  map[string]string{shmSidecar: "not copied: the WAL index SQLite rebuilds from the log on open", walSidecar: storeSidecarWal(walCopied, walGone, walAppeared)},
+		"integrityCheck": integrity, "restoreCandidate": restoreCandidate,
+		"meaning": "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte",
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -391,8 +439,17 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			break
 		}
 	}
+	if !restoreCandidate {
+		// The copy and its manifest are there and stay there: the manifest is what records that this artifact is not a
+		// restore candidate, so the refusal carries it rather than a partial copy with no record.
+		err := fmt.Errorf("the copy is not a restore candidate: PRAGMA integrity_check answered %q", integrity)
+		return Object{field("requested", true), field("made", false), field("destination", dest), field("partial", true), field("kept", true),
+			field("manifest", manifestPath), field("files", files), field("bytes", bytes), field("aggregateDigest", aggregate),
+			field("integrityCheck", integrity), field("restoreCandidate", false), field("error", err.Error())}, err
+	}
 	return Object{field("requested", true), field("made", true), field("destination", dest), field("manifest", manifestPath), field("source", source),
 		field("files", files), field("bytes", bytes), field("skipped", strs(skipped)), field("aggregateDigest", aggregate), field("kept", true), field("at", o.stamp()),
+		field("integrityCheck", integrity), field("restoreCandidate", restoreCandidate),
 		field("meaning", "the state directory was copied, byte for byte, after the daemon and in-flight cells answered and before the swap; nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)")}, nil
 }
 
@@ -476,11 +533,15 @@ func enoughRoom(parent string, need int64) error {
 
 // listState walks the state directory without following links: directories, regular files, and symbolic links to
 // regular files (whose bytes are copied under the link's name, since a link alone would back up nothing). The store's
-// own files are named as SQLite resolves them: when relay.sqlite3 is a link, the real file's -wal is copied beside it
-// as relay.sqlite3-wal, so a restore opens with the commits only the log held. Its -shm is not listed at all: SQLite
+// own two sidecars are recognised by the path SQLite resolves the database to, not by the top-level name: a store
+// whose relay.sqlite3 is a link to a file inside the state directory has its -wal and -shm beside that file, and the
+// walk leaves the -shm out and hands the -wal to the sidecar rules there as it does at the top level (CRW-862, PR
+// #735 P1 2). Whichever path the log was resolved to, it is listed under the restore-compatible name
+// relay.sqlite3-wal, so the copy opens with the commits only the log held. Its -shm is not listed at all: SQLite
 // rebuilds that index from the log on open, so a backup neither copies it nor refuses when one appears or goes. A
 // socket, a FIFO or a device is listed as skipped. A link to anything else is a refusal.
 func listState(source, dbPath string) ([]backedUp, []string, error) {
+	sidecars := sidecarsFor(source, dbPath)
 	var entries []backedUp
 	var skipped []string
 	err := filepath.WalkDir(source, func(path string, d fs.DirEntry, err error) error {
@@ -495,18 +556,39 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 		if rel == "." {
 			return nil
 		}
-		if isStoreShm(rel) {
+		// The store's shared-memory index is never listed, wherever SQLite resolved it to. Its write-ahead log is
+		// listed under the restore-compatible name when it is the state directory's own; a log beside a linked store
+		// is registered below, under that same name, so the walk leaves it here.
+		if sidecars.isShm(path) {
 			return nil
+		}
+		storeWal := sidecars.isWal(path)
+		if storeWal && rel != walSidecar {
+			return nil
+		}
+		if err := stateBackupWalk(path); err != nil {
+			return err
 		}
 		info, err := d.Info()
 		if err != nil {
+			// Another connection to the store may make its sidecars go between the walk's ReadDir and this Info. A log
+			// or index of the store that went there is recorded as gone before its copy, not a refusal; every other
+			// file's ENOENT, and every other error, still refuses (CRW-862, PR #735 P1 3).
+			if errors.Is(err, fs.ErrNotExist) && (storeWal || sidecars.isShm(path)) {
+				if storeWal {
+					// the log is recorded in the listing as gone before its copy, so the manifest's reading and the copy
+					// loop see what happened even though there is nothing left to copy
+					entries = append(entries, backedUp{Path: rel, Kind: "file", storeWal: true, vanished: true})
+				}
+				return nil
+			}
 			return err
 		}
 		switch mode := info.Mode(); {
 		case mode.IsDir():
 			entries = append(entries, backedUp{Path: rel, Kind: "dir", Mode: uint32(mode.Perm()), CopyMode: uint32(copyMode(true, mode.Perm()))})
 		case mode.IsRegular():
-			entries = append(entries, backedUp{Path: rel, Kind: "file", Size: info.Size(), Mode: uint32(mode.Perm()), CopyMode: uint32(copyMode(false, mode.Perm())), source: path})
+			entries = append(entries, backedUp{Path: rel, Kind: "file", Size: info.Size(), Mode: uint32(mode.Perm()), CopyMode: uint32(copyMode(false, mode.Perm())), source: path, storeWal: storeWal})
 		case mode&fs.ModeSymlink != 0:
 			target, err := os.Readlink(path)
 			if err != nil {
@@ -520,7 +602,7 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 			if err != nil || !real.Mode().IsRegular() {
 				return fmt.Errorf("%s is a link to %s, which is not a regular file, so there is no byte-identical copy of it to make", rel, target)
 			}
-			entries = append(entries, backedUp{Path: rel, Kind: "link-file", Size: real.Size(), Mode: uint32(real.Mode().Perm()), CopyMode: uint32(copyMode(false, real.Mode().Perm())), LinkTarget: target, source: resolved})
+			entries = append(entries, backedUp{Path: rel, Kind: "link-file", Size: real.Size(), Mode: uint32(real.Mode().Perm()), CopyMode: uint32(copyMode(false, real.Mode().Perm())), LinkTarget: target, source: resolved, storeWal: storeWal})
 		default:
 			skipped = append(skipped, rel+" ("+kindOf(mode)+")")
 		}
@@ -529,25 +611,21 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// the store's log file, when its database is a link to a file elsewhere (its -shm is never listed)
+	// the store's log file, when its database is a link to a file elsewhere in the state directory or outside it (its
+	// -shm is never listed): it is copied beside the link's own copy under the restore-compatible name
 	if resolved, _, err := store.InPlaceRead(dbPath); err == nil && resolved != filepath.Join(source, "relay.sqlite3") {
 		have := map[string]bool{}
 		for _, e := range entries {
 			have[e.Path] = true
 		}
-		for _, suffix := range []string{"-wal"} {
-			info, err := os.Lstat(resolved + suffix)
-			if err != nil {
-				continue
-			}
-			name := "relay.sqlite3" + suffix
+		if info, err := os.Lstat(resolved + "-wal"); err == nil {
 			if !info.Mode().IsRegular() {
-				return nil, nil, fmt.Errorf("%s is not a regular file, so the store's %s cannot be copied", resolved+suffix, suffix)
+				return nil, nil, fmt.Errorf("%s is not a regular file, so the store's write-ahead log cannot be copied", resolved+"-wal")
 			}
-			if have[name] {
-				return nil, nil, fmt.Errorf("the state directory already holds %s, which the store's log %s would have to be copied over", name, resolved+suffix)
+			if have[walSidecar] {
+				return nil, nil, fmt.Errorf("the state directory already holds %s, which the store's log %s would have to be copied over", walSidecar, resolved+"-wal")
 			}
-			entries = append(entries, backedUp{Path: name, Kind: "link-file", Size: info.Size(), Mode: uint32(info.Mode().Perm()), CopyMode: uint32(copyMode(false, info.Mode().Perm())), LinkTarget: resolved + suffix, source: resolved + suffix})
+			entries = append(entries, backedUp{Path: walSidecar, Kind: "link-file", Size: info.Size(), Mode: uint32(info.Mode().Perm()), CopyMode: uint32(copyMode(false, info.Mode().Perm())), LinkTarget: resolved + "-wal", source: resolved + "-wal", storeWal: true})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
@@ -580,39 +658,49 @@ func kindOf(mode fs.FileMode) string {
 
 // listingDiff is how two readings of the state directory differ, or "".
 func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []string) string {
-	// The store's two sidecars are out of the comparison: they come and go with any other connection to the store,
-	// and neither is a fact about the state directory. relay.sqlite3 itself stays in, so a checkpoint that rewrote
-	// it under the copy is still a change.
-	drop := func(entries []backedUp) []backedUp {
-		kept := make([]backedUp, 0, len(entries))
-		for _, e := range entries {
-			if isStoreSidecar(e.Path) {
-				continue
-			}
-			kept = append(kept, e)
-		}
-		return kept
-	}
-	a, b = drop(a), drop(b)
-	// the resolved file the bytes come from is part of what a reading says: a link in the chain that was pointed
-	// elsewhere between the two readings is a change, even where the new file is the same size
-	key := func(e backedUp) string {
+	// The store's write-ahead log is compared by its identity and not by its size or its presence: another
+	// connection may checkpoint it away and write a fresh one under the copy, so its size and its coming and going
+	// belong to the sidecar rules (the manifest's reading, and the frames-left-uncopied refusal). Its identity -
+	// which entry it is, whether it is a link, and which file the bytes come from - is a fact about the copy, and a
+	// log whose link target or resolved source moved between the two readings refuses (CRW-862, PR #735 P1 1). The
+	// store's shared-memory index is never listed. relay.sqlite3 itself and every other file keep the full key,
+	// size included, so a store written under the copy is still a change.
+	full := func(e backedUp) string {
 		return fmt.Sprintf("%s|%s|%d|%s|%s", e.Path, e.Kind, e.Size, e.LinkTarget, e.source)
 	}
+	identity := func(e backedUp) string {
+		return fmt.Sprintf("%s|%s|%s|%s", e.Path, e.Kind, e.LinkTarget, e.source)
+	}
+	var walA, walB *string
 	seen := map[string]bool{}
 	for _, e := range a {
-		seen[key(e)] = true
+		if e.storeWal {
+			value := identity(e)
+			walA = &value
+			continue
+		}
+		seen[full(e)] = true
 	}
 	var changed []string
 	for _, e := range b {
-		if !seen[key(e)] {
+		if e.storeWal {
+			value := identity(e)
+			walB = &value
+			continue
+		}
+		if !seen[full(e)] {
 			changed = append(changed, "new or changed: "+e.Path)
 		}
-		delete(seen, key(e))
+		delete(seen, full(e))
 	}
 	for k := range seen {
 		path, _, _ := strings.Cut(k, "|")
 		changed = append(changed, "gone or changed: "+path)
+	}
+	// the log is a change only when both readings hold it and its identity moved: its absence from one reading is
+	// the churn the sidecar rules already carry
+	if walA != nil && walB != nil && *walA != *walB {
+		changed = append(changed, "the store's write-ahead log changed: "+walSidecar)
 	}
 	if strings.Join(askipped, "\n") != strings.Join(bskipped, "\n") {
 		changed = append(changed, "an entry that is not a file appeared or went")
@@ -699,6 +787,70 @@ func digestOf(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// sqliteIntegrityCheck is the integrity gate of a backup copy: it duplicates the copied store beside the copy and
+// asks SQLite PRAGMA integrity_check on the duplicate. The copy itself is never opened: opening a database
+// checkpoints its write-ahead log and would change the bytes the backup holds, so the duplicate is the one SQLite
+// touches. The duplicate holds the copy's log too when the backup carries one, so a store whose commits live only
+// in the log is checked with them. The duplicate is removed either way, and the copy's bytes are not touched. The
+// answer is SQLite's own, joined when it is several rows; an error is why the copy is not a restore candidate.
+func sqliteIntegrityCheck(dest string, copied []backedUp) (string, error) {
+	scratch, err := os.MkdirTemp(filepath.Dir(dest), ".crw-integrity-")
+	if err != nil {
+		return "", fmt.Errorf("the scratch directory for the integrity check could not be created: %v", err)
+	}
+	defer os.RemoveAll(scratch)
+	var database string
+	for _, e := range copied {
+		if e.Kind == "dir" || !strings.HasPrefix(e.Path, "relay.sqlite3") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dest, filepath.FromSlash(e.Path)))
+		if err != nil {
+			return "", fmt.Errorf("the copy of %s could not be read for the integrity check: %v", e.Path, err)
+		}
+		target := filepath.Join(scratch, filepath.Base(e.Path))
+		if err := os.WriteFile(target, raw, 0o600); err != nil {
+			return "", fmt.Errorf("the integrity check's duplicate of %s could not be written: %v", e.Path, err)
+		}
+		if e.Path == "relay.sqlite3" {
+			database = target
+		}
+	}
+	if database == "" {
+		return "", errors.New("the copy holds no relay.sqlite3, so there is nothing for the integrity check to open")
+	}
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		return "", fmt.Errorf("the integrity check could not open the copy: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	rows, err := db.Query("PRAGMA integrity_check")
+	if err != nil {
+		return "", fmt.Errorf("the integrity check could not run: %v", err)
+	}
+	defer rows.Close()
+	var answers []string
+	for rows.Next() {
+		var answer string
+		if err := rows.Scan(&answer); err != nil {
+			return "", fmt.Errorf("the integrity check's answer could not be read: %v", err)
+		}
+		answers = append(answers, answer)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("the integrity check did not finish: %v", err)
+	}
+	if len(answers) == 0 {
+		return "", errors.New("the integrity check answered nothing")
+	}
+	answer := strings.Join(answers, "; ")
+	if answer != "ok" {
+		return answer, fmt.Errorf("PRAGMA integrity_check answered %q", answer)
+	}
+	return answer, nil
 }
 
 func syncPath(path string) error {
