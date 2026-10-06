@@ -61,9 +61,9 @@ func preHandlerServer(t *testing.T) (string, <-chan struct{}) {
 	return listener.Addr().String(), reached
 }
 
-// rawExchange writes one raw request and reads the whole response, to EOF, under a deadline.
+// listenerRawExchange writes one raw request and reads the whole response, to EOF, under a deadline.
 // Reaching EOF is itself the proof that the connection was closed rather than left open.
-func rawExchange(t *testing.T, address, request string) string {
+func listenerRawExchange(t *testing.T, address, request string) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
@@ -81,8 +81,8 @@ func rawExchange(t *testing.T, address, request string) string {
 	return string(data)
 }
 
-// statusLine returns the first line of a raw response, trimmed.
-func statusLine(response string) string {
+// listenerStatusLine returns the first line of a raw response, trimmed.
+func listenerStatusLine(response string) string {
 	line, _, _ := strings.Cut(response, "\r\n")
 	return strings.TrimSpace(line)
 }
@@ -103,8 +103,8 @@ func TestPreHandlerResponsesArePinned(t *testing.T) {
 		{"an unsupported protocol version", "GET /api/thing HTTP/2.0\r\nHost: " + address + "\r\n\r\n", "505"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			response := rawExchange(t, address, test.request)
-			if got := statusLine(response); !strings.HasPrefix(got, "HTTP/1.1 "+test.want) {
+			response := listenerRawExchange(t, address, test.request)
+			if got := listenerStatusLine(response); !strings.HasPrefix(got, "HTTP/1.1 "+test.want) {
 				t.Fatalf("status line %q, want a %s", got, test.want)
 			}
 			// The guard sets Content-Security-Policy before any other logic, so its presence is
@@ -135,7 +135,7 @@ func TestPreHandlerControlExpectContinueReachesTheHandler(t *testing.T) {
 	request := "POST /api/thing HTTP/1.1\r\nHost: " + address + "\r\nExpect: 100-continue\r\n" +
 		"Content-Type: application/json\r\n" + tokenHeader + ": " + listenerToken + "\r\n" +
 		"Content-Length: 2\r\nConnection: close\r\n\r\n{}"
-	response := rawExchange(t, address, request)
+	response := listenerRawExchange(t, address, request)
 	if !strings.Contains(strings.ToLower(response), "content-security-policy") {
 		t.Fatalf("the 100-continue control did not reach the Handler: %q", response)
 	}
@@ -148,8 +148,8 @@ func TestGuardRefusalOnTheListenerCarriesSecurityHeaders(t *testing.T) {
 	request := "POST /api/thing HTTP/1.1\r\nHost: " + address + "\r\n" +
 		"Content-Type: application/json\r\n" + tokenHeader + ": wrong-token\r\n" +
 		"Content-Length: 2\r\nConnection: close\r\n\r\n{}"
-	response := rawExchange(t, address, request)
-	if got := statusLine(response); !strings.HasPrefix(got, "HTTP/1.1 403") {
+	response := listenerRawExchange(t, address, request)
+	if got := listenerStatusLine(response); !strings.HasPrefix(got, "HTTP/1.1 403") {
 		t.Fatalf("status line %q, want a 403", got)
 	}
 	if !strings.Contains(strings.ToLower(response), "content-security-policy") {

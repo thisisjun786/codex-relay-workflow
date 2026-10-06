@@ -14,9 +14,19 @@ import (
 	"strings"
 )
 
-// The decided answers this file enforces. Every response carries the three headers below;
-// an /api/ response is never cached; no response carries a CORS allow header, because the
-// screen is served from this same origin and a cross-origin caller is refused instead.
+// The decided answers this file enforces. Every response the Handler writes carries the three
+// headers below; an /api/ response is never cached; no response carries a CORS allow header,
+// because the screen is served from this same origin and a cross-origin caller is refused
+// instead.
+//
+// The one exception is the responses net/http writes by itself before it calls the Handler: a
+// missing, repeated or malformed Host, an Expect other than 100-continue, an unsupported
+// protocol version, or a request line it cannot parse. net/http offers no hook to add a header
+// to those, and this package deliberately adds no HTTP parser, no connection wrapper that
+// rewrites response bytes and no second listener to reach them. The boundary is acceptable
+// because a browser cannot make such a request (Host and Expect are forbidden header names in
+// fetch), the body is only net/http's fixed status text, no path, static file or token is
+// touched, and the connection is closed. internal/gui/listener_test.go pins it.
 const (
 	cspHeader     = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'"
 	referrerValue = "no-referrer"
@@ -63,8 +73,10 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code string)
 	writeJSON(w, r, status, jsonError{Error: code})
 }
 
-// setSecurityHeaders sets the headers every response carries, before the status is written.
-// A /api/ response is no-store; a static response keeps its own cache policy.
+// setSecurityHeaders sets the headers every response the Handler writes carries, before the
+// status is written. A /api/ response is no-store; a static response keeps its own cache
+// policy. A response net/http writes before it calls the Handler never reaches this function;
+// the file-head comment names that exception and why it is accepted.
 func setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", cspHeader)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -154,6 +166,18 @@ func tokenMatches(presented, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(token)) == 1
 }
 
+// headerLines returns every line the named header field carries, and whether the field is
+// present at all. http.Header is a map keyed by the canonical spelling, and the token header
+// is sent as X-CRW-Token but stored as X-Crw-Token, so the lookup goes through Values, which
+// canonicalises its argument; a raw map index would silently miss it. A field present with an
+// empty value is present with one empty line, which the value checks refuse; a field with two
+// lines is refused before any value is compared. This reads a header field, not r.Host:
+// net/http removes Host from r.Header once it promotes it, so the Host check reads r.Host.
+func headerLines(h http.Header, name string) (lines []string, present bool) {
+	lines = h.Values(name)
+	return lines, lines != nil
+}
+
 // readBody reads a write body up to the 1 MiB limit and leaves the bytes on the request for
 // the handler. A declared Content-Length over the limit is refused at once (CXC's own
 // pre-check, local-http.ts:44-49); the read itself is bounded, so a chunked body that lies
@@ -182,10 +206,12 @@ func readBody(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// guard is the one security boundary: it sets the headers every response carries, refuses a
-// traversal path, checks the Host on every request, and checks the write rules (content type,
-// token and, when present, Origin) for every method other than GET and HEAD. It runs before
-// any route or static handler, so a later issue's handler cannot be reached without passing it.
+// guard is the one security boundary: it sets the headers every response it writes carries,
+// refuses a traversal path, checks the Host on every request, and checks the write rules
+// (content type, token and, when present, Origin) for every method other than GET and HEAD. It
+// runs before any route or static handler, so a later issue's handler cannot be reached without
+// passing it. A response net/http writes before it calls this function is the one exception to
+// the header contract; the file-head comment states why it is accepted.
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w, r)
@@ -202,15 +228,24 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if !contentTypeIsJSON(r.Header.Get("Content-Type")) {
+			// Each write header is counted by line as well as checked by value: a field with
+			// two lines is refused even when every line is individually valid, because the
+			// decided answer treats a repeated field as a malformed write rather than a
+			// value to reconcile. A missing Content-Type or token fails the length check,
+			// as its value check did before. An empty Origin is present with one empty line,
+			// which originAllowed refuses; an absent Origin leaves the token to decide.
+			contentTypes, _ := headerLines(r.Header, "Content-Type")
+			if len(contentTypes) != 1 || !contentTypeIsJSON(contentTypes[0]) {
 				writeError(w, r, http.StatusForbidden, codeForbidden)
 				return
 			}
-			if !tokenMatches(r.Header.Get(tokenHeader), s.token) {
+			tokens, _ := headerLines(r.Header, tokenHeader)
+			if len(tokens) != 1 || !tokenMatches(tokens[0], s.token) {
 				writeError(w, r, http.StatusForbidden, codeForbidden)
 				return
 			}
-			if origin := r.Header.Get("Origin"); origin != "" && !originAllowed(origin, s.port) {
+			origins, originPresent := headerLines(r.Header, "Origin")
+			if originPresent && (len(origins) != 1 || !originAllowed(origins[0], s.port)) {
 				writeError(w, r, http.StatusForbidden, codeForbidden)
 				return
 			}
