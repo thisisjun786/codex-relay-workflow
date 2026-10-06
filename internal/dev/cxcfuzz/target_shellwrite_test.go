@@ -256,3 +256,63 @@ func TestShellwriteGeneratorEmitsTheRequiredGroups(t *testing.T) {
 		}
 	}
 }
+
+// c2 (CRW-857): a program the generator emits must be one a real shell hands to the interpreter
+// unchanged. A single-quoted argument holding an unescaped single quote would end at that quote,
+// so the interpreter would receive a truncated program and the form would never reach the write
+// the issue asked for. The quoting is checked structurally, with no shell run: a single-quoted
+// form holds no single quote at all, and a double-quoted one escapes every character the shell
+// still reads inside double quotes.
+func TestShellwriteShellQuoteSurvivesTheDestination(t *testing.T) {
+	for _, dest := range []string{"/m/a", "/m/a'b", `/m/a"b`, "/m/a$b", "/m/a`b", `/m/a\b`, "/m/a b", "rel"} {
+		for _, literal := range shellWritePythonLiteralForms(dest) {
+			program := "import os; os.rename(\"/w/old.md\", " + literal + ")"
+			quoted := shellWriteShellQuote(program)
+			switch {
+			case strings.HasPrefix(quoted, "'"):
+				if !strings.HasSuffix(quoted, "'") {
+					t.Fatalf("the single-quoted form is unterminated: %q", quoted)
+				}
+				if inner := quoted[1 : len(quoted)-1]; strings.Contains(inner, "'") {
+					t.Fatalf("a single quote inside a single-quoted argument ends it early: %q", quoted)
+				}
+			case strings.HasPrefix(quoted, "\""):
+				if !strings.HasSuffix(quoted, "\"") {
+					t.Fatalf("the double-quoted form is unterminated: %q", quoted)
+				}
+				inner := quoted[1 : len(quoted)-1]
+				for i := 0; i < len(inner); i++ {
+					if inner[i] != '\\' {
+						continue
+					}
+					if i+1 >= len(inner) {
+						t.Fatalf("a trailing backslash escapes the closing quote: %q", quoted)
+					}
+					i++
+				}
+			default:
+				t.Fatalf("the program is not quoted at all: %q", quoted)
+			}
+		}
+	}
+}
+
+// c2 (CRW-857): the generated programs carry the shell quoting, so the class the issue named
+// reaches the campaigns as a command a shell could run rather than as truncated text.
+func TestShellwriteGeneratorQuotesItsPrograms(t *testing.T) {
+	rng := rand.New(rand.NewSource(17))
+	for i := 0; i < 5000; i++ {
+		program := shellWriteProgram(rng, shellWritePathFragments())
+		prefix := "python3 -c "
+		if !strings.HasPrefix(program, prefix) {
+			continue
+		}
+		quoted := program[len(prefix):]
+		if !strings.HasPrefix(quoted, "'") && !strings.HasPrefix(quoted, "\"") {
+			t.Fatalf("a python3 -c program is not shell-quoted: %q", program)
+		}
+		if strings.HasPrefix(quoted, "'") && strings.Count(quoted, "'") != 2 {
+			t.Fatalf("a single-quoted program holds a stray single quote: %q", program)
+		}
+	}
+}

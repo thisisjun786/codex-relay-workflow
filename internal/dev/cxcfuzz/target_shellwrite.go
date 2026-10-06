@@ -251,17 +251,31 @@ func shellWriteProgram(rng *rand.Rand, paths []string) string {
 	// that only reads the first argument of a call names the source and misses the write.
 	for _, literal := range shellWritePythonLiteralForms(dest) {
 		programs = append(programs,
-			"python3 -c 'import os; os.rename(\"/w/old.md\", "+literal+")'",
-			"python3 -c 'import shutil; shutil.copy(\"/w/old.md\", "+literal+")'",
-			"python3 -c 'import shutil; shutil.copyfile(\"/w/old.md\", "+literal+")'",
+			"python3 -c "+shellWriteShellQuote("import os; os.rename(\"/w/old.md\", "+literal+")"),
+			"python3 -c "+shellWriteShellQuote("import shutil; shutil.copy(\"/w/old.md\", "+literal+")"),
+			"python3 -c "+shellWriteShellQuote("import shutil; shutil.copyfile(\"/w/old.md\", "+literal+")"),
 		)
 	}
 	// The slash of a destination written as an escape: a reader that does not decode the escape
 	// names no path, or names the raw text.
 	for _, escaped := range shellWritePythonEscapeForms(dest) {
-		programs = append(programs, "python3 -c 'open(\""+escaped+"\",\"w\")'")
+		programs = append(programs, "python3 -c "+shellWriteShellQuote("open(\""+escaped+"\",\"w\")"))
 	}
 	return programs[rng.Intn(len(programs))]
+}
+
+// shellWriteShellQuote wraps a program so a real shell hands it to the interpreter unchanged. The
+// generator emits a command a reader lexes, but a form the shell cannot pass through is not the
+// write form the issue asked for: a single-quoted argument holding an unescaped single quote ends
+// at that quote, and the interpreter then receives a truncated program. A program without a single
+// quote takes the plain single-quoted form; otherwise it takes a double-quoted form with the four
+// characters the shell still reads inside double quotes escaped.
+func shellWriteShellQuote(program string) string {
+	if !strings.Contains(program, "'") {
+		return "'" + program + "'"
+	}
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(program)
+	return "\"" + escaped + "\""
 }
 
 // shellWritePythonLiteralForms is every quoting form the generator uses for a Python string

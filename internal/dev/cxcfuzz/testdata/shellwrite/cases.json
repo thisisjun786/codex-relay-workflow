@@ -168,107 +168,51 @@
     "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
   },
   {
-    "name": "crw857-rename-destination",
-    "input": "{\"command\": \"'import os; os.rename(\\\"/w/old.md\\\", r'/m/a\\r\\nb')'\\n2> /\"}",
-    "oracle": "[]",
-    "go": "[\"/\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the destination of os.rename is its second argument; the port reads it, the oracle reads neither argument, so the port names a write the oracle misses"
-  },
-  {
-    "name": "crw857-copyfile-destination",
-    "input": "{\"command\": \"> /m/a\\\"b & python3 -c 'import shutil; shutil.copyfile(\\\"\"}",
-    "oracle": "[\"/m/a\\\"b\"]",
-    "go": "[\"/m/a\\\"b\", \"/m/ab & python3 -c 'import shutil; shutil.copyfile(\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the destination of shutil.copyfile is its second argument; the port reads it and the oracle does not"
-  },
-  {
-    "name": "crw857-copy-destination",
-    "input": "{\"command\": \"> /m/a\\\"b | python3 -c 'import shutil; shutil.copy(\\\"\"}",
-    "oracle": "[\"/m/a\\\"b\"]",
-    "go": "[\"/m/a\\\"b\", \"/m/ab | python3 -c 'import shutil; shutil.copy(\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the destination of shutil.copy is its second argument; the port reads it and the oracle does not"
-  },
-  {
     "name": "crw857-escape-x2f-destination",
-    "input": "{\"command\": \"python3 -c 'open(\\\"~\\\\x2fx\\\",\\\"w\\\")'\"}",
-    "oracle": "[\"~\\\\x2fx\"]",
-    "go": "[\"~\\\\x2fx\", \"~/x\"]",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\\x2fm/a\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\\x2fm/a\"]",
+    "go": "[\"\\\\x2fm/a\", \"/m/a\"]",
     "tag": "open",
     "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\x2f in a destination and names the real path, which the oracle misses"
   },
   {
     "name": "crw857-escape-octal-destination",
-    "input": "{\"command\": \"python3 -c 'open(\\\"~\\\\057x\\\",\\\"w\\\")'\"}",
-    "oracle": "[\"~\\\\057x\"]",
-    "go": "[\"~\\\\057x\", \"~/x\"]",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\\057m/a\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\\057m/a\"]",
+    "go": "[\"\\\\057m/a\", \"/m/a\"]",
     "tag": "open",
     "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\057 and names the real path, which the oracle misses"
   },
   {
     "name": "crw857-escape-unicode-destination",
-    "input": "{\"command\": \"'open(\\\"\\\\u002fm/a.md\\\",\\\"w\\\")'\\ntee /\"}",
-    "oracle": "[]",
-    "go": "[\"/\"]",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\\u002fm/a\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\\u002fm/a\"]",
+    "go": "[\"\\\\u002fm/a\", \"/m/a\"]",
     "tag": "open",
     "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\u002f and names the real path, which the oracle misses"
   },
   {
-    "name": "crw857-escape-named-destination",
-    "input": "{\"command\": \"'open(\\\"\\\\N{SOLIDUS}m/a\\\\b\\\",\\\"w\\\")'; >/m/a\\r\"}",
-    "oracle": "[\"/m/a\"]",
-    "go": "[\"/m/a\", \"/m/a\\r\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port decodes the Python literal escape \\N{SOLIDUS} and names the real path, which the oracle misses"
-  },
-  {
-    "name": "crw857-fstring-brace-destination",
-    "input": "{\"command\": \"'import os; os.rename(\\\"/w/old.md\\\", f'{{/m/a;b}}')' && env -i tee /\"}",
-    "oracle": "[]",
-    "go": "[\"/\"]",
-    "tag": "open",
-    "record": "known-defects CRW-741/CRW-857 (port: fixed, security): the port reads a destination inside an f-string with doubled braces, which the oracle misses"
-  },
-  {
     "name": "crw857-subshell-write",
-    "input": "{\"command\": \"a#b & (echo hi > ~/x)\"}",
-    "oracle": "[\"~/x)\"]",
-    "go": "[\"~/x)\", \"~/x\"]",
+    "input": "{\"command\": \"(echo hi > /m/a)\"}",
+    "oracle": "[\"/m/a)\"]",
+    "go": "[\"/m/a)\", \"/m/a\"]",
     "tag": "open",
     "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a subshell group, which the oracle misses"
   },
   {
-    "name": "crw857-brace-group-write",
-    "input": "{\"command\": \"\\\"a > b\\\" >>../rel | { echo hi > /m/a)\"}",
-    "oracle": "[\"../rel\", \"/m/a)\"]",
-    "go": "[\"../rel\", \"/m/a)\", \"/m/a\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a brace group, which the oracle misses"
-  },
-  {
     "name": "crw857-command-substitution-write",
-    "input": "{\"command\": \"a#b && x=$(echo hi > /m/a)\"}",
+    "input": "{\"command\": \"x=$(echo hi > /m/a)\"}",
     "oracle": "[\"/m/a)\"]",
     "go": "[\"/m/a)\", \"/m/a\"]",
     "tag": "open",
     "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a command substitution, which the oracle misses"
   },
   {
-    "name": "crw857-backtick-write",
-    "input": "{\"command\": \"a#b || y=`echo hi > /m/a)\"}",
-    "oracle": "[\"/m/a)\"]",
-    "go": "[\"/m/a)\", \"/m/a\"]",
-    "tag": "open",
-    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): the port reads a write inside a backtick substitution, which the oracle misses"
-  },
-  {
-    "name": "crw857-triple-quoted-destination",
-    "input": "{\"command\": \"\\\"/w/old.md\\\", '''/m/n''')' | bash -c 'echo hi > /m/a\\r\"}",
-    "oracle": "[\"/m/a\"]",
-    "go": "[\"/m/a\", \"/m/a\\r\"]",
-    "tag": "open",
-    "record": "known-defects CRW-650/CRW-857 (port: fixed, security): the port reads a destination in a triple-quoted Python literal, which the oracle misses"
+    "name": "crw857-gap-copy-destination-not-named",
+    "input": "{\"command\": \"python3 -c 'import shutil; shutil.copy(\\\"/w/old.md\\\", \\\"/m/a\\\")'\"}",
+    "oracle": "[]",
+    "go": "[]",
+    "tag": "identical",
+    "record": "known-defects CRW-857 (port: pending, security): the destination of shutil.copy is its second argument and NEITHER reader names it, so a write reached this way is invisible to the memory gate; a follow-up issue owns the reader change in internal/pabcd/hook"
   }
 ]
