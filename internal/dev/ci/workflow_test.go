@@ -303,8 +303,11 @@ func TestWorkflow_parallel_legs_cover_the_whole_run(t *testing.T) {
 		if len(index[name]) != 1 {
 			t.Fatalf("go-product has %d steps named %q, want one", len(index[name]), name)
 		}
-		if got := steps[index[name][0]]["if"]; got != "matrix.part == 'dist'" {
-			t.Errorf("%q runs if %q, want matrix.part == 'dist'", name, got)
+		// A body-only edit that mirrors this leg stands these two steps down with the rest.
+		// CRW-790 appends the light guard to every go-product step, so a light leg does no work.
+		want := "matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'"
+		if got := steps[index[name][0]]["if"]; got != want {
+			t.Errorf("%q runs if %q, want %q", name, got, want)
 		}
 	}
 	if index[wired][0] < index[build][0] {
