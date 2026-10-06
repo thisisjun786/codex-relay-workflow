@@ -153,29 +153,24 @@ func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
 // resetLinkTargetExistsWith is resetLinkTargetExists with the root stat passed in, so a test can
 // watch whether a link's target is opened through the pinned descriptor. statRoot is root.Stat.
 func resetLinkTargetExistsWith(root *os.Root, name string, statRoot func(string) (os.FileInfo, error)) (bool, error) {
-	target, readErr := root.Readlink(name)
-	if readErr == nil {
-		exists, dotEnding, inside := resetLinkWalkTarget(root, target)
-		switch {
-		case inside && dotEnding:
-			// The walk decided the target without opening it, which is the whole point: os.Root would
-			// open the target directory here (CRW-554 forbids it).
+	// A target that stays inside the root and ends in "." or ".." is decided by the walk alone:
+	// statRoot would open the target directory for it (O_DIRECTORY, read only), which CRW-554 forbids.
+	if target, readErr := root.Readlink(name); readErr == nil {
+		if exists, dotEnding, inside := resetLinkWalkTarget(root, target); inside && dotEnding {
 			return exists, nil
-		case inside:
-			// A target that stays inside the root and does not end in "." or ".." is safe for the
-			// descriptor, which stats the final component without opening it. Keep that path, and with
-			// it today's verdict for every such target.
-			_, err := statRoot(name)
-			if err == nil {
-				return true, nil
-			}
-			if errors.Is(err, os.ErrNotExist) {
-				return false, nil
-			}
 		}
 	}
-	// The link vanished before this Readlink, or its target leaves the pinned root: judge it on the
-	// root's own path, accepted only while that path still names the pinned directory.
+	// Everything else keeps today's flow: the descriptor first, which stats the final component
+	// without opening it, then the OS on the root's own path. A target that stays inside the root
+	// without ending dot, a target that leaves it, and a link that vanished before this Readlink all
+	// reach the descriptor here.
+	_, err := statRoot(name)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
 	return resetLinkWalkOnTheRootPath(root, name)
 }
 

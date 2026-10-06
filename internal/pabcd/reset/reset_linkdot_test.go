@@ -37,9 +37,10 @@ func resetLinkDotWorkspace(t *testing.T, target string, keepMode os.FileMode) (*
 }
 
 // TestResetLinkDotTargetSkipsTheRootStat: a link whose Readlink target ends in a "." or ".."
-// component is judged on the root's own path without opening the target through the pinned
-// descriptor, which os.Root.Stat would do with O_DIRECTORY (CRW-554's requirement that the target is
-// not opened); every other target keeps the descriptor path. Verdicts match the descriptor path's.
+// component is judged by the walk, which reads the target's components through the pinned
+// descriptor with Lstat and Readlink only, so the target directory is never opened the way
+// os.Root.Stat would open it with O_DIRECTORY (CRW-554); every other target keeps the descriptor
+// path. Verdicts match the descriptor path's.
 func TestResetLinkDotTargetSkipsTheRootStat(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
