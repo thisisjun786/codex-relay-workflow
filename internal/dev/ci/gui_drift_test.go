@@ -279,6 +279,11 @@ func TestGUIDriftRejectsSymlinks(t *testing.T) {
 		}
 		r.git("add", "-A")
 		r.git("commit", "-qm", "a committed symlink")
+		// The committed parser is checked directly, so this boundary cannot be carried by the
+		// working-tree check that would also see the link.
+		if _, err := guiDriftCommitted(r.root, "HEAD"); err == nil {
+			t.Fatal("the committed parser accepted a symlink")
+		}
 		if _, err := guiDriftRun(t, r, built); err == nil {
 			t.Fatal("a committed symlink passed")
 		}
