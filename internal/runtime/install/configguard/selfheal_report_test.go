@@ -172,6 +172,28 @@ func selfHealReportWriteConfig(t *testing.T, home string) string {
 	return path
 }
 
+// selfHealReportMarkerMtimeMs is the configMtimeMs a marker must carry for the cache to match: the
+// very spelling the implementation compares with (selfHealReportMsOf, Node's statSync().mtimeMs).
+// A test that spells it any other way — float64(UnixNano())/1e6, for instance — agrees only while
+// the two roundings happen to coincide, which they stop doing at these timestamps.
+func selfHealReportMarkerMtimeMs(t *testing.T, path string) string {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strconv.FormatFloat(selfHealReportMsOf(info.ModTime()), 'f', -1, 64)
+}
+
+// selfHealReportMtimeSpellings returns the two ways a millisecond mtime can be computed for one
+// instant: the way Node's statSync().mtimeMs and selfHealReportMsOf do it (the seconds and the
+// nanoseconds added apart), and the lossy way through a single float64 of the nanosecond count.
+func selfHealReportMtimeSpellings(t time.Time) (node, lossy string) {
+	node = strconv.FormatFloat(float64(t.Unix())*1e3+float64(t.Nanosecond())/1e6, 'f', -1, 64)
+	lossy = strconv.FormatFloat(float64(t.UnixNano())/1e6, 'f', -1, 64)
+	return node, lossy
+}
+
 // selfHealReportFakeCodex puts a fake codex on PATH: "features list" answers with listing, anything
 // else exits 1, and every invocation is appended to the log this returns. It uses shell builtins
 // only, because the caller's PATH becomes the temporary directory that holds it.
@@ -366,11 +388,7 @@ func TestSelfHealReportOptedOutMarkerIsSilentWithoutCodex(t *testing.T) {
 func TestSelfHealReportCacheHitIsSilentWithoutCodex(t *testing.T) {
 	home := selfHealReportTempHome(t)
 	path := selfHealReportWriteConfig(t, home)
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ms := strconv.FormatFloat(float64(info.ModTime().UnixNano())/1e6, 'f', -1, 64)
+	ms := selfHealReportMarkerMtimeMs(t, path)
 	selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\",\"allEnabled\":true,\"healedKeys\":[],"+
 		"\"cachedKeys\":[\"default_mode_request_user_input\"],\"configMtimeMs\":"+ms+"}\n")
 	runner := &selfHealReportRunner{stdout: selfHealReportSoftOff}
@@ -388,11 +406,73 @@ func TestSelfHealReportCacheHitIsSilentWithoutCodex(t *testing.T) {
 	}
 }
 
+// TestSelfHealReportCacheHitPinnedMtime pins the cache key's arithmetic to an instant where the two
+// ways of spelling a millisecond mtime disagree: 2026-06-15T08:09:10.250Z is 1781510950250 the Node
+// way (the seconds and the nanoseconds added apart) and 1781510950249.9998 through a single
+// float64 of the nanosecond count. The marker carries the literal spelling under test, so the first
+// case fails if the comparison goes back to the lossy form and the second fails if it ever accepts
+// it, whatever the test helper does.
+func TestSelfHealReportCacheHitPinnedMtime(t *testing.T) {
+	fixed := time.Date(2026, 6, 15, 8, 9, 10, 250000000, time.UTC)
+	node, lossy := selfHealReportMtimeSpellings(fixed)
+	if node == lossy {
+		t.Fatalf("the pinned instant spells the same both ways (%s): pick another instant", node)
+	}
+	if node != "1781510950250" || lossy != "1781510950249.9998" {
+		t.Fatalf("the pinned instant spells %s and %s, want 1781510950250 and 1781510950249.9998", node, lossy)
+	}
+
+	for _, tc := range []struct {
+		name, ms string
+		cached   bool
+	}{
+		{"the node spelling hits", node, true},
+		{"the lossy spelling misses", lossy, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := selfHealReportTempHome(t)
+			path := selfHealReportWriteConfig(t, home)
+			if err := os.Chtimes(path, fixed, fixed); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.ModTime().Unix() != fixed.Unix() || info.ModTime().Nanosecond() != fixed.Nanosecond() {
+				t.Skipf("this filesystem stores %v, not the pinned %v", info.ModTime(), fixed)
+			}
+			if got := selfHealReportMarkerMtimeMs(t, path); got != node {
+				t.Fatalf("the pinned mtime reads as %s, want %s", got, node)
+			}
+			selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\",\"allEnabled\":true,\"healedKeys\":[],"+
+				"\"cachedKeys\":[\"default_mode_request_user_input\"],\"configMtimeMs\":"+tc.ms+"}\n")
+			runner := &selfHealReportRunner{stdout: selfHealReportSoftOff}
+
+			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
+			if tc.cached {
+				if len(runner.calls) != 0 {
+					t.Fatalf("the pinned cache hit still called codex: %v", runner.calls)
+				}
+				if len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonCached {
+					t.Fatalf("outcomes = %+v, want one skipped/cached at the pinned mtime", outcomes)
+				}
+				return
+			}
+			runner.onlyList(t)
+			if len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
+				t.Fatalf("outcomes = %+v, want one off outcome after the lossy spelling missed", outcomes)
+			}
+		})
+	}
+}
+
 // TestSelfHealReportCacheMissOnMovedMtime proves the cache rule still compares config.toml's mtime:
 // the same marker with a stale mtime re-probes.
 func TestSelfHealReportCacheMissOnMovedMtime(t *testing.T) {
 	home := selfHealReportTempHome(t)
 	selfHealReportWriteConfig(t, home)
+	// 1767225600000 is 2026-01-01T00:00:00Z, deliberately not the freshly written config.toml's mtime.
 	selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\",\"allEnabled\":true,\"healedKeys\":[],"+
 		"\"cachedKeys\":[\"default_mode_request_user_input\"],\"configMtimeMs\":1767225600000}\n")
 	runner := &selfHealReportRunner{stdout: selfHealReportSoftOff}
