@@ -67,8 +67,11 @@ func deliverRetryCount(logicalID, requestID string) int {
 	if !ok {
 		return 0
 	}
+	// Only a plain positive ordinal counts. A logical id that itself ends in -r<n> leaves a suffix
+	// this does not recognise, and reading it as an ordinal would skip retries rather than repeat
+	// one, which is the harmless direction.
 	n, err := strconv.Atoi(suffix)
-	if err != nil || n < 0 {
+	if err != nil || n < 1 || suffix != strconv.Itoa(n) {
 		return 0
 	}
 	return n

@@ -1015,6 +1015,10 @@ func TestDeliverRetryCountReadsTheRequestID(t *testing.T) {
 		{"m1-rx", 0},
 		{"m1-r-1", 0},
 		{"other-r3", 0},
+		{"m1-r01", 0},
+		{"m1-r+1", 0},
+		{"m1-r1x", 0},
+		{"m1-r 1", 0},
 	}
 	for _, c := range cases {
 		if got := deliverRetryCount("m1", c.id); got != c.want {
