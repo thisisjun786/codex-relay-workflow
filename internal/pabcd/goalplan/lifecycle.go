@@ -4,7 +4,8 @@ package goalplan
 // transformations: they read a plan and answer a new plan, an unchanged plan with the
 // reason it stands, or a refusal. They do no IO and append no ledger; callers publish a
 // changed plan through WriteGoalplan under the write lock. The validation order and
-// every reason text are the oracle's, including its quirks around duplicate ids.
+// every reason text are the oracle's, except where a duplicate id is refused rather than
+// rewritten (complete-task and meet-criterion, CRW-671): each function's comment says so.
 import (
 	"fmt"
 	"slices"
