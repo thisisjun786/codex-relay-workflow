@@ -1,0 +1,213 @@
+{
+  "schema": "crw-user-decision-fingerprint-vectors/1",
+  "algorithm": "sha256(normalize(context) + \"|\" + blocking subject + \"|\" + sorted normalized option ids); first 16 hex characters, lowercase",
+  "normalization": "ASCII letters lowercased only (A-Z to a-z; every other rune unchanged); each run of whitespace collapses to one space; leading and trailing whitespace dropped",
+  "ambiguity": "Validate refuses a '|' in the context, a ',' in an option id and a ':' or ',' in a blocking ref, so the three '|'-joined components and the ','-joined lists cannot be confused",
+  "note": "Fixed input/output pairs. This vector is the reference a second implementation is compared against; the Go test internal/relay/decisions must reproduce every fingerprint here.",
+  "vectors": [
+    {
+      "name": "host-window",
+      "context": "Schedule the 17-cell host rollback-then-update window (a real-host rollback, then update again).",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-161"
+        },
+        {
+          "kind": "plan_node",
+          "ref": "crw-302 chain"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "between-runs",
+        "later"
+      ],
+      "fingerprint": "7d19f239a5cbeed4"
+    },
+    {
+      "name": "case-and-space",
+      "context": "  Schedule   THE  host  window. ",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-161"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "2f496821c09ca92e"
+    },
+    {
+      "name": "case-and-space-same",
+      "context": "schedule the host window.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "crw-161"
+        }
+      ],
+      "optionIds": [
+        "later",
+        "now"
+      ],
+      "fingerprint": "2f496821c09ca92e"
+    },
+    {
+      "name": "option-order-a",
+      "context": "Adopt the CXC port acceptance gate F0.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-145"
+        }
+      ],
+      "optionIds": [
+        "adopt",
+        "defer"
+      ],
+      "fingerprint": "3d5b3751e59e1144"
+    },
+    {
+      "name": "option-order-b",
+      "context": "Adopt the CXC port acceptance gate F0.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-145"
+        }
+      ],
+      "optionIds": [
+        "defer",
+        "adopt"
+      ],
+      "fingerprint": "3d5b3751e59e1144"
+    },
+    {
+      "name": "blocking-order-a",
+      "context": "Pick the upgrade window.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        },
+        {
+          "kind": "plan_node",
+          "ref": "crw-302"
+        }
+      ],
+      "optionIds": [
+        "right-after-r3",
+        "with-r3"
+      ],
+      "fingerprint": "fc5bae329ee43c1b"
+    },
+    {
+      "name": "blocking-order-b",
+      "context": "Pick the upgrade window.",
+      "blocking": [
+        {
+          "kind": "plan_node",
+          "ref": "CRW-302"
+        },
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "with-r3",
+        "right-after-r3"
+      ],
+      "fingerprint": "fc5bae329ee43c1b"
+    },
+    {
+      "name": "no-blocking",
+      "context": "Choose the notification channel.",
+      "blocking": [],
+      "optionIds": [
+        "email",
+        "chat"
+      ],
+      "fingerprint": "84b442120142606f"
+    },
+    {
+      "name": "two-options",
+      "context": "Run the runtime upgrade right after R3.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "right-after-r3",
+        "with-r3"
+      ],
+      "fingerprint": "c09b2cd27f4a5c18"
+    },
+    {
+      "name": "three-options",
+      "context": "Three-way cleanup choice.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-161"
+        }
+      ],
+      "optionIds": [
+        "terminate",
+        "leave",
+        "escalate"
+      ],
+      "fingerprint": "9c88bdb9a3561e8a"
+    },
+    {
+      "name": "mixed-case-option-ids",
+      "context": "  Decide   the  Rollout  Order  ",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "A-first",
+        "B-first"
+      ],
+      "fingerprint": "cc245ed7f5eb6231"
+    },
+    {
+      "name": "non-ascii-unchanged",
+      "context": "Turkish dotted capital I and Greek capital sigma stay as they are: İΣ.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "İst",
+        "Σnd"
+      ],
+      "fingerprint": "f393089768f3e903"
+    },
+    {
+      "name": "non-ascii-hangul",
+      "context": "한국어 문장은 변형되지 않는다.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "ㄱ",
+        "ㄲ"
+      ],
+      "fingerprint": "b7ec159f7cdc9560"
+    }
+  ]
+}

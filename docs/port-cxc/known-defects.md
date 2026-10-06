@@ -1392,3 +1392,42 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoa
 ## Found by CRW-479 state publication durability
 
 - The unsynced primary state publications above (`state.ts:389` and `:630-631` at CXC v0.2.40) are fixed by this authorized durability change; port: fixed by CRW-479 (new Go fault-injection tests cover file-sync refusal, unchanged previous bytes, file/publication/directory ordering and returned directory-sync errors; existing recorded cases are unchanged, so there is no intentionally-changed recorded answer and no new corpus note). The existing fallback still lacks directory fsync, and newly created ancestor directories are not fsynced by this change; a host power loss is not exercised. No additional oracle defect was found.
+
+## Found by the UserPromptSubmit hook port (CRW-644)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/hook.ts` (`handleUserPromptSubmit` :656-754, the leading section up to the trigger branch) at v0.2.40, through `internal/pabcd/hook/prompt_submit.go`, registered as the harness leg `user-prompt-submit-checking-pabcd-trigger`. No recorded case interleaves two writers, so none is tagged for the three fixes below; the cases are the new Go tests named per line.
+
+- The memory-write marker write reads the session state, sets `memoryWriteRequested` and `memoryWriteTurn` and writes the whole state back with no lock, so an update a participating writer (the memory gate, the idle-edit counter, another hook of the same session) lands between the read and the write is overwritten by the stale copy and lost, and the write-back rebuilds the state from the reader's normalised value, so a stored record the reader cannot keep (an unverified list past its cap, a `receiptClaimed` cut at 256 UTF-16 units, a field of the wrong type, a legacy D-close marker, an interview tracker past `interview.MaxTrackerArray`) is lost with it (source `hook.ts:676-684`); port: fixed (a data-loss defect, fixed by decision as the memory gate, the idle-edit counter and `handlePostCompact` already are: the write re-reads inside `state.WithSessionLock` and writes nothing when the state cannot be read or the reader would not keep a stored record whole, so a corrupt file is left as it is instead of being replaced by a default; `TestPromptSubmitMarkerKeepsAParticipatingWritersUpdate`, `TestPromptSubmitLeavesAnUnreadableStateAlone`).
+- The Stop-budget turn stamp has the same defect (source `hook.ts:687-690`); port: fixed (the same lock and refusal, and the turn is judged again inside the lock, so a participating writer's stamp for the same turn is not overwritten; `TestPromptSubmitStampKeepsAParticipatingWritersUpdate`).
+- The loop-arm write has the same defect (source `hook.ts:739-743`); port: fixed (the same lock and refusal; `TestPromptSubmitLoopArmKeepsAParticipatingWritersUpdate`).
+- The same-turn guard is read before any lock (`hook.ts:691`), so two UserPromptSubmit invocations for one `(session, turn)` that overlap both pass it and both answer the arming mandate, and the oracle's list keeps one entry only because both of its unlocked writes publish a list read before either wrote; the port's lock stores the turn once (the append is skipped when the state the lock found already holds it) and still answers both (source `hook.ts:691` and `:739-743`; found by the Codex review and the Devin review of this port's pull request, `kind: bug`; `TestPromptSubmitLoopArmStoresTheTurnOnce`); port: kept.
+- `writeState` is unlocked and unguarded, so a failed write throws out of the handler and `cli.ts`'s catch answers nothing at all, while a write-back from the reader's normalised value replaces a file holding records the reader cannot keep; the port keeps the silence for a failed write and answers the arming mandate when its own rewrite guard is what skipped the write, since the oracle has no such guard and would have written and answered there (source `hook.ts:687-690` and `:739-743`; found by the Devin review, `kind: bug`; `TestPromptSubmitLoopArmFailsSilentOnAWriteFailure`, `TestPromptSubmitLoopArmAnswersWhenTheStateCannotBeRewritten`); port: kept (a port decision, the same fail-open rule the idle-edit counter records for lock and write errors).
+
+## Found by the steering batch port (CRW-643)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering.go`; the ported ranges are `:155-163,253-333`.
+
+- The failed-append warning interpolates the cause as `err.Error()` (Go's wording) where the oracle
+  interpolates `err.message` (Node's), so the same failure prints different text in the two runtimes
+  (source `steering.ts:315`, the only place in the unit that stringifies an error); port: kept.
+- An `annotate` op's note is never stored anywhere. `applyOps` skips the op with the comment
+  "ledger-only, by design" (`:189-190`), but the entry's summary carries only the op KINDS (`:275`)
+  and the ledger detail carries the key, that summary and the rationale (`:290`), so the note text a
+  batch was annotated with cannot be recovered from the plan or the ledger after the call (source
+  `steering.ts:189-190`, `:275`, `:290`; the recorded case `cli__loop__criteria_questions_and_steer`
+  carries an annotate batch, but it is CLI-level and no port of this transaction can drive it yet);
+  port: kept.
+
+- The port's plan writer syncs the plan directory after its rename (`internal/pabcd/goalplan/write.go`,
+  `writePublishAt`), which the oracle's `renameWithRetry` does not, so a directory-sync failure is
+  returned as a write error although the new plan is already published; `ApplySteeringBatch` then
+  answers a Go error and appends no ledger row, and a retry with the same key answers `duplicate`, so
+  the `steered` row stays missing for a batch whose plan is committed (source: this port's writer,
+  not the oracle; no recorded case drives a failing directory sync); port: kept (port-introduced,
+  not an upstream defect; the fix belongs to the writer, which is outside this issue's edit regions,
+  and is proposed as a follow-up).
+- Fidelity decision, not a defect: the answer for an absent plan is a string compare against the reason
+  the shared lock builds (`goalplan '<slug>' does not exist`), exactly as the oracle compares its own
+  lock's reason (`:327`). The two spellings are kept in step by `TestSteeringApplyUnboundSlugIsRefused`,
+  which pins the resulting `no goalplan found at slug '<slug>'` text and the fact that no state is created.
