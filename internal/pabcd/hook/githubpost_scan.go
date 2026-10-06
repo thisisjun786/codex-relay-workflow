@@ -1,7 +1,6 @@
 package hook
 
-// CRW-783: the secret patterns the GitHub post guard looks for in the text bound for GitHub, and the
-// name=value shape that marks a credential or an environment dump. Only the line is reported.
+// CRW-783: the secret patterns the guard looks for, and the name=value shape marking a credential or dump.
 
 import (
 	"regexp"
@@ -37,8 +36,7 @@ func githubPostSecretLine(text string) (int, bool) {
 	return 0, false
 }
 
-// githubPostSecretPatterns is the key prefixes and the private-key header, compiled where they are used
-// rather than at package level. Each length is the shortest the pattern's own shape allows.
+// githubPostSecretPatterns is the key prefixes and the private-key header, compiled where they are used.
 func githubPostSecretPatterns() []*regexp.Regexp {
 	return []*regexp.Regexp{
 		regexp.MustCompile(`sk-[A-Za-z0-9_-]{16,}`),
@@ -51,8 +49,7 @@ func githubPostSecretPatterns() []*regexp.Regexp {
 	}
 }
 
-// githubPostAssignment is the name of a NAME=value line, an optional leading export allowed, and whether the
-// line is one.
+// githubPostAssignment is the name of a NAME=value line, an optional leading export allowed.
 func githubPostAssignment(line string) (string, bool) {
 	s := strings.TrimSpace(line)
 	if rest, ok := strings.CutPrefix(s, "export"); ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {

@@ -11,12 +11,9 @@ import (
 	"testing"
 )
 
-// CRW-783 red-first cases. The guard is CRW's own protection, so there is no oracle case to replay: the
-// incident shape, every inline-body form, the title rule, the file and heredoc reads, the programs it cannot
-// read, the commands that are not targets, and the reason and bound properties the issue fixes.
+// CRW-783 red-first cases: the guard is CRW's own protection, so no oracle case is replayed here.
 
-// githubPostWant is one command's judgement: the rule and the place it is denied as, or no denial, with the
-// guidance the issue fixes.
+// githubPostWant is one command's judgement: the rule and the place, or no denial, with the fixed guidance.
 func githubPostWant(t *testing.T, raw, label, wantRule, wantPlace string) {
 	t.Helper()
 	reason := githubPostReason(t, raw)
@@ -43,8 +40,7 @@ func githubPostWant(t *testing.T, raw, label, wantRule, wantPlace string) {
 	}
 }
 
-// githubPostReason is the deny reason of the guard's answer for one payload; githubPostAnswerReason is the
-// same for one answer envelope.
+// githubPostReason is the deny reason for one payload; githubPostAnswerReason for one answer envelope.
 func githubPostReason(t *testing.T, raw string) string {
 	t.Helper()
 	return githubPostAnswerReason(t, HandleGitHubPostGuard(raw))
@@ -70,9 +66,7 @@ func githubPostAnswerReason(t *testing.T, answer string) string {
 	return envelope.HookSpecificOutput.PermissionDecisionReason
 }
 
-// githubPostPayload is one PreToolUse payload, for the Bash tool unless another tool is named;
-// githubPostShell is one whose command is shell text; githubPostWrite writes one file under a case's
-// temporary directory.
+// githubPostPayload is one PreToolUse payload, for the Bash tool unless another tool is named.
 func githubPostPayload(t *testing.T, tool, cwd string, input map[string]any) string {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{
@@ -96,8 +90,7 @@ func githubPostWrite(t *testing.T, dir, name, content string) {
 	}
 }
 
-// githubPostTempHome points HOME, CODEX_HOME and CRW_HOME at temporary directories and reports whether the
-// guard left anything under the real ones.
+// githubPostTempHome points the homes at temporary directories and checks the real ones are unchanged.
 func githubPostTempHome(t *testing.T) {
 	t.Helper()
 	before := githubPostHomeListing()
@@ -134,12 +127,10 @@ func githubPostHomeListing() string {
 	return strings.Join(out, " | ")
 }
 
-// githubPostFake builds a key-shaped value from pieces, so no key-shaped literal sits in this file: the
-// branch's own secret scan reads the committed bytes.
+// githubPostFake builds a key-shaped value from pieces, so no key-shaped literal sits in this file.
 func githubPostFake(prefix string, n int) string { return prefix + strings.Repeat("a", n) }
 
-// TestGitHubPostGuardJudgements is every command-level case, including the incident shape and the shapes an
-// independent audit found reaching gh unjudged.
+// TestGitHubPostGuardJudgements is every command-level case, including the shapes the reviews found.
 func TestGitHubPostGuardJudgements(t *testing.T) {
 	githubPostTempHome(t)
 	cwd := t.TempDir()
@@ -246,6 +237,21 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"mention in a search", "rg -n 'gh pr comment' docs", "", ""},
 		{"other command", "git log --oneline", "", ""},
 		{"option separator", "gh pr comment 1 -- -b plain", "", ""},
+		// The shapes the Codex review found: grouping, aliases, parameters, nested keys, fill, wrappers.
+		{"grouping parens", "(gh pr comment 1 -b \"shows `env`\")", githubPostRuleExpand, githubPostWhereCommand},
+		{"grouping braces", "{ gh pr comment 1 -b \"shows `env`\"; }", githubPostRuleExpand, githubPostWhereCommand},
+		{"grouping negation", "! gh pr comment 1 -b \"shows `env`\"", githubPostRuleExpand, githubPostWhereCommand},
+		{"pr new alias", "gh pr new -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"issue new alias", "gh issue new -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"special parameter", "bash -c 'gh pr create -t \"$1\" --body-file clean.md' _ 'x'", githubPostRuleExpand, githubPostWhereCommand},
+		{"nested api body", "gh api graphql -F input[body]=\"see $TOKEN\"", githubPostRuleExpand, githubPostWhereCommand},
+		{"fill mode", "gh pr create --fill", githubPostRuleUnread, githubPostWhereCommand},
+		{"template mode", "gh pr create --title Plain --template secret.md", githubPostRuleUnread, githubPostWhereCommand},
+		{"rewritten body file", "printf x > clean.md && gh pr comment 1 --body-file clean.md", githubPostRuleUnread, "clean.md"},
+		{"second heredoc", "cat <<'LEFT' | gh pr comment 1 --body-file - <<'RIGHT'\nclean\nLEFT\n" + githubPostFake("xoxb-", 12) + "\nRIGHT\n", githubPostRuleSecret, "-:1"},
+		{"wrapper option value", "env -u OLD gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"wrapper option value with a secret", "env -u OLD gh pr comment 1 -b \"shows `env`\"", githubPostRuleExpand, githubPostWhereCommand},
+		{"sudo user option value", "sudo -u root gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
@@ -253,8 +259,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 	}
 }
 
-// TestGitHubPostGuardReadsAHomeRelativeFile: a name the shell expands from the home directory is a file the
-// guard can read, so a clean one passes.
+// TestGitHubPostGuardReadsAHomeRelativeFile: a clean home-relative body file passes.
 func TestGitHubPostGuardReadsAHomeRelativeFile(t *testing.T) {
 	githubPostTempHome(t)
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "notes.md"), []byte("a clean body\n"), 0o600); err != nil {
@@ -297,8 +302,7 @@ func TestGitHubPostGuardReadsAnArgvCommand(t *testing.T) {
 	githubPostWant(t, clean, "argv with a clean file", "", "")
 }
 
-// TestGitHubPostGuardReasonCarriesNoValue is the property the incident turned into a rule: the reason names
-// the rule and the place, nothing of the text.
+// TestGitHubPostGuardReasonCarriesNoValue is the rule the incident created: the reason names no value.
 func TestGitHubPostGuardReasonCarriesNoValue(t *testing.T) {
 	githubPostTempHome(t)
 	cwd := t.TempDir()
@@ -314,8 +318,7 @@ func TestGitHubPostGuardReasonCarriesNoValue(t *testing.T) {
 	}
 }
 
-// TestGitHubPostAnswerBoundsThePayload is the row's own stdin policy: a payload within the bound is judged,
-// one over it is refused, and a failed read answers nothing.
+// TestGitHubPostAnswerBoundsThePayload is the row's own stdin policy: a payload within the bound is judged.
 func TestGitHubPostAnswerBoundsThePayload(t *testing.T) {
 	githubPostTempHome(t)
 	payload := githubPostShell(t, t.TempDir(), "gh pr comment 1 -b \"shows `local` here\"")
