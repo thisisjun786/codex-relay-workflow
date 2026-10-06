@@ -189,6 +189,30 @@ func TestVerdictVerifiedHeadIsNotRecordedWhenTheRulingIsRefused(t *testing.T) {
 	}
 }
 
+// The row is read back through the store reader the later acceptance will call, not only through
+// raw SQL: what the writer records is what the reader answers, field for field.
+func TestVerdictVerifiedHeadReadsBackThroughTheStoreReader(t *testing.T) {
+	t.Parallel()
+	v := newVH(t)
+	rid, event := v.ruled()
+	_, err := v.ack.RecordVerdict(v.ctx, event, "verified", "verdict-turn-1", nil, nil, nil, nil, vhHead)
+	mustDo(t, err)
+	read, found, err := store.VerifiedHead(v.ctx, v.store, event)
+	mustDo(t, err)
+	if !found {
+		t.Fatal("the reader found no head the writer recorded")
+	}
+	if read.EventID != event || read.RelationshipID != rid || read.ExecutionGeneration != 1 ||
+		read.VerdictTurnID != "verdict-turn-1" || read.HeadSHA != vhHead ||
+		read.RecordedByTaskID != parent || read.RecordedAt != v.clock.ISO() {
+		t.Fatalf("the reader answered %+v", read)
+	}
+	// and an event nobody ruled has none: absence, not an error
+	if _, found, err := store.VerifiedHead(v.ctx, v.store, "no-such-event"); err != nil || found {
+		t.Fatalf("an event with no ruling: found=%v err=%v", found, err)
+	}
+}
+
 // Without the flag a verified ruling is exactly what it was: the answer carries no new field, and no
 // dag_verified_heads row appears.
 func TestVerdictWithoutTheHeadIsUnchanged(t *testing.T) {
