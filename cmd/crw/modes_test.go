@@ -1,10 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -14,9 +20,14 @@ import (
 func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"nope"}, &out, &errOut); code != parserExit ||
-		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...") ||
-		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'help', 'version')") {
+		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,help,version} ...") ||
+		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'help', 'version')") {
 		t.Fatalf("unknown mode: %d %q", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(context.Background(), "crw", []string{"config"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "usage: crw config") {
+		t.Errorf("crw config: %d %q", code, errOut.String())
 	}
 	out.Reset()
 	errOut.Reset()
@@ -98,5 +109,83 @@ func TestAnInterruptEndsAHookLegWaitingForItsInput(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("an interrupted hook is still waiting for its input")
+	}
+}
+
+// The gui mode serves until a signal, then ends cleanly on SIGINT and SIGTERM alike: the
+// process exits 0 and its listener is closed. The signal reaches the run through the mode
+// row's cancelOn, which is what makes SIGTERM behave as SIGINT does.
+func TestGuiEndsOnASignal(t *testing.T) {
+	crw := testsupport.CRW(t)
+	for _, signal := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(signal.String(), func(t *testing.T) {
+			home := t.TempDir()
+			cmd := exec.Command(crw, "gui", "--port", "0")
+			cmd.Env = []string{
+				"HOME=" + home,
+				"CODEX_HOME=" + filepath.Join(home, "codex"),
+				"CRW_HOME=" + filepath.Join(home, "crw"),
+				"PATH=" + os.Getenv("PATH"),
+				testsupport.RefuseLiveStateEnv + "=1",
+			}
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Process.Kill() })
+			lines := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(stdout)
+				if scanner.Scan() {
+					lines <- scanner.Text()
+				}
+				close(lines)
+			}()
+			var line string
+			select {
+			case got, ok := <-lines:
+				if !ok {
+					t.Fatalf("the gui printed no line (stderr %q)", stderr.String())
+				}
+				line = got
+			case <-time.After(30 * time.Second):
+				t.Fatal("the gui printed no line")
+			}
+			if !strings.HasPrefix(line, "crw gui: serving http://127.0.0.1:") || !strings.Contains(line, "/#token=") {
+				t.Fatalf("the line is %q", line)
+			}
+			address := strings.TrimPrefix(strings.SplitN(line, "/#token=", 2)[0], "crw gui: serving http://")
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Get("http://" + address + "/api/health")
+			if err != nil {
+				t.Fatalf("the printed port does not serve: %v", err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("health: %d", resp.StatusCode)
+			}
+			if err := cmd.Process.Signal(signal); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("the gui did not end cleanly: %v (stderr %q)", err, stderr.String())
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatalf("the gui did not end after %v", signal)
+			}
+			if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
+				conn.Close()
+				t.Fatalf("the listener is still open on %s", address)
+			}
+		})
 	}
 }

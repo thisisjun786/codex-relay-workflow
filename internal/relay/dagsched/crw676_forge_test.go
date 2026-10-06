@@ -50,6 +50,7 @@ func crw676IncidentScript(withRealFailure bool) *ghScript {
 // The required check's failure is a job that never ran, so the scheduler's answer is checks_not_run
 // and the lane may rerun it once on the same head.
 func TestCRW676ForgeRowsAnswerChecksNotRunForTheStepLessRun(t *testing.T) {
+	t.Parallel()
 	pr := crw676IncidentScript(false).read(t)
 	if len(pr.CheckProblems) != 1 || !strings.HasPrefix(pr.CheckProblems[0], "checks_not_run: ") {
 		t.Fatalf("check problems = %v", pr.CheckProblems)
@@ -59,6 +60,7 @@ func TestCRW676ForgeRowsAnswerChecksNotRunForTheStepLessRun(t *testing.T) {
 // A matrix sibling that began a step and failed for real is not a job that never ran: the required
 // failure is a real failure and the answer stays checks_stale.
 func TestCRW676ARealFailureBesideTheNotRunJobsAnswersChecksStale(t *testing.T) {
+	t.Parallel()
 	pr := crw676IncidentScript(true).read(t)
 	if len(pr.CheckProblems) != 1 || !strings.HasPrefix(pr.CheckProblems[0], "checks_stale: ") {
 		t.Fatalf("check problems = %v", pr.CheckProblems)

@@ -12,6 +12,7 @@ import (
 )
 
 func Test33LargeMarkerFactPython(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "intent.json")
 	raw := `{"padding":"` + strings.Repeat("x", 5<<20) + `","dispatchRequestIdHash":"assignment"}`
 	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {

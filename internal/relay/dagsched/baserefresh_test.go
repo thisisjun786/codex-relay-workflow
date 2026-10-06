@@ -19,6 +19,7 @@ func (s *refreshScenario) refreshRows() int {
 // Criteria c1 and c2 (CRW-430): the node whose accepted result is current, whose child opened generation 2 by hand only to refresh the base, and whose pull request landed with the merged mark on generation 2,
 // is integrated once the relay has proved the refresh, and its slot goes back. The proof is the relay's own reading of git: three merges of dev, the second with a hand resolved conflict the parent names.
 func TestBaseRefreshIntegratesTheNodeAndReturnsItsSlot(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -79,6 +80,7 @@ func TestBaseRefreshIntegratesTheNodeAndReturnsItsSlot(t *testing.T) {
 
 // The relay proves where a hand resolution can sit and cannot read what a hand put there, so the parent names exactly the files, after reading them.
 func TestBaseRefreshNeedsTheHandResolvedFilesNamedExactly(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -96,6 +98,7 @@ func TestBaseRefreshNeedsTheHandResolvedFilesNamedExactly(t *testing.T) {
 
 // A refresh with no hand resolution names none, and naming a file nobody resolved is refused as well.
 func TestBaseRefreshOfCleanMergesNamesNoFile(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.repo.commit("other.txt", "dev one")
@@ -120,6 +123,7 @@ func TestBaseRefreshOfCleanMergesNamesNoFile(t *testing.T) {
 
 // Criterion c1 (what the path refuses): a later generation whose head holds anything but merges of the base is not a refresh. Each case leaves no record and the node as it was.
 func TestBaseRefreshRefusesWhatIsMoreThanMergesOfTheBase(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, code string
 		build      func(s *refreshScenario)
@@ -225,6 +229,7 @@ func TestBaseRefreshRefusesWhatIsMoreThanMergesOfTheBase(t *testing.T) {
 // Where the node has another route or the generation is not one the parent verified, nothing is recorded: a stale node goes through its own route (which this path leaves as it was), a node that
 // landed is done, a generation nobody ruled verified is not a result, and only the parent of the relationship records.
 func TestBaseRefreshIsRefusedWhereTheNodeIsNotInThatState(t *testing.T) {
+	t.Parallel()
 	ready := func(t *testing.T) *refreshScenario {
 		s := newRefreshScenario(t)
 		s.openGeneration()
@@ -320,6 +325,7 @@ func TestBaseRefreshIsRefusedWhereTheNodeIsNotInThatState(t *testing.T) {
 // The record is an append: the same chain again is a replay, a pull request that moved on (the child merged the base once more) is the next record proved again from the accepted head, and the node
 // integrates on the head the newest record names.
 func TestBaseRefreshReplayAndAPullRequestThatMovedOn(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -354,6 +360,7 @@ func TestBaseRefreshReplayAndAPullRequestThatMovedOn(t *testing.T) {
 // What the readers trust: a row is a refresh only when it digests to its id; the rows are append-only; and a store that predates the table (a read-only open never creates the zone) reads as a node with
 // no refresh.
 func TestBaseRefreshRowsAreTrustedOnlyWhenTheyDigestToTheirId(t *testing.T) {
+	t.Parallel()
 	forge := func(s *refreshScenario, seq int, id, head string) {
 		s.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json,"+
 			" recorded_by_task_id, coordinator_epoch, recorded_at) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?, 'dev', ?, '{}', '[]', 'someone', 0, 't')",
@@ -417,6 +424,7 @@ func TestBaseRefreshRowsAreTrustedOnlyWhenTheyDigestToTheirId(t *testing.T) {
 // An edge that waits for the node's verified result (artifact_verified) reads the generation the acceptance stands on (CRW-447): while the relationship is at the later generation and no record says the
 // acceptance stands on it, the edge reads blocked:stale_head, and once the record is made it is satisfied (the record alone used to leave it reading the accepted generation).
 func TestBaseRefreshMovesTheGenerationAnArtifactEdgeReads(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	if st := s.status("g", "ia"); !st.Satisfied {
 		t.Fatalf("the edge before generation 2 = %+v", st)
@@ -436,6 +444,7 @@ func TestBaseRefreshMovesTheGenerationAnArtifactEdgeReads(t *testing.T) {
 
 // Whoever claimed the plan after this session holds the epoch: the record is fenced like every command that decides.
 func TestBaseRefreshIsFencedByTheCoordinatorEpoch(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -452,6 +461,7 @@ func TestBaseRefreshIsFencedByTheCoordinatorEpoch(t *testing.T) {
 
 // The report the parent ruled verified names the head it describes; the head the forge shows has to be that head (a report that names none leaves nothing to compare, an abbreviation counts).
 func TestBaseRefreshWantsTheForgeHeadTheReportNames(t *testing.T) {
+	t.Parallel()
 	report := func(s *refreshScenario, head string) {
 		s.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, pr_url, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
 			" VALUES (?, 1, ?, 2, ?, 'owner/repo', 7, NULL, ?, 'DONE', 'proved', 'v1', 'done', 'merge', 't')", s.event2, s.rid, s.revision2, head)
@@ -478,6 +488,7 @@ func TestBaseRefreshWantsTheForgeHeadTheReportNames(t *testing.T) {
 
 // A proof that finishes after another record landed does not put the acceptance back: the call is refused and repeated.
 func TestBaseRefreshProvedWhileAnotherRecordLandsIsRefused(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -506,6 +517,7 @@ func TestBaseRefreshProvedWhileAnotherRecordLandsIsRefused(t *testing.T) {
 
 // The path leaves the correction route of a result that is current as it was: dag-correct still refuses it after the record.
 func TestBaseRefreshDoesNotOpenTheCorrectionRoute(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -519,6 +531,7 @@ func TestBaseRefreshDoesNotOpenTheCorrectionRoute(t *testing.T) {
 
 // The documentation says what was built: the command, the closed codes, the readers and the limits.
 func TestBaseRefreshIsDocumented(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)
@@ -532,6 +545,7 @@ func TestBaseRefreshIsDocumented(t *testing.T) {
 }
 
 func TestCLIBaseRefreshRefusals(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	if out, code := crw(t, state, "dag-base-refresh", "--plan", "p1", "--node", "research", "--actor", "parent"); code != 2 || parseOut(t, out)["reason"] != "disposition_conflict" {
 		t.Fatalf("a non_pr node: exit %d\n%s", code, out)
@@ -546,6 +560,7 @@ func TestCLIBaseRefreshRefusals(t *testing.T) {
 
 // A conflict marker is as wide as the conflict-marker-size attribute of the first parent says: a file committed with three-character markers is as unresolved as one with seven.
 func TestBaseRefreshRefusesCommittedMarkersOfTheWidthTheAttributesSet(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenarioWith(t, func(repo *gitRepo) {
 		repo.write(".gitattributes", "shared.json conflict-marker-size=3\n")
 		repo.git("add", ".gitattributes")
@@ -573,6 +588,7 @@ func TestBaseRefreshRefusesCommittedMarkersOfTheWidthTheAttributesSet(t *testing
 
 // A conflict that has no markers (a file under the binary merge) is resolved by keeping one side: the resolved file is then the one git wrote, and it is a resolution all the same, named by the parent.
 func TestBaseRefreshAcceptsAConflictResolvedByKeepingASide(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenarioWith(t, func(repo *gitRepo) {
 		repo.write(".gitattributes", "data.bin merge=binary\n")
 		repo.write("data.bin", "from the feature")
@@ -602,6 +618,7 @@ func TestBaseRefreshAcceptsAConflictResolvedByKeepingASide(t *testing.T) {
 // Where the plan moves under a node whose base refresh is recorded, the node is handled like any other: the generation the refresh carried it to is not an open correction, the correction is the generation
 // after it and binds, and the reworked result is accepted in place of the first.
 func TestBaseRefreshThenAStaleNodeIsCorrectedAsAnyOther(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -652,6 +669,7 @@ func TestBaseRefreshThenAStaleNodeIsCorrectedAsAnyOther(t *testing.T) {
 
 // A criteria change alone after a refresh ruled the same output again is a revalidation of the same acceptance, as it is for any node: the output the acceptance stands on is the refreshed generation's.
 func TestBaseRefreshThenACriteriaChangeIsRevalidatedAsAnyOther(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -680,6 +698,7 @@ func TestBaseRefreshThenACriteriaChangeIsRevalidatedAsAnyOther(t *testing.T) {
 // The relay's own settling closes a merged relationship when nothing is owed and its plan node has an acceptance of the marked head. After a refresh the acceptance stands on the marked head, so a refreshed
 // relationship settles after its integration and not before the record.
 func TestBaseRefreshLetsTheRelationshipSettleAfterItsIntegration(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -709,6 +728,7 @@ func TestBaseRefreshLetsTheRelationshipSettleAfterItsIntegration(t *testing.T) {
 // The forge reading a refresh is proved against is read as an acceptance reads one: evidence the forge left incomplete is the host's failure and nothing is written. A merged pull request has the verdict unknown
 // by construction (candidate_not_open and candidate_unknown, because nothing is left to hand over), so it is readable when those are its only problems.
 func TestBaseRefreshReadsTheForgeFailClosed(t *testing.T) {
+	t.Parallel()
 	read := func(s *refreshScenario, state string, problems ...Problem) {
 		pr := openPR("owner/repo", 7, s.head)
 		pr.State, pr.Verdict, pr.Problems = state, "unknown", problems
@@ -745,6 +765,7 @@ func TestBaseRefreshReadsTheForgeFailClosed(t *testing.T) {
 
 // A ruling that names no manifest leaves the previous one in force. After a recorded refresh the previous generation has no execution of its own, so the manifest carried over is the one before the refresh.
 func TestBaseRefreshThenARulingWithoutAManifestCarriesTheManifestOver(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()

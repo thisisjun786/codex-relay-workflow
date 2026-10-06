@@ -40,6 +40,7 @@ func redeclareHeld(f *fixture, regions ...Region) (RegionDeclaration, error) {
 }
 
 func TestARunningNodeMayNarrowItsDeclaration(t *testing.T) {
+	t.Parallel()
 	exclusive := func(path, kind string) Region { return nr(path, kind, "", "exclusive", "") }
 	wholeRepo := func(path string) Region {
 		r := nr(path, "file", "", "exclusive", "")
@@ -105,6 +106,7 @@ func TestARunningNodeMayNarrowItsDeclaration(t *testing.T) {
 }
 
 func TestARunningNodeCannotWidenItsDeclaration(t *testing.T) {
+	t.Parallel()
 	exclusive := func(path, kind string) Region { return nr(path, kind, "", "exclusive", "") }
 	deleting := func(path string) Region {
 		r := nr(path, "file", "", "", "")
@@ -164,6 +166,7 @@ func TestARunningNodeCannotWidenItsDeclaration(t *testing.T) {
 // A refusal that is not about width keeps its old meaning: a node whose head is accepted keeps what it holds until the head lands (the declaration describes the pull request and
 // conflicts are classified from it), a holder that never declared has nothing to narrow, and the same declaration again is a replay.
 func TestNarrowingKeepsTheOtherRefusals(t *testing.T) {
+	t.Parallel()
 	t.Run("an accepted head does not narrow", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()

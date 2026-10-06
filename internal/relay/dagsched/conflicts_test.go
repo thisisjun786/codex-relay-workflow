@@ -39,6 +39,7 @@ func lines(n int, replace map[int]string) string {
 // Criterion c7: the number of merge-tree conflicts between the heads of two parallel branches is recorded. Real repositories: disjoint files, the same lines of one file, two files, and
 // two distant hunks of one file (which merge cleanly).
 func TestMergeTreeConflictCount(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		left, right map[string]string
@@ -92,6 +93,7 @@ func TestMergeTreeConflictCount(t *testing.T) {
 // What is not a pair of branches of a plan is refused and writes nothing: a node of another kind, two heads that are not commits of the checkout, a repository that is not a local path,
 // and a caller that is not the project's parent.
 func TestObserveConflictsRefusals(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	left, right := repo.parallel(map[string]string{"a.txt": "left\n"}, map[string]string{"b.txt": "right\n"})
@@ -124,6 +126,7 @@ func TestObserveConflictsRefusals(t *testing.T) {
 
 // The checkout is whatever git says it is: a linked working tree, a path with a colon in it (an environment list of alternates would split it) and a file whose name is a single space are all
 // measured, and a merge git could not compute is a failure and never a count of zero.
+// sequential: t.Setenv("TMPDIR") is process-wide.
 func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 	conflict := func(t *testing.T, repo *gitRepo, name string) (string, string) {
 		t.Helper()
@@ -188,6 +191,7 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 // The checkout's own configuration and working tree are not part of the question: a merge driver it configures would be a command run for whoever observes it, and an uncommitted
 // .gitattributes would change the count of the same two commits. Neither runs, and neither changes the answer.
 func TestObserveConflictsIgnoresTheCheckoutsConfigurationAndAttributes(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.commit("c.txt", lines(12, nil))
@@ -216,6 +220,7 @@ func TestObserveConflictsIgnoresTheCheckoutsConfigurationAndAttributes(t *testin
 // The attributes that count are the ones committed in the left head: a union merge driver named in .gitattributes of the commits is built in to git and resolves the file, so a pair that
 // git itself merges cleanly is not counted as a conflict.
 func TestObserveConflictsHonoursCommittedAttributes(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.commit("c.txt", lines(12, nil))

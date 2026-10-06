@@ -15,6 +15,7 @@ func policyCLIState(t *testing.T) string {
 }
 
 func TestCLIReleasePolicyLandingResultAndMeasurements(t *testing.T) {
+	t.Parallel()
 	state := policyCLIState(t)
 
 	// the measurements before any policy, any pass or any result: absent where nothing was read
@@ -103,6 +104,7 @@ func TestCLIReleasePolicyLandingResultAndMeasurements(t *testing.T) {
 }
 
 func TestCLIRegionDeclareNarrowsAndRefusesWidening(t *testing.T) {
+	t.Parallel()
 	state := policyCLIState(t)
 	declare := func(regions string) (string, int) {
 		return crw(t, state, "dag-region-declare", "--plan", "p", "--node", "hold", "--actor", "parent", "--regions", regions)

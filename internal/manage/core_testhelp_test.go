@@ -28,7 +28,32 @@ func TestMain(m *testing.M) {
 		coreFakeMain()
 		return
 	}
-	os.Exit(m.Run())
+	os.Exit(coreMain(m))
+}
+
+// coreMain points the homes and the XDG directories at one temporary tree before any test
+// runs, so a test that drives Run without setting its own home reads no configuration file
+// and writes nothing under the real ones.
+func coreMain(m *testing.M) int {
+	root, err := os.MkdirTemp("", "crw-manage-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "crw manage tests: the isolation root:", err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	for key, path := range map[string]string{
+		"HOME":            filepath.Join(root, "home"),
+		"CODEX_HOME":      filepath.Join(root, "codex"),
+		"CRW_HOME":        filepath.Join(root, "crw"),
+		"CRW_CONFIG":      "",
+		"XDG_CONFIG_HOME": filepath.Join(root, "xdg-config"),
+	} {
+		if err := os.Setenv(key, path); err != nil {
+			fmt.Fprintln(os.Stderr, "crw manage tests:", err)
+			return 1
+		}
+	}
+	return m.Run()
 }
 
 // coreFakeMain is this test binary acting as the fake crw: it appends its own arguments
@@ -128,8 +153,9 @@ func coreCheckCalls(t *testing.T, got, want [][]string) {
 }
 
 // coreTempHome points HOME, CODEX_HOME and CRW_HOME at a fresh temporary tree, clears
-// XDG_STATE_HOME so a test can see the HOME fallback, and returns the three roots, so
-// no test reaches the real ones.
+// XDG_STATE_HOME and XDG_CONFIG_HOME so a test sees the HOME fallbacks and the crw
+// configuration file's default location sits under the temporary home, and returns the
+// three roots, so no test reaches the real ones.
 func coreTempHome(t *testing.T) (home, codexHome, crwHome string) {
 	t.Helper()
 	home = t.TempDir()
@@ -139,6 +165,7 @@ func coreTempHome(t *testing.T) (home, codexHome, crwHome string) {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CRW_HOME", crwHome)
 	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	return home, codexHome, crwHome
 }
 

@@ -65,6 +65,7 @@ func (h *hl) raceDispatched() string {
 }
 
 func Test21_ADR01_a_verified_disposition_is_never_overwritten(t *testing.T) {
+	t.Parallel()
 	t.Run("losing rejection", func(t *testing.T) {
 		mirror(t, adr, "CompetingAcknowledgements.test_a_losing_rejection_does_not_overwrite_a_verified_acceptance", func(h *hl) {
 			event := h.raceDispatched()
@@ -122,6 +123,7 @@ func Test21_ADR01_a_verified_disposition_is_never_overwritten(t *testing.T) {
 }
 
 func Test21_ADR02_a_losing_rejection_leaves_the_verdict_path_open(t *testing.T) {
+	t.Parallel()
 	mirror(t, adr, "CompetingAcknowledgements.test_the_losing_rejection_leaves_the_verdict_path_open", func(h *hl) {
 		event := h.raceDispatched()
 		accepting := h.host.startTurn(parent, "accepting-turn", "inProgress", "")
@@ -135,6 +137,7 @@ func Test21_ADR02_a_losing_rejection_leaves_the_verdict_path_open(t *testing.T) 
 }
 
 func Test21_ADR03_an_unverified_acknowledgement_is_still_upgradable(t *testing.T) {
+	t.Parallel()
 	mirror(t, adr, "CompetingAcknowledgements.test_an_unverified_acknowledgement_is_still_upgradable", func(h *hl) {
 		event := h.raceDispatched()
 		turn := h.host.startTurn(parent, "parent-own-turn", "inProgress", "")
@@ -154,6 +157,7 @@ func Test21_ADR03_an_unverified_acknowledgement_is_still_upgradable(t *testing.T
 // ---------------------------------------------------------------- test_recovery_negatives.py
 
 func Test21_RCN01_a_restart_sweep_never_resends_or_retries(t *testing.T) {
+	t.Parallel()
 	mirror(t, rcn, "RecoveryRefusesToInvent.test_a_restart_sweep_never_resends", func(h *hl) {
 		event := h.queuedEvent(regOpts{recipients: []string{parent, child}})
 		h.attemptOn(event, h.host, nil)
@@ -172,6 +176,7 @@ func Test21_RCN01_a_restart_sweep_never_resends_or_retries(t *testing.T) {
 }
 
 func Test21_RCN02_reading_a_transcript_settles_nothing(t *testing.T) {
+	t.Parallel()
 	mirror(t, rcn, "RecoveryRefusesToInvent.test_reading_a_transcript_settles_nothing", func(h *hl) {
 		h.register(regOpts{recipients: []string{parent, child}})
 		before := pyjson.Text(h.assignment().Get("state"))
@@ -226,6 +231,7 @@ func (h *hl) resumeRestating(generation int64, roots, recipients []string, actor
 }
 
 func Test21_RCN03_a_paused_assignment_is_never_auto_resumed(t *testing.T) {
+	t.Parallel()
 	mirror(t, rcn, "RecoveryRefusesToInvent.test_a_paused_assignment_is_never_auto_resumed", func(h *hl) {
 		h.register(regOpts{recipients: []string{parent, child}})
 		h.setStatusBy("paused", parent)
