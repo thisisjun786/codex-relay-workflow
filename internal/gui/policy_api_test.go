@@ -46,6 +46,9 @@ func policyHost(t *testing.T, text string, withRecord bool) string {
 	t.Setenv("HOME", root)
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	// CRW_CONFIG would otherwise name the developer's real management configuration, which the
+	// relay reader consults for the socket and the state directory.
+	t.Setenv("CRW_CONFIG", filepath.Join(root, "crw-config.json"))
 	file := filepath.Join(root, "execution-policy.json")
 	if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
@@ -185,7 +188,7 @@ func TestPolicyWithAnUnreadableFileIsUnreadable(t *testing.T) {
 // TestPolicyCheckRejectsAnInvalidPair is C3.
 func TestPolicyCheckRejectsAnInvalidPair(t *testing.T) {
 	policyHost(t, policyText, true)
-	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"Kind\":\"setRolePairs\",\"Role\":\"child\",\"Pairs\":[{\"Model\":\"nobody/nothing\",\"Effort\":\"xhigh\"}]}}"
+	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"kind\":\"setRolePairs\",\"role\":\"child\",\"pairs\":[{\"model\":\"nobody/nothing\",\"reasoningEffort\":\"xhigh\"}]}}"
 	code, body := checkResponse(t, policyServer(t), payload)
 	if code != http.StatusOK || body["valid"] != false {
 		t.Fatalf("an invalid pair was accepted: %d %v", code, body)
@@ -199,7 +202,7 @@ func TestPolicyCheckRejectsAnInvalidPair(t *testing.T) {
 // TestPolicyCheckDoesNotSwapMaxAndXhigh is C3.
 func TestPolicyCheckDoesNotSwapMaxAndXhigh(t *testing.T) {
 	policyHost(t, policyText, true)
-	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"Kind\":\"setAllowed\",\"Model\":\"gpt-6.1-sol\",\"Efforts\":[\"max\"]}}"
+	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"kind\":\"setAllowed\",\"model\":\"gpt-6.1-sol\",\"efforts\":[\"max\"]}}"
 	code, body := checkResponse(t, policyServer(t), payload)
 	if code != http.StatusOK || body["valid"] != false {
 		t.Fatalf("max was accepted where the file approves xhigh: %d %v", code, body)
@@ -209,7 +212,7 @@ func TestPolicyCheckDoesNotSwapMaxAndXhigh(t *testing.T) {
 // TestPolicyCheckRejectsASupervisorModelWrite is C3.
 func TestPolicyCheckRejectsASupervisorModelWrite(t *testing.T) {
 	policyHost(t, policyText, true)
-	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"Kind\":\"setRolePairs\",\"Role\":\"supervisor\",\"Pairs\":[{\"Model\":\"anthropic/opus\",\"Effort\":\"xhigh\"}]}}"
+	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"kind\":\"setRolePairs\",\"role\":\"supervisor\",\"pairs\":[{\"model\":\"anthropic/opus\",\"reasoningEffort\":\"xhigh\"}]}}"
 	code, body := checkResponse(t, policyServer(t), payload)
 	if code != http.StatusOK || body["valid"] != false {
 		t.Fatalf("a supervisor model write was accepted: %d %v", code, body)
@@ -219,7 +222,7 @@ func TestPolicyCheckRejectsASupervisorModelWrite(t *testing.T) {
 // TestPolicyCheckAcceptsAValidChange is C3's positive half.
 func TestPolicyCheckAcceptsAValidChange(t *testing.T) {
 	policyHost(t, policyText, true)
-	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"Kind\":\"removeException\",\"ID\":\"legacy\"}}"
+	payload := "{\"expectedDigest\":\"" + digestOf(policyText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
 	code, body := checkResponse(t, policyServer(t), payload)
 	if code != http.StatusOK || body["valid"] != true {
 		t.Fatalf("a valid change was refused: %d %v", code, body)
@@ -233,7 +236,7 @@ func TestPolicyCheckAcceptsAValidChange(t *testing.T) {
 // TestPolicyCheckReportsAStaleDigest is C3: the caller's digest is compared and returned.
 func TestPolicyCheckReportsAStaleDigest(t *testing.T) {
 	policyHost(t, policyText, true)
-	payload := "{\"expectedDigest\":\"0000\",\"change\":{\"Kind\":\"removeException\",\"ID\":\"legacy\"}}"
+	payload := "{\"expectedDigest\":\"0000\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
 	code, body := checkResponse(t, policyServer(t), payload)
 	if code != http.StatusOK || body["stale"] != true || body["currentDigest"] != digestOf(policyText) {
 		t.Fatalf("stale check: %d %v", code, body)
@@ -270,11 +273,11 @@ func TestPolicyCheckWritesNothing(t *testing.T) {
 
 	server := policyServer(t)
 	for _, change := range []string{
-		"{\"Kind\":\"setRolePairs\",\"Role\":\"child\",\"Pairs\":[{\"Model\":\"anthropic/opus\",\"Effort\":\"xhigh\"}]}",
-		"{\"Kind\":\"removeException\",\"ID\":\"legacy\"}",
-		"{\"Kind\":\"setAllowed\",\"Model\":\"openai/gpt-5\",\"Efforts\":[\"high\"]}",
-		"{\"Kind\":\"setException\",\"ID\":\"extra\",\"Role\":\"child\",\"Model\":\"anthropic/opus\",\"Effort\":\"xhigh\",\"CWD\":[\"/tmp/project\"]}",
-		"{\"Kind\":\"removeAllowed\",\"Model\":\"openai/gpt-5\"}",
+		"{\"kind\":\"setRolePairs\",\"role\":\"child\",\"pairs\":[{\"model\":\"anthropic/opus\",\"reasoningEffort\":\"xhigh\"}]}",
+		"{\"kind\":\"removeException\",\"id\":\"legacy\"}",
+		"{\"kind\":\"setAllowed\",\"model\":\"openai/gpt-5\",\"efforts\":[\"high\"]}",
+		"{\"kind\":\"setException\",\"id\":\"extra\",\"role\":\"child\",\"model\":\"anthropic/opus\",\"reasoningEffort\":\"xhigh\",\"cwd\":[\"/tmp/project\"]}",
+		"{\"kind\":\"removeAllowed\",\"model\":\"openai/gpt-5\"}",
 	} {
 		payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":" + change + "}"
 		code, body := checkResponse(t, server, payload)
@@ -306,7 +309,7 @@ func TestPolicyCheckWritesNothing(t *testing.T) {
 // token the guard requires.
 func TestPolicyCheckNeedsTheGuard(t *testing.T) {
 	policyHost(t, policyText, true)
-	payload := "{\"expectedDigest\":\"x\",\"change\":{\"Kind\":\"removeException\",\"ID\":\"legacy\"}}"
+	payload := "{\"expectedDigest\":\"x\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
 	recorder := request(policyServer(t), http.MethodPost, "/api/policy/check", guardHost, payload, map[string]string{"Content-Type": "application/json"})
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("a check without the token was answered %d", recorder.Code)
@@ -321,6 +324,10 @@ func catalogHost(t *testing.T) {
 	t.Setenv("HOME", root)
 	t.Setenv("CRW_HOME", filepath.Join(root, "crw"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	// The catalog reader probes the OCX binary on PATH and reads the Codex home's model catalog,
+	// so both are pointed at an empty directory: the test is about this route, not the host.
+	t.Setenv("PATH", filepath.Join(root, "bin"))
 }
 
 // TestCatalogIsRegistered is C5: the catalog route answers and keeps the reader's status apart.

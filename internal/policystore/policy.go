@@ -64,7 +64,7 @@ type Pair struct{ Model, Effort string }
 type pairWire struct {
 	Model           string `json:"model"`
 	ReasoningEffort string `json:"reasoningEffort"`
-	Effort          string `json:"effort"`
+	Effort          string `json:"effort,omitempty"`
 }
 
 // UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
@@ -87,23 +87,27 @@ func (p Pair) MarshalJSON() ([]byte, error) {
 	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort})
 }
 
-// RoleView is one declared role: its pairs, or the record expectation of a supervisor.
+// RoleView is one declared role: its pairs, or the record expectation of a supervisor. The JSON
+// keys are the document spellings, so the response reads the way the policy file does.
 type RoleView struct {
-	Name        string
-	Expectation string
-	Pairs       []Pair
+	Name        string `json:"name"`
+	Expectation string `json:"expectation"`
+	Pairs       []Pair `json:"pairs"`
 }
 
 // AllowedView is one allowlist entry.
 type AllowedView struct {
-	Model   string
-	Efforts []string
+	Model   string   `json:"model"`
+	Efforts []string `json:"efforts"`
 }
 
 // ExceptionView is one declared exception.
 type ExceptionView struct {
-	ID, Role, Model, Effort string
-	CWD                     []string
+	ID     string   `json:"id"`
+	Role   string   `json:"role,omitempty"`
+	Model  string   `json:"model"`
+	Effort string   `json:"reasoningEffort"`
+	CWD    []string `json:"cwd"`
 }
 
 // Reading is what the policy file declares, or the named state that says why it could not be read.

@@ -31,7 +31,7 @@ type Change struct {
 	Model   string   `json:"model,omitempty"`
 	Efforts []string `json:"efforts,omitempty"`
 	ID      string   `json:"id,omitempty"`
-	Effort  string   `json:"effort,omitempty"`
+	Effort  string   `json:"reasoningEffort,omitempty"`
 	CWD     []string `json:"cwd,omitempty"`
 }
 
@@ -66,6 +66,9 @@ func Check(raw []byte, expectedDigest string, change Change) CheckResult {
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
+	// The snapshot is taken before the edit, because apply writes through the decoded document
+	// (pyjson.Object.Set assigns in place) and would otherwise leave nothing to compare against.
+	before := snapshotSections(document)
 	updated, moved, err := apply(document, change)
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
@@ -76,7 +79,7 @@ func Check(raw []byte, expectedDigest string, change Change) CheckResult {
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
-	if err := onlyTheTargetMoved(document, updated, change); err != nil {
+	if err := onlyTheTargetMoved(before, updated, change); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
@@ -331,27 +334,54 @@ func withoutKey(document pyjson.Object, key string) pyjson.Object {
 	return out
 }
 
+// sections is the document before the edit: each of the three declared sections as canonical JSON,
+// and every other top-level key. It is taken before apply, because apply assigns through the
+// decoded document in place.
+type sections struct {
+	values map[string]string
+	others []string
+}
+
+// snapshotSections records what a comparison needs: the three sections the changes may name, and
+// the other top-level keys, which no change may drop.
+func snapshotSections(document pyjson.Object) sections {
+	snapshot := sections{values: map[string]string{}}
+	for _, key := range []string{"roles", "allowed", "exceptions"} {
+		snapshot.values[key] = canonical(document.Get(key))
+	}
+	for _, field := range document {
+		switch field.Key {
+		case "roles", "allowed", "exceptions":
+			continue
+		}
+		snapshot.others = append(snapshot.others, field.Key)
+	}
+	return snapshot
+}
+
+// canonical is a value as the comparisons spell it: compact, keys sorted, so two spellings of the
+// same document compare equal and any real difference does not.
+func canonical(value any) string {
+	return pyjson.Dumps(value, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
+}
+
 // onlyTheTargetMoved refuses a candidate that changed anything but the section the change names.
-// It compares every other top-level section and refuses a dropped top-level key, so a normalisation
-// the writer would introduce is caught here rather than silently accepted.
-func onlyTheTargetMoved(before, after pyjson.Object, change Change) error {
+// Every other section is compared with its snapshot and a dropped top-level key is refused, so a
+// normalisation or an unrelated edit the writer introduced is caught here rather than silently
+// accepted.
+func onlyTheTargetMoved(before sections, after pyjson.Object, change Change) error {
 	prefix := changePrefix(change)
 	for _, key := range []string{"roles", "allowed", "exceptions"} {
 		if key == prefix {
 			continue
 		}
-		one := pyjson.Dumps(before.Get(key), pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
-		two := pyjson.Dumps(after.Get(key), pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
-		if one != two {
+		if before.values[key] != canonical(after.Get(key)) {
 			return fmt.Errorf("the change moved %s, which it does not name", key)
 		}
 	}
-	for _, field := range before {
-		if field.Key == "roles" || field.Key == "allowed" || field.Key == "exceptions" {
-			continue
-		}
-		if _, present := after.Lookup(field.Key); !present {
-			return fmt.Errorf("the change dropped the top-level key %q", field.Key)
+	for _, key := range before.others {
+		if _, present := after.Lookup(key); !present {
+			return fmt.Errorf("the change dropped the top-level key %q", key)
 		}
 	}
 	return nil
