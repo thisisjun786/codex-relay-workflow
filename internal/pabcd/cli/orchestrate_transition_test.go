@@ -695,6 +695,22 @@ func TestOrchestrateTransitionHoldsTheSessionLock(t *testing.T) {
 }
 
 // orchestrateTransitionListing is the entry names under ~/.codex and ~/.crw, or "absent".
+// TestOrchestrateTransitionRowBeforeState pins the commit order: a row that cannot be written leaves the
+// session untouched, so the same verb can be retried (the oracle's state-first order advanced the FSM).
+func TestOrchestrateTransitionRowBeforeState(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "row-order"
+	orchestrateTransitionSession(t, cwd, id, `{"phase":"IDLE"}`)
+	if err := os.MkdirAll(filepath.Join(cwd, ".crw", "ledger.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orchestrateTransitionTry(t, cwd, "P", "--session", id); err == nil {
+		t.Fatal("a transition whose row cannot be written reported success")
+	}
+	if state.ReadState(cwd, id).Phase != state.PhaseIdle {
+		t.Fatal("the session moved although its row could not be written")
+	}
+}
+
 func orchestrateTransitionListing(t *testing.T, home string) string {
 	t.Helper()
 	out := []string{}
