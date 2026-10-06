@@ -133,7 +133,9 @@ func Legs() []Leg {
 		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, true, false, false, func(c Call) string {
 			return pabcdhook.HandleMemoryWriteGate(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, nil},
+		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, func(c Call) string {
+			return pabcdhook.HandleAutomationOwnershipGate(c.Raw, os.LookupEnv)
+		}},
 	}
 }
 
