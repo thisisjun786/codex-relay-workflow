@@ -1024,3 +1024,228 @@ func promptDcloseRotatingLock(t *testing.T, cwd, sessionID string) func(cwd, ses
 		return state.WithSessionLock(lockCwd, lockSession, fn)
 	}
 }
+
+// promptDcloseGoalplanLedgerPath is the bound plan's ledger file.
+func promptDcloseGoalplanLedgerPath(t *testing.T, cwd, slug string) string {
+	t.Helper()
+	dir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, goalplan.GoalplanLedgerFile)
+}
+
+// promptDclosePabcdLedgerPath is the session transition ledger.
+func promptDclosePabcdLedgerPath(cwd string) string {
+	return filepath.Join(cwd, crwdir.DirName, state.LedgerFile)
+}
+
+// promptDcloseBlockAppend replaces a JSONL path with a directory, so the next append to it fails
+// the way an unwritable ledger does, and answers the undo. It is how these tests arm a write
+// failure at one exact point of the close.
+func promptDcloseBlockAppend(t *testing.T, path string) func() {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return func() { _ = os.Remove(path) }
+}
+
+// promptDcloseHoldPlanLock takes the bound plan's write lock and holds it until release runs,
+// failing the test when the lock could not be taken at all. A goroutine takes it because the caller
+// must keep running while it is held, the way a second session bound to the same plan sits inside
+// the critical section its own goalplan rows are appended in.
+func promptDcloseHoldPlanLock(t *testing.T, cwd, slug string) (release func()) {
+	t.Helper()
+	got, stop, done, failure := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan string, 1)
+	go func() {
+		defer close(done)
+		locked, err := goalplan.WithGoalplanWriteLock(cwd, slug, func(*goalplan.Goalplan) (struct{}, error) {
+			close(got)
+			<-stop
+			return struct{}{}, nil
+		}, &goalplan.GoalplanWriteLockOptions{RetryDelaysMs: []int{}})
+		if err != nil || locked.Kind != "ok" {
+			failure <- locked.Reason
+			close(got)
+		}
+	}()
+	<-got
+	select {
+	case reason := <-failure:
+		t.Fatalf("the plan lock could not be held: %s", reason)
+	default:
+	}
+	return func() { close(stop); <-done }
+}
+
+// TestPromptDcloseAppendsTheGoalplanRowsUnderThePlanLock is finding (a) of generation 2 of
+// CRW-797: the two goalplan rows are appended inside the second goalplan write lock, as
+// goalplan/write.go requires of an existing-plan caller. Two sessions bound to the same plan whose
+// closes interleave between the state publication and the rows must end with each row exactly
+// once, which holds only when the dedup read and the append are one critical section.
+func TestPromptDcloseAppendsTheGoalplanRowsUnderThePlanLock(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-rows-under-lock"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "rows under the plan lock"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhasePending, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-1")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	// Two sessions bound to the same plan, each carrying the marker of the same half-finished close
+	// of wp-1. Both closes owe the same two rows, which is what makes the dedup read and the append
+	// one critical section's business.
+	attests := map[string]string{}
+	for _, sessionID := range []string{"s1", "s2"} {
+		promptSubmitStateFile(t, cwd, sessionID, func(s *state.State) {
+			s.Phase, s.Slug, s.OrchestrationActive = state.PhaseC, slug, true
+			s.CheckEpoch = promptDcloseStr("c-rows")
+			s.Flags = state.Flags{AuditPassed: true, CheckPassed: true}
+			s.DcloseRecovery = &state.DcloseRecoveryMarker{SessionID: sessionID, CheckEpoch: "c-rows",
+				ClosedWorkPhaseID: "wp-1", NextWorkPhaseID: promptDcloseStr("wp-2")}
+		})
+		attests[sessionID] = promptDcloseAttest("wp-1", "")
+	}
+
+	// A second writer holds the plan's write lock across the window in which s1 sits between its
+	// state publication and its rows. The rows belong inside that lock, so s1 writes none of them
+	// while it is held; the order this finding names appended them there, outside every plan lock.
+	var release func()
+	seams := &promptDcloseSeams{afterStateWrite: func() {
+		release = promptDcloseHoldPlanLock(t, cwd, slug)
+	}}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", attests["s1"], seams)
+	if panicked != nil {
+		t.Fatalf("s1's close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "finalization is pending") {
+		t.Errorf("s1's close while the plan lock was held: %q", answer)
+	}
+	if rows := promptDcloseGoalplanRows(t, cwd, slug); len(rows) != 0 {
+		t.Errorf("s1 appended its goalplan rows while another writer held the plan lock: %+v", rows)
+	}
+	release()
+
+	// The same request finishes the close now that the lock is free, each row exactly once.
+	if retry := promptDcloseRun(t, cwd, "s1", "t2", attests["s1"]); strings.Contains(retry, "refused") || strings.Contains(retry, "pending") {
+		t.Fatalf("the retry did not finish the close: %q", retry)
+	}
+	// The second session bound to the same plan runs the same close and adds no goalplan row.
+	if answer2 := promptDcloseRun(t, cwd, "s2", "t1", attests["s2"]); strings.Contains(answer2, "refused") {
+		t.Fatalf("s2's close refused: %q", answer2)
+	}
+	rows := promptDcloseGoalplanRows(t, cwd, slug)
+	counts := map[string]int{}
+	for _, row := range rows {
+		counts[promptDcloseStringOf(row["detail"])]++
+	}
+	if counts["closed wp-1"] != 1 || counts["started wp-2"] != 1 {
+		t.Errorf("the goalplan rows are not exactly once each: %+v", rows)
+	}
+}
+
+// promptDcloseStringOf reads a decoded JSONL value as text, where an absent key and a null both
+// read as the empty text.
+func promptDcloseStringOf(value any) string {
+	s, _ := value.(string)
+	return s
+}
+
+// TestPromptDcloseGoalplanRowFailureAfterPublicationAnswersPending is finding (b) of generation 2
+// of CRW-797: once the resting state is published, a goalplan row that could not be written is not
+// a close that wrote nothing. The answer is the finalization-pending text, the marker stays, and
+// the same D request finishes the rows once.
+func TestPromptDcloseGoalplanRowFailureAfterPublicationAnswersPending(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-rows-fail-after-publication"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "rows fail after publication"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhasePending, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-1")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-rows-fail")
+	attest := promptDcloseAttest("wp-1", promptDcloseReceipt(t, cwd, "s1", "c-rows-fail"))
+	restore := promptDcloseBlockAppend(t, promptDcloseGoalplanLedgerPath(t, cwd, slug))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "finalization is pending") {
+		t.Errorf("a goalplan row failure after the publication: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written") {
+		t.Errorf("the answer claims nothing was written: %q", answer)
+	}
+	s := state.ReadState(cwd, "s1")
+	if s.Phase != state.PhaseIdle || s.DcloseRecovery == nil {
+		t.Fatalf("the state after the failed row: %+v", s)
+	}
+	if promptDcloseReadPlan(t, cwd, slug).WorkPhases[0].Status != goalplan.WorkPhaseDone {
+		t.Errorf("the plan was not committed before the rows")
+	}
+	// The same D request, with the ledger writable again, finishes the rows, the close row and the
+	// marker cleanup, each exactly once.
+	restore()
+	retry := promptDcloseRun(t, cwd, "s1", "t2", attest)
+	if strings.Contains(retry, "refused") || strings.Contains(retry, "pending") {
+		t.Fatalf("the retry did not finish the close: %q", retry)
+	}
+	rows := promptDcloseGoalplanRows(t, cwd, slug)
+	if len(rows) != 2 || rows[0]["detail"] != "closed wp-1" || rows[1]["detail"] != "started wp-2" {
+		t.Errorf("the goalplan rows: %+v", rows)
+	}
+	if closeRows := promptOrchestrateLedger(t, cwd); len(closeRows) != 1 || closeRows[0]["closedWorkPhaseId"] != "wp-1" {
+		t.Errorf("the close rows: %+v", closeRows)
+	}
+	if s := state.ReadState(cwd, "s1"); s.DcloseRecovery != nil || s.CheckEpoch != nil {
+		t.Errorf("the retry did not clear the marker: %+v", s)
+	}
+}
+
+// TestPromptDcloseAllDoneRowFailureAnswersTheWarning is finding (c) of generation 2 of CRW-797: an
+// all-done close publishes a resting state with no marker and an empty check epoch, so a PABCD
+// close row that could not be written has no same-D retry to promise. The answer is the success
+// text with one warning line, never the finalization-pending text a retry cannot honour.
+func TestPromptDcloseAllDoneRowFailureAnswersTheWarning(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-all-done-row-fail"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "all done row failure"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-finished", Title: "finished", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-all-done-row-fail")
+	attest := promptDcloseAttest("", promptDcloseReceipt(t, cwd, "s1", "c-all-done-row-fail"))
+	restore := promptDcloseBlockAppend(t, promptDclosePabcdLedgerPath(cwd))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	restore()
+	if strings.Contains(answer, "finalization is pending") {
+		t.Errorf("an all-done close with no marker promised a retry: %q", answer)
+	}
+	if !strings.Contains(answer, "[crw: DONE]") || !strings.Contains(answer, "IPABCD: IDLE") {
+		t.Errorf("the DONE directive: %q", answer)
+	}
+	warning := "the close was applied but its ledger row could not be written: "
+	if strings.Count(answer, warning) != 1 {
+		t.Errorf("the close row warning: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle || s.DcloseRecovery != nil || s.CheckEpoch != nil {
+		t.Errorf("the resting state: %+v", s)
+	}
+	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
+		t.Errorf("the close rows: %+v", rows)
+	}
+}

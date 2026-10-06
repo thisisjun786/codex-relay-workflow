@@ -238,8 +238,11 @@ func promptDcloseRecoveredTransition(current state.State, command *fsm.Orchestra
 // that never reaches the file, would leave a ledger row describing a close the session never made
 // (found by the Devin review and the Codex review of this pull request). The port keeps the
 // oracle's row order and text and appends them after the state publication, which is the order
-// every other writer of this repository uses (CRW-744/793/811). The session lock the caller holds
-// serialises the whole sequence, so no second close can observe the rows half-written.
+// every other writer of this repository uses (CRW-744/793/811). The two rows sets are appended
+// inside the second goalplan write lock, so the goalplan rows obey goalplan/write.go's rule that an
+// existing-plan caller appends under that lock, and a session's own row set is one critical section
+// with the marker cleanup. The session lock the caller holds serialises the whole sequence, so no
+// second close can observe the rows half-written.
 func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhaseID string, recovering bool, result fsm.ApplyResult, command *fsm.OrchestrateCommand, seams *promptDcloseSeams, guard func() string) promptDcloseOutcome {
 	slug := held.Slug
 
@@ -294,28 +297,35 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	}
 	promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterStateWrite })
 
-	// The goalplan rows follow the state publication, in the oracle's order.
-	for _, row := range plan.rows {
-		if promptDcloseHasGoalplanRow(p.Cwd, slug, string(row.event), row.detail) {
-			continue
-		}
-		if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
-			Ts: promptDcloseTimestamp(), Slug: slug, Event: row.event, Detail: row.detail,
-		}); rowErr != nil {
-			return promptDcloseOutcome{refusal: promptOrchestrateRefusal("the goalplan ledger row could not be written: " + rowErr.Error() + " Nothing was written.")}
-		}
-	}
-
 	// §40 Z2: an all-done close leaves no marker for a failed second lock to resume, so it writes no
 	// recovery marker and has nothing to clean up; its close row carries a null closed work phase.
 	closeCheckEpoch, closedWorkPhaseID := held.CheckEpoch, closePhaseID
 	if plan.allDone {
 		closedWorkPhaseID = ""
 	}
-	// The PABCD close row lands inside the second goalplan lock for a cycle close, so two recoveries
-	// cannot both observe an absent row; an all-done close takes the same lock with no marker to
-	// clean up.
+	// Both row sets land inside the second goalplan lock, in the oracle's order: the two goalplan
+	// rows first, then the PABCD close row, then the marker cleanup. The lock is what makes the
+	// dedup reads sound - goalplan/write.go requires an existing-plan caller to append under it - so
+	// two sessions bound to the same plan (a fresh close racing a recovery, or two recoveries) cannot
+	// both observe a row absent and append it twice (finding (a) of generation 2 of CRW-797). The
+	// session lock the caller holds is a different lock and serialises one session only.
+	rowsErr := error(nil)
 	finalize, finalizeErr := goalplan.WithGoalplanWriteLock(p.Cwd, slug, func(*goalplan.Goalplan) (struct{}, error) {
+		for _, row := range plan.rows {
+			if promptDcloseHasGoalplanRow(p.Cwd, slug, string(row.event), row.detail) {
+				continue
+			}
+			if rowErr := goalplan.AppendGoalplanLedger(p.Cwd, slug, goalplan.GoalplanLedgerEntry{
+				Ts: promptDcloseTimestamp(), Slug: slug, Event: row.event, Detail: row.detail,
+			}); rowErr != nil {
+				// The resting state is already published, so this is not a refusal that wrote nothing.
+				// Stop before the close row and the marker cleanup: the marker is the same-D retry's
+				// only handle on this half-finished finalization, so leaving it in place is what makes
+				// the pending text true (finding (b) of generation 2 of CRW-797).
+				rowsErr = rowErr
+				return struct{}{}, nil
+			}
+		}
 		if result.Ledger != nil && !promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID) {
 			row := *result.Ledger
 			row.Close = &state.CloseKey{CheckEpoch: closeCheckEpoch}
@@ -360,7 +370,21 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		if finalizeErr != nil {
 			reason = finalizeErr.Error()
 		}
+		if plan.allDone {
+			// §40 Z2: an all-done close publishes a resting state with no marker, so there is no
+			// same-D retry to promise and the pending text would be a lie - a retry is refused as
+			// an illegal IDLE->D transition. The close did happen and only its ledger row is
+			// missing, which is the durability warning the CLI writers use (CRW-744/793/811;
+			// finding (c) of generation 2 of CRW-797).
+			return promptDcloseOutcome{warning: promptDcloseLedgerWarning(reason)}
+		}
 		return promptDcloseOutcome{pending: promptDcloseFinalizePending(reason)}
+	}
+	if rowsErr != nil {
+		// The resting state and the recovery marker are already on disk when the goalplan rows are
+		// appended, so a row that could not be written is not a close that wrote nothing (finding
+		// (b) of generation 2 of CRW-797). The marker is still there, so the pending text is exact.
+		return promptDcloseOutcome{pending: promptDcloseFinalizePending("the goalplan ledger row could not be written: " + rowsErr.Error())}
 	}
 	return promptDcloseOutcome{warning: warning}
 }
@@ -801,4 +825,12 @@ func promptDcloseGoalplanUnreadable(reason string) string {
 // promptDcloseFinalizePending is the finalization-pending text (:1347-1354).
 func promptDcloseFinalizePending(reason string) string {
 	return "[crw \u2014 D-close was committed and the cycle is closed, but ledger/marker finalization is pending: " + reason + " The recovery marker is still on the session, so running the same D request again finishes the cleanup.]"
+}
+
+// promptDcloseLedgerWarning is the durability warning for a close that did happen whose PABCD
+// close row could not be written. It follows the CLI writers' wording (CRW-744/793/811) and is
+// carried as one extra line after the DONE directive. It is the all-done answer's counterpart of
+// the pending text: an all-done close leaves no marker, so no retry can finish the row.
+func promptDcloseLedgerWarning(reason string) string {
+	return "the close was applied but its ledger row could not be written: " + reason
 }
