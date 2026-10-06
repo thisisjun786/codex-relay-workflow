@@ -342,10 +342,58 @@ func TestLockWaitExpiredAndAgyCalled(t *testing.T) {
 		{"a crash", art(u, "review/unavailable/crash"), false, "unknown"},
 		{"a runner error", art(u, "review/unavailable/runner_error"), false, "unknown"},
 		{"a completed review", art(review.StatusComplete, "review/normal/"), false, "unknown"},
-		{"a partial review", art(review.StatusPartial, "review/unavailable/quota"), false, "unknown"},
+		{"a partial review", art(review.StatusPartial, "review/unavailable/quota"), false, "true"},
 	} {
 		if got := lockWaitExpired(c.a); got != c.lock {
 			t.Errorf("%s: lockWaitExpired = %v, want %v", c.name, got, c.lock)
+		}
+		if got := format(agyCalledOf(c.a)); got != c.called {
+			t.Errorf("%s: agyCalledOf = %s, want %s", c.name, got, c.called)
+		}
+	}
+}
+
+// The failure record of a run that did not end complete names the case and, when it can be told, whether agy was called: reason lists the distinct reasons of the review calls that did not end
+// normal (a lock wait left out), or the auxiliary calls when no review call failed, and agyCalled is true once a review call ended normal, ended invalid or failed with a reason agy reported itself.
+func TestFailureRecordOfARunThatDidNotEndComplete(t *testing.T) {
+	const u, p = review.StatusUnavailable, review.StatusPartial
+	art := func(status review.Status, calls ...string) *review.Artifact {
+		a := &review.Artifact{Status: status}
+		for _, s := range calls {
+			parts := strings.Split(s, "/")
+			a.Calls = append(a.Calls, review.CallRecord{Stage: parts[0], Class: parts[1], Reason: parts[2]})
+		}
+		return a
+	}
+	format := func(b *bool) string {
+		switch {
+		case b == nil:
+			return "unknown"
+		case *b:
+			return "true"
+		}
+		return "false"
+	}
+	for _, c := range []struct {
+		name   string
+		a      *review.Artifact
+		reason string
+		called string
+	}{
+		{"time limit", art(u, "review/invalid/time_limit_exceeded", "review/invalid/time_limit_exceeded"), "time_limit_exceeded", "true"},
+		{"content filter", art(u, "review/unavailable/content_filter"), "content_filter", "true"},
+		{"denied actions", art(u, "review/invalid/denied_actions"), "denied_actions", "true"},
+		{"normal and a crash", art(p, "review/normal/", "review/unavailable/crash"), "crash", "true"},
+		{"normal and a quota", art(p, "review/normal/", "review/unavailable/quota"), "quota", "true"},
+		{"an auxiliary failure only", art(p, "review/normal/", "review/normal/", "group/unavailable/crash"), "crash", "true"},
+		{"quota", art(u, "review/unavailable/quota"), "quota", "true"},
+		{"crash", art(u, "review/unavailable/crash"), "crash", "unknown"},
+		{"not started", art(u, "review/unavailable/not_started"), "not_started", "false"},
+		{"two distinct reasons", art(p, "review/normal/", "review/unavailable/quota", "review/invalid/time_limit_exceeded"), "quota,time_limit_exceeded", "true"},
+		{"a lock wait beside an auxiliary failure", art(p, "review/unavailable/lock_wait_expired", "group/unavailable/crash"), "", "false"},
+	} {
+		if got := ledgerFailureReason(c.a); got != c.reason {
+			t.Errorf("%s: ledgerFailureReason = %q, want %q", c.name, got, c.reason)
 		}
 		if got := format(agyCalledOf(c.a)); got != c.called {
 			t.Errorf("%s: agyCalledOf = %s, want %s", c.name, got, c.called)
@@ -415,5 +463,60 @@ func TestLockWaitBesideARetryableFailureStaysRetryable(t *testing.T) {
 	f.on("2026-10-05", okResult)
 	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != "complete" {
 		t.Fatalf("the retry after a mixed run: %d %+v %s", code, sum, errOut)
+	}
+}
+
+// A run that did not end complete records the failure it knows, apart from the retry decision: one reviewer ends normal and one crashes, the artifact is partial, and the finished line
+// names the crash and says agy was called (the normal reviewer proves it ran).
+func TestPartialRunRecordsTheKnownFailureAndThatAgyWasCalled(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	var reviews int
+	f.s.answer = func(prompt []byte) agy.Result {
+		if stage, _, _ := bytes.Cut(prompt, []byte("\n")); string(stage) != "review" {
+			return okResult
+		}
+		reviews++
+		if reviews == 1 {
+			return okResult
+		}
+		return crashResult
+	}
+	f.on("2026-10-04", okResult)
+	code, sum, errOut := f.run(head)
+	if code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != string(review.StatusPartial) {
+		t.Fatalf("a partial run: %d %+v %s", code, sum, errOut)
+	}
+	recs := f.ledger()
+	if last := recs[len(recs)-1]; last.Event != "finished" || last.Status != string(review.StatusPartial) || last.Reason != "crash" || last.AgyCalled == nil || !*last.AgyCalled {
+		t.Fatalf("the finished line of a partial run must name the crash and that agy was called: %+v", last)
+	}
+}
+
+// An unavailable run that closes the patch at once (a content filter, the time limit, a denied action) records the known failure too, not only a retryable one.
+func TestUnavailableRunThatClosesAtOnceRecordsTheKnownFailure(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", filterResult)
+	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != string(review.StatusUnavailable) {
+		t.Fatalf("a content filter run: %d %+v %s", code, sum, errOut)
+	}
+	recs := f.ledger()
+	if last := recs[len(recs)-1]; last.Event != "finished" || last.Status != string(review.StatusUnavailable) || last.Reason != "content_filter" || last.AgyCalled == nil || !*last.AgyCalled {
+		t.Fatalf("the finished line of a content filter run must name the filter and that agy was called: %+v", last)
+	}
+}
+
+// A complete run's line is unchanged: it carries neither a reason nor agyCalled.
+func TestCompleteRunRecordsNoFailure(t *testing.T) {
+	f := newFixture(t)
+	head := f.repo.change(f.base, 2)
+	f.on("2026-10-04", okResult)
+	if code, sum, errOut := f.run(head); code != 0 || sum.Outcome != OutcomeReviewed || sum.Status != string(review.StatusComplete) {
+		t.Fatalf("a complete run: %d %+v %s", code, sum, errOut)
+	}
+	recs := f.ledger()
+	if last := recs[len(recs)-1]; last.Event != "finished" || last.Status != string(review.StatusComplete) || last.Reason != "" || last.AgyCalled != nil {
+		t.Fatalf("a complete run's line must carry neither a reason nor agyCalled: %+v", last)
 	}
 }
