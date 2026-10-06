@@ -159,8 +159,8 @@ func harnessDriftCheckMatches(t *testing.T, got HarnessCheck, want harnessDriftC
 	default:
 		t.Fatalf("%s: unknown recorded error class %q", want.Name, want.ErrorClass)
 	}
-	if got.Repair != want.Repair {
-		t.Fatalf("%s repair = %q, want %q", got.Name, got.Repair, want.Repair)
+	if harnessReportRepairString(got.Repair) != want.Repair {
+		t.Fatalf("%s repair = %q, want %q", got.Name, harnessReportRepairString(got.Repair), want.Repair)
 	}
 }
 
