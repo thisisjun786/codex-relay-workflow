@@ -44,7 +44,7 @@ const reasonRunnerError = "runner_error"
 // where agy ran and reported the failure itself. A crash or a runner error is in neither: whether agy was called cannot be told from the record.
 var (
 	agyNeverStarted = []agy.Reason{agy.ReasonLockWaitExpired, agy.ReasonNotStarted}
-	agyReported     = []agy.Reason{agy.ReasonQuota, agy.ReasonAuthentication, agy.ReasonUnknownModel}
+	agyReported     = []agy.Reason{agy.ReasonQuota, agy.ReasonAuthentication, agy.ReasonUnknownModel, agy.ReasonContentFilter}
 )
 
 // lockWaitExpired reports whether a is an unavailable review where agy was never started because the host-wide lock was not free within the wait: every review call failed that way. Such a run is not a
@@ -66,11 +66,11 @@ func lockWaitExpired(a *review.Artifact) bool {
 	return seen
 }
 
-// agyCalledOf reports whether agy was actually called for this review, when that can be told: true as soon as one review call is one where agy ran and reported the failure itself, false when every
-// review call is one where agy never started (a lock wait, agy that could not be started), and nil when none proves agy ran and at least one is a crash or a runner error (or the review did not end as
-// unavailable).
+// agyCalledOf reports whether agy was actually called for this review, when that can be told, for the ledger line of a run that did not end complete: true as soon as one review call ended normal or
+// invalid (agy answered) or failed with a reason agy reported itself (quota, authentication, unknown_model, content_filter), false when every review call is one where agy never started (a lock wait,
+// agy that could not be started), and nil when none proves agy ran and at least one is a crash or a runner error. It is nil for a complete run, whose line carries no agyCalled.
 func agyCalledOf(a *review.Artifact) *bool {
-	if a.Status != review.StatusUnavailable {
+	if a.Status == review.StatusComplete {
 		return nil
 	}
 	var ran, stopped, unknown bool
@@ -78,10 +78,12 @@ func agyCalledOf(a *review.Artifact) *bool {
 		if c.Stage != "review" {
 			continue
 		}
-		switch r := agy.Reason(c.Reason); {
-		case slices.Contains(agyReported, r):
+		switch {
+		case c.Class == string(agy.ClassNormal) || c.Class == string(agy.ClassInvalid):
 			ran = true
-		case slices.Contains(agyNeverStarted, r):
+		case slices.Contains(agyReported, agy.Reason(c.Reason)):
+			ran = true
+		case slices.Contains(agyNeverStarted, agy.Reason(c.Reason)):
 			stopped = true
 		default:
 			unknown = true
@@ -98,6 +100,31 @@ func agyCalledOf(a *review.Artifact) *bool {
 		return &called
 	}
 	return nil
+}
+
+// ledgerFailureReason is what the ledger line of a run that did not end complete records as its reason: the distinct reasons of the review calls that did not end normal, a lock wait left out (agy was
+// never started, so it names no failure), sorted and joined by commas. When no review call failed -- the run is partial because an auxiliary stage failed -- it lists the auxiliary calls that did not
+// end normal the same way. It is empty when no failed call names a reason.
+func ledgerFailureReason(a *review.Artifact) string {
+	if review := nonNormalCallReasons(a.Calls, true); len(review) > 0 {
+		return strings.Join(review, ",")
+	}
+	return strings.Join(nonNormalCallReasons(a.Calls, false), ",")
+}
+
+// nonNormalCallReasons returns the distinct reasons of the calls of the named kind (the review calls, or the auxiliary ones) that did not end normal, a lock wait left out, sorted.
+func nonNormalCallReasons(calls []review.CallRecord, reviewCall bool) []string {
+	var seen []string
+	for _, c := range calls {
+		if (c.Stage == "review") != reviewCall || c.Class == string(agy.ClassNormal) || agy.Reason(c.Reason) == agy.ReasonLockWaitExpired || c.Reason == "" {
+			continue
+		}
+		if !slices.Contains(seen, c.Reason) {
+			seen = append(seen, c.Reason)
+		}
+	}
+	slices.Sort(seen)
+	return seen
 }
 
 // nextDay is the UTC day after day (2006-01-02).
