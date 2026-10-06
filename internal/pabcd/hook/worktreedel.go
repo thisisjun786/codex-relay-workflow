@@ -369,17 +369,20 @@ func worktreeDelQuoteSegments(command string) []string {
 		}
 		if r.state == worktreeDelQuoteDouble && (c == '`' || c == '$' && i+1 < len(command) && command[i+1] == '(') {
 			// an outer double quote keeps a substitution together: a quote, a separator or a parenthesis inside it is not this shell's
+			skip := 0
 			if c == '`' {
-				_, n := worktreeDelSubstitutionBody(command[i+1:], true)
-				cur = append(cur, command[i:i+1+n]...)
-				i += n
-			} else {
-				_, n := worktreeDelSubstitutionBody(command[i+2:], false)
-				cur = append(cur, command[i:i+2+n]...)
-				i += n + 1
+				if _, n, closed := worktreeDelSubstitutionBody(command[i+1:], true); closed {
+					skip = 1 + n
+				}
+			} else if _, n, closed := worktreeDelSubstitutionBody(command[i+2:], false); closed {
+				skip = 2 + n
 			}
-			r.prev = 'x'
-			continue
+			if skip > 0 {
+				cur = append(cur, command[i:i+skip]...)
+				i += skip - 1
+				r.prev = 'x'
+				continue
+			} // an unclosed body is read plainly below, so the ordinary grammar still cuts at a separator inside it
 		}
 		if r.state == worktreeDelQuoteComment && opened && c == '`' && worktreeDelQuoteBackslashes(command[:i])%2 == 0 {
 			r.state, r.prev, opened = worktreeDelQuotePlain, '`', false // a comment in a backtick body ends at the closing backtick
@@ -928,7 +931,8 @@ func worktreeDelQuoteDropRedirects(words []string) []string {
 // <(...) or >(...) (backtick false) or of a backtick pair (backtick true), and how many bytes it spans up to and including
 // the closing ) or backtick. It tracks the quotes, backslashes and comments inside the way the reader does, so a ) inside a
 // quote or a comment does not close the substitution and a nested ( counts. An unterminated substitution runs to the end.
-func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
+// closed says whether the closing byte was found, so a caller can fall back to the ordinary reading when it was not.
+func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int, bool) {
 	var out []byte
 	depth := 1
 	r := worktreeDelQuoteReader{prev: ' '}
@@ -951,7 +955,7 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 			if c == '`' {
 				// the first unescaped backtick ends the substitution whatever the state inside it: bash ends it there even in a comment
 				// or an unterminated quote (echo "`# '`" and echo "`'`" both close at the backtick)
-				return string(out), i + 1
+				return string(out), i + 1, true
 			}
 		} else {
 			switch {
@@ -959,14 +963,14 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int) {
 				depth++
 			case c == ')' && r.state == worktreeDelQuotePlain:
 				if depth--; depth == 0 {
-					return string(out), i + 1
+					return string(out), i + 1, true
 				}
 			}
 		}
 		out = append(out, c)
 		r.step(c)
 	}
-	return string(out), len(rest)
+	return string(out), len(rest), false
 }
 
 // worktreeDelBraceEnd is the length of the text up to and including the } that closes a ${...} parameter expansion, whose
@@ -1023,15 +1027,15 @@ func worktreeDelSubstitutions(segment string) []string {
 		switch {
 		case c == '$' && i+1 < len(segment) && segment[i+1] == '(':
 			start = i + 2
-			body, n = worktreeDelSubstitutionBody(segment[i+2:], false)
+			body, n, _ = worktreeDelSubstitutionBody(segment[i+2:], false)
 			n += 2
 		case c == '`':
 			start = i + 1
-			body, n = worktreeDelSubstitutionBody(segment[i+1:], true)
+			body, n, _ = worktreeDelSubstitutionBody(segment[i+1:], true)
 			n++
 		case (c == '<' || c == '>') && i+1 < len(segment) && segment[i+1] == '(':
 			start = i + 2
-			body, n = worktreeDelSubstitutionBody(segment[i+2:], false)
+			body, n, _ = worktreeDelSubstitutionBody(segment[i+2:], false)
 			n += 2
 		default:
 			r.step(c)
