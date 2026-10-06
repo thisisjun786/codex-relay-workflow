@@ -1,76 +1,64 @@
 package state
 
 import (
-	"bytes"
-	"encoding/json"
-
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 )
 
 // RewriteKeepsInterview says whether writing kept back over the session file raw would keep every interview record the file
 // stores. kept is the tracker ReadStateStrict rebuilt from raw: ReconstructInterview caps contradictions and assumptions at
-// interview.MaxTrackerArray (drop-oldest) and drops an ontology entity with no name and a relationship with no target, so a
-// stored array longer than the rebuilt one is a record the write-back would lose. The two values cannot be compared instead:
-// the reader's rebuild always normalises a dimension (an absent known/unknown array becomes empty, an unrecognised level
-// becomes low), so a value comparison would refuse every write and silently stop the recovery. A tracker the file does not
-// hold, or holds as null, holds no entry to lose.
+// interview.MaxTrackerArray (drop-oldest), caps each dimension's known/unknown list and each ontology entry's fields and
+// relationships the same way, drops the strings of a list that are not text, and drops an ontology entity with no name and a
+// relationship with no target, so a stored list longer than the rebuilt one is a record the write-back would lose. The two
+// values cannot be compared instead: the reader's rebuild always normalises a dimension (an absent known/unknown list becomes
+// empty, an unrecognised level becomes low), so a value comparison would refuse every write and silently stop the recovery. A
+// tracker the file does not hold, or holds as null, holds no entry to lose.
 //
-// raw is read as ReadStateStrict reads it: a document that is not one JSON object is refused, and the key is decoded with
-// numbers left as json.Number. This is the judgement the post-compact hook has always made (its sessionHookInterviewKeepsStored),
-// moved here so the cli writers share it.
+// raw is read exactly as ReadStateStrict reads it (decodeObject: numbers stay json.Number, a repeated key keeps its last
+// value, and anything after the top-level object is refused), so the document this judges is the document the reader rebuilt
+// kept from. This is the judgement the post-compact hook has always made (its sessionHookInterviewKeepsStored), moved here so
+// the cli writers share it.
 func RewriteKeepsInterview(raw []byte, kept *interview.Tracker) bool {
-	stored, ok := rewriteJSONField(raw, "interview")
-	if !ok {
+	m := decodeObject(raw)
+	if m == nil {
 		return false
 	}
-	object, _ := stored.(map[string]any)
+	object, _ := m["interview"].(map[string]any)
 	contradictions, _ := object["contradictions"].([]any)
 	assumptions, _ := object["assumptions"].([]any)
 	ontology, _ := object["ontologySchema"].([]any)
-	if kept == nil {
-		return len(contradictions) == 0 && len(assumptions) == 0 && len(ontology) == 0
+	// kept is nil only for a document that holds no tracker at all, so every stored list is then a record to lose.
+	var keepContradictions, keepAssumptions, keepOntology int
+	if kept != nil {
+		keepContradictions, keepAssumptions, keepOntology = len(kept.Contradictions), len(kept.Assumptions), len(kept.OntologySchema)
 	}
-	if len(contradictions) > len(kept.Contradictions) || len(assumptions) > len(kept.Assumptions) || len(ontology) > len(kept.OntologySchema) {
+	if len(contradictions) > keepContradictions || len(assumptions) > keepAssumptions || len(ontology) > keepOntology {
 		return false
 	}
-	for i, entity := range ontology {
+	dimensions, _ := object["dimensions"].(map[string]any)
+	for _, d := range interview.DimensionOrder() {
+		score, _ := dimensions[string(d)].(map[string]any)
+		known, _ := score["known"].([]any)
+		unknown, _ := score["unknown"].([]any)
+		keepKnown, keepUnknown := 0, 0
+		if kept != nil {
+			keptScore := kept.Dimensions.Score(d)
+			keepKnown, keepUnknown = len(keptScore.Known), len(keptScore.Unknown)
+		}
+		if len(known) > keepKnown || len(unknown) > keepUnknown {
+			return false
+		}
+	}
+	for i, entity := range ontology { // the entity count was checked above, so the rebuilt entry exists
 		record, _ := entity.(map[string]any)
+		fields, _ := record["fields"].([]any)
 		relationships, _ := record["relationships"].([]any)
-		if len(relationships) > len(kept.OntologySchema[i].Relationships) {
+		keepFields, keepRelationships := 0, 0
+		if kept != nil {
+			keepFields, keepRelationships = len(kept.OntologySchema[i].Fields), len(kept.OntologySchema[i].Relationships)
+		}
+		if len(fields) > keepFields || len(relationships) > keepRelationships {
 			return false
 		}
 	}
 	return true
-}
-
-// rewriteJSONField is the value of one top-level key of a state document, decoded as the reader decodes it: numbers stay
-// json.Number. A document that is not one JSON object is refused; a key the document does not hold is the nil value.
-func rewriteJSONField(doc []byte, key string) (any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(doc))
-	dec.UseNumber()
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, false
-	}
-	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-		return nil, false
-	}
-	for dec.More() {
-		name, err := dec.Token()
-		if err != nil {
-			return nil, false
-		}
-		if field, ok := name.(string); ok && field == key {
-			var value any
-			if dec.Decode(&value) != nil {
-				return nil, false
-			}
-			return value, true
-		}
-		var skip json.RawMessage
-		if dec.Decode(&skip) != nil {
-			return nil, false
-		}
-	}
-	return nil, true
 }
