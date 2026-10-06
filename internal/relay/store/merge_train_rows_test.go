@@ -23,6 +23,61 @@ func mergeTrainRow(id string) string {
 		" leader_task_id, created_at) VALUES ('%s','repo|dev','o/r','dev','%s','task-leader','2026-10-06T00:00:00Z')", id, zoneDigest)
 }
 
+// The two terminal outcomes the successor commands will write: a train that lands every member closes
+// with done, and one whose base a landing outside the lane moved closes with abandoned. Both are just
+// another appended event, so the state follows the newest one and no earlier row moves. The writer
+// refuses the same things the DDL does, so the command layer never has to pre-check them.
+func TestDAGMergeTrainTerminalStatesAndWriterRefusals(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	ctx := context.Background()
+	train := MergeTrainRow{TrainID: "train-2", TargetKey: "o/r|dev", Repository: "o/r", BaseRef: "dev",
+		BaseSHA: zoneDigest, LeaderTaskID: "task-leader", CreatedAt: "2026-10-06T00:00:00Z"}
+	if err := RecordMergeTrain(ctx, s, train); err != nil {
+		t.Fatal(err)
+	}
+	// the writer refuses a kind outside the five, an empty actor and a repeated sequence number
+	for _, bad := range []MergeTrainEventRow{
+		{TrainID: train.TrainID, Seq: 1, Kind: "started", Actor: "task-leader", DetailJSON: "{}", RecordedAt: "2026-10-06T00:00:01Z"},
+		{TrainID: train.TrainID, Seq: 1, Kind: MergeTrainOpened, Actor: "", DetailJSON: "{}", RecordedAt: "2026-10-06T00:00:01Z"},
+		{TrainID: train.TrainID, Seq: 1, Kind: MergeTrainOpened, Actor: "task-leader", DetailJSON: "", RecordedAt: "2026-10-06T00:00:01Z"},
+		{TrainID: "train-none", Seq: 1, Kind: MergeTrainOpened, Actor: "task-leader", DetailJSON: "{}", RecordedAt: "2026-10-06T00:00:01Z"},
+	} {
+		if err := RecordMergeTrainEvent(ctx, s, bad); err == nil {
+			t.Fatalf("the writer accepted %+v", bad)
+		}
+	}
+	// the writer refuses a member at a sequence number the train already holds, and one of another train
+	member := MergeTrainMemberRow{TrainID: train.TrainID, Seq: 1, TurnID: "turn-1", PRNumber: 701,
+		RelationshipID: "rel-1", MemberHead: zoneDigest}
+	if err := RecordMergeTrainMember(ctx, s, member); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordMergeTrainMember(ctx, s, member); err == nil {
+		t.Fatal("the writer accepted a second member at one sequence number")
+	}
+	// an abandoned train: the state is abandoned and every earlier event still reads back unchanged
+	opened := MergeTrainEventRow{TrainID: train.TrainID, Seq: 1, Kind: MergeTrainOpened, Actor: "task-leader", DetailJSON: "{}", RecordedAt: "2026-10-06T00:00:01Z"}
+	verified := MergeTrainEventRow{TrainID: train.TrainID, Seq: 2, Kind: MergeTrainVerified, Actor: "task-leader", DetailJSON: `{"seq":1,"run_id":37414778712}`, RecordedAt: "2026-10-06T00:00:02Z"}
+	abandoned := MergeTrainEventRow{TrainID: train.TrainID, Seq: 3, Kind: MergeTrainAbandoned, Actor: "task-leader", DetailJSON: `{"reason":"base moved out of lane"}`, RecordedAt: "2026-10-06T00:00:03Z"}
+	for _, event := range []MergeTrainEventRow{opened, verified, abandoned} {
+		if err := RecordMergeTrainEvent(ctx, s, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state, found, err := MergeTrainState(ctx, s, train.TrainID); err != nil || !found || state != MergeTrainAbandoned {
+		t.Fatalf("state = %q found=%v (%v), want %q", state, found, err, MergeTrainAbandoned)
+	}
+	events, err := MergeTrainEvents(ctx, s, train.TrainID)
+	if err != nil || !reflect.DeepEqual(events, []MergeTrainEventRow{opened, verified, abandoned}) {
+		t.Fatalf("events = %+v (%v)", events, err)
+	}
+	// the two terminal kinds are distinct constants, so a reader can tell them apart
+	if MergeTrainDone == MergeTrainAbandoned {
+		t.Fatal("done and abandoned are the same kind")
+	}
+}
+
 // mergeTrainMemberRow is one merge_train_members row as SQL.
 func mergeTrainMemberRow(train string, seq int, turn string) string {
 	return fmt.Sprintf("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id,"+
