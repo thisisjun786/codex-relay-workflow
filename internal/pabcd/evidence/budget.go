@@ -75,7 +75,11 @@ func ResolveTombstone(cwd, sessionID string, p Payload) bool {
 	return resolveTombstone(cwd, sessionID, p, state.WithSessionLock)
 }
 
-func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
+func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc, publishedWrite ...func(string, state.State) error) bool {
+	write := state.WriteState
+	if len(publishedWrite) > 0 && publishedWrite[0] != nil {
+		write = publishedWrite[0]
+	}
 	agentID, turnID, resolvable := tombstoneIdentity(p)
 	if !resolvable {
 		return false
@@ -90,7 +94,7 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc) bool {
 			return nil
 		}
 		s.SessionID, s.UnverifiedSubagents = sessionID, next
-		if err := state.WriteState(cwd, s); err != nil {
+		if err := write(cwd, s); err != nil {
 			return err
 		}
 		removed = true

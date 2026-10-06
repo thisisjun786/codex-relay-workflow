@@ -71,7 +71,11 @@ func RecordTombstone(cwd, sessionID string, p Payload, attempts int, marker Mark
 	return recordTombstone(cwd, sessionID, p, attempts, time.Now(), state.WithSessionLock, marker)
 }
 
-func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Time, lock lockFunc, marker MarkerWriter) bool {
+func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Time, lock lockFunc, marker MarkerWriter, publishedWrite ...func(string, state.State) error) bool {
+	write := state.WriteState
+	if len(publishedWrite) > 0 && publishedWrite[0] != nil {
+		write = publishedWrite[0]
+	}
 	agentID, turnID, resolvable := tombstoneIdentity(p)
 	claimed, _ := ExtractReceiptPath(p.LastAssistantMessage) // the claimed path only, never the child's prose
 	if units := utf16.Encode([]rune(claimed)); len(units) > state.MaxReceiptClaimLen {
@@ -91,7 +95,7 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		s.UnverifiedSubagents = append(slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
 		}), entry)
-		return state.WriteState(cwd, s)
+		return write(cwd, s)
 	}
 	if lock(cwd, sessionID, commit) == nil {
 		return true
