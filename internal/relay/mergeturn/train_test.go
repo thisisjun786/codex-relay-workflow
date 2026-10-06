@@ -178,18 +178,6 @@ func (w *tr) open(turn, actor, base string, members ...int64) (map[string]any, e
 	return w.m.Open(w.ctx, turn, actor, base, members, w.tip, w.forge)
 }
 
-func (w *tr) trainID() string {
-	w.t.Helper()
-	rows, err := w.s.All(w.ctx, "SELECT train_id FROM merge_trains")
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	if len(rows) != 1 {
-		w.t.Fatalf("trains = %d, want 1", len(rows))
-	}
-	return rows[0].Get("train_id").(string)
-}
-
 func (w *tr) count(query string, args ...any) int64 {
 	w.t.Helper()
 	var n int64

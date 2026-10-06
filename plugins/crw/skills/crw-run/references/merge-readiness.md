@@ -1136,6 +1136,73 @@ infrastructure failure before the code ran, or undetermined. Those three are rep
 count and are not in it; so are a landing not yet landed (`pending`) and one not read (`unread`),
 and none of them is ever counted as zero.
 
+
+### Merge a bundle
+
+Under the strict ruleset a lane that merges members one by one needs a green `dev-gate` on every
+prefix tree, so k members cost k CI runs and the runner limit caps a train at 3 to 4. A bundle is the
+alternative: the leader builds **one pull request** over several verified members, that one tree gets
+**one** full CI run, and it lands as **one merge commit**. The size is uncapped — one run whatever the
+size. The commands are `merge-train-open`, `merge-train-verify`, `merge-train-land`,
+`merge-train-close` and `merge-train-show` (the decision in `docs/port/decisions.md` section 79 and
+its correction; the operator page is `docs/relay/README.md`).
+
+**Choosing the members.** The parent that holds the lane turn is the leader.
+
+- Among the verified pull requests waiting for the lane, choose those that merge onto the current dev
+  in order without a conflict. Gather related ones (the same package or area) first; pull requests
+  whose packages do not overlap may ride together too, because a failure can then be narrowed by
+  package.
+- Leave out a member that needs a base-refresh correction.
+- Members may belong to different parents. There is no count cap. The order follows the plan's
+  precedence edges: a member whose plan predecessor is also in the bundle must stand after it.
+
+**The leader's steps.**
+
+1. `merge-train-open --turn <the leader's turn> --actor <leader> --base-sha <D> --member <pr>...`.
+   The relay reads the base, the pull requests and the members' turns and refuses `disposition_conflict`
+   (a duplicate, an order against a plan edge, a member head that is not its accepted head, a base other
+   than the dev tip) with no event. A bundle of one member is today's lane and opens no train.
+2. Build the bundle branch `refs/heads/crw-train/<train_id>` from the dev tip D by `git merge --no-ff`
+   of each member head in order. Do not resolve by hand; a member that conflicts is left out and the
+   train reopened.
+3. Open the one bundle pull request. Its title is "CRW bundle <train_id>: #a #b …" and its body lists
+   the members and the evidence. Post it through a file scanned by gitleaks, and label it `crw-lane`
+   so its run is a full one even in light mode.
+4. After its CI finishes, `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H>
+   --run <R> --repo <a checkout>`. The relay reads the pull request, the run and the chain itself and
+   compares your values; a run that is not this repository's `ci.yml`, a fork run, a job that is not a
+   success, a go-product test leg whose test step was skipped, and a hand-resolved merge are each
+   refused with no event.
+5. `gh pr merge <bundle pr> --merge --match-head-commit <H>`.
+6. `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`. The
+   relay reads the dev tip and M's parents from the forge; anything but M with parents (D, H) and every
+   member head an ancestor of M is refused and writes nothing. On success every member turn is recorded
+   landed with M.
+7. For each member pull request, check it shows merged; if it does not, comment "landed via bundle
+   <merge sha>" and close it.
+8. `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and delete the
+   bundle branch.
+
+**Each member's parent.** Once the landing is recorded, the member's own parent records
+`assignment-mark` (merged) and `dag-integration-observe` on its relationship. The ruling and the
+integration observation stay the parent's work.
+
+**Failure handling.**
+
+- If the bundle's CI fails, read the failed job's log for the packages it names and remove the members
+  that touch those packages, then open a new bundle over the rest (close the old one abandoned and close
+  its pull request).
+- If no member can be named as the cause, halve the bundle and run again, keeping a predecessor and its
+  successors on the same side.
+- If only a known flaky test failed, rerun the failed jobs once.
+- A set that failed twice goes one by one through the lane.
+- A removed member rides alone.
+- If a merge outside the lane moves dev, abandon the bundle and open a new one.
+
+**The lane script** changes only after the bundle merge is in the runtime; until then the lane goes one
+at a time. The `plugin.json` version line is re-recorded mechanically.
+
 ### Resolve a mechanical conflict yourself
 
 A conflict is not always a reason to return a candidate. Two conflicts are frequent and have a fixed answer:

@@ -607,6 +607,59 @@ Global options come BEFORE the subcommand:
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.
 
+## The merge lane: landing a bundle
+
+The merge lane's own commands are `merge-turn-*` (one candidate at a time) and, since CRW-768,
+`merge-train-*` (a bundle of several verified candidates landing as one). A bundle exists because a
+strict lane that merges members one by one needs a green `dev-gate` on every prefix tree, so k
+members cost k CI runs and the runner limit caps the count; a bundle's one pull request gets **one**
+full CI run on its single tree and lands as **one merge commit**, whatever the size. The parent
+procedure is in the crw-run skill's
+[merge-readiness](https://github.com/thisisjun786/codex-relay-workflow/blob/dev/plugins/crw/skills/crw-run/references/merge-readiness.md#merge-a-bundle).
+
+| Command | Purpose |
+|---|---|
+| `merge-train-open` | the leader's holding turn opens a train over the members in the given order; one member is today's lane and opens no train |
+| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run and the first-parent chain in the given checkout, and appends a verified event |
+| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed |
+| `merge-train-close` | close the train done, or abandon it and return its member turns to waiting |
+| `merge-train-show` | the train's members in order, its event log, the state its newest event derives, and a reconcile reading of a lost landing |
+
+The relay reads the pull request, the run, the jobs, the commits and the ancestry from the forge
+itself, and the chain from the given checkout; the caller's values are compared and never trusted.
+A bundle that disagrees or is out of order is `disposition_conflict` and a forge or git that cannot
+answer is `merge_target_unreadable`, and a refusal writes no event. The five commands are offline
+like the `merge-turn-*` ones.
+
+The steps, with the command names:
+
+1. **Choose the members.** Among the verified pull requests waiting for the lane, take those that
+   merge onto the current dev in order without a conflict; related ones (the same package) first, and
+   non-overlapping packages may ride together. Leave out a member that needs a base-refresh
+   correction. Members may belong to different parents. There is no count cap. The order follows the
+   plan's precedence edges.
+2. **The leader.** `merge-train-open --turn <the leader's turn> --actor <leader> --base-sha <D>
+   --member <pr>...`; then build the bundle branch `refs/heads/crw-train/<train_id>` from D by
+   `git merge --no-ff` of each member head in order (no hand resolution); open the one bundle pull
+   request through a file scanned by gitleaks and label it `crw-lane`; after its CI finishes,
+   `merge-train-verify --train <id> --actor <leader> --bundle-pr <n> --head <H> --run <R> --repo
+   <checkout>`; then `gh pr merge <bundle pr> --merge --match-head-commit <H>`; then
+   `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`; then
+   check every member pull request shows merged (comment "landed via bundle <merge sha>" and close it
+   if not); then `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and
+   delete the bundle branch.
+3. **Each member's parent.** Once the landing is recorded, the member's own parent records
+   `assignment-mark` (merged) and `dag-integration-observe` on its relationship.
+4. **Failure handling.** A member touching a failed job's packages is removed and the rest re-bundled
+   (the old train abandoned); when no member can be named the bundle is halved with a predecessor and
+   its successors kept on the same side; a known flaky test's jobs are rerun once; a set that failed
+   twice goes one by one; a removed member rides alone; a train whose base moved outside the lane is
+   abandoned and reopened.
+5. **The lane script** changes only after the bundle merge is in the runtime. The `plugin.json`
+   version line is re-recorded mechanically.
+
+
+
 ## The normal flow
 
 A child completing work from inside its own live turn:
