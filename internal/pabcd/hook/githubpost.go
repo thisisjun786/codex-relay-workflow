@@ -293,19 +293,6 @@ func (s *githubPostScan) api(args []githubPostWord) (githubPostSite, bool) {
 	return first, denied
 }
 
-// githubPostFieldKeys is the fields a -f/-F key names: the key itself, and the field on either side of a
-// nested key, because GitHub reads body[text] and input[body] as text bound for the post.
-func githubPostFieldKeys(key string) []string {
-	keys := []string{key}
-	if i := strings.IndexByte(key, '['); i >= 0 {
-		keys = append(keys, key[:i])
-	}
-	if i := strings.LastIndexByte(key, '['); i >= 0 {
-		keys = append(keys, strings.TrimSuffix(key[i+1:], "]"))
-	}
-	return keys
-}
-
 // githubPostOptions reads a gh command's options, in the long and short forms pflag accepts. A value-taking
 // shorthand ends its bundle, as pflag reads it (-bplain is -b with "plain"), a -- ends the options, and a
 // value taken from the next word is not read again as an option of its own.
@@ -726,35 +713,27 @@ func githubPostWrapper(name string) bool {
 	return false
 }
 
-// githubPostWrapperValue is a wrapper option that takes the next word as its value, as githubPostWrapperValues
-// lists them for its own help: a function, not a package-level table, so nothing is initialized at start.
+// githubPostWrapperValue is a wrapper option that takes the next word as its value, as its own help lists
+// them. The table is built inside the call rather than at package level, so nothing is initialized at start.
 func githubPostWrapperValue(name, option string) bool {
-	for _, v := range strings.Fields(githubPostWrapperValues(name)) {
+	values := map[string]string{
+		"env":     "-u --unset -C --chdir -S --split-string",
+		"sudo":    "-u --user -g --group -p --prompt -C --close-from -h --host -U --other-user -R --chroot -r --role -t --type -D --chdir",
+		"doas":    "-u --user -C --config",
+		"timeout": "-s --signal -k --kill-after",
+		"nice":    "-n --adjustment",
+		"ionice":  "-c --class -n --classdata -p --pid",
+		"stdbuf":  "-i --input -o --output -e --error",
+		"chrt":    "-p --pid -T --sched-runtime -P --sched-period -D --sched-deadline",
+		"taskset": "-p --pid",
+		"xargs":   "-I --replace -n --max-args -L --max-lines -P --max-procs -s --max-chars -E --eof -d --delimiter -a --arg-file",
+	}[name]
+	for _, v := range strings.Fields(values) {
 		if option == v || strings.HasPrefix(option, v+"=") {
 			return true
 		}
 	}
 	return false
-}
-
-func githubPostWrapperValues(name string) string {
-	for _, row := range [...]string{
-		"env -u --unset -C --chdir -S --split-string",
-		"sudo -u --user -g --group -p --prompt -C --close-from -h --host -U --other-user -R --chroot -r --role -t --type -D --chdir",
-		"doas -u --user -C --config",
-		"timeout -s --signal -k --kill-after",
-		"nice -n --adjustment",
-		"ionice -c --class -n --classdata -p --pid",
-		"stdbuf -i --input -o --output -e --error",
-		"chrt -p --pid -T --sched-runtime -P --sched-period -D --sched-deadline",
-		"taskset -p --pid",
-		"xargs -I --replace -n --max-args -L --max-lines -P --max-procs -s --max-chars -E --eof -d --delimiter -a --arg-file",
-	} {
-		if rest, ok := strings.CutPrefix(row, name+" "); ok {
-			return rest
-		}
-	}
-	return ""
 }
 
 // githubPostMentions is whether the text names gh with pr, issue or api, the fail-closed rule's words: the
