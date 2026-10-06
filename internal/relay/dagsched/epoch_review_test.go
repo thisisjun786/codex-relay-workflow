@@ -10,6 +10,7 @@ import (
 
 // A session that retries its claim after losing the response is told what the first answer told it: the same epoch, and the same claim it replaced.
 func TestAClaimReplayNamesTheClaimItReplaced(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
@@ -51,6 +52,7 @@ func TestAClaimReplayNamesTheClaimItReplaced(t *testing.T) {
 // A merge turn whose effect is unknown is reconciled by observing where the head is, and only the parent of the accepted result's relationship can observe. A parent that holds the project and
 // the epoch but not that relationship is told it needs an operator, not to run a command that refuses it.
 func TestRestartDoesNotPrescribeAnObservationItsActorCannotMake(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newJudgeKit(t)
 	k.claim(k.sched, "g", "parent", "session-1")

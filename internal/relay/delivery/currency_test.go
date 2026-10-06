@@ -107,6 +107,7 @@ func runVCU(t *testing.T, mode string, goSide func(v *vcu) any, wantReason strin
 }
 
 func TestVCU01_a_verified_verdict_needs_the_current_head(t *testing.T) {
+	t.Parallel()
 	t.Run("generation advanced", func(t *testing.T) {
 		runVCU(t, "advanced", func(v *vcu) any {
 			e := v.acknowledged("")
@@ -143,6 +144,7 @@ func TestVCU01_a_verified_verdict_needs_the_current_head(t *testing.T) {
 }
 
 func TestVCU02_a_paused_relationship_refuses_every_verdict(t *testing.T) {
+	t.Parallel()
 	runVCU(t, "paused", func(v *vcu) any {
 		e := v.acknowledged("")
 		v.setStatusBy("paused", parent)
@@ -159,6 +161,7 @@ func TestVCU02_a_paused_relationship_refuses_every_verdict(t *testing.T) {
 }
 
 func TestVCU03_needs_changes_on_a_stale_event_is_refused_unverified_is_recorded(t *testing.T) {
+	t.Parallel()
 	t.Run("needs_changes", func(t *testing.T) {
 		runVCU(t, "nc_stale", func(v *vcu) any {
 			e := v.acknowledged("")
@@ -180,6 +183,7 @@ func TestVCU03_needs_changes_on_a_stale_event_is_refused_unverified_is_recorded(
 }
 
 func TestVCU04_a_replay_returns_the_historical_verdict(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "vcu", "replay")
 	v := newVCU(t, tree)
@@ -197,6 +201,7 @@ func TestVCU04_a_replay_returns_the_historical_verdict(t *testing.T) {
 }
 
 func TestVCU06_head_revision_lineage_evidence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mode, evidence string
 		build          func(v *vcu)
@@ -238,6 +243,7 @@ func TestVCU06_head_revision_lineage_evidence(t *testing.T) {
 }
 
 func TestVCU07_a_revision_cannot_declare_itself(t *testing.T) {
+	t.Parallel()
 	runVCU(t, "self", func(v *vcu) any {
 		rid := v.register(regOpts{})
 		payload := v.readyPayload(rid, 1, []string{v.artifact("out.txt", "self referential")}, 1, assigned("completed"))
@@ -248,6 +254,7 @@ func TestVCU07_a_revision_cannot_declare_itself(t *testing.T) {
 }
 
 func TestVCU08_criteria_coverage_on_verdicts(t *testing.T) {
+	t.Parallel()
 	both := []any{finding("c1", "verified", ""), finding("c2", "verified", "")}
 	claimed := func(v *vcu) string {
 		e := v.acknowledged("")
@@ -287,6 +294,7 @@ func TestVCU08_criteria_coverage_on_verdicts(t *testing.T) {
 }
 
 func TestVCU09_criteria_currency_binds_the_review(t *testing.T) {
+	t.Parallel()
 	both := []any{finding("c1", "verified", ""), finding("c2", "verified", "")}
 	for _, tc := range []struct {
 		mode, reason string
@@ -328,6 +336,7 @@ func TestVCU09_criteria_currency_binds_the_review(t *testing.T) {
 }
 
 func TestVCU10_the_set_digest_resists_delimiter_injection(t *testing.T) {
+	t.Parallel()
 	a := SetDigest([]Criterion{{"a", "b|c", true}})
 	b := SetDigest([]Criterion{{"a|b", "c", true}})
 	golden.Check(t, "set digests", []byte(a+" "+b))

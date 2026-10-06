@@ -63,6 +63,7 @@ func wantPresent(t *testing.T, m map[string]any, samples float64, keys ...string
 
 // An empty plan has no data for anything: every measure is absent with its reason, and none reads zero.
 func TestAMeasureWithNoDataIsAbsentNotZero(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("m", 0, "m-r1", addNode("a", dag.NodeImplementation), addNode("b", dag.NodeImplementation))
@@ -86,6 +87,7 @@ func TestAMeasureWithNoDataIsAbsentNotZero(t *testing.T) {
 
 // Landings that nothing measured read absent, not zero: no sweep found a conflict, no merge judgement exists, the parent recorded nothing.
 func TestLandingsWithNothingMeasuredAreAbsentNotZero(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1", "l2")
 	w.land("l1", 1, 0)
 	w.land("l2", 2, 0)
@@ -122,6 +124,7 @@ func (w *policyWorld) judge(node, outcome string, seq int, at time.Time) {
 }
 
 func TestMeasurementsReadTheStore(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1", "l2", "l3")
 	f := w.f
 
@@ -222,6 +225,7 @@ func TestMeasurementsReadTheStore(t *testing.T) {
 
 // A store whose zone predates the tables that hold a measure reads that measure absent with the reason, and the rest as it is.
 func TestMeasurementsOfAnOlderZone(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1")
 	w.land("l1", 1, 0)
 	for _, table := range []string{"dag_pass_release_policy", "dag_release_policy", "dag_landing_results", "dag_conflict_sweep_members"} {
@@ -244,6 +248,7 @@ func TestMeasurementsOfAnOlderZone(t *testing.T) {
 }
 
 func TestCancelledAfterReleaseCountsNodesThatHadAChild(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("c", 0, "c-r1", addNode("x", dag.NodeImplementation), addNode("y", dag.NodeImplementation), addNode("z", dag.NodeImplementation))
@@ -258,6 +263,7 @@ func TestCancelledAfterReleaseCountsNodesThatHadAChild(t *testing.T) {
 
 // The observations of a plan upgraded from a build before the sweep ledger have no sweep member: they are measurements all the same, so the pull requests they name are measured and their conflicts are tallied.
 func TestObservationsRecordedBeforeTheSweepLedgerAreMeasured(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t)
 	f := w.f
 	f.exec("INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES ('dco-old', 'p', 'cand', 'hold', 'owner/repo', 'x', 'y', 'z', 1, 'git', 'parent', ?)", stamp(policyAt(0)))

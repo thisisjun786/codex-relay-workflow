@@ -19,6 +19,7 @@ import (
 const (
 	scopeIssue   = "issue"
 	scopeProject = "project"
+	scopeStore   = "store"
 	roleChild    = "child"
 	roleParent   = "parent"
 	linkExec     = "execution"
@@ -243,9 +244,14 @@ func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bo
 	return hasRecord, nil, nil
 }
 
-// bindingPlan is linkage.binding_plan.
+// bindingPlan is linkage.binding_plan for a binding on the role's own level.
 func (l linkage) bindingPlan(ctx context.Context, role, key string, endpoint Endpoint, replacing string) (*bindingPlan, *linkRefusal, error) {
-	kind := roleScope[role]
+	return l.bindingPlanKind(ctx, role, roleScope[role], key, endpoint, replacing)
+}
+
+// bindingPlanKind is linkage.binding_plan for a binding whose scope kind is named rather than the
+// role's own: the store seat is the only binding that names one (CRW-450).
+func (l linkage) bindingPlanKind(ctx context.Context, role, kind, key string, endpoint Endpoint, replacing string) (*bindingPlan, *linkRefusal, error) {
 	if err := encodedID(role, kind, key, endpoint.TaskID); err != nil {
 		return nil, nil, err
 	}
@@ -334,8 +340,11 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	err = l.q(ctx).QueryRowContext(ctx, "SELECT scope_kind, scope_key FROM scope_bindings  WHERE task_id = ? AND role = ? AND scope_key != ?"+
-		"    AND status IN ('active','paused') AND superseded_by IS NULL", endpoint.TaskID, role, key).Scan(&other.kind, &other.key)
+	// The same role at another SCOPE, not merely another key: a supervisor's seats are one per
+	// Linear level, and an initiative whose key happens to be "store" is not the store seat.
+	err = l.q(ctx).QueryRowContext(ctx, "SELECT scope_kind, scope_key FROM scope_bindings  WHERE task_id = ? AND role = ?"+
+		"    AND NOT (scope_kind = ? AND scope_key = ?)"+
+		"    AND status IN ('active','paused') AND superseded_by IS NULL", endpoint.TaskID, role, kind, key).Scan(&other.kind, &other.key)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalRoleAlreadyBound,
 			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + role + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +

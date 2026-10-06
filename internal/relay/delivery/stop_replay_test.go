@@ -13,6 +13,7 @@ import (
 // A context that ends in the middle of a replay is a stop, whichever step of the replay it ends
 // in: the answer is the context's error, never a verdict about a marker the replay did not get to
 // read (a conflict where the fact is the same, an unbound generation where the bind stands).
+// sequential: t.Setenv(MarkerEnv) is process-wide.
 func TestAStopDuringAReplayIsNeverAMarkerVerdict(t *testing.T) {
 	t.Run("publish or compare", func(t *testing.T) {
 		target := filepath.Join(t.TempDir(), "facts", "intent.json")

@@ -14,6 +14,7 @@ import (
 // that dangles and one whose bin/crw is not a regular executable file; a runtime reached whole is
 // landed.
 func TestLandedAtIsWhatAHostReaches(t *testing.T) {
+	t.Parallel()
 	dest := t.TempDir()
 	current := filepath.Join(dest, "current")
 	looping := filepath.Join(current, "bin-0.9.1-000000000000")
