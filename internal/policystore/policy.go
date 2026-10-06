@@ -262,7 +262,11 @@ func projectExceptions(document pyjson.Object) []ExceptionView {
 
 // readRegular reads a regular file's bytes, judged on the descriptor.
 func readRegular(path string) ([]byte, error) {
-	file, err := reading.OpenRegular(path)
+	encoded, err := encodedPath(path)
+	if err != nil {
+		return nil, err
+	}
+	file, err := reading.OpenRegular(encoded)
 	if err != nil {
 		return nil, err
 	}
