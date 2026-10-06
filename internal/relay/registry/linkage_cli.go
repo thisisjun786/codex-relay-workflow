@@ -106,7 +106,7 @@ func endpoint(p parsed, prefix string) Endpoint {
 var linkageCommands = []command{
 	{Command: dispatch.Command{Name: "linkage-bind"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
-			return r.BindScopeAs(ctx, p.text("role"), p.text("scope"), endpoint(p, ""), Active)
+			return r.bindScopeKind(ctx, p.text("role"), p.text("scope-kind"), p.text("scope"), endpoint(p, ""), Active)
 		}},
 	{Command: dispatch.Command{Name: "linkage-supervise", Defaults: map[string]any{"kind": linkExec}},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {

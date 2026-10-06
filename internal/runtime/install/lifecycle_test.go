@@ -16,6 +16,7 @@ import (
 // candidate through its own executables, records the install entries, a point and the pointer's
 // placement, moves the pointer and settles the claim last.
 func TestInstallRecordsThePointerAndSettlesTheClaimLast(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	env := runtimeDir(h, "0.9.0", first, t)
@@ -70,6 +71,7 @@ func TestInstallRecordsThePointerAndSettlesTheClaimLast(t *testing.T) {
 // outgoing, so a second rollback returns again). Remove refuses the selected runtime and removes
 // an unselected settled one, dropping its install entries.
 func TestUpdateRollbackAndRemove(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -136,6 +138,7 @@ func TestUpdateRollbackAndRemove(t *testing.T) {
 // App Server, so it is never exercised - leaves the previous selection and pointer exactly as
 // they were, releases only this run's directory, and status reads the host as it was.
 func TestAFailedUpdateLeavesThePreviousRuntime(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, failed := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -177,6 +180,7 @@ func TestAFailedUpdateLeavesThePreviousRuntime(t *testing.T) {
 // An archive whose bytes do not hash to what SHA256SUMS lists is refused before anything is
 // unpacked: nothing under the destination and no host record is created.
 func TestADigestMismatchIsRefusedBeforeUnpacking(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	path := archive(t, "0.9.0", "")
 	write(t, filepath.Join(filepath.Dir(path), install.SumsName), "0000000000000000000000000000000000000000000000000000000000000000  "+filepath.Base(path)+"\n")

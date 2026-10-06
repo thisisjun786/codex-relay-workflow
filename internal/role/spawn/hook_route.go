@@ -324,7 +324,7 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		// Issue the managed spawn (:1094-1097): a failure is the deny envelope. The candidate's model and effort then replace
 		// whatever the caller sent, a null candidate field deleting the key.
 		if _, err := role.IssueManagedSpawn(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID); err != nil {
-			return DenyEnvelope("managed dispatch: " + err.Error())
+			return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err))
 		}
 		if a.managed.Candidate.Model == nil {
 			updated = spawnHookWithout(updated, "model")
