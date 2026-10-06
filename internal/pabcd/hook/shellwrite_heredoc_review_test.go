@@ -37,6 +37,11 @@ func TestShellWriteHeredocReviewUnreadable(t *testing.T) {
 	for _, c := range []struct{ name, command string }{
 		{"a nested -c program holds an unquoted heredoc", "bash -c 'python3 <<EOF\nopen(\"$P\",\"w\")\nEOF'"},
 		{"eval holds an unquoted heredoc", "eval 'python3 <<EOF\nopen(\"$P\",\"w\")\nEOF'"},
+		// Devin's red finding: a backslash-newline joins the lines and the shell still expands the following $, so the
+		// body is unreadable. shellWriteHeredocBodyExpands treats the backslash as escaping only the newline, so the $
+		// is seen (this row pins the answer that makes the finding a false positive). The command is built from a
+		// literal so the source shows the real backslash-newline pair.
+		{"a continued line still expands its $", "python3 <<EOF\nopen('x" + "\\\n" + "$P','w')\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, ok := shellWriteHeredocUnreadable(c.command)
