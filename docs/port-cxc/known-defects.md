@@ -1265,9 +1265,9 @@ Source: `plugins/codexclaw/scripts/hook-observation.mjs` (`readHookObservations`
 
 ## Found by the goalplan lifecycle port (CRW-542)
 
-- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: fixed by CRW-671.
 - `decide` compares the stored answer untrimmed against the trimmed input, so a stored `" yes"` rejects the same `yes` as already having a different answer (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1297`; recorded case `decide_reject_padded_stored_answer`); port: kept.
-- `meet-criterion` judges only the first criterion of a duplicated id, so when that one is already met it answers unchanged and a later open duplicate of the same id can never be met; the plan then never reads complete (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1389-1404`; recorded case `meet_unchanged_duplicate_met_then_open` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `meet-criterion` judges only the first criterion of a duplicated id, so when that one is already met it answers unchanged and a later open duplicate of the same id can never be met; the plan then never reads complete (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1389-1404`; recorded case `meet_unchanged_duplicate_met_then_open` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: fixed by CRW-671.
 
 ## CRW-639 — the deletion guard's shell reader: su's attached program, the depth limit, data operands
 
@@ -1380,3 +1380,10 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
 ## Found by the M2b state-copy classifier port (CRW-655)
 
 - The classifier keeps the 255-byte single-path-component name limit and never reads the destination filesystem's real NAME_MAX, so a destination with a smaller limit (not the ext4 or APFS the design assumes) is refused by the publish step rather than the preflight (docs/port-cxc/state-migration.md:106-108 and :176-187); a limitation of this port, not an oracle defect, port: kept.
+
+## CRW-671 — the goalplan completion and meet operations refuse an ambiguous id
+
+Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoalplanTask` :1351-1382, `meetGoalplanCriterion` :1384-1406) at v0.2.40 (commit 3c1459ac), through `internal/pabcd/goalplan/lifecycle.go`.
+
+- `complete-task` and `meet-criterion` judged the first entry of a duplicated id and then rewrote every entry carrying it, so the other entry's outcome or captured evidence was overwritten (the two lines above under the CRW-542 section); port: fixed by CRW-671 (a data-loss defect, fixed by decision like the parity rule revision of 2026-10-03: the operation refuses, changing nothing, when the work phase id matches more than one phase, the task id more than one task of that phase, or the criterion id more than one criterion, in the shape `DecideGoalplanDecision` already uses; the check runs after the not-in-this-plan refusal and before the already-done/met answer and the readiness check; reads that keep duplicates and every other operation are unchanged).
+- Three recorded cases in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json` move with it and are tagged intentionally-changed in the replay, the recording itself unchanged: `complete_ok_duplicate_task_ids` and `meet_unchanged_duplicate_met_then_open` (named by the issue) and `meet_ok_duplicate_criterion_ids`, which the same rule reaches because it holds two open criteria of one id.
