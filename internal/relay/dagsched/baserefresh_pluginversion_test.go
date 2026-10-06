@@ -1,6 +1,7 @@
 package dagsched
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,13 @@ func pluginVersionCommit(t *testing.T, r *gitRepo, message string, files map[str
 // re-recording is the clean difference the proof must pass on; with it true both sides re-record, so
 // the manifest conflicts.
 func newPluginVersionRefreshScenario(t *testing.T, bothSidesRecord bool) *refreshScenario {
+	return newPluginVersionRefreshScenarioDeclaring(t, bothSidesRecord, nil)
+}
+
+// newPluginVersionRefreshScenarioDeclaring is newPluginVersionRefreshScenario with the candidate's
+// declaration holding extra as well: the regions a node declares describe its pull request, so they
+// are recorded before the acceptance.
+func newPluginVersionRefreshScenarioDeclaring(t *testing.T, bothSidesRecord bool, extra []Region) *refreshScenario {
 	t.Helper()
 	k := newIntegrationKit(t)
 	repo := k.repo
@@ -99,6 +107,15 @@ func newPluginVersionRefreshScenario(t *testing.T, bothSidesRecord bool) *refres
 	}, true)
 	k.putPlan("g", 1, "g-r2", addRelNode("A", dag.NodeNonPR), addEdge("ia", "I", "A", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": forgeKitRepository, "target_base_ref": "dev"}))
 	k.declare("g", "I", "feature.txt")
+	if len(extra) > 0 {
+		regions := append([]Region{}, extra...)
+		for i := range regions {
+			regions[i].Repository = forgeKitRepository
+		}
+		if _, err := k.sched.DeclareRegions(context.Background(), "g", "I", "parent", regions); err != nil {
+			t.Fatal(err)
+		}
+	}
 	a := k.acceptOnForge("g", "I", acceptOpts{HeadSHA: h1, PR: 7})
 	k.holdSlotsFor("g", "I")
 	n, _ := nodeOf(k.snapshot("g"), "I")
@@ -156,6 +173,24 @@ func TestBaseRefreshPluginVersionConflictedManifest(t *testing.T) {
 		t.Fatalf("a conflicted manifest recorded again = %v %+v rows=%d", err, got, s.refreshRows())
 	}
 	refreshRuleRecord(t, s, pluginversion.ManifestRepoPath, BuiltinPluginVersionRule)
+}
+
+// A declaration the candidate makes for the manifest does not become the built-in rule's mark: when
+// the checker cannot prove the declared rule, the path stays one the parent has to name, and the
+// record keeps it manual. Only the checker's own answer settles a path.
+func TestBaseRefreshPluginVersionCandidateRuleIsNotOverriddenByTheBuiltin(t *testing.T) {
+	s := newPluginVersionRefreshScenarioDeclaring(t, false, []Region{{Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: "regenerate:false"}})
+	s.pluginVersionMerge(t, false, func(t *testing.T, r *gitRepo, recorded string) {
+		pluginVersionWrite(t, r, pluginversion.ManifestRepoPath, pluginVersionManifestText("0.4.0+000000000000", "d"))
+	})
+	if _, err := s.record(); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), pluginversion.ManifestRepoPath) || s.refreshRows() != 0 {
+		t.Fatalf("a declared rule the checker could not prove was marked built-in: %v rows=%d", err, s.refreshRows())
+	}
+	got, err := s.record(pluginversion.ManifestRepoPath)
+	if err != nil || got.Replayed || s.refreshRows() != 1 {
+		t.Fatalf("naming the file the parent read = %v %+v rows=%d", err, got, s.refreshRows())
+	}
+	refreshRuleRecord(t, s, pluginversion.ManifestRepoPath, "")
 }
 
 // TestBaseRefreshPluginVersionRefusals is the other half of c2: a non-derived version, another changed

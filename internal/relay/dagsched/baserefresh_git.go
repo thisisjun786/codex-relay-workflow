@@ -105,7 +105,7 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		if err != nil {
 			return nil, err
 		}
-		var paths, descriptions, builtin []string
+		var paths, descriptions []string
 		rules := map[string]string{}
 		for _, r := range st.Resolved {
 			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && len(sets[r.Path]) > 0 {
@@ -121,7 +121,6 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			if r.Path == pluginversion.ManifestRepoPath {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, r.Path)
-				builtin = append(builtin, r.Path)
 			}
 		}
 		if len(paths) == 0 {
@@ -138,15 +137,12 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 			for _, path := range why.Manual {
 				delete(rules, path)
 			}
-			// The checker is the one that decided which rule settles the paths it was given, so the
-			// built-in manifest path takes the rule it proved rather than a name assumed here.
+			// Only the checker's own answer settles a path: it decides which rule proved what, and a
+			// path it left out of Rules keeps the empty rule that sends it to the parent's --resolved
+			// name. Assuming the built-in rule here would hand a manifest the checker refused a
+			// mechanical mark it never proved.
 			for path, rule := range why.Rules {
 				rules[path] = rule
-			}
-		}
-		for _, path := range builtin {
-			if _, settled := rules[path]; !settled {
-				rules[path] = BuiltinPluginVersionRule
 			}
 		}
 		for j := range st.Resolved {
