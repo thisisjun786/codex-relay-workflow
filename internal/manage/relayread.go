@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -173,8 +174,9 @@ func relayReadStorePath(stateDir string) string {
 // relayReadOpenStore opens the relay store read-only under the store's own no-sidecar rule, so a
 // read creates neither the write-ahead log nor the shared-memory index beside a store whose log
 // holds no frame. store.OpenInPlace resolves the path the way SQLite does and then makes SQLite
-// name that same file as the connection's main database. This is the one open helper the package's
-// store readings share; the read itself is the caller's ReadSnapshot.
+// name that same file as the connection's main database. It takes the state directory and returns
+// the read-only handle, so a sibling store reading in this package can reuse it; the read itself is
+// the caller's ReadSnapshot.
 func relayReadOpenStore(ctx context.Context, stateDir string) (*store.ReadOnly, error) {
 	if stateDir == "" {
 		return nil, ErrRelayStateUnconfigured
@@ -214,6 +216,10 @@ func RelayReadState(ctx context.Context, stateDir string, opts RelayReadOptions)
 		Failures: []RelayFailure{},
 	}
 	if err := handle.ReadSnapshot(ctx, func(ctx context.Context, st *store.Store) error {
+		// ReadSnapshot builds a bare Store; the path it was opened from is what the assignment
+		// view's store_directory reads, so a reader that needs the store's own directory sees it
+		// rather than failing on an empty path.
+		st.Path = relayReadStorePath(stateDir)
 		relayReadSections(ctx, st, opts, &projection)
 		return nil
 	}); err != nil {
@@ -348,9 +354,17 @@ func relayReadRelationships(ctx context.Context, st *store.Store, opts RelayRead
 func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions, out *RelayProjection) []RelayPlan {
 	query := "SELECT plan_id FROM dag_plans"
 	var args []any
+	var conditions []string
 	if len(opts.Plans) > 0 {
-		query += " WHERE plan_id IN (" + relayReadPlaceholders(len(opts.Plans)) + ")"
-		args = relayReadArgs(opts.Plans)
+		conditions = append(conditions, "plan_id IN ("+relayReadPlaceholders(len(opts.Plans))+")")
+		args = append(args, relayReadArgs(opts.Plans)...)
+	}
+	if len(opts.Projects) > 0 {
+		conditions = append(conditions, "project_key IN ("+relayReadPlaceholders(len(opts.Projects))+")")
+		args = append(args, relayReadArgs(opts.Projects)...)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY plan_id"
 	ids, err := relayReadIDs(ctx, st, query, args)
@@ -358,6 +372,29 @@ func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions,
 		relayReadFail(out, relayReadSectionPlans, "", err)
 		return nil
 	}
+	// A plan the caller named that the store does not carry at all is reported rather than dropped,
+	// so a typo or a stale selection cannot read as a plan with nothing in it: the scheduler refuses
+	// an unknown plan and the item carries that refusal as its own reason. A named plan the store
+	// does carry but the project filter left out is the filter working, not an unknown plan, so the
+	// existence check is deliberately made without the project predicate.
+	known, err := relayReadKnownPlans(ctx, st, opts.Plans)
+	if err != nil {
+		relayReadFail(out, relayReadSectionPlans, "", err)
+		return nil
+	}
+	selected := map[string]bool{}
+	for _, id := range ids {
+		selected[id] = true
+	}
+	for _, wanted := range opts.Plans {
+		// A plan the store holds was excluded by the project selector, which is the selector
+		// working; only one the store does not hold at all is a source that could not be read.
+		if known[wanted] || selected[wanted] {
+			continue
+		}
+		ids = append(ids, wanted)
+	}
+	sort.Strings(ids)
 	scheduler := &dagsched.Scheduler{Store: st}
 	items := make([]RelayPlan, 0, len(ids))
 	for _, plan := range ids {
@@ -379,6 +416,26 @@ func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions,
 		items = append(items, item)
 	}
 	return items
+}
+
+// relayReadKnownPlans is which of the named plans the store carries at all, without the project
+// filter: a named plan the store holds but a project selector excluded is the selector working,
+// while one the store does not hold is a source that could not be read.
+func relayReadKnownPlans(ctx context.Context, st *store.Store, wanted []string) (map[string]bool, error) {
+	known := map[string]bool{}
+	if len(wanted) == 0 {
+		return known, nil
+	}
+	ids, err := relayReadIDs(ctx, st,
+		"SELECT plan_id FROM dag_plans WHERE plan_id IN ("+relayReadPlaceholders(len(wanted))+")",
+		relayReadArgs(wanted))
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		known[id] = true
+	}
+	return known, nil
 }
 
 // relayReadMergeTurns reads the record of each chosen merge turn.
@@ -474,6 +531,10 @@ func relayReadBindings(ctx context.Context, st *store.Store, opts RelayReadOptio
 				continue
 			}
 			if record == nil {
+				// A row the store no longer carries is reported like every other unread source
+				// rather than dropped, so an item never vanishes from the projection unnoticed.
+				items = append(items, RelayBinding{BindingID: id, Read: RelayReadMark{State: relayReadReadUnknown,
+					Reason: "the store no longer holds this binding"}})
 				continue
 			}
 			items = append(items, relayReadBindingRecord(id, record))
@@ -532,13 +593,18 @@ func relayReadRun(ctx context.Context, e *Env, args []string) int {
 		case arg == "--all":
 			opts.IncludeClosed = true
 		case arg == "--state", arg == "--plan", arg == "--project":
-			if i+1 >= len(args) {
+			// The next token is the value unless it is missing or is itself an option: an option
+			// token here is a missing value, not a value that happens to start with "--".
+			if i+1 >= len(args) || relayReadIsOptionToken(args[i+1]) {
 				return relayReadUsageError(e, arg+" needs a value")
 			}
 			i++
 			relayReadApplyOption(&opts, &state, arg, args[i])
 		case strings.HasPrefix(arg, "--state="), strings.HasPrefix(arg, "--plan="), strings.HasPrefix(arg, "--project="):
 			name, value, _ := strings.Cut(arg, "=")
+			if value == "" {
+				return relayReadUsageError(e, name+" needs a value")
+			}
 			relayReadApplyOption(&opts, &state, name, value)
 		default:
 			return relayReadUsageError(e, fmt.Sprintf("unexpected argument %q", arg))
@@ -566,6 +632,16 @@ func relayReadRun(ctx context.Context, e *Env, args []string) int {
 		return relayReadUnknownExit
 	}
 	return 0
+}
+
+// relayReadIsOptionToken reports whether a token is one of this command's own options rather than
+// a value: a value a caller means literally is written with the --name=value form.
+func relayReadIsOptionToken(token string) bool {
+	switch token {
+	case "-h", "--help", "--all", "--state", "--plan", "--project":
+		return true
+	}
+	return false
 }
 
 // relayReadApplyOption records one option's value.

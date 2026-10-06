@@ -667,6 +667,9 @@ func TestRelayReadOptionsChooseTheTargets(t *testing.T) {
 	if len(byProject.Relationships) != 1 || byProject.Relationships[0].RelationshipID != "rel-project-1" {
 		t.Errorf("--project did not narrow the relationships: %+v", byProject.Relationships)
 	}
+	if len(byProject.Plans) != 1 || byProject.Plans[0].PlanID != "plan-project-1" {
+		t.Errorf("--project did not narrow the plans: %+v", byProject.Plans)
+	}
 	if len(byProject.Bindings) != 1 || byProject.Bindings[0].ScopeKey != "project-1" {
 		t.Errorf("--project did not narrow the bindings: %+v", byProject.Bindings)
 	}
@@ -694,6 +697,73 @@ func TestRelayReadOptionsChooseTheTargets(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("--all left the closed relationship out: %+v", closed.Relationships)
+	}
+}
+
+// A plan the caller named but the store does not carry is an item whose source could not be read:
+// it is reported with an unknown read mark and the command exits 1, rather than an empty section
+// that reads as a plan with nothing in it.
+func TestRelayReadRequestedPlanTheStoreLacksIsUnknown(t *testing.T) {
+	f := relayReadEverything(t)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{Plans: []string{"plan-absent"}})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	if len(projection.Plans) != 1 || projection.Plans[0].PlanID != "plan-absent" {
+		t.Fatalf("plans = %+v, want the requested plan reported", projection.Plans)
+	}
+	if projection.Plans[0].Read.State != relayReadReadUnknown {
+		t.Errorf("read = %+v, want unknown", projection.Plans[0].Read)
+	}
+	code, _, stderr := relayReadRunCommand(t, f.dir, "--plan", "plan-absent")
+	if code != relayReadUnknownExit {
+		t.Errorf("exit = %d, want %d (stderr: %s)", code, relayReadUnknownExit, stderr)
+	}
+}
+
+// An option that needs a value must not swallow the next option: "--plan --all" is a malformed
+// command line, not a request for a plan named "--all".
+func TestRelayReadOptionValueThatLooksLikeAnOptionIsUsage(t *testing.T) {
+	for _, args := range [][]string{
+		{"--plan", "--all"}, {"--project", "--all"}, {"--state", "--all"},
+		{"--plan"}, {"--project"}, {"--state"},
+		{"--plan="}, {"--project="}, {"--state="},
+	} {
+		env := dagReviewEnv(t)
+		var stdout, stderr bytes.Buffer
+		env.Stdout, env.Stderr = &stdout, &stderr
+		if code := relayReadCommand.Run(context.Background(), env, args); code != usageExit {
+			t.Errorf("%q: exit = %d, want %d", args, code, usageExit)
+		}
+		if !strings.Contains(stderr.String(), "usage: crw manage relay-read") {
+			t.Errorf("%q: the usage line is missing: %q", args, stderr.String())
+		}
+	}
+}
+
+// The read must not depend on the process's working directory: a caller that names an absolute
+// state directory still gets its relationships read when the working directory has been removed.
+func TestRelayReadReadsWithTheWorkingDirectoryRemoved(t *testing.T) {
+	f := relayReadEverything(t)
+	f.close()
+	gone := t.TempDir()
+	t.Chdir(gone)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	item := relayReadRelationshipByID(t, projection, "rel-1")
+	if item.Read.State != relayReadReadOK {
+		t.Errorf("the relationship read %q with the working directory removed: %s", item.Read.State, item.Read.Reason)
+	}
+	if item.State == nil {
+		t.Errorf("the relationship state is missing: %+v", item)
 	}
 }
 
