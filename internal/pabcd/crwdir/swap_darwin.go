@@ -20,9 +20,12 @@ func crwdirSwapExchange(a, b string) error {
 	return nil
 }
 
-// crwdirSwapExchangeUnsupported reports whether err says this platform cannot exchange two files.
+// crwdirSwapExchangeUnsupported reports whether err says this platform cannot exchange two files:
+// the kernel lacks the syscall (ENOSYS) or the volume lacks the flag (EINVAL, ENOTSUP, EOPNOTSUPP).
+// EPERM is deliberately not in the set: a permission failure at the exchange is a real refusal of
+// this publication, not a volume without exchange.
 func crwdirSwapExchangeUnsupported(err error) bool {
-	for _, errno := range [...]syscall.Errno{syscall.EINVAL, syscall.ENOSYS, syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.EPERM} {
+	for _, errno := range [...]syscall.Errno{syscall.EINVAL, syscall.ENOSYS, syscall.ENOTSUP, syscall.EOPNOTSUPP} {
 		if errors.Is(err, errno) {
 			return true
 		}

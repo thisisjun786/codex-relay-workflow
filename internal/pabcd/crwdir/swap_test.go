@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -263,4 +264,29 @@ func TestCrwdirConfigLockWaitsForAShortHolder(t *testing.T) {
 	}
 	waited.Release()
 	<-done
+}
+
+// EPERM at the exchange is a real permission refusal, not "this filesystem cannot exchange": it must
+// not be reported as a filesystem limitation that tells the operator to give up.
+func TestCrwdirSwapDoesNotCallAPermissionFailureUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	target, backup := filepath.Join(dir, "config.toml"), swapBackup(dir)
+	before := "model = \"a\"\n"
+	writeSwapFile(t, target, before, 0o644)
+
+	_, err := crwdirSwapPublish(target, []byte(before), []byte("model = \"b\"\n"), backup, func(at crwdirSwapStep) error {
+		if at == crwdirSwapStepExchange {
+			return &os.LinkError{Op: "rename", Old: "a", New: "b", Err: syscall.EPERM}
+		}
+		return nil
+	}, nil)
+	if err == nil || !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("the permission failure was not surfaced: %v", err)
+	}
+	if strings.Contains(err.Error(), "does not support an atomic exchange") {
+		t.Fatalf("a permission failure was reported as an unsupported filesystem: %v", err)
+	}
+	if got := read(t, target); got != before {
+		t.Fatalf("the refusal changed the target: %q", got)
+	}
 }
