@@ -55,7 +55,7 @@ func TestPumpQueueActiveSteersAll(t *testing.T) {
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "one")
 	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "two")
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
 	tools := deliverSendToolsOf(t, log)
@@ -87,7 +87,7 @@ func TestPumpQueueWaitsUntilMax(t *testing.T) {
 	if err := os.Chtimes(path, pumpTestNow, pumpTestNow); err != nil {
 		t.Fatal(err)
 	}
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
 	for _, tool := range deliverSendToolsOf(t, log) {
@@ -114,7 +114,7 @@ func TestPumpQueueSendsRoleParentAfterMax(t *testing.T) {
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
 	calls := deliverSendCallsOf(t, log)
@@ -137,7 +137,7 @@ func TestPumpQueueUnknownKeepsFiles(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "one")
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
 	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 {

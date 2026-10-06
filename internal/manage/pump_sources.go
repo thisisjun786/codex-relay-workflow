@@ -54,7 +54,6 @@ func pumpTruncate(text string, limit int) string {
 type pumpRolloutSource struct{}
 
 func (pumpRolloutSource) Name() string { return "rollout" }
-func (pumpRolloutSource) Relay() bool  { return false }
 
 // pumpRolloutPath is the last-by-name rollout file of one parent thread, or empty when there is
 // none. The thread names one path component; a thread carrying a separator or a glob character is
@@ -157,30 +156,38 @@ func (pumpRolloutSource) Collect(_ context.Context, e *Env, cfg *Config, st *pum
 	}
 	sort.Strings(threads)
 	var events []pumpEvent
+	read, failed := 0, 0
 	for _, thread := range threads {
 		path, err := pumpRolloutPath(e, thread)
 		if err != nil {
-			return pumpSourceResult{Status: pumpSourceUnmeasured}
+			// One parent the source cannot read must not lose the other parents' events or their
+			// offsets, so it is counted and the walk continues.
+			failed++
+			continue
 		}
 		if path == "" {
 			continue
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			return pumpSourceResult{Status: pumpSourceUnmeasured}
+			failed++
+			continue
 		}
 		start, known := st.Offsets[path]
 		if !known {
 			// First sight: the offset goes to the end and no history is sent.
 			st.Offsets[path] = info.Size()
+			read++
 			continue
 		}
 		if info.Size() <= start {
+			read++
 			continue
 		}
 		lines, offset, err := pumpRolloutLines(path, start)
 		if err != nil {
-			return pumpSourceResult{Status: pumpSourceUnmeasured}
+			failed++
+			continue
 		}
 		for i, line := range lines {
 			if ev, ok := pumpRolloutEvent(thread, cfg.Parents[thread], path, start+int64(i), line); ok {
@@ -188,8 +195,15 @@ func (pumpRolloutSource) Collect(_ context.Context, e *Env, cfg *Config, st *pum
 			}
 		}
 		st.Offsets[path] = offset
+		read++
 	}
-	return pumpSourceResult{Status: pumpSourceOK, Events: events}
+	// The source is unmeasured only when every parent it tried failed; a partial read still
+	// delivers the events it got.
+	status := pumpSourceOK
+	if read == 0 && failed > 0 {
+		status = pumpSourceUnmeasured
+	}
+	return pumpSourceResult{Status: status, Events: events}
 }
 
 // pumpPRSource reads the repository's pull requests and reports only the ones whose title carries
@@ -197,7 +211,15 @@ func (pumpRolloutSource) Collect(_ context.Context, e *Env, cfg *Config, st *pum
 type pumpPRSource struct{}
 
 func (pumpPRSource) Name() string { return "pr" }
-func (pumpPRSource) Relay() bool  { return false }
+
+// pumpPRStateOf is the state word a previously stored "KEY #n STATE" value ends with.
+func pumpPRStateOf(value string) string {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return "UNKNOWN"
+	}
+	return fields[len(fields)-1]
+}
 
 // pumpPRRow is one row of gh pr list's answer.
 type pumpPRRow struct {
@@ -225,14 +247,22 @@ func (pumpPRSource) Collect(ctx context.Context, _ *Env, cfg *Config, st *pumpSt
 	if pattern == "" {
 		pattern = pumpDefaultIssuePattern
 	}
-	key := regexp.MustCompile(pattern)
+	// A pattern the product cannot compile is refused as an unusable setting rather than allowed
+	// to panic the whole pump.
+	key, err := regexp.Compile(pattern)
+	if err != nil {
+		return pumpSourceResult{Status: pumpSourceUnmeasured}
+	}
 	current := map[string]string{}
+	states := map[string]string{}
 	for _, row := range rows {
 		match := key.FindString(row.Title)
 		if match == "" {
 			continue
 		}
-		current[fmt.Sprintf("%d", row.Number)] = fmt.Sprintf("%s #%d %s", match, row.Number, row.State)
+		number := fmt.Sprintf("%d", row.Number)
+		current[number] = fmt.Sprintf("%s #%d %s", match, row.Number, row.State)
+		states[number] = row.State
 	}
 	previous := st.PRs
 	seen := st.PRsSeen
@@ -242,12 +272,16 @@ func (pumpPRSource) Collect(ctx context.Context, _ *Env, cfg *Config, st *pumpSt
 		return pumpSourceResult{Status: pumpSourceOK}
 	}
 	var changed []string
+	ids := []string{}
 	lowOnly := true
 	for number, value := range current {
 		if previous[number] == value {
 			continue
 		}
 		changed = append(changed, value)
+		// The id names the transition, so a PR that returns to an earlier state is a new event
+		// rather than one the sent set already holds.
+		ids = append(ids, fmt.Sprintf("%s:%s>%s", number, pumpPRStateOf(previous[number]), states[number]))
 		if !strings.HasSuffix(value, " OPEN") && !strings.HasSuffix(value, " MERGED") {
 			lowOnly = false
 		}
@@ -256,12 +290,13 @@ func (pumpPRSource) Collect(ctx context.Context, _ *Env, cfg *Config, st *pumpSt
 		return pumpSourceResult{Status: pumpSourceOK}
 	}
 	sort.Strings(changed)
+	sort.Strings(ids)
 	kind := pumpKindPR
 	if lowOnly {
 		kind = pumpKindLow
 	}
 	return pumpSourceResult{Status: pumpSourceOK, Events: []pumpEvent{{
-		ID: "pr#" + strings.Join(changed, ","), Kind: kind,
+		ID: "pr#" + strings.Join(ids, ","), Kind: kind,
 		Text: "PR changes: " + strings.Join(changed, ", "),
 	}}}
 }

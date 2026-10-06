@@ -111,14 +111,32 @@ type pumpState struct {
 	Sent    map[string]bool   `json:"sent"`
 	PRsSeen bool              `json:"prs_seen"`
 
+	// Attempt is the batch an unsettled delivery was tried under. While it is set, the batch's
+	// ids and text are frozen, so a newly collected event cannot change the logical id and skip
+	// the reconciliation the issue requires.
+	Attempt *pumpAttempt `json:"attempt"`
+	// QueueAccepted is a queue thread's notices an accepted delivery carried but whose move to
+	// sent/ did not finish. The next round completes the move before anything else, so an
+	// accepted notice is never sent twice.
+	QueueAccepted map[string][]string `json:"queue_accepted"`
+
 	extra map[string]json.RawMessage
+}
+
+// pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its
+// text. Freezing is what makes a second round reconcile the same request id.
+type pumpAttempt struct {
+	LogicalID string   `json:"logical_id"`
+	IDs       []string `json:"ids"`
+	Text      string   `json:"text"`
 }
 
 // pumpNewState is an empty state with every map allocated, so a source never writes into a nil map.
 func pumpNewState() pumpState {
 	return pumpState{
 		Offsets: map[string]int64{}, PRs: map[string]string{}, Sources: map[string]string{},
-		Cursors: map[string]string{}, Sent: map[string]bool{}, extra: map[string]json.RawMessage{},
+		Cursors: map[string]string{}, Sent: map[string]bool{},
+		QueueAccepted: map[string][]string{}, extra: map[string]json.RawMessage{},
 	}
 }
 
@@ -156,6 +174,10 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.Sent)
 		case "prs_seen":
 			err = json.Unmarshal(value, &st.PRsSeen)
+		case "attempt":
+			err = json.Unmarshal(value, &st.Attempt)
+		case "queue_accepted":
+			err = json.Unmarshal(value, &st.QueueAccepted)
 		default:
 			// A key this file does not name belongs to a later node; it is preserved on write.
 			st.extra[key] = value
@@ -178,6 +200,9 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 	}
 	if st.Sent == nil {
 		st.Sent = map[string]bool{}
+	}
+	if st.QueueAccepted == nil {
+		st.QueueAccepted = map[string][]string{}
 	}
 	return st, nil
 }
@@ -203,7 +228,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 	}{
 		{"offsets", st.Offsets}, {"pending", st.Pending}, {"first_at", st.FirstAt},
 		{"prs", st.PRs}, {"sources", st.Sources}, {"cursors", st.Cursors}, {"sent", st.Sent},
-		{"prs_seen", st.PRsSeen},
+		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
 	} {
 		if err := put(field.key, field.value); err != nil {
 			return err
@@ -384,26 +409,37 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 		return 1, err
 	}
 	pumpCollect(ctx, e, cfg, &st, s, now)
-	if cfg.ManagementThread == "" {
-		pumpLog(cfg, "no management_thread; waiting")
-		return 0, nil
-	}
 	// pending reaches disk before anything is sent, so a crash at any point leaves the events
-	// recoverable and an offset never advances past an undelivered event.
+	// recoverable and an offset never advances past an undelivered event. A management thread that
+	// is not configured gates only the management batch: the parent queue targets the parent
+	// threads, so it is still flushed.
 	if !dry {
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
 		}
 	}
-	if due, urgent := pumpDue(st.Pending, st.FirstAt, now, s); due {
-		body := pumpBody(st.Pending, now, urgent, s.Footer)
+	switch {
+	case cfg.ManagementThread == "":
+		pumpLog(cfg, "no management_thread; the management batch waits, the parent queue still runs")
+	case st.Attempt != nil:
+		// An unsettled attempt is reconciled first, under its own frozen id, before any new batch
+		// is formed.
 		if dry {
-			fmt.Fprintln(e.Stdout, body)
-		} else if code, err := pumpDeliver(ctx, e, cfg, &st, body); err != nil {
+			fmt.Fprintln(e.Stdout, st.Attempt.Text)
+		} else if code, err := pumpDeliver(ctx, e, cfg, &st, ""); err != nil {
 			return code, err
 		}
+	default:
+		if due, urgent := pumpDue(st.Pending, st.FirstAt, now, s); due {
+			body := pumpBody(st.Pending, now, urgent, s.Footer)
+			if dry {
+				fmt.Fprintln(e.Stdout, body)
+			} else if code, err := pumpDeliver(ctx, e, cfg, &st, body); err != nil {
+				return code, err
+			}
+		}
 	}
-	if err := pumpQueueFlush(ctx, e, cfg, s, dry); err != nil {
+	if err := pumpQueueFlush(ctx, e, cfg, &st, s, dry); err != nil {
 		// A failed flush keeps the notices queued for the next round; it never fails the round.
 		pumpLog(cfg, "queue flush: "+err.Error())
 	}
@@ -413,26 +449,69 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 // pumpDeliver sends the pending batch and clears it only on accepted. On unknown or refused the
 // batch stays pending, and the next round reconciles it under the same logical id.
 func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, body string) (int, error) {
+	// The attempt is frozen before the send: an event collected while it is in flight cannot change
+	// the logical id, so a later round reconciles the same request id instead of resending a batch
+	// that may already have been accepted. An attempt already frozen is reused as it stands.
+	if st.Attempt == nil {
+		attempt := pumpAttempt{LogicalID: pumpBatchID(st.Pending), IDs: pumpPendingIDs(st.Pending), Text: body}
+		st.Attempt = &attempt
+		if err := st.pumpSave(cfg); err != nil {
+			return 1, err
+		}
+	}
+	attempt := *st.Attempt
 	out, err := Deliver(ctx, e, cfg, Message{
-		LogicalID: pumpBatchID(st.Pending), Thread: cfg.ManagementThread, Text: body,
+		LogicalID: attempt.LogicalID, Thread: cfg.ManagementThread, Text: attempt.Text,
 		Settings: cfg.Settings.Management,
 	})
 	if err != nil && out.Class == "" {
 		return 1, err
 	}
 	pumpLog(cfg, fmt.Sprintf("deliver request=%s events=%d class=%s received=%v applied=%v",
-		out.RequestID, len(st.Pending), out.Class, out.Class == deliverClassAccepted, false))
+		out.RequestID, len(attempt.IDs), out.Class, out.Class == deliverClassAccepted, false))
 	if out.Class != deliverClassAccepted {
+		if out.Class == deliverClassUnknown {
+			// The attempt stays frozen so the next round reconciles it under the same id.
+			return 0, err
+		}
+		// A refusal is terminal and nothing was sent, so the freeze lifts: a later batch may carry
+		// these events again, and a new event changes the logical id as usual.
+		st.Attempt = nil
+		if err := st.pumpSave(cfg); err != nil {
+			return 1, err
+		}
 		return 0, err
 	}
-	for _, ev := range st.Pending {
-		st.Sent[ev.ID] = true
+	delivered := map[string]bool{}
+	for _, id := range attempt.IDs {
+		st.Sent[id] = true
+		delivered[id] = true
 	}
-	st.Pending, st.FirstAt = nil, nil
+	// Only the attempted events clear; an event that arrived while the batch was in flight stays
+	// pending under a fresh batch.
+	remaining := make([]pumpEvent, 0, len(st.Pending))
+	for _, ev := range st.Pending {
+		if !delivered[ev.ID] {
+			remaining = append(remaining, ev)
+		}
+	}
+	st.Pending, st.Attempt = remaining, nil
+	if len(remaining) == 0 {
+		st.FirstAt = nil
+	}
 	if err := st.pumpSave(cfg); err != nil {
 		return 1, err
 	}
 	return 0, nil
+}
+
+// pumpPendingIDs is the ids of one batch, in order.
+func pumpPendingIDs(events []pumpEvent) []string {
+	ids := make([]string, 0, len(events))
+	for _, ev := range events {
+		ids = append(ids, ev.ID)
+	}
+	return ids
 }
 
 // pumpLog appends one line to the pump log. It is best effort: a log that cannot be written
@@ -451,11 +530,11 @@ func pumpLog(cfg *Config, message string) {
 	_ = file.Close()
 }
 
-// pumpSource is one event source. Relay reports whether its events carry ids the relay owns, so
-// the pump dedups them against the sent set across a restart.
+// pumpSource is one event source. Every event carries a stable id, and the pump dedups all of them
+// through the sent set, so an id a relay owns is sent once across a restart exactly like the ids
+// the pump's own sources mint.
 type pumpSource interface {
 	Name() string
-	Relay() bool
 	Collect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings) pumpSourceResult
 }
 

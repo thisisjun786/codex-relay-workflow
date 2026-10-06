@@ -47,15 +47,12 @@ func pumpTestSwapSources(t *testing.T, sources ...pumpSource) {
 // pumpTestSource is a source a later node registers and the contract tests inject.
 type pumpTestSource struct {
 	name   string
-	relay  bool
 	status string
 	events []pumpEvent
-	cursor string
 	onRead func(st *pumpState)
 }
 
 func (s *pumpTestSource) Name() string { return s.name }
-func (s *pumpTestSource) Relay() bool  { return s.relay }
 func (s *pumpTestSource) Collect(_ context.Context, _ *Env, _ *Config, st *pumpState, _ pumpSettings) pumpSourceResult {
 	if s.onRead != nil {
 		s.onRead(st)
@@ -65,6 +62,13 @@ func (s *pumpTestSource) Collect(_ context.Context, _ *Env, _ *Config, st *pumpS
 		status = pumpSourceOK
 	}
 	return pumpSourceResult{Status: status, Events: s.events}
+}
+
+// pumpTestReadStatePtr loads the state as a pointer, for a call that mutates and saves it.
+func pumpTestReadStatePtr(t *testing.T, cfg *Config) *pumpState {
+	t.Helper()
+	st := pumpTestReadState(t, cfg)
+	return &st
 }
 
 // pumpTestReadState decodes the state document, failing the test on a read error.
@@ -382,7 +386,7 @@ func TestPumpUnmeasuredSourceKeepsOthersDelivering(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	pumpTestSwapSources(t,
-		&pumpTestSource{name: "relay", relay: true, status: pumpSourceUnmeasured},
+		&pumpTestSource{name: "relay", status: pumpSourceUnmeasured},
 		&pumpTestSource{name: "signal", events: []pumpEvent{{ID: "s1", Kind: pumpKindQuestion, Text: "signal"}}},
 	)
 	if _, err := pumpRound(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
@@ -409,7 +413,7 @@ func TestPumpRelayIDOnceAcrossRestartAndGap(t *testing.T) {
 	})
 	cfg := pumpTestConfig(t, bridge)
 	// The source reads relay ids 5 and 9 (a gap) and stores the cursor.
-	src := &pumpTestSource{name: "relay", relay: true, events: []pumpEvent{{ID: "relay-5", Kind: pumpKindQuestion, Text: "a"}},
+	src := &pumpTestSource{name: "relay", events: []pumpEvent{{ID: "relay-5", Kind: pumpKindQuestion, Text: "a"}},
 		onRead: func(st *pumpState) { st.Cursors["relay"] = "9" }}
 	pumpTestSwapSources(t, src)
 	if _, err := pumpRound(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
@@ -530,5 +534,123 @@ func TestPumpRunRefusesLockedWithTheJSON(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "pump_locked") {
 		t.Errorf("stdout = %q, want the pump_locked JSON", out.String())
+	}
+}
+
+// A newly collected event does not change a frozen attempt's logical id: the next round
+// reconciles the same request id instead of resending a batch that may already be accepted.
+func TestPumpNewEventDoesNotBypassReconciliation(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "in_progress_or_unknown", "retrySafe": false}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	src := &pumpTestSource{name: "fake", events: []pumpEvent{{ID: "A", Kind: pumpKindQuestion, Text: "A"}}}
+	pumpTestSwapSources(t, src)
+	if _, err := pumpRound(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	first := pumpTestReadState(t, cfg)
+	if first.Attempt == nil {
+		t.Fatal("the unknown attempt was not frozen")
+	}
+	firstID := first.Attempt.LogicalID
+	// A new event arrives while the attempt is unsettled.
+	src.events = []pumpEvent{{ID: "B", Kind: pumpKindQuestion, Text: "B"}}
+	if _, err := pumpRound(context.Background(), e, cfg, pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	calls := deliverSendCallsOf(t, log)
+	if calls[len(calls)-1]["tool"] != deliverToolOperation {
+		t.Fatalf("the second round did not reconcile: %v", deliverSendToolsOf(t, log))
+	}
+	if got := deliverSendRequestIDOf(t, calls[len(calls)-1]); got != firstID {
+		t.Errorf("the reconcile used request id %q, want the frozen %q", got, firstID)
+	}
+}
+
+// An accepted delivery whose move did not finish is completed on the next round, not resent.
+func TestPumpQueueAcceptedMembershipSurvivesAPartialMove(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "one")
+	// The membership is recorded as if the move had failed after acceptance.
+	st := pumpTestReadState(t, cfg)
+	st.QueueAccepted["parent-1"] = []string{"aaaaaaaaaaaaaaaa.txt"}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range deliverSendToolsOf(t, log) {
+		if tool == deliverToolSend || tool == deliverToolSteer {
+			t.Fatalf("the completion sent the accepted notice again: %v", deliverSendToolsOf(t, log))
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Errorf("the accepted notice was not moved: %v", err)
+	}
+	_ = path
+}
+
+// An unusable issue_pattern is unmeasured, not a panic.
+func TestPumpPRSourceBadPatternIsUnmeasured(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	bad := "[unclosed"
+	settings := pumpSettingsFrom(cfg)
+	settings.IssuePattern = bad
+	st := pumpTestReadState(t, cfg)
+	res := pumpPRSource{}.Collect(context.Background(), e, cfg, &st, settings)
+	if res.Status != pumpSourceUnmeasured {
+		t.Fatalf("status = %q, want unmeasured", res.Status)
+	}
+}
+
+// A PR that returns to an earlier state produces a new event id, so a reopening after a closure
+// is announced rather than dropped as a repeat.
+func TestPumpPRSourceRepeatStateIsNew(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	cfg.Repository = "owner/repo"
+	saved := pumpExec
+	t.Cleanup(func() { pumpExec = saved })
+
+	state := func(state string) []byte {
+		out, _ := json.Marshal([]map[string]any{{"number": 12, "state": state, "title": "CRW-1: x"}})
+		return out
+	}
+	st := pumpTestReadState(t, cfg)
+	src := pumpPRSource{}
+
+	// First run: OPEN is stored, no event.
+	pumpExec = func(_ context.Context, _ string, _ ...string) ([]byte, error) { return state("OPEN"), nil }
+	src.Collect(context.Background(), e, cfg, &st, pumpSettingsFrom(cfg))
+	// CLOSED is a change.
+	pumpExec = func(_ context.Context, _ string, _ ...string) ([]byte, error) { return state("CLOSED"), nil }
+	res := src.Collect(context.Background(), e, cfg, &st, pumpSettingsFrom(cfg))
+	if len(res.Events) != 1 {
+		t.Fatalf("CLOSED produced %d events, want 1", len(res.Events))
+	}
+	closedID := res.Events[0].ID
+	// OPEN again is a new transition, not the first OPEN's id.
+	pumpExec = func(_ context.Context, _ string, _ ...string) ([]byte, error) { return state("OPEN"), nil }
+	res = src.Collect(context.Background(), e, cfg, &st, pumpSettingsFrom(cfg))
+	if len(res.Events) != 1 {
+		t.Fatalf("the reopening produced %d events, want 1", len(res.Events))
+	}
+	if res.Events[0].ID == closedID {
+		t.Errorf("the reopening reused the CLOSED event id %q", closedID)
 	}
 }
