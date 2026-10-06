@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // deliverTestConfig is a configuration whose outbox lives in a fresh temporary directory, so no
@@ -235,6 +236,25 @@ func TestDeliverExcerpt(t *testing.T) {
 	}
 	long := deliverExcerpt(deliverReply{Text: strings.Repeat("x", deliverExcerptLimit+50)})
 	if len(long) != deliverExcerptLimit {
-		t.Errorf("the excerpt is %d characters, want %d", len(long), deliverExcerptLimit)
+		t.Errorf("the excerpt is %d bytes, want %d", len(long), deliverExcerptLimit)
+	}
+}
+
+// A cut lands on a character boundary, so a receipt holding a multi-byte character is not left
+// with a broken rune. The receipt below is one byte short of the limit followed by three-byte
+// characters, so a byte cut would land inside one.
+func TestDeliverExcerptCutsOnACharacterBoundary(t *testing.T) {
+	text := strings.Repeat("x", deliverExcerptLimit-1) + strings.Repeat(string(rune(0xac00)), 5)
+	got := deliverExcerpt(deliverReply{Text: text})
+	if len(got) > deliverExcerptLimit {
+		t.Fatalf("the excerpt is %d bytes, over the limit", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("the excerpt holds a broken rune: %q", got)
+	}
+	for _, r := range got {
+		if r == utf8.RuneError {
+			t.Fatalf("the excerpt holds the replacement rune")
+		}
 	}
 }

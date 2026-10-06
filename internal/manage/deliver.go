@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The bridge's response contract, allowlisted: every value these names do not carry is unknown,
@@ -119,16 +120,22 @@ func deliverRetryable(reply deliverReply) bool {
 	return reply.Err == nil && delivery == "not_delivered"
 }
 
-// deliverExcerpt is the minimum reconciliation evidence kept with an attempt.
+// deliverExcerpt is the minimum reconciliation evidence kept with an attempt. A cut lands on a
+// character boundary, so a receipt holding a multi-byte character is kept whole rather than left
+// with a broken rune that would read as corruption in the ledger.
 func deliverExcerpt(reply deliverReply) string {
 	text := reply.Text
 	if reply.Err != nil {
 		text = reply.Err.Error()
 	}
-	if len(text) > deliverExcerptLimit {
-		text = text[:deliverExcerptLimit]
+	if len(text) <= deliverExcerptLimit {
+		return text
 	}
-	return text
+	cut := deliverExcerptLimit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }
 
 // deliverNewRecord is the record written before the first send. The request id is chosen here
