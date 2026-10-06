@@ -14,6 +14,11 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	// The fixture builds a real store, so this test binary links internal/relay/store and must
+	// also link internal/testsupport: that package refuses a database below a live relay state
+	// directory before any TestMain runs, so a test that forgot isolation is refused rather than
+	// reading the operator's live state (internal/testsupport/livestate_test.go).
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The fixture clock: every row this file writes is placed relative to one base instant, so a
