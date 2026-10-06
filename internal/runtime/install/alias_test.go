@@ -22,6 +22,7 @@ import (
 // entries and outgoing dropped. The test reruns itself inside bwrap; it is skipped where bwrap
 // cannot bind.
 func TestRemoveKnowsARuntimeByIdentityNotSpelling(t *testing.T) {
+	// sequential: re-execs the test binary in bwrap and counts the processes the process-wide table holds.
 	a, b := os.Getenv("CRW_ALIAS_A"), os.Getenv("CRW_ALIAS_B")
 	if a == "" {
 		bwrap, err := exec.LookPath("bwrap")
