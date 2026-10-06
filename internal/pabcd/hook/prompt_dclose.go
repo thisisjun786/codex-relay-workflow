@@ -361,7 +361,7 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		if result.Ledger != nil {
 			present, readErr := promptDcloseHasPabcdCloseRow(p.Cwd, p.SessionID, closeCheckEpoch, closedWorkPhaseID)
 			if readErr != nil {
-				return struct{}{}, errors.New("the session ledger could not be read: " + readErr.Error())
+				return struct{}{}, errors.New("the PABCD ledger could not be read: " + readErr.Error())
 			}
 			if !present {
 				row := *result.Ledger

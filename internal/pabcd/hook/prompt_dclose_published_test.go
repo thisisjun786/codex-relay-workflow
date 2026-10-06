@@ -295,6 +295,41 @@ func TestPromptDclosePrePublicationMarkerFailureStillRefuses(t *testing.T) {
 
 // TestPromptDcloseUnbusyCloseIsUnchanged is the third control: with no seam and a free lock the
 // close completes exactly as before, resting at IDLE with the marker cleared.
+func TestPromptDclosePrePublicationPlanFailureStillRefuses(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-prepublication-plan"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-prepublication-plan")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-prepublication-plan")
+	beforePlan := promptDcloseFileText(promptDclosePlanPath(t, cwd, slug))
+	seams := &promptDcloseSeams{writePlan: func(string, *goalplan.Goalplan) error {
+		return errors.New("the goalplan could not be written before the rename")
+	}}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "Nothing was written") {
+		t.Errorf("a pre-publication plan failure answered %q", answer)
+	}
+	if strings.Contains(answer, "[crw: DONE]") {
+		t.Errorf("a pre-publication plan failure completed the close: %q", answer)
+	}
+	// The recovery marker was written before the plan write (the oracle's own order), so only the
+	// plan and the ledgers are asserted unchanged here; the marker stays for a retry.
+	if after := promptDcloseFileText(promptDclosePlanPath(t, cwd, slug)); after != beforePlan {
+		t.Errorf("a pre-publication plan failure rewrote the plan:\n got %q\nwant %q", after, beforePlan)
+	}
+	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
+		t.Errorf("a pre-publication plan failure wrote a PABCD row: %+v", rows)
+	}
+	if rows := promptDcloseGoalplanRows(t, cwd, slug); len(rows) != 0 {
+		t.Errorf("a pre-publication plan failure wrote a goalplan row: %+v", rows)
+	}
+}
+
+// TestPromptDcloseUnbusyCloseIsUnchanged is the third control: with no seam and a free lock the
+// close completes exactly as before, resting at IDLE with the marker cleared.
 func TestPromptDcloseUnbusyCloseIsUnchanged(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-unbusy-unchanged"
