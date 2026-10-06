@@ -201,14 +201,20 @@ func deliverNow(e *Env) string {
 // from a command line, so a separator, a parent reference or an over-long name would either
 // escape the state directory or make the retry id the bridge refuses.
 func deliverPathComponent(name, what string) error {
+	return deliverPathComponentLimit(name, what, deliverRequestIDLimit-deliverRetrySuffixRoom)
+}
+
+// deliverPathComponentLimit is the same check against a caller's own length bound, for a name that
+// is never used as a retry id.
+func deliverPathComponentLimit(name, what string, limit int) error {
 	if name == "" || name == "." || name == ".." {
 		return fmt.Errorf("crw manage: %s %q is not a usable name", what, name)
 	}
 	if strings.ContainsRune(name, 0x2f) || strings.ContainsRune(name, 0x5c) || strings.ContainsRune(name, 0) {
 		return fmt.Errorf("crw manage: %s %q must not contain a path separator", what, name)
 	}
-	if len(name) > deliverRequestIDLimit-deliverRetrySuffixRoom {
-		return fmt.Errorf("crw manage: %s %q is longer than %d characters", what, name, deliverRequestIDLimit-deliverRetrySuffixRoom)
+	if len(name) > limit {
+		return fmt.Errorf("crw manage: %s %q is longer than %d characters", what, name, limit)
 	}
 	return nil
 }

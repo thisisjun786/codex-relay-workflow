@@ -82,7 +82,14 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 	}
-	return sendParentReport(e, out.Class, out.RequestID, logicalID)
+	class := out.Class
+	if class == "" {
+		// A local refusal the delivery never classified -- an unsafe logical id, text that is not
+		// UTF-8, an unreadable or unwritable ledger -- still has to report a class the output
+		// contract names, or a client cannot read the exit-1 result.
+		class = deliverClassRefused
+	}
+	return sendParentReport(e, class, out.RequestID, logicalID)
 }
 
 // sendParentQueueSafe refuses a queue path that would not stay under the state directory. The
@@ -90,7 +97,9 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 // planted symlink where either belongs would redirect the notice out of the state directory even
 // though every component is a single safe name.
 func sendParentQueueSafe(cfg *Config, thread, logicalID string) error {
-	if err := deliverPathComponent(thread, "thread"); err != nil {
+	// The thread names a directory and is never used as a retry id, so it takes the bridge's own
+	// thread bound rather than the shorter one a request id leaves room for.
+	if err := deliverPathComponentLimit(thread, "thread", deliverThreadLimit); err != nil {
 		return err
 	}
 	if err := deliverPathComponent(logicalID, "logical id"); err != nil {

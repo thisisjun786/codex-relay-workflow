@@ -3,7 +3,6 @@ package manage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -159,6 +158,13 @@ func deliverSendConfig(t *testing.T, bridge string) *Config {
 }
 
 // deliverSendCallsOf reads the calls the fake bridge saw, oldest first.
+// deliverSeedRecord is the record one test starts from: the logical id m1 carrying the text
+// "hello" to thread-1, which is the message every delivery test sends, so the record matches
+// what Deliver is asked for.
+func deliverSeedRecord(state string) deliverRecord {
+	return deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", MessageSHA256: deliverMessageSHA256("hello"), State: state}
+}
+
 func deliverSendCallsOf(t *testing.T, log string) []map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(log)
@@ -257,7 +263,7 @@ func TestDeliverReconcileResendCountsAgainstTheRetryCap(t *testing.T) {
 		append(append(append(append([]map[string]any{}, refusing...), refusing...), refusing...), refusing...)...)
 	bridge, log := deliverFakeBridge(t, steps)
 	cfg := deliverSendConfig(t, bridge)
-	if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: deliverStateUnknown}); err != nil {
+	if err := deliverSave(cfg, deliverSeedRecord(deliverStateUnknown)); err != nil {
 		t.Fatal(err)
 	}
 	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
@@ -297,7 +303,7 @@ func TestDeliverReconcilesAPreDispatchRefusalIntoAResendUnderANewID(t *testing.T
 				{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
 			})
 			cfg := deliverSendConfig(t, bridge)
-			if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: state}); err != nil {
+			if err := deliverSave(cfg, deliverSeedRecord(state)); err != nil {
 				t.Fatal(err)
 			}
 			out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
@@ -433,7 +439,7 @@ func TestDeliverReconcilesAnUnsettledRecordFirst(t *testing.T) {
 			e := deliverSendTestEnv(t)
 			bridge, log := deliverFakeBridge(t, []map[string]any{c.answer})
 			cfg := deliverSendConfig(t, bridge)
-			if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: c.state}); err != nil {
+			if err := deliverSave(cfg, deliverSeedRecord(c.state)); err != nil {
 				t.Fatal(err)
 			}
 			out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
@@ -463,7 +469,7 @@ func TestDeliverResendsNotAttemptedUnderTheSameRequestID(t *testing.T) {
 		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
 	})
 	cfg := deliverSendConfig(t, bridge)
-	if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: deliverStateUnknown}); err != nil {
+	if err := deliverSave(cfg, deliverSeedRecord(deliverStateUnknown)); err != nil {
 		t.Fatal(err)
 	}
 	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
@@ -586,8 +592,8 @@ func TestDeliverWritesTheRecordBeforeTheBridgeStarts(t *testing.T) {
 	e := deliverSendTestEnv(t)
 	cfg := deliverSendConfig(t, filepath.Join(t.TempDir(), "not-a-bridge"))
 	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
-	if err == nil || out.Class != deliverClassRefused {
-		t.Fatalf("Deliver: %q %v, want the dial refusal", out.Class, err)
+	if err == nil || out.Class != deliverClassUnknown {
+		t.Fatalf("Deliver: %q %v, want the failed-dial outcome", out.Class, err)
 	}
 	record := deliverRecordOf(t, cfg, "m1")
 	if record.LogicalID != "m1" || record.RequestID != out.RequestID || record.MessageSHA256 == "" || record.CreatedAt == "" {
@@ -629,7 +635,7 @@ func TestDeliverPreservesEveryFieldOfTheRecordItRewrites(t *testing.T) {
 	cfg := deliverSendConfig(t, bridge)
 	seed := deliverRecord{
 		LogicalID: "m1", RequestID: "m1", TargetThread: "thread-1",
-		MessageSHA256: "seed-digest", CreatedAt: "2026-10-06T00:00:00Z", State: deliverStatePending,
+		MessageSHA256: deliverMessageSHA256("hello"), CreatedAt: "2026-10-06T00:00:00Z", State: deliverStatePending,
 		Attempts: []deliverAttempt{{At: "2026-10-06T00:00:00Z", Class: deliverClassUnknown, ReceiptExcerpt: "seed"}},
 	}
 	if err := deliverSave(cfg, seed); err != nil {
@@ -753,29 +759,20 @@ func TestDeliverRetryLeavesTheRecordReconcilable(t *testing.T) {
 	}
 }
 
-// A dial that failed because the delivery was cancelled is not a refusal the bridge made: no
-// bridge answered and nothing was sent, so the attempt stays undetermined.
-func TestDeliverDialClassifiesACancelledDialAsUnknown(t *testing.T) {
-	live := context.Background()
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	cases := []struct {
-		name string
-		ctx  context.Context
-		err  error
-		want string
-	}{
-		{"a dial that could not start the bridge", live, errors.New("start the bridge: no such file"), deliverClassRefused},
-		{"a context that ended during the dial", cancelled, errors.New("start the bridge: broken pipe"), deliverClassUnknown},
-		{"a transport failure that is a cancellation", live, context.Canceled, deliverClassUnknown},
-		{"a transport failure that is a deadline", live, context.DeadlineExceeded, deliverClassUnknown},
+// A dial that fails is never a refusal the bridge made: it never saw the message, so nothing is
+// written off and a later attempt reconciles against a bridge that may by then be reachable.
+func TestDeliverAFailedDialIsNotARefusal(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	cfg := deliverSendConfig(t, filepath.Join(t.TempDir(), "not-a-bridge"))
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err == nil {
+		t.Fatal("a failed dial reported no error")
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := deliverDialClass(c.ctx, c.err); got != c.want {
-				t.Errorf("deliverDialClass = %q, want %q", got, c.want)
-			}
-		})
+	if out.Class != deliverClassUnknown {
+		t.Errorf("a failed dial classified as %q, want unknown", out.Class)
+	}
+	if record := deliverRecordOf(t, cfg, "m1"); record.State != deliverStatePending {
+		t.Errorf("a failed dial recorded %+v, want the record as it was written", record)
 	}
 }
 
@@ -786,10 +783,9 @@ func TestDeliverSettledRefusedRecordReplaysAsRefused(t *testing.T) {
 	e := deliverSendTestEnv(t)
 	bridge, log := deliverFakeBridge(t, nil)
 	cfg := deliverSendConfig(t, bridge)
-	if err := deliverSave(cfg, deliverRecord{
-		LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1", State: deliverStateRefused,
-		Attempts: []deliverAttempt{{At: "2026-10-06T00:00:00Z", Class: deliverClassRefused, ReceiptExcerpt: "rejected"}},
-	}); err != nil {
+	seed := deliverSeedRecord(deliverStateRefused)
+	seed.Attempts = []deliverAttempt{{At: "2026-10-06T00:00:00Z", Class: deliverClassRefused, ReceiptExcerpt: "rejected"}}
+	if err := deliverSave(cfg, seed); err != nil {
 		t.Fatal(err)
 	}
 	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
@@ -879,5 +875,165 @@ func TestDeliverReportsAFailedLedgerWrite(t *testing.T) {
 	}
 	if out.Class != deliverClassAccepted || out.RequestID != "m1" {
 		t.Errorf("the outcome lost its meaning: %+v", out)
+	}
+}
+
+// One logical id stands for one message. A caller that reuses an id for different text or a
+// different thread is refused rather than told the other message's outcome.
+func TestDeliverRefusesAReusedLogicalIDForAnotherMessage(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg := deliverSendConfig(t, bridge)
+	if _, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"}); err != nil {
+		t.Fatalf("the first delivery: %v", err)
+	}
+	cases := []struct {
+		name string
+		m    Message
+	}{
+		{"another thread, the same text", Message{LogicalID: "m1", Thread: "thread-2", Text: "hello"}},
+		{"the same thread, another text", Message{LogicalID: "m1", Thread: "thread-1", Text: "goodbye"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := Deliver(context.Background(), e, cfg, c.m)
+			if err == nil || out.Class != deliverClassRefused {
+				t.Fatalf("Deliver: %q %v, want a refusal", out.Class, err)
+			}
+		})
+	}
+	if tools := deliverSendToolsOf(t, log); len(tools) != 2 {
+		t.Errorf("the fake bridge saw %v, want only the first delivery's two calls", tools)
+	}
+}
+
+// A message the bridge would refuse before it records anything is refused locally, so the record
+// does not stay undetermined forever over an input that can never be delivered.
+func TestDeliverRefusesInputBeyondTheBridgeLimits(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, log := deliverFakeBridge(t, nil)
+	cfg := deliverSendConfig(t, bridge)
+	cases := []struct {
+		name string
+		m    Message
+	}{
+		{"a thread past the bridge limit", Message{LogicalID: "m1", Thread: strings.Repeat("t", deliverThreadLimit+1), Text: "hello"}},
+		{"a message past the bridge limit", Message{LogicalID: "m1", Thread: "thread-1", Text: strings.Repeat("x", deliverMessageLimit+1)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := Deliver(context.Background(), e, cfg, c.m)
+			if err == nil || out.Class != deliverClassRefused {
+				t.Fatalf("Deliver: %q %v, want a local refusal", out.Class, err)
+			}
+		})
+	}
+	if calls := deliverSendCallsOf(t, log); len(calls) != 0 {
+		t.Errorf("the bridge was started for an input it would refuse: %v", calls)
+	}
+	if entries, err := os.ReadDir(filepath.Join(cfg.StateDir, "outbox")); err == nil && len(entries) != 0 {
+		t.Errorf("an impossible input wrote %v", entries)
+	}
+}
+
+// A delivery that never confirms the thread is idle does not start a turn: the bridge reports its
+// two disagreements when the status and the newest turn conflict and directs the caller to read
+// again, and starting a turn then could put the message in the wrong turn.
+func TestDeliverRequiresAConfirmedIdleObservation(t *testing.T) {
+	for _, observation := range []string{"active_without_in_progress_turn", "in_progress_turn_without_active_status", "notLoaded", "systemError", "unknown"} {
+		t.Run(observation, func(t *testing.T) {
+			e := deliverSendTestEnv(t)
+			bridge, log := deliverFakeBridge(t, []map[string]any{{
+				"payload": map[string]any{"observation": observation}}})
+			cfg := deliverSendConfig(t, bridge)
+			out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+			if err != nil || out.Class != deliverClassUnknown {
+				t.Fatalf("Deliver: %q %v, want unknown", out.Class, err)
+			}
+			for _, call := range deliverSendCallsOf(t, log) {
+				if call["tool"] == deliverToolSend {
+					t.Errorf("a turn was started on an unconfirmed thread: %v", call)
+				}
+			}
+		})
+	}
+}
+
+// A restart with a record already naming a retry id continues the sequence it left: the next id is
+// strictly newer, so the bridge is never asked to replay a receipt for an id it already answered.
+func TestDeliverRestartContinuesThePersistedRetrySequence(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	cfg := deliverSendConfig(t, "unused")
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "not_attempted", "retrySafe": true}},
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "failed", "delivery": "not_delivered"}},
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg.Bridge.Binary = bridge
+	seed := deliverSeedRecord(deliverStateUnknown)
+	seed.RequestID = "m1-r1"
+	if err := deliverSave(cfg, seed); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || out.Class != deliverClassAccepted {
+		t.Fatalf("Deliver: %q %v", out.Class, err)
+	}
+	var ids []string
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSend {
+			ids = append(ids, deliverSendRequestIDOf(t, call))
+		}
+	}
+	want := []string{"m1-r1", "m1-r2"}
+	if len(ids) != len(want) {
+		t.Fatalf("the sends were %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("send %d used %q, want %q", i, ids[i], want[i])
+		}
+	}
+}
+
+// The retry ordinal is read back from a request id, and a request id that is not one of this
+// logical message's retries counts as none.
+func TestDeliverRetryCountReadsTheRequestID(t *testing.T) {
+	cases := []struct {
+		id   string
+		want int
+	}{
+		{"m1", 0},
+		{"m1-r1", 1},
+		{"m1-r2", 2},
+		{"m1-r", 0},
+		{"m1-rx", 0},
+		{"m1-r-1", 0},
+		{"other-r3", 0},
+	}
+	for _, c := range cases {
+		if got := deliverRetryCount("m1", c.id); got != c.want {
+			t.Errorf("deliverRetryCount(%q) = %d, want %d", c.id, got, c.want)
+		}
+	}
+}
+
+// A local refusal the delivery never classified still reports a class the output contract names,
+// so a client reading the exit-1 JSON can place it.
+func TestSendParentReportsARefusalForALocalError(t *testing.T) {
+	coreTempHome(t)
+	bridge, _ := deliverFakeBridge(t, nil)
+	sendParentWithConfig(t, deliverSendConfig(t, bridge))
+	code, stdout := sendParentRunCommand(t, "--thread", "thread-1", "--logical-id", "../escape", "--message-file", sendParentMessageFile(t, "a notice"))
+	if code != sendParentExitRefused {
+		t.Fatalf("exit %d, want %d (%s)", code, sendParentExitRefused, stdout)
+	}
+	if reply := sendParentReply(t, stdout); reply["class"] != deliverClassRefused {
+		t.Errorf("the report was %v, want the refused class", reply)
 	}
 }

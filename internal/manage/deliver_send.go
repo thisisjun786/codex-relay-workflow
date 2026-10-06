@@ -2,15 +2,19 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/sys/unix"
 )
 
 // This file drives one delivery over the bridge: the MCP stdio session, the get_operation
@@ -37,10 +41,70 @@ const (
 	// The bridge's answer when it holds no record of a request id at all: the refusal happened
 	// before the operation was written, so nothing was sent.
 	deliverUnknownRequestID = "Unknown request_id"
+
+	// The bridge's own input bounds: a thread longer than 128 characters or a message longer than
+	// 100,000 is refused before it writes the operation, so the driver refuses it locally instead of
+	// recording an attempt nobody could have made.
+	deliverThreadLimit  = 128
+	deliverMessageLimit = 100000
+	deliverLockDir      = "locks"
 )
 
 // deliverBridge is one bridge session, started for a single delivery and closed with it.
 type deliverBridge struct{ session *mcp.ClientSession }
+
+// deliverMessageSHA256 is the digest of one message's text, the value the record keeps so a
+// logical id cannot silently stand for two different messages.
+func deliverMessageSHA256(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return fmt.Sprintf("%x", sum)
+}
+
+// deliverRetryCount is the retry ordinal a request id carries, so a restart continues the
+// sequence the record left instead of minting an id the bridge already answered for.
+func deliverRetryCount(logicalID, requestID string) int {
+	suffix, ok := strings.CutPrefix(requestID, logicalID+"-r")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(suffix)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// deliverLock holds one logical id for the length of a delivery. Two processes that both read
+// the same pending record and both find the bridge holding nothing would otherwise both send,
+// so the second one is refused while the first is still working. The kernel releases the lock
+// when the process ends, so a crash cannot leave it held.
+func deliverLock(cfg *Config, logicalID string) (func(), error) {
+	if err := deliverPathComponent(logicalID, "logical id"); err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(cfg.StateDir, deliverLockDir)
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("crw manage: the lock directory is a symlink; refusing to lock through it")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("crw manage: the lock directory: %w", err)
+	}
+	file, err := os.OpenFile(filepath.Join(dir, logicalID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("crw manage: the delivery lock: %w", err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = file.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, fmt.Errorf("crw manage: another delivery of %s is in flight", logicalID)
+		}
+		return nil, fmt.Errorf("crw manage: lock the delivery: %w", err)
+	}
+	return func() {
+		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		_ = file.Close()
+	}, nil
+}
 
 // Deliver sends one logical message over the configured bridge and records what it settled on.
 // An unknown outcome is never recorded as sent and never removed: it is reconciled with the
@@ -79,6 +143,23 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	if err := deliverPathComponent(m.LogicalID, "logical id"); err != nil {
 		return Outcome{}, err
 	}
+	// The bridge refuses these before it records an operation, so the message could never be
+	// delivered and the record would only stay undetermined forever.
+	if len(m.Thread) > deliverThreadLimit {
+		return Outcome{Class: deliverClassRefused, RequestID: m.LogicalID},
+			fmt.Errorf("crw manage: the thread is longer than %d characters", deliverThreadLimit)
+	}
+	if len(m.Text) > deliverMessageLimit {
+		return Outcome{Class: deliverClassRefused, RequestID: m.LogicalID},
+			fmt.Errorf("crw manage: the message is longer than %d characters", deliverMessageLimit)
+	}
+	// One logical id is delivered by one process at a time. Without this, two processes can both
+	// read the same pending record, both find the bridge holds nothing, and both send.
+	release, err := deliverLock(cfg, m.LogicalID)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer release()
 	record, known, err := deliverLoad(cfg, m.LogicalID)
 	if err != nil {
 		return Outcome{}, err
@@ -89,6 +170,12 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			return Outcome{}, err
 		}
 	} else {
+		// The record belongs to one logical message. A caller that reuses the id for different text or
+		// a different thread is refused rather than told the other message's outcome.
+		if record.TargetThread != m.Thread || record.MessageSHA256 != deliverMessageSHA256(m.Text) {
+			return Outcome{Class: deliverClassRefused, RequestID: m.LogicalID},
+				fmt.Errorf("crw manage: the logical id %q already belongs to another message", m.LogicalID)
+		}
 		// A settled record is answered from the record itself, so the same request id stays one
 		// attempt and nothing is sent again. An accepted message is already dispatched; a refused
 		// one is terminal, and dialling the bridge for it would only let a definitive refusal decay
@@ -102,25 +189,16 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	}
 	bridge, err := deliverDial(ctx, e, cfg)
 	if err != nil {
-		// A context that ended while the bridge was starting is not a refusal: no bridge answered and
-		// nothing was sent, so the attempt stays undetermined and the message is not written off.
-		class := deliverDialClass(ctx, err)
-		if class == deliverClassUnknown {
-			// A cancelled dial attempted nothing: the record keeps the state it was written with, so
-			// a later attempt reconciles it rather than reading a refusal the bridge never made.
-			return Outcome{Class: class, RequestID: record.RequestID}, err
-		}
-		record.State = class
-		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: class, ReceiptExcerpt: deliverExcerpt(deliverReply{Err: err})})
-		if saveErr := deliverSave(cfg, record); saveErr != nil {
-			return Outcome{Class: class, RequestID: record.RequestID},
-				fmt.Errorf("%w (and the ledger write failed: %v)", err, saveErr)
-		}
-		return Outcome{Class: class, RequestID: record.RequestID}, err
+		// A bridge that could not be started refused nothing: it never saw the message. The record
+		// keeps the state it was written with, so a later attempt reconciles it against a bridge that
+		// may by then be reachable, instead of reading a refusal the bridge never made.
+		return Outcome{Class: deliverClassUnknown, RequestID: record.RequestID}, err
 	}
 	defer bridge.close()
 	requestID := record.RequestID
-	retries := 0
+	// The retry ordinal comes from the record, so a restart continues the sequence it left rather
+	// than minting an id the bridge already holds a receipt for.
+	retries := deliverRetryCount(m.LogicalID, record.RequestID)
 	if known {
 		// The record is unsettled: read the bridge's own receipt before anything is sent, so an
 		// attempt that may already have gone out is never duplicated under a fresh id.
@@ -142,6 +220,11 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			// stays unsettled until that attempt settles, so a process that dies during it reconciles.
 			excerpt := "get_operation: nothing was sent; resending under the same request id"
 			if verdict == deliverReconcileResendNew {
+				if retries >= deliverRetryLimit {
+					record.State = deliverStateRefused
+					record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: nothing was sent; the retry cap is spent"})
+					return deliverSettled(cfg, record, Outcome{Class: deliverClassRefused, RequestID: record.RequestID})
+				}
 				retries++
 				requestID = deliverRetryRequestID(m.LogicalID, retries)
 				record.RequestID = requestID
@@ -168,6 +251,9 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			record.State, record.Received, record.Applied = deliverStateAccepted, true, false
 			return deliverSettled(cfg, record, Outcome{Class: class, RequestID: requestID, Receipt: reply.Payload})
 		case deliverClassRefused:
+			// A live not_attempted receipt is a refusal under the issue's contract, and only a
+			// not_delivered refusal is retried, so it settles here. A record that reconciles to
+			// not_attempted is a different case and reuses its id before any send.
 			if !deliverRetryable(reply) || retries >= deliverRetryLimit {
 				record.State = deliverStateRefused
 				return deliverSettled(cfg, record, Outcome{Class: class, RequestID: requestID, Receipt: reply.Payload})
@@ -189,16 +275,6 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: requestID, Receipt: reply.Payload})
 		}
 	}
-}
-
-// deliverDialClass places a failed dial. A context that ended while the bridge was starting, and a
-// transport error that is itself a cancellation, are not refusals the bridge made: no bridge
-// answered and nothing was sent, so the attempt stays undetermined rather than being written off.
-func deliverDialClass(ctx context.Context, err error) string {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return deliverClassUnknown
-	}
-	return deliverClassRefused
 }
 
 // deliverSettled writes the record a settled outcome produced. A write that fails is reported
@@ -296,8 +372,15 @@ func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, reques
 	if turn.Payload != nil {
 		observation, _ := turn.Payload["observation"].(string)
 		turnID, _ := turn.Payload["activeTurnId"].(string)
-		if observation == "active" && turnID != "" {
+		switch {
+		case observation == "active" && turnID != "":
 			return b.call(ctx, deliverToolSteer, map[string]any{"request_id": requestID, "thread_id": m.Thread, "expected_turn_id": turnID, "message": m.Text}), deliverToolSteer
+		case observation == "idle":
+			// The only observation a turn may be started on. The bridge reports its two
+			// disagreements when the status and the newest turn conflict and directs the caller to
+			// read again; starting a turn then could put the message in the wrong turn.
+		default:
+			return deliverReply{Err: fmt.Errorf("crw manage: the thread is not confirmed idle (observation %q); nothing was sent", observation)}, deliverToolActive
 		}
 	}
 	args := map[string]any{"request_id": requestID, "thread_id": m.Thread, "message": m.Text}
