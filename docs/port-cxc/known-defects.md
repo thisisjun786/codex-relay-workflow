@@ -1301,4 +1301,3 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
 - An op that is an array passes the op object test (`:90` is a `typeof` test, and an array is an object) and
   fails the kind read instead, so the refusal names the missing kind of a value that is not an object at all
   (source `steering.ts:90-92`; the batch is still rejected whole); port: kept.
-
