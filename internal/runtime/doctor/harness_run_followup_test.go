@@ -163,6 +163,32 @@ func TestHarnessFollowupReportSurrogateNameAndSurface(t *testing.T) {
 	}
 }
 
+// TestHarnessFollowupInstalledRootScansEveryMarketplace: c1(1) says the marketplaces are scanned as
+// harnessInstallRootBody scans them, so a second marketplace holding the same plugin folder is a
+// second installed root and the command refuses rather than diagnosing the first one it met.
+func TestHarnessFollowupInstalledRootScansEveryMarketplace(t *testing.T) {
+	codexHome := harnessFollowupCache(t, "local", "0.4.0+x")
+	other := filepath.Join(codexHome, "plugins", "cache", "public", "crw", "0.4.0+x", ".codex-plugin")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "plugin.json"), []byte("{\"name\":\"crw\",\"version\":\"0.4.0+x\",\"hooks\":[]}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := harnessFollowupRun(t, nil, map[string]string{"CODEX_HOME": codexHome})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stdout %q stderr %q", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	for _, want := range []string{filepath.Join("local", "crw", "0.4.0+x"), filepath.Join("public", "crw", "0.4.0+x"), "PLUGIN_ROOT"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr %q does not name %q", stderr, want)
+		}
+	}
+}
+
 // TestHarnessFollowupFeaturesKilledIsNullStatus: the runner's killed marker is the oracle's null
 // status, so the features check warns without the exit-code phrase; a real non-zero exit keeps it.
 func TestHarnessFollowupFeaturesKilledIsNullStatus(t *testing.T) {
