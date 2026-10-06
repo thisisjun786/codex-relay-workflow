@@ -129,16 +129,23 @@ func resetRmIfExists(root *os.Root, name, display string, result *ResetResult) e
 	return nil
 }
 
+// resetLinkWalkLimit is how many links the judgement follows before it hands the target to the OS
+// path. The issue fixes it at 40, the ceiling the kernel uses for a whole resolution.
+const resetLinkWalkLimit = 40
+
 // resetLinkTargetExists is existsSync for the link name in a pinned root.
-// os.Root resolves a target that stays inside the root through the descriptor
-// itself, except one whose final component is "." or "..": resolving that opens
-// the target directory (O_DIRECTORY, read only), which a reset must not do. Such
-// a target, and any other the descriptor cannot resolve (an absolute target, ".."
-// past the root, more link hops than os.Root follows), is judged by the OS on the
-// root's own path, which is accepted only while that path still names the pinned
-// directory before and after the stat; otherwise the verdict could describe
-// another directory than the one the removal acts on, so the judgement refuses
-// instead of guessing. Callers pass a bare leaf name.
+//
+// os.Root resolves a target that stays inside the root through the descriptor itself, except one
+// whose final component is "." or "..": resolving that opens the target directory (O_DIRECTORY,
+// read only), which a reset must not do. The walk here reads the link target and judges its path
+// components with Lstat and Readlink only, so a target that stays inside the root is decided
+// without opening it — including a chain of links that ends in a dot component. A target the walk
+// cannot keep inside the root (an absolute target, ".." above it, more hops than resetLinkWalkLimit,
+// a component it cannot read) and a link whose Readlink fails keep the older judgement: the
+// descriptor first, then the OS on the root's own path, accepted only while that path still names
+// the pinned directory before and after the stat; otherwise the verdict could describe another
+// directory than the one the removal acts on, so the judgement refuses instead of guessing.
+// Callers pass a bare leaf name.
 func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
 	return resetLinkTargetExistsWith(root, name, root.Stat)
 }
@@ -146,20 +153,133 @@ func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
 // resetLinkTargetExistsWith is resetLinkTargetExists with the root stat passed in, so a test can
 // watch whether a link's target is opened through the pinned descriptor. statRoot is root.Stat.
 func resetLinkTargetExistsWith(root *os.Root, name string, statRoot func(string) (os.FileInfo, error)) (bool, error) {
-	// A target whose final component is "." or ".." makes statRoot open the target directory itself
-	// (O_DIRECTORY, read only), which CRW-554 forbids; such a target is judged on the root's own path
-	// instead, like any other target the descriptor cannot resolve. A Readlink failure keeps the
-	// descriptor path.
 	target, readErr := root.Readlink(name)
-	if readErr != nil || !resetLinkDotEnding(target) {
-		_, err := statRoot(name)
-		if err == nil {
-			return true, nil
-		}
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
+	if readErr == nil {
+		exists, dotEnding, inside := resetLinkWalkTarget(root, target)
+		switch {
+		case inside && dotEnding:
+			// The walk decided the target without opening it, which is the whole point: os.Root would
+			// open the target directory here (CRW-554 forbids it).
+			return exists, nil
+		case inside:
+			// A target that stays inside the root and does not end in "." or ".." is safe for the
+			// descriptor, which stats the final component without opening it. Keep that path, and with
+			// it today's verdict for every such target.
+			_, err := statRoot(name)
+			if err == nil {
+				return true, nil
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
 		}
 	}
+	// The link vanished before this Readlink, or its target leaves the pinned root: judge it on the
+	// root's own path, accepted only while that path still names the pinned directory.
+	return resetLinkWalkOnTheRootPath(root, name)
+}
+
+// resetLinkWalkTarget judges a link's Readlink text against the pinned root by walking the target's
+// path components with Lstat and Readlink only, opening no file and no directory of its own. It
+// reports whether the target exists, whether its final component is "." or ".." (the case os.Root
+// cannot stat without opening the target directory), and whether the walk stayed inside the root
+// at all; a target it cannot keep inside the root is the caller's to judge on the root's path.
+//
+// "." is skipped and ".." pops one component after the links before it were expanded; a symlink
+// component is read and its target spliced into the components still to walk, at most
+// resetLinkWalkLimit times. A component that does not exist means the target does not exist; a
+// component that is not a directory where one is needed means the same; the final component only
+// has to exist.
+func resetLinkWalkTarget(root *os.Root, target string) (exists, dotEnding, inside bool) {
+	if filepath.IsAbs(target) {
+		return false, false, false
+	}
+	sep := string(filepath.Separator)
+	remaining := strings.Split(target, sep)
+	var walked []string
+	hops := 0
+	for len(remaining) > 0 {
+		dotEnding = resetLinkWalkDotEnding(remaining)
+		component := remaining[0]
+		remaining = remaining[1:]
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			if len(walked) == 0 {
+				return false, dotEnding, false // above the root
+			}
+			walked = walked[:len(walked)-1]
+			continue
+		}
+		path := resetLinkWalkPath(walked, component)
+		info, err := root.Lstat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, dotEnding, true
+			}
+			return false, dotEnding, false
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			hops++
+			if hops > resetLinkWalkLimit {
+				return false, dotEnding, false
+			}
+			link, err := root.Readlink(path)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return false, dotEnding, true
+				}
+				return false, dotEnding, false
+			}
+			if filepath.IsAbs(link) {
+				return false, dotEnding, false
+			}
+			// A relative link target resolves against the directory holding the link, which is the
+			// walked prefix: splice it in front of the components still to walk.
+			remaining = append(strings.Split(link, sep), remaining...)
+			continue
+		}
+		if len(remaining) == 0 {
+			return true, dotEnding, true
+		}
+		if !info.IsDir() {
+			return false, dotEnding, true // a component below a non-directory cannot resolve
+		}
+		walked = append(walked, component)
+	}
+	return true, dotEnding, true
+}
+
+// resetLinkWalkDotEnding reports whether the last component still to walk is "." or "..", ignoring
+// trailing separators. It is read at the top of each step so it survives both a spliced link target
+// and an early exit.
+func resetLinkWalkDotEnding(remaining []string) bool {
+	for i := len(remaining) - 1; i >= 0; i-- {
+		switch remaining[i] {
+		case "":
+			continue
+		case ".", "..":
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// resetLinkWalkPath is the path of component below the components already walked. It is built by
+// concatenation, never filepath.Join, which would clean ".." the kernel resolves physically.
+func resetLinkWalkPath(walked []string, component string) string {
+	if len(walked) == 0 {
+		return component
+	}
+	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + component
+}
+
+// resetLinkWalkOnTheRootPath is the older judgement for a target the descriptor cannot keep inside
+// the root: the OS stats the root's own path, accepted only while that path still names the pinned
+// directory before and after the stat, so a renamed pinned directory refuses instead of guessing.
+func resetLinkWalkOnTheRootPath(root *os.Root, name string) (bool, error) {
 	pinned, err := root.Stat(".")
 	if err != nil {
 		return false, err
@@ -180,19 +300,6 @@ func resetLinkTargetExistsWith(root *os.Root, name string, statRoot func(string)
 		return false, err
 	}
 	return statErr == nil, nil
-}
-
-// resetLinkDotEnding reports whether target's final path component is "." or "..".
-func resetLinkDotEnding(target string) bool {
-	sep := string(filepath.Separator)
-	trimmed := strings.TrimRight(target, sep)
-	if trimmed == "" {
-		return false
-	}
-	if i := strings.LastIndex(trimmed, sep); i >= 0 {
-		trimmed = trimmed[i+1:]
-	}
-	return trimmed == "." || trimmed == ".."
 }
 
 func resetSessions(root *os.Root, base string, result *ResetResult) error {
