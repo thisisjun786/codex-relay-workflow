@@ -65,6 +65,7 @@ func cut(t *testing.T, entries []entry, last *tar.Header, body string) []byte {
 // refusal comes before anything is written: an entry ahead of it in the archive is not
 // unpacked either, and not even bin/ is created. The release layout itself unpacks.
 func TestAnArchiveCannotPlantControlData(t *testing.T) {
+	t.Parallel()
 	binary := "\x7fELF crw"
 	links := []entry{
 		{tar.Header{Name: "codex-session-relay", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
@@ -120,6 +121,7 @@ func TestAnArchiveCannotPlantControlData(t *testing.T) {
 // more than an archive may unpack to each refuse the whole archive before anything is written -
 // with the release's own entries ahead of them, not even those are unpacked.
 func TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten(t *testing.T) {
+	// sequential: lowers the package's maxUnpacked bound for the whole process.
 	release := []entry{
 		{tar.Header{Name: "LICENSE", Typeflag: tar.TypeReg}, "MIT\n"},
 		{tar.Header{Name: "crw", Mode: 0o755, Typeflag: tar.TypeReg}, "\x7fELF crw"},

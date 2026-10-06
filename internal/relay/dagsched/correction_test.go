@@ -53,6 +53,7 @@ func (k *releaseKit) prepare() Prepared {
 // Criterion c6: a correction returns to the same child. The prepared manifest is stored, its instruction names it in English, and the ruling's restoration block (the only text the correction
 // message is proven to carry) is what binds the generation: the bound digest is derived from it, never from the caller's omission.
 func TestCorrectionBindsTheManifestNamedInTheRestorationBlock(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	rid := k.correctionKit()
 	var previous string
@@ -97,6 +98,7 @@ func TestCorrectionBindsTheManifestNamedInTheRestorationBlock(t *testing.T) {
 // What the child was NOT told does not bind: a digest in an ordinary finding is never rendered by the relay's correction message, so the previous manifest stays in force; a restoration block that
 // names two manifests is refused.
 func TestCorrectionDoesNotBindWhatTheChildWasNotTold(t *testing.T) {
+	t.Parallel()
 	t.Run("the digest is in an ordinary finding", func(t *testing.T) {
 		k := newReleaseKit(t)
 		rid := k.correctionKit()
@@ -139,6 +141,7 @@ func TestCorrectionDoesNotBindWhatTheChildWasNotTold(t *testing.T) {
 
 // The preconditions of recording a correction.
 func TestCorrectionPreconditions(t *testing.T) {
+	t.Parallel()
 	t.Run("a generation that no ruling opened", func(t *testing.T) {
 		k := newReleaseKit(t)
 		rid := k.correctionKit()

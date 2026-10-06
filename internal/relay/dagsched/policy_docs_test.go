@@ -8,6 +8,7 @@ import (
 // CRW-411: the page, the skill and the command specs say the same things about narrowing, the release policy, the results and the measurements, so a command, table, key, state, kind or reason that
 // is added or renamed in the code cannot go undescribed.
 func TestPolicyPageSkillAndSpecsNameTheSameThings(t *testing.T) {
+	t.Parallel()
 	page := readText(t, "../../../docs/relay/dag-scheduler.md")
 	plans := readText(t, "../../../docs/relay/dag-plans.md")
 	skill := readText(t, "../../../plugins/crw/skills/crw-run/references/region-grades.md")
