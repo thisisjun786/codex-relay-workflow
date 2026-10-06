@@ -1376,3 +1376,29 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
 ## Found by the metric lock-acquired cancellation port (CRW-667)
 
 - The lock-acquired check read the context only when the wait had to wait: `appendRow` read `ctx.Err()` before the write only under `waited`, which `metricLockWait` set when the lock came from a retry, so a lock the first non-blocking `Flock(LOCK_NB)` took at once (a free ledger) was written with no look at the context; a `metric ingest` cancelled right after that Flock therefore left a row that did not exist at the interrupt and answered nil, where the oracle's process dies at the signal and writes none (the oracle has no lock and no signal handler, `pabcd-state/src/metrics.ts:119-137` and `pabcd-state/src/metric-cli.ts:92-151` at v0.2.40; no corpus fixture drives an interrupt); port: fixed (port-introduced, not an upstream defect — the ledger lock is this port's): `appendRow` reads `ctx.Err()` once after the lock is taken, whether or not the wait had to wait, and before it writes, closing the file without a write and returning the context's own error as it is, and `metricLockWait` drops its `waited` return; `context.Background` keeps the blocking `Flock`, so every uninterrupted run is unchanged, and the window between the check and `WriteString` stays (`TestRecordMetricsFromTextContextCancelledAfterTheFirstFlockWritesNoRow` and `TestRecordMetricsFromTextContextCancelledAfterTheFirstFlockWithTwoLinesWritesNoRow`, red on the base with a row written, plus CRW-637's two cases and CRW-627's five unchanged, and `TestRecordMetricsFromTextContextStopsBetweenLines` now expects no row).
+
+## CRW-640 — the doctor harness report: the cut's lone high surrogate and the empty repair (port-introduced parity defects, fixed)
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` (`buildDeclaredFeaturesCheck` :132-164
+and the `CheckResult` type :25-32) at v0.2.40, through the port in
+`internal/runtime/doctor/harness_report.go`. Both are deviations the port introduced from the
+oracle, not oracle defects, and this change repairs them; the first supersedes the CRW-346 line
+above (`## CRW-346 — the doctor text renderer stderr slice`).
+
+- The 160-unit slice of a features-probe stderr can end inside a surrogate pair
+  (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:137`); the oracle keeps the lone high
+  surrogate in the string, so its `--json` report writes the `\ud83d` escape
+  (`plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`) while the UTF-8 encoder writes U+FFFD
+  in the text report. The port held U+FFFD in both and lost the escape (the CRW-346 line above);
+  this change keeps the surrogate as its WTF-8 bytes and writes the escape in `--json`, so both
+  outputs match the oracle; port: fixed (the recorded case `stderr_slice_cuts_a_surrogate_pair` in
+  `internal/runtime/doctor/testdata/harness/report/oracle.json`, re-recorded without
+  `toWellFormed()` so the recorder holds the oracle's JSON string, plus
+  `harness_report_parity_test.go`).
+- `CheckResult.repair` is optional (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:31`), so an
+  explicit empty repair is a present value: the oracle's `--json` report keeps `"repair":""`
+  while `renderDoctor` drops it (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:653`). The
+  port's `HarnessCheck.Repair` was a plain string with `omitempty`, so an explicit empty repair was
+  indistinguishable from an absent one and the key was always dropped; this change makes it a
+  `*string` (nil absent, a pointer to "" present), so the key survives a round trip; port: fixed.
+
