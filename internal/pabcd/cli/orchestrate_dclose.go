@@ -21,8 +21,9 @@ package cli
 //     (docs/port-cxc/known-defects/CRW-756.md records why that order is kept).
 //
 // The oracle's commit hooks (OrchestrateCommitHooks, :424-429) become orchestrateDcloseSeam, an
-// unexported seam the tests pass in. Nothing here is a package-level variable and nothing runs at
-// program start.
+// unexported seam the tests pass in. The one package-level value here is
+// orchestrateDcloseSurrogateOptions, a struct literal with no initializer work; nothing runs at
+// program start and there is no init().
 
 import (
 	"errors"

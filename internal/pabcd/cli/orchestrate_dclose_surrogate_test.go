@@ -356,18 +356,23 @@ func TestOrchestrateDcloseSurrogateWritesItsOwnCloseRow(t *testing.T) {
 
 // TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement is the issue's other control: an
 // invalid UTF-8 byte inside a stored ledger row is read as U+FFFD, as Node's readFileSync utf8 reads
-// it, so the row does match a close whose id carries the real U+FFFD. The byte is written raw (0xFF),
+// it, so the row does match a close whose id carries the real U+FFFD. The bytes are written raw,
 // never as an escape, which is the shape a hand edit or a byte-level copy leaves behind.
+//
+// The raw sequence is the incomplete multi-byte prefix E0 A0, not a lone 0xFF: source.DecodeUTF8
+// follows the WHATWG maximal-subpart rule and folds that whole prefix into ONE U+FFFD, where a
+// per-byte replacement (what a reader without DecodeUTF8 would do) folds it into TWO. So this case
+// fails if the DecodeUTF8 step is dropped, while a lone 0xFF would not tell the two apart.
 func TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
 	id, slug := "surrogate-invalid-byte", "surrogate-invalid-byte-plan"
 	phaseID := "wp-" + orchestrateDcloseSurrogateFFFD
 	orchestrateDcloseSurrogateSeedAtC(t, cwd, id, slug, phaseID)
 	ledger := orchestrateDcloseSurrogateGoalplanLedgerPath(cwd, slug)
-	// "closed wp-" followed by the single byte 0xFF: Node reads the byte as U+FFFD, so the detail
-	// becomes exactly the close's own target.
+	// "closed wp-" followed by the two bytes E0 A0: Node reads the maximal subpart as one U+FFFD,
+	// so the detail becomes exactly the close's own target.
 	orchestrateDcloseSurrogateWriteRaw(t, ledger,
-		orchestrateDcloseSurrogateGoalplanRow(slug, "closed wp-"+"\xff"),
+		orchestrateDcloseSurrogateGoalplanRow(slug, "closed wp-"+"\xe0\xa0"),
 	)
 
 	have, err := orchestrateDcloseHasGoalplanRow(cwd, slug, goalplan.EventWorkphaseDone, "closed "+phaseID)
@@ -375,7 +380,7 @@ func TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement(t *testing.T
 		t.Fatal(err)
 	}
 	if !have {
-		t.Fatal("a row whose invalid byte reads as U+FFFD did not match the U+FFFD close, as it does in Node")
+		t.Fatal("a row whose invalid bytes read as one U+FFFD did not match the U+FFFD close, as it does in Node")
 	}
 }
 
