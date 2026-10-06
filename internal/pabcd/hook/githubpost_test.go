@@ -396,6 +396,11 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"a print naming a post", "echo 'gh pr comment'", "", ""},
 		{"another file written", "env > other.txt\ngh pr comment 1 --body-file body.md", "", ""},
 		{"a directory change with nothing to do with gh", "cd sub && ls", "", ""},
+		// The allow list's boundary: git is allowed only for its reading subcommands, so a config or alias
+		// word that could run something else is on the refusing side, and a pushd is a directory change.
+		{"git with a config word", "git -c alias.p='!gh pr comment 1 -b plain' p", githubPostRuleUnread, githubPostWhereCommand},
+		{"git with an alias subcommand", "git -c core.pager=cat show gh pr comment", githubPostRuleUnread, githubPostWhereCommand},
+		{"body file after a pushd", "pushd sub && gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
