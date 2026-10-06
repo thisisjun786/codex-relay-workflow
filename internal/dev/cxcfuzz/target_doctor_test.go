@@ -312,6 +312,45 @@ func TestDoctorArbitraryExitStatusKeepsItsNumber(t *testing.T) {
 	}
 }
 
+// TestDoctorLenientInputShapes pins the reader shapes the oracle answers and the port must too,
+// rather than refusing them: the oracle tests the run for truthiness (doctor.ts:346) and the
+// status for `typeof ... === "number"`, and reads a checks value that is not an array as no
+// checks. Refusing any of these would answer an input the oracle answers, which is a divergence
+// the target invented. They are also the shapes the shrinker reaches: it reduces a container to
+// the empty string and a number to zero.
+func TestDoctorLenientInputShapes(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"absent run", `{"report":{}}`, "overall: PASS"},
+		{"empty-string run", `{"report":{},"run":""}`, "overall: PASS"},
+		{"zero run", `{"report":{},"run":0}`, "overall: PASS"},
+		{"non-array checks", `{"report":{"checks":""}}`, "overall: PASS"},
+		{"non-object check", `{"report":{"checks":[0]}}`, "overall: PASS"},
+		{"non-number status", `{"run":{"status":""}}`, "could not read 'codex features list'"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := decode(test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer, err := doctorGo(value, RootEnv(t.TempDir()))
+			if err != nil {
+				t.Fatalf("the reader refused an input the oracle answers: %v", err)
+			}
+			text, _, err := doctorAnswer(answer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(text, test.want) {
+				t.Fatalf("text = %q, want it to contain %q", text, test.want)
+			}
+		})
+	}
+}
+
 // TestDoctorMalformedCheckAgreesAcrossSides is the regression the campaign exposed: the generic
 // reducer deletes an object keys before it reduces values, so a shrink candidate can lose a
 // check required fields. That candidate must not become a difference of its own, or the shrinker

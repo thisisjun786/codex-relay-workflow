@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -138,7 +139,10 @@ func doctorReport(input any) (doctor.HarnessReport, error) {
 	if err != nil {
 		return doctor.HarnessReport{}, err
 	}
-	if run, found := field(input, "run"); found && run != nil {
+	// The features check is appended only when the input carries a run the oracle would read, the
+	// way doctor.ts:346 tests it: an absent run, null and the empty string all leave the report
+	// without a features check.
+	if run, found := field(input, "run"); found && doctorRunTruthy(run) {
 		check, err := doctorFeaturesCheck(run)
 		if err != nil {
 			return doctor.HarnessReport{}, err
@@ -174,9 +178,11 @@ func doctorChecks(source any) ([]doctor.HarnessCheck, error) {
 	if !found || value == nil {
 		return []doctor.HarnessCheck{}, nil
 	}
+	// A checks value that is not an array reads as no checks, the way the oracle test does;
+	// refusing it here would answer an input the oracle answers.
 	items, ok := value.([]any)
 	if !ok {
-		return nil, fmt.Errorf("checks must be an array, not %T", value)
+		return []doctor.HarnessCheck{}, nil
 	}
 	checks := make([]doctor.HarnessCheck, 0, len(items))
 	for i, item := range items {
@@ -245,9 +251,12 @@ func doctorStatus(run any) (*int, error) {
 	if !found || value == nil {
 		return nil, nil
 	}
+	// The oracle reads the status with `typeof res.status === "number"`, so a value of any other
+	// type is its null status rather than a refused input: reading it as an error would answer an
+	// input the oracle answers. A JSON number reaches this as a json.Number or a Go number.
 	code, err := integer(value)
 	if err != nil {
-		return nil, fmt.Errorf("run.status: %w", err)
+		return nil, nil
 	}
 	return &code, nil
 }
@@ -264,6 +273,31 @@ func doctorOptionalString(value any, key string) (*string, error) {
 		return nil, fmt.Errorf("%s must be a string, not %T", key, raw)
 	}
 	return &text, nil
+}
+
+// doctorRunTruthy is the oracle test on the features probe (doctor.ts:346), which is false for
+// an absent run, null, false, 0 and the empty string, so those append no features check. A
+// non-empty container is truthy, as it is in JavaScript.
+func doctorRunTruthy(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case string:
+		return v != ""
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0
+	case json.Number:
+		n, err := v.Int64()
+		return err != nil || n != 0
+	default:
+		return true
+	}
 }
 
 // doctorText is an optional string as the port reads it, with nil as the empty string.
