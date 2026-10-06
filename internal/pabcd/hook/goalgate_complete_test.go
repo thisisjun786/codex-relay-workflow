@@ -3,6 +3,7 @@ package hook
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	sourcesession "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -372,5 +374,162 @@ func TestGoalGateCompleteGuardFailsOpen(t *testing.T) {
 	reason, _ := goalGateTestDeny(t, goalCompleteApplyGuard(p, true, midCycle))
 	if !strings.Contains(reason, "phase B") || !strings.Contains(reason, "`crw pabcd orchestrate") {
 		t.Errorf("a failing resolver changed the reason: %q", reason)
+	}
+}
+
+// goalCompleteTestGitRepo makes cwd a repository with .crw ignored, so the state, plan and receipt this file
+// writes leave the captured tree clean: the identity the guard captures is then exactly the one the plan and
+// the receipt record, and the passing v2 case can assert the receipt callback the guard wires.
+func goalCompleteTestGitRepo(t *testing.T) string {
+	t.Helper()
+	cwd := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+cwd,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(cwd, ".gitignore"), []byte(".crw/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "initial")
+	return cwd
+}
+
+// A complete schema-v2 plan with an approved final gate and a matching receipt passes: this is the case that
+// reaches the receipt reader and the source capture together, which the deny cases cannot.
+func TestGoalGateCompleteGuardPassingV2PlanWithReceipt(t *testing.T) {
+	goalGateTestEnv(t)
+	cwd := goalCompleteTestGitRepo(t)
+	sessionID := "gc-v2"
+	current := goalCompleteCaptureSourceIdentity(cwd, sessionID)
+	if current.Kind != "resolved" || current.CommitSha == "" || current.Dirty {
+		t.Fatalf("the fixture tree is not a clean resolved capture: %#v", current)
+	}
+
+	ts := "2026-01-01T00:00:00.000Z"
+	two := 2.0
+	met := "go test: 0 fail"
+	roundID := "r1"
+	receiptPath := ".crw/evidence/test.json"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "v2 pass", Criteria: []goalplan.NewGoalplanCriterion{{Scenario: "tests", ExpectedEvidence: "green"}}})
+	plan.SchemaVersion = &two
+	plan.Criteria = []goalplan.GoalplanCriterion{{ID: "c-1", Scenario: "tests", ExpectedEvidence: "green", CapturedEvidence: &met, Status: goalplan.CriterionMet, Surface: goalplan.SurfaceLogic}}
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp1", Title: "t", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{"c-1"}}}
+	identity := current
+	plan.FinalGate = &goalplan.FinalGateState{Status: goalplan.GateApproved, QaRequired: false, UpdatedAt: ts,
+		ReviewRoundID: &roundID, TestReceiptPath: &receiptPath, Verdict: goalplan.VerdictPass, SourceIdentity: &identity}
+	plan.ReviewRounds = []goalplan.ReviewRoundState{{RoundID: roundID, Purpose: goalplan.PurposeFinalGate, PlanPath: "p.md",
+		PlanSha256: strings.Repeat("a", 64), Status: goalplan.ReviewApproved, OpenedAt: ts,
+		Lane: goalplan.ReviewLane{LaunchID: "r1-x", Verdict: goalplan.VerdictPass, SourceIdentity: &identity}}}
+	goalCompleteTestWritePlan(t, cwd, sessionID, plan, func(s *state.State) { s.Phase = state.PhaseIdle; s.OrchestrationActive = false })
+
+	receipt, err := json.Marshal(map[string]any{"kind": "test", "createdAt": ts,
+		"sourceIdentity": map[string]any{"kind": string(current.Kind), "commitSha": current.CommitSha, "dirty": current.Dirty, "capturedAt": current.CapturedAt}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cwd, ".crw", "evidence")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "test.json"), receipt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out := goalCompleteTestGuard(t, cwd, sessionID, true, map[string]any{"status": "complete"}); out != "" {
+		t.Errorf("a complete v2 plan with a matching receipt: %q", out)
+	}
+
+	// The receipt callback is load-bearing: a receipt captured against another tree denies, which is the
+	// final gate's own reading of what ParseSourceBoundReceipt returned.
+	mismatch, err := json.Marshal(map[string]any{"kind": "test", "createdAt": ts,
+		"sourceIdentity": map[string]any{"kind": "resolved", "commitSha": strings.Repeat("b", 40), "dirty": false, "capturedAt": ts}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "test.json"), mismatch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reason, _ := goalGateTestDeny(t, goalCompleteTestGuard(t, cwd, sessionID, true, map[string]any{"status": "complete"}))
+	if !strings.Contains(reason, "the test receipt describes a different source") {
+		t.Errorf("a receipt captured against another tree: %q", reason)
+	}
+}
+
+// goalCompleteTestGit runs one git command in dir with a fixed identity and no system config.
+func goalCompleteTestGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+dir,
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
+// A complete schema-v2 plan with an approved final gate passes when the session is bound to a clean source
+// worktree and the gate and the receipt record exactly that tree. This is the case that reaches the source
+// capture, the source comparison and the receipt reader together; a bound session is what makes it possible,
+// because only a bound capture excludes the .crw state directory (session-source-identity.ts:6-10).
+func TestGoalGateCompleteGuardPassingV2PlanWithBoundSource(t *testing.T) {
+	goalGateTestEnv(t)
+	repo := goalCompleteTestGitRepo(t)
+	linked := filepath.Join(t.TempDir(), "wt")
+	goalCompleteTestGit(t, repo, "worktree", "add", "-q", "-b", "wt-branch", linked)
+	sessionID := "gc-v2pass"
+	goalCompleteTestState(t, repo, sessionID, nil)
+	if _, err := sourcesession.Bind(repo, sessionID, linked); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	identity := goalCompleteCaptureSourceIdentity(repo, sessionID)
+	if identity.Kind != "resolved" || identity.CommitSha == "" || identity.Dirty || identity.SourceRoot == nil || *identity.SourceRoot != linked {
+		t.Fatalf("the bound source is not a clean resolved capture: %#v", identity)
+	}
+
+	ts := "2026-01-01T00:00:00.000Z"
+	two := 2.0
+	met := "go test: 0 fail"
+	roundID := "r1"
+	receiptPath := ".crw/evidence/test.json"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "v2 pass bound", Criteria: []goalplan.NewGoalplanCriterion{{Scenario: "tests", ExpectedEvidence: "green"}}})
+	plan.SchemaVersion = &two
+	plan.Criteria = []goalplan.GoalplanCriterion{{ID: "c-1", Scenario: "tests", ExpectedEvidence: "green", CapturedEvidence: &met, Status: goalplan.CriterionMet, Surface: goalplan.SurfaceLogic}}
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp1", Title: "t", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{"c-1"}}}
+	plan.FinalGate = &goalplan.FinalGateState{Status: goalplan.GateApproved, QaRequired: false, UpdatedAt: ts,
+		ReviewRoundID: &roundID, TestReceiptPath: &receiptPath, Verdict: goalplan.VerdictPass, SourceIdentity: &identity}
+	plan.ReviewRounds = []goalplan.ReviewRoundState{{RoundID: roundID, Purpose: goalplan.PurposeFinalGate, PlanPath: "p.md",
+		PlanSha256: strings.Repeat("a", 64), Status: goalplan.ReviewApproved, OpenedAt: ts,
+		Lane: goalplan.ReviewLane{LaunchID: "r1-x", Verdict: goalplan.VerdictPass, SourceIdentity: &identity}}}
+	goalCompleteTestWritePlan(t, repo, sessionID, plan, func(s *state.State) { s.Phase = state.PhaseIdle; s.OrchestrationActive = false })
+
+	receipt, err := json.Marshal(map[string]any{"kind": "test", "createdAt": ts, "sourceIdentity": map[string]any{
+		"kind": string(identity.Kind), "commitSha": identity.CommitSha, "dirty": identity.Dirty,
+		"capturedAt": identity.CapturedAt, "sourceRoot": *identity.SourceRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repo, ".crw", "evidence")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "test.json"), receipt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out := goalCompleteTestGuard(t, repo, sessionID, true, map[string]any{"status": "complete"}); out != "" {
+		t.Errorf("a complete v2 plan with a bound clean source and a matching receipt: %q", out)
 	}
 }
