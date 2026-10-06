@@ -210,6 +210,27 @@ func TestMechanicalPluginVersionLine(t *testing.T) {
 		f.record()
 		f.wantPass(t, f.run(f.finish()), f.r.git("rev-parse", "HEAD"))
 	})
+	t.Run("a candidate that declares the manifest while the merged node declares only its own file", func(t *testing.T) {
+		f := newPluginVersionFixture(t)
+		f.standard()
+		f.startMerge()
+		head := f.resolve()
+		candidate := f.regionsFile(mechanical(pluginversion.ManifestRepoPath, "regenerate:false"))
+		merged := f.regionsFile(mechanical(pluginversion.PluginRelative+"/skills/crw-run/SKILL.md", "regenerate:false"))
+		f.wantPass(t, f.run(head, candidate, merged), head)
+	})
+	// CRW-732 changed this expectation: a declaration that touches the place without settling it with
+	// one agreed rule no longer takes the built-in rule's place, so the version line is settled as it
+	// is when no declaration covers the file.
+	t.Run("a declaration that covers the file without one agreed rule leaves the built-in rule its say", func(t *testing.T) {
+		f := newPluginVersionFixture(t)
+		f.standard()
+		f.startMerge()
+		head := f.resolve()
+		local := mechanical(pluginversion.ManifestRepoPath, "")
+		local.Grade = "local"
+		f.wantPass(t, f.run(head, f.regionsFile(local)), head)
+	})
 }
 
 func TestMechanicalPluginVersionLineRefusals(t *testing.T) {
@@ -245,15 +266,6 @@ func TestMechanicalPluginVersionLineRefusals(t *testing.T) {
 		head := f.resolve()
 		regions := f.regionsFile(mechanical(pluginversion.ManifestRepoPath, "regenerate:false"))
 		wantMechRefused(t, f.run(head, regions), "regeneration_failed")
-	})
-	t.Run("a declaration that covers the file without a mechanical rule", func(t *testing.T) {
-		f := newPluginVersionFixture(t)
-		f.standard()
-		f.startMerge()
-		head := f.resolve()
-		local := mechanical(pluginversion.ManifestRepoPath, "")
-		local.Grade = "local"
-		wantMechRefused(t, f.run(head, f.regionsFile(local)), "conflict_outside_mechanical", pluginversion.ManifestRepoPath)
 	})
 	t.Run("the parents record two releases", func(t *testing.T) {
 		f := newPluginVersionFixture(t)

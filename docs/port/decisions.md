@@ -6073,3 +6073,278 @@ Only `docs/port/decisions.md` changes: one section at its end. No product code, 
 contract file, golden, skill document or `plugin.json` changes, and no refusal reason, zone statement,
 CLI option or output field is added. The slice above ships as its own implementation issue with its own
 red test and its own PR.
+
+## 81. The lane gets runners first by needing fewer of them; GitHub sells no priority (CRW-780)
+
+Decision (design only, 2026-10-06): a workflow run cannot be given priority over another on
+standard GitHub-hosted runners — the documentation offers no such control — so the lane cannot be
+moved ahead of the children. What the lane can have is a smaller field to compete in, and the
+measurement below says the field is mostly runs that did not need to exist. The recommendation is
+ordered by measured effect against risk: first the run-count rules the packet adopted on
+2026-10-06 made permanent, together with the edited-run reuse and the leg rebalance the sibling CI
+nodes already own; then the dev push run, which re-verifies a tree the lane already proved; then the
+lane's own capacity, where the plan ceiling is the only documented lever that needs no new trust
+path. The plan upgrade, the dev push rule and a self-hosted runner are Jun's decisions and are
+collected at the end. The batch size `k` stays 2. This section changes no running behavior.
+
+### The measurement
+
+Read with `gh api GET` on 2026-10-06 over the window 08:00–15:00 KST
+(`2026-10-05T23:00:00Z..2026-10-06T06:00:00Z`):
+
+```sh
+gh api --paginate "repos/thisisjun786/codex-relay-workflow/actions/runs?created=2026-10-05T23:00:00Z..2026-10-06T06:00:00Z&per_page=100" \
+  --jq '.workflow_runs[] | [.id,.event,.status,(.conclusion//"null"),.head_sha,.run_attempt,.created_at,.run_started_at,.updated_at] | @tsv'
+gh api "repos/thisisjun786/codex-relay-workflow/actions/runs/<run id>/jobs?per_page=100" \
+  --jq '.jobs[] | [.name,.started_at,.completed_at,.conclusion] | @tsv'
+git log --first-parent origin/dev --since=2026-10-05T23:00:00Z --until=2026-10-06T06:00:00Z --oneline | wc -l
+```
+
+| What | Measured | Source |
+| --- | --- | --- |
+| Runs | 350, run ids 37386271268 to 37421344052 | the runs list above |
+| Runs by event | `pull_request` 264, `push` 45, `workflow_dispatch` 41 | the runs list above |
+| Runs by conclusion | success 310, cancelled 31, failure 8, one still running | the runs list above |
+| Cancelled by event | `pull_request` 27, `workflow_dispatch` 3, `push` 1 | the runs list above |
+| Merges | 45 | `git log --first-parent` above; the 45 `push` runs to `dev` agree |
+| Runs per merge | 7.8 (the issue's expectation is about 2.5 to 3) | 350 / 45 |
+| Job slots | one run is ten jobs, so up to 3,500 in seven hours, about 8.3 a minute sustained (a cancelled run starts fewer) | `.github/workflows/ci.yml:19-149`; the jobs list above |
+| Repeated runs on one head | 250 distinct head SHAs, 91 ran more than once, 100 runs beyond the first of their head, and 95 of those extra runs are `pull_request` runs on a head that already had one (79 heads ran twice, 8 three times). These are repeated runs on one head, not necessarily runs of one tree: a `pull_request` run reports the pull request head as `head_sha` while it tests `refs/pull/<number>/merge` (§79), so a base advance between two of them changes the tree without changing the head | the runs list above |
+| Run wall time, `run_started_at` to `updated_at` | `pull_request` median 281 s, p90 730 s, max 1252 s; `push` median 275 s; `workflow_dispatch` median 276 s | the runs list above |
+| Job duration | `test-1` 260 s, `test-2` 259 s, `test-rest` 246 s, `test-3` 197 s, `lint` 148 s, `dist` 144 s, `test-4` 128 s, `validate` 35 s, `secrets` 9 s, `dev-gate` 3 s (medians) | the jobs list above, 26 `pull_request` runs sampled across the window, 260 jobs |
+| Runner wait, job `started_at` minus run `created_at` | the 182 matrix jobs: median 4 s, p90 270 s, max 456 s; 23 of 182 (12.6%) waited 155 s or more and 19 (10.4%) waited 270 s or more; the worst wait in a run has median 6 s and p90 417 s | the jobs list above |
+| Cost of cancellation | 25 of the 27 cancelled `pull_request` runs had jobs that had already started; those jobs ran 26,328 s of job execution time between them, median 1,134 s and max 1,875 s per run, summed per run from each job's `completed_at` minus its `started_at` | the jobs of those runs, read with the jobs endpoint above |
+| Lane CI | §79's measurement of the same day stands: turn median 5.4 min, of which base refresh to CI end 5.2 min. The issue records the lane growing from 4.5 to 11 minutes; the `pull_request` p90 of 730 s, about 12 minutes, is that tail | the issue body for the lane figure; the runs list above for the tail |
+
+Percentiles here are nearest-rank: the p-th percentile is the value at rank `ceil(p*n)` of the sorted
+sample, and a median of an even-sized sample is the lower of the two middle values. Recomputing with
+a different convention moves the p90 values by one rank.
+
+The measurement's window is fixed by `created`; the jobs are read per run from the jobs endpoint, and
+the two derived figures are computed as follows: the run wall time is `updated_at` minus
+`run_started_at` (the queue wait before the run started is deliberately outside it, and the runner
+wait is measured separately as a job's `started_at` minus its run's `created_at`); the cancellation
+cost is the sum over a cancelled run's jobs of `completed_at` minus `started_at`, counting only the
+jobs whose `started_at` is set, which is why 25 of the 27 cancelled pull request runs carry it.
+
+The management session's own observation the same afternoon — 30 jobs running and 14 runs waiting
+(12 `pull_request`, 1 `push`) — is the same picture from the other side and is recorded in the issue
+body, not re-measured here.
+
+### What the measurement says the bottleneck is
+
+One pull request run asks for nine jobs at once: `validate`, `secrets` and the seven-part
+`go-product` matrix. Three concurrent pull request runs therefore claim 27 of the account's 40
+concurrent jobs, and four claim 36. The lane's own run is one more of the same shape, so the lane
+does not merely wait behind the children — it waits behind a queue it is itself shaped like.
+
+The work is not the problem; the demand is. The slowest leg is 260 s and the median run is 281 s,
+but the p90 run is 730 s and the worst matrix job waited 456 s for a runner. The extra minutes are
+queueing, and they land on whichever run is unlucky rather than on the lane.
+
+Most of the runs are avoidable. All 41 `workflow_dispatch` runs report a `codex/` branch as their
+`head_branch`, so they are pull request branches rather than `dev`; they are 11.7% of every run in
+the window, and the packet stopped that practice on 2026-10-06. Another 95 runs re-ran a head that
+already had a pull request run. Cancellation does not recover what was already
+spent: 31 runs were cancelled, and the jobs that had already started in the 27 cancelled pull
+request runs had run 26,328 s of job execution time between them. Cancelling does release the
+runners it stops, but only from the moment of the cancellation, so the queue time those runs had
+already cost is not given back.
+
+The pattern repeats outside the window, in this pull request itself: a `pull_request` event by the
+review bot started a second run of all ten jobs on the same head four seconds after the first,
+because the edited-run reuse of option 7 has not landed yet. Both runs report the same `head_sha`,
+`8e053f26cf`, which is the pull request head rather than what either run tested; on a base that
+did not move between them the two runs cover one tree.
+
+### The current concurrency settings, checked against the documentation
+
+`.github/workflows/ci.yml:13-17` groups on
+`workflow-skills-ci-${{ github.event.pull_request.number || github.ref }}`, plus `-edit` when the
+event action is `edited` and the base did not change, with `cancel-in-progress: true`.
+
+The documentation confirms the comment's reading:
+
+- "You can use `jobs.<job_id>.concurrency` to ensure that only a single job or workflow using the
+  same concurrency group will run at a time", and with `cancel-in-progress: true` GitHub "will
+  cancel any workflow runs or jobs that are already in progress in the same concurrency group"
+  ("Control workflow concurrency"). The group name is case-insensitive.
+- A push to a pull request branch starts no run of its own, because the `push` trigger names only
+  `dev` (`.github/workflows/ci.yml:3-5`). What cancels that pull request's in-progress run is the
+  new `pull_request` (synchronize) run, which shares the pull request number's group — measured, 27
+  cancelled `pull_request` runs. An edited-body run is in its own group and neither cancels nor is
+  cancelled by the synchronize run. A `workflow_dispatch` run on a pull request branch is grouped
+  by `github.ref`, that is `refs/heads/<branch>`, and likewise stands apart from the pull request
+  run.
+- Consecutive merges put their `dev` push runs in one group (`refs/heads/dev`), so the later merge
+  cancels the earlier one — measured, 1 cancelled `push` run. That sits against `POLICY.md`, whose
+  release reads the latest dev push CI for the released SHA: a merge whose dev push run the next
+  merge cancelled has no dev push run of its own, and a later push does not cover it, because
+  `release.yml` reads the run by `head_sha=$RELEASE_SHA` in both `release-source`
+  (`.github/workflows/release.yml:114-126`) and `release-publish` (`:211-223`) and requires the
+  returned run's `head_sha` to be that exact commit. The cancelled run has to be rerun, or the
+  release gate changed, before that SHA can be released. This section records the tension and
+  changes nothing; the rule is part of option 6 below.
+
+Source: "Control workflow concurrency"
+(<https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency>),
+read 2026-10-06.
+
+### Whether a run can be given runner priority
+
+No. The pages read on 2026-10-06 — "Limits", "GitHub-hosted runners", "Larger runners", "Control
+workflow concurrency", "Self-hosted runners" and "Secure use" — document no control that orders one
+workflow run ahead of another on standard GitHub-hosted runners. A run waits for the account's
+concurrent-job capacity, and the only bound the documentation states is a discard: a run "has been successfully
+queued, but has not been processed by a GitHub-hosted runner within 45 minutes, then the queued
+workflow run is discarded".
+
+The documented levers are therefore only the plan's concurrent-job ceiling, larger runners, and
+self-hosted runners or runner groups. All three change the account's capacity; none reorders runs.
+That is why this section answers the question with "fewer runs and less demand per run" rather than
+with a priority mechanism.
+
+Sources, read 2026-10-06: "Limits"
+(<https://docs.github.com/en/actions/reference/limits>), "GitHub-hosted runners"
+(<https://docs.github.com/en/actions/concepts/runners/github-hosted-runners>), "Larger runners"
+(<https://docs.github.com/en/actions/concepts/runners/larger-runners>), "Self-hosted runners"
+(<https://docs.github.com/en/actions/concepts/runners/self-hosted-runners>), "Secure use"
+(<https://docs.github.com/en/actions/reference/security/secure-use>, the page option 3's quotation
+comes from), and "Control workflow concurrency" above.
+
+### The plan limits and cost
+
+From "Limits", for standard GitHub-hosted runners the total concurrent jobs are Free 20, Pro 40,
+Team 60 and Enterprise 500 (and for larger runners, Team 1000 and Enterprise 1000). This account is
+on Pro (Jun, 2026-10-06) and the repository's owner is a user account
+(`repos/thisisjun786/codex-relay-workflow` reports `owner.type: "User"`), so the ceiling today is 40.
+
+From the billing page: "GitHub Actions usage is free for self-hosted runners and for public
+repositories that use standard GitHub-hosted runners", and "Public repositories: Minutes remain
+free". For this repository the runner minutes therefore cost nothing at any ceiling, and the plan's
+incremental value here is the ceiling and the plan's other features, not minutes.
+
+The monthly plan prices could not be read from the documentation: the documentation pages carry
+feature lists rather than prices, and <https://github.com/pricing> puts the plan figures in a
+template that the browser fills in (`data-plan="business"` and `data-plan="business_plus"` render
+4 and 21 USD per user a month, and no value is bound for the account's own plan), so this section
+does not state a price. Two facts that bear on the comparison are readable: GitHub Team is
+described as an organization plan ("In addition to
+the features available with GitHub Free for organizations, GitHub Team includes:") and "GitHub bills
+for GitHub Team on a per-user basis". This repository is owned by a user account, so Pro to Team
+means creating an organization and transferring the repository — the transfer cost §79 already
+records for its organization-transfer option (the Go module path, the `release.yml` owner check, and
+Devin and Linear reconnection). The prices themselves are left to Jun.
+
+Sources, read 2026-10-06: "Limits" above, "Billing for GitHub Actions"
+(<https://docs.github.com/en/billing/concepts/product-billing/github-actions>), and "GitHub's plans"
+(<https://docs.github.com/en/get-started/learning-about-github/githubs-plans>).
+
+### The options, on the body's criteria
+
+| Option | Same-tree all-job success and the strict gate | Required check and job names; §79 (a) | Effect per merge | Cost | Risk, and the slice it needs | Public-repository security | Jun |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1. Intermediate runs test only changed packages; the lane runs the full suite on the refreshed head and `dev-gate` reads it | Weakened unless the tree is proved identical. The check on the pull request head would rest on a run of another ref, and the next push to that head starts over | Names unchanged. A `workflow_dispatch` run is an admitted source under §79 (a) | The lane's run is the full one and the lane is the bottleneck, so the lane's wait does not fall; total job slots stay near 3,500 | A lane step plus a conditional pull request workflow | The pull request's `dev-gate` stops meaning "every job succeeded on this head", and the tree proof belongs to the tree-keyed reuse node; one region in the workflow | No new trust path | Yes |
+| 2. Run only the legs a changed path or package needs | Weakened: a leg that does not run is not a success | Names unchanged; §79 (a) unaffected | Large for a documentation-only pull request, near zero for a Go change, because almost every leg is reachable | A selection rule in the workflow | Also contradicts `POLICY.md:71`, "Nothing is selected by changed paths". One region | No new trust path | Yes |
+| 3. A lane-dedicated self-hosted runner | Unchanged | Names unchanged; §79 (a) unaffected | The only option that answers "runners first" directly: the lane's run stops competing | Not one machine: `ci.yml` makes nine prerequisite jobs eligible at once, so the lane keeps today's latency only with capacity for at least nine runners per simultaneous run (18 at `k = 2`) or an autoscaling pool, plus maintenance and a new trust path | A new trust path in a public repository; one region, plus a runner pool and its upkeep | Refused as stated: "self-hosted runners should almost never be used for public repositories on GitHub, because any user can open pull requests against the repository and compromise the environment". A pool that serves only the lane's own `workflow_dispatch` runs, which a fork cannot start, narrows the exposure but does not remove it, because a pull request can still edit any workflow the runner serves | Yes |
+| 4. Pro to Team, 60 concurrent jobs | Unchanged | Names unchanged; §79 (a) unaffected | The ceiling rises 40 to 60, so the lane's nine-job run and the children's runs queue less. It does not reduce the 350 runs or the 3,500 job slots that cause the queue | An organization and a repository transfer; monthly prices unread | The transfer cost §79 lists; no code slice, only settings, a ruleset and an organization | No new trust path | Yes |
+| 5. Lighter intermediate pushes, or a draft until handoff | Unchanged | Names unchanged; §79 (a) unaffected | A draft adds a run rather than saving one: `ci.yml:8` lists `opened` and `ready_for_review`, so opening the draft starts the same run a ready pull request would and marking it ready starts another on the same head | None | None; no slice, and it costs one extra run. Its only saving is fewer pushes, which option 7 covers | No new trust path | No |
+| 6. Reuse or omit the dev push run | Unchanged: with the strict gate and a merge commit the dev push tree is the tree the lane verified, which is §79's premise | Names unchanged. A `push` run to `dev` is an admitted source, so reusing it is consistent with §79 (a) | Minus 45 runs per seven hours, 12.9% of all runs, and minus 450 job slots; also removes the dev push cancel race | `POLICY.md`'s release-evidence paragraph, `docs/releases.md`, the `release.yml` check and its contract tests | The release loses a run of its own and a reused result must be labelled as reused; one region | No new trust path | Yes |
+| 7. (added) Make the packet's run-count rules permanent | Unchanged: nothing is weakened | Names unchanged; §79 (a) unaffected | Minus the 41 dispatch runs (11.7%), minus the edited share of the 95 extra pull request runs (the runs API reports `pull_request` for `opened` and `edited` alike, so that share cannot be read here; the edited-run reuse node owns it), plus a shorter longest leg from the leg-rebalance node | Skill text only | Low; one region of skill text | No new trust path | No |
+
+Option 5 is answered as the issue frames it. Both one-shot reviews run once per pull request, when
+it is opened or when it becomes ready (the issue's wording), so a draft moves each of them to the
+ready transition rather than removing it, and the receipt waits for whichever has started. The
+draft buys no CI either way. The packet's own rules — no `workflow_dispatch` on a pull request
+branch, the complete body written before the pull request is created, and at most one failed-job
+rerun per head — are what actually removes runs, and they are option 7.
+
+### The recommendation, in order
+
+1. **Take option 7 first.** It is the only lever with no decision, no weakening and a measured
+   effect: 41 dispatch runs gone, the edited-run share of 95 extra runs, and a shorter longest leg.
+   The sibling nodes for the edited-run reuse and the leg rebalance are already running; the packet
+   rules need only to become the written procedure.
+2. **Then decide option 6.** The dev push run is the second-largest single block (45 runs, 12.9%)
+   and its risk is confined to the release-evidence rule, which is one paragraph of `POLICY.md` and
+   one check in `release.yml`. It also removes the dev push cancel race recorded above.
+3. **Then decide option 4.** If the lane is to have capacity of its own, the plan ceiling is the
+   only documented lever that needs no new trust path. It is worth taking as the same decision as
+   §79's organization-transfer option rather than as a separate one, because a Team plan needs an
+   organization and this repository belongs to a user account.
+4. **Option 3 only if option 4 is refused, and only for the lane's own runs.** The security
+   criterion is not satisfied by a self-hosted runner in a public repository; it can be narrowed to
+   the lane's `workflow_dispatch` runs, which a fork cannot start, but the runner remains reachable
+   by any workflow in the repository. This is Jun's decision and this section does not recommend it.
+5. **Do not take option 1 or option 2.** Both weaken the first criterion — the same-tree all-job
+   success — and option 2 also contradicts `POLICY.md`. If the intermediate-run cost is the target,
+   the leg rebalance and the run-count rules get most of it without changing what `dev-gate` means.
+6. **Option 5 needs nothing on its own**; its saving is already inside option 7.
+
+### Whether `k` moves from 2
+
+No; keep `k = 2`. A batch of `k` needs `10k` concurrent jobs, so `k = 2` already claims half of the
+account's 40 while the members' own runs still need room, and the measurement shows the account is
+saturated at that level: 12.6% of sampled matrix jobs waited 155 s or more and the worst waited
+456 s. A larger `k` multiplies both the concurrent demand and the red rate §79 computed for a batch
+of two. Revisit `k` after option 7 has landed and the run count has actually fallen, and after the
+plan question is decided: at a ceiling of 60 with a smaller field, `k = 3` becomes affordable, and
+§79's formula `k = min(2, floor(concurrent_jobs / 10), ready_waiters)` is what would have to change.
+
+### Decisions left to Jun
+
+1. **The dev push run (option 6).** Approve reusing the lane's verified tree as the release
+   evidence, or omitting the dev push run, and the `POLICY.md` and `release.yml` wording that goes
+   with it. This section recommends it second.
+2. **The plan ceiling (option 4).** Decide whether to raise the concurrent-job limit, and whether to
+   take it as part of the organization-transfer decision §79 already holds.
+3. **The self-hosted runner (option 3).** This section does not recommend it for a public
+   repository; if Jun wants it, say which runs it may serve.
+4. **The intermediate-run split and path selection (options 1 and 2).** This section does not
+   recommend them because they weaken the same-tree all-job success; if Jun takes option 2, the
+   `POLICY.md` sentence "Nothing is selected by changed paths" has to change with it.
+5. **`k`.** Confirm `k = 2` for now and the condition above for revisiting it.
+
+### Follow-up interfaces
+
+No signature, reason registry, output field, CLI, SQL or golden changes in this pull request. Each
+slice below is one region of about 600 lines or less, is assignable to IF DeepSeek, is ordered after
+the leg-rebalance, edited-run-reuse and tree-keyed-reuse nodes, and is proved red before it is
+built.
+
+1. **The run-count rules in the child packet and the `crw-run` skill** (`plugins/crw/skills/crw-run`
+   — the packet template and the procedure references; no product code). Contracts to keep: the
+   relay CLI contract unchanged, the required check name `dev-gate` unchanged, the job names
+   unchanged. Red first is a scenario review: a packet that names a `workflow_dispatch` run on the
+   pull request branch is refused; a packet whose pull request is opened before its body is complete
+   is refused; a second failed-job rerun on the same head is refused. End condition: the three rules
+   are named in the packet template, and `crw-dev ci plugin`, `crw-dev ci validate` and the link
+   check pass. About 150 to 250 lines of skill text.
+2. **The dev push run as release evidence** (`.github/workflows/ci.yml` — the `push` trigger at
+   `:3-5`, without which the 45 runs keep starting — `POLICY.md` release paragraph,
+   `docs/releases.md`, both exact-push lookups in `.github/workflows/release.yml`,
+   `release-source` (`:114-126`) and `release-publish` (`:211-223`), `internal/contracttest/release.go`
+   and `internal/contracttest/release_workflow_test.go`, and the CI-control contract tests).
+   Contracts to keep: the release refuses a source it cannot read, as it does today. Red first: a
+   release that the replacement evidence admits succeeds, so the positive case fails against
+   today's exact-push rule; the existing negatives (a missing exact-SHA push run, a
+   `workflow_dispatch` run, a stale or unrelated run) stay, and a reused `dev-gate` is labelled
+   reused and refused as the release's own run. End condition: the rule is written and checked in
+   both copies. Waits on Jun's decision on option 6.
+3. **The lane's capacity** (the workflow and the operator page). Contracts to keep: the required
+   check name and the job names unchanged; no `pull_request_target`. Red first: a `pull_request`
+   run cannot reach a lane runner. End condition: the lane's runs use the new capacity and every
+   other run still uses the standard runners. Waits on Jun's decisions on options 3 and 4.
+
+Option 1, if Jun takes it, consumes the tree-keyed reuse node's tree proof and is not sliced here;
+it is a change to what the pull request's `dev-gate` means and should be planned with that node
+rather than beside it.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test, workflow,
+contract file, golden, skill document or `plugin.json` changes, and no ruleset, repository setting,
+branch or runner is touched. The measurement was taken with read-only `gh api GET` reads of this
+repository's Actions runs and jobs; no run was rerun, cancelled or dispatched, and no repository
+setting was changed. The run-count rules, the dev push rule, the lane capacity, the intermediate-run
+split and the path selection ship as the follow-ups above, each under its own issue.

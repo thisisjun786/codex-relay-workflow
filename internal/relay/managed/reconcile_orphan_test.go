@@ -18,8 +18,11 @@ type orphanArchiveApp struct {
 	*scriptedApp
 	archiveCalls []string
 	archiveErr   error
-	createErr    error
-	creates      int
+	// archiveHook runs as the archive is sent, so a test can cancel the caller's context in the
+	// window between the send and its reply.
+	archiveHook func()
+	createErr   error
+	creates     int
 }
 
 func (h *orphanArchiveApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
@@ -27,6 +30,15 @@ func (h *orphanArchiveApp) HostCall(ctx context.Context, method string, params m
 		return h.scriptedApp.HostCall(ctx, method, params)
 	}
 	h.archiveCalls = append(h.archiveCalls, pyjson.Text(params["threadId"]))
+	if h.archiveHook != nil {
+		h.archiveHook()
+	}
+	// The real client lets cancellation win over the reply (internal/bridge/appserver/client.go), so
+	// a cancelled context is answered with its error, as the archive that was sent and never
+	// answered is.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if h.archiveErr != nil {
 		return nil, h.archiveErr
 	}
@@ -69,11 +81,12 @@ func orphanArchiveRows(t *testing.T, k *reconcileKit) int {
 	return n
 }
 
-// orphanArchiveDetail is the single managed_orphan_archive row's detail.
+// orphanArchiveDetail is the newest managed_orphan_archive row's detail: an archive that was sent
+// writes its result row after the mark the attempt was given, so the newest row is the result.
 func orphanArchiveDetail(t *testing.T, k *reconcileKit) map[string]any {
 	t.Helper()
 	var raw string
-	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_orphan_archive'").Scan(&raw); err != nil {
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_orphan_archive' ORDER BY seq DESC LIMIT 1").Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var detail map[string]any
@@ -102,6 +115,10 @@ func TestReconcileArchivesTheOrphanAStandbyResumeRefusalLeaves(t *testing.T) {
 	if len(app.archiveCalls) != 1 || app.archiveCalls[0] != "t-1" {
 		t.Fatalf("archive calls: %v", app.archiveCalls)
 	}
+	// The attempt is marked before the host effect and its result recorded after it.
+	if rows := orphanArchiveRows(t, k); rows != 2 {
+		t.Fatalf("the archive wrote %d rows, want the attempting and ok rows", rows)
+	}
 	detail := orphanArchiveDetail(t, k)
 	if detail["archive"] != "ok" || detail["thread"] != "t-1" || pyjson.Text(detail["error"]) != "" || detail["attempt"] != float64(0) {
 		t.Fatalf("archive detail: %v", detail)
@@ -119,6 +136,9 @@ func TestReconcileOrphanArchiveFailureStillRecreates(t *testing.T) {
 	k.expect(got, "admitted", "", "recreated")
 	if got["childTaskId"] != "t-2" || len(app.archiveCalls) != 1 {
 		t.Fatalf("the archive failure stopped the recreation: %v calls=%v", got["childTaskId"], app.archiveCalls)
+	}
+	if rows := orphanArchiveRows(t, k); rows != 2 {
+		t.Fatalf("the failed archive wrote %d rows, want the attempting and failed rows", rows)
 	}
 	detail := orphanArchiveDetail(t, k)
 	if detail["archive"] != "failed" || !strings.Contains(pyjson.Text(detail["error"]), "host refused") {
@@ -139,7 +159,7 @@ func TestReconcileOrphanArchiveRepeatDoesNotArchiveAgain(t *testing.T) {
 			t.Fatalf("the failing recreation is returned: %v", err)
 		}
 	}
-	if len(app.archiveCalls) != 1 || orphanArchiveRows(t, k) != 1 {
+	if len(app.archiveCalls) != 1 || orphanArchiveRows(t, k) != 2 {
 		t.Fatalf("a repeat archived again: calls=%v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
 	}
 }
@@ -156,6 +176,9 @@ func TestReconcileOrphanArchiveSkipsAThreadTheHostDoesNotHold(t *testing.T) {
 	k.expect(k.run(), "admitted", "", "recreated")
 	if len(app.archiveCalls) != 0 {
 		t.Fatalf("an unknown thread was archived: %v", app.archiveCalls)
+	}
+	if rows := orphanArchiveRows(t, k); rows != 1 {
+		t.Fatalf("the skipped archive wrote %d rows, want one", rows)
 	}
 	detail := orphanArchiveDetail(t, k)
 	if detail["archive"] != "skipped" {
@@ -176,6 +199,9 @@ func TestReconcileOrphanArchiveLeavesAThreadThatBecameActive(t *testing.T) {
 	k.expect(got, "admitted", "", "recreated")
 	if got["childTaskId"] != "t-2" || len(app.archiveCalls) != 0 {
 		t.Fatalf("an active thread was archived: child=%v calls=%v", got["childTaskId"], app.archiveCalls)
+	}
+	if rows := orphanArchiveRows(t, k); rows != 1 {
+		t.Fatalf("the skipped archive wrote %d rows, want one", rows)
 	}
 	detail := orphanArchiveDetail(t, k)
 	if detail["archive"] != "skipped" || !strings.Contains(pyjson.Text(detail["error"]), "active") {
@@ -199,7 +225,7 @@ func TestReconcileOrphanArchiveIsWithheldWhenThePolicyIsNotReady(t *testing.T) {
 	}
 	k.start.Readiness = func(context.Context, map[string]any) (string, error) { return "", nil }
 	k.expect(k.run(), "admitted", "", "recreated")
-	if len(app.archiveCalls) != 1 || orphanArchiveRows(t, k) != 1 {
+	if len(app.archiveCalls) != 1 || orphanArchiveRows(t, k) != 2 {
 		t.Fatalf("the ready repeat did not archive: calls=%v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
 	}
 }
@@ -258,10 +284,154 @@ func TestReconcileOrphanArchiveExhaustedAttemptsStayExhausted(t *testing.T) {
 	for range 2 {
 		k.expect(k.run(), "incomplete", "creation_unknown", "attempts_exhausted")
 	}
-	if len(app.archiveCalls) != 1 || app.archiveCalls[0] != "t-3" || orphanArchiveRows(t, k) != 1 {
+	if len(app.archiveCalls) != 1 || app.archiveCalls[0] != "t-3" || orphanArchiveRows(t, k) != 2 {
 		t.Fatalf("exhausted attempt archived: %v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
 	}
 	if detail := orphanArchiveDetail(t, k); detail["attempt"] != float64(last) || detail["archive"] != "ok" {
 		t.Fatalf("row names the wrong attempt: %v", detail)
+	}
+}
+
+// The two P1s of the merged orphan-archive work. The first is a transient re-read failure: the
+// orphan is neither archived nor recorded and the next attempt is created anyway, so the promise
+// "one archive and one row per attempt" is broken. The second is a cancellation after
+// thread/archive is sent but before it answers: no durable mark is left, so a repeat on a fresh
+// context sends thread/archive a second time.
+
+// A transient, non-cancellation failure of the orphan's re-read stops the call as unobservable:
+// nothing is created, nothing is sent, no row is written, and a repeat with a working read
+// archives once, writes the attempting and ok rows, and creates the next attempt.
+func TestReconcileOrphanInconclusiveReadStopsTheCall(t *testing.T) {
+	t.Parallel()
+	k, app := orphanKit(t, "name-timeout", "accept")
+	k.host.sendReceipts = []map[string]any{orphanStandby("t-1")}
+	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+
+	// The orphan's re-read fails with a transient error that is neither a cancellation nor one of
+	// the texts that say the host does not hold the thread.
+	k.host.failures["thread/read|t-1"] = errors.New("thread/read: connection reset by peer")
+	got := k.run()
+	k.expect(got, "incomplete", "creation_unknown", "unobservable")
+	if detail := pyjson.Text(recon(got)["detail"]); !strings.Contains(detail, "could not be read again") || !strings.Contains(detail, "connection reset by peer") {
+		t.Fatalf("the stop's detail: %q", detail)
+	}
+	if len(app.archiveCalls) != 0 || orphanArchiveRows(t, k) != 0 {
+		t.Fatalf("an inconclusive read archived: calls=%v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
+	}
+	if len(k.host.creates) != 1 {
+		t.Fatalf("an inconclusive read created the next attempt: %v", k.host.creates)
+	}
+	// A repeat decides again: with the read working the orphan is archived once and t-2 is created.
+	delete(k.host.failures, "thread/read|t-1")
+	k.expect(k.run(), "admitted", "", "recreated")
+	if len(app.archiveCalls) != 1 || app.archiveCalls[0] != "t-1" {
+		t.Fatalf("the repeat's archive calls: %v", app.archiveCalls)
+	}
+	if rows := orphanArchiveRows(t, k); rows != 2 {
+		t.Fatalf("the repeat wrote %d rows, want the attempting and ok rows", rows)
+	}
+	if detail := orphanArchiveDetail(t, k); detail["archive"] != "ok" || detail["thread"] != "t-1" || detail["attempt"] != float64(0) {
+		t.Fatalf("result row: %v", detail)
+	}
+	if k.host.creates[1] != k.host.creates[0] && !strings.HasPrefix(k.host.creates[1], "managed-create-") {
+		t.Fatalf("the next attempt is a derived operation: %v", k.host.creates)
+	}
+}
+
+// The attempt is marked before thread/archive is sent. A caller cancellation that lands after the
+// send leaves the attempting row, and a repeat on a fresh context does not archive a second time:
+// it recreates from the mark the cancelled call left.
+func TestReconcileOrphanArchiveCancellationLeavesTheAttemptingRow(t *testing.T) {
+	t.Parallel()
+	k, app := orphanKit(t, "name-timeout", "accept")
+	k.host.sendReceipts = []map[string]any{orphanStandby("t-1")}
+	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+
+	// The archive send is made and the caller's context is cancelled before the reply.
+	ctx, cancel := context.WithCancel(context.Background())
+	app.archiveHook = func() { cancel() }
+	if _, err := k.start.Run(ctx, k.raw); err == nil {
+		t.Fatalf("the cancelled archive is returned")
+	}
+	app.archiveHook = nil
+	if len(app.archiveCalls) != 1 {
+		t.Fatalf("archive calls after the cancellation: %v", app.archiveCalls)
+	}
+	if rows := orphanArchiveRows(t, k); rows != 1 {
+		t.Fatalf("the cancelled archive wrote %d rows, want one attempting row", rows)
+	}
+	if detail := orphanArchiveDetail(t, k); detail["archive"] != "attempting" || detail["thread"] != "t-1" {
+		t.Fatalf("the cancelled call's row: %v", detail)
+	}
+
+	// The repeat runs on a fresh context: it does not send thread/archive again and recreates.
+	got := k.run()
+	k.expect(got, "admitted", "", "recreated")
+	if len(app.archiveCalls) != 1 {
+		t.Fatalf("the repeat archived again: %v", app.archiveCalls)
+	}
+	if rows := orphanArchiveRows(t, k); rows != 1 {
+		t.Fatalf("the repeat added a row: %d", rows)
+	}
+	if got["childTaskId"] != "t-2" {
+		t.Fatalf("the repeat did not recreate: %v", got["childTaskId"])
+	}
+}
+
+// A result row whose error text carries a quote and a newline is still matched by the
+// request-and-attempt probe, so the attempt cannot archive twice.
+func TestReconcileOrphanArchiveHostileErrorTextDoesNotDefeatTheProbe(t *testing.T) {
+	t.Parallel()
+	k, app := orphanKit(t, "name-timeout", "accept")
+	app.archiveErr = errors.New("thread/archive: refused \"t-1\"\nretry later")
+	// The recreation fails too, so a repeat reaches decide() again and would archive a second time
+	// if the hostile error text defeated the attempt probe.
+	app.createErr = errors.New("thread/start: host refused")
+	k.host.sendReceipts = []map[string]any{orphanStandby("t-1")}
+	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+	for range 2 {
+		if _, err := k.runErr(); err == nil || !strings.Contains(err.Error(), "host refused") {
+			t.Fatalf("the failing recreation is returned: %v", err)
+		}
+	}
+	if len(app.archiveCalls) != 1 || orphanArchiveRows(t, k) != 2 {
+		t.Fatalf("hostile error text: calls=%v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
+	}
+	detail := orphanArchiveDetail(t, k)
+	if detail["archive"] != "failed" || !strings.Contains(pyjson.Text(detail["error"]), "refused") {
+		t.Fatalf("failure row: %v", detail)
+	}
+}
+
+// The rows a start writes are the raw journal detail; this asserts the shape the probe relies on:
+// the attempt is the field "attempt":<n> followed by its separator, in every row of the attempt.
+func TestReconcileOrphanArchiveRowsCarryTheAttemptField(t *testing.T) {
+	t.Parallel()
+	k, _ := orphanKit(t, "name-timeout", "accept")
+	k.host.sendReceipts = []map[string]any{orphanStandby("t-1")}
+	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+	k.expect(k.run(), "admitted", "", "recreated")
+	rows, err := k.start.Store.DB.Query("SELECT detail FROM journal WHERE kind='managed_orphan_archive' ORDER BY seq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var seen []map[string]any
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(raw, `"attempt":0,`) {
+			t.Fatalf("a row does not carry the attempt field the probe matches: %s", raw)
+		}
+		var detail map[string]any
+		if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+			t.Fatal(err)
+		}
+		seen = append(seen, detail)
+	}
+	if len(seen) != 2 || seen[0]["archive"] != "attempting" || seen[1]["archive"] != "ok" {
+		t.Fatalf("rows in order: %v", seen)
 	}
 }
