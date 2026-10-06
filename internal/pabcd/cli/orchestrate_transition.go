@@ -25,10 +25,9 @@ import (
 // (:466-548) is that library's; this file starts at the state it reads. Ported as-is, texts with the
 // authorized name substitution only (.codexclaw -> .crw, cxc orchestrate -> crw pabcd orchestrate).
 //
-// Three pieces of the oracle's file belong to other issues and are not ported here: the A>B review
-// binding (:49-92) and the B>C source gates (:701-717) are pass-throughs CRW-755 fills, and the D close
-// (:725-1064) is a refusal CRW-756 (normal path) and CRW-757 (recovery) fill. No verb row reaches this
-// code yet, so nothing user-visible depends on those gaps (CRW-758 connects the row).
+// Three pieces belong to other issues: the A>B review binding (:49-92) and the B>C source gate (:701-717) are
+// pass-throughs CRW-755 fills, and the D close (:725-1064) is a refusal CRW-756 and CRW-757 fill. No verb row
+// reaches this code yet, so nothing user-visible depends on those gaps (CRW-758 connects it).
 
 // orchestrateTransitionTimestampLayout is Date.prototype.toISOString, as a ledger or goalplan row prints a time.
 const orchestrateTransitionTimestampLayout = "2006-01-02T15:04:05.000Z"
@@ -45,8 +44,7 @@ func orchestrateTransitionTimestamp() string {
 }
 
 // orchestrateTransitionMintEpoch is mintEpoch (:96-103): one nonce per edge, the UTC instant to the second
-// plus three random bytes. The instant alone would collide on a fast re-plan, which is exactly the case the
-// epoch exists to tell apart. A random source that cannot answer is an error, not a silent short nonce.
+// plus three random bytes. The instant alone would collide on a fast re-plan, the case the epoch tells apart.
 func orchestrateTransitionMintEpoch(prefix string) (string, error) {
 	var raw [3]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -55,8 +53,8 @@ func orchestrateTransitionMintEpoch(prefix string) (string, error) {
 	return prefix + "-" + time.Now().UTC().Format("20060102150405") + "-" + hex.EncodeToString(raw[:]), nil
 }
 
-// orchestrateTransitionPlaceholderDid is PLACEHOLDER_DID of attest.ts:66 (/^(tbd|todo|n\/?a|none|done|ok|\.+|-+)$/i),
-// which the oracle keeps private to the I>P override path. ASCII folding, as a JavaScript /i without the u flag compares.
+// orchestrateTransitionPlaceholderDid is PLACEHOLDER_DID of attest.ts:66, which the oracle keeps private to the
+// I>P override path: ASCII folding, as a JavaScript /i without the u flag compares.
 func orchestrateTransitionPlaceholderDid(s string) bool {
 	folded := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
@@ -74,7 +72,6 @@ func orchestrateTransitionPlaceholderDid(s string) bool {
 }
 
 // orchestrateTransitionStoredIdentity is a capture in the form a session file stores (state.SourceIdentity).
-// A capture omits an empty tree hash, so the stored field is present only when the capture has one.
 func orchestrateTransitionStoredIdentity(id source.Identity) state.SourceIdentity {
 	out := state.SourceIdentity{Kind: id.Kind, CommitSha: id.CommitSha, Dirty: id.Dirty, CapturedAt: id.CapturedAt, SourceRoot: id.SourceRoot}
 	if id.TreeHash != "" {
@@ -83,8 +80,8 @@ func orchestrateTransitionStoredIdentity(id source.Identity) state.SourceIdentit
 	return out
 }
 
-// orchestrateTransitionWithArchitectHint is withArchitectHint (:456-464): a terminal entry can reach P without
-// a UserPromptSubmit turn, so the formal-P consultation pointer is repeated there. Advice only; no gate.
+// orchestrateTransitionWithArchitectHint is withArchitectHint (:456-464): a terminal entry reaches P without a
+// UserPromptSubmit turn, so the formal-P consultation pointer is repeated there. Advice only; no gate.
 func orchestrateTransitionWithArchitectHint(phase state.Phase, output string) string {
 	if phase != state.PhaseP {
 		return output
@@ -93,8 +90,7 @@ func orchestrateTransitionWithArchitectHint(phase state.Phase, output string) st
 }
 
 // orchestrateTransitionPlanBindingOf is :1073-1074: the P>A edge keeps the unit and epoch it just minted,
-// entering A another way keeps the session's own (A-only, so the state read at P has already normalised it
-// away), and anywhere else drops both so a re-plan cannot leave an old approval looking current.
+// entering A another way keeps the session's own, and anywhere else drops both.
 func orchestrateTransitionPlanBindingOf(binding *orchestrateTransitionPlanBinding, cur state.State, phase state.Phase) (unit, epoch *string) {
 	if binding != nil {
 		u, e := binding.unit, binding.epoch
@@ -107,7 +103,7 @@ func orchestrateTransitionPlanBindingOf(binding *orchestrateTransitionPlanBindin
 }
 
 // orchestrateTransitionCheckEpoch is :1075-1077: entering C mints a check epoch, staying in C keeps the
-// session's own, and anywhere else drops it, so re-checking invalidates the receipt of the earlier check.
+// session's own, and anywhere else drops it, so re-checking invalidates the earlier receipt.
 func orchestrateTransitionCheckEpoch(from, to state.Phase, current *string) (*string, error) {
 	if to != state.PhaseC {
 		return nil, nil
@@ -122,12 +118,10 @@ func orchestrateTransitionCheckEpoch(from, to state.Phase, current *string) (*st
 	return &epoch, nil
 }
 
-// orchestrateTransitionSupersedeStaleRounds is the P>A housekeeping of :1085-1118. A fresh plan epoch orphans
+// orchestrateTransitionSupersedeStaleRounds is the P>A housekeeping of :1085-1118: a fresh plan epoch orphans
 // every open plan_audit round this session owns, so they are closed under the goalplan write lock before the
-// new binding lands; otherwise the gate would wait on a round no sign-off can reach. The stranded epoch is
-// read from the rounds, not from state, because this edge is entered from P, where the A-only binding has
-// already been normalised to null. Fail-open: a lock that cannot be taken, an unreadable plan or a failed
-// write leaves the edge to proceed, as the oracle's catch does.
+// new binding lands. The stranded epoch is read from the rounds, because this edge is entered from P, where
+// the A-only binding has already been normalised to null. Fail-open, as the oracle's catch is.
 func orchestrateTransitionSupersedeStaleRounds(cwd, slug, sessionID, epoch string) {
 	_, _ = goalplan.WithGoalplanWriteLock(cwd, slug, func(plan *goalplan.Goalplan) (struct{}, error) {
 		stranded := ""
@@ -160,53 +154,65 @@ func orchestrateTransitionSupersedeStaleRounds(cwd, slug, sessionID, epoch strin
 	}, nil)
 }
 
-// orchestrateTransitionReviewBinding is the A>B review binding check (validateReviewBinding, :49-92 and
-// :688-691). CRW-755 ports it, including the security fix for a recorded verdict that carries no binding;
-// until then the edge passes, as the oracle does for a round that proves nothing.
+// orchestrateTransitionReviewBinding is the A>B review binding check (validateReviewBinding, :49-92, :688-691).
+// CRW-755 ports it, the security fix for a recorded verdict without a binding included; until then it passes.
 func orchestrateTransitionReviewBinding(cur state.State, a OrchestrateCliArgs, sessionID string) *CliResult {
 	return nil
 }
 
 // orchestrateTransitionSourceGate is the B>C source gate (:701-717): the B entry snapshot must exist and the
-// source must have changed during B. CRW-755 ports it; until then the edge passes.
+// source must have changed during B. CRW-755 ports it; until then it passes.
 func orchestrateTransitionSourceGate(cwd, sessionID string, cur state.State) *CliResult {
 	return nil
 }
 
-// orchestrateTransitionDClose is the D close (:725-1064): the unbound close, and the bound one with its
-// goalplan lock, receipt gate and recovery branch. CRW-756 (normal path) and CRW-757 (recovery) port it;
-// this issue refuses the edge rather than half-close a cycle.
+// orchestrateTransitionDClose is the D close (:725-1064), which CRW-756 and CRW-757 port. This issue refuses
+// the edge rather than half-close a cycle.
 func orchestrateTransitionDClose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
 	return CliResult{}, errors.New("orchestrate D close is not ported yet")
 }
 
 // orchestrateTransitionStateWritable is this writer's half of the port's data-loss rule for the session file
-// (docs/port-cxc/known-defects.md, "Found by the CRW-609 lossless rewrite guard"): the oracle's writeState
-// publishes the state the reader rebuilt, so a stored lone surrogate, invalid UTF-8, a receipt past the cap
-// or a record past the list cap is replaced or dropped on the way through, and the oracle writes anyway. The
-// port refuses instead, as every other session writer here does (cliVerdictsIntact, the hook's rewritable
-// check, the evidence guard), because over-refusal is never loss. A file that does not exist stores nothing.
+// (docs/port-cxc/known-defects.md, "Found by the CRW-609 lossless rewrite guard"): the oracle publishes the
+// state the reader rebuilt, so a stored lone surrogate, invalid UTF-8, a receipt past the cap or a record past
+// the list cap is replaced or dropped. The port refuses instead, as every other session writer here does.
 func orchestrateTransitionStateWritable(cwd, sessionID string, kept state.State) bool {
 	return cliVerdictsIntact(cwd, sessionID, len(kept.UnverifiedSubagents))
 }
 
-// orchestrateTransitionStateRefusal is the refusal shared by the three writes this file owns. It is the
-// port's own text: the oracle has no refusal here, because it never checks (the known-defects line above).
+// orchestrateTransitionStateRefusal is the refusal shared by the three writes this file owns.
 func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb) CliResult {
 	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) +
 		": session state holds records this rewrite would change; refusing to overwrite it. Nothing was written."}
 }
 
 // RunOrchestrateTransition ports the transition half of orchestrate-cli.ts (:549-1131) on the mutation
-// RunOrchestrateRead delegated. It does its own state, goalplan and ledger IO, as the oracle's
-// runOrchestrateCli does, and returns the oracle's CliResult; an error is a Go-level IO failure the oracle
-// would have thrown, which no refusal path uses.
+// RunOrchestrateRead delegated. It does its own state, goalplan and ledger IO and returns the oracle's
+// CliResult; an error is a Go-level IO failure the oracle would have thrown, which no refusal path uses.
+//
+// The whole read, gate and write runs under the session's exclusive lock. The oracle takes no lock, so a hook
+// that writes the same session meanwhile is overwritten by this command's earlier copy and its update is lost;
+// the port fixes that (the data-loss class the parity rule revision of 2026-10-03 fixes during the port). A
+// lock that cannot be taken is an error, never a silent success.
 func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult, error) {
+	var out CliResult
+	err := state.WithSessionLock(a.Cwd, sessionID, func() error {
+		var inner error
+		out, inner = orchestrateTransitionApply(a, sessionID)
+		return inner
+	})
+	if err != nil {
+		return CliResult{}, err
+	}
+	return out, nil
+}
+
+// orchestrateTransitionApply is the ported body, run while the caller holds the session lock.
+func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResult, error) {
 	cwd, verb := a.Cwd, a.Verb
 	cur := state.ReadState(cwd, sessionID)
-	// 050 wp5 §5: the fixed close target, and whether this D request is finishing a close that already
-	// started. A matching marker means the first attempt already spent the binding, transition and receipt
-	// gates, so re-consuming them would refuse a retry for gates it has no way to satisfy twice.
+	// 050 wp5 §5: the fixed close target, and whether this D request is finishing a close that already started.
+	// A matching marker means the first attempt spent the binding, transition and receipt gates already.
 	closePhaseID := ""
 	if verb == fsm.VerbD && a.Attest != nil {
 		closePhaseID = text.Trim(a.Attest.WorkPhaseID)
@@ -238,25 +244,21 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 		return CliResult{Code: 0, Output: "orchestrate reset: current=" + string(cur.Phase) + " -> IDLE (session " + sessionID + ")"}, nil
 	}
 
-	// A phase verb: agent-gated through the un-weakened transition(). Validate before any phase or goalplan
-	// write; identity and artifact cwd stay native.
+	// A phase verb: agent-gated through the un-weakened transition(), validated before any write.
 	to := state.Phase(verb)
 	if _, err := session.Resolve(cwd, sessionID); err != nil {
 		return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": SOURCE-ROOT: " + err.Error()}, nil
 	}
-	// #133: entry refusal for a goalplan-bound cycle with no resolvable source identity. Same neighbourhood as
-	// the SOURCE-ROOT check, for the same reason: without it a bound non-git session enters P, passes A and B
-	// (B>C is deliberately fail-open) and strands at C, whose close needs a receipt that cannot be bound.
-	// Guarded on state.slug, the bound-session condition the work-phase and receipt gates already use, so
-	// unbound HITL cycles are untouched, and on the ENTRY edges only: A>P is a re-plan inside a cycle already
-	// in flight, and refusing it would strand the session rather than protect it.
+	// #133: entry refusal for a goalplan-bound cycle with no resolvable source identity, so a bound non-git
+	// session cannot enter P and strand at C, whose close needs a receipt that cannot be bound. Guarded on
+	// state.slug, so unbound HITL cycles are untouched, and on the ENTRY edges only: A>P is a re-plan.
 	if to == state.PhaseP && (cur.Phase == state.PhaseIdle || cur.Phase == state.PhaseI) && cur.Slug != "" {
 		if gate := session.CheckBound(cwd, sessionID); !gate.OK {
 			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + gate.Reason + "\nNothing was written."}, nil
 		}
 	}
-	// P>A plan-artifact gate (DIFFLEVEL-ROADMAP-01): the plan must exist as numbered on-disk docs before
-	// Audit. It runs even with no attestation, so the first error names planUnit. Fail-closed on this edge only.
+	// P>A plan-artifact gate (DIFFLEVEL-ROADMAP-01): the plan must exist as numbered on-disk docs before Audit.
+	// It runs even with no attestation, so the first error names planUnit. Fail-closed on this edge only.
 	var binding *orchestrateTransitionPlanBinding
 	if cur.Phase == state.PhaseP && to == state.PhaseA {
 		planCheck := attest.ValidatePlanArtifacts(a.Attest, cwd)
@@ -269,8 +271,8 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 		}
 		binding = &orchestrateTransitionPlanBinding{unit: planCheck.Unit, epoch: epoch}
 	}
-	// Work-phase binding gate (LOOP-UNIT-CHAIN-01): on every gated edge of a goalplan-bound session the
-	// attestation must name the one effective active work-phase. Fail-open when no goalplan resolves.
+	// Work-phase binding gate (LOOP-UNIT-CHAIN-01): on a gated edge of a bound session the attestation must
+	// name the one effective active work-phase. Fail-open when no goalplan resolves.
 	if attest.IsGated(cur.Phase, to) && cur.Slug != "" && !recoveringDclose {
 		var effective *string
 		if plan := goalplan.ReadGoalplan(cwd, cur.Slug); plan != nil {
@@ -280,8 +282,8 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}, nil
 		}
 	}
-	// I>P: the interview soft gate. The agent CLI path uses the un-weakened transition(), which has no
-	// override support, so this adds the equivalent of applyHumanTransition's override for I>P only.
+	// I>P: the interview soft gate. transition() has no override support, so this adds the equivalent of
+	// applyHumanTransition's override for I>P only.
 	if cur.Phase == state.PhaseI && to == state.PhaseP {
 		gate := interview.EvaluateInterviewGate(cur.Interview, &interview.GateEvidence{
 			BackedDimensions: ledger.DimensionsBackedByAnswers(cwd, sessionID),
@@ -303,9 +305,8 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 			if ok, reason := fsm.CanEnter(to, next); !ok {
 				return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + reason}, nil
 			}
-			// I>P is never B, so the snapshot is cleared explicitly rather than spread, and it is neither B
-			// nor A, so both bindings are cleared: this writer bypasses transition() and would otherwise
-			// spread stale values.
+			// I>P is never B or A, so the snapshot and both bindings are cleared explicitly: this writer
+			// bypasses transition() and would otherwise spread stale values.
 			next.Phase, next.OrchestrationActive, next.LastInjectedPhase = to, true, &to
 			next.StopBlockPhase, next.StopBlockCount = nil, 0
 			next.PhaseEntrySource, next.PlanUnit, next.PlanEpoch, next.CheckEpoch = nil, nil, nil, nil
@@ -336,7 +337,7 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 				"; interview soft-gate: " + strings.Join(gate.Warnings, "; ") + ". Pass override:true in --attest to proceed."}, nil
 		}
 	}
-	// 050 wp5 §5: a marker-matched D retry is resuming a transition the first attempt already made legally.
+	// 050 wp5 §5: a marker-matched D retry resumes a transition the first attempt already made legally;
 	// state.phase is IDLE by then, so transition() would refuse C>D on a session whose cycle is mid-close.
 	var result fsm.TransitionResult
 	if recoveringDclose {
@@ -353,8 +354,7 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 		}
 		return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + reason}, nil
 	}
-	// LEAN-REVIEW-01: an open round is honoured, never required. A recorded verdict adds provenance on top of
-	// the attest. The B>C source gates follow, and the D close takes the cycle to IDLE.
+	// LEAN-REVIEW-01: an open round is honoured, never required; the B>C source gates follow, then the D close.
 	if cur.Phase == state.PhaseA && to == state.PhaseB && cur.Slug != "" {
 		if refusal := orchestrateTransitionReviewBinding(cur, a, sessionID); refusal != nil {
 			return *refusal, nil
@@ -368,14 +368,13 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 	if to == state.PhaseD {
 		return orchestrateTransitionDClose(cwd, sessionID, closePhaseID, cur, a.Attest, recoveringDclose)
 	}
-	// The port's data-loss refusal, before any of this edge's writes (the goalplan housekeeping below
-	// included), so a refusal leaves state, both ledgers and the goalplan untouched.
+	// The data-loss refusal, before any of this edge's writes, the goalplan housekeeping included.
 	if !orchestrateTransitionStateWritable(cwd, sessionID, cur) {
 		return orchestrateTransitionStateRefusal(verb), nil
 	}
 
-	// L6: a real CLI transition is progress, so the Stop stagnation guard resets. SOURCE-DELTA-01: snapshot the
-	// source on entry to B and clear it on every other edge, so a stale snapshot cannot outlive its phase.
+	// L6: a real transition is progress, so the Stop stagnation guard resets. SOURCE-DELTA-01: snapshot the
+	// source on entry to B and clear it on every other edge, so no stale snapshot outlives its phase.
 	var entrySource *state.SourceIdentity
 	if result.State.Phase == state.PhaseB {
 		exclude := true
@@ -406,8 +405,7 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 	if err := state.WriteState(cwd, next); err != nil {
 		return CliResult{}, err
 	}
-	// C-RENDER-GROUNDING-01: a new cycle starts at P, so the render ledger is cleared and the Stop advisory
-	// judges this cycle's rows only (stale rows both suppress and misfire).
+	// C-RENDER-GROUNDING-01: a new cycle starts at P, so the render ledger is cleared (stale rows misfire).
 	if result.State.Phase == state.PhaseP {
 		hook.ResetRenderLedger(cwd)
 	}

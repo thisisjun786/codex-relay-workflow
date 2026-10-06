@@ -5,16 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/attest"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// orchestrateTransitionRoot is a temporary world for the transition tests: HOME, CODEX_HOME and CRW_HOME
-// point inside it, so no run can reach the real Codex home (packet "Real state").
+// orchestrateTransitionRoot is a temporary world for the transition tests: HOME, CODEX_HOME and CRW_HOME point
+// inside it, so no run can reach the real Codex home (the packet's real-state rule).
 func orchestrateTransitionRoot(t *testing.T) string {
 	t.Helper()
 	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
@@ -92,18 +93,8 @@ func orchestrateTransitionLedger(t *testing.T, cwd string) []map[string]any {
 	return rows
 }
 
-func orchestrateTransitionGit(t *testing.T, cwd string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = cwd
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-}
-
-// orchestrateTransitionRowKeys is the JSON key order of one ledger row, which JSON.stringify fixes at build
-// time: the oracle's rows are compared by shape, so the order is part of the contract.
-func orchestrateTransitionRowKeys(t *testing.T, cwd string, index int) []string {
+// orchestrateTransitionRowLine is one raw ledger line: JSON.stringify fixes a row's key order at build time.
+func orchestrateTransitionRowLine(t *testing.T, cwd string, index int) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(cwd, ".crw", "ledger.jsonl"))
 	if err != nil {
@@ -113,23 +104,7 @@ func orchestrateTransitionRowKeys(t *testing.T, cwd string, index int) []string 
 	if index >= len(lines) {
 		t.Fatalf("row %d of %d", index, len(lines))
 	}
-	decoder := json.NewDecoder(strings.NewReader(lines[index]))
-	keys := []string{}
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			t.Fatalf("row %d: %v", index, err)
-		}
-		if delim, ok := token.(json.Delim); ok && delim == '}' {
-			return keys
-		}
-		if key, ok := token.(string); ok {
-			keys = append(keys, key)
-			if err := decoder.Decode(new(json.RawMessage)); err != nil {
-				t.Fatalf("row %d value: %v", index, err)
-			}
-		}
-	}
+	return lines[index]
 }
 
 // orchestrateTransitionRepo is a one-commit git repository, so a capture resolves.
@@ -149,20 +124,23 @@ func orchestrateTransitionRepo(t *testing.T) string {
 	} {
 		t.Setenv(name, value)
 	}
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
 	orchestrateTransitionPut(t, filepath.Join(root, "tracked.txt"), "x\n")
-	orchestrateTransitionGit(t, root, "init", "-q", "-b", "main", ".")
-	orchestrateTransitionGit(t, root, "add", "tracked.txt")
-	orchestrateTransitionGit(t, root, "commit", "-qm", "init")
+	git("init", "-q", "-b", "main", ".")
+	git("add", "tracked.txt")
+	git("commit", "-qm", "init")
 	return root
 }
 
-// orchestrateTransitionReadyInterview is readyInterview() of orchestrate-cli.test.ts: every dimension maxed,
-// no open contradiction, one recorded scan, so readState derives flags.interview=true.
-const orchestrateTransitionReadyInterview = `{"roundId":1,"dimensions":{"goal":{"level":"max","known":["x"],"unknown":[],"confidence":1},` +
-	`"constraint":{"level":"max","known":["x"],"unknown":[],"confidence":1},` +
-	`"success":{"level":"max","known":["x"],"unknown":[],"confidence":1},` +
-	`"ontology":{"level":"max","known":["x"],"unknown":[],"confidence":1}},` +
-	`"contradictions":[],"assumptions":[],"autoResolveCount":0,"consecutiveAutoResolves":0,"scanRounds":1,"lastScanRoundId":1}`
+// orchestrateTransitionReadyInterview is readyInterview() of orchestrate-cli.test.ts: every dimension maxed, no
+// open contradiction, one recorded scan, so readState derives flags.interview=true.
+const orchestrateTransitionReadyInterview = `{"roundId":1,"dimensions":{"goal":{"level":"max","known":["x"],"unknown":[],"confidence":1},"constraint":{"level":"max","known":["x"],"unknown":[],"confidence":1},"success":{"level":"max","known":["x"],"unknown":[],"confidence":1},"ontology":{"level":"max","known":["x"],"unknown":[],"confidence":1}},"contradictions":[],"assumptions":[],"autoResolveCount":0,"consecutiveAutoResolves":0,"scanRounds":1,"lastScanRoundId":1}`
 
 // TestOrchestrateTransitionReset ports "status renders phase; reset clears to IDLE" (:442): a reset from every
 // phase is the same cleared-IDLE write as the human path, and a reset from rest is a recognised no-op.
@@ -186,8 +164,9 @@ func TestOrchestrateTransitionReset(t *testing.T) {
 			if len(rows) != 1 || rows[0]["reason"] != "reset" || rows[0]["from"] != from || rows[0]["to"] != "IDLE" {
 				t.Fatalf("reset ledger: %+v", rows)
 			}
-			if keys := orchestrateTransitionRowKeys(t, cwd, 0); !reflect.DeepEqual(keys, []string{"ts", "sessionId", "from", "to", "reason"}) {
-				t.Fatalf("reset row keys: %v", keys)
+			shape := `","sessionId":"reset-` + from + `","from":"` + from + `","to":"IDLE","reason":"reset"}`
+			if line := orchestrateTransitionRowLine(t, cwd, 0); !strings.Contains(line, shape) {
+				t.Fatalf("reset row shape: %s", line)
 			}
 		})
 	}
@@ -367,9 +346,10 @@ func TestOrchestrateTransitionInterviewGate(t *testing.T) {
 		if evidence["scanRounds"] != float64(0) || evidence["highContradictionCount"] != float64(0) {
 			t.Fatalf("scan evidence: %+v", evidence)
 		}
-		want := []string{"ts", "sessionId", "from", "to", "reason", "actor", "override", "scanEvidence", "evidence"}
-		if keys := orchestrateTransitionRowKeys(t, cwd, 0); !reflect.DeepEqual(keys, want) {
-			t.Fatalf("override row keys: %v", keys)
+		shape := `","from":"I","to":"P","reason":"cli","actor":"agent","override":true,` +
+			`"scanEvidence":{"scanRounds":0,"highContradictionCount":0},"evidence":"interview done"}`
+		if line := orchestrateTransitionRowLine(t, cwd, 0); !strings.Contains(line, shape) {
+			t.Fatalf("override row shape: %s", line)
 		}
 	})
 	t.Run("override-refusals", func(t *testing.T) {
@@ -418,8 +398,8 @@ func TestOrchestrateTransitionIllegalEdge(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionOrdinaryWrite ports the ordinary edge write (:1066-1131): state, ledger and the
-// render ledger, and the architect pointer P alone carries.
+// TestOrchestrateTransitionOrdinaryWrite ports the ordinary edge write (:1066-1131): state, ledger, the render
+// ledger, and the architect pointer P alone carries.
 func TestOrchestrateTransitionOrdinaryWrite(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id := "ordinary"
@@ -445,8 +425,8 @@ func TestOrchestrateTransitionOrdinaryWrite(t *testing.T) {
 	if len(rows) != 1 || rows[0]["from"] != "IDLE" || rows[0]["to"] != "P" || rows[0]["reason"] != "cli" || rows[0]["evidence"] != nil {
 		t.Fatalf("ledger: %+v", rows)
 	}
-	if keys := orchestrateTransitionRowKeys(t, cwd, 0); !reflect.DeepEqual(keys, []string{"ts", "sessionId", "from", "to", "reason"}) {
-		t.Fatalf("IDLE>P row keys: %v", keys)
+	if line := orchestrateTransitionRowLine(t, cwd, 0); !strings.Contains(line, `","from":"IDLE","to":"P","reason":"cli"}`) {
+		t.Fatalf("IDLE>P row shape: %s", line)
 	}
 	rawState, err := os.ReadFile(state.StatePath(cwd, id))
 	if err != nil {
@@ -467,8 +447,8 @@ func TestOrchestrateTransitionOrdinaryWrite(t *testing.T) {
 	if rows := orchestrateTransitionLedger(t, cwd); rows[len(rows)-1]["evidence"] != "audited" {
 		t.Fatalf("P>A evidence: %+v", rows)
 	}
-	if keys := orchestrateTransitionRowKeys(t, cwd, 1); !reflect.DeepEqual(keys, []string{"ts", "sessionId", "from", "to", "reason", "evidence"}) {
-		t.Fatalf("P>A row keys: %v", keys)
+	if line := orchestrateTransitionRowLine(t, cwd, 1); !strings.Contains(line, `","from":"P","to":"A","reason":"cli","evidence":"audited"}`) {
+		t.Fatalf("P>A row shape: %s", line)
 	}
 	rawState, err = os.ReadFile(state.StatePath(cwd, id))
 	if err != nil {
@@ -628,10 +608,9 @@ func TestOrchestrateTransitionDCloseNotPorted(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionRefusesALossyStateRewrite is the port's data-loss guard on the session write
-// (docs/port-cxc/known-defects.md, "Found by the CRW-609 lossless rewrite guard"): the oracle publishes the
-// state the reader rebuilt, so a stored lone surrogate is replaced by U+FFFD; the port refuses and writes
-// nothing, leaving the file, both ledgers and the goalplan as they were.
+// TestOrchestrateTransitionRefusesALossyStateRewrite is the port's data-loss guard on the session write: the
+// oracle publishes the state the reader rebuilt, so a stored lone surrogate becomes U+FFFD; the port refuses
+// and writes nothing, leaving the file, both ledgers and the goalplan as they were.
 func TestOrchestrateTransitionRefusesALossyStateRewrite(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id := "lossy-state"
@@ -660,9 +639,9 @@ func TestOrchestrateTransitionRefusesALossyStateRewrite(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionLeavesRealHomesAlone is the packet's real-state rule: every run here points HOME,
-// CODEX_HOME and CRW_HOME into temporary directories, and the ambient listings of the host's ~/.codex and
-// ~/.crw are compared before and after. A difference is reported, never cleaned up by this test.
+// TestOrchestrateTransitionLeavesRealHomesAlone is the packet's real-state rule: HOME, CODEX_HOME and CRW_HOME
+// point into temporary directories, and the ambient listings of the host's ~/.codex and ~/.crw are compared
+// before and after; a difference is reported, never cleaned up by this test.
 func TestOrchestrateTransitionLeavesRealHomesAlone(t *testing.T) {
 	home := os.Getenv("HOME")
 	before := orchestrateTransitionListing(t, home)
@@ -676,26 +655,64 @@ func TestOrchestrateTransitionLeavesRealHomesAlone(t *testing.T) {
 	if got := orchestrateTransitionRun(t, cwd, "reset", "--session", id); got.Code != 0 {
 		t.Fatalf("reset: %+v", got)
 	}
-	if after := orchestrateTransitionListing(t, home); !reflect.DeepEqual(before, after) {
-		t.Fatalf("the host's ~/.codex or ~/.crw changed: %v -> %v", before, after)
+	if after := orchestrateTransitionListing(t, home); before != after {
+		t.Fatalf("the host's ~/.codex or ~/.crw changed: %q -> %q", before, after)
 	}
 }
 
-func orchestrateTransitionListing(t *testing.T, home string) map[string]string {
+// TestOrchestrateTransitionHoldsTheSessionLock is the port's fix for the oracle's unlocked transition: while a
+// participating writer holds the lock the transition cannot publish (the lock gives up after about 250 ms), and
+// the update that writer made is kept once the transition runs.
+func TestOrchestrateTransitionHoldsTheSessionLock(t *testing.T) {
+	cwd := orchestrateTransitionRoot(t)
+	id := "lock-hold"
+	orchestrateTransitionSession(t, cwd, id, `{"phase":"P"}`)
+	unit := orchestrateTransitionSeedPlanUnit(t, cwd)
+	args := OrchestrateCliArgs{Verb: fsm.VerbA, Cwd: cwd, Attest: &attest.Attestation{From: state.PhaseP, To: state.PhaseA, Did: "audited", PlanUnit: unit}}
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_ = state.WithSessionLock(cwd, id, func() error {
+			s := state.ReadState(cwd, id)
+			s.MemoryWriteGrant = true
+			if err := state.WriteState(cwd, s); err != nil {
+				t.Error(err)
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	if got, err := RunOrchestrateTransition(args, id); err == nil {
+		t.Fatalf("the transition published while another writer held the session lock: %+v", got)
+	}
+	if state.ReadState(cwd, id).Phase != state.PhaseP {
+		t.Fatal("a refused transition moved the session")
+	}
+	close(release)
+	got, err := RunOrchestrateTransition(args, id)
+	if err != nil || got.Code != 0 {
+		t.Fatalf("P>A: %+v %v", got, err)
+	}
+	if after := state.ReadState(cwd, id); after.Phase != state.PhaseA || !after.MemoryWriteGrant {
+		t.Fatalf("the participating writer's update was lost: %+v", after)
+	}
+}
+
+// orchestrateTransitionListing is the entry names under ~/.codex and ~/.crw, or "absent".
+func orchestrateTransitionListing(t *testing.T, home string) string {
 	t.Helper()
-	out := map[string]string{}
+	out := []string{}
 	for _, name := range []string{".codex", ".crw"} {
-		root := filepath.Join(home, name)
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			out[name] = "absent"
-			continue
-		}
+		entries, err := os.ReadDir(filepath.Join(home, name))
 		names := []string{}
 		for _, entry := range entries {
 			names = append(names, entry.Name())
 		}
-		out[name] = strings.Join(names, ",")
+		if err != nil {
+			names = []string{"absent"}
+		}
+		out = append(out, name+"="+strings.Join(names, ","))
 	}
-	return out
+	return strings.Join(out, ";")
 }
