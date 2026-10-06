@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -162,5 +163,25 @@ func TestCapacityUnreadableSignalsDoNotSuppress(t *testing.T) {
 	}
 	if report.Plans[0].ReceiptWait.Count != 1 || report.Plans[0].Verdict != capacityExpand {
 		t.Fatalf("an interrupted delivery counted: %+v", report.Plans[0])
+	}
+}
+
+// A log whose last line is still being written is read to its last complete record; a record that
+// cannot be decoded anywhere in the middle leaves the whole log unmeasured.
+func TestCapacityUsageLogTailAndCorruption(t *testing.T) {
+	dir := t.TempDir()
+	complete := "{\"timestamp\":%d,\"attempts\":[{\"status\":429,\"model\":\"deepseek-v4.1-flash\"}]}\n"
+	record := fmt.Sprintf(complete, capacityTestNow.UnixMilli())
+
+	tail := filepath.Join(dir, "tail.jsonl")
+	capacityTestMust(t, os.WriteFile(tail, []byte(record+"{\"timestamp\":1,\"attemp"), 0o600))
+	if state, count := capacityChild429Count(tail, []string{"deepseek-v4.1-flash"}, capacityTestNow.Add(-time.Hour)); state != capacityMeasured || count == nil || *count != 1 {
+		t.Errorf("a partial trailing line: %s %v, want measured 1", state, count)
+	}
+
+	corrupt := filepath.Join(dir, "corrupt.jsonl")
+	capacityTestMust(t, os.WriteFile(corrupt, []byte(record+"not json\n"+record), 0o600))
+	if state, count := capacityChild429Count(corrupt, []string{"deepseek-v4.1-flash"}, capacityTestNow.Add(-time.Hour)); state != capacityUnmeasured || count != nil {
+		t.Errorf("a corrupt record: %s %v, want unmeasured", state, count)
 	}
 }

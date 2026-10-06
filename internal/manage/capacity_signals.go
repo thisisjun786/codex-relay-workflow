@@ -1,6 +1,8 @@
 package manage
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -131,8 +133,17 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 	}
 	defer file.Close()
 	count := 0
-	decoder := json.NewDecoder(file)
+	reader := bufio.NewReader(file)
 	for {
+		line, readErr := reader.ReadBytes('\n')
+		// A final line with no newline is a write still in progress, not a record: stop at it rather
+		// than reading a partial record as the end of the log.
+		if len(line) > 0 && line[len(line)-1] != '\n' {
+			break
+		}
+		if len(bytes.TrimSpace(line)) == 0 && readErr != nil {
+			break
+		}
 		var record struct {
 			Timestamp int64 `json:"timestamp"`
 			Attempts  []struct {
@@ -140,16 +151,15 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 				Model  string `json:"model"`
 			} `json:"attempts"`
 		}
-		if err := decoder.Decode(&record); err != nil {
-			// Only a clean end of file completes the count: a record that cannot be decoded, or a
-			// partially written tail, leaves the log unmeasured rather than reporting a partial
-			// count as if the whole window had been read.
-			if err == io.EOF {
-				break
-			}
+		// A record in the middle that cannot be decoded leaves the whole log unmeasured, rather than
+		// reporting a partial count as if the window had been read.
+		if err := json.Unmarshal(line, &record); err != nil {
 			return capacityUnmeasured, nil
 		}
 		if record.Timestamp < since.UnixMilli() {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 		for _, attempt := range record.Attempts {
@@ -162,6 +172,9 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 					break
 				}
 			}
+		}
+		if readErr != nil {
+			break
 		}
 	}
 	return capacityMeasured, &count
