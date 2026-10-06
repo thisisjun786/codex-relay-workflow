@@ -172,12 +172,17 @@ func branchStoreMarks(ctx context.Context, handle *dagReviewStore, plan string) 
 	for id := range executed {
 		released[id] = true
 	}
-	// The integration reading mirrors the review's (dagReviewIntegratedAt): an observation of an
-	// active acceptance that is an ancestor and was not reverted is an integration.
+	// The integration reading is the scheduler's own rule (dagsched.integratedAt): an observation of
+	// an active acceptance that is an ancestor and was not reverted, with no later observation of
+	// the same acceptance and target saying it is not. Without the second half a node whose landing
+	// was undone would read as integrated and drop out of the connectivity graph.
 	integrated, err := column("SELECT DISTINCT a.node_id FROM dag_acceptances a" +
 		" JOIN dag_integration_observations o ON o.acceptance_id = a.acceptance_id" +
 		" WHERE a.plan_id = ? AND a.state = 'active' AND o.is_ancestor = 1" +
-		" AND (o.reverted_by IS NULL OR o.reverted_by = '')")
+		" AND (o.reverted_by IS NULL OR o.reverted_by = '')" +
+		" AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2" +
+		" WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository" +
+		" AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -187,9 +192,9 @@ func branchStoreMarks(ctx context.Context, handle *dagReviewStore, plan string) 
 // branchAttach computes the candidates of one plan: nil when the plan carries none at all (a hold
 // plan without --branches-always), otherwise a list, empty when nothing can be detached.
 func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verdict string, waiting []string) (*BranchCandidates, error) {
-	if verdict == capacityHold && !branchAlwaysFor(e) {
-		return nil, nil
-	}
+	// The thresholds are read and validated before the hold shortcut: a malformed section is a
+	// refusal whether or not this plan happens to carry candidates, so a configuration mistake never
+	// hides behind a transient verdict.
 	settings, err := branchSettingsOf(cfg)
 	if err != nil {
 		return nil, err
@@ -197,6 +202,9 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 	minNodes, maxBranches, err := branchThresholds(settings)
 	if err != nil {
 		return nil, err
+	}
+	if verdict == capacityHold && !branchAlwaysFor(e) {
+		return nil, nil
 	}
 	// The store is read through the review's own read-only handle: one no-sidecar open, and the
 	// region reading the scheduler makes (the latest declaration per node, with its hold).

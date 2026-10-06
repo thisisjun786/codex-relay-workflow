@@ -160,11 +160,27 @@ func (f *branchFixture) release(node string) *branchFixture {
 
 // integrated records a landed node: its accepted head is observed contained in the base.
 func (f *branchFixture) integrated(node string) *branchFixture {
+	f.t.Helper()
+	f.accepted(node)
+	f.observation(node, 1, true)
+	return f
+}
+
+// accepted records the acceptance of one node, without an observation.
+func (f *branchFixture) accepted(node string) *branchFixture {
+	f.t.Helper()
 	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?,?,0,?,?)",
 		"acceptance-"+node, branchTestPlan, node, "manifest-"+node, "rel-"+node, "event", "revision", "criteria",
 		"verified", "verified", "turn", "{}", "task-parent", branchTestNow.Format(time.RFC3339), "active")
-	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,1,?,1,NULL,?)",
-		"observation-"+node, "acceptance-"+node, branchTestRepo, "dev", "subject", "tip", "ancestry", branchTestNow.Format(time.RFC3339))
+	return f
+}
+
+// observation records one integration observation of a node's acceptance, at one sequence number.
+func (f *branchFixture) observation(node string, seq int, ancestor bool) *branchFixture {
+	f.t.Helper()
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,?)",
+		"observation-"+node+"-"+branchItoa(seq), "acceptance-"+node, branchTestRepo, "dev", "subject", "tip",
+		dagReviewFlag(ancestor), "ancestry", seq, branchTestNow.Format(time.RFC3339))
 	return f
 }
 
@@ -300,6 +316,27 @@ func TestBranchCandidatesRefuseAnUnreadableThreshold(t *testing.T) {
 	capacityConfig = func(*Env) *Config { return f.cfg }
 	if _, err := Capacity(context.Background(), f.env, f.cfg, false); err == nil {
 		t.Fatal("a min_branch_nodes that is not a number judged the plan anyway")
+	}
+}
+
+// The thresholds are validated on the hold path too: a malformed section is refused whether or not
+// this plan carries candidates, so a configuration mistake never hides behind a transient verdict.
+func TestBranchCandidatesRefuseABadThresholdOnAHoldPlan(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2")
+	f.region("A", "a.go", "file", "", "edit", false)
+	f.region("B", "b.go", "file", "", "edit", false)
+	f.publish()
+	// The host memory bound makes the verdict hold, which is the path that skips the candidates.
+	branchWriteReady(t, filepath.Join(f.dir, "ready.json"), []string{"CRW-1", "CRW-2"}, "deferring")
+	f.section["min_branch_nodes"] = "two"
+	f.load()
+	config := capacityConfig
+	t.Cleanup(func() { capacityConfig = config })
+	capacityConfig = func(*Env) *Config { return f.cfg }
+	_, err := Capacity(context.Background(), f.env, f.cfg, false)
+	if err == nil {
+		t.Fatal("a hold plan accepted a min_branch_nodes that is not a number")
 	}
 }
 
@@ -490,6 +527,26 @@ func TestBranchCandidatesDoNotConnectThroughAnIntegratedNode(t *testing.T) {
 	f.integrated("C")
 	got := branchSummaries(branchList(t, f.publish().run()))
 	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1")
+}
+
+// An integration that a later observation contradicts does not integrate: the node stays live, so
+// the bundle it joins is not detachable. This is the scheduler's own rule (a positive observation
+// with no later negative one), not merely "any ancestor observation ever recorded".
+func TestBranchCandidatesKeepANodeWhoseIntegrationWasSuperseded(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3").node("D", "CRW-4")
+	f.edge("e1", "A", "B").edge("e2", "C", "D")
+	for _, node := range []string{"A", "B", "C", "D"} {
+		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+	}
+	// C was observed contained and then, later, observed not contained: it is live again.
+	f.accepted("C")
+	f.observation("C", 1, true)
+	f.observation("C", 2, false)
+	got := branchSummaries(branchList(t, f.publish().run()))
+	// C is live, so C+D is a bundle; if C read as integrated it would be dropped and D would stand
+	// alone below the floor, leaving A+B as the only candidate.
+	branchWant(t, got, "A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
 }
 
 // C1: when the whole plan is one component there is no candidate, and the plan still carries the
