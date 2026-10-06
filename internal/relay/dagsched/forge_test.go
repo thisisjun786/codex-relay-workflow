@@ -125,6 +125,7 @@ func (g *ghScript) read(t *testing.T) PullRequest {
 // and then classified by the fail-closed rule: an unknown verdict is never an accepted PullRequest, a stale one is a refusal, and a failing check is a judgement that passes through
 // with its checks.
 func TestForgeProjectionFromRealSnapshot(t *testing.T) {
+	t.Parallel()
 	t.Run("a clean pull request", func(t *testing.T) {
 		pr := newGHScript().read(t)
 		if pr.Verdict != "ready" || pr.State != "open" || pr.IsDraft || pr.HeadSHA != forgeHead || pr.BaseSHA != forgeBase || pr.BaseRef != "dev" || pr.Number != 7 || pr.Repository != "owner/name" {

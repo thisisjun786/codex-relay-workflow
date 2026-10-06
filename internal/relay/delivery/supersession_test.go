@@ -71,6 +71,7 @@ func runSUP(t *testing.T, mode string, goSide func(f *fixture, out map[string]an
 }
 
 func TestSUP01_an_advanced_generation_annotates_older_deliveries_without_rewriting_them(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"queued", "outstanding", "capped", "withheld_cap", "dispatched", "current", "mark"} {
 		t.Run(mode, func(t *testing.T) {
 			runSUP(t, mode, func(f *fixture, out map[string]any) {
@@ -116,6 +117,7 @@ func TestSUP01_an_advanced_generation_annotates_older_deliveries_without_rewriti
 }
 
 func TestSUP02_an_annotated_delivery_reports_as_history(t *testing.T) {
+	t.Parallel()
 	runSUP(t, "dispatched", func(f *fixture, out map[string]any) {
 		e := f.queuedOutcome("ready_for_review")
 		f.mustAttempt(e, nil)
@@ -129,6 +131,7 @@ func TestSUP02_an_annotated_delivery_reports_as_history(t *testing.T) {
 }
 
 func TestSUP03_a_final_successor_annotates_its_predecessor(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"terminal", "queued_pred", "outstanding_pred"} {
 		t.Run(mode, func(t *testing.T) {
 			runSUP(t, mode, func(f *fixture, out map[string]any) {
@@ -184,6 +187,7 @@ func (f *fixture) settleStaged(thread, turn string) {
 }
 
 func TestSUP04_a_re_emitted_final_receipt_still_reports_its_stage(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "sup", "reemit")
 	f := newFixture(t, tree)
@@ -201,6 +205,7 @@ func TestSUP04_a_re_emitted_final_receipt_still_reports_its_stage(t *testing.T) 
 }
 
 func TestSUP05_a_later_execution_only_outcome_survives_a_final_revision_head(t *testing.T) {
+	t.Parallel()
 	runSUP(t, "exec_only", func(f *fixture, out map[string]any) {
 		reviewable := f.queuedOutcome("ready_for_review")
 		f.mustAttempt(reviewable, nil)
@@ -223,6 +228,7 @@ func TestSUP05_a_later_execution_only_outcome_survives_a_final_revision_head(t *
 }
 
 func TestSUP06_enqueueing_clears_the_intent_it_satisfies(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"intent", "stranded"} {
 		t.Run(mode, func(t *testing.T) {
 			runSUP(t, mode, func(f *fixture, out map[string]any) {
@@ -246,6 +252,7 @@ func TestSUP06_enqueueing_clears_the_intent_it_satisfies(t *testing.T) {
 }
 
 func TestSUP07_an_older_generation_is_never_sent(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"ready_for_review", "blocked_needs_input", "failed"} {
 		t.Run(outcome, func(t *testing.T) {
 			runSUP(t, "presend_"+outcome, func(f *fixture, out map[string]any) {
@@ -278,6 +285,7 @@ func TestSUP07_an_older_generation_is_never_sent(t *testing.T) {
 }
 
 func TestSUP08_a_newer_final_revision_supersedes_and_a_staged_one_does_not(t *testing.T) {
+	t.Parallel()
 	t.Run("final successor", func(t *testing.T) {
 		runSUP(t, "newer", func(f *fixture, out map[string]any) {
 			older := f.queuedOutcome("ready_for_review")

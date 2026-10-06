@@ -20,6 +20,7 @@ import (
 // The commands are the marker-only forms (--no-db-path, --db-path), which cli.py's
 // _reads_no_selected_store exempts from the check_start preflight, so the hold itself answers.
 func TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python(t *testing.T) {
+	t.Parallel()
 	side := newSide(t, filepath.Join(parityTree(t), "work"))
 	rid := regexp.MustCompile(`rel-[0-9a-f]{16}`).FindString(sqliteDump(t, side, "SELECT relationship_id FROM relationships"))
 	side.expect("relationship id", rid)
