@@ -175,7 +175,14 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 	if s.depth <= 0 {
 		return githubPostSite{}, false
 	}
-	program, ok := githubPostProgram(verb, rest)
+	spelled := make([]string, len(rest))
+	for i, w := range rest {
+		spelled[i] = w.text
+	}
+	program, ok := strings.Join(spelled[1:], " "), verb == "eval"
+	if shellVerbIsShell(verb) {
+		program, ok = shellVerbShellScript(spelled[1:])
+	}
 	if !ok {
 		return githubPostSite{}, false
 	}
@@ -185,21 +192,6 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 	deeper := *s
 	deeper.depth--
 	return deeper.text(program)
-}
-
-// githubPostProgram is the command string a shell -c or eval would run, when this command starts one.
-func githubPostProgram(verb string, words []githubPostWord) (string, bool) {
-	rest := make([]string, len(words))
-	for i, w := range words {
-		rest[i] = w.text
-	}
-	if shellVerbIsShell(verb) {
-		return shellVerbShellScript(rest[1:])
-	}
-	if verb == "eval" {
-		return strings.Join(rest[1:], " "), true
-	}
-	return "", false
 }
 
 // gh judges a gh command: pr create|edit|comment|review, issue create|comment|edit, or api with a field;
@@ -238,67 +230,72 @@ func (s *githubPostScan) gh(args []githubPostWord) (githubPostSite, bool) {
 // -t and --title may stay inline unless they hold an expansion or a secret. Every option is read. --fill
 // and --template are denied: the text they post comes from the repository, not from the command.
 func (s *githubPostScan) flags(args []githubPostWord) (githubPostSite, bool) {
-	first, denied := githubPostSite{}, false
-	for _, o := range githubPostOptions(args, "btF") {
-		site, no := githubPostSite{}, false
+	return githubPostFirst(githubPostOptions(args, "btF"), func(o githubPostOption) (githubPostSite, bool) {
 		switch o.name {
 		case "-b", "--body":
-			site, no = s.inline(o.value, true)
+			return s.inline(o.value, true)
 		case "-t", "--title":
-			site, no = s.inline(o.value, false)
+			return s.inline(o.value, false)
 		case "-F", "--body-file":
-			site, no = s.file(o.value)
+			return s.file(o.value)
 		case "--fill", "--fill-first", "--fill-verbose", "--template":
-			site, no = githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 		}
-		if no && !denied {
-			first, denied = site, true
-		}
-	}
-	return first, denied
+		return githubPostSite{}, false
+	})
 }
 
 // api judges gh api, a target only through a body or title field: -f, --raw-field, -F, --field, --input. A
 // nested key is read by both its top-level and its terminal field (body[text], input[body]).
 func (s *githubPostScan) api(args []githubPostWord) (githubPostSite, bool) {
-	first, denied := githubPostSite{}, false
-	for _, o := range githubPostOptions(args, "fF") {
-		site, no := githubPostSite{}, false
+	return githubPostFirst(githubPostOptions(args, "fF"), func(o githubPostOption) (githubPostSite, bool) {
 		if o.name == "--input" {
-			site, no = s.file(o.value)
-		} else if o.name == "-f" || o.name == "--raw-field" || o.name == "-F" || o.name == "--field" {
-			key, value, ok := strings.Cut(o.value.text, "=")
-			if !ok {
-				continue
-			}
-			file := o.name == "-F" || o.name == "--field"
-			// A nested key is read by its top-level and its terminal field, the two GitHub reads.
-			fields := []string{key}
-			if i := strings.IndexByte(key, '['); i >= 0 {
-				fields = append(fields, key[:i])
-			}
-			if i := strings.LastIndexByte(key, '['); i >= 0 {
-				fields = append(fields, strings.TrimSuffix(key[i+1:], "]"))
-			}
-			for _, field := range fields {
-				switch {
-				case field == "body" && file && strings.HasPrefix(value, "@"):
-					site, no = s.file(githubPostWord{text: strings.TrimPrefix(value, "@")})
-				case field == "body":
-					site, no = s.inline(o.value, true)
-				case field == "title":
-					site, no = s.inline(o.value, false)
+			return s.file(o.value)
+		}
+		if o.name != "-f" && o.name != "--raw-field" && o.name != "-F" && o.name != "--field" {
+			return githubPostSite{}, false
+		}
+		key, value, ok := strings.Cut(o.value.text, "=")
+		if !ok {
+			return githubPostSite{}, false
+		}
+		file := o.name == "-F" || o.name == "--field"
+		// A nested key is read by its top-level and its terminal field, the two GitHub reads.
+		fields := []string{key}
+		if i := strings.IndexByte(key, '['); i >= 0 {
+			fields = append(fields, key[:i])
+		}
+		if i := strings.LastIndexByte(key, '['); i >= 0 {
+			fields = append(fields, strings.TrimSuffix(key[i+1:], "]"))
+		}
+		for _, field := range fields {
+			switch {
+			case field == "body" && file && strings.HasPrefix(value, "@"):
+				if site, no := s.file(githubPostWord{text: strings.TrimPrefix(value, "@")}); no {
+					return site, true
 				}
-				if no {
-					break
+			case field == "body":
+				if site, no := s.inline(o.value, true); no {
+					return site, true
+				}
+			case field == "title":
+				if site, no := s.inline(o.value, false); no {
+					return site, true
 				}
 			}
 		}
-		if no && !denied {
-			first, denied = site, true
+		return githubPostSite{}, false
+	})
+}
+
+// githubPostFirst judges every option and answers the first denial, so a field after a clean one is judged.
+func githubPostFirst(options []githubPostOption, judge func(githubPostOption) (githubPostSite, bool)) (githubPostSite, bool) {
+	for _, o := range options {
+		if site, denied := judge(o); denied {
+			return site, true
 		}
 	}
-	return first, denied
+	return githubPostSite{}, false
 }
 
 // githubPostOptions reads a gh command's options, in the long and short forms pflag accepts. A value-taking
