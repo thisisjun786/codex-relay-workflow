@@ -9,6 +9,7 @@ import (
 
 // c1: a write of a new copy that fails part way (a full disk) leaves a file that does not hash to its name. The call that created it took it back, whatever it holds of the bytes it meant to
 // write, because a strict prefix of those bytes cannot be a manifest copy anything relies on.
+// sequential: assigns the package variable testFreezeWrite.
 func TestAFailedWriteOfANewCopyIsTakenBack(t *testing.T) {
 	for name, written := range map[string]func(canonical []byte) []byte{
 		"half of the bytes":    func(c []byte) []byte { return c[:len(c)/2] },
@@ -59,6 +60,7 @@ func TestAFailedWriteOfANewCopyIsTakenBack(t *testing.T) {
 }
 
 // c1: only what its own failed write could have left is taken back. A file at the path that holds other bytes (planted, or swapped in between the write and the cleanup) stays, with its evidence.
+// sequential: assigns the package variable testFreezeWrite.
 func TestAFailedWriteLeavesAFileThatIsNotAPrefixOfTheBytes(t *testing.T) {
 	k := newReleaseKit(t)
 	k.largeB()
@@ -85,6 +87,7 @@ func TestAFailedWriteLeavesAFileThatIsNotAPrefixOfTheBytes(t *testing.T) {
 
 // c1: a call that only reused a file never takes it back, even when the file holds a prefix of its bytes (the creator's write is still going, or failed and is its creator's to clean).
 func TestAReusedPartialFileIsNotTheCallsToTakeBack(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	canonical := []byte(strings.Repeat("reused ", 100))
