@@ -73,6 +73,39 @@ and environments. CI concurrency cancels obsolete runs within the same PR or bra
 interrupted dev push is not release evidence: rerun that exact push run if the owner later
 chooses its commit.
 
+## The body-only edit mirror
+
+No job reads a pull request's title or body, but a title or body edit fires the `edited` trigger
+again and used to rerun all ten jobs on the same commit. Such a run now mirrors what the head has
+already proved.
+
+An `edited` event whose base did not change (`github.event.action == 'edited' &&
+!github.event.changes.base`) joins the pull request's own concurrency group, so it waits behind a
+running run instead of cancelling it, and a later push cancels it in turn. Every other event,
+a retarget included, still cancels obsolete runs.
+
+`validate`, `secrets` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
+and only on such an edit. The script reads, with `gh api`, the newest completed run of this workflow,
+of this repository, for the same `head_sha`, other than the run it is in, and mirrors the job when
+that run's same-named job's newest attempt concluded `success`. It answers `mirrored=true` with the
+run id in its step output and its step summary, or `mirrored=false`.
+
+Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
+condition the step already had. The full checkout is one of them, and the sparse checkout of
+`scripts/ci` above the mirror is what has to exist before the script can decide. A mirrored job
+succeeds without running its steps, and nothing is skipped at job level: GitHub reports a skipped
+job's check as success, so a skipped `dev-gate` could hide an earlier red run.
+
+The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing job,
+another head, workflow or repository, an unreadable API and the run itself all answer
+`mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
+unchanged, and the three jobs add only `actions: read` to the workflow's `contents: read`, which is
+what reading the runs and jobs endpoints needs.
+
+Mirroring is safe because it repeats a result this head already has. `dev` is strict, so a merge
+candidate contains dev's tip, and the same `head_sha` is the same tree: the run being mirrored is a
+run of the same pull request's own head, never another tree's.
+
 ## The test legs
 
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a

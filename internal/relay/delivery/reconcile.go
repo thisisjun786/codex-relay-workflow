@@ -475,6 +475,14 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 				if anchor, err = rc.bindPromotedAnchor(ctx, attempt, delivery, o.dispatchTurn); err != nil {
 					return err
 				}
+				// A keeping decision (answer, stop) continues the child in the turn this promotion
+				// just recorded. Recovery settles the delivery dispatched exactly as a send does, so
+				// it admits the continuation turn the same way, and whether the first transport
+				// response arrived does not decide whether the parent can see that turn's end
+				// (CRW-669). The turn is read from the delivery row the UPDATE above wrote.
+				if err := admitKeptDecisionTurn(ctx, rc.Store, rc.Clock, attempt.S("event_id"), ""); err != nil {
+					return err
+				}
 			}
 			var previous any
 			if before != nil {

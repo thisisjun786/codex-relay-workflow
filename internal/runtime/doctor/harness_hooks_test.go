@@ -30,6 +30,15 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 )
 
+// hooksRepairString is the string a check's repair pointer holds, and "" when it is nil: the
+// recorded repair is the oracle's optional string, whose absent and empty cases both read "".
+func hooksRepairString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 type hooksOracle struct {
 	T0       int64             `json:"t0"`
 	Manifest string            `json:"manifest"`
@@ -213,7 +222,7 @@ func TestHarnessHooksReplayTheOracleReader(t *testing.T) {
 					env["CODEX_THREAD_ID"] = *q.SessionFromEnv
 				}
 				check := doctor.HarnessHookExecutionCheck(plugin, options, hooksLookup(env), time.UnixMilli(now))
-				if check.Name != q.Check.Name || string(check.Severity) != q.Check.Severity || check.Evidence != hooksOracleScript(q.Check.Evidence) || check.Repair != "" {
+				if check.Name != q.Check.Name || string(check.Severity) != q.Check.Severity || check.Evidence != hooksOracleScript(q.Check.Evidence) || hooksRepairString(check.Repair) != "" {
 					t.Errorf("query %d check: got %+v, oracle %+v", i, check, q.Check)
 				}
 			}
@@ -250,7 +259,7 @@ func TestHarnessHooksReplayTheOracleTrustCheck(t *testing.T) {
 			}
 			got := doctor.HarnessHookTrustCheck(plugin, options, hooksLookup(env))
 			names := strings.NewReplacer("@@CODEX_HOME@@", home, "cxc hooks retrust", "crw doctor retrust")
-			if got.Name != "hook-trust" || string(got.Severity) != c.Expect.Severity || got.Repair != names.Replace(c.Expect.Repair) {
+			if got.Name != "hook-trust" || string(got.Severity) != c.Expect.Severity || hooksRepairString(got.Repair) != names.Replace(c.Expect.Repair) {
 				t.Errorf("got %+v, oracle %+v", got, c.Expect)
 			}
 			if c.Expect.Evidence == nil && got.Evidence == "" || c.Expect.Evidence != nil && got.Evidence != names.Replace(*c.Expect.Evidence) {

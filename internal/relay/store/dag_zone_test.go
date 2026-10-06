@@ -68,6 +68,9 @@ var zoneInventory = map[string][]string{
 	"dag_pass_release_policy": {"plan_id", "pass_seq", "policy_json"},
 	// CRW-468 (appended statement): the host memory bound a recorded pass saw.
 	"dag_pass_host_memory": {"plan_id", "pass_seq", "state", "reading_limit", "host_json"},
+	// CRW-728 (appended statements): the proof dag-accept records when it accepts a head the parent's ruling verified, and the head a ruling verified.
+	"dag_acceptance_refreshes": {"refresh_id", "acceptance_id", "refresh_seq", "relationship_id", "execution_generation", "event_id", "revision_hash", "head_sha", "verified_head_sha", "base_repository", "base_ref", "base_tip_sha", "proof_json", "resolved_paths_json", "recorded_by_task_id", "coordinator_epoch", "recorded_at"},
+	"dag_verified_heads":       {"event_id", "relationship_id", "execution_generation", "verdict_turn_id", "head_sha", "recorded_by_task_id", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
