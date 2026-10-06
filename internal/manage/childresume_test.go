@@ -441,6 +441,96 @@ func TestResumeRefusesAnAssignmentWithoutAParent(t *testing.T) {
 	}
 }
 
+// A recorded workspace-write policy is carried in full: the resume's config names the writable
+// roots and the three flags, so the host cannot apply its own defaults instead.
+func TestResumeCarriesTheRecordedWorkspaceWritePolicy(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	write := `{"settings":{"sandbox":{"type":"workspaceWrite","writableRoots":["/w"],"networkAccess":true,"excludeTmpdirEnvVar":false,"excludeSlashTmp":true},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":["/w"],"model":"m","reasoningEffort":"xhigh"}}`
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, write, 0)
+	e, _, _ := resumeEnv(t, exe)
+	if _, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	var resume map[string]any
+	if err := json.Unmarshal(resumeHostRequests(host)[1].Params, &resume); err != nil {
+		t.Fatal(err)
+	}
+	if resume["sandbox"] != "workspace-write" {
+		t.Fatalf("sandbox mode %v", resume["sandbox"])
+	}
+	config, _ := resume["config"].(map[string]any)
+	section, _ := config["sandbox_workspace_write"].(map[string]any)
+	if !slices.Equal(resumeStrings(section["writable_roots"]), []string{"/w"}) || section["network_access"] != true ||
+		section["exclude_tmpdir_env_var"] != false || section["exclude_slash_tmp"] != true {
+		t.Fatalf("sandbox_workspace_write %v", section)
+	}
+}
+
+// A record the relay calls not deliverable is refused: resuming with settings the relay itself
+// will not send with would carry an authorization nobody checked.
+func TestResumeRefusesANonDeliverableRecord(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	undeliverable := `{"settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":["/w"],"model":"m","reasoningEffort":"xhigh"},"deliverable":false,"roleFinding":{"code":"role_binding_mismatch","detail":"two live bindings"}}`
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, undeliverable, 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+	failure, ok := err.(*resumeFailure)
+	if !ok || failure.Reason != resumeSettingsUnavailable || resumeExit(failure) != usageExit ||
+		!strings.Contains(failure.Detail, "role_binding_mismatch") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := host.Count("thread/read"); n != 0 {
+		t.Errorf("the host was contacted %d times before the record was refused", n)
+	}
+}
+
+// A turn/start whose answer is lost is an unknown outcome, not an ordinary host error: the turn
+// may already have started, so the operator is told to read the thread before resending.
+func TestResumeReportsALostTurnStartAsUncertain(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	host.Respond("turn/start", fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1011, Reason: "lost"}})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+	failure, ok := err.(*resumeFailure)
+	if !ok || failure.Reason != resumeTurnStartUncertain || resumeExit(failure) != 3 {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(failure.Detail, "read the thread") {
+		t.Errorf("the refusal does not tell the operator to read the thread: %q", failure.Detail)
+	}
+}
+
+// A dry run against a thread that reports no settings says it cannot verify them, rather than
+// reporting a disagreement the record would not have.
+func TestResumeDryRunReportsUnverifiedSettings(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "notLoaded"}}}})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m", dryRun: true})
+	failure, ok := err.(*resumeFailure)
+	if !ok || failure.Reason != resumeSettingsUnverified || resumeExit(failure) != 3 {
+		t.Fatalf("err = %v", err)
+	}
+	if methods := resumeHostMethods(host); !slices.Equal(methods, []string{"thread/read"}) {
+		t.Fatalf("the dry run sent %q", methods)
+	}
+}
+
+// The admit-turn line names the program this runtime is reached by, not a bare crw that an
+// installation does not put on PATH.
+func TestResumeAdmitTurnNamesTheResolvedProgram(t *testing.T) {
+	line := resumeAdmitTurn(&Config{Relay: coreRelay{State: "/s", Socket: "/k"}}, "rel-1", 3, "turn-1", "01parent")
+	if strings.HasPrefix(line, "crw ") {
+		t.Fatalf("the line names a bare crw: %q", line)
+	}
+	if !strings.Contains(line, "relay") || !strings.Contains(line, "--state /s --socket /k admit-turn") {
+		t.Fatalf("the line is not the relay's own invocation: %q", line)
+	}
+}
+
 // The command registers itself, so crw manage lists it.
 func TestResumeIsRegistered(t *testing.T) {
 	if !slices.Contains(coreNames(), "child-resume") {

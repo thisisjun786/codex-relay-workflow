@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // resumeUsage is the one line crw manage child-resume prints for its help and its refusals.
@@ -24,10 +25,26 @@ const (
 	resumeThreadActive          = "thread_active"
 	resumeSettingsMismatch      = "settings_mismatch"
 	resumeMCPNotDisabled        = "mcp_not_disabled"
+	resumeSettingsUnverified    = "settings_unverified"
+	resumeTurnStartUncertain    = "turn_start_uncertain"
 )
 
 // resumeSettingsModes maps the sandbox type a record carries to the mode thread/resume takes.
 var resumeSettingsModes = map[string]string{"readOnly": "read-only", "workspaceWrite": "workspace-write", "dangerFullAccess": "danger-full-access"}
+
+// resumeWorkspaceWriteDefaults and resumeWorkspaceWriteKeys are the workspace-write policy a
+// resume carries, spelled as internal/relay/registry writes it: the four fields under
+// config.sandbox_workspace_write, each with the default a record that leaves it out takes. A
+// resume that sent only the mode would leave the host to apply its own defaults, which may be
+// wider or narrower than the recorded policy.
+var resumeWorkspaceWriteDefaults = map[string]any{"writable_roots": []any{}, "network_access": false, "exclude_tmpdir_env_var": false, "exclude_slash_tmp": false}
+
+var resumeWorkspaceWriteKeys = [][2]string{
+	{"writableRoots", "writable_roots"},
+	{"networkAccess", "network_access"},
+	{"excludeTmpdirEnvVar", "exclude_tmpdir_env_var"},
+	{"excludeSlashTmp", "exclude_slash_tmp"},
+}
 
 // resumeOptions is one run of child-resume.
 type resumeOptions struct {
@@ -134,10 +151,30 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay exited with status " + fmt.Sprint(code) + ": " + resumeTrim(stdout)}
 	}
 	var answer struct {
-		Settings resumeSettings `json:"settings"`
+		Settings      resumeSettings `json:"settings"`
+		Usable        *bool          `json:"usable"`
+		Deliverable   *bool          `json:"deliverable"`
+		RecordFinding *struct {
+			Code, Detail string
+		} `json:"recordFinding"`
+		RoleFinding *struct {
+			Code, Detail string
+		} `json:"roleFinding"`
 	}
 	if err := json.Unmarshal(stdout, &answer); err != nil {
 		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay answer: " + err.Error()}
+	}
+	// The relay refuses a send with a record that is not deliverable (a contested role binding, a
+	// pair its policy no longer authorizes, a record finding). Resuming with one would carry
+	// settings the relay itself will not send with, so this command refuses it the same way.
+	if answer.Deliverable != nil && !*answer.Deliverable {
+		detail := "the relay records this task's settings as not deliverable"
+		for _, finding := range []*struct{ Code, Detail string }{answer.RecordFinding, answer.RoleFinding} {
+			if finding != nil && finding.Code != "" {
+				detail += "; " + finding.Code + ": " + finding.Detail
+			}
+		}
+		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: detail}
 	}
 	settings := answer.Settings
 	missing := []string{}
@@ -180,6 +217,26 @@ func resumeMCPConfig(disabled []string) map[string]any {
 		off[name] = map[string]any{"enabled": false}
 	}
 	return off
+}
+
+// resumeSandboxConfig adds the recorded workspace-write policy to a resume's config, the way
+// internal/relay/registry carries it. A record of another kind has nothing to add: its mode is
+// the whole policy.
+func resumeSandboxConfig(config, sandbox map[string]any) map[string]any {
+	if kind, _ := sandbox["type"].(string); kind != "workspaceWrite" {
+		return config
+	}
+	section := map[string]any{}
+	for name, value := range resumeWorkspaceWriteDefaults {
+		section[name] = value
+	}
+	for _, key := range resumeWorkspaceWriteKeys {
+		if value, ok := sandbox[key[0]]; ok {
+			section[key[1]] = value
+		}
+	}
+	config["sandbox_workspace_write"] = section
+	return config
 }
 
 // resumeRun is one child-resume: two relay reads, then one App Server connection carrying
@@ -238,7 +295,13 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return nil, &resumeFailure{Reason: resumeThreadActive, Detail: "the thread is active; nothing was sent"}
 	}
 	if opts.dryRun {
-		// The settings comparison the dry run is for, against what the thread reports now.
+		// The settings comparison the dry run is for, against what the thread reports now. A thread
+		// that reports neither setting is not a thread whose record this command can check: a
+		// notLoaded thread reports nothing until it is resumed, so that is reported as unverified
+		// rather than as a disagreement the record would not have.
+		if read.Thread.Model == "" && read.Thread.ReasoningEffort == "" {
+			return nil, &resumeFailure{Reason: resumeSettingsUnverified, Detail: "the thread reports no settings until it is resumed, so the dry run cannot check the record; the dry run sent nothing"}
+		}
 		if mismatch := resumeCompare(settings, read.Thread.Model, read.Thread.ReasoningEffort); mismatch != "" {
 			return nil, &resumeFailure{Reason: resumeSettingsMismatch, Detail: mismatch + "; the dry run sent nothing"}
 		}
@@ -249,7 +312,8 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		"threadId": child, "excludeTurns": true, "model": settings.Model, "cwd": settings.CWD,
 		"sandbox": mode, "approvalPolicy": settings.ApprovalPolicy,
 		"runtimeWorkspaceRoots": settings.RuntimeWorkspaceRoots,
-		"config":                map[string]any{"model_reasoning_effort": settings.ReasoningEffort, "mcp_servers": resumeMCPConfig(disabled)},
+		"config": resumeSandboxConfig(map[string]any{"model_reasoning_effort": settings.ReasoningEffort,
+			"mcp_servers": resumeMCPConfig(disabled)}, settings.Sandbox),
 	})
 	if err != nil {
 		return nil, err
@@ -290,18 +354,26 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 			return nil, &resumeFailure{Reason: resumeMCPNotDisabled, Detail: "the server " + quote.Value(name) + " reads " + quote.Value(state) + "; no turn was started"}
 		}
 	}
-	// 4. turn/start with the message file's text, unchanged.
-	started, err := call("turn/start", map[string]any{"threadId": child,
+	// 4. turn/start with the message file's text, unchanged. This is the one step whose failure is
+	// not an ordinary host error: the request frame may have reached the host and started the turn
+	// before the answer was lost, so the outcome is unknown and the operator must read the thread
+	// before sending the message again. Reporting it as an ordinary retryable failure would invite
+	// the same message twice.
+	uncertain := func(detail string) error {
+		return &resumeFailure{Reason: resumeTurnStartUncertain, Detail: "the turn may or may not have started (" + detail +
+			"); read the thread before sending the message again"}
+	}
+	started, err := client.Call(ctx, "turn/start", map[string]any{"threadId": child,
 		"input": []map[string]any{{"type": "text", "text": opts.message}}})
 	if err != nil {
-		return nil, err
+		return nil, uncertain("turn/start: " + err.Error())
 	}
 	var turn struct{ Turn struct{ ID string } }
 	if err := json.Unmarshal(started, &turn); err != nil {
-		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "turn/start result: " + err.Error()}
+		return nil, uncertain("turn/start result: " + err.Error())
 	}
 	if turn.Turn.ID == "" {
-		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "turn/start answered with no turn id"}
+		return nil, uncertain("turn/start answered with no turn id")
 	}
 	report.TurnID = turn.Turn.ID
 	report.AdmitTurn = resumeAdmitTurn(cfg, opts.relationship, generation, turn.Turn.ID, parent)
@@ -327,7 +399,11 @@ func resumeCompare(settings *resumeSettings, model, effort string) string {
 // command started, with the state and the socket the relay helper resolved. A value the
 // configuration did not name is left out, and the helper resolves it again.
 func resumeAdmitTurn(cfg *Config, relationship string, generation int64, turn, actor string) string {
-	argv := []string{"crw", "relay"}
+	// The program is the one this runtime is reached by, resolved as the relay's own recovery
+	// lines resolve it (internal/relay/registry.RelayProgram): the codex-session-relay link beside
+	// the binary, else the binary itself with the relay mode. A bare crw is not on PATH after an
+	// install, so a line the parent has to paste cannot name it.
+	argv := append([]string{}, registry.RelayProgram()...)
 	if cfg.Relay.State != "" {
 		argv = append(argv, "--state", cfg.Relay.State)
 	}
