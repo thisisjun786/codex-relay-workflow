@@ -1310,8 +1310,6 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
   direction (found by the pull request's reviews); port: kept (a false positive; follow-up proposal: read `<(...)` and `>(...)`
   only in plain text, where bash performs them).
 
-  by the pull request's reviews).
-
 - The body reader does not model two constructs bash allows inside a substitution, so a removal after either of them inside
   a double-quoted substitution is not read: a nested substitution whose own quotes confuse the outer double quote's state
   (`echo "$(printf '%s' "$(echo ")")"; rm -rf ../repo)"`) and a `#` that stands after a blank inside a `${...}` parameter
@@ -1319,6 +1317,15 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
   allowed on the base commit as well (checked against 8a8a466a), so neither is a regression of this change; both need the
   segmenter to parse nested substitutions and parameter expansions, which is a larger change than this issue carries; port:
   kept (follow-up proposal).
+
+- A substitution the reader judges makes the rest of the segment after it live again from the plain quote state, so data
+  that follows in single quotes is read as a command: `echo "$(true)" '$(rm -rf ../repo)'` and
+  `git log --format="$(echo x)" -- '$(rm -rf ../repo)'` are denied, while the same commands without the earlier
+  substitution are allowed. The base commit allowed both; the generation-2 change judges the rest of the segment at the
+  segment's own depth and memoizes, which keeps the reading but not the exponential cost. This is accepted as a false
+  positive in the over-denying direction, like the process-substitution one above, and is not fixed in this issue; port:
+  kept (a false positive; follow-up proposal: re-read the rest of the segment from the state the reader was in, not from
+  the plain state).
 
 ## CRW-649 — the review-round working-directory boundary and the plan key
 

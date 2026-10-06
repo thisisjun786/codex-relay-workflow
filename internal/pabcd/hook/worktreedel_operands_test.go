@@ -1,6 +1,10 @@
 package hook
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 // The words after a -c program, the substitutions a word runs before its shell starts, and the reading depth limit, as
 // CRW-670 closes the gap CRW-639 left. Every row was run in bash 5.3.9 with a harmless stand-in for rm (touch in a temporary
@@ -54,5 +58,65 @@ func TestWorktreeDelOperandDataStaysData(t *testing.T) {
 	r.denied(t, "bash -c 'declare -p | grep \"^declare -a BASH_AR.V=\" | cut -d\\\" -f2 | bash' -c 'rm -rf ../repo'", "rm -r ../repo") // an obfuscated BASH_ARGV and a pipeline make the program uncertain
 	r.denied(t, "bash -c 'echo $1' -c 'rm -rf ../repo'", "rm -r ../repo")
 	r.denied(t, "su -c 'echo ok' -c 'rm -rf ../repo' root", "rm -r ../repo")
+	r.intact(t)
+}
+
+// A long but harmless command line with many substitutions must still be judged. The walk used to judge the rest of
+// a segment after every opener as a nested program, so k backtick substitutions cost about 2^k walks: 2.6 s at k=12
+// and far past the PreToolUse hook's ten-second timeout at k=40. The walk now judges that rest at the segment's own
+// depth and memoizes, so the same commands answer quickly. Each verdict runs in its own goroutine, so a regression
+// fails this test with the timeout instead of hanging the suite (CRW-670, generation 2).
+func TestWorktreeDelOperandManySubstitutions(t *testing.T) {
+	r := newDelRig(t)
+	const many = 40
+	for _, c := range []struct{ label, cmd, what string }{
+		{"unquoted backticks", "echo" + strings.Repeat(" `true`", many), ""},
+		{"quoted backticks", "echo \"" + strings.Repeat("`true` ", many) + "\"", ""},
+		{"unquoted backticks then rm", "echo" + strings.Repeat(" `true`", many) + "; rm -rf ../repo", "rm -r ../repo"},
+		{"quoted backticks then rm", "echo \"" + strings.Repeat("`true` ", many) + "\"; rm -rf ../repo", "rm -r ../repo"},
+	} {
+		got, ok := worktreeDelVerdictWithin(t, r, c.cmd, 10*time.Second)
+		if !ok {
+			t.Fatalf("%s: the verdict did not return within 10s", c.label)
+		}
+		if c.what == "" {
+			if got.Deny {
+				t.Errorf("%s: denied (%s); want allow", c.label, got.Reason)
+			}
+			continue
+		}
+		if !got.Deny || !strings.HasPrefix(got.Reason, "[crw: WORKTREE-GUARD-03] blocked `"+c.what+"`: ") {
+			t.Errorf("%s: deny %v, reason %.60q; want a deny of %q, not the budget reason", c.label, got.Deny, got.Reason, c.what)
+		}
+	}
+	r.intact(t)
+}
+
+// worktreeDelVerdictWithin runs one verdict in its own goroutine and reports whether it returned within d.
+func worktreeDelVerdictWithin(t *testing.T, r delRig, cmd string, d time.Duration) (GuardVerdict, bool) {
+	t.Helper()
+	done := make(chan GuardVerdict, 1)
+	go func() { done <- r.verdict(cmd) }()
+	select {
+	case v := <-done:
+		return v, true
+	case <-time.After(d):
+		return GuardVerdict{}, false
+	}
+}
+
+// One evaluation may judge only worktreeDelWalkBudget distinct texts. With the budget lowered to 16 the walk denies
+// a command whose distinct texts exceed it, with a reason of its own; with the default budget the same harmless command
+// is allowed (CRW-670, generation 2).
+func TestWorktreeDelOperandBudget(t *testing.T) {
+	r := newDelRig(t)
+	cmd := "echo" + strings.Repeat(" $(true)", 20)
+	if got := worktreeDelEvaluate(cmd, r.checkout, r.id(), 16); !got.Deny ||
+		!strings.HasPrefix(got.Reason, "[crw: WORKTREE-GUARD-03] blocked `a command too complex for the guard to read`: ") {
+		t.Errorf("budget 16: deny %v, reason %.70q; want a deny with the budget reason", got.Deny, got.Reason)
+	}
+	if got := r.verdict(cmd); got.Deny {
+		t.Errorf("default budget: denied (%s); want allow", got.Reason)
+	}
 	r.intact(t)
 }
