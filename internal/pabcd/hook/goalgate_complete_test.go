@@ -533,3 +533,24 @@ func TestGoalGateCompleteGuardPassingV2PlanWithBoundSource(t *testing.T) {
 		t.Errorf("a complete v2 plan with a bound clean source and a matching receipt: %q", out)
 	}
 }
+
+// The oracle wraps the invocation resolution in its own try/catch (goal-gate.ts:176-181): a resolver that
+// fails, throws included, never changes the deny decision. A resolver that panics must not reach the guard's
+// outer catch, where it would turn a deny into a pass.
+func TestGoalGateCompleteGuardResolverPanicStillDenies(t *testing.T) {
+	goalGateTestEnv(t)
+	cwd := t.TempDir()
+	goalCompleteTestState(t, cwd, "gc8", func(s *state.State) { s.Phase = state.PhaseB; s.OrchestrationActive = true })
+	deps := goalCompleteDeps{
+		Invocation: func() (string, error) { panic("the resolver cannot answer") },
+		ReadState:  state.ReadStateStrict,
+	}
+	p := goalGatePreToolUse{SessionID: "gc8", Cwd: cwd, ToolName: goalGateUpdateGoalToolName, ToolInput: map[string]any{"status": "complete"}}
+	reason, _ := goalGateTestDeny(t, goalCompleteApplyGuard(p, true, deps))
+	if !strings.Contains(reason, "phase B") {
+		t.Errorf("a panicking resolver changed the decision: %q", reason)
+	}
+	if !strings.Contains(reason, "`crw pabcd orchestrate") {
+		t.Errorf("a panicking resolver should leave the reason as it is: %q", reason)
+	}
+}

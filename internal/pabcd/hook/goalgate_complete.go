@@ -51,11 +51,17 @@ func goalCompleteProcessDeps() goalCompleteDeps {
 // reason and additional context are the same text, with a trailing newline. The invocation rename touches every
 // backtick-anchored command prefix in the reason, as the oracle's global replace does; a resolver that fails
 // leaves the reason as it is, which is the oracle's fail-open.
-func goalCompleteDenyEnvelope(reason string, invocation func() (string, error)) string {
+func goalCompleteDenyEnvelope(reason string, invocation func() (string, error)) (out string) {
+	// The oracle wraps this resolution in its own try/catch (goal-gate.ts:176-181): a resolver that throws
+	// leaves the reason as it is and never changes the deny. A panic must be caught here rather than reach the
+	// guard's outer recover, where it would turn a deny into a pass.
 	if invocation != nil {
-		if inv, err := invocation(); err == nil {
-			reason = strings.ReplaceAll(reason, "`crw ", "`"+inv+" ")
-		}
+		func() {
+			defer func() { _ = recover() }()
+			if inv, err := invocation(); err == nil {
+				reason = strings.ReplaceAll(reason, "`crw ", "`"+inv+" ")
+			}
+		}()
 	}
 	return editAnswer("deny", reason, reason)
 }
