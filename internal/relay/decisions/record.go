@@ -9,6 +9,7 @@ package decisions
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -77,6 +78,7 @@ var (
 	ErrBadNeededBy         = errors.New("decisions: needed_by is not an RFC3339 timestamp")
 	ErrRecommendation      = errors.New("decisions: the recommendation names no option")
 	ErrAmbiguousField      = errors.New("decisions: a field holds one of the fingerprint's delimiters")
+	ErrControlCharacter    = errors.New("decisions: a field holds a control character")
 	ErrTransition          = errors.New("decisions: that transition is not allowed")
 	ErrMergeConflict       = errors.New("decisions: the two records differ beyond their seen entries")
 	ErrFingerprintMismatch = errors.New("decisions: the two records have different fingerprints")
@@ -237,29 +239,41 @@ func Normalize(text string) string {
 	return strings.Join(strings.Fields(asciiLower(text)), " ")
 }
 
-// Fingerprint is the question's identity: the first 16 hex characters of the SHA-256 of the
-// normalized context, blocking subject and sorted option ids joined by "|". Two statements of
-// one question that normalize alike are one record; Validate keeps the material unambiguous.
+// Fingerprint is the question's identity: the first 16 hex characters of the SHA-256 of the JSON
+// encoding of [Normalize(context), [[kind, ref], ...] sorted, [option id, ...] sorted]. The
+// encoding keeps the three parts and every list element apart, so no character inside a field can
+// make two different questions share a material; Validate's delimiter refusals stay as a second
+// guard. Two statements of one question that normalize alike are one record.
 func Fingerprint(context string, blocking []Blocking, options []Option) string {
-	entries := make([]string, 0, len(blocking))
+	subjects := make([][2]string, 0, len(blocking))
 	for _, entry := range blocking {
-		entries = append(entries, Normalize(entry.Kind)+":"+Normalize(entry.Ref))
+		subjects = append(subjects, [2]string{Normalize(entry.Kind), Normalize(entry.Ref)})
 	}
-	sort.Strings(entries)
+	sort.Slice(subjects, func(i, j int) bool {
+		if subjects[i][0] != subjects[j][0] {
+			return subjects[i][0] < subjects[j][0]
+		}
+		return subjects[i][1] < subjects[j][1]
+	})
 	ids := make([]string, 0, len(options))
 	for _, option := range options {
 		ids = append(ids, Normalize(option.ID))
 	}
 	sort.Strings(ids)
-	material := Normalize(context) + "|" + Normalize(strings.Join(entries, ",")) + "|" + Normalize(strings.Join(ids, ","))
-	sum := sha256.Sum256([]byte(material))
+	material, err := json.Marshal([]any{Normalize(context), subjects, ids})
+	if err != nil {
+		// A string and two string slices always encode; a failure would mean the material changed
+		// shape, and a fingerprint computed from nothing would be worse than stopping.
+		panic("decisions: fingerprint material: " + err.Error())
+	}
+	sum := sha256.Sum256(material)
 	return hex.EncodeToString(sum[:])[:16]
 }
 
 // Validate refuses a record that is not a well-formed crw-user-decision/1: a wrong schema id, an
-// unknown kind or state, an empty context, an option set that is not 2 or 3 options with unique
-// non-empty ids, a vocabulary miss, a needed_by that is not RFC3339, a recommendation naming no
-// option, or a field carrying a fingerprint delimiter.
+// unknown kind or state, a control character in a free-text field, an empty context, an option set
+// that is not 2 or 3 options with unique non-empty ids, a vocabulary miss, a needed_by that is not
+// RFC3339, a recommendation naming no option, or a field carrying a fingerprint delimiter.
 func Validate(record Record) error {
 	if record.Schema != Schema {
 		return fmt.Errorf("%w: %q", ErrSchema, record.Schema)
@@ -269,6 +283,9 @@ func Validate(record Record) error {
 	}
 	if !IsState(record.State) {
 		return fmt.Errorf("%w: %q", ErrUnknownState, record.State)
+	}
+	if err := checkControlCharacters(record); err != nil {
+		return err
 	}
 	if strings.TrimSpace(record.Context) == "" {
 		return ErrEmptyContext
@@ -305,9 +322,12 @@ func Validate(record Record) error {
 		return fmt.Errorf("%w: %q", ErrUnknownAuthority, record.Authority.Kind)
 	}
 	if record.NeededBy != "" {
-		// time.Parse accepts a comma fractional separator, which RFC 3339 does not.
-		parsed, err := time.Parse(time.RFC3339, record.NeededBy)
-		if err != nil || parsed.Format(time.RFC3339) != record.NeededBy {
+		// RFC 3339's fraction separator is ".", but Go's parser also takes a comma; refuse the
+		// comma explicitly and otherwise keep the value as written, fractional seconds included.
+		if strings.Contains(record.NeededBy, ",") {
+			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
+		}
+		if _, err := time.Parse(time.RFC3339Nano, record.NeededBy); err != nil {
 			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
 		}
 	}
@@ -317,18 +337,125 @@ func Validate(record Record) error {
 	return nil
 }
 
-// answer is what a second observation must agree on, so merging cannot drop a later answer.
-func answer(record Record) string {
-	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s",
-		record.State, record.AnsweredAt, record.AnsweredBy, record.AnsweredVia, record.AnswerText,
-		record.AppliedAt, record.AppliedEvent, record.AppliedGeneration, record.WithdrawnReason, record.ExpiredReason)
+// checkControlCharacters refuses the first free-text field that holds a control character: U+0000
+// to U+001F or U+007F. The context alone may hold a newline or a tab, because a question is a
+// paragraph. The fields walked are the ones the format carries as free text.
+func checkControlCharacters(record Record) error {
+	// hasControl reports a control character; allowLines exempts a newline and a tab.
+	hasControl := func(text string, allowLines bool) bool {
+		for _, r := range text {
+			if allowLines && (r == '\n' || r == '\t') {
+				continue
+			}
+			if r < 0x20 || r == 0x7f {
+				return true
+			}
+		}
+		return false
+	}
+	refuse := func(name, value string, allowLines bool) error {
+		if hasControl(value, allowLines) {
+			return fmt.Errorf("%w: %s", ErrControlCharacter, name)
+		}
+		return nil
+	}
+	if err := refuse("context", record.Context, true); err != nil {
+		return err
+	}
+	if record.Recommendation != nil {
+		if err := refuse("recommendation.option", record.Recommendation.Option, false); err != nil {
+			return err
+		}
+		if err := refuse("recommendation.one_line", record.Recommendation.OneLine, false); err != nil {
+			return err
+		}
+	}
+	for _, option := range record.Options {
+		for _, field := range []struct{ name, value string }{
+			{"option.id", option.ID},
+			{"option.label", option.Label},
+			{"option.effect", option.Effect},
+		} {
+			if err := refuse(field.name, field.value, false); err != nil {
+				return err
+			}
+		}
+	}
+	for _, entry := range record.Blocking {
+		for _, field := range []struct{ name, value string }{
+			{"blocking.kind", entry.Kind},
+			{"blocking.ref", entry.Ref},
+		} {
+			if err := refuse(field.name, field.value, false); err != nil {
+				return err
+			}
+		}
+	}
+	for _, seen := range record.Seen {
+		for _, field := range []struct{ name, value string }{
+			{"seen.at", seen.At},
+			{"seen.source", seen.Source},
+			{"seen.note", seen.Note},
+		} {
+			if err := refuse(field.name, field.value, false); err != nil {
+				return err
+			}
+		}
+	}
+	for _, field := range []struct{ name, value string }{
+		{"origin.issue", record.Origin.Issue},
+		{"origin.project", record.Origin.Project},
+		{"source.kind", record.Source.Kind},
+		{"source.ref", record.Source.Ref},
+		{"authority.kind", record.Authority.Kind},
+		{"authority.ref", record.Authority.Ref},
+		{"answered_at", record.AnsweredAt},
+		{"answered_by", record.AnsweredBy},
+		{"answered_via", record.AnsweredVia},
+		{"answer_text", record.AnswerText},
+		{"applied_at", record.AppliedAt},
+		{"applied_event", record.AppliedEvent},
+		{"withdrawn_reason", record.WithdrawnReason},
+		{"expired_reason", record.ExpiredReason},
+	} {
+		if err := refuse(field.name, field.value, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// Merge folds a second statement of the same question into the first: the same fingerprint, the
-// same answer and lifecycle, and the second one's seen entries appended to the first one's. A
-// stored fingerprint is checked against its content, and a record differing beyond its seen is
-// refused rather than overwritten, so no stale field and no later answer is lost.
+// sameAnswer is what a second statement must agree on, so merging cannot drop a later answer. The
+// fields are compared one by one: a material joining them would let two different answers collide.
+func sameAnswer(first, second Record) bool {
+	return first.State == second.State &&
+		first.AnsweredAt == second.AnsweredAt &&
+		first.AnsweredBy == second.AnsweredBy &&
+		first.AnsweredVia == second.AnsweredVia &&
+		first.AnswerText == second.AnswerText &&
+		first.AppliedAt == second.AppliedAt &&
+		first.AppliedEvent == second.AppliedEvent &&
+		first.AppliedGeneration == second.AppliedGeneration &&
+		first.WithdrawnReason == second.WithdrawnReason &&
+		first.ExpiredReason == second.ExpiredReason
+}
+
+// Merge folds a second statement of the same question into the first. The two must name the same
+// question (the same fingerprint) and carry the same answer, and the second record's seen entries
+// are appended to the first record's. The stored statement survives: its kind, options,
+// recommendation and origin are the ones the merged record keeps. A statement that differs beyond
+// its seen entries is refused with ErrMergeConflict rather than overwritten, so no stale field and
+// no later answer is lost. Each record must also be well formed and its stored fingerprint must
+// match its content. The identity and answer checks run before the per-record validation so that a
+// differing answer is reported as the conflict it is, rather than masked by a format refusal in
+// one of the very fields the comparison covers.
 func Merge(first, second Record) (Record, error) {
+	if first.Fingerprint != second.Fingerprint {
+		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)
+	}
+	if !sameAnswer(first, second) {
+		return Record{}, fmt.Errorf("%w: %s and %s", ErrMergeConflict, first.State, second.State)
+	}
 	for _, record := range []Record{first, second} {
 		if err := Validate(record); err != nil {
 			return Record{}, err
@@ -336,12 +463,6 @@ func Merge(first, second Record) (Record, error) {
 		if content := Fingerprint(record.Context, record.Blocking, record.Options); content != record.Fingerprint {
 			return Record{}, fmt.Errorf("%w: %s is not its content's %s", ErrFingerprintMismatch, record.Fingerprint, content)
 		}
-	}
-	if first.Fingerprint != second.Fingerprint {
-		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)
-	}
-	if answer(first) != answer(second) {
-		return Record{}, fmt.Errorf("%w: %s and %s", ErrMergeConflict, first.State, second.State)
 	}
 	merged := first
 	merged.Seen = append(append([]Seen{}, first.Seen...), second.Seen...)
