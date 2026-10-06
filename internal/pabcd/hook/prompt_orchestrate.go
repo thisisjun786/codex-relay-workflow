@@ -111,6 +111,10 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return "[crw — refused: the session state changed or cannot be rewritten without losing a stored record, so this command was not applied. Nothing was written.]", true
 	}
 	if result.Ledger != nil {
+		// The oracle writes the state and appends the row afterwards (:1360 then :1395), so an append
+		// that fails leaves an applied phase change unrecorded and answers nothing. That order is kept
+		// (the issue's step (9)), and so is the append's position outside the locked section, which
+		// belongs to promptSubmitWriteState (docs/port-cxc/known-defects/CRW-385.md).
 		if err := state.AppendLedger(p.Cwd, *result.Ledger); err != nil {
 			return "", true
 		}
