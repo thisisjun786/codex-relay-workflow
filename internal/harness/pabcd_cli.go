@@ -210,7 +210,7 @@ func reviewRoundVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer) int {
 	raw := ""
 	ingest := len(args) > 0 && args[0] == "ingest"
-	writer := ingest || len(args) > 0 && (args[0] == "record" || args[0] == "kind")
+	writer := metricWrites(args)
 	if ingest {
 		type stdinRead struct {
 			raw      string
@@ -251,6 +251,22 @@ func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr
 	}
 	fmt.Fprintln(stdout, result.Output)
 	return result.Code
+}
+
+// metricWrites reports whether the metric row's arguments can write the ledger or the kind file, which are the runs the
+// invocation's context can cut short (CRW-632). metric kind writes only when it names a kind (cli.MetricKindRequested);
+// without one it reads, as metric show does, and a reading run still prints its answer under an ended context.
+func metricWrites(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "ingest", "record":
+		return true
+	case "kind":
+		return cli.MetricKindRequested(args) != nil
+	}
+	return false
 }
 
 // divergenceVerb is the divergence row (cli.ts:183-189). The library's error is the oracle's one

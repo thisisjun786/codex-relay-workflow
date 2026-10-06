@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -253,5 +254,21 @@ func TestPabcdWritersEndOnTheFirstInterruptWhileTheLockIsHeld(t *testing.T) {
 				t.Fatalf("the run changed the child's home listings\nbefore:\n%s\nafter:\n%s", before, after)
 			}
 		})
+	}
+}
+
+// TestPabcdMetricKindReadsUnderAnEndedContext keeps the reading half of the kind row: without a kind
+// argument the verb only reads, so it prints its answer even when the invocation's context has ended,
+// exactly as metric show does. Only "kind <satisfy|maximize>" writes and can be cut short (CRW-632).
+func TestPabcdMetricKindReadsUnderAnEndedContext(t *testing.T) {
+	root := pabcdCLITestHome(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := PabcdContext(ctx, []string{"metric", "kind", "--session", "s1"}, strings.NewReader(""), &stdout, &stderr, Verbs()); code != 0 || stdout.String() != "metric kind: satisfy\n" || stderr.Len() != 0 {
+		t.Fatalf("reading metric kind under an ended context: code %d, stdout %q, stderr %q; want the answer with exit 0", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(c620MetricRecord(root)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reading metric kind wrote a record: %v", err)
 	}
 }

@@ -101,6 +101,16 @@ func metricCliKind(raw string) *metric.ObjectiveKind {
 	return nil
 }
 
+// MetricKindRequested is the kind the metric row's arguments ask to write, or nil when the run only reads the kind:
+// parseObjectiveKind of the first positional (metric-cli.ts:136-144). The kind branch writes on it, and the harness reads
+// it to tell a writing kind run from a reading one (CRW-632). argv is the row's arguments after the "metric" token.
+func MetricKindRequested(argv []string) *metric.ObjectiveKind {
+	if positionals := metricCliPositionals(argv[1:]); len(positionals) > 0 {
+		return metricCliKind(positionals[0])
+	}
+	return nil
+}
+
 // metricCliDigit reports whether c is a digit of base (2, 8 or 16).
 func metricCliDigit(c byte, base int) bool {
 	switch {
@@ -287,10 +297,7 @@ func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) 
 		return CliResult{Code: 0, Output: strings.Join(lines, "\n")}, nil
 
 	case "kind":
-		var requested *metric.ObjectiveKind
-		if positionals := metricCliPositionals(argv[1:]); len(positionals) > 0 {
-			requested = metricCliKind(positionals[0])
-		}
+		requested := MetricKindRequested(argv)
 		if requested != nil {
 			if err := metric.WriteObjectiveKindContext(ctx, cwd, sessionID, *requested); err != nil {
 				return CliResult{}, err
