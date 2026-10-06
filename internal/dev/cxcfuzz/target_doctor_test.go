@@ -8,6 +8,7 @@ package cxcfuzz
 // themselves live in testdata/doctor/cases.json and are replayed by TestCases.
 
 import (
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -262,6 +263,52 @@ func TestDoctorMissingRequiredFieldsReadEmpty(t *testing.T) {
 		if !strings.Contains(jsonText, want) {
 			t.Fatalf("json does not carry %s:\n%s", want, jsonText)
 		}
+	}
+}
+
+// TestDoctorMissingChecksReadsEmpty pins the second shape the shrinker can reach: deleting the
+// report checks key. The port answers an absent list as an empty one (doctorChecks returns an
+// empty slice, so the JSON carries [] where Go would otherwise write null) and the oracle reads
+// its own undefined list the same way, so the candidate compares Same and the keep predicate
+// rejects it. The generated input draws this shape too (doctorGenerate).
+func TestDoctorMissingChecksReadsEmpty(t *testing.T) {
+	input := "{\"report\":{\"schemaVersion\":1}}"
+	value, err := decode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := doctorGo(value, RootEnv(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, jsonText, err := doctorAnswer(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "overall: PASS"; text != want {
+		t.Fatalf("text = %q, want %q", text, want)
+	}
+	if !strings.Contains(jsonText, "\"checks\": []") {
+		t.Fatalf("an absent checks list was not written as []:\n%s", jsonText)
+	}
+	if strings.Contains(jsonText, "null") {
+		t.Fatalf("an absent checks list was written as null:\n%s", jsonText)
+	}
+}
+
+// TestDoctorArbitraryExitStatusKeepsItsNumber pins the third branch of the features check over
+// values outside the generator earlier pool: a real non-zero exit carries its own number in the
+// evidence (only the killed marker omits it), which the oracle and the port must agree on.
+func TestDoctorArbitraryExitStatusKeepsItsNumber(t *testing.T) {
+	for _, code := range []int{1, 42, 127, 255} {
+		check := doctor.HarnessFeaturesCheck(doctor.HarnessRun{Status: doctorStatusOf(t, code), Stderr: "boom"})
+		if want := fmt.Sprintf("could not read 'codex features list' (exit %d): boom", code); check.Evidence != want {
+			t.Fatalf("exit %d evidence = %q, want %q", code, check.Evidence, want)
+		}
+	}
+	killed := doctor.HarnessFeaturesCheck(doctor.HarnessRun{Status: doctorStatusOf(t, -1), Stderr: "boom"})
+	if killed.Evidence != "could not read 'codex features list': boom" {
+		t.Fatalf("the killed marker wrote an exit number: %q", killed.Evidence)
 	}
 }
 

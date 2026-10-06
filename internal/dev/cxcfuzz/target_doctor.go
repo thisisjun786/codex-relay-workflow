@@ -339,9 +339,14 @@ func doctorGenerate(rng *rand.Rand, size int) any {
 	for n := rng.Intn(4); n > 0; n-- {
 		checks = append(checks, doctorGenerateCheck(rng))
 	}
-	report := pyjson.Object{
-		{Key: "schemaVersion", Value: doctor.HarnessSchemaVersion},
-		{Key: "checks", Value: checks},
+	report := pyjson.Object{{Key: "schemaVersion", Value: doctor.HarnessSchemaVersion}}
+	// The checks key is sometimes absent: the shrinker deletes an object's members, so a candidate
+	// can lose it, and both readers must answer an absent list as an empty one (the oracle's
+	// `source.checks` is undefined and runDoctor pushes into a fresh array; the port's doctorChecks
+	// returns an empty slice). Generating the shape keeps that agreement measured rather than
+	// assumed, and the missing-required-fields case below pins the same family.
+	if rng.Intn(6) > 0 {
+		report = report.Set("checks", checks)
 	}
 	for _, key := range []string{"pluginVersion", "codexVersion", "activeSurface"} {
 		if rng.Intn(3) == 0 {
@@ -380,15 +385,19 @@ func doctorGenerateRun(rng *rand.Rand, size int) any {
 		{Key: "stdout", Value: doctorGenerateListing(rng)},
 		{Key: "stderr", Value: doctorGenerateStderr(rng, size)},
 	}
-	switch rng.Intn(4) {
-	case 0:
+	// The status pool covers the three branches the check has: 0 (the listing is read), a non-zero
+	// exit (the evidence carries the number), and the killed marker -1 (no number). It also draws
+	// the rest of the byte range, so the "a real non-zero code keeps its number" path is measured
+	// over more than one value rather than assumed from a single representative.
+	switch n := rng.Intn(6); {
+	case n == 0:
 		run = run.Set("status", 0)
-	case 1:
-		run = run.Set("status", 3)
-	case 2:
+	case n == 1:
 		run = run.Set("status", -1)
-	default:
+	case n == 2:
 		run = run.Set("status", nil)
+	default:
+		run = run.Set("status", 1+rng.Intn(255))
 	}
 	return run
 }

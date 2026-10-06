@@ -70,5 +70,21 @@
     "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"e\\\"\\n    },\\n    {\\n      \\\"name\\\": \\\"n\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[] : e\\n[] n: \\noverall: PASS\"}",
     "tag": "identical",
     "record": ""
+  },
+  {
+    "name": "report-missing-checks-reads-empty-on-both-sides",
+    "input": "{\"report\": {\"schemaVersion\": 1}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": []\\n}\\n\", \"text\": \"overall: PASS\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": []\\n}\\n\", \"text\": \"overall: PASS\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-arbitrary-exit-status-keeps-its-number",
+    "input": "{\"run\": {\"status\": 42, \"stderr\": \"boom\", \"stdout\": \"\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list' (exit 42): boom\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list' (exit 42): boom\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list' (exit 42): boom\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list' (exit 42): boom\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
   }
 ]
