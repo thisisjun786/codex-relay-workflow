@@ -254,10 +254,11 @@ func overlapByIdentity(trees []pinned, codex *pinned) error {
 	return nil
 }
 
-// overlapWalkLimit bounds one tree's identity walk. A tree that holds more directories than this, a walk that nests deeper
-// than this, or a directory the walk cannot open or read refuses: the comparison against the other trees cannot be proven,
-// and a run must not guess.
-const overlapWalkLimit = 100000
+// overlapWalkLimit bounds one tree's identity walk. A tree the walk enters more directories of than this, a walk that nests
+// deeper than this, or a directory the walk cannot open or read refuses: the comparison against the other trees cannot be
+// proven, and a run must not guess. The walk counts every directory it enters, not the distinct identities it records,
+// because two spellings of one directory are both visited and a tree of aliases must not slip past the bound.
+const overlapWalkLimit = 200000
 
 // overlapByContents refuses a tree, or the Codex home, that reaches another selected tree through a second spelling of a
 // directory. A bind mount gives one directory a second name whose identity (device and inode) is unchanged, so the aliased
@@ -332,16 +333,17 @@ func setsShare(a, b map[fileID]struct{}) bool {
 // children cannot exhaust them.
 func identitySet(path string, root *Dir) (map[fileID]struct{}, error) {
 	set := map[fileID]struct{}{root.id: {}}
-	if err := walkIdentity(path, root, set, 0); err != nil {
+	visited := 1
+	if err := walkIdentity(path, root, set, 0, &visited); err != nil {
 		return nil, err
 	}
 	return set, nil
 }
 
-// walkIdentity adds every directory below cur to set, at most overlapWalkLimit levels down. cur stays open for the whole
-// call and each child is closed before the next sibling is opened, so a directory holding many children costs two
-// descriptors rather than one per child.
-func walkIdentity(path string, cur *Dir, set map[fileID]struct{}, depth int) error {
+// walkIdentity adds every directory below cur to set, at most overlapWalkLimit levels down and counting each directory it
+// enters in visited. cur stays open for the whole call and each child is closed before the next sibling is opened, so a
+// directory holding many children costs two descriptors rather than one per child.
+func walkIdentity(path string, cur *Dir, set map[fileID]struct{}, depth int, visited *int) error {
 	if depth >= overlapWalkLimit {
 		return refuse(ReasonOverlap, path, "nests more than "+strconv.Itoa(overlapWalkLimit)+" directories deep")
 	}
@@ -361,12 +363,13 @@ func walkIdentity(path string, cur *Dir, set map[fileID]struct{}, depth int) err
 		if err != nil {
 			return refuse(ReasonOverlap, path, "cannot be opened to compare identities: "+err.Error())
 		}
-		if len(set) >= overlapWalkLimit {
+		*visited++
+		if *visited > overlapWalkLimit {
 			_ = child.Close()
-			return refuse(ReasonOverlap, path, "holds more than "+strconv.Itoa(overlapWalkLimit)+" directories")
+			return refuse(ReasonOverlap, path, "holds more than "+strconv.Itoa(overlapWalkLimit)+" directories (visited "+strconv.Itoa(*visited)+")")
 		}
 		set[child.id] = struct{}{}
-		err = walkIdentity(path, child, set, depth+1)
+		err = walkIdentity(path, child, set, depth+1, visited)
 		_ = child.Close()
 		if err != nil {
 			return err

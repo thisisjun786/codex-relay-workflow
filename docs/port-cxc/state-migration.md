@@ -160,8 +160,9 @@ refused with `overlap` and the detail `reaches <other path> through another spel
 mount is one directory reached by a second name and its identity is unchanged; two trees that hold a directory of each
 other below their own roots are refused the same way, because the same directory is reachable under both. The tree's own
 identity is in its set, so every refusal the by-identity check already made stays. A directory the walk cannot open or
-read, a walk that nests deeper than 100,000 directories, or a tree of more than 100,000 directories, refuses instead of
-passing an unproven comparison. Two limits: a FUSE mirror such as bindfs that reports its own inode numbers is not
+read, a walk that enters more than 200,000 directories or nests deeper than that, refuses instead of passing an unproven
+comparison; the count is of directories entered, not of distinct identities recorded, so a tree of many spellings of one
+directory cannot slip past the bound. Two limits: a FUSE mirror such as bindfs that reports its own inode numbers is not
 recognised, and a mount changed during a run is out of scope, because changing one needs a privilege the copy does not use.
 
 Source files, permissions, links and directories are never changed, removed or renamed. The command writes no config, activation, registration or source metadata. Multi-file publication is not one atomic transaction; the quiet-window requirement and references-last ordering prevent consumers from reading an unfinished graph. No rollback deletes copied records. Failure output records exactly which writes completed.
