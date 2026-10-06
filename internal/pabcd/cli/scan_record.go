@@ -24,6 +24,14 @@ func RunScanCli(args ScanCliArgs) CliResult {
 }
 
 func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error) CliResult {
+	return cliPublishedScanRecordRun(a, appendEvent, state.WriteState)
+}
+
+// cliPublishedScanRecordRun is the CRW-823 write seam, a third argument rather than a change to
+// scanRecordRun's existing two-argument signature, so every existing test still compiles. writeState
+// is an argument, never package state, so a test can drive the published-but-unsynced path without
+// changing what any other caller does; scanRecordRun passes state.WriteState.
+func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent) error, writeState func(string, state.State) error) CliResult {
 	if a.Action == ScanActionHelp {
 		return CliResult{Output: scanRecordHelp}
 	}
@@ -104,7 +112,7 @@ func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent)
 		}
 		next.LastScanRoundID = next.ScanRounds
 		s.Interview = &next
-		return state.WriteState(a.Cwd, s)
+		return writeState(a.Cwd, s)
 	})
 	if err != nil {
 		return CliResult{Code: 1, Output: "scan record failed: " + cliErrorMessage(err)}

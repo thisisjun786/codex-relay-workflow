@@ -76,6 +76,13 @@ func ParseMemoryCLIArgs(argv []string, cwd string) MemoryCliParse {
 // RunMemoryCLI writes precisely the existing memoryWriteGrant boolean under the
 // session lock. Consumption is the memory gate's responsibility, not this library's.
 func RunMemoryCLI(a MemoryAllowWriteArgs) (string, int) {
+	return cliPublishedMemoryAllowWrite(a, state.WriteState)
+}
+
+// cliPublishedMemoryAllowWrite is the CRW-823 write seam. writeState is an argument, never package
+// state, so a test can drive the published-but-unsynced path without changing what any other caller
+// does; RunMemoryCLI passes state.WriteState.
+func cliPublishedMemoryAllowWrite(a MemoryAllowWriteArgs, writeState func(string, state.State) error) (string, int) {
 	err := state.WithSessionLock(a.Cwd, a.SessionID, func() error {
 		s, unreadable := state.ReadStateStrict(a.Cwd, a.SessionID)
 		// Intentionally changed: the oracle replaces unreadable bytes with a default.
@@ -89,7 +96,7 @@ func RunMemoryCLI(a MemoryAllowWriteArgs) (string, int) {
 			return errors.New(cliInterviewRefusalReason)
 		}
 		s.MemoryWriteGrant = true
-		return state.WriteState(a.Cwd, s)
+		return writeState(a.Cwd, s)
 	})
 	if err != nil {
 		return fmt.Sprintf("memory allow-write: could not record the grant (%s)", cliErrorMessage(err)), 1

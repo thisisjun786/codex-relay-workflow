@@ -21,6 +21,20 @@ import (
 type ReviewRoundRunOptions struct {
 	Env  host.LookupEnv
 	Lock *goalplan.GoalplanWriteLockOptions
+
+	// WriteGoalplan is the CRW-823 plan-write seam of the open and abort verbs. Nil means
+	// goalplan.WriteGoalplan, the writer a production call uses; a caller that passes one drives the
+	// published-but-unsynced path. It is an argument, never package state, so one test cannot fault
+	// another's write.
+	WriteGoalplan func(string, *goalplan.Goalplan) error
+}
+
+// cliPublishedWriteGoalplan is the configured plan write, defaulting to the real one.
+func cliPublishedWriteGoalplan(o *ReviewRoundRunOptions) func(string, *goalplan.Goalplan) error {
+	if o != nil && o.WriteGoalplan != nil {
+		return o.WriteGoalplan
+	}
+	return goalplan.WriteGoalplan
 }
 
 // RunReviewRoundCli ports runReviewRoundCli (review-round-cli.ts:210-306, CXC v0.2.40, 3c1459ac) on the parser, the plan-file
@@ -198,7 +212,7 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 		if inFlight.Kind != review.OK {
 			return reviewRoundRunRefuse(prefix + reviewRoundRunReason(inFlight)), nil
 		}
-		if err := goalplan.WriteGoalplan(args.Cwd, inFlight.Plan); err != nil {
+		if err := cliPublishedWriteGoalplan(o)(args.Cwd, inFlight.Plan); err != nil {
 			return ReviewRoundCliResult{}, err
 		}
 		packet, err := reviewRoundArgsRenderOpenPacket(round, len(files), o.Env)
@@ -220,7 +234,7 @@ func reviewRoundRunAbort(args ReviewRoundCliArgs, st state.State, o *ReviewRound
 		if aborted.Kind != review.OK {
 			return reviewRoundRunRefuse("review-round abort: " + reviewRoundRunReason(aborted)), nil
 		}
-		if err := goalplan.WriteGoalplan(args.Cwd, aborted.Plan); err != nil {
+		if err := cliPublishedWriteGoalplan(o)(args.Cwd, aborted.Plan); err != nil {
 			return ReviewRoundCliResult{}, err
 		}
 		return ReviewRoundCliResult{Output: "review-round abort: " + aborted.Round.RoundID + " closed as inconclusive"}, nil
