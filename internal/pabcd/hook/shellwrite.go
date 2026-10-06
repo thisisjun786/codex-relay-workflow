@@ -206,42 +206,17 @@ func shellWriteHeredocTrimTabs(line []uint16) []uint16 {
 	return line[i:]
 }
 
-// shellWriteHeredocHeaderWords is the words of the simple command that owns the here-document, read the way the shell
-// reads it (CRW-765 correction 2): the header is cut at pipes and control operators, so only the command the
-// here-document is attached to is judged, and every redirection (with its target word) is dropped wherever it stands,
-// before or after the verb. A redirection is not a command word, so a redirect before the verb reads as the interpreter
-// and a redirect after the operator leaves the command word alone; a here-string operator and its word are dropped the
-// same way.
-func shellWriteHeredocHeaderWords(header []uint16) []string {
-	seg := shellWriteHeredocOwningSegment(header)
-	out := []uint16{}
-	for i := 0; i < len(seg); {
-		ch := seg[i]
-		if ch == '\'' || ch == '"' {
-			next := skipQuoted(seg, i)
-			out = append(out, seg[i:next]...)
-			i = next
-			continue
-		}
-		if ch == '<' && shellAt(seg, i+1) == '<' {
-			if shellAt(seg, i+2) == '<' {
-				i = readToken(seg, i+3).next // a here-string: the operator and its word
-			} else {
-				i = shellWriteHeredocSkipDelimiter(seg, i) // << / <<- and its delimiter word
-			}
-			out = append(out, ' ')
-			continue
-		}
-		if ch == '<' || ch == '>' || ch == '&' && shellAt(seg, i+1) == '>' {
-			out = shellWriteHeredocDropFd(out)
-			i = shellWriteHeredocSkipRedirect(seg, i)
-			out = append(out, ' ')
-			continue
-		}
-		out = append(out, ch)
-		i++
+// shellWriteHeredocInterpreterName reports whether a word's last path element is one of the modeled interpreters
+// (CRW-765 correction 3): python, python3, pythonX.Y, node, nodejs, sh, bash, dash, ash, zsh, ksh and mksh, also as
+// the last element of a path. A here-document attached to a command whose verb is one of these may be that
+// interpreter's program.
+func shellWriteHeredocInterpreterName(word string) bool {
+	name := shellVerbName(word)
+	switch name {
+	case "python", "python3", "node", "nodejs", "sh", "bash", "dash", "ash", "zsh", "ksh", "mksh":
+		return true
 	}
-	return shellTokenize(shellString(out))
+	return shellVerbVersioned(name)
 }
 
 // shellWriteHeredocOwningSegment is the part of a header between the last control operator before the here-document
@@ -305,65 +280,179 @@ func shellWriteHeredocSeparator(s []uint16, i int) bool {
 	return false
 }
 
-// shellWriteHeredocDropFd removes a file-descriptor digit word (the 2 of 2>) from the words read so far, when the digits
-// stand as their own word; a digit inside a word (cmd2>) stays.
-func shellWriteHeredocDropFd(out []uint16) []uint16 {
-	k := len(out)
-	for k > 0 && out[k-1] >= '0' && out[k-1] <= '9' {
-		k--
+// The closed rule (CRW-765 correction 3) classifies one here-document by proving its owning simple command, so a
+// header shape the parser does not model fails closed instead of being added shape by shape. shellWriteHeredocSimpleCommand
+// proves the owning command: it is a simple command made only of literal words, here-document operators (no file
+// descriptor or fd 0) with their delimiter words, and the fixed redirections with a literal target word.
+const (
+	shellWriteHeredocOpNone     = iota
+	shellWriteHeredocOpHeredoc  // << or <<-, with its delimiter word already consumed
+	shellWriteHeredocOpRedirect // [n]>, [n]>>, [n]< or &>, with a target word to read
+	shellWriteHeredocOpDup      // [n]>&m or [n]<&m, which names a descriptor and takes no target word
+	shellWriteHeredocOpInvalid  // an operator shape the closed set does not allow, so the command is not proven
+)
+
+// shellWriteHeredocSimpleCommand reads the owning simple command strictly. ok is true only when the segment is made
+// only of literal words, here-document operators (no file descriptor or fd 0) with their delimiter words, and the fixed
+// redirections with a literal target word. A word holding an expansion, a substitution, a brace, a glob, a comment
+// marker or a here-string is not literal, so the command is not proven and its here-document fails closed. words is the
+// literal words in order, the verb first.
+func shellWriteHeredocSimpleCommand(seg []uint16) (words []string, ok bool) {
+	words = []string{}
+	for i := 0; i < len(seg); {
+		c := seg[i]
+		if shellSpace(c) {
+			i++
+			continue
+		}
+		if c == '#' {
+			return words, len(words) > 0 // a # at the start of a word begins a comment to the end of the line
+		}
+		switch kind, next := shellWriteHeredocOperator(seg, i); kind {
+		case shellWriteHeredocOpNone:
+		case shellWriteHeredocOpInvalid:
+			return words, false
+		case shellWriteHeredocOpRedirect:
+			if _, n, lit := shellWriteHeredocLiteralWord(seg, next); lit {
+				i = n
+			} else {
+				return words, false
+			}
+			continue
+		default:
+			i = next
+			continue
+		}
+		w, n, lit := shellWriteHeredocLiteralWord(seg, i)
+		if !lit || len(w) == 0 {
+			return words, false
+		}
+		words = append(words, shellString(w))
+		i = n
 	}
-	if k == len(out) {
-		return out
-	}
-	if k > 0 && !shellSpace(out[k-1]) {
-		return out
-	}
-	return out[:k]
+	return words, len(words) > 0
 }
 
-// shellWriteHeredocSkipRedirect is the offset after a redirection operator and its target: <, >, >>, <>, >|, &>, &>>,
-// n>&m, n<&m, n>&- and the file target that follows.
-func shellWriteHeredocSkipRedirect(s []uint16, i int) int {
-	i++
-	if shellAt(s, i) == '>' || shellAt(s, i) == '<' {
-		i++ // >> or <>
-	}
-	if shellAt(s, i) == '&' {
-		i++
-		if shellAt(s, i) == '-' {
-			return i + 1
+// shellWriteHeredocOperator reads the operator at i with an optional file-descriptor number attached (no space). For a
+// here-document it also consumes the delimiter word, whose quoting it ignores. It returns shellWriteHeredocOpNone when
+// the bytes are no operator at all, and shellWriteHeredocOpInvalid when they are an operator shape the closed set does
+// not allow (a here-string, a descriptor other than 0 on a here-document, >|, <>, &>>), so the command is not proven.
+func shellWriteHeredocOperator(s []uint16, i int) (kind int, next int) {
+	// &> is the only operator that begins with &.
+	if shellAt(s, i) == '&' && shellAt(s, i+1) == '>' {
+		if shellAt(s, i+2) == '>' {
+			return shellWriteHeredocOpInvalid, i // &>> is not in the set
 		}
-		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-			i++
-		}
-		return i
+		return shellWriteHeredocOpRedirect, i + 2
 	}
+	j := i
+	for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+		j++
+	}
+	if j >= len(s) || (s[j] != '<' && s[j] != '>') {
+		return shellWriteHeredocOpNone, i
+	}
+	fd := shellString(s[i:j])
+	if s[j] == '<' {
+		switch {
+		case shellAt(s, j+1) == '<' && shellAt(s, j+2) == '<':
+			return shellWriteHeredocOpInvalid, i // <<< is a here-string, not in the set
+		case shellAt(s, j+1) == '<':
+			if fd != "" && fd != "0" {
+				return shellWriteHeredocOpInvalid, i // a file descriptor other than 0
+			}
+			k := j + 2
+			if shellAt(s, k) == '-' {
+				k++
+			}
+			return shellWriteHeredocOpHeredoc, shellWriteHeredocDelimiterEnd(s, k)
+		case shellAt(s, j+1) == '&':
+			k := j + 2
+			for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+				k++
+			}
+			if k == j+2 {
+				return shellWriteHeredocOpInvalid, i // <& with no descriptor
+			}
+			return shellWriteHeredocOpDup, k
+		case shellAt(s, j+1) == '>':
+			return shellWriteHeredocOpInvalid, i // <> is not in the set
+		default:
+			return shellWriteHeredocOpRedirect, j + 1 // [n]<
+		}
+	}
+	switch {
+	case shellAt(s, j+1) == '&':
+		k := j + 2
+		for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+			k++
+		}
+		if k == j+2 {
+			return shellWriteHeredocOpInvalid, i // >& with no descriptor
+		}
+		return shellWriteHeredocOpDup, k
+	case shellAt(s, j+1) == '>':
+		if shellAt(s, j+2) == '&' {
+			return shellWriteHeredocOpInvalid, i // >>& is not in the set
+		}
+		return shellWriteHeredocOpRedirect, j + 2 // [n]>>
+	case shellAt(s, j+1) == '|':
+		return shellWriteHeredocOpInvalid, i // >| is not in the set
+	default:
+		return shellWriteHeredocOpRedirect, j + 1 // [n]>
+	}
+}
+
+// shellWriteHeredocLiteralWord reads one word and reports whether it is literal: an unquoted word without an expansion,
+// a substitution, a brace, a glob or a comment marker; a single-quoted word; or a double-quoted word without an
+// expansion, a backtick or a backslash. It returns the word's unquoted text and the offset after it.
+func shellWriteHeredocLiteralWord(s []uint16, i int) (word []uint16, next int, literal bool) {
 	for i < len(s) && shellSpace(s[i]) {
 		i++
 	}
-	if i >= len(s) {
-		return i
-	}
-	if s[i] == '\'' || s[i] == '"' {
-		return skipQuoted(s, i)
-	}
+	out := []uint16{}
+	literal = true
+	var quote uint16
 	for i < len(s) {
 		c := s[i]
-		if shellSpace(c) || c == ';' || c == '|' || c == '&' || c == '<' || c == '>' || c == '(' || c == ')' {
-			break
+		if quote == 0 {
+			if shellSpace(c) || c == '<' || c == '>' || c == ';' || c == '|' || c == '&' || c == '(' || c == ')' {
+				break
+			}
+			switch c {
+			case '\'', '"':
+				quote = c
+				i++
+				continue
+			case '$', '\x60', '{', '}', '#', '*', '?', '[':
+				literal = false
+			}
+			out = append(out, c)
+			i++
+			continue
 		}
+		if c == quote {
+			quote = 0
+			i++
+			continue
+		}
+		if quote == '"' && (c == '$' || c == '\x60' || c == '\\') {
+			literal = false
+		}
+		out = append(out, c)
 		i++
 	}
-	return i
+	if quote != 0 {
+		literal = false
+	}
+	if len(out) == 0 {
+		return nil, i, false
+	}
+	return out, i, literal
 }
 
-// shellWriteHeredocSkipDelimiter is the offset after a << operator and its delimiter word, reading the word as the
-// collector does (a quote pair, a backslash escape, or a run of word characters).
-func shellWriteHeredocSkipDelimiter(s []uint16, i int) int {
-	i += 2
-	if shellAt(s, i) == '-' {
-		i++
-	}
+// shellWriteHeredocDelimiterEnd is the offset after a here-document delimiter word that begins at i.
+func shellWriteHeredocDelimiterEnd(s []uint16, i int) int {
 	for i < len(s) && shellSpace(s[i]) {
 		i++
 	}

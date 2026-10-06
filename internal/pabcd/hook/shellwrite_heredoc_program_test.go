@@ -51,6 +51,7 @@ func TestShellWriteHeredocReads(t *testing.T) {
 		{"python Path write_text", "python3 - <<'EOF'\nPath('/m/a').write_text('x')\nEOF"},
 		{"node createWriteStream", "node <<'EOF'\nrequire('fs').createWriteStream('/m/a')\nEOF"},
 		{"python2 heredoc", "python2 <<'EOF'\nopen('/m/a','w')\nEOF"},
+		{"mksh is in the closed rule's shell set", "mksh <<'EOF'\necho x > /m/a\nEOF"},
 		{"wrapper before the interpreter", "sudo python3 - <<'EOF'\nopen('/m/a','w')\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -73,7 +74,6 @@ func TestShellWriteHeredocUnchanged(t *testing.T) {
 		{"node -e supplies the program inline", "node -e 'console.log(1)' <<'EOF'\nrequire('fs').writeFileSync('" + mem + "/a','x')\nEOF"},
 		{"tee body is data", "tee note.md <<'EOF'\n" + mem + "\nEOF"},
 		{"bash -c supplies the program inline", "bash -c 'echo hi' <<'EOF'\necho x > " + mem + "/a\nEOF"},
-		{"mksh is outside the issue's shell set", "mksh <<'EOF'\necho x > " + mem + "/a\nEOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := ShellWriteDestinations(c.command); slices.Contains(got, mem+"/a") {

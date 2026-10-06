@@ -118,25 +118,29 @@ func TestShellWriteHeredocReviewDepth(t *testing.T) {
 	}
 }
 
-// TestShellWriteHeredocReviewHeaderWords pins the header reader that removes every operator and delimiter word, so a
-// backslash-escaped delimiter does not read as a script operand.
-func TestShellWriteHeredocReviewHeaderWords(t *testing.T) {
-	for _, c := range []struct{ name, header string }{
+// TestShellWriteHeredocReviewSimpleCommand pins the strict reader the closed rule uses: the owning simple command is
+// proven only when every word is literal and every operator is a here-document operator or a redirection from the fixed
+// set with a literal target.
+func TestShellWriteHeredocReviewSimpleCommand(t *testing.T) {
+	for _, c := range []struct{ name, segment string }{
 		{"a plain delimiter", "python3 - <<EOF"},
 		{"a backslash-escaped delimiter", "python3 <<\\EOF"},
 		{"a quoted delimiter", "python3 <<'EOF'"},
 		{"two operators", "python3 <<'A' <<'B'"},
+		{"a redirect before the verb", "2>&1 python3 - <<EOF"},
+		{"a redirect after the operator", "bash <<'EOF' 2>/dev/null"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := shellWriteHeredocHeaderWords(utf16.Encode([]rune(c.header)))
-			if len(got) < 1 || got[0] != "python3" {
-				t.Errorf("%q read as %q, want the interpreter first", c.header, got)
-			}
-			for _, w := range got {
-				if w == "EOF" || w == "A" || w == "B" || w == "\\EOF" {
-					t.Errorf("%q kept a delimiter word: %q", c.header, got)
-				}
+			words, ok := shellWriteHeredocSimpleCommand(utf16.Encode([]rune(c.segment)))
+			if !ok || len(words) == 0 || !shellWriteHeredocInterpreterName(words[0]) {
+				t.Errorf("%q read as %q, ok=%v; want a proven interpreter command", c.segment, words, ok)
 			}
 		})
+	}
+	// A word with an expansion or a compound command is not proven.
+	for _, segment := range []string{"x=$(bash <<'EOF'", "{ python3 -; } <<'EOF'", "f() { bash; } <<'EOF'"} {
+		if _, ok := shellWriteHeredocSimpleCommand(utf16.Encode([]rune(segment))); ok {
+			t.Errorf("%q was proven, want not proven", segment)
+		}
 	}
 }

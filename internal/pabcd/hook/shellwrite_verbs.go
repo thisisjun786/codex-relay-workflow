@@ -1856,37 +1856,153 @@ const (
 	shellWriteHeredocShell
 )
 
-// shellWriteHeredocKindOf reports the interpreter a command runs and whether it reads its program from standard input,
-// so a here-document attached to it is program text rather than data. It reads the command words the way the verb step
-// does (through shellVerbSkipWrappers and shellVerbName): python/python3/py/versioned read stdin when no script operand
-// and no -c, --command or -m is present, or the operand is -, or -i forces interactive input after an initial program;
-// node/nodejs when no script operand and no -e, --eval, -p or --print is present, or the operand is -; sh, bash, dash,
-// ash, zsh or ksh when no -c and no script operand is present, or -s forces stdin. Every other command reads no program
-// from its standard input.
-func shellWriteHeredocKindOf(words []string) (kind shellWriteHeredocKind, ok bool, certain bool) {
-	if len(words) == 0 {
-		return 0, false, true
+// shellWriteHeredocReading is how the closed rule (CRW-765 correction 3) classifies a here-document.
+type shellWriteHeredocReading int
+
+const (
+	// shellWriteHeredocData: the owning simple command is proven to be a non-interpreter, so the body is data (today's
+	// oracle behaviour, not read as a program).
+	shellWriteHeredocData shellWriteHeredocReading = iota + 1
+	// shellWriteHeredocProgram: the owning simple command is proven to be an interpreter that reads its program from
+	// standard input, so the body is read as that interpreter's program.
+	shellWriteHeredocProgram
+	// shellWriteHeredocUnknown: the reader cannot prove the owning simple command is a non-interpreter, so the
+	// here-document fails closed when the command text names an interpreter.
+	shellWriteHeredocUnknown
+)
+
+// shellWriteHeredocClassify classifies one here-document under the closed rule (CRW-765 correction 3) and returns the
+// reader to use when it is a program. The rule proves the owning simple command: it must be made only of literal words,
+// allowed redirections and here-document operators (shellWriteHeredocSimpleCommand), and its verb must be neither an
+// interpreter nor a function the same command defines. A proven interpreter verb that reads standard input is a
+// program; a proven interpreter verb that does not is data (its here-document feeds the interpreter's own stdin); a
+// proven non-interpreter verb is data. Everything the rule cannot prove is unknown, and unknown fails closed when the
+// command text names an interpreter.
+func shellWriteHeredocClassify(h shellWriteHeredoc, funcs map[string]bool) (shellWriteHeredocReading, shellWriteHeredocKind) {
+	words, ok := shellWriteHeredocSimpleCommand(shellWriteHeredocOwningSegment(h.command))
+	if !ok {
+		return shellWriteHeredocUnknown, 0
 	}
-	verb, args := shellVerbName(words[0]), words[1:]
+	rest := shellVerbSkipWrappers(words)
+	if len(rest) == 0 {
+		return shellWriteHeredocUnknown, 0
+	}
+	verb, args := shellVerbName(rest[0]), rest[1:]
+	if shellWriteHeredocReservedWord(verb) {
+		// A reserved word is no simple command's verb, so the owning command is not proven (a compound command's tail
+		// such as `fi <<'EOF'` is not a simple command).
+		return shellWriteHeredocUnknown, 0
+	}
+	if !shellWriteHeredocInterpreterName(verb) {
+		if funcs[verb] {
+			return shellWriteHeredocUnknown, 0 // a function the same command defines
+		}
+		return shellWriteHeredocData, 0
+	}
+	kind, stdin, certain := shellWriteHeredocStdin(verb, args)
+	if !certain {
+		return shellWriteHeredocUnknown, 0
+	}
+	if !stdin {
+		return shellWriteHeredocData, 0 // the interpreter runs an inline or script program; the body is its stdin data
+	}
+	return shellWriteHeredocProgram, kind
+}
+
+// shellWriteHeredocReservedWord reports whether a word is a shell reserved word, which is never a simple command's verb
+// (CRW-765 correction 3): the closed rule proves a simple command, and a reserved word begins or ends a compound one.
+func shellWriteHeredocReservedWord(word string) bool {
+	switch word {
+	case "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac", "in",
+		"function", "select", "time", "coproc", "!", "[[", "]]", "{", "}":
+		return true
+	}
+	return false
+}
+
+// shellWriteHeredocStdin reports the reader for an interpreter verb and whether it reads its program from standard
+// input. certain is false when an option the reader does not model leaves the program's source undecidable.
+func shellWriteHeredocStdin(verb string, args []string) (kind shellWriteHeredocKind, stdin bool, certain bool) {
 	switch {
-	case verb == "python" || verb == "python3" || verb == "py" || shellVerbVersioned(verb):
-		stdin, sure := shellWriteHeredocPythonStdin(args)
-		return shellWriteHeredocPython, stdin, sure
+	case verb == "python" || verb == "python3" || shellVerbVersioned(verb):
+		stdin, certain = shellWriteHeredocPythonStdin(args)
+		return shellWriteHeredocPython, stdin, certain
 	case verb == "node" || verb == "nodejs":
-		stdin, sure := shellWriteHeredocNodeStdin(args)
-		return shellWriteHeredocNode, stdin, sure
+		stdin, certain = shellWriteHeredocNodeStdin(args)
+		return shellWriteHeredocNode, stdin, certain
 	case shellWriteHeredocIsShell(verb):
-		stdin, sure := shellWriteHeredocShellStdin(args)
-		return shellWriteHeredocShell, stdin, sure
+		stdin, certain = shellWriteHeredocShellStdin(args)
+		return shellWriteHeredocShell, stdin, certain
 	}
 	return 0, false, true
 }
 
-// shellWriteHeredocIsShell is the issue's shell set: the POSIX shells whose program may come from standard input. It is
-// narrower than shellVerbIsShell, which also lists mksh and fish (CRW-765, criterion c1).
+// shellWriteHeredocFunctionNames is the function names the command defines (name() or name ()), so a here-document
+// attached to a call of one is not proven to feed an interpreter (CRW-765 correction 3).
+func shellWriteHeredocFunctionNames(command []uint16) map[string]bool {
+	out := map[string]bool{}
+	s := stripHeredocBodies(command)
+	for i := 0; i < len(s); i++ {
+		if s[i] != '(' {
+			continue
+		}
+		j := i
+		for j > 0 && shellSpace(s[j-1]) {
+			j--
+		}
+		k := j
+		for k > 0 && !shellSpace(s[k-1]) && !strings.ContainsRune(";|&()<>", rune(s[k-1])) {
+			k--
+		}
+		m := i + 1
+		for m < len(s) && shellSpace(s[m]) {
+			m++
+		}
+		if name := shellString(s[k:j]); name != "" && m < len(s) && s[m] == ')' {
+			out[shellVerbName(name)] = true
+		}
+	}
+	return out
+}
+
+// shellWriteHeredocWordRune reports whether a byte is part of a command word's text: the characters of a name or a
+// path. Whitespace, a shell metacharacter and an expansion marker all end the word, so an interpreter named inside a
+// command substitution ($(bash ...)) is still seen (CRW-765 correction 3, rule 3).
+func shellWriteHeredocWordRune(c rune) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' || c == '/' || c >= 128
+}
+
+// shellWriteHeredocNamesInterpreter reports whether the command text outside here-document bodies names an interpreter
+// anywhere: a word whose last path element is an interpreter name (CRW-765 correction 3, rule 3).
+func shellWriteHeredocNamesInterpreter(command []uint16) bool {
+	s := shellString(stripHeredocBodies(command))
+	start := -1
+	check := func(end int) bool {
+		if start < 0 {
+			return false
+		}
+		return shellWriteHeredocInterpreterName(s[start:end])
+	}
+	for i := 0; i < len(s); i++ {
+		if shellWriteHeredocWordRune(rune(s[i])) {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if check(i) {
+			return true
+		}
+		start = -1
+	}
+	return check(len(s))
+}
+
+// shellWriteHeredocIsShell is the closed rule's shell set (CRW-765 correction 3): the shells whose program may come
+// from standard input. mksh is included, and fish is not (the rule's list).
 func shellWriteHeredocIsShell(verb string) bool {
 	switch verb {
-	case "sh", "bash", "dash", "ash", "zsh", "ksh":
+	case "sh", "bash", "dash", "ash", "zsh", "ksh", "mksh":
 		return true
 	}
 	return false
@@ -2106,13 +2222,12 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 // the destinations its body names. It is the verb step's addition after the oracle's own answer, so a command whose
 // here-document feeds no interpreter is read exactly as before (CRW-765, criterion c1).
 func shellWriteHeredocDestinations(command string, depth int) []string {
+	funcs := shellWriteHeredocFunctionNames(utf16.Encode([]rune(command)))
 	out := []string{}
 	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
-		kind, ok, certain := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
-		// A here-document attached to an interpreter whose program source the reader cannot decide is not read here;
-		// the fail-closed walk denies it (shellWriteHeredocUnreadableIn).
-		if kind == 0 || !ok || !certain {
-			continue
+		reading, kind := shellWriteHeredocClassify(h, funcs)
+		if reading != shellWriteHeredocProgram {
+			continue // data is not read, and unknown is denied by the fail-closed walk
 		}
 		dests, _ := shellWriteHeredocProgramWrites(h, kind, depth+1)
 		out = append(out, dests...)
@@ -2139,15 +2254,21 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 	if *budget < 0 {
 		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
 	}
-	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
-		kind, ok, certain := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
-		if kind != 0 && !certain {
-			// The command names an interpreter, but an option this reader does not model leaves it unclear whether the
-			// here-document is that interpreter's program: the reader cannot tell, so it fails closed.
-			return shellWriteHeredocUnreadableWhat, true
-		}
-		if kind == 0 || !ok {
+	u := utf16.Encode([]rune(command))
+	funcs := shellWriteHeredocFunctionNames(u)
+	named := shellWriteHeredocNamesInterpreter(u)
+	for _, h := range shellWriteHeredocs(u) {
+		reading, kind := shellWriteHeredocClassify(h, funcs)
+		if reading == shellWriteHeredocUnknown {
+			// The rule cannot prove the owning command is a non-interpreter, so the here-document fails closed when
+			// the command text names an interpreter anywhere (CRW-765 correction 3, rule 3).
+			if named {
+				return shellWriteHeredocUnreadableWhat, true
+			}
 			continue
+		}
+		if reading != shellWriteHeredocProgram {
+			continue // data: the body is not read as a program
 		}
 		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
 			return shellWriteHeredocUnreadableWhat, true
