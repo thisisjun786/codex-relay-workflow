@@ -204,7 +204,7 @@ func TestCLIExitCodesAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	code, out, _ = cliRun(t, ctx, "--cwd", ws2)
-	if code != 1 || !strings.Contains(out, "result: failed") {
+	if code != 1 || !strings.Contains(out, "result: interrupted") {
 		t.Fatalf("cancelled exit %d\n%s", code, out)
 	}
 	if _, err := os.Stat(filepath.Join(ws2, ".crw")); !os.IsNotExist(err) {
@@ -229,15 +229,38 @@ func TestCLICancellationDuringTheCopy(t *testing.T) {
 	t.Cleanup(func() { cliCancel = nil })
 	code, out, _ := cliRun(t, context.Background(), "--cwd", ws, "--report", report)
 	cliCancel = nil
-	if code != 1 || !strings.Contains(out, "result: failed") {
+	if code != 1 || !strings.Contains(out, "result: interrupted") {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
 	if _, err := os.Stat(report); !os.IsNotExist(err) {
 		t.Fatalf("a cancelled run published a report: %v", err)
 	}
-	// Some writes landed and the report says so rather than claiming a complete copy.
-	if !strings.Contains(out, "writesCompleted") && strings.Contains(out, "result: copied") {
+	if strings.Contains(out, "result: copied") {
 		t.Fatalf("a cancelled run claimed a copy:\n%s", out)
+	}
+}
+
+// A migration that only creates structure (an absent destination root and its canonical
+// .gitignore, with no file item) still changed the filesystem, so it is a copy rather than an
+// already-equal run, and a dry run over the same source counts no directory as a copy.
+func TestCLIDirectoryOnlyMigrationIsACopy(t *testing.T) {
+	base := isolate(t)
+	ws := cliWS(t, base, map[string]string{"sessions/": ""})
+	code, out, _ := cliRun(t, context.Background(), "--cwd", ws, "--dry-run")
+	if code != 0 || !strings.Contains(out, "copied=0") {
+		t.Fatalf("dry-run exit %d\n%s", code, out)
+	}
+	code, out, _ = cliRun(t, context.Background(), "--cwd", ws)
+	if code != 0 || !strings.Contains(out, "result: copied") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(ws, ".crw", ".gitignore")); err != nil {
+		t.Fatalf("the canonical .gitignore was not published: %v", err)
+	}
+	// A rerun is already-equal, and still reports the directory it keeps as an existing one.
+	code, out, _ = cliRun(t, context.Background(), "--cwd", ws)
+	if code != 0 || !strings.Contains(out, "result: already-equal") {
+		t.Fatalf("rerun exit %d\n%s", code, out)
 	}
 }
 

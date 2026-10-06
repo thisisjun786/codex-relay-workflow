@@ -114,6 +114,9 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	if o.dryRun {
 		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, nil))
 	}
+	// A destination root or directory this run will create is a real filesystem change no file item
+	// accounts for, so the result distinguishes that mutating run from an already-equal one.
+	structural := structuralWrites(roots, plan)
 	if err := ctx.Err(); err != nil {
 		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
 	}
@@ -134,6 +137,8 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	}
 	res, err := applyWith(roots, plan, pub)
 	report := o.assemble(roots, plan, atts, res, err)
+	report.structural = structural
+	report.Result = summarize(report)
 	// The report file is published before stdout is written, and its own failure is folded into the
 	// document the caller reads, so stdout and the exit code never disagree.
 	if err == nil && target != nil {
@@ -144,6 +149,55 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 		}
 	}
 	return o.emit(stdout, stderr, report)
+}
+
+// structuralWrites reports whether the run will create a destination root or a destination
+// directory, changes that no file item of the plan reports. It reads only; nothing is written.
+func structuralWrites(roots *Roots, plan *Plan) bool {
+	for _, p := range []*Pair{roots.Project, roots.User} {
+		if p != nil && p.Dest == nil {
+			return true
+		}
+	}
+	if plan == nil {
+		return false
+	}
+	for _, it := range plan.Items {
+		if !applyDir(it) {
+			continue
+		}
+		root := destRootOf(roots, it.Scope)
+		if root == nil {
+			return true
+		}
+		rel := applyRel(it.Destination)
+		if rel == "" {
+			continue
+		}
+		d, opened, err := classifyOpenDest(root, rel)
+		classifyCloseAll(opened)
+		if d != nil {
+			_ = d.Close()
+			continue
+		}
+		if err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// destRootOf is a scope's pinned destination root, or nil.
+func destRootOf(roots *Roots, scope Scope) *Dir {
+	switch scope {
+	case ScopeProject:
+		return dirOf(roots.Project, true)
+	case ScopeUser:
+		return dirOf(roots.User, true)
+	case ScopeCodex:
+		return roots.Codex
+	}
+	return nil
 }
 
 // parseCLI reads the command line. A help request is reported as help with no error.

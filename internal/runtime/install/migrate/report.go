@@ -6,6 +6,7 @@ package migrate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -32,6 +33,9 @@ type Report struct {
 	Error           *ReportError
 	WritesCompleted int
 	SourceVerified  bool
+	// structural records that the run created a destination root or directory, a change no file
+	// item reports, so a run that only made structure still reads as a copy.
+	structural bool
 }
 
 // ReportRoot is one selected scope's source and destination.
@@ -64,6 +68,11 @@ func summarize(r *Report) string {
 			return string(ResultFailed)
 		}
 	}
+	// A run that only created a root, published the canonical .gitignore or finished a directory mode
+	// still changed the filesystem, so it is a copy even though no file item reports one.
+	if r.WritesCompleted > 0 || r.structural {
+		return string(ResultCopied)
+	}
 	for _, it := range r.Items {
 		if it.Result == ResultCopied {
 			return string(ResultCopied)
@@ -78,13 +87,17 @@ func reportError(err error) *ReportError {
 	if errors.As(err, &refused) {
 		return &ReportError{Kind: string(ResultRefused), Reason: string(refused.Reason), Path: refused.Path, Detail: refused.Detail}
 	}
+	// A cancellation is the interruption the exit contract names, not an I/O failure.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &ReportError{Kind: "interrupted", Detail: err.Error()}
+	}
 	return &ReportError{Kind: string(ResultFailed), Detail: err.Error()}
 }
 
 // exitCode is the process exit code the report carries: 0 for a verified copy, an already-equal run
 // or a dry run, 1 for a refusal or a failure.
 func (r *Report) exitCode() int {
-	if r.Error != nil || r.Result == string(ResultRefused) || r.Result == string(ResultFailed) {
+	if r.Error != nil || r.Result == string(ResultRefused) || r.Result == string(ResultFailed) || r.Result == "interrupted" {
 		return codeRefused
 	}
 	return codeOK
@@ -227,7 +240,11 @@ func (r *Report) counts() (copied, equal, excluded, refused, attention int) {
 		case it.Result == ResultRefused:
 			refused++
 		case it.Result == ResultDryRun:
-			copied++
+			// A directory row is not a copy: a real run creates a directory as part of publishing the
+			// files under it, so counting it would overstate what the run would copy.
+			if !applyDir(it.Item) {
+				copied++
+			}
 		}
 	}
 	// A whole-scope refusal (a root-safety or preflight conflict) is stored in the error, not as an
