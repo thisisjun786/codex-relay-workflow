@@ -60,6 +60,7 @@ type supervisorReport struct {
 	TaskID   string          `json:"taskId"`
 	Settings json.RawMessage `json:"settings"`
 	Binding  json.RawMessage `json:"binding"`
+	Refusals json.RawMessage `json:"refusals"`
 }
 
 // supervisorRecord is crw manage supervisor register: the two relay answers, spliced in unchanged.
@@ -316,16 +317,20 @@ func supervisorShow(ctx context.Context, e *Env, args []string) int {
 		// one either: both are refused with the relay's own state and contention in detail, so a
 		// caller never reads a contested seat as an unbound one.
 		reason := "binding_state_unknown"
-		if answer.State == "ambiguous" || len(answer.Contention) > 0 {
+		if answer.State == "ambiguous" || len(supervisorLiveContention(answer.Contention)) > 0 {
 			reason = "binding_ambiguous"
 		}
 		return supervisorRefuse(e, reason, linkage)
 	}
-	if len(answer.Contention) > 0 {
+	if len(supervisorLiveContention(answer.Contention)) > 0 {
+		// A resolved or unregistered walk that carries a live conflict is still contested: the
+		// relay leaves the state resolved only when the contention it found is not one of the two
+		// competing ones, so the live entries are what decides this, not the state label.
 		return supervisorRefuse(e, "binding_ambiguous", linkage)
 	}
 	if err := supervisorWrite(e.Stdout, supervisorReport{OK: true, TaskID: section.TaskID,
-		Settings: settingsValue, Binding: supervisorStoreBinding(answer.Levels)}); err != nil {
+		Settings: settingsValue, Binding: supervisorStoreBinding(answer.Levels),
+		Refusals: supervisorRefusalRecords(answer.Contention)}); err != nil {
 		return supervisorWriteFailure(e, err)
 	}
 	return 0
@@ -348,6 +353,52 @@ type supervisorLinkage struct {
 	Readable   bool              `json:"readable"`
 	Levels     []supervisorLevel `json:"levels"`
 	Contention []json.RawMessage `json:"contention"`
+}
+
+// supervisorLiveContention is the entries of a linkage-up answer's contention array that are a
+// conflict the relay found now: each carries a non-empty "contention" key (competing_owners,
+// competing_parents, instruction_conflict, owner_drift, scope_cycle). The other kind of entry is a
+// past refusal record from the linkage_conflicts table, which carries no such key and is kept
+// forever; treating one of those as a live conflict would make show fail for good after a single
+// refused competitor, so the two kinds are read apart.
+func supervisorLiveContention(contention []json.RawMessage) []json.RawMessage {
+	var live []json.RawMessage
+	for _, entry := range contention {
+		var item struct {
+			Contention string `json:"contention"`
+		}
+		if err := json.Unmarshal(entry, &item); err != nil {
+			// An entry this command cannot read is not a live conflict it can name, but it is
+			// also not a past refusal: keep it out of the live set and let it ride in refusals as
+			// the relay's own bytes, so nothing is dropped.
+			continue
+		}
+		if item.Contention != "" {
+			live = append(live, entry)
+		}
+	}
+	return live
+}
+
+// supervisorRefusalRecords is the entries of a linkage-up answer's contention array that are past
+// refusal records rather than live conflicts: those with no "contention" key (or an empty one), and
+// any entry this command could not read. They are not a failure, so they are reported rather than
+// refused, and the array is always present (empty when there are none).
+func supervisorRefusalRecords(contention []json.RawMessage) json.RawMessage {
+	records := []json.RawMessage{}
+	for _, entry := range contention {
+		var item struct {
+			Contention string `json:"contention"`
+		}
+		if err := json.Unmarshal(entry, &item); err != nil || item.Contention == "" {
+			records = append(records, entry)
+		}
+	}
+	data, err := json.Marshal(records)
+	if err != nil {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(data)
 }
 
 // supervisorLinkageOf reads the linkage-up answer. ok is false when the answer is not JSON or says

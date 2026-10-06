@@ -172,6 +172,7 @@ type supervisorReportOut struct {
 	TaskID   string          `json:"taskId"`
 	Settings json.RawMessage `json:"settings"`
 	Binding  json.RawMessage `json:"binding"`
+	Refusals json.RawMessage `json:"refusals"`
 }
 
 // supervisorRefusalOut is the JSON object show writes when the linkage answer is a contested or
@@ -459,9 +460,8 @@ func TestSupervisorShowReportsAContestedBindingAsAmbiguous(t *testing.T) {
 	}
 }
 
-// C1: a resolved walk that carries any contention at all is refused the same way, because the
-// reader leaves the state resolved only when the contention it found is not one of the two
-// competing ones.
+// C1: a resolved walk that carries a live contention entry is refused: an entry with a
+// non-empty "contention" key is a conflict the relay found now, not a past refusal record.
 func TestSupervisorShowReportsAContentionListAsAmbiguous(t *testing.T) {
 	linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
 		`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],` +
@@ -482,6 +482,100 @@ func TestSupervisorShowReportsAContentionListAsAmbiguous(t *testing.T) {
 	}
 	if refusal.OK || refusal.Reason != "binding_ambiguous" || !strings.Contains(string(refusal.Detail), "owner_drift") {
 		t.Errorf("refusal %+v", refusal)
+	}
+}
+
+// C1 (generation 2): a past refusal record is not a live conflict. The relay keeps every
+// linkage_conflicts row forever, and those rows carry no "contention" key; counting them would make
+// show fail for good after one refused competitor. A resolved walk with only such a record is a
+// success, and the record rides along in refusals as the relay's own bytes.
+func TestSupervisorShowReportsAPastRefusalAsRefusals(t *testing.T) {
+	linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+		`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],` +
+		`"contention":[{"at":"2026-10-07T00:00:00Z","scopeKind":"store","scopeKey":"store",` +
+		`"reason":"duplicate_scope_owner","incumbent":"task-supervisor","challenger":"task-other",` +
+		`"detail":"the seat already had an owner"}]}`
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    linkage,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, errOut := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != 0 {
+		t.Fatalf("show: exit %d, stderr %q", code, errOut.String())
+	}
+	var report supervisorReportOut
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatalf("the output is not one JSON object: %v\n%s", err, out.String())
+	}
+	if !report.OK || !strings.Contains(string(report.Binding), `"bindingId":"bnd-1"`) {
+		t.Errorf("report %+v", report)
+	}
+	if !strings.Contains(string(report.Refusals), "duplicate_scope_owner") {
+		t.Errorf("refusals = %s, want the relay's own refusal record", report.Refusals)
+	}
+	var refusals []json.RawMessage
+	if err := json.Unmarshal(report.Refusals, &refusals); err != nil {
+		t.Fatalf("refusals is not an array: %v (%s)", err, report.Refusals)
+	}
+	if len(refusals) != 1 {
+		t.Errorf("refusals has %d entries, want 1", len(refusals))
+	}
+}
+
+// C1 (generation 2): the same rule for an unregistered walk: no binding, the refusal record still
+// reported, exit 0.
+func TestSupervisorShowReportsAPastRefusalWithNoBinding(t *testing.T) {
+	linkage := `{"state":"unregistered","readable":true,"levels":[],"gaps":[],` +
+		`"contention":[{"at":"2026-10-07T00:00:00Z","scopeKind":"store","scopeKey":"store",` +
+		`"reason":"duplicate_scope_owner","incumbent":"task-supervisor","challenger":"task-other",` +
+		`"detail":"the seat already had an owner"}]}`
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":null,"usable":false}`,
+		"linkage-up":    linkage,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, errOut := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != 0 {
+		t.Fatalf("show: exit %d, stderr %q", code, errOut.String())
+	}
+	var report supervisorReportOut
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err)
+	}
+	if !report.OK || string(report.Binding) != "null" {
+		t.Errorf("report %+v", report)
+	}
+	var refusals []json.RawMessage
+	if err := json.Unmarshal(report.Refusals, &refusals); err != nil {
+		t.Fatalf("refusals is not an array: %v (%s)", err, report.Refusals)
+	}
+	if len(refusals) != 1 {
+		t.Errorf("refusals has %d entries, want 1", len(refusals))
+	}
+}
+
+// C1 (generation 2): a walk with no contention at all still carries an empty refusals array, so a
+// caller can read the field unconditionally.
+func TestSupervisorShowReportsEmptyRefusalsWhenNone(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    supervisorResolved,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, errOut := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != 0 {
+		t.Fatalf("show: exit %d, stderr %q", code, errOut.String())
+	}
+	var report supervisorReportOut
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err)
+	}
+	if string(report.Refusals) != "[]" {
+		t.Errorf("refusals = %s, want []", report.Refusals)
 	}
 }
 
