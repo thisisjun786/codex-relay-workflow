@@ -314,12 +314,12 @@ func TestImproveProposeFaultDoesNotClaimTheScopeKeyAsAProject(t *testing.T) {
 	if doc.Project != "" {
 		t.Errorf("the fault draft project = %q, want empty (the scope key is not a project)", doc.Project)
 	}
-	if len(report.Candidates) == 1 {
-		for _, project := range report.Candidates[0].Projects {
-			if project.Project != auditDraftOwnerUnknown {
-				t.Errorf("the fault candidate claims the project %q, want only the owner-unknown marker", project.Project)
-			}
-		}
+	if len(report.Candidates) != 1 {
+		t.Fatalf("candidates = %+v, want one", report.Candidates)
+	}
+	projects := report.Candidates[0].Projects
+	if len(projects) != 1 || projects[0].Project != auditDraftOwnerUnknown {
+		t.Errorf("the fault candidate projects = %+v, want one owner-unknown marker", projects)
 	}
 }
 
