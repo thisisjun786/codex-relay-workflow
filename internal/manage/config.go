@@ -181,7 +181,11 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 	// A key that is there but empty is not a value: the install layout's defaults stand.
 	if cfg.StateDir == "" || !coreKeyPresent(manage["state_dir"]) {
 		cfg.StateDir = coreManageStateRoot(e, file)
-	} else {
+	}
+	// The value is the file's either way the file supplied it: the manage object's own
+	// state_dir, or a paths.manage_state override that moved the manage_state root. Only
+	// the install layout's default leaves the source as default.
+	if coreManageStateFromFile(manage, file) {
 		cfg.sources["state_dir"] = coreSourceConfig
 	}
 	if cfg.Relay.Socket == "" {
@@ -277,6 +281,17 @@ func coreManageStateRoot(e *Env, file *crwconfig.File) string {
 		return filepath.Join(coreHomeDir(e, "XDG_STATE_HOME", ".local/state"), "crw", "manage")
 	}
 	return roots[crwconfig.RootManage].Path
+}
+
+// coreManageStateFromFile reports whether the configuration file supplied the state
+// directory: its manage object carries a state_dir, or its paths section moved the
+// manage_state root, which crwconfig sources to the override input. A file that only
+// supplies the environment's own defaults leaves the value the install layout's.
+func coreManageStateFromFile(manage map[string]json.RawMessage, file *crwconfig.File) bool {
+	if coreKeyPresent(manage["state_dir"]) {
+		return true
+	}
+	return file != nil && file.Roots()[crwconfig.RootManage].Source == crwconfig.SourceConfig
 }
 
 // coreHomeDir is a per-user directory: the variable's value when it is set, else name

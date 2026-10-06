@@ -225,6 +225,9 @@ func TestConfigDefaultsWithoutAFileAndTheManageStateRoot(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errOut)
 	} else if report["state_dir"] != "/srv/elsewhere" {
 		t.Errorf("state_dir = %v, want the paths override", report["state_dir"])
+	} else if sources := coreBlock(t, report, "sources"); sources["state_dir"] != coreSourceConfig {
+		// The paths section is the file's, so the value it moved is not a default.
+		t.Errorf("sources[state_dir] = %v, want %q", sources["state_dir"], coreSourceConfig)
 	}
 }
 
