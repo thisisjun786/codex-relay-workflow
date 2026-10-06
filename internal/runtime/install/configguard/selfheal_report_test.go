@@ -194,6 +194,38 @@ func selfHealReportMtimeSpellings(t time.Time) (node, lossy string) {
 	return node, lossy
 }
 
+// selfHealReportPinMtime gives path the first instant of the hour starting at base whose two mtime
+// spellings differ and which the filesystem stores exactly as asked. It never skips: a filesystem
+// that rounds one instant is asked for the next, so the returned instant is always one where the
+// Node spelling and the lossy one disagree, and the caller's assertions are therefore about the
+// comparison rather than about a coincidence. It fails when it finds none within the hour.
+func selfHealReportPinMtime(t *testing.T, path string, base time.Time) (time.Time, string, string) {
+	t.Helper()
+	for i := 0; i < 1000; i++ {
+		candidate := base.Add(time.Duration(i) * time.Millisecond)
+		node, lossy := selfHealReportMtimeSpellings(candidate)
+		if node == lossy {
+			continue
+		}
+		if err := os.Chtimes(path, candidate, candidate); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.ModTime().Unix() != candidate.Unix() || info.ModTime().Nanosecond() != candidate.Nanosecond() {
+			continue
+		}
+		if got := selfHealReportMarkerMtimeMs(t, path); got != node {
+			t.Fatalf("the pinned mtime reads as %s, want %s", got, node)
+		}
+		return candidate, node, lossy
+	}
+	t.Fatalf("no instant in the hour from %v both differs between the two spellings and survives this filesystem", base)
+	return time.Time{}, "", ""
+}
+
 // selfHealReportFakeCodex puts a fake codex on PATH: "features list" answers with listing, anything
 // else exits 1, and every invocation is appended to the log this returns. It uses shell builtins
 // only, because the caller's PATH becomes the temporary directory that holds it.
@@ -413,55 +445,42 @@ func TestSelfHealReportCacheHitIsSilentWithoutCodex(t *testing.T) {
 // case fails if the comparison goes back to the lossy form and the second fails if it ever accepts
 // it, whatever the test helper does.
 func TestSelfHealReportCacheHitPinnedMtime(t *testing.T) {
-	fixed := time.Date(2026, 6, 15, 8, 9, 10, 250000000, time.UTC)
-	node, lossy := selfHealReportMtimeSpellings(fixed)
-	if node == lossy {
-		t.Fatalf("the pinned instant spells the same both ways (%s): pick another instant", node)
-	}
-	if node != "1781510950250" || lossy != "1781510950249.9998" {
-		t.Fatalf("the pinned instant spells %s and %s, want 1781510950250 and 1781510950249.9998", node, lossy)
-	}
+	// 2026-06-15T08:09:10Z is the first instant of a window in which the two spellings disagree; the
+	// helper walks forward from it when a filesystem stores a coarser timestamp.
+	base := time.Date(2026, 6, 15, 8, 9, 10, 0, time.UTC)
 
 	for _, tc := range []struct {
 		name, ms string
-		cached   bool
+		want     SelfHealReportAction
 	}{
-		{"the node spelling hits", node, true},
-		{"the lossy spelling misses", lossy, false},
+		{"the node spelling hits", "node", SelfHealReportSkipped},
+		{"the lossy spelling misses", "lossy", SelfHealReportOff},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := selfHealReportTempHome(t)
 			path := selfHealReportWriteConfig(t, home)
-			if err := os.Chtimes(path, fixed, fixed); err != nil {
-				t.Fatal(err)
-			}
-			info, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if info.ModTime().Unix() != fixed.Unix() || info.ModTime().Nanosecond() != fixed.Nanosecond() {
-				t.Skipf("this filesystem stores %v, not the pinned %v", info.ModTime(), fixed)
-			}
-			if got := selfHealReportMarkerMtimeMs(t, path); got != node {
-				t.Fatalf("the pinned mtime reads as %s, want %s", got, node)
+			pinned, node, lossy := selfHealReportPinMtime(t, path, base)
+			ms := node
+			if tc.ms == "lossy" {
+				ms = lossy
 			}
 			selfHealReportWriteMarker(t, home, "{\"checkedAt\":\"2025-12-31T00:00:00.000Z\",\"allEnabled\":true,\"healedKeys\":[],"+
-				"\"cachedKeys\":[\"default_mode_request_user_input\"],\"configMtimeMs\":"+tc.ms+"}\n")
+				"\"cachedKeys\":[\"default_mode_request_user_input\"],\"configMtimeMs\":"+ms+"}\n")
 			runner := &selfHealReportRunner{stdout: selfHealReportSoftOff}
 
 			outcomes := SelfHealReport(SelfHealReportDeps{CodexHome: home, Run: runner.run})
-			if tc.cached {
+			if tc.want == SelfHealReportSkipped {
 				if len(runner.calls) != 0 {
-					t.Fatalf("the pinned cache hit still called codex: %v", runner.calls)
+					t.Fatalf("the pinned cache hit at %v still called codex: %v", pinned, runner.calls)
 				}
 				if len(outcomes) != 1 || outcomes[0].Reason != SelfHealReasonCached {
-					t.Fatalf("outcomes = %+v, want one skipped/cached at the pinned mtime", outcomes)
+					t.Fatalf("outcomes = %+v, want one skipped/cached at %v (%s)", outcomes, pinned, node)
 				}
 				return
 			}
 			runner.onlyList(t)
-			if len(outcomes) != 1 || outcomes[0].Action != SelfHealReportOff {
-				t.Fatalf("outcomes = %+v, want one off outcome after the lossy spelling missed", outcomes)
+			if len(outcomes) != 1 || outcomes[0].Action != tc.want {
+				t.Fatalf("outcomes = %+v, want one off outcome: the lossy spelling %s of %v missed the mtime %s", outcomes, lossy, pinned, node)
 			}
 		})
 	}
