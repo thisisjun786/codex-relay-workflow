@@ -621,6 +621,25 @@ func TestEditMirror_a_shared_run_number_is_broken_by_the_larger_id(t *testing.T)
 	runEditMirror(t, c).check(t, c)
 }
 
+// run_number is the first key and id only breaks a tie between equal run numbers, so a run whose
+// larger id belongs to the smaller run_number is not the candidate.
+func TestEditMirror_the_run_number_outranks_the_id(t *testing.T) {
+	const older, newer = 9999, 1111
+	c := editMirrorCase{
+		name: "the smaller id carries the larger run number",
+		runs: []editMirrorRunFixture{
+			editMirrorRunAs(older, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+			editMirrorRunAs(newer, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 12 }),
+		},
+		jobs: map[int][]editMirrorJobFixture{
+			older: {editMirrorJob("validate", "success", 1)},
+			newer: {editMirrorJob("validate", "failure", 1)},
+		},
+		want: "false",
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
 // The script asks for the runs of this workflow on this head, reads every page so its answer
 // never rests on the API's page order, and never reads its own run.
 func TestEditMirror_reads_every_page_of_the_runs_of_this_workflow_on_this_head(t *testing.T) {
