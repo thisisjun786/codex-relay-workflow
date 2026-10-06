@@ -212,3 +212,26 @@ func TestWorktreeDelPipeScanIsLinear(t *testing.T) {
 	}
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeCompoundBodies pins the compound bodies the generation-2 re-review's probing reached: a case, a
+// while, a for and an if inside a subshell, a while inside a brace group, and a subshell nested in a subshell. Every
+// one of them runs the shell with the pipe on its standard input (checked in bash 5.3.9 with a touch stand-in for rm).
+// The region a pipe feeds runs to the end of the text when it opens a compound, because a compound's own separators
+// and its case patterns make its end hard to find and reading past it can only deny too much.
+func TestWorktreeDelPipeCompoundBodies(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | (case x in x) echo esac ; bash;; esac)",
+		"printf 'rm -rf ../repo' | (while true; do echo done ; bash; break; done)",
+		"printf 'rm -rf ../repo' | (for i in x; do bash; break; done)",
+		"printf 'rm -rf ../repo' | (if true; then bash; fi)",
+		"printf 'rm -rf ../repo' | ( echo done ; bash )",
+		"printf 'rm -rf ../repo' | { while true; do bash; break; done; }",
+		"printf 'rm -rf ../repo' | ( ( while true; do bash; break; done ) )",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A compound that runs something other than a shell is read as today, and the controls stay allowed.
+	r.allowed(t, "printf x | (cd sub; cat)", "printf x | { cat; }", "printf x | bash -c 'cat'", "printf x | nohup cat")
+	r.intact(t)
+}

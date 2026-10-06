@@ -2428,7 +2428,7 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 		}
 		end := worktreeDelUnreadablePipeEnd(text, i+1)
 		if worktreeDelUnreadableOpensCompound(strings.TrimSpace(text[i+1 : end])) {
-			end = worktreeDelUnreadableCompoundEnd(text, i+1) // a shell compound keeps the pipe to its closing keyword
+			end = len(text) // a compound keeps the pipe to its own end, which a separator or a case pattern can hide
 		}
 		if what, ok := worktreeDelUnreadablePipeRegion(strings.TrimSpace(text[i+1 : end])); ok {
 			return what, true
@@ -2438,8 +2438,10 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 	return "", false
 }
 
-// worktreeDelUnreadableOpensCompound says whether a text opens a shell compound whose body continues past a separator:
-// if, while, until, for and case.
+// worktreeDelUnreadableOpensCompound says whether a text opens a compound whose body continues past a separator: a
+// subshell or a brace group, or the shell keywords if, while, until, for and case. A compound's own separators and its
+// case patterns make its end hard to find, so the region a pipe feeds runs to the end of the text when it opens one:
+// reading past the compound can only deny too much, never too little (CRW-726, c15(b)).
 func worktreeDelUnreadableOpensCompound(text string) bool {
 	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
 	if len(plain) == 0 {
@@ -2449,54 +2451,7 @@ func worktreeDelUnreadableOpensCompound(text string) bool {
 	case "if", "while", "until", "for", "case":
 		return true
 	}
-	return false
-}
-
-// worktreeDelUnreadableCompoundEnd is the byte that closes the shell compound a pipe feeds, from the byte after the
-// operator: the matching fi, done or esac that stands as a word of its own, or the end of the text when none does.
-func worktreeDelUnreadableCompoundEnd(text string, from int) int {
-	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text[from:]))
-	for i := 0; i < len(plain); i++ {
-		switch basename(plain[i]) {
-		case "fi", "done", "esac":
-			return worktreeDelUnreadableWordEnd(text, from, i+1)
-		}
-	}
-	return len(text)
-}
-
-// worktreeDelUnreadableWordEnd is the byte just past the n-th word of a text, counted from `from`.
-func worktreeDelUnreadableWordEnd(text string, from, n int) int {
-	r := worktreeDelQuoteReader{prev: ' '}
-	seen := 0
-	for i := from; i < len(text); i++ {
-		c := text[i]
-		if r.escapes(text, i) {
-			r.pair()
-			i++
-			continue
-		}
-		state := r.state
-		r.step(c)
-		if state != worktreeDelQuotePlain || r.state != worktreeDelQuotePlain {
-			continue
-		}
-		if strings.IndexByte(" \t\r\n;&|(){}", c) >= 0 {
-			continue
-		}
-		if i == from || strings.IndexByte(" \t\r\n;&|(){}", text[i-1]) >= 0 {
-			seen++
-			if seen == n {
-				for j := i; j < len(text); j++ {
-					if strings.IndexByte(" \t\r\n;&|(){}", text[j]) >= 0 {
-						return j
-					}
-				}
-				return len(text)
-			}
-		}
-	}
-	return len(text)
+	return strings.HasPrefix(strings.TrimSpace(text), "(") || strings.HasPrefix(strings.TrimSpace(text), "{")
 }
 
 // worktreeDelUnreadablePipeEnd is the byte that ends the command a pipe feeds, from the byte after the operator: the next
