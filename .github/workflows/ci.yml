@@ -11,39 +11,95 @@ permissions:
   contents: read
 
 concurrency:
-  # A title or body edit that keeps the base gets its own group, so it never cancels the
-  # run a push started. A retarget stays in the main group and replaces obsolete runs.
-  group: workflow-skills-ci-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'edited' && !github.event.changes.base && '-edit' || '' }}
-  cancel-in-progress: true
+  # A title or body edit that keeps the base joins the pull request's own group, so it waits
+  # behind a running run instead of cancelling it, and a later push cancels it in turn. A
+  # retarget and every other event still replace obsolete runs.
+  group: workflow-skills-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !(github.event.action == 'edited' && !github.event.changes.base) }}
 
 jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # The mirror reads this repository's runs and jobs with the workflow's own token.
+    permissions:
+      contents: read
+      actions: read
     steps:
+      # A body-only edit needs only the mirror script, and the script has to exist before the
+      # mirror decides, so it is fetched sparsely first. Every other run skips this step.
+      - name: Check out scripts/ci for the body-only edit mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      # On a body-only edit, a job this head already ran successfully stands down. Every later
+      # step of this job carries the answer, so no step is skipped at job level, which GitHub
+      # would report as a success and a skipped dev-gate could hide an earlier red run with.
+      - name: Mirror the jobs this head already ran
+        id: mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        run: bash scripts/ci/edit_mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_NAME: validate
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.mirror.outputs.mirrored != 'true'
         with:
           # The large-blob check judges every blob a pull request or a push brings into the history.
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.mirror.outputs.mirrored != 'true'
         with:
           go-version-file: go.mod
       # The CI checks live in the development binary, which release archives never carry.
       - run: go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev
+        if: steps.mirror.outputs.mirrored != 'true'
       # A pull request run judges the commits it adds to its base, a push to dev the commits it adds;
       # a run with neither (a manual dispatch) judges every commit.
       - run: '"$RUNNER_TEMP/crw-dev" ci validate'
         env:
           BLOB_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        if: steps.mirror.outputs.mirrored != 'true'
       - run: '"$RUNNER_TEMP/crw-dev" ci plugin'
+        if: steps.mirror.outputs.mirrored != 'true'
       - run: '"$RUNNER_TEMP/crw-dev" ci contracts'
+        if: steps.mirror.outputs.mirrored != 'true'
 
   secrets:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     steps:
+      - name: Check out scripts/ci for the body-only edit mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Mirror the jobs this head already ran
+        id: mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        run: bash scripts/ci/edit_mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_NAME: secrets
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.mirror.outputs.mirrored != 'true'
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -51,10 +107,14 @@ jobs:
       - run: bash scripts/ci/secrets.sh
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        if: steps.mirror.outputs.mirrored != 'true'
 
   go-product:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -62,22 +122,42 @@ jobs:
         # `make test` (the contract corpus included); the static release binaries.
         part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]
     steps:
+      - name: Check out scripts/ci for the body-only edit mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Mirror the jobs this head already ran
+        id: mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        run: bash scripts/ci/edit_mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_NAME: go-product (${{ matrix.part }})
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.mirror.outputs.mirrored != 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.mirror.outputs.mirrored != 'true'
         with:
           go-version-file: go.mod
       - name: Lint
-        if: matrix.part == 'lint'
+        if: matrix.part == 'lint' && steps.mirror.outputs.mirrored != 'true'
         run: make lint
       - name: Test and replay the contract corpus (${{ matrix.part }})
-        if: startsWith(matrix.part, 'test-')
+        if: startsWith(matrix.part, 'test-') && steps.mirror.outputs.mirrored != 'true'
         env:
           PART: ${{ matrix.part }}
         run: make test-part TEST_PART="${PART#test-}"
       - name: Build the static binaries for every published target
-        if: matrix.part == 'dist'
+        if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
         run: |
           for target in linux/amd64 linux/arm64 darwin/arm64; do
             os=${target%/*}
@@ -89,29 +169,29 @@ jobs:
       # home and the plugin's declared wiring runs against it. CGO_ENABLED=0 and -trimpath are
       # the dist build's, so the test reuses its compiled packages and only relinks.
       - name: Install and wire the release binary in an isolated home
-        if: matrix.part == 'dist'
+        if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
         env:
           CGO_ENABLED: '0'
         run: CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...
-      - if: matrix.part == 'dist'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_linux_amd64
           path: dist/crw_linux_amd64/crw
           if-no-files-found: error
-      - if: matrix.part == 'dist'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_linux_arm64
           path: dist/crw_linux_arm64/crw
           if-no-files-found: error
-      - if: matrix.part == 'dist'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_darwin_arm64
           path: dist/crw_darwin_arm64/crw
           if-no-files-found: error
-      - if: matrix.part == 'dist'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SHA256SUMS

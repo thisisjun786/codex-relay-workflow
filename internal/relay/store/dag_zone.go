@@ -709,4 +709,49 @@ BEGIN SELECT RAISE(ABORT, 'dag_generation_withdrawals rows are append-only: neve
     PRIMARY KEY (plan_id, pass_seq),
     FOREIGN KEY (plan_id, pass_seq) REFERENCES dag_passes (plan_id, pass_seq)
 )`,
+	// CRW-728: the proof dag-accept records when it accepts a head the parent's ruling verified (CRW-666, the second slice of the decision in docs/port/decisions.md section 78). The acceptance row keeps its own
+	// identity and the accepted head stays the one the relay reads from the forge; this record is the evidence of how that head was produced: the head the ruling named, and the base the merge came from, with the
+	// proof_json and resolved_paths_json bodies dag_base_refreshes already carries (dagsched/baserefresh.go). It is deliberately outside the acceptance's identity, so a deleted row could not be told from an
+	// acceptance that never needed one: the table is append-only and its id is the digest of its content, so a row written by hand is ignored by every reader.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_refreshes (
+    refresh_id           TEXT PRIMARY KEY CHECK (refresh_id <> ''),
+    acceptance_id        TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    refresh_seq          INTEGER NOT NULL CHECK (refresh_seq >= 1),
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 1),
+    event_id             TEXT NOT NULL CHECK (event_id <> ''),
+    revision_hash        TEXT NOT NULL CHECK (revision_hash <> ''),
+    head_sha             TEXT NOT NULL CHECK (head_sha <> ''),
+    verified_head_sha    TEXT NOT NULL CHECK (verified_head_sha <> ''),
+    base_repository      TEXT NOT NULL CHECK (base_repository <> ''),
+    base_ref             TEXT NOT NULL CHECK (base_ref <> ''),
+    base_tip_sha         TEXT NOT NULL CHECK (base_tip_sha <> ''),
+    proof_json           TEXT NOT NULL CHECK (proof_json <> ''),
+    resolved_paths_json  TEXT NOT NULL,
+    recorded_by_task_id  TEXT NOT NULL,
+    coordinator_epoch    INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at          TEXT NOT NULL,
+    UNIQUE (acceptance_id, refresh_seq),
+    UNIQUE (acceptance_id, head_sha)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_no_update BEFORE UPDATE ON dag_acceptance_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_acceptance_refreshes_no_delete BEFORE DELETE ON dag_acceptance_refreshes
+BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes rows are append-only: never deleted'); END`,
+
+	// CRW-728: the head a verdict turn verified, fixed when the ruling is recorded so dag-accept can prove a parent-made refresh against it instead of trusting the head the forge shows at accept time (the
+	// post-merge finding P1-1 of the CRW-666 pull request, the parent's decision of 2026-10-06). One event has one verified head; the record keys nothing outside the zone, so it is written on its own.
+	`CREATE TABLE IF NOT EXISTS dag_verified_heads (
+    event_id             TEXT PRIMARY KEY CHECK (event_id <> ''),
+    relationship_id      TEXT NOT NULL CHECK (relationship_id <> ''),
+    execution_generation INTEGER NOT NULL CHECK (execution_generation >= 1),
+    verdict_turn_id      TEXT NOT NULL CHECK (verdict_turn_id <> ''),
+    head_sha             TEXT NOT NULL CHECK (head_sha <> ''),
+    recorded_by_task_id  TEXT NOT NULL,
+    recorded_at          TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_no_update BEFORE UPDATE ON dag_verified_heads
+BEGIN SELECT RAISE(ABORT, 'dag_verified_heads rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_no_delete BEFORE DELETE ON dag_verified_heads
+BEGIN SELECT RAISE(ABORT, 'dag_verified_heads rows are append-only: never deleted'); END`,
 }
