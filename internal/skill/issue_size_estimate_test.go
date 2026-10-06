@@ -75,6 +75,7 @@ func TestIssueSizeEstimateForms(t *testing.T) {
 		{"estimate 400 lines", 400},
 		{"about 350 lines", 350},
 		{"약 200줄, 약 450줄", 450},
+		{"600 미만", 600},
 	} {
 		t.Run(test.text, func(t *testing.T) {
 			_, r, out := sizeEstimateCheck(t, sizeEstimateBody(test.text), nil)
@@ -206,6 +207,7 @@ func TestIssueSizeCalibrateTables(t *testing.T) {
 		{"foreign schema", "crw-issue-size-calibration/2", good},
 		{"missing cell", "crw-issue-size-calibration/1", []map[string]any{{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": 150, "actual_test": nil}}},
 		{"negative actual", "crw-issue-size-calibration/1", []map[string]any{{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": -150, "actual_test": 0}}},
+		{"actual counts overflow", "crw-issue-size-calibration/1", []map[string]any{{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": 9223372036854775807, "actual_test": 1}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if code, _, errOut := call([]string{"issue-size", "calibrate", "--table", sizeEstimateTableFile(t, test.schema, test.rows)}, ""); code != 2 || errOut == "" {

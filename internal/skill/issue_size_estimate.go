@@ -162,10 +162,12 @@ func sizeEstimateDistributionOf(rows []sizeEstimateRatio) sizeEstimateDistributi
 }
 
 // sizeEstimateForms are the ways a body states its line estimate, in the sections the check reads:
-// 추정 N줄, 약 N줄, N~M줄, estimate N lines, about N lines. A range's upper bound is the stated value.
+// 추정 N줄, 약 N줄, N~M줄, N 미만, estimate N lines, about N lines. A range's upper bound is the
+// stated value, and "N 미만" (under N) is N, the reading the issue's own calibration table records.
 var sizeEstimateForms = []*regexp.Regexp{
 	regexp.MustCompile("(?:추정|약)[[:space:]]*([0-9][0-9,]*)[[:space:]]*줄"),
 	regexp.MustCompile("([0-9][0-9,]*)[[:space:]]*[~–—-][[:space:]]*([0-9][0-9,]*)[[:space:]]*줄"),
+	regexp.MustCompile("([0-9][0-9,]*)[[:space:]]*줄?[[:space:]]*미만"),
 	regexp.MustCompile("(?i)(?:estimate[sd]?|about)[[:space:]]+(?:of[[:space:]]+)?(?:about[[:space:]]+)?([0-9][0-9,]*)[[:space:]]*lines?"),
 }
 
