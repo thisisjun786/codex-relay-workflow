@@ -185,6 +185,16 @@ func write(t *testing.T, path, text string) {
 	}
 }
 
+// writeExecutable writes a file this test process then runs, through the same helper the package
+// uses for its own: a fork that landed inside the write would inherit the descriptor and leave
+// the path unexecutable (ETXTBSY, golang/go#22315).
+func writeExecutable(t *testing.T, path string, body []byte, mode os.FileMode) {
+	t.Helper()
+	if err := install.WriteExecutable(path, body, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func at(o record.Object, path ...string) any {
 	var v any = o
 	for _, key := range path {

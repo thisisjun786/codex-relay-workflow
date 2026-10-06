@@ -128,6 +128,7 @@ func (k *releaseKit) recoveries(action string) int {
 
 // c1: a release refused after it froze an oversize manifest leaves nothing behind, and says what it removed.
 func TestRefusedReleaseLeavesNoFrozenCopy(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	k.holdSlots(6)
@@ -169,6 +170,7 @@ func TestRefusedReleaseLeavesNoFrozenCopy(t *testing.T) {
 
 // c1: assemble can refuse after it froze (the prompt is too long); that copy goes too.
 func TestAssembleRefusalAfterTheFreezeRemovesTheCopy(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	req := k.request(false)
@@ -190,6 +192,7 @@ func TestAssembleRefusalAfterTheFreezeRemovesTheCopy(t *testing.T) {
 
 // c1: a release that loses a race over identical bytes created the file the winner reuses; the winner's intent names it, so it stays.
 func TestLostRaceOverIdenticalBytesKeepsTheWinnersCopy(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	k.sched.Now = func() string { return "2026-10-02T01:00:00.000000+00:00" }
@@ -220,6 +223,7 @@ func TestLostRaceOverIdenticalBytesKeepsTheWinnersCopy(t *testing.T) {
 
 // c1: the intent is recorded over a copy that is there: a copy that vanished between the freeze and the intent transaction is frozen again inside it.
 func TestIntentTransactionFreezesAVanishedCopyAgain(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	k.sched.testAfterReserve = func() error {
@@ -246,6 +250,7 @@ func TestIntentTransactionFreezesAVanishedCopyAgain(t *testing.T) {
 
 // c1: what a live intent or a stored manifest names is never removed, whoever asks: a bound release, the manifest an acceptance rests on, a prepared correction.
 func TestDiscardNeverRemovesWhatALiveIntentOrAStoredManifestNames(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	res := k.mustRelease("rp", "B")
@@ -275,6 +280,7 @@ func TestDiscardNeverRemovesWhatALiveIntentOrAStoredManifestNames(t *testing.T) 
 }
 
 func TestDiscardNeverRemovesAPreparedCorrectionsCopy(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.correctionKit()
 	prepared := k.prepare()
@@ -293,6 +299,7 @@ func TestDiscardNeverRemovesAPreparedCorrectionsCopy(t *testing.T) {
 
 // c1: a call removes only a file it created, only a regular file that hashes to its name, and nothing a live intent names; an orphan is removed with its evidence.
 func TestDiscardRemovesOnlyAnOrphanItCreated(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	dir := filepath.Join(k.root, "dag-input-manifests")
@@ -352,6 +359,7 @@ func TestDiscardRemovesOnlyAnOrphanItCreated(t *testing.T) {
 
 // c2: the reading names the way on, and closing returns the slot and frees the node (it reads ready again, since nothing owns it).
 func TestCloseReturnsTheSlotOfAnAbandonedRelease(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, request := k.abandon("rp", "A")
@@ -383,6 +391,7 @@ func TestCloseReturnsTheSlotOfAnAbandonedRelease(t *testing.T) {
 
 // c2: the same close again is the same answer, before and after the node was released again, and it changes nothing.
 func TestCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, _ := k.abandon("rp", "A")
@@ -410,6 +419,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 
 // c2: close answers only for an intent that is abandoned.
 func TestCloseRefusals(t *testing.T) {
+	t.Parallel()
 	type setup func(k *releaseKit) string
 	cases := []struct {
 		name    string
@@ -479,6 +489,7 @@ func TestCloseRefusals(t *testing.T) {
 
 // c2: after the close the node is released again by the ordinary command. The same manifest goes under a successor request id (the abandoned one is a tombstone forever), once.
 func TestReleaseAfterCloseReleasesOnceUnderASuccessorRequest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, abandoned := k.abandon("rp", "A")
@@ -513,6 +524,7 @@ func TestReleaseAfterCloseReleasesOnceUnderASuccessorRequest(t *testing.T) {
 
 // c2: a manifest that changed since the abandoned release (here the tip the child starts from moved) is an ordinary new release under its own digest.
 func TestReleaseAfterCloseOfAChangedManifestIsAnOrdinaryRelease(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, _ := k.abandon("rp", "I")
@@ -529,6 +541,7 @@ func TestReleaseAfterCloseOfAChangedManifestIsAnOrdinaryRelease(t *testing.T) {
 
 // c2: a digest that matches an OLDER closed intent (the tip moved away and back) is reopened under a successor of that intent's request, and the node's current intent is the successor.
 func TestReleaseAfterCloseOfAnOlderManifestReopensThatIntent(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	first, firstRequest := k.abandon("rp", "I")
@@ -555,6 +568,7 @@ func TestReleaseAfterCloseOfAnOlderManifestReopensThatIntent(t *testing.T) {
 
 // c2: nothing is released again while a live child owns the issue, and the refusal leaves no slot and no row behind.
 func TestReleaseAfterCloseCreatesNoChildWhileALiveChildExists(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, _ := k.abandon("rp", "A")
@@ -572,6 +586,7 @@ func TestReleaseAfterCloseCreatesNoChildWhileALiveChildExists(t *testing.T) {
 
 // c2: eight callers release a closed node at once, from two connections: one child.
 func TestReleaseAfterCloseCreatesOneChildUnderRace(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, _ := k.abandon("rp", "A")
@@ -612,6 +627,7 @@ func TestReleaseAfterCloseCreatesOneChildUnderRace(t *testing.T) {
 
 // c2: a successor start that is released again is abandoned again: close and release once more give a third request id, and still one live child.
 func TestAbandonedSuccessorCanBeClosedAndReleasedAgain(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, first := k.abandon("rp", "A")
@@ -638,6 +654,7 @@ func TestAbandonedSuccessorCanBeClosedAndReleasedAgain(t *testing.T) {
 
 // c2: an operator may already have returned the slot; closing then returns nothing and still closes.
 func TestCloseAfterTheOperatorReturnedTheSlot(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, _ := k.abandon("rp", "A")
@@ -655,6 +672,7 @@ func TestCloseAfterTheOperatorReturnedTheSlot(t *testing.T) {
 
 // c1: closing removes the copy the abandoned intent froze, unless a live intent still names the same file; the answer records it and a repeat answers the same.
 func TestCloseRemovesTheCopyOfTheAbandonedIntent(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	digest, _ := k.abandon("rp", "B")
@@ -679,6 +697,7 @@ func TestCloseRemovesTheCopyOfTheAbandonedIntent(t *testing.T) {
 }
 
 func TestCloseKeepsACopyALiveIntentNames(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	digest, _ := k.abandon("rp", "B")
@@ -712,6 +731,7 @@ func newReleaseKitAt(t *testing.T, state string) *releaseKit {
 
 // c2: the command through the built binary: the shapes of success, replay, refusal and usage.
 func TestCLIReleaseClose(t *testing.T) {
+	t.Parallel()
 	state := filepath.Join(t.TempDir(), "state")
 	k := newReleaseKitAt(t, state)
 	releasePlan(k.fixture, "rp")
@@ -759,6 +779,7 @@ func TestCLIReleaseClose(t *testing.T) {
 
 // c3: the page names the command, the table, the successor id, the removal's mechanism and every reason the journal evidence can give.
 func TestSchedulerPageDescribesTheRecoveryAndTheCleanup(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)

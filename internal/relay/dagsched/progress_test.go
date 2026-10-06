@@ -86,6 +86,7 @@ func pinnedAcceptance(head string, pr int64) acceptOpts {
 
 // Criterion c4 (contract E-01 fork and join): the fixed record of the fork/join plan, before anything runs and part way through, gives the expected distribution.
 func TestProgressForkJoinDistribution(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -133,6 +134,7 @@ func TestProgressForkJoinDistribution(t *testing.T) {
 // Criterion c4 (contract E-24, E-18: amend) and c3 (overlapping counts): over the shared-root plan a revision that changes one node makes it and the node built on it stale; their siblings and
 // their ancestor stay accepted. The nodes that went stale are still counted as accepted, so accepted and stale overlap: neither the document nor the test adds them up.
 func TestProgressAmendMakesDescendantsStale(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	invSharedRoot(k)
 	p := k.progress("sr")
@@ -191,6 +193,7 @@ func stalePrinted(t *testing.T, p Progress) error {
 
 // Criterion c4 (contract 3.2, 7.4: pause): a paused node stays where the relay says it is, still holds its slot, and a paused node that was accepted is still an accepted one.
 func TestProgressPauseDistribution(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("pz", 0, "pz-r1", addNode("x", dag.NodeImplementation), addNode("y", dag.NodeNonPR), addNode("z", dag.NodeNonPR), addEdge("yz", "y", "z", dag.EdgeArtifactVerified, nil))
@@ -222,6 +225,7 @@ func TestProgressPauseDistribution(t *testing.T) {
 // Criterion c4 and the first risk of the design: blocked is an overlay, not a stage. A node that is accepted and evicted, one whose child reported blocked, one whose creation is unknown, one with no
 // relationship behind its execution and one whose managed start was released all stay in the stage of their derived state and are listed, with their reasons, as blocked.
 func TestProgressBlockedOverlay(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("bk", 0, "bk-r1", addNode("ev", dag.NodeImplementation), addNode("eff", dag.NodeImplementation), addNode("rep", dag.NodeNonPR), addNode("cre", dag.NodeNonPR), addNode("amb", dag.NodeNonPR), addNode("abn", dag.NodeNonPR))
@@ -264,6 +268,7 @@ func TestProgressBlockedOverlay(t *testing.T) {
 // Criterion c3: a revision change always shows the change in the denominator. Five revisions: the plan starts with three nodes, a fourth is added, one is retired, one is updated (same id, new
 // version) and one is replaced (one id out, one in, the count the same).
 func TestProgressRevisionDenominators(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("p", 0, "p-r1", addNode("a", dag.NodeNonPR), addNode("b", dag.NodeNonPR), addNode("c", dag.NodeNonPR),
 		addEdge("ab", "a", "b", dag.EdgeArtifactVerified, nil), addEdge("bc", "b", "c", dag.EdgeArtifactVerified, nil))
@@ -331,6 +336,7 @@ func TestProgressRevisionDenominators(t *testing.T) {
 // Criterion c3: activity is never progress. Polls of the child's turn, observations of its lifecycle, turns admitted and token usage of a dimension nobody limited are written again and again,
 // the scheduler's clock is moved far ahead, and the document does not change by a byte.
 func TestProgressActivityIsNeverProgress(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("a", 0, "a-r1", addNode("run", dag.NodeNonPR), addNode("cand", dag.NodeNonPR))
@@ -362,6 +368,7 @@ func TestProgressActivityIsNeverProgress(t *testing.T) {
 // Criterion c3, the distinction the activity test leaves open: a limit someone declared and a usage someone recorded against it are a resource fact. It decides whether a node that has not started
 // reads ready or waiting on a resource, and it never moves a node that started.
 func TestProgressResourceIsNotActivity(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("r", 0, "r-r1", addNode("run", dag.NodeNonPR), addNode("cand", dag.NodeNonPR))
@@ -390,6 +397,7 @@ func TestProgressResourceIsNotActivity(t *testing.T) {
 // Criterion c4 (pause) through the plan's own lifecycle changes: a node the plan cancelled or archived is in that stage and is not counted as done, a node it paused and a node of a paused plan
 // that nobody owns are paused, an owned node the plan holds keeps its execution's stage (the plan stops the scheduler, not the child), and the document says what the plan did, revision by revision.
 func TestProgressPlanLifecycle(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("lc", 0, "lc-r1", addNode("un", dag.NodeNonPR), addNode("ar", dag.NodeNonPR), addNode("ca", dag.NodeNonPR), addNode("pa", dag.NodeNonPR),
@@ -472,6 +480,7 @@ func TestProgressPlanLifecycle(t *testing.T) {
 // A landing is not taken back by the plan: a node whose pull request landed stays integrated, and counted, when the plan cancels it, while a node accepted and not landed that the plan cancels is not
 // counted as done.
 func TestProgressLandingSurvivesCancel(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -497,6 +506,7 @@ func TestProgressLandingSurvivesCancel(t *testing.T) {
 // The plan's cancel and a cancelled relationship both put a node in the cancelled stage, and only the plan's takes its acceptance out of the count: a relationship that was cancelled after the node was
 // accepted leaves the acceptance standing.
 func TestProgressCancelledRelationshipStillCountsItsAcceptance(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("cr", 0, "cr-r1", addNode("rel", dag.NodeNonPR), addNode("pln", dag.NodeNonPR))
@@ -515,6 +525,7 @@ func TestProgressCancelledRelationshipStillCountsItsAcceptance(t *testing.T) {
 
 // Every branch of the stage rule, and the states the rule refuses.
 func TestProgressStageOf(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		state, disposition, reason string
 		want                       string
@@ -585,6 +596,7 @@ func TestProgressStageOf(t *testing.T) {
 
 // The stage rule with the plan's lifecycle: the plan's end beats the execution's state except for a landing; a pause on an owned node does not move it; a paused plan holds a node nobody owns.
 func TestProgressStageOfLifecycle(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		state, disposition, reason, life string
 		want                             string
@@ -634,6 +646,7 @@ func syntheticInput(nodes ...NodeReading) ProgressInput {
 // Criterion c3 (0 blocked nodes without a reason): the projection refuses, as a failure of the host, a reading that would print a blocked or stale node it cannot explain, a state it has no
 // stage for, and revisions that do not end at the reading's own denominator.
 func TestProgressRefusesWhatItCannotExplain(t *testing.T) {
+	t.Parallel()
 	good := NodeReading{NodeID: "n", IssueKey: "CRW-n", Kind: dag.NodeNonPR, State: StateRunning, Disposition: DispSkip, Reason: SkipAlreadyOwned, Detail: "relay state requested"}
 	if _, err := ProjectProgress(syntheticInput(good)); err != nil {
 		t.Fatalf("a sound reading is refused: %v", err)
@@ -662,6 +675,7 @@ func TestProgressRefusesWhatItCannotExplain(t *testing.T) {
 
 // The links: exact identifiers, null where the store holds nothing, never guessed.
 func TestProgressLinks(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("l", 0, "l-r1", addNode("run", dag.NodeNonPR), addNode("rel", dag.NodeNonPR), addNode("acc", dag.NodeImplementation), addNode("rep", dag.NodeImplementation),
@@ -748,6 +762,7 @@ func TestProgressLinks(t *testing.T) {
 // A release that was closed (the abandoned managed start ended, its slot returned) no longer owns the node: the node is planned again and shows no managed start. The release that follows a
 // close of the same manifest is the node's open intent under its successor request id, and that is the managed start the node shows.
 func TestProgressManagedStartFollowsTheOpenIntent(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("c", 0, "c-r1", addNode("n", dag.NodeNonPR))
@@ -776,6 +791,7 @@ func TestProgressManagedStartFollowsTheOpenIntent(t *testing.T) {
 // The store-only path (criterion c2), through the production call and the layers below it: Progress marks its context, and under the mark no artifact is stat'ed and the assignment view
 // spells recovery commands with a fixed program name. dag-ready, which does not mark, is unchanged, and the control proves the fixture reaches the stat. The plan is a diamond: d rests on p1 and
 // p2; when p1 changes d is rebuilt, and p2, which did not change, hands over an artifact whose receipt declared no size.
+// sequential: assigns the package variable statArtifact.
 func TestProgressStoreOnlyBypasses(t *testing.T) {
 	f := newFixture(t)
 	f.projectParent()
@@ -833,6 +849,7 @@ func TestProgressStoreOnlyBypasses(t *testing.T) {
 // ReadProgress is a store transaction like Read: inside a composing transaction it joins the caller's, inside a plain one it is refused; a caller already inside a transaction calls Progress with
 // its own querier.
 func TestProgressInsideCallersTransaction(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -872,6 +889,7 @@ func TestProgressInsideCallersTransaction(t *testing.T) {
 
 // A guard, not the proof of criterion c2 (that is the behaviour above and the command test): the library file imports nothing that reaches outside the process or the command layer.
 func TestProgressSourceImportsGuard(t *testing.T) {
+	t.Parallel()
 	file, err := parser.ParseFile(token.NewFileSet(), "progress.go", nil, parser.ImportsOnly)
 	if err != nil {
 		t.Fatal(err)
@@ -888,6 +906,7 @@ func TestProgressSourceImportsGuard(t *testing.T) {
 
 // The page names the command, the schema, every stage and every key of the document, so it cannot drift from what the code prints.
 func TestProgressPageNamesEveryStageAndKey(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-progress.md")
 	if err != nil {
 		t.Fatal(err)

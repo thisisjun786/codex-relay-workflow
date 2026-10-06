@@ -370,7 +370,7 @@ func (a Archive) Unpack(environment string) error {
 			return fmt.Errorf("the archive's %s is neither a link to %s nor its bytes", name, Binary)
 		}
 	}
-	if err := writeFile(filepath.Join(bin, Binary), binary, 0o755); err != nil {
+	if err := writeExecutable(filepath.Join(bin, Binary), binary, 0o755); err != nil {
 		return err
 	}
 	for _, name := range definition.Links() {

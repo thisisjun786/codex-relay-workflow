@@ -350,3 +350,29 @@ func TestANullPathsSectionIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// C12: the default location is the configuration home's raw text plus /crw/config.json,
+// joined the way the roots are, so a base that mixes a symbolic link and ".." keeps the
+// meaning the filesystem gives that spelling instead of the directory filepath.Clean names.
+func TestTheDefaultLocationKeepsTheRawConfigurationHome(t *testing.T) {
+	home := t.TempDir()
+	real := t.TempDir()
+	link := filepath.Join(home, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	// The raw text mixes the link and "..", so cleaning it would name a different tree.
+	raw := link + "/../link"
+	env := rootsEnv("HOME", home, "XDG_CONFIG_HOME", raw)
+	file, err := Load(env, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, source := file.Path()
+	if want := raw + "/crw/config.json"; path != want {
+		t.Errorf("the default location is %q, want the raw %q", path, want)
+	}
+	if source != SourceEnv {
+		t.Errorf("the source is %q, want env", source)
+	}
+}

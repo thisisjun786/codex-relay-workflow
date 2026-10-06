@@ -244,6 +244,7 @@ func TestAReEmitOfTheSameBytesIsADuplicateOfTheSuppressedReceipt(t *testing.T) {
 // c3: emit. A naming of a suppressed receipt is accepted and recorded as the child stated it; the
 // head reads it as above. The command is run as the child runs it after a restart, in a turn
 // admitted by a continuation claim, and the head is read back with revision-head.
+// sequential: assigns the package variable CommandClock.
 func TestEmitAcceptsARevisionNamingASuppressedReceipt(t *testing.T) {
 	w := newSPWorld(t)
 	previous := CommandClock

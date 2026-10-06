@@ -70,7 +70,9 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 		// The collector's notRun mark is read as a strict boolean, the same read merge-evidence's
 		// notRunJobs uses: anything that is not true reads false (CRW-676).
 		notRun, _ := c["notRun"].(bool)
-		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Stamp: stamps[textOf(c["runId"])], Attempt: attempt, NotRun: notRun})
+		// The collector's testSkipped mark is read the same way (CRW-824).
+		testSkipped, _ := c["testSkipped"].(bool)
+		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Stamp: stamps[textOf(c["runId"])], Attempt: attempt, NotRun: notRun, TestSkipped: testSkipped})
 	}
 	// the collector holds the declared list as []string when it read it and nil when it could not: nil is "not declared", an empty list is "requires none".
 	switch declared := handoff["requiredDeclared"].(type) {
@@ -101,13 +103,17 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 
 // forgeRows restates the checks of the head the way the evidence predicate reads them. The
 // collector's notRun mark is written back only when it is set, so a row without it gains no field
-// and an ordinary failure stays an ordinary failure (CRW-676).
+// and an ordinary failure stays an ordinary failure (CRW-676). The testSkipped mark is written
+// back the same way (CRW-824).
 func forgeRows(checks []Check) []any {
 	var rows []any
 	for _, c := range checks {
 		row := map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalText(c.Provider)}
 		if c.NotRun {
 			row["notRun"] = true
+		}
+		if c.TestSkipped {
+			row["testSkipped"] = true
 		}
 		rows = append(rows, row)
 	}
