@@ -1398,3 +1398,6 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoa
   `evidence/x/.123.1760000000000.tmp` was skipped (`classify.go:574-597`); port: fixed — the exact temporary shapes of
   docs/port-cxc/state-migration.md:105 are now matched only inside the directory of the producer that writes them, and the
   final-name part before `.<pid>.` must be non-empty, with the red-first cases in `inventory_intermediate_test.go`.
+  Consequence of the fix, disclosed: a `.tmp` or `.probe-` name of a producer row 105 does not name (the `dispatches/`,
+  `objective-kind/` and `divergence/` writers) now reports `not in the inventory` instead of `producer intermediate`; the
+  disposition is unchanged (skip, never copied).

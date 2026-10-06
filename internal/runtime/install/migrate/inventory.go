@@ -269,7 +269,9 @@ type inventoryIntermediateRow struct {
 }
 
 // inventoryIntermediateRows names every producer the design's fifth table lists, with the source line that writes its
-// temporary. Table order is not significant: the rows are disjoint by scope, directory and shape.
+// temporary. The first row whose scope, directory and shape all match claims the name; the two user-root rows share a shape
+// because subagents.json and model-catalog.json are written by the same writer pattern, and their comments name the file each
+// covers.
 var inventoryIntermediateRows = []inventoryIntermediateRow{
 	// state.ts:387 publishes sessions/<id>.json through <finalPath>.<pid>.<uuid>.tmp.
 	{ScopeProject, "sessions", inventoryIntermediateFinalPidUUID},
