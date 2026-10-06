@@ -1,0 +1,294 @@
+{
+  "algorithm": "sha256(json([normalize(context), sorted [[normalize(kind), normalize(ref)], ...], sorted [normalize(option id), ...]])); first 16 hex characters, lowercase",
+  "ambiguity": "Validate still refuses a '|' in the context, a ',' in an option id and a ':' or ',' in a blocking ref, as a second guard behind the encoding",
+  "encoding": "the material is the compact JSON encoding Go's encoding/json produces (json.Marshal): no spaces between elements, and the quotation mark, the reverse solidus, the controls below U+0020, the HTML characters \u003c \u003e \u0026 and the separators U+2028 U+2029 written as \\uXXXX escapes; every other rune, non-ASCII included, written as UTF-8 as it is. An encoder with different escaping or spacing fingerprints the same question differently, so this rule is part of the format.",
+  "normalization": "ASCII letters lowercased only (A-Z to a-z; every other rune unchanged); each run of whitespace collapses to one space; leading and trailing whitespace dropped",
+  "note": "Fixed input/output pairs. This vector is the reference a second implementation is compared against; the Go test internal/relay/decisions must reproduce every fingerprint here.",
+  "schema": "crw-user-decision-fingerprint-vectors/1",
+  "vectors": [
+    {
+      "name": "host-window",
+      "context": "Schedule the 17-cell host rollback-then-update window (a real-host rollback, then update again).",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-161"
+        },
+        {
+          "kind": "plan_node",
+          "ref": "crw-302 chain"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "between-runs",
+        "later"
+      ],
+      "fingerprint": "82af00a939d14aac"
+    },
+    {
+      "name": "case-and-space",
+      "context": "  Schedule   THE  host  window. ",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-161"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "9357a1148d23f358"
+    },
+    {
+      "name": "case-and-space-same",
+      "context": "schedule the host window.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "crw-161"
+        }
+      ],
+      "optionIds": [
+        "later",
+        "now"
+      ],
+      "fingerprint": "9357a1148d23f358"
+    },
+    {
+      "name": "option-order-a",
+      "context": "Adopt the CXC port acceptance gate F0.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-145"
+        }
+      ],
+      "optionIds": [
+        "adopt",
+        "defer"
+      ],
+      "fingerprint": "b0c3706630143ab0"
+    },
+    {
+      "name": "option-order-b",
+      "context": "Adopt the CXC port acceptance gate F0.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-145"
+        }
+      ],
+      "optionIds": [
+        "defer",
+        "adopt"
+      ],
+      "fingerprint": "b0c3706630143ab0"
+    },
+    {
+      "name": "blocking-order-a",
+      "context": "Pick the upgrade window.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        },
+        {
+          "kind": "plan_node",
+          "ref": "crw-302"
+        }
+      ],
+      "optionIds": [
+        "right-after-r3",
+        "with-r3"
+      ],
+      "fingerprint": "0e6552cd80e4ef7a"
+    },
+    {
+      "name": "blocking-order-b",
+      "context": "Pick the upgrade window.",
+      "blocking": [
+        {
+          "kind": "plan_node",
+          "ref": "CRW-302"
+        },
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "with-r3",
+        "right-after-r3"
+      ],
+      "fingerprint": "0e6552cd80e4ef7a"
+    },
+    {
+      "name": "no-blocking",
+      "context": "Choose the notification channel.",
+      "blocking": [],
+      "optionIds": [
+        "email",
+        "chat"
+      ],
+      "fingerprint": "70c800851745daea"
+    },
+    {
+      "name": "two-options",
+      "context": "Run the runtime upgrade right after R3.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "right-after-r3",
+        "with-r3"
+      ],
+      "fingerprint": "3f9c12be32b7fd61"
+    },
+    {
+      "name": "three-options",
+      "context": "Three-way cleanup choice.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-161"
+        }
+      ],
+      "optionIds": [
+        "terminate",
+        "leave",
+        "escalate"
+      ],
+      "fingerprint": "cf2f49ecf3bdd5e7"
+    },
+    {
+      "name": "mixed-case-option-ids",
+      "context": "  Decide   the  Rollout  Order  ",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "A-first",
+        "B-first"
+      ],
+      "fingerprint": "190e055a7c454951"
+    },
+    {
+      "name": "non-ascii-unchanged",
+      "context": "Turkish dotted capital I and Greek capital sigma stay as they are: İΣ.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "İst",
+        "Σnd"
+      ],
+      "fingerprint": "378e45a35cb3a705"
+    },
+    {
+      "name": "non-ascii-hangul",
+      "context": "한국어 문장은 변형되지 않는다.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "ㄱ",
+        "ㄲ"
+      ],
+      "fingerprint": "142cad12f8fff0de"
+    },
+    {
+      "name": "delimiter-pair-a",
+      "context": "c",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "x"
+        }
+      ],
+      "optionIds": [
+        "a",
+        "issue:y|z",
+        "zz"
+      ],
+      "fingerprint": "3690b6914736be83"
+    },
+    {
+      "name": "delimiter-pair-b",
+      "context": "c",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "x|a"
+        },
+        {
+          "kind": "issue",
+          "ref": "y"
+        }
+      ],
+      "optionIds": [
+        "z",
+        "zz"
+      ],
+      "fingerprint": "2fa2fbe0d0c650e5"
+    },
+    {
+      "name": "html-escapes",
+      "context": "R\u0026D \u003cwindow\u003e at 10:00",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "c608945c5c867550"
+    },
+    {
+      "name": "line-separators",
+      "context": "first\u2028second\u2029third",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "92e2e2ed038aed29"
+    },
+    {
+      "name": "html-escapes-in-option",
+      "context": "Pick the channel.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "a\u003cb",
+        "c\u0026d"
+      ],
+      "fingerprint": "17bde3a14eb9e7e8"
+    }
+  ]
+}

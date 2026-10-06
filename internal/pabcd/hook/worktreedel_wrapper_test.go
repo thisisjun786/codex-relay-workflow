@@ -97,8 +97,9 @@ func TestWorktreeDelWrapperDataOperandsAllowed(t *testing.T) {
 
 // Where the options do not name the -c program for sure, or a word after it could matter, every operand that holds a blank is
 // still read, as CRW-611 left it: a shell outside the modeled family, a program the walk cannot place (a lone -, +c, an option
-// argument it over-reads, a script instead of -c), a redirection word, an option-like word after the program (a later -c is
-// $0 for bash, but su would run it, and the walk does not tell them apart). Over-reading only denies too much.
+// argument it over-reads, a script instead of -c), a redirection word, an option-like word after the program of su and of every
+// shell whose later operands are not data (su would run a later -c, and the walk does not tell those shells apart). Over-reading
+// only denies too much.
 func TestWorktreeDelWrapperUncertainStaysRead(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
@@ -111,7 +112,6 @@ func TestWorktreeDelWrapperUncertainStaysRead(t *testing.T) {
 		"zsh -c -oshwordsplit 'echo OK' 'rm -rf ../repo'",
 		"bash -c 'echo OK' <<< 'rm -rf ../repo'",
 		"su --shell /bin/sh 'rm -rf ../repo'",
-		"bash -c 'echo OK' -c 'rm -rf ../repo'",
 		"bash -c 'echo OK' > 'log file' 'rm -rf ../repo'",
 		"su -c 'echo ok' -- root 'rm -rf ../repo'",
 	} {

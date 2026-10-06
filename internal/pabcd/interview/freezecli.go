@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 const freezeHelp = "crw pabcd freeze \u2014 build or preview the interview freeze manifest\n\nUsage:\n" +
@@ -242,16 +243,23 @@ func throwsToString(v any) bool {
 }
 
 // readPrior reads the earlier manifest as checkStale meets it. ok is false where the oracle's try block fails: the file cannot be read
-// or parsed, the root is not an object, planFiles is not an array, or an entry is null. Every other value is kept as JavaScript holds it.
+// or parsed, the root is not an object, planFiles is not an array, or an entry is null. Every other value is kept as JavaScript holds
+// it, through the repository's lossless reader: a lone surrogate escape stays the WTF-8 bytes a Go string holds it in (Surrogates), so
+// a manifest naming the escape of U+D800 is a different path than the file U+FFFD.md the plan really holds, as it is in JavaScript.
+// Numbers stay as spelled, so a number past float64's range still reads as an infinity, and an object or array reads as the map and
+// slice jsOf takes. decodeUTF8 comes first, as readFileSync does: it replaces each ill-formed subpart with one U+FFFD, where the
+// reader would replace each byte.
 func readPrior(file string) (frozen []frozenEntry, planHash jsVal, ok bool) {
-	var root map[string]any
 	raw, err := os.ReadFile(file)
-	dec := json.NewDecoder(strings.NewReader(decodeUTF8(raw))) // readFileSync decodes the bytes, JSON.parse then reads one whole value
-	dec.UseNumber()
-	if err != nil || dec.Decode(&root) != nil {
+	if err != nil {
 		return nil, jsVal{}, false
 	}
-	if _, err := dec.Token(); err != io.EOF {
+	doc, err := pyjson.Loads(decodeUTF8(raw), pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Surrogates: true})
+	if err != nil {
+		return nil, jsVal{}, false
+	}
+	root, isObject := doc.(map[string]any)
+	if !isObject {
 		return nil, jsVal{}, false
 	}
 	entries, isArray := root["planFiles"].([]any)
