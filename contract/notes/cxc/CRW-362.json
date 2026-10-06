@@ -23,23 +23,6 @@
       "set": {
         "steps/0/stderr": "crw doctor retrust: enabled install key is ambiguous (0); candidates: (none); pass --key <plugin@marketplace>\n"
       }
-    },
-    {
-      "id": "cli__hooks__retrust_safety_pin_refuses_all_drifted",
-      "reason": "The safety pin is ported unchanged: one existing trust entry, no hash matching its recomputation, refused with and without --bootstrap-ok, config.toml untouched. The given names the CRW plugin's one declared hook (whose identity differs from the oracle's 32), and the catch prefix follows the CLI table.",
-      "given": {
-        "env": {
-          "PLUGIN_ROOT": "${PLUGIN_ROOT}"
-        },
-        "files": {
-          "codex/config.toml": "model = \"gpt-5.5\"\n\n[plugins.\"crw@local\"]\nenabled = true\n\n[hooks.state.\"crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
-        }
-      },
-      "set": {
-        "steps/0/stderr": "crw doctor retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n",
-        "steps/1/stderr": "crw doctor retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n",
-        "tree/codex/config.toml/content": "model = \"gpt-5.5\"\n\n[plugins.\"crw@local\"]\nenabled = true\n\n[hooks.state.\"crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
-      }
     }
   ]
 }
