@@ -73,19 +73,30 @@ func Legs() []Leg {
 			if p.TurnID != nil {
 				turn = *p.TurnID
 			}
+			transcript := ""
+			if p.TranscriptPath != nil {
+				transcript = *p.TranscriptPath
+			}
 			// The platform argument stays empty: LoopArmDirective resolves this host's platform when
 			// it is not given, which is the oracle's default (process.platform). The handler answers
 			// the context, and ContextOutput is the port of buildContextOutput that wraps it.
 			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandle(pabcdhook.PromptSubmitPayload{
-				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
+				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, TranscriptPath: transcript,
+				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
 		}},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
-		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
+		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
+			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		}},
 		{"permission-request-allowing-agent-thread", "permission-request", "permission-request", Permission, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAgentThreadPermissionRequest(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
-		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
+		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
+			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		}},
+		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
+			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		}},
 		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, false, false, true, func(c Call) string {
 			p, ok := ParsePostToolUse(c.Raw)
 			if !ok {
