@@ -42,6 +42,7 @@ func (h *hl) refusal(_ any, err error) {
 }
 
 func Test21_ACR01_turn_start_precision(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "TurnStartPrecision.test_a_turn_starting_in_the_same_second_as_its_send_is_not_refused", func(h *hl) {
 		h.eq(certainlyBefore(1789420929, sentAt()))
 	})
@@ -55,6 +56,7 @@ func Test21_ACR01_turn_start_precision(t *testing.T) {
 }
 
 func Test21_ACR02_archive_observation(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "UnknownArchiveState.test_an_unknown_archive_observation_is_not_evidence_of_being_unarchived", func(h *hl) {
 		o := Observe(context.Background(), noArchiveInfo{h.host}, parent, nil, true)
 		h.eq(o.Deliverable)
@@ -79,6 +81,7 @@ func Test21_ACR02_archive_observation(t *testing.T) {
 }
 
 func Test21_ACR03_a_correct_proof_from_a_real_later_turn_closes_the_attempt(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Acknowledgement.test_a_correct_proof_from_a_real_later_turn_closes_the_attempt", func(h *hl) {
 		event, turn := h.ackDispatched()
 		result, err := h.ack.Acknowledge(h.ctx, event, turn.TurnID, AckProof(event, turn.TurnID), true, nil, h.host)
@@ -91,6 +94,7 @@ func Test21_ACR03_a_correct_proof_from_a_real_later_turn_closes_the_attempt(t *t
 }
 
 func Test21_ACR04_an_ack_proof_mismatch_is_refused(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Acknowledgement.test_an_echo_without_the_proof_never_closes_the_attempt", func(h *hl) {
 		event, turn := h.ackDispatched()
 		h.refusal(h.ack.Acknowledge(h.ctx, event, turn.TurnID, strings.Repeat("0", 64), true, nil, h.host))
@@ -103,6 +107,7 @@ func Test21_ACR04_an_ack_proof_mismatch_is_refused(t *testing.T) {
 }
 
 func Test21_ACR05_an_unknown_turn_is_kept_unverified(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Acknowledgement.test_a_turn_that_does_not_exist_does_not_close_the_attempt", func(h *hl) {
 		event, _ := h.ackDispatched()
 		result, err := h.ack.Acknowledge(h.ctx, event, "invented-turn", AckProof(event, "invented-turn"), true, nil, h.host)
@@ -113,6 +118,7 @@ func Test21_ACR05_an_unknown_turn_is_kept_unverified(t *testing.T) {
 }
 
 func Test21_ACR06_a_turn_that_started_before_the_delivery_is_refused(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Acknowledgement.test_a_turn_that_started_before_the_delivery_is_refused", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		old := h.host.startTurn(parent, "older-turn", "completed", "")
@@ -123,6 +129,7 @@ func Test21_ACR06_a_turn_that_started_before_the_delivery_is_refused(t *testing.
 }
 
 func Test21_ACR07_an_advanced_generation_is_a_disposition_conflict(t *testing.T) {
+	t.Parallel()
 	t.Run("advanced before the ack", func(t *testing.T) {
 		mirror(t, acr, "Acknowledgement.test_a_generation_that_advanced_after_dispatch_cannot_be_accepted", func(h *hl) {
 			event, turn := h.ackDispatched()
@@ -143,6 +150,7 @@ func Test21_ACR07_an_advanced_generation_is_a_disposition_conflict(t *testing.T)
 }
 
 func Test21_ACR08_one_event_is_claimed_for_verification_once(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Acknowledgement.test_one_event_is_verified_only_once", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		first, err := h.ack.ClaimVerification(h.ctx, event, "t1")
@@ -179,6 +187,7 @@ func (h *hl) verdict(event, verdict, turn string) (Obj, error) {
 }
 
 func Test21_ACR09_a_verdict_requires_a_verified_acceptance(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Verdicts.test_a_verdict_requires_a_verified_acceptance", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		h.attemptOn(event, h.host, nil)
@@ -187,6 +196,7 @@ func Test21_ACR09_a_verdict_requires_a_verified_acceptance(t *testing.T) {
 }
 
 func Test21_ACR10_needs_changes_opens_a_generation_and_queues_a_revision(t *testing.T) {
+	t.Parallel()
 	mirror(t, acr, "Verdicts.test_needs_changes_opens_a_generation_and_queues_a_revision_to_the_same_child", func(h *hl) {
 		event := h.verdictAcknowledged([]string{parent, child})
 		record, err := h.verdict(event, "needs_changes", "verdict-1")

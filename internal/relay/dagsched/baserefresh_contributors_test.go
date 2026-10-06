@@ -32,6 +32,7 @@ func contributorMerge(t *testing.T, s *refreshScenario, regions []Region, known 
 }
 
 func TestBaseRefreshContributorsAcrossHops(t *testing.T) {
+	t.Parallel()
 	for _, grade := range []string{GradeMechanical, GradeLocal} {
 		t.Run(grade, func(t *testing.T) {
 			s := mechanicalRefresh(t, RuleUnion, false)
@@ -73,6 +74,7 @@ func TestBaseRefreshContributorsAcrossHops(t *testing.T) {
 }
 
 func TestBaseRefreshUnknownDeltaVetoesKnownContributor(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, false)
 	contributorMerge(t, s, []Region{gr("shared.json", GradeMechanical, RuleUnion)}, true)
 	r := s.repo
@@ -98,6 +100,7 @@ func TestBaseRefreshUnknownDeltaVetoesKnownContributor(t *testing.T) {
 }
 
 func TestBaseRefreshRegenerateEligibilityRecord(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"generated", "owner loss", "partial updater", "failed command"} {
 		t.Run(kind, func(t *testing.T) {
 			k := newIntegrationKit(t)
@@ -160,6 +163,7 @@ func TestBaseRefreshRegenerateEligibilityRecord(t *testing.T) {
 }
 
 func TestBaseRefreshContributorAgreement(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name              string
 		regions           []Region
@@ -197,6 +201,7 @@ func TestBaseRefreshContributorAgreement(t *testing.T) {
 }
 
 func TestBaseRefreshContributorDeclarationFrozen(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, false)
 	contributorMerge(t, s, []Region{gr("shared.json", GradeMechanical, RuleUnion)}, true)
 	s.sched.testBeforeRefreshTx = func() {

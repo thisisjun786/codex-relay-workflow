@@ -40,6 +40,7 @@ func problemCodes(pr PullRequest) []string {
 }
 
 func TestClassifyPullRequestReadsAMergedPullRequest(t *testing.T) {
+	t.Parallel()
 	t.Run("the reading the collector gives for a merged pull request is readable", func(t *testing.T) {
 		pr := mergedGH().read(t)
 		// the premise this rule rests on, from the real collector over a scripted forge: unknown by construction, with exactly the two problems
@@ -132,6 +133,7 @@ func TestClassifyPullRequestReadsAMergedPullRequest(t *testing.T) {
 // The classification passes a merged reading and the reader decides what a merged state means to it. Each case below is the reading the collector gives, not a reading with the verdict ready:
 // the readers used to be tested only with a merged state the collector can never produce.
 func TestEveryReaderDecidesAboutAMergedPullRequestFromItsState(t *testing.T) {
+	t.Parallel()
 	t.Run("release compares the head of a pinned predecessor that merged", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -202,6 +204,7 @@ func TestEveryReaderDecidesAboutAMergedPullRequestFromItsState(t *testing.T) {
 // now classifies as every other reader does. These are the readings the collector can give on which the two rules differ, and the reading they agree on; the readings it cannot give (a stale,
 // absent or unrecognised verdict that carries only the two merged problems) are rows of TestClassifyPullRequestReadsAMergedPullRequest, and are the host's failure there.
 func TestBaseRefreshClassifiesAMergedPullRequestAsEveryReaderDoes(t *testing.T) {
+	t.Parallel()
 	merged := []Problem{{Code: evidence.CandidateNotOpen}, {Code: evidence.CandidateUnknown}}
 	cases := []struct {
 		name     string
