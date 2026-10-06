@@ -522,28 +522,34 @@ func MergeTrainOfTurn(ctx context.Context, s *Store, turnID string) (MergeTrainR
 	if err != nil || !present {
 		return MergeTrainRow{}, "", false, err
 	}
-	member, err := queryRow(ctx, s, scanMergeTrainMember, "SELECT "+mergeTrainMemberColumns+" FROM merge_train_members WHERE turn_id = ? ORDER BY train_id LIMIT 1", turnID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return MergeTrainRow{}, "", false, nil
-	}
+	// every membership of the turn is read, newest train first, and the newest event's kind decides:
+	// a turn that was in an abandoned train and now waits in a replacement must be answered by the
+	// replacement, so the first historical membership is not enough (finding 4)
+	members, err := queryRows(ctx, s, scanMergeTrainMember, "SELECT "+mergeTrainMemberColumns+" FROM merge_train_members WHERE turn_id = ? ORDER BY train_id DESC", turnID)
 	if err != nil {
 		return MergeTrainRow{}, "", false, err
 	}
-	state, found, err := MergeTrainState(ctx, s, member.TrainID)
-	if err != nil {
-		return MergeTrainRow{}, "", false, err
+	for _, member := range members {
+		state, found, err := MergeTrainState(ctx, s, member.TrainID)
+		if err != nil {
+			return MergeTrainRow{}, "", false, err
+		}
+		if !found {
+			state = MergeTrainOpened
+		}
+		if state != MergeTrainOpened && state != MergeTrainVerified {
+			continue
+		}
+		row, found, err := MergeTrain(ctx, s, member.TrainID)
+		if err != nil {
+			return MergeTrainRow{}, "", false, err
+		}
+		if !found {
+			continue
+		}
+		return row, state, true, nil
 	}
-	if !found {
-		state = MergeTrainOpened
-	}
-	if state != MergeTrainOpened && state != MergeTrainVerified {
-		return MergeTrainRow{}, "", false, nil
-	}
-	row, found, err := MergeTrain(ctx, s, member.TrainID)
-	if err != nil || !found {
-		return MergeTrainRow{}, "", false, err
-	}
-	return row, state, true, nil
+	return MergeTrainRow{}, "", false, nil
 }
 
 // ProductBindingsRow is one product_bindings row, every column in DDL order.

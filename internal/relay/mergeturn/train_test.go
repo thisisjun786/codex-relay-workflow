@@ -660,20 +660,22 @@ func TestTrainMemberTurnsRefuseCheckAndLand(t *testing.T) {
 	}
 }
 
-// TestTrainAbandonedReturnsMembersToWaiting.
+// TestTrainAbandonedReturnsMembersToWaiting: an abandoned train leaves its member turns in the queue
+// they were in before it opened. The leader still holds the turn (so the reopen, which needs a
+// holding turn, has one) and every other member is still waiting (so it can ride a replacement).
 func TestTrainAbandonedReturnsMembersToWaiting(t *testing.T) {
 	w := newTr(t)
 	train := w.openedTrain()
-	rows, _ := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? ORDER BY seq", train)
-	var held string
+	rows, _ := w.s.All(w.ctx, "SELECT turn_id, seq FROM merge_train_members WHERE train_id = ? ORDER BY seq", train)
+	var leaderTurn string
+	waiting := map[string]bool{}
 	for _, row := range rows {
 		turn := row.Get("turn_id").(string)
-		if state := w.turn(turn).State; state == "holding" {
-			held = turn
+		if seq, _ := row.Get("seq").(int64); seq == 1 {
+			leaderTurn = turn
+		} else {
+			waiting[turn] = true
 		}
-	}
-	if held == "" {
-		t.Fatal("no holding member turn to abandon")
 	}
 	answer, err := w.m.Close(w.ctx, train, trLeader, "abandoned", "the base moved out of lane")
 	if err != nil {
@@ -682,8 +684,13 @@ func TestTrainAbandonedReturnsMembersToWaiting(t *testing.T) {
 	if answer["state"] != "abandoned" {
 		t.Fatalf("state = %v, want abandoned", answer["state"])
 	}
-	if state := w.turn(held).State; state != "returned" {
-		t.Fatalf("the leader turn = %s, want returned", state)
+	if state := w.turn(leaderTurn).State; state != "holding" {
+		t.Fatalf("the leader turn = %s, and the reopen needs it holding", state)
+	}
+	for turn := range waiting {
+		if state := w.turn(turn).State; state != "waiting" {
+			t.Fatalf("member turn %s = %s, want waiting", turn, state)
+		}
 	}
 }
 
@@ -907,20 +914,25 @@ func TestTrainShowNeverReadsANullRowAsATrain(t *testing.T) {
 }
 
 // TestTrainDecisionTenClosureAndHalving: the failure rule's two helpers keep dependencies together.
+// The members carry plan node ids (the key the edges are written in), not commit heads (finding 12).
 func TestTrainDecisionTenClosureAndHalving(t *testing.T) {
-	members := []TrainMemberExpectation{{PRNumber: 101, AcceptedHead: "n-a"}, {PRNumber: 102, AcceptedHead: "n-b"}, {PRNumber: 103, AcceptedHead: "n-c"}, {PRNumber: 104, AcceptedHead: "n-d"}}
-	edges := []TrainPlanEdge{{FromNodeID: "n-a", ToNodeID: "n-b"}, {FromNodeID: "n-b", ToNodeID: "n-c"}}
+	nodes := []TrainMemberNode{{PRNumber: 101, NodeID: "node-a"}, {PRNumber: 102, NodeID: "node-b"}, {PRNumber: 103, NodeID: "node-c"}, {PRNumber: 104, NodeID: "node-d"}}
+	edges := []TrainPlanEdge{{FromNodeID: "node-a", ToNodeID: "node-b"}, {FromNodeID: "node-b", ToNodeID: "node-c"}}
 	// a failure of A removes A, B and C (its transitive successors), and never D
-	if got := TrainDependencyClosure(members, edges, 101); !reflect.DeepEqual(got, []int64{101, 102, 103}) {
+	if got := TrainDependencyClosure(nodes, edges, 101); !reflect.DeepEqual(got, []int64{101, 102, 103}) {
 		t.Fatalf("closure of 101 = %v, want [101 102 103]", got)
 	}
 	// a failure of D removes only D
-	if got := TrainDependencyClosure(members, edges, 104); !reflect.DeepEqual(got, []int64{104}) {
+	if got := TrainDependencyClosure(nodes, edges, 104); !reflect.DeepEqual(got, []int64{104}) {
 		t.Fatalf("closure of 104 = %v, want [104]", got)
+	}
+	// a member with no node is its own closure
+	if got := TrainDependencyClosure([]TrainMemberNode{{PRNumber: 201}}, edges, 201); !reflect.DeepEqual(got, []int64{201}) {
+		t.Fatalf("closure of a node-less member = %v, want [201]", got)
 	}
 	// halving keeps A, B, C on one side even when the split would separate them: a two-member half of
 	// [101 102] leaves 103 with them because 102 is its predecessor
-	first, second := TrainHalve(members, edges)
+	first, second := TrainHalve([]int64{101, 102, 103, 104}, nodes, edges)
 	if len(first) == 0 || len(second) == 0 {
 		t.Fatalf("halving produced %v / %v", first, second)
 	}
@@ -988,4 +1000,208 @@ func ciJobNames(t *testing.T, workflow string) []string {
 		}
 	}
 	return names
+}
+
+// TestTrainFindingsFromTheFirstReview: one test per finding the one-shot Codex review raised on the
+// first head, so each fix is pinned rather than asserted in prose.
+func TestTrainFindingsFromTheFirstReview(t *testing.T) {
+	t.Run("finding 1: the leader PR must be the first member", func(t *testing.T) {
+		w := newTr(t)
+		leader := w.claim(trLane, trLeader, "head-lead", 101)["turnId"].(string)
+		w.pr(101, "head-lead")
+		w.waiting("PRJ-M2", "task-m2", "head-m2", 102)
+		w.pr(102, "head-m2")
+		if _, err := w.open(leader, trLeader, "base-0", 102, 101); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a bundle whose first member is not the leader: %v", err)
+		}
+		if _, err := w.open(leader, trLeader, "base-0", 102); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a bundle that omits the leader: %v", err)
+		}
+	})
+
+	t.Run("finding 8: a member with no relationship is refused, not a SQLite error", func(t *testing.T) {
+		w := newTr(t)
+		leader := w.claim(trLane, trLeader, "head-lead", 101)["turnId"].(string)
+		w.pr(101, "head-lead")
+		w.bind("PRJ-M2", "task-m2", trHost)
+		// a waiting turn that records no relationship
+		if _, err := w.m.Request(w.ctx, trRepo, trBase, "PRJ-M2", "task-m2", trHost, "head-m2", true, ClaimOptions{PR: sql.NullInt64{Int64: 102, Valid: true}}); err != nil {
+			t.Fatal(err)
+		}
+		w.pr(102, "head-m2")
+		if _, err := w.open(leader, trLeader, "base-0", 101, 102); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member with no relationship: %v", err)
+		}
+		if n := w.trainEvents(); n != 0 {
+			t.Fatalf("a refused open wrote %d event(s)", n)
+		}
+	})
+
+	t.Run("finding 9: a closed or retargeted member PR is refused", func(t *testing.T) {
+		w := newTr(t)
+		leader, members := w.threeMembers()
+		w.forge.pulls[102] = TrainPullRequest{Number: 102, State: "closed", BaseRef: trBase, HeadSHA: "head-m2"}
+		if _, err := w.open(leader, trLeader, "base-0", members...); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a closed member: %v", err)
+		}
+		w.forge.pulls[102] = TrainPullRequest{Number: 102, State: "open", BaseRef: "main", HeadSHA: "head-m2"}
+		if _, err := w.open(leader, trLeader, "base-0", members...); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a retargeted member: %v", err)
+		}
+	})
+
+	t.Run("finding 10: a member that did not declare ready is refused", func(t *testing.T) {
+		w := newTr(t)
+		leader := w.claim(trLane, trLeader, "head-lead", 101)["turnId"].(string)
+		w.pr(101, "head-lead")
+		w.bind("PRJ-M2", "task-m2", trHost)
+		if _, err := w.m.Request(w.ctx, trRepo, trBase, "PRJ-M2", "task-m2", trHost, "head-m2", false,
+			ClaimOptions{PR: sql.NullInt64{Int64: 102, Valid: true}, Relationship: sql.NullString{String: "rel-m2", Valid: true}}); err != nil {
+			t.Fatal(err)
+		}
+		w.pr(102, "head-m2")
+		if _, err := w.open(leader, trLeader, "base-0", 101, 102); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member that did not declare ready: %v", err)
+		}
+	})
+
+	t.Run("finding 6: a landed tree other than the tested tree is refused", func(t *testing.T) {
+		w := newTr(t)
+		train := w.verifiedTrain()
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "some-other-tree"}
+		if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a landed tree other than the tested one: %v", err)
+		}
+		if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+			t.Fatalf("a refused land wrote %d landed event(s)", n)
+		}
+	})
+
+	t.Run("finding 2: a member that moved after the train opened is not landed", func(t *testing.T) {
+		w := newTr(t)
+		train := w.verifiedTrain()
+		var memberTurn string
+		rows, _ := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", train)
+		memberTurn = rows[0].Get("turn_id").(string)
+		// the member restates its candidate head while the train is live: merge-turn-ready is not
+		// guarded, and the landing must revalidate rather than record the stale row
+		w.exec("UPDATE merge_turns SET candidate_head = 'head-moved' WHERE turn_id = ?", memberTurn)
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+		if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member that moved after the train opened: %v", err)
+		}
+		if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+			t.Fatalf("a refused land landed %d turn(s)", n)
+		}
+	})
+
+	t.Run("finding 7: done only after a landing", func(t *testing.T) {
+		w := newTr(t)
+		train := w.openedTrain()
+		if _, err := w.m.Close(w.ctx, train, trLeader, "done", "premature"); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("done from opened: %v", err)
+		}
+		if _, err := w.m.Close(w.ctx, train, trLeader, "abandoned", "out of lane"); err != nil {
+			t.Fatalf("abandoned from opened: %v", err)
+		}
+	})
+
+	t.Run("finding 7: abandoned is refused after a landing", func(t *testing.T) {
+		w := newTr(t)
+		verified := w.verifiedTrain()
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+		if _, err := w.m.TrainLand(w.ctx, verified, trLeader, "merge-1", "", w.tip, w.forge); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.m.Close(w.ctx, verified, trLeader, "abandoned", "after landing"); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("abandoned after a landing: %v", err)
+		}
+	})
+
+	t.Run("finding 3: abandoning leaves a usable leader", func(t *testing.T) {
+		w := newTr(t)
+		train := w.openedTrain()
+		var leaderTurn string
+		rows, _ := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 1", train)
+		leaderTurn = rows[0].Get("turn_id").(string)
+		if _, err := w.m.Close(w.ctx, train, trLeader, "abandoned", "the base moved out of lane"); err != nil {
+			t.Fatal(err)
+		}
+		// opening a train never moved the member turns, so abandoning leaves the leader holding and
+		// the members waiting: the documented abandon-and-reopen flow has its leader
+		if state := w.turn(leaderTurn).State; state != "holding" {
+			t.Fatalf("the leader is %s after an abandon, and the reopen needs it holding", state)
+		}
+		// and the leader can open the replacement train
+		if _, err := w.open(leaderTurn, trLeader, "base-0", 101, 102); err != nil {
+			t.Fatalf("the leader could not reopen after an abandon: %v", err)
+		}
+	})
+
+	t.Run("finding 5: landing promotes the next waiter", func(t *testing.T) {
+		w := newTr(t)
+		train := w.verifiedTrain()
+		w.bind("PRJ-LATE", "task-late", trHost)
+		if _, err := w.m.Request(w.ctx, trRepo, trBase, "PRJ-LATE", "task-late", trHost, "head-late", true,
+			ClaimOptions{PR: sql.NullInt64{Int64: 301, Valid: true}, Relationship: sql.NullString{String: "rel-late", Valid: true}}); err != nil {
+			t.Fatal(err)
+		}
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+		if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge); err != nil {
+			t.Fatal(err)
+		}
+		var lateState string
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT state FROM merge_turns WHERE holder_task_id = 'task-late'").Scan(&lateState); err != nil {
+			t.Fatal(err)
+		}
+		if lateState != "holding" {
+			t.Fatalf("the late candidate is %s, and a landing must promote it", lateState)
+		}
+	})
+
+	t.Run("finding 4: a turn in a replacement train is guarded", func(t *testing.T) {
+		w := newTr(t)
+		first := w.openedTrain()
+		var memberTurn string
+		rows, _ := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", first)
+		memberTurn = rows[0].Get("turn_id").(string)
+		// the first train is abandoned, and the member waits in a replacement train whose id sorts
+		// before the abandoned one
+		if _, err := w.m.Close(w.ctx, first, trLeader, "abandoned", "out of lane"); err != nil {
+			t.Fatal(err)
+		}
+		w.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('aaa-replacement','tgt','owner/repo','dev','base-0','task-leader','2026-10-01T00:00:00Z')")
+		w.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('aaa-replacement',1,?,102,'rel-m2','head-m2')", memberTurn)
+		w.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('aaa-replacement',1,'opened','task-leader','{}','2026-10-01T00:00:00Z')")
+		// the member is in a live train again, so merge-turn-check must refuse it
+		if _, err := w.m.Check(w.ctx, memberTurn, "task-m2", "head-m2", "base-0", []any{}, contract.OrderedObject{}, nil, w.tip); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member of a replacement train: %v", err)
+		}
+	})
+
+	t.Run("finding 11: reconcile reads the combined head", func(t *testing.T) {
+		w := newTr(t)
+		train := w.verifiedTrain()
+		// every member head is an ancestor of the tip, but the verified head H is not
+		w.tip.set(trRepo, trBase, "elsewhere")
+		w.forge.compares["head-lead..elsewhere"] = "ahead"
+		w.forge.compares["head-m2..elsewhere"] = "ahead"
+		w.forge.compares["head-m3..elsewhere"] = "ahead"
+		w.forge.compares["head-bundle..elsewhere"] = "diverged"
+		answer, err := w.m.Show(w.ctx, train, w.tip, w.forge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, _ := answer["reconcile"].(map[string]any)
+		if rec == nil || rec["landed"] != false {
+			t.Fatalf("reconcile without the combined head = %v, want landed false", answer["reconcile"])
+		}
+		if rec["verifiedHead"] != "head-bundle" {
+			t.Fatalf("reconcile did not read the verified head: %v", rec)
+		}
+	})
 }

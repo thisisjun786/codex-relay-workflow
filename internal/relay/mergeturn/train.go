@@ -187,6 +187,17 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		return nil, trainConflict("the base branch %s reads %s and --base-sha states %s; the bundle is built on the base the branch points at now", pyvalue.StrRepr(early.BaseRef), pyvalue.StrRepr(tip.SHA), pyvalue.StrRepr(base))
 	}
 	leaderPR := early.PRNumber.Int64
+	// the leader's pull request is the first member and its turn is today's lane; a list that omits it
+	// or puts another pull request first would bypass the head-of-line candidate (finding 1)
+	if members[0] != leaderPR {
+		return nil, trainConflict("the leader's own pull request %d must be the bundle's first member, and the list starts with %d; a bundle does not bypass the head-of-line candidate", leaderPR, members[0])
+	}
+	if early.DeclaredReady != 1 {
+		return nil, trainConflict("the leader's turn %s has not declared its candidate ready, so it is not a candidate the lane may carry", pyvalue.StrRepr(turn))
+	}
+	if !early.RelationshipID.Valid || early.RelationshipID.String == "" {
+		return nil, trainConflict("the leader's turn %s records no relationship, so its landing cannot be recorded", pyvalue.StrRepr(turn))
+	}
 	seen := map[int64]bool{}
 	expectations := make([]TrainMemberExpectation, 0, len(members))
 	order := make([]int64, 0, len(members))
@@ -212,6 +223,12 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if pull.Number != pr {
 			return nil, trainUnreadable("the forge's answer for pull request %d names %d", pr, pull.Number)
 		}
+		if pull.State != "open" {
+			return nil, trainConflict("member pull request %d is %s, and a bundle carries open pull requests", pr, pull.State)
+		}
+		if pull.BaseRef != early.BaseRef {
+			return nil, trainConflict("member pull request %d targets %s and the bundle's base is %s", pr, pyvalue.StrRepr(pull.BaseRef), pyvalue.StrRepr(early.BaseRef))
+		}
 		if pr == leaderPR {
 			if !SameCommit(pull.HeadSHA, early.CandidateHead) {
 				return nil, trainConflict("the leader's pull request %d reads head %s and its turn holds %s; a member's head is not refreshed by the bundle", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(early.CandidateHead))
@@ -225,6 +242,12 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		}
 		if !SameCommit(pull.HeadSHA, member.CandidateHead) {
 			return nil, trainConflict("pull request %d reads head %s and its waiting turn holds %s; the member's head moved", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(member.CandidateHead))
+		}
+		if member.DeclaredReady != 1 {
+			return nil, trainConflict("pull request %d's turn %s has not declared its candidate ready, so it is not a candidate the lane may carry", pr, pyvalue.StrRepr(member.TurnID))
+		}
+		if !member.RelationshipID.Valid || member.RelationshipID.String == "" {
+			return nil, trainConflict("pull request %d's turn %s records no relationship, so its landing cannot be recorded", pr, pyvalue.StrRepr(member.TurnID))
 		}
 		expectations = append(expectations, TrainMemberExpectation{TurnID: member.TurnID, PRNumber: pr, RelationshipID: member.RelationshipID.String, AcceptedHead: member.CandidateHead})
 	}
@@ -244,10 +267,17 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if row.HolderTaskID != actor || row.State != Holding {
 			return trainConflict("turn %s changed while the bundle was being read, so it is not the holding turn this open began on; call again", pyvalue.StrRepr(turn))
 		}
-		if _, found, e := store.MergeTrain(tx, s.Store, id); e != nil {
-			return e
-		} else if found {
-			return trainConflict("train %s already exists for turn %s at head %s", id, pyvalue.StrRepr(turn), pyvalue.StrRepr(row.CandidateHead))
+		// a train id names one opening, not the candidate: a turn that abandons a train and reopens
+		// one for the same head gets a fresh id rather than colliding with the abandoned record
+		for suffix := 2; ; suffix++ {
+			_, found, e := store.MergeTrain(tx, s.Store, id)
+			if e != nil {
+				return e
+			}
+			if !found {
+				break
+			}
+			id = trainID(early.TargetKey, turn, early.CandidateHead) + "-" + strconv.Itoa(suffix)
 		}
 		if e := store.RecordMergeTrain(tx, s.Store, store.MergeTrainRow{TrainID: id, TargetKey: row.TargetKey, Repository: row.Repository, BaseRef: row.BaseRef, BaseSHA: tip.SHA, LeaderTaskID: actor, CreatedAt: at}); e != nil {
 			return e
@@ -597,6 +627,11 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 	if !SameCommit(commit.Parents[0], row.BaseSHA) || !SameCommit(commit.Parents[1], head) {
 		return nil, trainConflict("merge commit %s has parents %s and %s, and a bundle's are the base %s and the verified head %s in that order", landed, pyvalue.StrRepr(commit.Parents[0]), pyvalue.StrRepr(commit.Parents[1]), pyvalue.StrRepr(row.BaseSHA), pyvalue.StrRepr(head))
 	}
+	// the landed tree must be the tree the bundle CI passed on: a commit can carry the right parents
+	// and an arbitrary tree, so the verified tree is compared here rather than trusted from the shape
+	if tested, _ := verified["tree"].(string); tested != "" && commit.Tree != "" && commit.Tree != tested {
+		return nil, trainConflict("merge commit %s has tree %s and the verified bundle tree is %s, so the landed tree is not the tree CI passed", landed, commit.Tree, tested)
+	}
 	members, err := store.MergeTrainMembers(ctx, s.Store, train)
 	if err != nil {
 		return nil, err
@@ -625,18 +660,34 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 			return trainConflict("train %s changed while the landing was being read, so nothing is recorded; call again", pyvalue.StrRepr(train))
 		}
 		// every member turn lands, the leader's included, in the same transaction as the event, so a
-		// failure leaves neither the rows nor the event (the relay's one-transaction rule)
+		// failure leaves neither the rows nor the event (the relay's one-transaction rule). Each turn
+		// is revalidated here: it can have withdrawn or restated its head since the train opened, and
+		// a stale bundle must not record such a turn landed (finding 2).
 		for _, m := range members {
 			turn, e := s.Store.MergeTurn(tx, m.TurnID)
 			if e != nil {
 				return e
+			}
+			if turn.State != Holding && turn.State != Waiting {
+				return trainConflict("member turn %s of pull request %d is %s, so it is not a turn this bundle can land", pyvalue.StrRepr(m.TurnID), m.PRNumber, turn.State)
+			}
+			if !SameCommit(turn.CandidateHead, m.MemberHead) {
+				return trainConflict("member turn %s of pull request %d now holds %s and the bundle carries %s, so the member changed after the train opened", pyvalue.StrRepr(m.TurnID), m.PRNumber, pyvalue.StrRepr(turn.CandidateHead), pyvalue.StrRepr(m.MemberHead))
 			}
 			if e := s.closeWith(tx, turn, "landed", reason, actor, at, nullable(landed), nullable(tip.SHA)); e != nil {
 				return e
 			}
 		}
 		detail := trainLandedDetail(landed, head, reason, members)
-		return store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: store.MergeTrainLanded, Actor: actor, DetailJSON: pythonJSON(detail), RecordedAt: at})
+		if e := store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: store.MergeTrainLanded, Actor: actor, DetailJSON: pythonJSON(detail), RecordedAt: at}); e != nil {
+			return e
+		}
+		// the landing released the target: a ready turn that joined after the train opened takes the
+		// next lane turn in the same transaction (finding 5)
+		if _, e := s.promote(tx, row.TargetKey, at); e != nil {
+			return e
+		}
+		return e
 	})
 	if err != nil {
 		return nil, err
@@ -687,6 +738,9 @@ func (s *Service) Close(ctx context.Context, train, actor, state, reason string)
 	if current == store.MergeTrainDone || current == store.MergeTrainAbandoned {
 		return nil, trainConflict("train %s is already %s", pyvalue.StrRepr(train), current)
 	}
+	if err := trainCloseStateRefusal(train, kind, current); err != nil {
+		return nil, err
+	}
 	at := s.now()
 	seq, err := s.nextTrainEventSeq(ctx, train)
 	if err != nil {
@@ -700,24 +754,15 @@ func (s *Service) Close(ctx context.Context, train, actor, state, reason string)
 		if !found || latest == store.MergeTrainDone || latest == store.MergeTrainAbandoned {
 			return trainConflict("train %s changed while it was being closed, so nothing is recorded; call again", pyvalue.StrRepr(train))
 		}
-		if kind == store.MergeTrainAbandoned {
-			members, e := store.MergeTrainMembers(tx, s.Store, train)
-			if e != nil {
-				return e
-			}
-			for _, m := range members {
-				turn, e := s.Store.MergeTurn(tx, m.TurnID)
-				if e != nil {
-					return e
-				}
-				// a member still holding or merging returns to waiting; one already landed is left
-				if turn.State == Holding || turn.State == Merging || turn.State == Unknown {
-					if e := s.closeWith(tx, turn, "returned", "returned when train "+train+" was abandoned: "+reason, actor, at, sql.NullString{}, sql.NullString{}); e != nil {
-						return e
-					}
-				}
-			}
+		if e := trainCloseStateRefusal(train, kind, latest); e != nil {
+			return e
 		}
+		// An abandoned train leaves the member turns exactly where they are: opening a train never
+		// moved them, so the leader is still holding and every other member is still waiting. That is
+		// what "the member turns return to the waiting queue" means here, and it is what makes the
+		// documented abandon-and-reopen flow work: merge-train-open requires a holding turn, and the
+		// leader is still the one holding it. Closing the leader as returned would leave the target
+		// with no holder and no way to reopen without an extra claim.
 		return store.RecordMergeTrainEvent(tx, s.Store, store.MergeTrainEventRow{TrainID: train, Seq: seq, Kind: kind, Actor: actor, DetailJSON: pythonJSON(map[string]any{"reason": reason}), RecordedAt: at})
 	})
 	if err != nil {
@@ -761,8 +806,25 @@ func (s *Service) reconcileLanding(ctx context.Context, row store.MergeTrainRow,
 	if err != nil {
 		return map[string]any{"unreadable": err.Error()}
 	}
+	verified, found, err := s.newestVerified(ctx, row.TrainID)
+	if err != nil {
+		return map[string]any{"unreadable": err.Error()}
+	}
+	if !found {
+		return map[string]any{"unreadable": "the train holds no verified event to reconcile against"}
+	}
+	head, _ := verified["head"].(string)
+	if head == "" {
+		return map[string]any{"unreadable": "the verified event names no head to reconcile against"}
+	}
+	// the combined head H is what the bundle landed: every member head being an ancestor of the tip
+	// is not enough, because separate merges could have put them there while H never landed (finding 11)
+	combined, err := forge.Compare(ctx, row.Repository, head, tip.SHA)
+	if err != nil {
+		return map[string]any{"unreadable": "the ancestry of the verified head " + head + " in " + tip.SHA + " was not read: " + err.Error()}
+	}
 	list := make([]any, 0, len(members))
-	landed := true
+	landed := combined == "identical" || combined == "ahead"
 	for _, m := range members {
 		status, err := forge.Compare(ctx, row.Repository, m.MemberHead, tip.SHA)
 		if err != nil {
@@ -773,26 +835,34 @@ func (s *Service) reconcileLanding(ctx context.Context, row store.MergeTrainRow,
 		}
 		list = append(list, map[string]any{"seq": m.Seq, "prNumber": m.PRNumber, "memberHead": m.MemberHead, "status": status})
 	}
-	return map[string]any{"devTip": tip.SHA, "landed": landed, "members": list}
+	return map[string]any{"devTip": tip.SHA, "verifiedHead": head, "verifiedHeadStatus": combined, "landed": landed, "members": list}
 }
 
 // TrainPlanEdge is one live plan edge between two accepted nodes, the shape decision 10's failure rule
-// reads: from_node_id is a predecessor of to_node_id.
+// reads: FromNodeID is a predecessor of ToNodeID. The ids are plan node ids, so the helpers below
+// take an explicit node-to-member mapping rather than matching them against a member's commit head.
 type TrainPlanEdge struct {
 	FromNodeID string
 	ToNodeID   string
+}
+
+// TrainMemberNode is one member's plan node: the pull request the member carries and the node id its
+// accepted head was accepted under, which is the key the plan edges are written in.
+type TrainMemberNode struct {
+	PRNumber int64
+	NodeID   string
 }
 
 // TrainDependencyClosure is decision 10's failure rule made checkable: the members that must be
 // removed with a failing one, its successors on the plan edges taken transitively. The failing pull
 // request is included. It is a pure function the leader applies by hand (the lane script is out of
 // scope here); it adds no command and no refusal reason.
-func TrainDependencyClosure(members []TrainMemberExpectation, edges []TrainPlanEdge, failingPR int64) []int64 {
-	// each member's accepted head identifies its node, and a node's successors are the to_node_id of
-	// the live edges whose from_node_id is it
-	nodeOf := map[string]int64{}
-	for _, m := range members {
-		nodeOf[m.AcceptedHead] = m.PRNumber
+func TrainDependencyClosure(nodes []TrainMemberNode, edges []TrainPlanEdge, failingPR int64) []int64 {
+	prOf := map[string]int64{}
+	for _, n := range nodes {
+		if n.NodeID != "" {
+			prOf[n.NodeID] = n.PRNumber
+		}
 	}
 	successors := map[string][]string{}
 	for _, e := range edges {
@@ -800,25 +870,25 @@ func TrainDependencyClosure(members []TrainMemberExpectation, edges []TrainPlanE
 	}
 	removed := map[int64]bool{failingPR: true}
 	queue := []string{}
-	for head, pr := range nodeOf {
-		if pr == failingPR {
-			queue = append(queue, head)
+	for _, n := range nodes {
+		if n.PRNumber == failingPR && n.NodeID != "" {
+			queue = append(queue, n.NodeID)
 		}
 	}
 	for len(queue) > 0 {
-		head := queue[0]
+		node := queue[0]
 		queue = queue[1:]
-		for _, next := range successors[head] {
-			if pr, ok := nodeOf[next]; ok && !removed[pr] {
+		for _, next := range successors[node] {
+			if pr, ok := prOf[next]; ok && !removed[pr] {
 				removed[pr] = true
 				queue = append(queue, next)
 			}
 		}
 	}
 	out := make([]int64, 0, len(removed))
-	for _, m := range members {
-		if removed[m.PRNumber] {
-			out = append(out, m.PRNumber)
+	for _, n := range nodes {
+		if removed[n.PRNumber] {
+			out = append(out, n.PRNumber)
 		}
 	}
 	return out
@@ -828,32 +898,31 @@ func TrainDependencyClosure(members []TrainMemberExpectation, edges []TrainPlanE
 // the bundle is split in two with every predecessor and its successors kept on the same side, so no
 // half carries a member whose dependency is in the other. The split is by the members' order, then
 // repaired by moving a member whose predecessor is in the other half to the predecessor's side.
-func TrainHalve(members []TrainMemberExpectation, edges []TrainPlanEdge) (first, second []int64) {
-	if len(members) < 2 {
-		for _, m := range members {
-			first = append(first, m.PRNumber)
-		}
-		return first, nil
+func TrainHalve(order []int64, nodes []TrainMemberNode, edges []TrainPlanEdge) (first, second []int64) {
+	if len(order) < 2 {
+		return append([]int64{}, order...), nil
 	}
-	half := (len(members) + 1) / 2
+	prOf := map[string]int64{}
+	for _, n := range nodes {
+		if n.NodeID != "" {
+			prOf[n.NodeID] = n.PRNumber
+		}
+	}
+	half := (len(order) + 1) / 2
 	side := map[int64]int{}
-	for i, m := range members {
+	for i, pr := range order {
 		if i < half {
-			side[m.PRNumber] = 0
+			side[pr] = 0
 		} else {
-			side[m.PRNumber] = 1
+			side[pr] = 1
 		}
-	}
-	nodeOf := map[string]int64{}
-	for _, m := range members {
-		nodeOf[m.AcceptedHead] = m.PRNumber
 	}
 	// a member whose predecessor stands on the other side moves to the predecessor's side
 	for changed := true; changed; {
 		changed = false
 		for _, e := range edges {
-			from, okFrom := nodeOf[e.FromNodeID]
-			to, okTo := nodeOf[e.ToNodeID]
+			from, okFrom := prOf[e.FromNodeID]
+			to, okTo := prOf[e.ToNodeID]
 			if !okFrom || !okTo || side[from] == side[to] {
 				continue
 			}
@@ -861,14 +930,28 @@ func TrainHalve(members []TrainMemberExpectation, edges []TrainPlanEdge) (first,
 			changed = true
 		}
 	}
-	for _, m := range members {
-		if side[m.PRNumber] == 0 {
-			first = append(first, m.PRNumber)
+	for _, pr := range order {
+		if side[pr] == 0 {
+			first = append(first, pr)
 		} else {
-			second = append(second, m.PRNumber)
+			second = append(second, pr)
 		}
 	}
 	return first, second
+}
+
+// trainCloseStateRefusal is finding 7: done closes only a landed train, and abandoned closes only a
+// train that has not landed, so a premature done cannot remove the member guards without a landing
+// and an abandonment after a landing cannot make the derived state report a failure that did not
+// happen.
+func trainCloseStateRefusal(train string, kind, current string) error {
+	if kind == store.MergeTrainDone && current != store.MergeTrainLanded {
+		return trainConflict("train %s is %s and closes done only after it landed", pyvalue.StrRepr(train), current)
+	}
+	if kind == store.MergeTrainAbandoned && current == store.MergeTrainLanded {
+		return trainConflict("train %s landed and is closed done, not abandoned", pyvalue.StrRepr(train))
+	}
+	return nil
 }
 
 // trainAnswer is one train's whole reading: the row, the members in order, the event log, and the
