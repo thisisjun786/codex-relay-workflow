@@ -64,7 +64,18 @@ func Legs() []Leg {
 		{"session-start-advising-agent-thread-permissions", "session-start", "session-start-permission-advisory", Permission, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAgentThreadSessionStartAdvisory(c.Raw, os.LookupEnv)
 		}},
-		{"user-prompt-submit-checking-pabcd-trigger", "user-prompt-submit", "user-prompt-submit", Generic, false, false, false, nil},
+		{"user-prompt-submit-checking-pabcd-trigger", "user-prompt-submit", "user-prompt-submit", Generic, false, false, false, func(c Call) string {
+			p, ok := ParseUserPromptSubmit(c.Raw)
+			if !ok {
+				return ""
+			}
+			turn := ""
+			if p.TurnID != nil {
+				turn = *p.TurnID
+			}
+			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandle(pabcdhook.PromptSubmitPayload{
+				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
+		}},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
 		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
 		{"permission-request-allowing-agent-thread", "permission-request", "permission-request", Permission, false, false, false, func(c Call) string {
