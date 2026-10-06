@@ -137,6 +137,7 @@ func (k *integrationKit) acceptOnForge(plan, node string, o acceptOpts) accepted
 // The mapping is the kit's explicit statement of which temporary repository a forge identity stands for: a forge is read from the repository it is mapped to and from no other, and the tip is reported
 // under the forge's own name.
 func TestForgeKitMapsEachForgeToItsOwnRepository(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
@@ -166,6 +167,7 @@ func TestForgeKitMapsEachForgeToItsOwnRepository(t *testing.T) {
 // A forge nobody mapped has no answer. Each reader errors, and the kit also remembers the request, so that a caller which swallows the error (liveheads.go skips a tip it cannot read) still fails
 // the test when it ends. This test takes what it provoked.
 func TestForgeKitFailsOnAnUnmappedForge(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	k.declare("g", "I", "x.go")
 	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: head1, PR: 5})
@@ -196,6 +198,7 @@ func TestForgeKitFailsOnAnUnmappedForge(t *testing.T) {
 // An absolute path is a local checkout, and the forge kit leaves it to the production local readers: a legacy local row keeps being observed under its path, the forge is never consulted for it,
 // and nothing is recorded under the forge for it.
 func TestForgeKitLeavesLocalCheckoutsToTheLocalReaders(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	// the local checkout is a repository of its own, so that sending its requests to the repository the forge is mapped to would not give the same answers
 	repo := newGitRepo(t)
@@ -240,6 +243,7 @@ func (r *recordingTB) finish() {
 
 // What catches a caller that swallows the reader's error is the failure at the end of the test: an unmapped request nobody took is reported once, naming the forge, and one a test took is not.
 func TestForgeKitReportsAnUnmappedRequestNobodyTook(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	left := &recordingTB{TB: t}
 	readers := newForgeKitReaders(left)
@@ -266,6 +270,7 @@ func TestForgeKitReportsAnUnmappedRequestNobodyTook(t *testing.T) {
 // The guard of the mapping is activated by spellings the product's tip reader would not read: mergeturn.TargetReader checks the repository against its slug pattern as given, so a name that differs
 // from its trimmed form is refused there, and a kit that mapped it would answer for a repository that reader refuses. Nothing is registered by a refusal.
 func TestForgeKitRefusesMisspelledMappings(t *testing.T) {
+	t.Parallel()
 	readers := newForgeKitReaders(t)
 	path := t.TempDir()
 	for _, forge := range []string{" owner/repo ", "owner/repo\n", "repo", "/tmp/owner/repo", "/repo", "owner/", "a/b/c", ""} {
@@ -287,6 +292,7 @@ func TestForgeKitRefusesMisspelledMappings(t *testing.T) {
 // The forge reader refuses some branch names that git accepts. The kit's reader answers for a forge, so it has to refuse them too, and this holds the copy of the rule equal to the product's: the
 // product reader is pointed at a gh that does not exist, so a branch name it refuses is refused before any process starts and one it accepts fails to start gh. Neither reaches a network.
 func TestForgeKitRejectsTheBranchNamesTheForgeReaderRejects(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	ctx := context.Background()
 	product := mergeturn.TargetReader{GH: filepath.Join(t.TempDir(), "no-gh")}

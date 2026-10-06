@@ -146,6 +146,7 @@ func TestStoredReceiptLookupAnswersEachStateOfTheRelationship(t *testing.T) {
 // A lookup that is given neither a path nor a resolver cannot look, and says so, where one that is
 // not asked about a named turn never needs a store, so its resolver is not called.
 func TestStoredReceiptLookupAtNeedsAPathOnlyForANamedTurn(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	q := ReceiptQuery{Relationship: "rel", Session: "session", Turn: "turn"}
 	if answer, readable, err := LookupStoredReceiptAt(ctx, "", nil, time.Second, q); answer != nil || readable || err != nil {
@@ -171,6 +172,7 @@ func TestStoredReceiptLookupAtNeedsAPathOnlyForANamedTurn(t *testing.T) {
 // it neither waits for a second pool connection (the pool has one, and the transaction holds it)
 // nor leaves the transaction changed.
 func TestStoredReceiptLookupReadsThroughTheCallersTransaction(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := stageReceipt(t)
 	rolledBack := errors.New("rolled back on purpose")

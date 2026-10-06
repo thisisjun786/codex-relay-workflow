@@ -282,7 +282,11 @@ func sqliteRows(path string) (string, []string, error) {
 
 // sqliteSchema is the digest of a database's schema and its tables, by name.
 func sqliteSchema(db *sql.DB) (string, []string, error) {
-	result, err := db.Query("SELECT type, name, COALESCE(sql, '') FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY type, name")
+	v1, err := testsupport.V1ObjectPredicate()
+	if err != nil {
+		return "", nil, err
+	}
+	result, err := db.Query("SELECT type, name, COALESCE(sql, '') FROM sqlite_master WHERE " + v1 + " ORDER BY type, name")
 	if err != nil {
 		return "", nil, err
 	}

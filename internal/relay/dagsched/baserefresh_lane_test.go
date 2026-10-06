@@ -76,6 +76,7 @@ func recordedScenario(t *testing.T) (*refreshScenario, RefreshResult) {
 // Before the record the same pull request is stale_head and gets no turn. The work report of generation 2 names the refreshed head, so the lane's own check, which is not changed, compares the candidate
 // with it.
 func TestARefreshedNodeIsJudgedAndMergedInTheLane(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	ctx := context.Background()
 	s.openGeneration()
@@ -160,6 +161,7 @@ func TestARefreshedNodeIsJudgedAndMergedInTheLane(t *testing.T) {
 // Criterion c2: what no record covers is refused as before. A pull request that moved on after the record, a head that holds more than merges of the base (the record is refused, so there is none), and
 // a row that does not digest to its id (nobody proved it) each leave the pull request stale_head, the request without a turn, and the edge blocked.
 func TestARefreshedPullRequestNoRecordCoversIsRefusedAsBefore(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		setup func(t *testing.T) *refreshScenario
@@ -229,6 +231,7 @@ func TestARefreshedPullRequestNoRecordCoversIsRefusedAsBefore(t *testing.T) {
 // What the record says is the head of the acceptance, and the newest record wins: a pull request at the head of an older record is stale_head, one at the newest is not. A check made under an earlier
 // record's head is history once a newer record lands; a check made under a head the acceptance never stood on is not a reading of it.
 func TestTheNewestRecordIsTheHeadThePullRequestIsJudgedAgainst(t *testing.T) {
+	t.Parallel()
 	s, first := recordedScenario(t)
 	older := s.head
 	if res, err := s.judge(); err != nil || !res.Eligible() || res.HeadSHA != older {
@@ -269,6 +272,7 @@ func TestTheNewestRecordIsTheHeadThePullRequestIsJudgedAgainst(t *testing.T) {
 // The edge asks where the relay last saw the pull request. What it saw of the accepted head before the record was seen under the accepted head: history. The same observation repeated after the record is
 // a new row under the head the acceptance stands on, and it is a move.
 func TestAnObservationMadeBeforeTheRecordIsHistoryAndTheSameOneAfterItIsAMove(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	if res, err := s.judge(); err != nil || !res.Eligible() || res.ObservedHeadSHA != s.h1 {
 		t.Fatalf("judge at the accepted head = %v %+v", err, res)
@@ -293,6 +297,7 @@ func TestAnObservationMadeBeforeTheRecordIsHistoryAndTheSameOneAfterItIsAMove(t 
 
 // The same stale observation made before the record and after it is two rows: it is judged against two different heads, and the first must not stand for the second.
 func TestTheSameObservationBeforeAndAfterTheRecordAreTwoRows(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
@@ -323,6 +328,7 @@ func TestTheSameObservationBeforeAndAfterTheRecordAreTwoRows(t *testing.T) {
 // A head that was evicted stays evicted in the history. A pull request back at it after a record moved the acceptance on is stale_head and is observed as such, not answered from the old eviction while the
 // latest row still says eligible at the refreshed head.
 func TestAnEvictedHeadTheAcceptanceNoLongerStandsOnIsObservedAsStale(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	failing := func(head string, attempt int64) PullRequest {
 		pr := openPR("owner/repo", 7, head)
@@ -362,6 +368,7 @@ func TestAnEvictedHeadTheAcceptanceNoLongerStandsOnIsObservedAsStale(t *testing.
 
 // The refresh the judgement read is still the one the acceptance stands on when the judgement is written: a record that lands in between is a reading that is older than the history.
 func TestAJudgementReadBeforeANewerRecordIsNotWritten(t *testing.T) {
+	t.Parallel()
 	s, _ := recordedScenario(t)
 	s.sched.testBeforeJudgeTx = func() {
 		s.sched.testBeforeJudgeTx = nil
@@ -375,6 +382,7 @@ func TestAJudgementReadBeforeANewerRecordIsNotWritten(t *testing.T) {
 
 // The request reads the head the acceptance stands on again where it creates the turn: a record that lands between the judgement and the request leaves the eligible judgement of another head, and no turn.
 func TestAMergeRequestReadsTheStandAgainWhereItCreatesTheTurn(t *testing.T) {
+	t.Parallel()
 	s, _ := recordedScenario(t)
 	if res, err := s.judge(); err != nil || !res.Eligible() {
 		t.Fatalf("judge = %v %+v", err, res)
@@ -391,6 +399,7 @@ func TestAMergeRequestReadsTheStandAgainWhereItCreatesTheTurn(t *testing.T) {
 // The release freshness check reads the pull request of a pinned predecessor against the head its acceptance stands on: a recorded refresh releases the successor, and a pull request that moved on after the
 // record does not (merge_candidate_moved, with the stale_head observation kept). A record that lands while the forge is read writes no observation.
 func TestReleaseFreshnessFollowsTheRecordedRefresh(t *testing.T) {
+	t.Parallel()
 	t.Run("the pull request is at the refreshed head", func(t *testing.T) {
 		s, _ := recordedScenario(t)
 		if res, err := s.release("g", "A"); err != nil || s.count("SELECT COUNT(*) FROM dag_releases WHERE plan_id = 'g' AND node_id = 'A'") != 1 {
@@ -424,6 +433,7 @@ func TestReleaseFreshnessFollowsTheRecordedRefresh(t *testing.T) {
 
 // A merge turn of unknown effect for a head the acceptance stands on, or stood on before a record moved it, blocks the node's reading as one for the accepted head does.
 func TestAMergeTurnOfUnknownEffectForARefreshedHeadBlocksTheNode(t *testing.T) {
+	t.Parallel()
 	s, _ := recordedScenario(t)
 	first := s.head
 	if _, turn, err := s.askForTurn(); err != nil || turn == nil {
@@ -442,6 +452,7 @@ func TestAMergeTurnOfUnknownEffectForARefreshedHeadBlocksTheNode(t *testing.T) {
 
 // The merge-order readers follow the head the acceptance stands on: the node whose turn is for the refreshed head is in the turn lane, and the current accepted head is that head.
 func TestTheMergeLaneReadersFollowTheRecordedHead(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	ctx := context.Background()
 	s.openGeneration()

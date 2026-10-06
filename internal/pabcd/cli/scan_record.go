@@ -37,6 +37,10 @@ func scanRecordRun(a ScanCliArgs, appendEvent func(string, state.InterviewEvent)
 		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
+		// Intentionally changed: publishing a capped/repaired read loses interview records too.
+		if !cliInterviewIntact(a.Cwd, a.SessionID) {
+			return errors.New(cliInterviewRefusalReason)
+		}
 		tracker := s.Interview
 		if tracker == nil {
 			tracker = interview.DefaultInterview(0)

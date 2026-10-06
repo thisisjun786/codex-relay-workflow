@@ -31,6 +31,7 @@ func (h *host) main(t *testing.T, env scope.Env, args ...string) (int, string, s
 // the repair - and reported by status, so hook and register-mcp never write settings naming a
 // pointer the host does not run.
 func TestTheDestinationIsFixed(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, _, stderr := h.main(t, h.env, "status", "--dest", h.dest); code != install.Usage || !strings.Contains(stderr, "-dest") {
 		t.Fatalf("--dest: exit %d %s", code, stderr)
@@ -72,6 +73,7 @@ func TestTheDestinationIsFixed(t *testing.T) {
 // --owner defaults to plugin, the only owner, and hook takes no --adapter or --event, whose only
 // values were completion and Stop (decision 69); the answer still names all three.
 func TestHookAndRegisterMCPNeedNoSingleValueSwitch(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, stdout, stderr := h.main(t, h.env, "hook", "--marker-root", filepath.Join(h.home, "markers"))
 	if code != install.OK || !strings.Contains(stdout, `"owner": "plugin"`) || !strings.Contains(stdout, `"adapter": "completion"`) || !strings.Contains(stdout, `"event": "Stop"`) {
@@ -96,6 +98,7 @@ func TestHookAndRegisterMCPNeedNoSingleValueSwitch(t *testing.T) {
 // directory, and so is a HOME a lexical join and the kernel can read apart (a "..", or exactly
 // two leading slashes). A document built from the environment (a marker root) is refused by its writer.
 func TestPathsTheInstallerCannotSpellAreRefused(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	for name, tc := range map[string]struct {
 		env  scope.Env
@@ -137,6 +140,7 @@ func TestPathsTheInstallerCannotSpellAreRefused(t *testing.T) {
 // An empty directory argument to rollback is a usage error, as it is for remove: an unset
 // variable spelled as the directory must not send the host to the outgoing selection.
 func TestAnEmptyRollbackDirectoryIsAUsageError(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
@@ -155,6 +159,7 @@ func TestAnEmptyRollbackDirectoryIsAUsageError(t *testing.T) {
 // reading refuses (runtime_install.py tests `is not None`), never "no policy": nothing is written
 // and the bridge never starts with role checks off.
 func TestAnEmptyExecutionPolicyIsRefused(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	policy, _ := h.policy(t)
 	for _, args := range [][]string{
@@ -177,6 +182,7 @@ func TestAnEmptyExecutionPolicyIsRefused(t *testing.T) {
 // second owner a Go promotion refuses, and a bridge table naming the pointer's bridge that way is
 // the pointer's bridge, not a foreign one.
 func TestTheSecondOwnerRuleKnowsThePointerByIdentity(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	previous, _ := h.goEraHost(t)
 	alias := filepath.Join(filepath.Dir(h.home), filepath.Base(h.home)+"-alias")
@@ -207,6 +213,7 @@ func TestTheSecondOwnerRuleKnowsThePointerByIdentity(t *testing.T) {
 // and the pointer names another) a bare rollback refuses and names both, and finishing the move
 // by name records the runtime the pointer left.
 func TestOutgoingIsTheRuntimeThePointerLeaves(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -256,6 +263,7 @@ func TestOutgoingIsTheRuntimeThePointerLeaves(t *testing.T) {
 // lock until it has acted: held by another run, the rollback refuses with nothing written; and
 // while the rollback commits, nobody else can take it.
 func TestARollbackHoldsItsTargetsDirectoryLock(t *testing.T) {
+	// sequential: replaces the package's commit seam.
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
