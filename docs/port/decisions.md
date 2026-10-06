@@ -5150,9 +5150,9 @@ implementation acceptance that names no verified head (`accept.go:208`, `:224`).
 `no_update` is unreachable here because `N` equal to `P` is decided before the
 proof runs. The contract reads §4.3's `head_sha` row with the verified head and the
 proof record and lists the new table with §4.5's tables; the CLI gains
-`--verified-head`, `--checkout` and `--resolved` on `dag-accept`
+`--verified-head` and `--checkout` on `dag-accept`
 (`internal/relay/argparse/specs.json:846`, beside the base-refresh flags at
-`:866-867`); the acceptance's answer gains the proof fields and its goldens are
+`:866`); the acceptance's answer gains the proof fields and its goldens are
 recorded when the slice ships. No exit code, reading reason or golden answer
 changes in this pull request.
 
@@ -5183,44 +5183,61 @@ pull request. Each slice is one region and about 600 lines or less, and each is
 proved red before it is built.
 
 1. **The acceptance proof** (`internal/relay/dagsched`, `accept.go` and the
-   scheduler's own new test file `accept_refresh_test.go`; the plan's region work
-   in `baserefresh.go` is reused, not moved).
-   `(*Scheduler).Accept(ctx context.Context, plan, node, actor string, in
-   AcceptInput) (AcceptResult, error)` and `(*Scheduler).accept(...)` keep their
-   signatures; `AcceptInput` (`accept.go:31-36`) gains `VerifiedHead string`,
-   `Checkout string` and `Resolved []string`, and `AcceptResult` gains the proof it
-   recorded (`VerifiedHead string`, `Resolved []string`, `RefreshID string`).
-   `accept` gains the proof between the forge reading (`:229-235`) and the
-   acceptance insert (`:401`): for an implementation node, `in.VerifiedHead == ""`
-   is `malformed_receipt` with `an implementation node is accepted on the head its
-   ruling verified: name --verified-head`; `in.VerifiedHead == pr.HeadSHA` proves
-   nothing; otherwise the base tip is read with
-   `s.Tips.Tip(in.PullRequest.Repository, pr.BaseRef)` (the reader `Accept` already
-   uses at `:190-199`), the checkout is resolved with `refreshCheckout(repo,
-   in.Checkout)` (`baserefresh.go:154`), the three commits must be in it
-   (`merge_target_unreadable` with the fetch to run, `baserefresh.go:280-283`),
-   `proveBaseRefresh(ctx, g, in.VerifiedHead, pr.HeadSHA, tip.SHA)` refuses with
-   `refusedProof`'s text and closed code (`baserefresh.go:168-170`),
-   `applyMechanical` (`baserefresh_git.go:93`) is applied with the plan's
-   declarations and contributor heads (`loadDeclarations`, `refreshContributors`),
-   and `in.Resolved` must equal the manual paths with the existing comparison and
-   text (`baserefresh.go:357-362`). The proof runs inside the acceptance's
-   transaction (`:242`), before the supersede update (`:371`), so a refusal leaves
-   the acceptance it would have replaced active. Replays and revalidations
-   (`:314-355`) and `sameForgeReading` (`:464`) are untouched, and a node that
-   accepted before this change keeps reading as it does. The `AcceptInput` comment
-   (`:29-30`) is rewritten: the input names the head the ruling is about, and the
-   accepted head is still the one the relay reads from the forge.
-   Red first: a differing head with no checkout is `merge_target_unreadable`; a
-   hand resolution outside every declared region is `disposition_conflict` with
-   `tree_differs` and writes no row while the superseded acceptance stays active;
-   a head that is the verified head merged with the base tip is accepted with the
-   proof recorded; `N` equal to `P` is accepted with no checkout; a missing
-   `--verified-head` is `malformed_receipt`; a chain of two updates is one proof;
-   a replay is unchanged. Green controls: a non-PR acceptance, a terminal node's
-   default target, and an acceptance recorded before this change.
-   `docs/relay/dag-scheduler.md` "Accepting a result" (`:480`) gains the proof when
-   the slice ships.
+scheduler's own new test file `accept_refresh_test.go`; the plan's region work
+in `baserefresh.go` is reused, not moved).
+`(*Scheduler).Accept(ctx context.Context, plan, node, actor string, in
+AcceptInput) (AcceptResult, error)` and `(*Scheduler).accept(...)` keep their
+signatures; `AcceptInput` (`accept.go:31-36`) gains `VerifiedHead string`,
+`Checkout string` and `Resolved []string`, and `AcceptResult` gains the proof it
+recorded (`VerifiedHead string`, `Manual []string`, `RefreshID string`).
+`accept` gains the proof between the forge reading (`:229-235`) and the
+acceptance insert (`:401`): for an implementation node, `in.VerifiedHead == ""`
+is `malformed_receipt` with `an implementation node is accepted on the head its
+ruling verified: name --verified-head`; `in.VerifiedHead == pr.HeadSHA` proves
+nothing; otherwise the base tip is read with
+`s.Tips.Tip(in.PullRequest.Repository, pr.BaseRef)` (the reader `Accept` already
+uses at `:190-199`), the checkout is resolved with `refreshCheckout(repo,
+in.Checkout)` (`baserefresh.go:154`), the three commits must be in it
+(`merge_target_unreadable` with the fetch to run, `baserefresh.go:280-283`),
+`proveBaseRefresh(ctx, g, in.VerifiedHead, pr.HeadSHA, tip.SHA)` refuses with
+`refusedProof`'s text and closed code (`baserefresh.go:168-170`),
+`applyMechanical` (`baserefresh_git.go:93`) is applied with the plan's
+declarations and contributor heads (`loadDeclarations`, `refreshContributors`),
+and the paths a rule did not prove are refused: `dag-accept` takes no
+`--resolved`, so the comparison `RecordBaseRefresh` makes against the caller's
+names (`baserefresh.go:357-362`) is not reused, and a hand resolution outside
+every declared and built-in rule is a refusal that sends the candidate back to its
+child. The proof runs before `Store.Compose`, as `RecordBaseRefresh` runs its own
+(`baserefresh.go:293-356`, before `Compose` at `:387`), because
+`applyMechanical` can execute a declared `regenerate:` command with a
+ten-minute per-run timeout (`base_refresh_relay.go:18`,
+`base_refresh_mechanical.go:31`) and `Compose` takes SQLite's writer lock
+(`accept.go:242`). The transaction then re-reads what the proof rested on — the
+plan's declarations and contributor heads, the node's slice and criteria digests,
+the relationship's generation and verified head, the active acceptance's identity,
+and the forge and base readings — as `RecordBaseRefresh` re-checks them
+(`baserefresh.go:388-457`), and writes the acceptance, its forge row and the proof
+row together; a refusal before it leaves the acceptance it would have replaced
+active (`:371`). Replays and revalidations (`:314-355`) and `sameForgeReading`
+(`:464`) are untouched, and a node that accepted before this change keeps reading
+as it does. The `AcceptInput` comment (`:29-30`) is rewritten: the input names the
+head the ruling is about, and the accepted head is still the one the relay reads
+from the forge.
+Red first: a differing head with no `--checkout` is `malformed_receipt` from
+`refreshCheckout` (`baserefresh.go:162`), while a checkout that does not hold one
+of the three commits is `merge_target_unreadable` (`:282`); a hand resolution
+outside every declared and built-in region is `disposition_conflict` with
+`tree_differs`, writes no row and leaves the superseded acceptance active; a head
+that is the verified head merged with the base tip is accepted with the proof
+recorded; `N` equal to `P` is accepted with no checkout; a missing
+`--verified-head` is `malformed_receipt`; a chain of two updates is one proof;
+a replay is unchanged. Green controls: a non-PR acceptance, a terminal node's
+default target, and an acceptance recorded before this change.
+`docs/relay/dag-scheduler.md` "Accepting a result" (`:480`) gains the proof, and
+the lane's own call and its instructions are updated in the same change:
+`plugins/crw/skills/crw-run/references/merge-readiness.md:982` says `dag-accept`
+takes none from the caller, so leaving it behind would make every new
+implementation acceptance `malformed_receipt`.
 
 2. **The proof record** (`internal/relay/store`, the zone and its snapshot, plus
    the scheduler's insert).
@@ -5229,21 +5246,27 @@ proved red before it is built.
    `event_id`, `revision_hash`, `head_sha`, `verified_head_sha`,
    `base_repository`, `base_ref`, `base_tip_sha`, `proof_json`,
    `resolved_paths_json`, `recorded_by_task_id`, `coordinator_epoch`,
-   `recorded_at`; `UNIQUE (acceptance_id, refresh_seq)` and `UNIQUE (acceptance_id,
-   head_sha)`, a foreign key to `dag_acceptances`). Its id is the digest of its
-   content, as `refreshDigest` (`baserefresh.go:61-64`) is. The zone ledger
-   (`internal/relay/store/dag_zone.go`) gains the statement at its end,
-   `testdata/dag_zone_shipped.json` records the new object with
-   `CRW_GOLDEN=update`, and `dag_zone_test.go`'s `zoneInventory` (`:26-71`) lists
-   its columns. The row type and its reader sit in
-   `internal/relay/store/domain_rows.go` beside `MergeTurnsRow` (`:277`), and the
-   insert runs in the acceptance's transaction.
-   Red first: `TestDAGZoneInventory` and `TestDAGZoneShippedTextIsFrozen` fail
-   until the table and its snapshot entry exist; a round trip reads back the same
-   proof and a row that does not digest to its id is not read; a swap-gate test in
-   `internal/runtime/swapgate` reads the new table as `ExtendsZone` and releases it
-   only with `--backup-state-to`. No shipped statement is edited, and the route in
-   `internal/runtime/install/zone.go:68-85` is unchanged.
+`recorded_at`; `UNIQUE (acceptance_id, refresh_seq)` and `UNIQUE (acceptance_id,
+head_sha)`, a foreign key to `dag_acceptances`, and the `BEFORE UPDATE` and
+`BEFORE DELETE` triggers every immutable zone ledger carries — for
+`dag_base_refreshes` at `dag_zone.go:637-640` — because the proof is deliberately
+outside the acceptance's identity, so a deleted row could not be told from an
+acceptance that never needed one). Its id is the digest of its content, as
+`refreshDigest` (`baserefresh.go:61-64`) is. The zone ledger
+(`internal/relay/store/dag_zone.go`) gains the statement at its end,
+`testdata/dag_zone_shipped.json` records the new object with
+`CRW_GOLDEN=update`, and `dag_zone_test.go`'s `zoneInventory` (`:26-71`) lists
+its columns. The row type and its reader sit in
+`internal/relay/store/domain_rows.go` beside `MergeTurnsRow` (`:277`), and the
+insert runs in the acceptance's transaction.
+Red first: `TestDAGZoneInventory` and `TestDAGZoneShippedTextIsFrozen` fail
+until the table and its snapshot entry exist; a round trip reads back the same
+proof and a row that does not digest to its id is not read; a swap-gate test in
+`internal/runtime/swapgate` reads the new table as `ExtendsZone` and releases it
+only with `--backup-state-to`; an `UPDATE` and a `DELETE` of a proof row abort,
+as they do for `dag_base_refreshes` (`dag_zone_test.go:399-419`). No shipped
+statement is edited, and the route in
+`internal/runtime/install/zone.go:68-85` is unchanged.
 
 3. **The built-in plugin-manifest rule in the relay's proof**
    (`internal/skill/base_refresh_relay.go`, with the classifier call site in
@@ -5252,13 +5275,20 @@ proved red before it is built.
    resolutions today (`:64`). It builds the same built-in map the skill's
    `mechanical` command builds for `plugins/crw/.codex-plugin/plugin.json`
    (`base_refresh_mechanical.go:295-330`, `:473-521`) and passes it to
-   `settleMechanical` (`:335`); `RefreshMechanicalChecker`
-   (`baserefresh_git.go:45`) and `RegisterRefreshMechanical` (`:56`) keep their
-   shapes, or gain one built-in parameter. One proof has one answer, so every relay
-   caller of `applyMechanical` gains it — today `dag-base-refresh`
-   (`baserefresh.go:348`) and, after slice 1, `dag-accept`. A `dag-accept`-only
-   switch is rejected: the same three commits would then be mechanical in one
-   command and manual in the other.
+`settleMechanical` (`:335`); `RefreshMechanicalChecker`
+(`baserefresh_git.go:45`) and `RegisterRefreshMechanical` (`:56`) keep their
+shapes, or gain one built-in parameter. The selection changes with it:
+`applyMechanical` sends a path to the checker only when a declaration covers it
+and a contributor head is known (`baserefresh_git.go:105-115`), so the manifest
+path would otherwise never reach the rule built for it — the checker is called
+whenever the manifest is unproved and no declaration covers it, and it answers
+through the same `RefreshMechanicalRefusal` (`:46-51`), whose `Detail` is a
+refusal and whose `Manual` leaves the path to the acceptance's own refusal. One
+proof has one answer, so every relay
+caller of `applyMechanical` gains it — today `dag-base-refresh`
+(`baserefresh.go:348`) and, after slice 1, `dag-accept`. A `dag-accept`-only
+switch is rejected: the same three commits would then be mechanical in one
+command and manual in the other.
    Red first: a merge whose only difference is the manifest's version line, equal
    to the version the head's own payload derives, passes the relay's
    classification; a version that is not the derived one, a mode change and a
@@ -5267,7 +5297,8 @@ proved red before it is built.
    `internal/skill/base_refresh_pluginversion_test.go`) stay green. New cases live
    in a new file, `internal/skill/base_refresh_relay_pluginversion_test.go`.
 
-Out of scope, and left for the coordinator to schedule: the implementation itself,
-the merge-lane scripts, other relay packages, the skill documents and
-`plugin.json`; the version line `plugin.json` records is settled by the
-coordinator's own merge of the tree, as it is for every sibling.
+Out of scope for this pull request, which changes one document: the implementation
+itself, the merge-lane scripts and the skill documents. They ship with the slices
+above in the same rollout, so the lane is never left calling a command it cannot
+satisfy. The version line `plugin.json` records is settled by the coordinator's
+own merge of the tree, as it is for every sibling.
