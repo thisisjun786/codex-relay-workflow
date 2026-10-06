@@ -475,7 +475,12 @@ func TestTheStagnationCounterReadsTheHeadItStandsOnAndCountsDistinctAttempts(t *
 			AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: "t", State: "active"})
 		// the merge judge copies the eviction of this head onto the acceptance in force as one row (mergejudge.go, round maxRounds)
 		f.mergeCheckRow(dig("acc-a2"), "mc-a2-1", 1, head1, failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 2}}), maxRounds, OutcomeEvicted)
+		// the reading writes nothing on the check path either: the whole zone's rows are the same before and after it
+		before := f.zoneRows()
 		st := f.stagnationOf("sp", "I")
+		if after := f.zoneRows(); fmt.Sprint(before) != fmt.Sprint(after) {
+			t.Fatalf("the check reading wrote rows: %v -> %v", before, after)
+		}
 		// the copy is the same attempt as mc-2: it is not a third failure, and the two distinct attempts of the head are kept across both acceptances
 		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure {
 			t.Fatalf("the same head accepted again after two failures reads %+v, want count 2 (the copied eviction is the same attempt)", st)

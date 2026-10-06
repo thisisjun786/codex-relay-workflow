@@ -64,12 +64,13 @@ func (st Stagnation) canonical() map[string]any {
 }
 
 // Stagnation reads a node’s stagnation counter from the rows the store already keeps: its correction generations (dag_node_executions, kind correction) with the finding each ruling carried,
-// its merge-check history (dag_merge_checks, the round and the failed required checks) and its revalidations (dag_acceptance_revalidations). It returns nil below the threshold of 2, and a
+// its merge-check history (dag_merge_checks, the failed required checks of each judgement) and its revalidations (dag_acceptance_revalidations). It returns nil below the threshold of 2, and a
 // node that landed reads none whatever the rows say (it is never run again, E-20). It reads no clock and writes nothing.
 //
 // What counts is the current state of the node: an acceptance is the repair, so the rows of the generations before it, and the check rows of a head other than the one it stands on now, are the
 // history of a result that was already repaired. The head a node stands on is the one its acceptance stands on now (standOf): a recorded base refresh moves it, and the check rows of the head it
-// stood on before the record are that head’s history. A node with no active acceptance counts everything it has.
+// stood on before the record are that head’s history. A node with no active acceptance counts every correction generation it has, and reads no repeated check failure at all: there is no head it
+// stands on, and a check row is evidence about the commit it ran on.
 //
 // A revalidation (dag_acceptance_revalidations) is read as part of the acceptance it re-verifies and not as a row of its own: it re-verifies the SAME accepted output under the plan’s criteria and
 // writes no correction generation, so it moves neither the floor nor the run. It matters here for the other direction: because the active acceptance is what the floor comes from, a node whose result
