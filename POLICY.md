@@ -183,6 +183,78 @@ applicable notices for adapted material; the notices for ported CXC material are
 review history, private reporting and contributor readiness before making a
 private repository public or publishing a release.
 
+## Work units, review and integration
+
+### The units
+
+A feature or acceptance unit, a parallel work packet and an integration bundle of prepared
+changes are three different units, and policy does not force them into one. It no longer
+requires issue = child = pull request = that pull request's own full CI = its own merge turn.
+Every issue is traced from its acceptance criteria to a reviewed candidate to the actual merge
+commit on its intended target; an implementation that delivers only part of the criteria never
+closes the issue.
+
+An issue carries one coherent unit of work: the implementation, the tests it requires, the
+documentation directly tied to it and the review fixes it directly raises. Being verifiable on
+its own permits a split; it does not require one. Line counts and file counts are references
+only — never an assignment gate, never a forced split and never a gate a user must waive. Split
+for a contract with value of its own, for a different responsibility, risk or deployment
+boundary, or for a real benefit from parallel ownership. A direct defect found in a pull request
+about that pull request's own change is fixed in that pull request rather than split off.
+
+### Several packets in one feature
+
+Policy allows several parallel packets for one feature with explicit owners: overlapping code,
+shared types and fixtures each get an owner, and existing ids, branches and contracts are kept.
+The capability is switched on per support, not by this policy text.
+
+**Activation is per support.** Today the relay registers one child per issue relationship.
+Separating a feature issue from a packet id, reserving and owning packets, and covering them are
+the multi-packet support issue's; bundle integration and criteria mapping are the merge-train
+issue's. Multi-packet work is switched on only after both are merged and installed and a real
+acceptance has shown two packets of one feature with duplicate prevention, a final candidate and
+a refusal to close the whole on a partial completion. Until then one issue runs as one packet.
+A successful first single-packet bundle run is not multi-packet support. Never work around this
+with wording or invented issue ids.
+
+### Integration bundles
+
+Preparation and review run in parallel. Per target an integrator freezes only prepared changes
+into a small bundle — the base, the member heads, their order, the combined head and the criteria
+mapping — without filling to a count and without waiting for unfinished work; a risky or urgent
+change goes alone. The bundle runs its full CI as the final candidate and lands in one merge. A
+failure removes or fixes the cause and what depends on it and re-verifies the changed candidate;
+when the target or the base moves, only the invalidated evidence is refreshed. The relay
+document and code contract for this is the merge-train issue's; until it is installed the serial
+lane applies.
+
+### Review
+
+The required independent review stays, and the revision it read and the disposition of every
+important finding it raised are recorded. For the optional Devin and Codex reviews the fixed
+time is a waiting budget of 45 minutes from the review's first signal; it is only a waiting
+budget, never evidence that a review stalled or finished. Past that budget a
+review still running is recorded as pending, not complete, and the wait is released only when the
+current candidate's required independent review and its finding dispositions already exist;
+missing independent review is obtained through the existing approved path. A late important
+finding is judged against the current candidate. External bots are never re-requested,
+interrupted or bypassed. The coordinator checks valid evidence and the integration part and does
+not rerun everything without reason or add duplicate approvals. Where the collector or the lane
+still refuses the new flow, that is missing official support to report; nothing merges outside
+the lane.
+
+### Audit
+
+Audit, scores and records are strengthened: repeated recording of one fact and approval round
+trips are reduced, while criteria, history, model roles, review revisions and finding
+dispositions are kept. Quantitative proof of the effect is not a condition for progress.
+
+### Unchanged
+
+No force push and no unverified merge. The final candidate's full CI and the post-merge
+dev-push release verification stay separate. The temporary CI light mode stays as it is.
+
+
 ## Activation
 
 Checked-in rules and successful local checks do not enable GitHub enforcement.
