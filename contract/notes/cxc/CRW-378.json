@@ -1,0 +1,27 @@
+{
+  "issue": "CRW-378",
+  "identical": [
+    "hook__session-start-bootstrapping-pabcd-state__baseline_empty_workspace",
+    "hook__session-start-bootstrapping-pabcd-state__corrupt_state_unchanged",
+    "hook__session-start-bootstrapping-pabcd-state__env_on_overrides_project_off",
+    "hook__session-start-bootstrapping-pabcd-state__noncanonical_session_id_writes_nothing",
+    "hook__session-start-bootstrapping-pabcd-state__resumed_state_unchanged",
+    "hook__post-tool-use-capturing-interview-answers__active_goal_captures_silently",
+    "hook__post-tool-use-capturing-interview-answers__baseline_empty_workspace",
+    "hook__post-tool-use-capturing-interview-answers__content_block_response",
+    "hook__post-tool-use-capturing-interview-answers__ignored_and_disabled",
+    "hook__post-tool-use-capturing-interview-answers__partial_and_malformed_rounds",
+    "hook__post-tool-use-capturing-interview-answers__phase_i_reinjects_rescan_directive",
+    "hook__post-tool-use-capturing-interview-answers__replay_is_idempotent",
+    "hook__post-tool-use-capturing-interview-answers__string_payloads_captured",
+    "hook__post-tool-use-capturing-interview-answers__unreadable_goal_db_captures_silently",
+    "hook__post-compact-resetting-reinject-cursor__baseline_empty_workspace",
+    "hook__post-compact-resetting-reinject-cursor__idle_is_a_noop"
+  ],
+  "intentionally-changed": [
+    {
+      "id": "hook__post-compact-resetting-reinject-cursor__active_cycle_resets_cursor",
+      "reason": "the oracle reads the session state and writes it back with no lock, so an update a participating writer lands between the two is lost (data-loss defect, fixed by decision: the port re-reads inside the session lock and refuses to rewrite a state whose records the reader cannot keep). The single-step case observes the same bytes, so the claim names no difference."
+    }
+  ]
+}

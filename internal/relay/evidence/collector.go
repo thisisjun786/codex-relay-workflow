@@ -339,6 +339,36 @@ func outcome(n map[string]any) string {
 	}
 	return "unknown"
 }
+
+// jobNeverRan reports whether a workflow job concluded cancelled without beginning any step. The
+// jobs API leaves the step list empty (or absent) and every started_at unset for a job no runner
+// ever picked up, which is the shape the Actions incident of 2026-10-05 produced; such a job says
+// nothing about the commit, so the collector marks it and merge-evidence answers checks_not_run
+// instead of checks_stale (CRW-661). A job that began a step is not this, however it ended, and
+// anything the collector cannot read is left unmarked rather than called a job that never ran.
+func jobNeverRan(j map[string]any) bool {
+	if !strings.EqualFold(strOf(j["conclusion"]), "cancelled") {
+		return false
+	}
+	steps, ok := List(j["steps"])
+	if !ok {
+		return true
+	}
+	if len(steps) == 0 {
+		return true
+	}
+	for _, raw := range steps {
+		step, isObject := Object(raw)
+		if !isObject {
+			return false
+		}
+		if strings.TrimSpace(strOf(step.Get("started_at"))) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func provider(n map[string]any) any {
 	id := mapOf(n["app"])["id"]
 	if id == nil {
@@ -424,11 +454,18 @@ func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, conn
 			positions[slot]++
 			identity := fmt.Sprintf("workflow-run:%s:%s#%d", runText, strOf(j["name"]), index)
 			entry := map[string]any{"runId": identity, "name": strOf(j["name"]), "headSha": strOf(r["head_sha"]), "conclusion": outcome(j), "attempt": attempt, "provider": nil}
+			detailEntry := map[string]any{"source": "workflow-job", "runId": identity, "name": strOf(j["name"]), "superseded": replaced, "status": j["status"], "conclusion": j["conclusion"], "attempt": attempt, "startedAt": j["started_at"], "completedAt": j["completed_at"], "url": j["html_url"], "workflowRunUrl": r["html_url"], "workflowName": r["name"]}
+			// The same value on the check entry and on the detail entry: a job the runner never
+			// picked up is told apart from one that failed (CRW-661).
+			if jobNeverRan(j) {
+				entry["notRun"] = true
+				detailEntry["notRun"] = true
+			}
 			if !replaced {
 				entries = append(entries, entry)
 				bindings = append(bindings, binding{entry, jid})
 			}
-			detail = append(detail, map[string]any{"source": "workflow-job", "runId": identity, "name": strOf(j["name"]), "superseded": replaced, "status": j["status"], "conclusion": j["conclusion"], "attempt": attempt, "startedAt": j["started_at"], "completedAt": j["completed_at"], "url": j["html_url"], "workflowRunUrl": r["html_url"], "workflowName": r["name"]})
+			detail = append(detail, detailEntry)
 		}
 	}
 	published, e := f.enumerateREST("check runs", root+"/commits/"+head+"/check-runs", "check_runs", map[string]string{"filter": "latest"}, idOf)
