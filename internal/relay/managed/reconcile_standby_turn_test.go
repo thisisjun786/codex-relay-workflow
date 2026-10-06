@@ -130,6 +130,16 @@ func TestStandbyTurnACompletedTurnTheCreationSentIsAdopted(t *testing.T) {
 	}
 	k.noSecondTurn()
 	k.effects(1, 1) // the creation, then the business turn only
+	// A repeat reaches the same thread and recognises the same turn: the engine never rewrites the host's
+	// receipt, so it still says outcome_unknown and nothing may depend on an earlier run having changed it.
+	// The child and the standby turn stay the same and no further host effect is taken.
+	again := k.run()
+	k.expect(again, "admitted", "", "adopted")
+	if again["standbyTurnId"] != turn || again["childTaskId"] != "t-1" {
+		t.Fatalf("a repeat changed the child or the standby turn: %v %v", again["childTaskId"], again["standbyTurnId"])
+	}
+	k.noSecondTurn()
+	k.effects(1, 1)
 }
 
 // A standby turn still running leaves the request pending, to be read again, and sends nothing.
