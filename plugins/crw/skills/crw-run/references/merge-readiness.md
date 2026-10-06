@@ -1172,6 +1172,9 @@ among its commands, the parent does not settle a conflict either.
      --record-version`, after the merge of the skills has settled, because the suffix digests the whole
      payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
+     For the generated case sections of `plugins/crw/skills/crw-run/references/dispatch-verification.md` it is
+     `go run -tags dev ./cmd/crw-dev ci dispatch-cases --write`, which rebuilds that document from the row and
+     block files under `docs/crw-run/dispatch-cases/`.
 
 The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
 `plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
