@@ -204,13 +204,13 @@ func sum(r io.Reader) ([sha256.Size]byte, error) {
 	return [sha256.Size]byte(h.Sum(nil)), err
 }
 
-// EnsureProjectRoot returns the pinned W/.crw, created when absent, once its .gitignore is there: published as
-// crwdir.GitignoreText whenever it is absent, also in a root that already exists, so a run interrupted between the mkdir and the
-// publication is repaired by the next one before any state is copied (crwdir.EnsureDir stops at an existing root). A regular
-// .gitignore that was already there when the call began belongs to its owner and is kept as it is, so a differing one is
-// published past and the call succeeds; when it was absent and a racer makes a differing one before the rename, that
-// ReasonDiffers refusal is returned so the caller stops before copying state (state-migration.md Preflight 3-4). A link,
-// directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
+// EnsureProjectRoot returns the pinned W/.crw, created when absent at the private mode 0700 (under the umask) once its
+// .gitignore is there: published as crwdir.GitignoreText whenever it is absent, also in a root that already exists, so a run
+// interrupted between the mkdir and the publication is repaired by the next one before any state is copied (crwdir.EnsureDir
+// stops at an existing root). A regular .gitignore that was already there when the call began belongs to its owner and is kept
+// as it is, so a differing one is published past and the call succeeds; when it was absent and a racer makes a differing one
+// before the rename, that ReasonDiffers refusal is returned so the caller stops before copying state (state-migration.md
+// Preflight 3-4). A link, directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
 func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 	// Was .gitignore already there when this call started? Capture that before EnsureDest can create the root, so a .gitignore
 	// a racer makes in the window that creation opens (or in the root step) is a conflicting initialization race, not a
@@ -225,11 +225,12 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		}
 	}
 	made := pair.Dest == nil
-	root, err := p.ensureDest(pair, 0o777)
+	// The root's mkdir itself is private (CRW-878), so no failure between it and the chmod below can leave a root another
+	// user can read through, whatever a retry then makes of the root it finds. Only a root this call made may be tightened.
+	root, err := p.ensureDest(pair, 0o700)
 	if err == nil && made {
-		// EnsureDest creates the root 0777 subject to umask, and only a root this call made may be tightened. Give it the
-		// private marker mode here, before the fallible .gitignore publication, so a failure below cannot leave a widened
-		// root that a retry would then find as an existing one.
+		// Give the root the private marker mode here, before the fallible .gitignore publication, so a failure below cannot
+		// leave a widened root that a retry would then find as an existing one.
 		err = applyChmodRaw(root, applyTempRaw)
 	}
 	if err == nil {
