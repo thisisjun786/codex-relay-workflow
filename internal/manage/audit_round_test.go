@@ -195,22 +195,22 @@ func TestAuditRoundCommandsUsage(t *testing.T) {
 	e, out, errOut := auditEnv(t)
 	out.Reset()
 	errOut.Reset()
-	if code := auditRunRound(e, []string{"--help"}); code != 0 || !strings.Contains(out.String(), auditRoundUsage) {
+	if code := auditRunRound(context.Background(), e, []string{"--help"}); code != 0 || !strings.Contains(out.String(), auditRoundUsage) {
 		t.Errorf("round --help: exit %d %q", code, out.String())
 	}
 	for _, args := range [][]string{nil, {"nope"}, {"start"}, {"status"}, {"start", "--name", "r"}, {"start", "--name", "r", "--nope", "x"}} {
 		out.Reset()
 		errOut.Reset()
-		if code := auditRunRound(e, args); code != usageExit {
+		if code := auditRunRound(context.Background(), e, args); code != usageExit {
 			t.Errorf("%v: exit %d, want %d", args, code, usageExit)
 		}
 	}
-	if code := auditRunRound(e, []string{"status", "--name", "absent"}); code != 1 {
+	if code := auditRunRound(context.Background(), e, []string{"status", "--name", "absent"}); code != 1 {
 		t.Errorf("status of a missing round: exit %d, want 1", code)
 	}
 	// A name that would leave the rounds directory is a usage error, not a read.
 	errOut.Reset()
-	if code := auditRunRound(e, []string{"status", "--name", "../escape"}); code != usageExit {
+	if code := auditRunRound(context.Background(), e, []string{"status", "--name", "../escape"}); code != usageExit {
 		t.Errorf("an escaping round name: exit %d, want %d: %q", code, usageExit, errOut.String())
 	}
 }

@@ -386,7 +386,7 @@ const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--pha
 // still holds pending or failed, and the round subcommand, which starts a round and reports
 // its progress. The help flags keep their own path so the usage stays reachable without a
 // subcommand.
-func auditRun(_ context.Context, e *Env, args []string) int {
+func auditRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditUsage)
 		return usageExit
@@ -396,11 +396,11 @@ func auditRun(_ context.Context, e *Env, args []string) int {
 		fmt.Fprintln(e.Stdout, auditUsage)
 		return 0
 	case "grade":
-		return auditRunGrade(e, args[1:])
+		return auditRunGrade(ctx, e, args[1:])
 	case "package":
-		return auditRunPackage(e, args[1:])
+		return auditRunPackage(ctx, e, args[1:])
 	case "round":
-		return auditRunRound(e, args[1:])
+		return auditRunRound(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
 	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'round')\n", args[0])
@@ -411,7 +411,7 @@ func auditRun(_ context.Context, e *Env, args []string) int {
 // configuration does not name, grades the one bundle through the engine and prints the
 // graded result as JSON. The engine writes the ledger and alert rows itself, so this
 // command records nothing of its own.
-func auditRunGrade(e *Env, args []string) int {
+func auditRunGrade(ctx context.Context, e *Env, args []string) int {
 	job, err := auditParseGradeArgs(args)
 	if err != nil {
 		fmt.Fprintln(e.Stderr, auditUsage)
@@ -428,7 +428,7 @@ func auditRunGrade(e *Env, args []string) int {
 		fmt.Fprintln(e.Stderr, "crw manage audit: error: grader_unconfigured: the audit section of the configuration names no grader command")
 		return usageExit
 	}
-	results, err := AuditGrade(context.Background(), e, cfg, []AuditJob{job})
+	results, err := AuditGrade(ctx, e, cfg, []AuditJob{job})
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
 		return 1

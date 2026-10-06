@@ -149,12 +149,18 @@ func auditPkgBuildFixture(t *testing.T, state, pkg, head string, criteria map[st
 // auditPkgHead is the head every package test builds at.
 const auditPkgHead = "0123456789abcdef0123456789abcdef01234567"
 
+// auditPkgLargePayload is a payload just over the one mebibyte the bundle rule names. The
+// size is written here rather than taken from the production constant, so the test states
+// the boundary it is checking and a change to that constant shows up as a failure instead
+// of as a larger allocation.
+const auditPkgLargePayload = (1 << 20) + 1
+
 // C5: the bundle carries every source and test file of the head, the criteria land in
 // criteria.json, and a file past 1MB is replaced by a listing line carrying its path, size
 // and sha256.
 func TestAuditPackageBuildsTheBundle(t *testing.T) {
 	state := t.TempDir()
-	big := strings.Repeat("x", auditPkgLargeFileBytes+1)
+	big := strings.Repeat("x", auditPkgLargePayload)
 	auditPkgFakeGit(t, auditPkgHead,
 		map[string][]string{"internal/manage": {"internal/manage/a.go", "internal/manage/a_test.go", "internal/manage/big.bin"}},
 		map[string]string{
@@ -348,5 +354,52 @@ func TestAuditPackageResolveHead(t *testing.T) {
 	}
 	if _, err := auditPkgResolveHead(ctx, auditPkgCheckout{}, ""); err == nil {
 		t.Error("a checkout with no repository resolved a head")
+	}
+}
+
+// A path that came out of the tree being read can never make the builder write outside the
+// bundle, and the containment check is what refuses it.
+func TestAuditPackageRefusesAPathThatLeavesTheBundle(t *testing.T) {
+	state := t.TempDir()
+	auditPkgFakeGit(t, auditPkgHead,
+		map[string][]string{"pkg": {"pkg/../../../../escaped.go"}},
+		map[string]string{"pkg/../../../../escaped.go": "package escaped\n"})
+	auditPkgFakeCriteria(t, map[string]string{})
+	e, _, _ := auditTestEnv(t)
+	cfg := auditPkgConfig(t, state, nil)
+	section, err := auditPkgSectionOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, err := auditPkgCheckoutOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auditPkgBuild(context.Background(), e, cfg, section, co, "pkg", auditPkgHead); err == nil {
+		t.Fatal("a path leaving the bundle was written")
+	}
+	root := auditPkgBundleRoot(e, cfg, section)
+	escaped := filepath.Join(filepath.Dir(root), "escaped.go")
+	if _, err := os.Stat(escaped); !os.IsNotExist(err) {
+		t.Errorf("a file was written outside the bundle root: %v", err)
+	}
+}
+
+// The containment helper is strict about the boundary itself and about a sibling that only
+// shares a name prefix.
+func TestAuditPkgContained(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "bundles")
+	inside := filepath.Join(root, "pkg-a", "src", "a.go")
+	if !auditPkgContained(root, inside) {
+		t.Errorf("%q is inside %q", inside, root)
+	}
+	for _, target := range []string{
+		root,
+		filepath.Join(root, "..", "elsewhere", "a.go"),
+		filepath.Join(root, "..", filepath.Base(root)+"-other", "a.go"),
+	} {
+		if auditPkgContained(root, target) {
+			t.Errorf("%q was accepted as inside %q", target, root)
+		}
 	}
 }

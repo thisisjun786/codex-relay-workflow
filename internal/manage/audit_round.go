@@ -272,10 +272,12 @@ func auditRoundWriteStatus(e *Env, doc *auditRoundFile) int {
 const auditRoundUsage = "usage: crw manage audit round {start,status} --name R"
 
 // auditRunRound is crw manage audit round.
-func auditRunRound(e *Env, args []string) int { return auditRoundRun(e, args) }
+func auditRunRound(ctx context.Context, e *Env, args []string) int {
+	return auditRoundRun(ctx, e, args)
+}
 
 // auditRoundRun is crw manage audit round.
-func auditRoundRun(e *Env, args []string) int {
+func auditRoundRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditRoundUsage)
 		return usageExit
@@ -285,27 +287,27 @@ func auditRoundRun(e *Env, args []string) int {
 		fmt.Fprintln(e.Stdout, auditRoundUsage)
 		return 0
 	case "start":
-		return auditRoundRunStart(e, args[1:])
+		return auditRoundRunStart(ctx, e, args[1:])
 	case "status":
-		return auditRoundRunStatus(e, args[1:])
+		return auditRoundRunStatus(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditRoundUsage)
 	fmt.Fprintf(e.Stderr, "crw manage audit round: error: invalid command %q (choose from 'start', 'status')\n", args[0])
 	return usageExit
 }
 
-// auditRoundStartUsage is the start subcommand's line.
-const auditRoundStartUsage = "usage: crw manage audit round start --name R (--package DIR | --packages PATTERN) [--head SHA]"
+// auditRoundStartUsage is the start subcommand's line. The head belongs to the pass that
+// audits a package, not to the round that lists them.
+const auditRoundStartUsage = "usage: crw manage audit round start --name R (--package DIR | --packages PATTERN)"
 
 // auditRoundRunStart is crw manage audit round start.
-func auditRoundRunStart(e *Env, args []string) int {
+func auditRoundRunStart(ctx context.Context, e *Env, args []string) int {
 	values, multi, err := auditRoundParseStart(args)
 	if err != nil {
 		fmt.Fprintln(e.Stderr, auditRoundStartUsage)
 		fmt.Fprintf(e.Stderr, "crw manage audit round start: error: %v\n", err)
 		return usageExit
 	}
-	ctx := context.Background()
 	cfg := coreDefaults(e)
 	co, err := auditPkgCheckoutOf(cfg)
 	if err != nil {
@@ -366,7 +368,7 @@ func auditRoundParseStart(args []string) (map[string]string, map[string][]string
 			value = args[i]
 		}
 		switch key {
-		case "name", "packages", "head":
+		case "name", "packages":
 			values[key] = value
 		case "package":
 			multi[key] = append(multi[key], value)
@@ -384,7 +386,7 @@ func auditRoundParseStart(args []string) (map[string]string, map[string][]string
 }
 
 // auditRoundRunStatus is crw manage audit round status.
-func auditRoundRunStatus(e *Env, args []string) int {
+func auditRoundRunStatus(_ context.Context, e *Env, args []string) int {
 	values, err := auditPkgParseArgs(args, map[string]bool{"name": true})
 	if err != nil || values["name"] == "" {
 		if err == nil {

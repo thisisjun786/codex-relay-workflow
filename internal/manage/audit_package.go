@@ -367,6 +367,9 @@ func auditPkgWriteSrc(ctx context.Context, co auditPkgCheckout, head, dir string
 			continue
 		}
 		target := filepath.Join(dir, auditPkgSrcDir, filepath.FromSlash(entry.Path))
+		if !auditPkgContained(dir, target) {
+			return nil, fmt.Errorf("the head names %q, which leaves the bundle", entry.Path)
+		}
 		if err := auditPkgWriteBlob(ctx, co, head, entry.Path, target); err != nil {
 			return nil, err
 		}
@@ -390,6 +393,16 @@ func auditPkgWriteBlob(ctx context.Context, co auditPkgCheckout, head, path, tar
 	return f.Close()
 }
 
+// auditPkgContained reports whether target is strictly below root, so a path that came out
+// of the tree being read can never make the builder write outside the bundle.
+func auditPkgContained(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
 // auditPkgWriteAtHead writes the repository paths' content at the head below dst. A file
 // path and a directory path both go through ls-tree, so a path that names a directory
 // brings the whole directory.
@@ -400,7 +413,11 @@ func auditPkgWriteAtHead(ctx context.Context, co auditPkgCheckout, head string, 
 			return err
 		}
 		for _, name := range auditPkgLines(out) {
-			if err := auditPkgWriteBlob(ctx, co, head, name, filepath.Join(dst, filepath.FromSlash(name))); err != nil {
+			target := filepath.Join(dst, filepath.FromSlash(name))
+			if !auditPkgContained(filepath.Dir(dst), target) {
+				return fmt.Errorf("the head names %q, which leaves the bundle", name)
+			}
+			if err := auditPkgWriteBlob(ctx, co, head, name, target); err != nil {
 				return err
 			}
 		}
@@ -550,7 +567,9 @@ func auditPkgLines(out []byte) []string {
 const auditPkgUsage = "usage: crw manage audit package --round R [--next N] [--head SHA]"
 
 // auditRunPackage is crw manage audit package.
-func auditRunPackage(e *Env, args []string) int { return auditPkgRun(e, args) }
+func auditRunPackage(ctx context.Context, e *Env, args []string) int {
+	return auditPkgRun(ctx, e, args)
+}
 
 // auditPkgParseArgs reads --name value and --name=value pairs against an allow-list. A
 // token that is not an allowed option, an option without a value, or a stray positional is
@@ -583,7 +602,7 @@ func auditPkgParseArgs(args []string, allowed map[string]bool) (map[string]strin
 // auditPkgRun is crw manage audit package. It attaches to one round, audits up to N
 // packages the round still holds pending or failed, and writes each result back into the
 // round file before releasing the lock.
-func auditPkgRun(e *Env, args []string) int {
+func auditPkgRun(ctx context.Context, e *Env, args []string) int {
 	values, help, err := hostReadParse(args, map[string]bool{"round": true, "next": true, "head": true})
 	if help {
 		fmt.Fprintln(e.Stdout, auditPkgUsage)
@@ -606,12 +625,11 @@ func auditPkgRun(e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
 		return usageExit
 	}
-	return auditPkgRunOne(e, round, next, values["head"])
+	return auditPkgRunOne(ctx, e, round, next, values["head"])
 }
 
 // auditPkgRunOne does the work auditPkgRun validated the arguments for.
-func auditPkgRunOne(e *Env, round string, next int, headArg string) int {
-	ctx := context.Background()
+func auditPkgRunOne(ctx context.Context, e *Env, round string, next int, headArg string) int {
 	cfg := coreDefaults(e)
 	section, err := auditPkgSectionOf(cfg)
 	if err != nil {
