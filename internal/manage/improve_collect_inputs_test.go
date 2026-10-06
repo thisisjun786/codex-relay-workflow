@@ -338,3 +338,77 @@ func TestImproveInputResolvesTheParentOfASourceSpelledThroughALink(t *testing.T)
 		t.Errorf("the refused run left a file at the source's name (stat err %v)", err)
 	}
 }
+
+// TestImproveInputRefusesALinkedDraftTarget covers an input reached through a link inside a
+// configured directory: a drafts source may be a directory the collector enumerates, and it
+// reads each entry it selects, following a link. The destination names the file such an entry
+// points at, which is outside the configured directory, so the directory prefix does not cover
+// it and the configured paths do not name it.
+func TestImproveInputRefusesALinkedDraftTarget(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	drafts := filepath.Join(s.root, "drafts")
+	archive := filepath.Join(s.root, "archive")
+	for _, dir := range []string{drafts, archive} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(archive, "one.json")
+	improveTestWrite(t, target, "{\"issue\":\"CRW-1\",\"title\":\"drafted\"}\n")
+	if err := os.Symlink(target, filepath.Join(drafts, "one.json")); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", target)
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputIsInput) {
+		t.Fatalf("an output naming the draft a directory entry links to: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputIsInput)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("the refused run removed the draft: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("the refused run replaced the draft its own evidence was read from: %q -> %q", before, after)
+	}
+}
+
+// TestImproveInputRefusesAStoreSidecar covers the other files a store read depends on. With a
+// write-ahead log beside the database, the read examines it and reads its committed frames, so
+// it is an input too, and replacing it with the bundle leaves JSON where SQLite expects its
+// coordination data. The relay source names the store file itself here, because a source that
+// names the state directory is already covered by the directory rule.
+func TestImproveInputRefusesAStoreSidecar(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	for _, sidecar := range []string{s.dbPath + "-wal", s.dbPath + "-shm"} {
+		if err := os.WriteFile(sidecar, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.dbPath}},
+	}}})
+	for _, sidecar := range []string{s.dbPath + "-wal", s.dbPath + "-shm"} {
+		code, _, stderr := improveTestRun(t, s, "--out", sidecar)
+		if code != 1 || !strings.Contains(stderr, improveReasonOutputIsInput) {
+			t.Fatalf("an output naming the store sidecar %s: exit %d, stderr %q, want the named refusal %s", sidecar, code, stderr, improveReasonOutputIsInput)
+		}
+		info, err := os.Stat(sidecar)
+		if err != nil {
+			t.Fatalf("the refused run removed the sidecar: %v", err)
+		}
+		if info.Size() != 0 {
+			t.Errorf("the refused run wrote %d bytes over the sidecar %s", info.Size(), sidecar)
+		}
+	}
+}

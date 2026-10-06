@@ -355,11 +355,13 @@ func improveSameFile(a, b string) (bool, error) {
 }
 
 // improveInputPaths is every path the collection opens: every path the configuration names,
-// plus the store file a configured relay or DAG source names inside its directory. The
-// collection opens that file rather than the directory, so a destination that is it has to be
-// refused too.
+// plus the files it reaches that the configuration does not name. For a relay or DAG source
+// that is the store file inside its directory, and for either source the database's own
+// write-ahead log and shared-memory index when they exist, because a store read examines them
+// and reads their committed frames. For a drafts directory, every entry the collection would
+// read, so a link to a file outside the directory is an input too.
 func improveInputPaths(section improveSection) []string {
-	paths := make([]string, 0, len(section.Sources)+3)
+	paths := make([]string, 0, len(section.Sources)+8)
 	for _, source := range section.Sources {
 		paths = append(paths, source.Path)
 	}
@@ -374,7 +376,26 @@ func improveInputPaths(section improveSection) []string {
 			// A source path that cannot be resolved is reported by the source read itself.
 			continue
 		}
-		paths = append(paths, opened)
+		// The sidecars are the ones beside the resolved store, which is the file the read
+		// examines them next to (store.InPlaceRead resolves the path the same way).
+		resolved, err := improveResolvedPath(opened)
+		if err != nil {
+			resolved = opened
+		}
+		paths = append(paths, opened, resolved+"-wal", resolved+"-shm")
+	}
+	// A drafts source that is a directory is enumerated, so every entry the collection would
+	// read is an input; a link to a file elsewhere is reached that way.
+	if drafts := section.Sources[improveKindDraft].Path; drafts != "" {
+		if info, err := os.Stat(drafts); err == nil && info.IsDir() {
+			if entries, err := os.ReadDir(drafts); err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+						paths = append(paths, filepath.Join(drafts, entry.Name()))
+					}
+				}
+			}
+		}
 	}
 	return paths
 }
