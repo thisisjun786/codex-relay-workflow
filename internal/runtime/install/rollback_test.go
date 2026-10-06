@@ -60,6 +60,7 @@ func (h *host) twoGoRuntimes(t *testing.T) (string, string, string) {
 // `crw hook --plugin-launch` through the pointer, records a Stop while the selection is committed
 // and while the pointer is placed, and once the pointer names the runtime rolled back to.
 func TestARollbackNeverRewritesTheSettings(t *testing.T) {
+	// sequential: replaces the commit and pointer-placement seams.
 	h := newHost(t)
 	previous, current, settings := h.twoGoRuntimes(t)
 	path := filepath.Join(h.codex, install.SettingsName)
@@ -100,6 +101,7 @@ func TestARollbackNeverRewritesTheSettings(t *testing.T) {
 // never rewritten, the pointer still names the runtime it named, and the ordinary rerun finishes
 // the rollback.
 func TestARollbackKilledAtItsCommitLeavesStopsRecorded(t *testing.T) {
+	// sequential: re-execs the test binary, which kills the test process at the commit.
 	if spec := os.Getenv("CRW_TEST_KILLED_ROLLBACK"); spec != "" {
 		killedRollback(t, spec)
 		return
@@ -163,6 +165,7 @@ func killedRollback(t *testing.T, spec string) {
 // A rollback never reverts a host fact: the operator's hold-mode settings, written on the current
 // runtime, are what the host has after a rollback and after rolling forward again.
 func TestARollbackKeepsTheHostFactsTheSettingsRecord(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	previous, _, _ := h.twoGoRuntimes(t)
 	path := filepath.Join(h.codex, install.SettingsName)
@@ -190,6 +193,7 @@ func TestARollbackKeepsTheHostFactsTheSettingsRecord(t *testing.T) {
 // later install of its archive keeps it instead of reclaiming it. A STAGING runtime no selection
 // accounts for is still refused, naming what its claim says.
 func TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second, third := archive(t, "0.9.0", ""), archive(t, "0.9.1", ""), archive(t, "0.9.2", "")
 	a, b := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -227,6 +231,7 @@ func TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled(t *testing.T) 
 // while a relay daemon of that runtime runs: it moves the selection back to what the host
 // already reaches.
 func TestARollbackThatMovesNoRuntimeAsksNoGate(t *testing.T) {
+	// sequential: starts a real relay daemon whose ready-wait deadline is load-sensitive.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, next := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -302,6 +307,7 @@ func (h *host) runDaemon(t *testing.T, relay string) {
 // Python venv an older installer left, say), are each refused with what is wrong, and nothing
 // moves.
 func TestARollbackRefusesARuntimeThatCannotBeLaunched(t *testing.T) {
+	t.Parallel()
 	for name, spoil := range map[string]func(t *testing.T, h *host, runtime string) (string, string){
 		"a Go runtime without its bridge link": func(t *testing.T, h *host, runtime string) (string, string) {
 			link := filepath.Join(runtime, "bin", "codex-thread-bridge")
@@ -349,6 +355,7 @@ func TestARollbackRefusesARuntimeThatCannotBeLaunched(t *testing.T) {
 // parent or / contain runtimes but are none, and are refused rather than read as whichever
 // runtime has the newest install entries (which would silently undo the rollback before).
 func TestANamedRollbackNamesARuntimeDirectory(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)

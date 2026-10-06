@@ -46,9 +46,11 @@ const promptSubmitMaxInjectedTurns = 50
 // handleUserPromptSubmit reads. TurnID is the payload's turn_id, or empty when it is absent or not a
 // string (the oracle's `?? ""`). PabcdEnabled is the caller's options.pabcdEnabled, which cli.ts
 // always supplies from readPabcdEnabled of the payload's cwd; false is the oracle's `=== false`.
+// TranscriptPath is the payload's transcript_path, or empty when it is absent or not a string; the
+// R-11 idempotency guards in prompt_trigger.go read it.
 type PromptSubmitPayload struct {
-	Cwd, SessionID, Prompt, TurnID string
-	PabcdEnabled                   bool
+	Cwd, SessionID, Prompt, TurnID, TranscriptPath string
+	PabcdEnabled                                   bool
 }
 
 // PromptSubmitHandle is the leading section of handleUserPromptSubmit (hook.ts:656-754). It returns
@@ -180,8 +182,8 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	}
 
 	// The oracle continues at hook.ts:755 with the trigger branch, the agbrowse-only branch and the
-	// passive pipeline; that remainder belongs to the successor unit of the same port.
-	return ""
+	// passive pipeline, in prompt_trigger.go; it answers the context, which the harness wraps.
+	return promptTriggerHandle(p, env, lock, current, state.Phase(trigger), entry.AdviseInterview, agbrowseRequested, loopArmRequested)
 }
 
 // promptSubmitTurn is the oracle's `turn === "" ? null : turn` for the marker's memoryWriteTurn.
