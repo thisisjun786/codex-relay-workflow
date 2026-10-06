@@ -166,6 +166,41 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 		if st == nil || st.Count != 2 || st.Cause != CauseRepeatedCheckFailure || st.Rung != RungEditPacket || st.FindingDigest != "" {
 			t.Fatalf("two rows failing the same required check read %+v, want count 2 and repeated_check_failure", st)
 		}
+		// a head accepted again and evicted again is the same failure a third time: the round restarts, the names do not change
+		f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+			" VALUES ('mc-3', ?, 3, ?, ?, 'tip', ?, ?, ?, 1, 'evicted', 'again after a fresh acceptance', 't')", a.Acceptance.AcceptanceID, head1, head1, digest, body, failed)
+		if st := f.stagnationOf("sp", "I"); st == nil || st.Count != 3 || st.Cause != CauseRepeatedCheckFailure || st.Rung != RungSplitNode {
+			t.Fatalf("the same required check failing a third time reads %+v, want count 3 and split_node", st)
+		}
+		// a different required check failing is a different failure and starts the run over
+		other := failuresJSON([]failure{{Name: "lint", Run: "4", Attempt: 1}})
+		f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+			" VALUES ('mc-4', ?, 4, ?, ?, 'tip', ?, ?, ?, 1, 'retry_same_sha', 'another check failed', 't')", a.Acceptance.AcceptanceID, head1, head1, digest, body, other)
+		if st := f.stagnationOf("sp", "I"); st != nil {
+			t.Fatalf("a different required check reads %+v, want the run reset and no object", st)
+		}
+	})
+
+	t.Run("the longer run decides the cause", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		rid := a.Acceptance.RelationshipID
+		for gen := int64(2); gen <= 4; gen++ {
+			f.addCorrection("sp", "I", rid, gen, rulingFinding("the same thing", gen), false)
+		}
+		failed := failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}})
+		body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
+		digest := dig("evidence")
+		for seq, round := range []int{1, 2} {
+			f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+				" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, ?, ?, 'evicted', 'same check failed', 't')", fmt.Sprintf("mc-%d", seq+1), a.Acceptance.AcceptanceID, seq+1, head1, head1, digest, body, failed, round)
+		}
+		st := f.stagnationOf("sp", "I")
+		if st == nil || st.Count != 3 || st.Cause != CauseRepeatedFinding {
+			t.Fatalf("a three-run of findings beside a two-run of checks reads %+v, want repeated_finding at count 3", st)
+		}
 	})
 
 	t.Run("the reading prints the object and counts the rung", func(t *testing.T) {

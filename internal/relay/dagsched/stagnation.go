@@ -93,17 +93,14 @@ func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string
 	if err != nil {
 		return nil, err
 	}
-	// the two causes are counted on different rows and never added: the larger of the two runs is the node's count, and the finding run wins a tie because it carries the identity
-	if checks.count > best || (checks.count == best && checks.count > 0 && bestDigest == "") {
-		if checks.count < stagnationThreshold {
-			return nil, nil
-		}
+	// the two causes are counted on different rows and never added: the longer run is the node’s count, and the finding run wins a tie because it carries the identity
+	if best >= checks.count && best >= stagnationThreshold {
+		return stagnationOf(n.NodeID, best, CauseRepeatedFinding, bestDigest, runs[len(runs)-1].event), nil
+	}
+	if checks.count >= stagnationThreshold {
 		return stagnationOf(n.NodeID, checks.count, CauseRepeatedCheckFailure, "", checks.event), nil
 	}
-	if best < stagnationThreshold {
-		return nil, nil
-	}
-	return stagnationOf(n.NodeID, best, CauseRepeatedFinding, bestDigest, runs[len(runs)-1].event), nil
+	return nil, nil
 }
 
 func stagnationOf(node string, count int, cause, digest, event string) *Stagnation {
@@ -150,15 +147,17 @@ type correctionRun struct {
 	event  string
 }
 
-// correctionRuns walks a node's recorded correction generations in order and returns the run each generation belongs to. A generation's finding identity is the canonical-JSON sha256 of the
-// findings of the needs_changes ruling that opened it (the same join RecordCorrection reads and restorationDigest parses), minus the restoration entry, whose note carries this generation's
+// correctionRuns walks a node’s recorded correction generations in order and returns the run each generation belongs to. A generation’s finding identity is the canonical-JSON sha256 of the
+// findings of the needs_changes ruling that opened it (the same join RecordCorrection reads and restorationDigest parses), minus the restoration entry, whose note carries this generation’s
 // manifest digest and so differs every round. A generation the coordinator opened by hand has no ruling at all, and one whose ruling carried no findings reads the same: neither carries an
 // identity, and both break a run without counting.
+//
+// The ruling is looked up the way RecordCorrection looks it up: the event of the generation BEFORE this one, in this relationship, that was ruled needs_changes and named this generation next. The
+// relationship and the event are what scope it; the verdict alone would let a correction of one node read another relationship’s ruling when the generation numbers coincide.
 func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, node string) ([]correctionRun, error) {
 	rows, err := q.QueryContext(ctx, "SELECT e.execution_generation, v.event_id, c.findings FROM dag_node_executions e"+
-		" LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"+
-		" LEFT JOIN verdicts v ON v.verdict = 'needs_changes' AND v.next_generation = e.execution_generation"+
-		" LEFT JOIN events ev ON ev.event_id = v.event_id AND ev.relationship_id = e.relationship_id AND ev.execution_generation = e.execution_generation - 1"+
+		" LEFT JOIN events ev ON ev.relationship_id = e.relationship_id AND ev.execution_generation = e.execution_generation - 1"+
+		" LEFT JOIN verdicts v ON v.event_id = ev.event_id AND v.verdict = 'needs_changes' AND v.next_generation = e.execution_generation"+
 		" LEFT JOIN verdict_context c ON c.event_id = v.event_id"+
 		" WHERE e.plan_id = ? AND e.node_id = ? AND e.kind = 'correction'"+
 		" ORDER BY e.execution_generation, v.decided_at", plan, node)
@@ -223,13 +222,12 @@ func correctionFindingDigest(findings string) string {
 	return dag.Digest(kept)
 }
 
-// repeatedCheckFailure is a node's repeated failed required check: the newest merge-check row of the node's acceptance and the newest row before it, when both failed a non-empty set of required
-// checks and the later row's round is greater (the merge lane's retry round, D-12). Count 2 is the failure seen again after the retry. The digest is empty: a check failure has no finding text, and
-// the failed names are the identity.
+// repeatedCheckFailure is a node's run of repeated failed required checks: the newest merge-check row of the node's acceptance, and the consecutive rows before it that failed the same non-empty set of
+// required check names as the newest rows of the node's merge-check history, newest first (the merge lane's retry round and its eviction, D-12). Count 2 is the failure seen again after the retry; the round is carried in the history but is not what ends the run, because a head accepted again restarts it. The digest is empty: a check failure has no finding text, and the failed check names are its identity.
 func (s *Scheduler) repeatedCheckFailure(ctx context.Context, q store.Querier, plan, node string) (correctionRun, error) {
 	rows, err := q.QueryContext(ctx, "SELECT c.round_no, c.failed_required_json FROM dag_merge_checks c"+
 		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id"+
-		" WHERE a.plan_id = ? AND a.node_id = ? ORDER BY c.rowid DESC LIMIT 2", plan, node)
+		" WHERE a.plan_id = ? AND a.node_id = ? ORDER BY c.rowid DESC", plan, node)
 	if err != nil {
 		return correctionRun{}, err
 	}
@@ -255,19 +253,31 @@ func (s *Scheduler) repeatedCheckFailure(ctx context.Context, q store.Querier, p
 	if len(list) < 2 {
 		return correctionRun{}, nil
 	}
-	newest, previous := list[0], list[1]
-	same, err := sameFailedRequired(newest.failed, previous.failed)
-	if err != nil {
+	if names, err := failedNames(list[0].failed); err != nil {
 		return correctionRun{}, err
-	}
-	if !same || newest.round <= previous.round {
+	} else if len(names) == 0 {
 		return correctionRun{}, nil
 	}
-	return correctionRun{count: 2}, nil
+	count := 1
+	for _, row := range list[1:] {
+		same, err := sameFailedRequired(row.failed, list[0].failed)
+		if err != nil {
+			return correctionRun{}, err
+		}
+		// the same names failing again is the same failure; a different set, or a row that failed nothing, ends the run
+		if !same {
+			break
+		}
+		count++
+	}
+	if count < stagnationThreshold {
+		return correctionRun{}, nil
+	}
+	return correctionRun{count: count}, nil
 }
 
-// sameFailedRequired is whether two stored failed-required lists name the same non-empty set of checks, compared as a sorted set: the same check failing again is the same failure however the
-// forge ordered the runs.
+// sameFailedRequired is whether two stored failed-required lists name the same non-empty set of checks, compared as a sorted set of names: the same check failing again is the same failure however
+// the forge ordered the runs, and a re-run of it (another run id) is still the same check.
 func sameFailedRequired(a, b string) (bool, error) {
 	left, err := failedNames(a)
 	if err != nil {
@@ -288,25 +298,30 @@ func sameFailedRequired(a, b string) (bool, error) {
 	return true, nil
 }
 
+// failedNames is the names of the failed required checks a row records, deduplicated and sorted. The relay's canonical form is a list of objects (name, run, attempt); a row written before that
+// shape holds the names alone. The run identity is deliberately left out: the retry of a check is a new run of the same check, so the name is what makes it the same failure.
 func failedNames(text string) ([]string, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
-	// the relay's canonical form is a list of objects (failuresJSON); a row written before that shape holds the names alone, so both are read
 	var list []any
 	if err := json.Unmarshal([]byte(text), &list); err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(list))
+	seen := map[string]bool{}
 	for _, entry := range list {
 		switch f := entry.(type) {
 		case string:
-			out = append(out, f)
+			seen[f] = true
 		case map[string]any:
-			name, _ := f["name"].(string)
-			run, _ := f["run"].(string)
-			out = append(out, name+"|"+run)
+			if name, _ := f["name"].(string); name != "" {
+				seen[name] = true
+			}
 		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out, nil

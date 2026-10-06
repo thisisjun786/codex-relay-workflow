@@ -741,11 +741,11 @@ The counter has two causes, and the reading names the one whose run is longer:
 | Cause | Read from | Meaning |
 | --- | --- | --- |
 | `repeated_finding` | the node’s correction generations (`dag_node_executions`, kind `correction`) with the finding of the `needs_changes` ruling that opened each | consecutive corrections carried the same findings |
-| `repeated_check_failure` | the node’s merge-check history (`dag_merge_checks`, the `round_no` and the failed required checks) | the same required checks failed again on the same head after the merge lane’s one retry |
+| `repeated_check_failure` | the node’s merge-check history (`dag_merge_checks`, the `round_no` and the failed required checks) | the same required checks failed again after the merge lane’s one retry, and again after a fresh acceptance |
 
 A correction generation’s **finding identity** is the canonical-JSON sha256 of the ruling’s `verdict_context.findings` entries that are **not** the restoration block, each entry as the relay stored it. The restoration entry is excluded because its note carries this generation’s manifest digest, which differs every round; that is why the identity is taken over the remaining entries rather than over the whole text. Two corrections of one node share an identity exactly when the ruling carried the same findings. A generation the coordinator opened by hand has no ruling and no findings at all ([Three ways to open the generation](#corrections)), and a correction whose ruling carried no findings reads the same way: neither carries an identity, so both break the run and raise no `repeated_finding` count.
 
-A repeated check failure is the newest merge-check row of the node’s acceptance and the newest row before it, when both failed a non-empty set of required checks and the later row’s round is greater: the same failure seen again after the retry. The failed names are the identity; a check failure has no finding text.
+A repeated check failure is a run of the newest merge-check rows of the node’s acceptance that all failed the same non-empty set of required checks: the same failure seen again after the retry, and again after a head is accepted a second time. The failed check names are the identity; the run identity is deliberately left out, because the retry of a check is a new run of the same check. A row that failed nothing, or failed another set of checks, ends the run. A check failure has no finding text.
 
 The rungs are closed, and the count names one of them:
 
