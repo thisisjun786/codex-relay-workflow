@@ -1,0 +1,1468 @@
+{
+  "source": "CXC v0.2.40 3c1459ac goalplan-cli.ts",
+  "classification": "identical (command names substituted at comparison)",
+  "parse": [
+    {
+      "argv": [],
+      "result": {
+        "error": "unknown loop verb '' (expected init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide); run cxc loop --help"
+      }
+    },
+    {
+      "argv": [
+        "help"
+      ],
+      "result": {
+        "verb": "help",
+        "cwd": "<WS>",
+        "criteria": []
+      }
+    },
+    {
+      "argv": [
+        "--help"
+      ],
+      "result": {
+        "verb": "help",
+        "cwd": "<WS>",
+        "criteria": []
+      }
+    },
+    {
+      "argv": [
+        "-h"
+      ],
+      "result": {
+        "verb": "help",
+        "cwd": "<WS>",
+        "criteria": []
+      }
+    },
+    {
+      "argv": [
+        "HELP"
+      ],
+      "result": {
+        "verb": "help",
+        "cwd": "<WS>",
+        "criteria": []
+      }
+    },
+    {
+      "argv": [
+        "help",
+        "x"
+      ],
+      "result": {
+        "error": "help: unexpected argument 'x'"
+      }
+    },
+    {
+      "argv": [
+        "nope"
+      ],
+      "result": {
+        "error": "unknown loop verb 'nope' (expected init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide); run cxc loop --help"
+      }
+    },
+    {
+      "argv": [
+        "NoPe"
+      ],
+      "result": {
+        "error": "unknown loop verb 'NoPe' (expected init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide); run cxc loop --help"
+      }
+    },
+    {
+      "argv": [
+        ""
+      ],
+      "result": {
+        "error": "unknown loop verb '' (expected init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide); run cxc loop --help"
+      }
+    },
+    {
+      "argv": [
+        "init"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": []
+      }
+    },
+    {
+      "argv": [
+        "INIT",
+        "--objective",
+        "x"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective=x"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--criterion",
+        "a",
+        "--criterion",
+        "b"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [
+          "a",
+          "b"
+        ],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--criterion"
+      ],
+      "result": {
+        "error": "init: --criterion requires a value (use --criterion=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--criterion="
+      ],
+      "result": {
+        "error": "init: --criterion requires a value"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--objective",
+        "y"
+      ],
+      "result": {
+        "error": "init: --objective may be provided only once"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--surface",
+        "logic"
+      ],
+      "result": {
+        "error": "init: --surface is not applied at init; use add-criterion --surface <logic|web|tui|desktop>. Nothing was written."
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--bogus"
+      ],
+      "result": {
+        "error": "init: unknown flag '--bogus'"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--bogus=1"
+      ],
+      "result": {
+        "error": "init: unknown flag '--bogus=1'"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--json"
+      ],
+      "result": {
+        "error": "init: unknown flag '--json'"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--cwd"
+      ],
+      "result": {
+        "error": "init: --cwd requires a value (use --cwd=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--session",
+        "s1",
+        "--schema-version",
+        "2"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "session": "s1",
+        "schemaVersion": 2
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "3"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 3
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "abc"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "0x10"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 16
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "0b11"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 3
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "0o17"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 15
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "Infinity"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "-Infinity"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "NaN"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        ""
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 0
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        " 5 "
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 5
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "1e3"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 1000
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "1_0"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "1e"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        ".5"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 0.5
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "1."
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 1
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "+2"
+      ],
+      "result": {
+        "verb": "init",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "x",
+        "schemaVersion": 2
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--schema-version",
+        "0x_10"
+      ],
+      "result": {
+        "error": "init: --schema-version requires a finite number"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--slug",
+        "s"
+      ],
+      "result": {
+        "verb": "show",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "slug": "s"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--slug"
+      ],
+      "result": {
+        "error": "show: --slug requires a value (use --slug=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--slug="
+      ],
+      "result": {
+        "error": "show: --slug requires a value"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--slug",
+        "--objective"
+      ],
+      "result": {
+        "error": "show: --slug requires a value (use --slug=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--slug",
+        "s",
+        "--slug",
+        "t"
+      ],
+      "result": {
+        "error": "show: --slug may be provided only once"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--json"
+      ],
+      "result": {
+        "error": "show: unknown flag '--json'"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "positional"
+      ],
+      "result": {
+        "error": "show: unexpected positional argument 'positional'"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--"
+      ],
+      "result": {
+        "error": "show: unknown flag '--'"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--objective",
+        "My Objective"
+      ],
+      "result": {
+        "verb": "show",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "objective": "My Objective"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--session",
+        "s1"
+      ],
+      "result": {
+        "verb": "show",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--cwd",
+        "/tmp"
+      ],
+      "result": {
+        "verb": "show",
+        "cwd": "/tmp",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": []
+      }
+    },
+    {
+      "argv": [
+        "validate",
+        "--slug",
+        "s"
+      ],
+      "result": {
+        "verb": "validate",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "slug": "s"
+      }
+    },
+    {
+      "argv": [
+        "ready",
+        "--slug",
+        "s",
+        "--json"
+      ],
+      "result": {
+        "verb": "ready",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "slug": "s",
+        "json": true
+      }
+    },
+    {
+      "argv": [
+        "ready",
+        "--json=1"
+      ],
+      "result": {
+        "error": "ready: --json takes no value"
+      }
+    },
+    {
+      "argv": [
+        "steer",
+        "--session",
+        "s1",
+        "--batch-json",
+        "{}"
+      ],
+      "result": {
+        "verb": "steer",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "batchJson": "{}"
+      }
+    },
+    {
+      "argv": [
+        "steer",
+        "--batch-json",
+        "x"
+      ],
+      "result": {
+        "verb": "steer",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "batchJson": "x"
+      }
+    },
+    {
+      "argv": [
+        "add-criterion",
+        "--session",
+        "s1",
+        "--criterion",
+        "c",
+        "--surface",
+        "web"
+      ],
+      "result": {
+        "verb": "add-criterion",
+        "cwd": "<WS>",
+        "criteria": [
+          "c"
+        ],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "surfaceGiven": true,
+        "surface": "web"
+      }
+    },
+    {
+      "argv": [
+        "add-criterion",
+        "--session",
+        "s1",
+        "--criterion",
+        "c",
+        "--surface"
+      ],
+      "result": {
+        "error": "add-criterion: --surface needs a value (logic|web|tui|desktop)"
+      }
+    },
+    {
+      "argv": [
+        "add-criterion",
+        "--session",
+        "s1",
+        "--criterion",
+        "c",
+        "--surface="
+      ],
+      "result": {
+        "error": "add-criterion: --surface needs a value (logic|web|tui|desktop)"
+      }
+    },
+    {
+      "argv": [
+        "add-criterion",
+        "--session",
+        "s1",
+        "--criterion",
+        "c",
+        "--presented",
+        "native"
+      ],
+      "result": {
+        "verb": "add-criterion",
+        "cwd": "<WS>",
+        "criteria": [
+          "c"
+        ],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "presented": "native"
+      }
+    },
+    {
+      "argv": [
+        "add-criterion",
+        "--session",
+        "s1",
+        "--criterion",
+        "c",
+        "--presented"
+      ],
+      "result": {
+        "error": "add-criterion: --presented requires a value (use --presented=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "add-work-phase",
+        "--session",
+        "s1",
+        "--id",
+        "w",
+        "--title",
+        "t",
+        "--depends-on",
+        "a",
+        "--depends-on",
+        "b"
+      ],
+      "result": {
+        "verb": "add-work-phase",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [
+          "a",
+          "b"
+        ],
+        "workPhaseIds": [],
+        "session": "s1",
+        "id": "w",
+        "title": "t"
+      }
+    },
+    {
+      "argv": [
+        "add-work-phase",
+        "--session",
+        "s1",
+        "--id",
+        "w",
+        "--title",
+        "t",
+        "--depends-on",
+        "a",
+        "--depends-on",
+        "a"
+      ],
+      "result": {
+        "error": "add-work-phase: --depends-on must not repeat prerequisite id 'a'"
+      }
+    },
+    {
+      "argv": [
+        "add-work-phase",
+        "--session",
+        "s1",
+        "--id",
+        "w",
+        "--title",
+        "t",
+        "--depends-on",
+        ""
+      ],
+      "result": {
+        "error": "add-work-phase: --depends-on requires one non-empty prerequisite id"
+      }
+    },
+    {
+      "argv": [
+        "add-work-phase",
+        "--session",
+        "s1",
+        "--id",
+        "w",
+        "--title",
+        "t",
+        "--depends-on"
+      ],
+      "result": {
+        "error": "add-work-phase: --depends-on requires a value (use --depends-on=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "add-task",
+        "--session",
+        "s1",
+        "--work-phase",
+        "wp1",
+        "--id",
+        "t1",
+        "--title",
+        "T"
+      ],
+      "result": {
+        "verb": "add-task",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "workPhaseId": "wp1",
+        "id": "t1",
+        "title": "T"
+      }
+    },
+    {
+      "argv": [
+        "complete-task",
+        "--session",
+        "s1",
+        "--work-phase",
+        "wp1",
+        "--id",
+        "t1",
+        "--outcome",
+        "o"
+      ],
+      "result": {
+        "verb": "complete-task",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "workPhaseId": "wp1",
+        "id": "t1",
+        "outcome": "o"
+      }
+    },
+    {
+      "argv": [
+        "meet-criterion",
+        "--session",
+        "s1",
+        "--id",
+        "c-1",
+        "--evidence",
+        "e"
+      ],
+      "result": {
+        "verb": "meet-criterion",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "id": "c-1",
+        "evidence": "e"
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--option",
+        "a",
+        "--option",
+        "b"
+      ],
+      "result": {
+        "verb": "ask",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "id": "d1",
+        "question": "q",
+        "options": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--option",
+        "a",
+        "--option",
+        "a"
+      ],
+      "result": {
+        "error": "ask: --option must not repeat 'a'"
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--option",
+        "  "
+      ],
+      "result": {
+        "error": "ask: --option requires one non-empty value"
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--work-phase",
+        "wp1",
+        "--work-phase",
+        "wp2"
+      ],
+      "result": {
+        "verb": "ask",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [
+          "wp1",
+          "wp2"
+        ],
+        "session": "s1",
+        "id": "d1",
+        "question": "q"
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--work-phase",
+        "wp1",
+        "--work-phase",
+        "wp1"
+      ],
+      "result": {
+        "error": "ask: --work-phase must not repeat id 'wp1'"
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--work-phase",
+        "  "
+      ],
+      "result": {
+        "error": "ask: --work-phase requires one non-empty id"
+      }
+    },
+    {
+      "argv": [
+        "decide",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--answer",
+        "a"
+      ],
+      "result": {
+        "verb": "decide",
+        "cwd": "<WS>",
+        "criteria": [],
+        "dependsOn": [],
+        "workPhaseIds": [],
+        "session": "s1",
+        "id": "d1",
+        "answer": "a"
+      }
+    },
+    {
+      "argv": [
+        "İNIT",
+        "--objective",
+        "x"
+      ],
+      "result": {
+        "error": "unknown loop verb 'İNIT' (expected init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide); run cxc loop --help"
+      }
+    },
+    {
+      "argv": [
+        "HELP",
+        "x"
+      ],
+      "result": {
+        "error": "help: unexpected argument 'x'"
+      }
+    },
+    {
+      "argv": [
+        "help",
+        "--help",
+        "x"
+      ],
+      "result": {
+        "error": "help: unexpected argument '--help'"
+      }
+    },
+    {
+      "argv": [
+        "init",
+        "--objective",
+        "x",
+        "--surface",
+        "logic",
+        "--surface",
+        "web"
+      ],
+      "result": {
+        "error": "init: --surface is not applied at init; use add-criterion --surface <logic|web|tui|desktop>. Nothing was written."
+      }
+    },
+    {
+      "argv": [
+        "ready",
+        "--json",
+        "--json"
+      ],
+      "result": {
+        "error": "ready: --json may be provided only once"
+      }
+    },
+    {
+      "argv": [
+        "show",
+        "--slug",
+        "s",
+        "--cwd"
+      ],
+      "result": {
+        "error": "show: --cwd requires a value (use --cwd=<value> for a value that starts with --)"
+      }
+    },
+    {
+      "argv": [
+        "ask",
+        "--session",
+        "s1",
+        "--id",
+        "d1",
+        "--question",
+        "q",
+        "--work-phase",
+        "wp1",
+        "--work-phase",
+        "wp1"
+      ],
+      "result": {
+        "error": "ask: --work-phase must not repeat id 'wp1'"
+      }
+    },
+    {
+      "argv": [
+        "add-work-phase",
+        "--session",
+        "s1",
+        "--id",
+        "w",
+        "--title",
+        "t",
+        "--depends-on",
+        "a",
+        "--bogus"
+      ],
+      "result": {
+        "error": "add-work-phase: unknown flag '--bogus'"
+      }
+    }
+  ],
+  "help": {
+    "code": 0,
+    "output": "cxc loop — durable goalplan for a multi-cycle PABCD loop\n\nUsage:\n  cxc loop init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]\n  cxc loop show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]\n  cxc loop validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]\n  cxc loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]\n  cxc loop add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]\n  cxc loop add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]\n  cxc loop ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]\n  cxc loop add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]\n  cxc loop complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]\n  cxc loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]\n  cxc loop ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]\n  cxc loop decide --session <id> --id <id> --answer <text> [--cwd <path>]\n  cxc loop --help\n\nNotes:\n  Mutating verbs require --session <id>; show, validate, and ready are read-only.\n  Unknown flags, stray positionals, missing values, and flags on the wrong verb are rejected before dispatch.\n  Every value flag also accepts --flag=value; use it for a value that starts with --.\n  The goalplan lives at <cwd>/.codexclaw/goalplans/<slug>/goalplan.json, so --cwd\n  matters when the process cwd is not the workspace you are planning in.\n  Repeat --depends-on once per prerequisite; add-task accepts only existing task ids\n  from the same work phase; comma-separated values are one id.\n  complete-task requires non-empty outcome evidence and never replaces a stored outcome.\n  init declares schemaVersion 1 unless --schema-version says otherwise. 2 and 3\n  additionally require an approved finalGate, and no verb in this build opens a\n  final-gate review round, so opt in only if you can record that gate yourself.\n  meet-criterion requires non-empty captured evidence for the same reason.\n  Send the question through the host first, then record it with ask; ask never sends a message.\n  Record the user's reply with decide. It changes only the decision record.\n  Repeat --option once per offered option; the recommendation must be one of them, and the answer stays free text.\n\nsteer --batch-json expects an object with:\n  { \"idempotencyKey\": \"<unique>\", \"rationale\": \"<why>\", \"evidence\": \"<proof>\",\n    \"ops\": [ { \"kind\": \"annotate\", \"note\": \"...\" } ] }\n  op kinds: annotate | add-criterion | add-work-phase (all additive — steering\n  cannot weaken a completion criterion)."
+  },
+  "plans": [
+    {
+      "name": "init-empty",
+      "lock": false,
+      "plan": {
+        "objective": "Ship the export feature",
+        "slug": "ship-the-export-feature",
+        "schemaVersion": 1,
+        "createdAt": "<TS>",
+        "updatedAt": "<TS>",
+        "activeWorkPhaseId": null,
+        "workPhases": [],
+        "criteria": [],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        }
+      },
+      "output": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true",
+      "code": 0
+    },
+    {
+      "name": "show-rich",
+      "lock": true,
+      "plan": {
+        "objective": "Rich plan",
+        "slug": "rich-plan",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": "wp1",
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Phase One",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t1",
+                "title": "Do a thing",
+                "status": "done",
+                "outcome": "did it"
+              }
+            ],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "d1"
+            ]
+          },
+          {
+            "id": "wp2",
+            "title": "Phase Two",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "the thing works",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "decisions": [
+          {
+            "id": "d1",
+            "question": "which way?",
+            "recommendation": "a",
+            "options": [
+              "a",
+              "b"
+            ],
+            "status": "open",
+            "askedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "id": "d2",
+            "question": "answered?",
+            "status": "decided",
+            "answer": "yes",
+            "askedAt": "2026-01-01T00:00:00.000Z",
+            "decidedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "schemaVersion": 1
+      },
+      "output": "[codexclaw loop: rich-plan]\nobjective: Rich plan\nhost: armed=false source=none\nworkPhases: 2 (remaining 2)\ncriteria: 1 (unmet 1)\ncomplete: false\nwriteLock: absent path=<WS>/.codexclaw/goalplans/rich-plan/.goalplan.lock\n  - wp1 [in_progress] Phase One\n  - wp2 [pending] Phase Two\n  - c-1 [open] the thing works\n  - d1 [open] which way?\n    options: a | b (recommended: a)\n    waiting: wp1",
+      "code": 0
+    },
+    {
+      "name": "show-locked",
+      "lock": true,
+      "present": true,
+      "plan": {
+        "objective": "Rich plan",
+        "slug": "rich-plan",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "activeWorkPhaseId": "wp1",
+        "workPhases": [
+          {
+            "id": "wp1",
+            "title": "Phase One",
+            "status": "in_progress",
+            "tasks": [
+              {
+                "id": "t1",
+                "title": "Do a thing",
+                "status": "done",
+                "outcome": "did it"
+              }
+            ],
+            "criteriaIds": [],
+            "awaitsDecision": [
+              "d1"
+            ]
+          },
+          {
+            "id": "wp2",
+            "title": "Phase Two",
+            "status": "pending",
+            "tasks": [],
+            "criteriaIds": []
+          }
+        ],
+        "criteria": [
+          {
+            "id": "c-1",
+            "scenario": "the thing works",
+            "expectedEvidence": "",
+            "capturedEvidence": null,
+            "status": "open"
+          }
+        ],
+        "host": {
+          "armed": false,
+          "armedAt": null,
+          "source": "none"
+        },
+        "decisions": [
+          {
+            "id": "d1",
+            "question": "which way?",
+            "recommendation": "a",
+            "options": [
+              "a",
+              "b"
+            ],
+            "status": "open",
+            "askedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "id": "d2",
+            "question": "answered?",
+            "status": "decided",
+            "answer": "yes",
+            "askedAt": "2026-01-01T00:00:00.000Z",
+            "decidedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "schemaVersion": 1
+      },
+      "output": "[codexclaw loop: rich-plan]\nobjective: Rich plan\nhost: armed=false source=none\nworkPhases: 2 (remaining 2)\ncriteria: 1 (unmet 1)\ncomplete: false\nwriteLock: present path=<WS>/.codexclaw/goalplans/rich-plan/.goalplan.lock ageMs=<AGE>\n  - wp1 [in_progress] Phase One\n  - wp2 [pending] Phase Two\n  - c-1 [open] the thing works\n  - d1 [open] which way?\n    options: a | b (recommended: a)\n    waiting: wp1",
+      "code": 0
+    }
+  ],
+  "show": [
+    {
+      "name": "slug-absent",
+      "ws": "empty",
+      "argv": [
+        "show",
+        "--slug",
+        "My Slug"
+      ],
+      "output": "loop show: no plan found at slug 'my-slug' (<WS>/.codexclaw/goalplans/my-slug/goalplan.json does not exist) - run `cxc loop init --objective \"...\"`",
+      "code": 1
+    },
+    {
+      "name": "objective-absent",
+      "ws": "empty",
+      "argv": [
+        "show",
+        "--objective",
+        "Ship It!"
+      ],
+      "output": "loop show: no plan found at slug 'ship-it' (<WS>/.codexclaw/goalplans/ship-it/goalplan.json does not exist) - run `cxc loop init --objective \"...\"`",
+      "code": 1
+    },
+    {
+      "name": "slug-blank-derived",
+      "ws": "empty",
+      "argv": [
+        "show",
+        "--slug",
+        "!!!"
+      ],
+      "output": "loop show: no plan found at slug 'interview' (<WS>/.codexclaw/goalplans/interview/goalplan.json does not exist) - run `cxc loop init --objective \"...\"`",
+      "code": 1
+    },
+    {
+      "name": "session-bound",
+      "ws": "bound",
+      "argv": [
+        "show",
+        "--session",
+        "rec-s1"
+      ],
+      "output": "[codexclaw loop: rich-plan]\nobjective: Rich plan\nhost: armed=false source=none\nworkPhases: 2 (remaining 2)\ncriteria: 1 (unmet 1)\ncomplete: false\nwriteLock: absent path=<WS>/.codexclaw/goalplans/rich-plan/.goalplan.lock\n  - wp1 [in_progress] Phase One\n  - wp2 [pending] Phase Two\n  - c-1 [open] the thing works\n  - d1 [open] which way?\n    options: a | b (recommended: a)\n    waiting: wp1",
+      "code": 0
+    },
+    {
+      "name": "session-unbound",
+      "ws": "bound",
+      "argv": [
+        "show",
+        "--session",
+        "rec-s2"
+      ],
+      "output": "loop show: --slug \"<text>\", --objective \"<text>\", or --session <id> (with a bound plan) is required",
+      "code": 1
+    },
+    {
+      "name": "none",
+      "ws": "empty",
+      "argv": [
+        "show"
+      ],
+      "output": "loop show: --slug \"<text>\", --objective \"<text>\", or --session <id> (with a bound plan) is required",
+      "code": 1
+    },
+    {
+      "name": "read-absent",
+      "ws": "empty",
+      "argv": [
+        "show",
+        "--slug",
+        "no-such-plan"
+      ],
+      "output": "loop show: no plan found at slug 'no-such-plan' (<WS>/.codexclaw/goalplans/no-such-plan/goalplan.json does not exist) - run `cxc loop init --objective \"...\"`",
+      "code": 1
+    }
+  ]
+}
