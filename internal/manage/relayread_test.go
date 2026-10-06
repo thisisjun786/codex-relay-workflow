@@ -667,6 +667,9 @@ func TestRelayReadPlanSelectorNarrowsMergeTurns(t *testing.T) {
 	if len(projection.MergeTurns) != 1 || projection.MergeTurns[0].TurnID != "turn-project-1" {
 		t.Errorf("--plan did not narrow the merge turns: %+v", projection.MergeTurns)
 	}
+	if len(projection.Relationships) != 1 || projection.Relationships[0].RelationshipID != "rel-project-1" {
+		t.Errorf("--plan did not narrow the relationships: %+v", projection.Relationships)
+	}
 }
 
 // A plan the caller named that the store holds but the project selector excluded is reported as an

@@ -56,6 +56,13 @@ var (
 // RelayReadOptions chooses what the projection covers. An empty Plans or Projects means every one
 // the store carries; IncludeClosed false keeps only live relationships, active or paused bindings
 // and merge turns that have not closed.
+//
+// A project selector narrows every section to that project: its relationships, its project-scope
+// bindings, its plans and its merge turns. A plan selector narrows the sections the plan owns: its
+// progress, the relationships that execute its nodes (the link the relay keeps in
+// dag_node_executions) and those relationships' merge turns. Both selectors may be given; a plan
+// the caller named that the selection leaves out is still reported, with an unknown read mark, so a
+// named target never vanishes without one.
 type RelayReadOptions struct {
 	Plans         []string
 	Projects      []string
@@ -304,15 +311,25 @@ const (
 func relayReadRelationships(ctx context.Context, st *store.Store, opts RelayReadOptions, out *RelayProjection) []RelayRelationship {
 	query := "SELECT r.relationship_id FROM relationships r"
 	var args []any
+	var conditions []string
 	if len(opts.Projects) > 0 {
-		query += " JOIN relationship_scope s ON s.relationship_id = r.relationship_id WHERE s.project_key IN (" +
-			relayReadPlaceholders(len(opts.Projects)) + ")"
+		query += " JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
+		conditions = append(conditions, "s.project_key IN ("+relayReadPlaceholders(len(opts.Projects))+")")
 		args = append(args, relayReadArgs(opts.Projects)...)
-	} else {
-		query += " WHERE 1 = 1"
+	}
+	if len(opts.Plans) > 0 {
+		// A plan selector narrows the relationships to the ones that execute a node of the plan, the
+		// same link the merge turns are narrowed by, so the two sections agree on which lanes a plan
+		// owns.
+		conditions = append(conditions, "EXISTS (SELECT 1 FROM dag_node_executions e WHERE e.relationship_id = r.relationship_id"+
+			" AND e.plan_id IN ("+relayReadPlaceholders(len(opts.Plans))+"))")
+		args = append(args, relayReadArgs(opts.Plans)...)
 	}
 	if !opts.IncludeClosed {
-		query += " AND r." + relayReadLiveRelationshipFilter
+		conditions = append(conditions, "r."+relayReadLiveRelationshipFilter)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY r.created_at, r.relationship_id"
 	ids, err := relayReadIDs(ctx, st, query, args)
