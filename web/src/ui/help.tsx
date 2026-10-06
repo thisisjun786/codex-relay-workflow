@@ -1,11 +1,12 @@
 // Ported from CXC v0.2.40 plugins/codexclaw/gui/src/ui/help.tsx (1-238), modified: the
 // topics are CRW's (status, execution policy, helper roles), the body text is CRW content
-// in English, and the /readme footer link is removed with the route it pointed at.
+// in English, the /readme footer link is removed with the route it pointed at, and the
+// drawer traps focus while open and follows the route when it changes underneath.
 /**
  * help.tsx - per-page help drawer plus a topic button.
  *
- * Right-side drawer with overlay, Escape/overlay-click/X close and focus management.
- * The visual style comes from the shared kit tokens in styles.css.
+ * Right-side drawer with overlay, Escape/overlay-click/X close, focus trap and focus
+ * restore. The visual style comes from the shared kit tokens in styles.css.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "./icons.tsx";
@@ -107,16 +108,41 @@ export function HelpDrawer({
   topic: HelpTopicId;
   onClose: () => void;
 }) {
+  const ref = useRef<HTMLDivElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!open) return undefined;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
+    const opener = document.activeElement as HTMLElement | null;
+    const node = ref.current;
     closeRef.current?.focus();
-    return () => document.removeEventListener("keydown", handler);
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !node) return;
+      // The drawer is aria-modal, so Tab must not reach the page behind its overlay.
+      const focusables = Array.from(
+        node.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])"),
+      ).filter((el) => !el.hasAttribute("disabled"));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      opener?.focus();
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -127,6 +153,7 @@ export function HelpDrawer({
     <>
       <div className="help-overlay" onClick={onClose} aria-hidden="true" />
       <aside
+        ref={ref}
         className="help-drawer"
         role="dialog"
         aria-modal="true"
@@ -158,6 +185,12 @@ export function HelpDrawer({
 export function useHelp(defaultTopic: HelpTopicId) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopicId>(defaultTopic);
+
+  // The route can change under an open drawer (Back/Forward, a nav click). The drawer
+  // must then describe the page actually shown, not the one it was opened on.
+  useEffect(() => {
+    setHelpTopic(defaultTopic);
+  }, [defaultTopic]);
 
   const openHelp = useCallback((topic: HelpTopicId) => {
     setHelpTopic(topic);

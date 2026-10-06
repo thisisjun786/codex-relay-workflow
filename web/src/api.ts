@@ -8,6 +8,9 @@
  * sessionStorage and rewrites the address without it. Only write requests carry the
  * token header and a JSON content type: reads are unauthenticated, writes are not.
  *
+ * A tab whose storage is denied keeps the token in memory instead, so stripping it from
+ * the address never loses the only copy and writes in that tab still carry it.
+ *
  * Screen-specific API functions arrive with the screens that need them; this module is
  * only the foundation they build on.
  */
@@ -65,19 +68,44 @@ function removeFragmentParam(fragment: string, name: string): string {
     .join("&");
 }
 
+/**
+ * The tab-local copy, used when sessionStorage is unavailable or refuses a write. Without
+ * it, a storage-denied tab would strip the token from the address and then have none to
+ * send, which would leave the GUI able to read but never to write.
+ */
+let memoryToken: string | null = null;
+
+/** True once this tab has seen storage deny a read or a write. */
+let storageDenied = false;
+
+/** sessionStorage, or undefined when the context denies access to it entirely. */
 function storage(): Storage | undefined {
-  return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
+  try {
+    return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
+  } catch {
+    // Some contexts throw on the sessionStorage getter itself, before any call.
+    storageDenied = true;
+    return undefined;
+  }
 }
 
-/** The stored token, or null when this tab has none. */
+/**
+ * The stored token, or null when this tab has none. While storage works it is the source
+ * of truth, so a tab that never received a token answers null; the in-memory copy is read
+ * only once storage has refused a read or a write.
+ */
 export function getToken(): string | null {
   const store = storage();
-  if (!store) return null;
-  try {
-    return store.getItem(TOKEN_STORAGE_KEY);
-  } catch {
-    return null;
+  if (store) {
+    try {
+      const stored = store.getItem(TOKEN_STORAGE_KEY);
+      if (stored !== null) return stored;
+      if (!storageDenied) return null;
+    } catch {
+      storageDenied = true;
+    }
   }
+  return memoryToken;
 }
 
 /**
@@ -92,12 +120,15 @@ export function bootstrapToken(): void {
   const fragment = hash.startsWith("#") ? hash.slice(1) : hash;
   const token = fragmentParam(fragment, TOKEN_PARAM);
   if (token === null || token === "") return;
+  // Hold the token in memory first: if the write below fails, this tab still has it.
+  memoryToken = token;
   const store = storage();
   if (store) {
     try {
       store.setItem(TOKEN_STORAGE_KEY, token);
     } catch {
-      // A storage-denied tab still gets the token out of the address below.
+      // Storage refused the write; the in-memory copy carries this tab.
+      storageDenied = true;
     }
   }
   const rest = removeFragmentParam(fragment, TOKEN_PARAM);

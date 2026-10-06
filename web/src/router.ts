@@ -77,4 +77,3 @@ export function useRoute(): string {
   }, []);
   return route;
 }
-
