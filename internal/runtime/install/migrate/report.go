@@ -102,7 +102,7 @@ func (r *Report) Object() contract.OrderedObject {
 	}
 	items := make([]any, 0, len(r.Items))
 	for _, it := range r.Items {
-		items = append(items, contract.OrderedObject{
+		item := contract.OrderedObject{
 			{Key: "scope", Value: string(it.Scope)},
 			{Key: "source", Value: it.Source},
 			{Key: "destination", Value: it.Destination},
@@ -112,7 +112,13 @@ func (r *Report) Object() contract.OrderedObject {
 			{Key: "bytes", Value: it.Size},
 			{Key: "digest", Value: digestText(it.Digest)},
 			{Key: "mode", Value: modeText(it.Mode)},
-		})
+		}
+		// A destination whose mode a publish left alone is a material difference this run deliberately
+		// does not correct, so the report carries the note rather than hiding it.
+		if it.Note != "" {
+			item = append(item, contract.Field{Key: "note", Value: it.Note})
+		}
+		items = append(items, item)
 	}
 	attention := make([]any, 0, len(r.Attention))
 	for _, a := range r.Attention {
@@ -176,15 +182,35 @@ func (r *Report) Text() string {
 	for _, it := range r.Items {
 		switch it.Result {
 		case ResultRefused:
-			fmt.Fprintf(&b, "refused: %s: %s\n", it.Source, it.Reason)
+			fmt.Fprintf(&b, "refused: %s: %s\n", it.Source, oneLine(it.Reason))
 		case ResultFailed:
-			fmt.Fprintf(&b, "failed: %s: %s\n", it.Source, it.Note)
+			fmt.Fprintf(&b, "failed: %s: %s\n", it.Source, oneLine(it.Note))
+		default:
+			if it.Note != "" {
+				fmt.Fprintf(&b, "note: %s: %s\n", it.Source, oneLine(it.Note))
+			}
 		}
 	}
 	for _, a := range r.Attention {
-		fmt.Fprintf(&b, "attention: %s: %s %s=%s (%s)\n", a.Item, a.Kind, a.Field, a.Value, a.Detail)
+		fmt.Fprintf(&b, "attention: %s: %s %s=%s (%s)\n", oneLine(a.Item), oneLine(a.Kind), oneLine(a.Field), oneLine(a.Value), oneLine(a.Detail))
 	}
 	return b.String()
+}
+
+// oneLine keeps a value on one line: a persisted string (a background note, a command argument) can
+// hold newlines, and writing them verbatim would break the one-line-per-entry format and let a value
+// inject apparent result or attention lines into the report.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r':
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // counts tallies the report's items: copied, already equal, excluded (a skip row), refused, and the
@@ -203,6 +229,11 @@ func (r *Report) counts() (copied, equal, excluded, refused, attention int) {
 		case it.Result == ResultDryRun:
 			copied++
 		}
+	}
+	// A whole-scope refusal (a root-safety or preflight conflict) is stored in the error, not as an
+	// item, so it is counted here rather than leaving `result: refused` beside `refused=0`.
+	if r.Error != nil && r.Error.Kind == string(ResultRefused) && refused == 0 {
+		refused = 1
 	}
 	return copied, equal, excluded, refused, len(r.Attention)
 }

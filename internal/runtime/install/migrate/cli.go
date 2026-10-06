@@ -14,9 +14,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
+	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // UsageText is this command's own help. The legacy `crw install` usage line is a frozen contract and
@@ -58,6 +61,11 @@ type cli struct {
 	jsonOut   bool
 	report    string
 }
+
+// cliCancel is a test seam. When it is set, it runs before every publication step, so a test can
+// cancel a run in the middle of the copy without raising a signal; the real path reads ctx, which
+// the install mode cancels on SIGINT, SIGTERM and SIGHUP.
+var cliCancel func() error
 
 // Run is `crw install migrate-state`. env is the environment the roots are read from, so the
 // caller's environment decides and this process's own is not consulted behind it.
@@ -109,16 +117,33 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	if err := ctx.Err(); err != nil {
 		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
 	}
-	res, err := apply(roots, plan)
+	pub, err := NewPublisher()
+	if err != nil {
+		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
+	}
+	// Cancellation reaches the copy itself: every publication step checks the context first, so a
+	// signal after classification stops the run with a failed or partial report instead of copying on.
+	pub.at = func(string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if cliCancel != nil {
+			return cliCancel()
+		}
+		return nil
+	}
+	res, err := applyWith(roots, plan, pub)
 	report := o.assemble(roots, plan, atts, res, err)
-	code := o.emit(stdout, stderr, report)
+	// The report file is published before stdout is written, and its own failure is folded into the
+	// document the caller reads, so stdout and the exit code never disagree.
 	if err == nil && target != nil {
 		if perr := target.publish(report); perr != nil {
+			report.Error = reportError(perr)
+			report.Result = summarize(report)
 			fmt.Fprintln(stderr, "crw install migrate-state: the report was not published: "+perr.Error())
-			return codeRefused
 		}
 	}
-	return code
+	return o.emit(stdout, stderr, report)
 }
 
 // parseCLI reads the command line. A help request is reported as help with no error.
@@ -162,6 +187,16 @@ func parseCLI(args []string) (cli, bool, error) {
 	}
 	if given["codex-home"] && !scope.Has(ScopeCodex) {
 		return cli{}, false, errors.New("--codex-home is read only with --scope codex or --scope all")
+	}
+	// An explicitly empty value names no path: an unset shell variable must not silently select the
+	// environment or the working directory instead of the root the operator meant.
+	for _, f := range []struct {
+		name  string
+		value string
+	}{{"cwd", o.cwd}, {"from-home", o.fromHome}, {"to-home", o.toHome}, {"codex-home", o.codexHome}, {"report", o.report}} {
+		if given[f.name] && f.value == "" {
+			return cli{}, false, fmt.Errorf("--%s names an empty value; name a path or omit the flag", f.name)
+		}
 	}
 	return o, false, nil
 }
@@ -218,12 +253,19 @@ func envRoot(lookup func(string) (string, bool), explicit, variable, def string)
 }
 
 // envHome is the home the default roots hang under: HOME when the caller's environment sets it,
-// else this user's passwd entry, as Open's own default does.
+// else this user's passwd entry, read without consulting the process environment.
 func envHome(lookup func(string) (string, bool)) (string, error) {
 	if home, set := lookup("HOME"); set && home != "" {
 		return home, nil
 	}
-	return os.UserHomeDir()
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	if u.HomeDir == "" {
+		return "", errors.New("the passwd entry names no home directory")
+	}
+	return u.HomeDir, nil
 }
 
 // target validates --report: an absent leaf outside every selected tree, in a directory that exists.
@@ -253,6 +295,20 @@ func (o cli) target(roots *Roots) (*reportTarget, error) {
 	if dir == nil {
 		return nil, fmt.Errorf("--report: the directory %s does not exist", parent)
 	}
+	// The lexical check above cannot see two spellings of one directory; identity can. The report
+	// parent must not be a selected root or lie inside one, or the run would write into the state
+	// it just verified.
+	_, _, chain, err := pinRoot(parent)
+	if err != nil {
+		_ = dir.Close()
+		return nil, fmt.Errorf("--report: %w", err)
+	}
+	for _, tree := range []*Dir{dirOf(roots.Project, false), dirOf(roots.Project, true), dirOf(roots.User, false), dirOf(roots.User, true), roots.Codex} {
+		if tree != nil && slices.Contains(chain, tree.id) {
+			_ = dir.Close()
+			return nil, fmt.Errorf("--report %s is the same directory as, or inside, a selected root; the report is written outside the source and destination trees", o.report)
+		}
+	}
 	if _, _, err := dir.OpenRegular(leaf); err == nil {
 		_ = dir.Close()
 		return nil, fmt.Errorf("--report %s already exists; name an absent file", o.report)
@@ -281,8 +337,9 @@ func (o cli) assemble(roots *Roots, plan *Plan, atts []Attention, res *ApplyResu
 			rep.Items = append(rep.Items, item)
 		}
 		if o.dryRun {
-			// Classification opened, stat'ed and hashed every copy and transform source once.
-			rep.SourceVerified = true
+			// Classification opened, stat'ed and hashed every copy and transform source once — but
+			// only a run that reached the end of the scope examined all of them.
+			rep.SourceVerified = failure == nil
 		}
 	}
 	if failure != nil {
@@ -290,6 +347,17 @@ func (o cli) assemble(roots *Roots, plan *Plan, atts []Attention, res *ApplyResu
 	}
 	rep.Result = summarize(rep)
 	return rep
+}
+
+// dirOf is a pair's source or destination directory, or nil.
+func dirOf(p *Pair, dest bool) *Dir {
+	if p == nil {
+		return nil
+	}
+	if dest {
+		return p.Dest
+	}
+	return p.Source
 }
 
 // reportRoots is the selected roots' source and destination pairs.
@@ -316,7 +384,7 @@ func namedRoots(opt Options) []ReportRoot {
 	var out []ReportRoot
 	if scope.Has(ScopeProject) {
 		if w, err := absRoot(opt.Cwd); err == nil {
-			out = append(out, ReportRoot{ScopeProject, filepath.Join(w, ProjectSourceName), filepath.Join(w, ".crw")})
+			out = append(out, ReportRoot{ScopeProject, filepath.Join(w, ProjectSourceName), filepath.Join(w, crwdir.DirName)})
 		}
 	}
 	if scope.Has(ScopeUser) {

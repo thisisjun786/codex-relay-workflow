@@ -185,7 +185,7 @@ func TestCLIExitCodesAndCancellation(t *testing.T) {
 	put(t, filepath.Join(ws, ".crw", "ledger.jsonl"), "other\n", 0o644)
 	put(t, filepath.Join(ws, ProjectSourceName, "sessions/a.json"), "{\"phase\":\"IDLE\"}\n", 0o644)
 	code, out, _ := cliRun(t, context.Background(), "--cwd", ws)
-	if code != 1 || !strings.Contains(out, "result: refused") {
+	if code != 1 || !strings.Contains(out, "result: refused") || !strings.Contains(out, "refused=1") {
 		t.Fatalf("conflict exit %d\n%s", code, out)
 	}
 	if got := get(t, filepath.Join(ws, ".crw", "ledger.jsonl")); got != "other\n" {
@@ -209,6 +209,78 @@ func TestCLIExitCodesAndCancellation(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(ws2, ".crw")); !os.IsNotExist(err) {
 		t.Fatalf("a cancelled run wrote: %v", err)
+	}
+}
+
+// A cancellation that arrives after classification, in the middle of the copy, stops the run: the
+// report is a failure with the writes completed, and no report file is published.
+func TestCLICancellationDuringTheCopy(t *testing.T) {
+	base := isolate(t)
+	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n", "sessions/a.json": "{\"phase\":\"IDLE\"}\n"})
+	report := filepath.Join(base, "report.json")
+	seen := 0
+	cliCancel = func() error {
+		seen++
+		if seen > 1 {
+			return context.Canceled
+		}
+		return nil
+	}
+	t.Cleanup(func() { cliCancel = nil })
+	code, out, _ := cliRun(t, context.Background(), "--cwd", ws, "--report", report)
+	cliCancel = nil
+	if code != 1 || !strings.Contains(out, "result: failed") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if _, err := os.Stat(report); !os.IsNotExist(err) {
+		t.Fatalf("a cancelled run published a report: %v", err)
+	}
+	// Some writes landed and the report says so rather than claiming a complete copy.
+	if !strings.Contains(out, "writesCompleted") && strings.Contains(out, "result: copied") {
+		t.Fatalf("a cancelled run claimed a copy:\n%s", out)
+	}
+}
+
+// An explicitly empty root or report value names no path, and is a usage error rather than a silent
+// fallback to the environment or the working directory.
+func TestCLIEmptyFlagValuesAreUsageErrors(t *testing.T) {
+	base := isolate(t)
+	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n"})
+	before := tree(t, base)
+	for _, args := range [][]string{
+		{"--cwd", ws, "--from-home", "", "--scope", "user"},
+		{"--cwd", ws, "--to-home", "", "--scope", "user"},
+		{"--cwd", ws, "--codex-home", "", "--scope", "codex"},
+		{"--cwd", ws, "--report", ""},
+		{"--cwd", ""},
+	} {
+		code, out, errOut := cliRun(t, context.Background(), args...)
+		if code != 2 || out != "" || !strings.Contains(errOut, "empty value") {
+			t.Errorf("%v: exit %d stdout=%q stderr=%q", args, code, out, errOut)
+		}
+	}
+	if got := tree(t, base); !reflect.DeepEqual(got, before) {
+		t.Fatalf("an empty flag value wrote: %v", got)
+	}
+}
+
+// A destination that already holds equal bytes but a different mode is a material difference this run
+// does not correct, so both the JSON and the text report carry it.
+func TestCLIReportKeepsTheDestinationModeNote(t *testing.T) {
+	base := isolate(t)
+	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n"})
+	dst := filepath.Join(ws, ".crw", "ledger.jsonl")
+	put(t, dst, "{}\n", 0o600)
+	if err := os.Chmod(dst, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := cliRun(t, context.Background(), "--cwd", ws)
+	if code != 0 || !strings.Contains(out, "result: already-equal") || !strings.Contains(out, "note: ledger.jsonl: destination kept its mode") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	code, out, _ = cliRun(t, context.Background(), "--cwd", ws, "--json")
+	if code != 0 || !strings.Contains(out, "\"note\"") {
+		t.Fatalf("exit %d\n%s", code, out)
 	}
 }
 
