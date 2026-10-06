@@ -78,7 +78,10 @@ func holdStoreFile(path string) (*os.File, error) {
 	}
 	info, err := file.Stat()
 	if err != nil {
-		_ = file.Close()
+		// The descriptor is open on a store file, so it is kept reachable rather than closed:
+		// closing it would drop this process's POSIX locks on that inode, which is the defect
+		// this file exists to prevent. The caller gets the error and uses nothing.
+		heldStoreFiles.unidentified = append(heldStoreFiles.unidentified, file)
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
