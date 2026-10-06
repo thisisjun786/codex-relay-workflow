@@ -175,24 +175,37 @@ func resetLinkTargetExistsWith(root *os.Root, name string, statRoot func(string)
 }
 
 // resetLinkWalkTarget judges a link's Readlink text against the pinned root by walking the target's
-// path components with Lstat and Readlink only, opening no file and no directory of its own. It
-// reports whether the target exists, whether its final component is "." or ".." (the case os.Root
-// cannot stat without opening the target directory), and whether the walk stayed inside the root
+// path components with Lstat and Readlink only. It never opens the target itself: the final
+// component is read with lstat, so a target whose last component is "." or ".." is decided where
+// os.Root would open that directory (O_DIRECTORY, read only) to follow the link to it. A
+// multi-component target still has its intermediate directories traversed by os.Root, the way
+// every path resolution traverses them, including the kernel lookup the OS-path judgement makes.
+//
+// The walk reports whether the target exists, whether its final component is "." or ".." (the case
+// os.Root cannot stat without opening the target directory), and whether it stayed inside the root
 // at all; a target it cannot keep inside the root is the caller's to judge on the root's path.
 //
 // "." is skipped and ".." pops one component after the links before it were expanded; a symlink
-// component is read and its target spliced into the components still to walk, at most
-// resetLinkWalkLimit times. A component that does not exist means the target does not exist; a
-// component that is not a directory where one is needed means the same; the final component only
-// has to exist.
+// component is read and its target spliced into the components still to walk. A component that
+// does not exist means the target does not exist; a component that is not a directory where one is
+// needed means the same; the final component only has to exist.
+//
+// The hop count starts at one because the caller already read this link's target with Readlink:
+// the kernel counts that link as the first of the 40 traversals it allows for the whole
+// resolution, so a chain of 40 links inside the target makes 41 and must not resolve.
 func resetLinkWalkTarget(root *os.Root, target string) (exists, dotEnding, inside bool) {
-	if filepath.IsAbs(target) {
+	// A target that does not resolve against the pinned directory keeps the OS-path judgement: an
+	// absolute one, and on Windows a rooted-without-volume one (backslash keep backslash dot, which
+	// filepath.IsAbs does not report) or a drive-relative one (C:keep backslash dot, whose VolumeName
+	// is non-empty). On Unix the volume is always empty and a leading separator is already absolute,
+	// so this adds nothing there.
+	if filepath.IsAbs(target) || filepath.VolumeName(target) != "" || strings.HasPrefix(target, string(filepath.Separator)) {
 		return false, false, false
 	}
 	sep := string(filepath.Separator)
 	remaining := strings.Split(target, sep)
 	var walked []string
-	hops := 0
+	hops := 1
 	for len(remaining) > 0 {
 		dotEnding = resetLinkWalkDotEnding(remaining)
 		component := remaining[0]

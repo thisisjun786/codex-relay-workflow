@@ -297,3 +297,95 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 		}
 	})
 }
+
+// TestResetLinkWalkCountsTheCandidateLinkInTheCeiling: the caller already read the candidate
+// link's target, and the kernel counts that link as the first of the 40 traversals it allows for
+// the whole resolution. A chain of 39 links inside the target is 40 and resolves; one of 40 is 41
+// and the OS reports a loop, so the walk must not call the target present either. Each case also
+// compares the walk with os.Stat on the same chain.
+func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		innerLinks int
+		wantExists bool
+	}{
+		{38, true},
+		{39, true},
+		{40, false},
+		{41, false},
+	} {
+		t.Run(strconv.Itoa(tc.innerLinks)+"_inner_links", func(t *testing.T) {
+			dir := resetLinkWalkWorkspace(t)
+			// a.json -> c1 -> ... -> c<inner> -> keep/. makes inner+1 traversals in all.
+			resetLinksLink(t, "keep/.", filepath.Join(dir, "c"+strconv.Itoa(tc.innerLinks)))
+			for i := tc.innerLinks - 1; i >= 1; i-- {
+				resetLinksLink(t, "c"+strconv.Itoa(i+1), filepath.Join(dir, "c"+strconv.Itoa(i)))
+			}
+			link := filepath.Join(dir, "a.json")
+			resetLinksLink(t, "c1", link)
+			_, statErr := os.Stat(link)
+			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v", err)
+			}
+			if got != (statErr == nil) {
+				t.Errorf("exists = %v, but the OS says %v: the walk must agree with the kernel", got, statErr == nil)
+			}
+			if got != tc.wantExists {
+				t.Errorf("exists = %v, want %v", got, tc.wantExists)
+			}
+		})
+	}
+}
+
+// TestResetLinkWalkDotEndingTargetOpensNoDirectory: the directory a dot-ending target names is not
+// opened by the judgement. CRW-554 requires that, and it is what the walk replaced: os.Root.Stat on
+// the link resolves it to that directory and opens it. The target directory is made search-only, so
+// opening it for reading fails, and a walk that opened it would report the target absent.
+//
+// A deeper target such as "keep/sub/.." is decided here too, but it does not distinguish the two
+// mechanisms: resolving it traverses keep and sub either way, so the search-only mode is not applied
+// to those rows. The intermediate traversal is what the OS-path fallback did as well.
+func TestResetLinkWalkDotEndingTargetOpensNoDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name, target string
+		dirs         []string
+	}{
+		{"keep_dot", "keep/.", nil},
+		{"keep_sub_dotdot", "keep/sub/..", []string{"keep", "sub"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "keep", "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(dir, "a.json")
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Fatal(err)
+			}
+			_, wantStat := os.Stat(link)
+			// keep is search-only from here on, so opening it for reading fails. The deeper row keeps
+			// keep traversable so that the case still tests what its name claims.
+			mode := os.FileMode(0o311)
+			if tc.dirs != nil {
+				mode = 0o711
+			}
+			if err := os.Chmod(filepath.Join(dir, "keep"), mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "keep"), 0o755) })
+			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v", err)
+			}
+			if wantStat != nil {
+				t.Fatalf("the case must resolve for the OS too: %v", wantStat)
+			}
+			if !got {
+				t.Error("exists = false: the judgement opened the target directory, which CRW-554 forbids")
+			}
+		})
+	}
+}
