@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// The judgement's vocabulary, its windows, and the status a relay read failure carries.
 const (
 	capacityWithin, capacityUnknown             = "within", "unknown"
 	capacityMeasured, capacityUnmeasured        = "measured", "unmeasured"
@@ -83,8 +82,8 @@ type capacityPlanRef struct {
 	Family  string `json:"family"`
 }
 
-// capacitySettings is the Section "capacity" document; the thresholds are pointers, so an omitted
-// key keeps its default.
+// capacitySettings is the Section "capacity" document; the thresholds are pointers so an omitted key
+// keeps its default.
 type capacitySettings struct {
 	Plans               []capacityPlanRef `json:"plans"`
 	ActionsStatusURL    string            `json:"actions_status_url"`
