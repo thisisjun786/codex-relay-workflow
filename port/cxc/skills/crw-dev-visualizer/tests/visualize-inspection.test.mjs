@@ -2,11 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-const source = resolve('port/cxc/skills/crw-dev-visualizer/upstream/sync-check.sh');
+const source = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'upstream', 'sync-check.sh');
 const hasBash = spawnSync('bash', ['--version']).status === 0;
 test('visualize inspection uses explicit root, version order, and failure states', { skip: !hasBash }, t => {
   const root = mkdtempSync(join(tmpdir(), 'crw-visualize-test-'));

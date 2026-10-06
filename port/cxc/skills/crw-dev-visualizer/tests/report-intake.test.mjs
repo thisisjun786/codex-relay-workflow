@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { prepareResearch } from "../scripts/research-adapter.mjs";
 
@@ -180,7 +181,7 @@ test("operational CLI reads only frozen JSON, emits provenance, and exits nonzer
   const home = join(dir, "home");
   const input = join(dir, "model.json");
   const metadata = join(dir, "metadata.json");
-  const script = resolve("port/cxc/skills/crw-dev-visualizer/scripts/report-intake.mjs");
+  const script = resolve(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "report-intake.mjs");
   writeFileSync(input, JSON.stringify(model()));
   writeFileSync(metadata, JSON.stringify({ skillVersion: "skill-cli", packageVersion: "package-cli", sourceSha: "b".repeat(40), hostAdapter: "aside" }));
   const env = { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_CACHE_HOME: join(home, "cache") };

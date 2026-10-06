@@ -334,7 +334,7 @@
       "file": "tests/report-intake.test.mjs",
       "reason": "Move the S-class skill-script test report-intake.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
       "add": true,
-      "sha256": "c1e87ba4caca3ad7ae217bbef80199f96287a0510116ec5846b0b9922b4a9b70"
+      "sha256": "fb4bcbf54e497948202b70422b07590480082369d2cfcd234cb066732ab67da8"
     },
     {
       "file": "tests/report-locale.test.mjs",
@@ -346,7 +346,7 @@
       "file": "tests/report-quality-gate.test.mjs",
       "reason": "Move the S-class skill-script test report-quality-gate.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
       "add": true,
-      "sha256": "72d452d3e21ed1da9d98fa782d69386ea03e4c0c1b32ff32e1d8eec7ef0ab4a4"
+      "sha256": "53b6d89913bfad0cc958fc67c5902e6a1e748468125118da7763c08148ae2770"
     },
     {
       "file": "tests/report-research-handoff.test.mjs",
@@ -358,7 +358,7 @@
       "file": "tests/visualize-inspection.test.mjs",
       "reason": "Move the S-class skill-script test visualize-inspection.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
       "add": true,
-      "sha256": "7dd59ae0729206ac504e9e53ac175b3fe6692c89a6e0e68d3785352329e33bed"
+      "sha256": "444f8c8412ac572b15fa9e29d66113fd00ae10f4457e84065d730a81a61de727"
     },
     {
       "file": "tests/visualizer-packaging.test.mjs",
