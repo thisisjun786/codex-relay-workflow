@@ -31,6 +31,7 @@ func (k *releaseKit) pinned() accepted {
 
 // Criterion c3 and D-15: the release is coupled with slot reservation, and a refusal of the reservation leaves no intent behind. Each case is one way the reservation fails.
 func TestReleaseCapacityRefusals(t *testing.T) {
+	t.Parallel()
 	t.Run("no slot is free: the contest is recorded and nothing else is", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -96,6 +97,7 @@ func TestReleaseCapacityRefusals(t *testing.T) {
 
 // A plan, an acceptance or a registration may move between the judgement and the intent. The intent is judged again under the lock, and nothing is written when it no longer holds.
 func TestReleaseRefusesWhenInputsChangeBetweenReadAndIntent(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		reason string
@@ -146,6 +148,7 @@ func TestReleaseRefusesWhenInputsChangeBetweenReadAndIntent(t *testing.T) {
 
 // E-10: a push to a predecessor's pull request after its acceptance stops the release of everything that builds on it.
 func TestReleaseRefusesStaleCodeHead(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.pinned()
@@ -174,6 +177,7 @@ func TestReleaseRefusesStaleCodeHead(t *testing.T) {
 }
 
 func TestReleaseAllowsMergedPinnedPredecessor(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.pinned()
@@ -191,6 +195,7 @@ func TestReleaseAllowsMergedPinnedPredecessor(t *testing.T) {
 
 // The forge is unreadable or the evidence incomplete: a host failure and no rows, retryable; a candidate that moved while it was read is a refusal.
 func TestReleaseFreshnessFailsClosed(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.pinned()
@@ -230,6 +235,7 @@ func TestReleaseFreshnessFailsClosed(t *testing.T) {
 // The forge is addressed by the owner/name the relay recorded at acceptance, never by the local path the edge targets. This is a LEGACY local row, seeded with acceptNode on purpose: a new
 // implementation acceptance names its forge as the target (acceptOnForge), and every other release test here already does.
 func TestReleaseFreshnessUsesForgeIdentity(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	checkout := t.TempDir()
 	pin := doc{"pins_code_head": true, "target_repository": checkout, "target_base_ref": "dev"}
@@ -251,6 +257,7 @@ func TestReleaseFreshnessUsesForgeIdentity(t *testing.T) {
 
 // Omission injection: removing the forge mapping of a pinned predecessor can never take it out of freshness checking: the node is blocked, not released unchecked.
 func TestReleaseRefusesPinnedPredecessorWithoutForgeRow(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	a := k.pinned()
@@ -273,6 +280,7 @@ func TestReleaseRefusesPinnedPredecessorWithoutForgeRow(t *testing.T) {
 // The replay of an intent never rebuilds the request: the frozen bytes go to the engine whatever moved since (the clock, an unrelated plan revision, the base tip, the caller's
 // words); a caller that spells the selectors differently is refused before the engine is asked.
 func TestReleaseReplayDoesNotRebuild(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.pinned()
@@ -331,6 +339,7 @@ func TestReleaseReplayDoesNotRebuild(t *testing.T) {
 
 // A stored manifest that no longer digests to its name stops a replay before the engine is asked.
 func TestReleaseReplayRevalidatesStoredManifest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.host.loseFirstCreation = true
@@ -360,6 +369,7 @@ func TestReleaseReplayRevalidatesStoredManifest(t *testing.T) {
 
 // A store failure while the manifest is written is never a success: nothing is released, nothing reserved, and the engine is not asked.
 func TestManifestStoreFailureIsNotSuccess(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.exec("CREATE TRIGGER refuse_manifest BEFORE INSERT ON dag_input_manifests BEGIN SELECT RAISE(ABORT, 'the disk refuses'); END")
@@ -378,6 +388,7 @@ func TestManifestStoreFailureIsNotSuccess(t *testing.T) {
 // Contract 4.4: every violated path blocks the release before anything is written and the engine is asked nothing, and the baseline of the same shape releases (so detection is not
 // a constant refusal). Tamper and omission injections are detected in every case.
 func TestBlockedPathsTable(t *testing.T) {
+	t.Parallel()
 	rewriteReceipt := func(k *releaseKit, a accepted, from, to string) {
 		k.exec("UPDATE events SET receipt = replace(receipt, ?, ?) WHERE event_id = ?", from, to, a.Event)
 	}
@@ -459,6 +470,7 @@ func TestBlockedPathsTable(t *testing.T) {
 
 // A manifest too large for a prompt is frozen to a file named by its own hash under the child's first root, and the prompt names the path and the hash of what was written.
 func TestReleaseFreezesALargeManifest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.acceptNode("rp", "A", acceptOpts{Artifacts: 320})
@@ -495,6 +507,7 @@ func TestReleaseFreezesALargeManifest(t *testing.T) {
 // H4 (audit): the acceptance whose pull request the relay read is the acceptance the manifest consumes. A predecessor accepted again while the forge is being read is a head that was
 // never checked.
 func TestReleaseFreshnessBindsTheAcceptanceItChecked(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.pinned()
@@ -527,6 +540,7 @@ func TestReleaseFreshnessBindsTheAcceptanceItChecked(t *testing.T) {
 // R2-H2 (audit): a pinned predecessor whose acceptance is out of sight while the pull requests are collected cannot drop out of the freshness check by reappearing before the manifest is
 // built: every pinned edge of the manifest must rest on a predecessor whose pull request the relay read.
 func TestReleaseFreshnessCannotOmitAPinnedPredecessor(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	a := k.pinned()

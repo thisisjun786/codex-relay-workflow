@@ -52,6 +52,7 @@ func entryBySeq(f *fixture, document string, seq int64) SummaryEntry {
 // Criterion c1, the key: an entry is identified by the decision it states (the progress digest), the document, the plan revision and a sequence number that only goes up, and the
 // same state of the plan is one entry however often it is asked for.
 func TestSummaryEnqueueIsKeyedAndOrdered(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	flow := newParentFlow(f, newFakeLinear(), "doc-1")
 	ctx := context.Background()
@@ -101,6 +102,7 @@ func TestSummaryEnqueueIsKeyedAndOrdered(t *testing.T) {
 // A summary the plan already states and the parent confirmed is not owed again, unless the parent says the document lost it (--again): then the same state is a new entry, while an
 // entry that is still owed is never doubled.
 func TestSummaryEnqueueAgainOnlyReassertsAConfirmedSummary(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -129,6 +131,7 @@ func TestSummaryEnqueueAgainOnlyReassertsAConfirmedSummary(t *testing.T) {
 }
 
 func TestSummaryEnqueueRefusals(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	ctx := context.Background()
 	if _, err := f.sched.EnqueueSummary(ctx, "nope", "parent", "doc-1", false); err == nil {
@@ -158,6 +161,7 @@ func claimRefusal(t *testing.T, f *fixture, id string) error {
 
 // The rules of one entry's life: who may claim, what a token fences, what a failed document does, and what a confirmation makes final.
 func TestSummaryClaimCompleteAndFailRules(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -261,6 +265,7 @@ func TestSummaryClaimCompleteAndFailRules(t *testing.T) {
 // Criterion c2: only the failed entries are retried, and an entry is retried alone. Two documents each have an entry that failed eight times (so each is failed); the real retry of
 // one leaves every field of the other exactly as it was.
 func TestSummaryRetryTouchesOnlyTheEntryItNames(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	ctx := context.Background()
 	var ids []string
@@ -309,6 +314,7 @@ type loopCounts struct{ confirmed, superseded []int64 }
 // Criterion c2: with entries that are overtaken before they are written, writes that fail, a write whose response is lost, a stale claimant that comes back late and a write
 // prepared before a newer summary landed, a summary older than one already in the document is never put there, and only the entries whose writes failed are written again.
 func TestSummaryReorderedEntriesAndWriteFailuresNeverOverwriteANewerSummary(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -418,6 +424,7 @@ func withoutZero(m map[int64]int) map[int64]int {
 // Criterion c2, a concurrent edit: a person changes the container between the parent's read and its write. The replacement no longer matches, Linear refuses it, and the next turn retries
 // that entry (and no other) against the document as it is then.
 func TestSummaryConcurrentEditIsRecoveredByRetryingOnlyThatEntry(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -452,6 +459,7 @@ func TestSummaryConcurrentEditIsRecoveredByRetryingOnlyThatEntry(t *testing.T) {
 // A parent that is replaced between its claim and its write: the old parent's relay calls are refused (it is no longer the project's parent), the write it had prepared is refused by
 // Linear once the new parent's summary has landed, and the new parent claims the entry again and finishes it.
 func TestSummaryReplacedParentIsFencedAtBothEnds(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -485,6 +493,7 @@ func TestSummaryReplacedParentIsFencedAtBothEnds(t *testing.T) {
 // The limit of the guarantee, shown: a writer that does not follow the protocol (a whole-document save, not a conditioned replacement) CAN put an older summary over a newer one, and the
 // counter sees it. The relay then reports it (reconcile) and the parent re-asserts the summary with enqueue --again: the document ends with the newest summary.
 func TestSummaryAWriterOutsideTheProtocolIsDetectedAndRepaired(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	flow := newParentFlow(f, lin, "doc-1")
@@ -521,6 +530,7 @@ func TestSummaryAWriterOutsideTheProtocolIsDetectedAndRepaired(t *testing.T) {
 // Criterion c3, in process: a lost response, a failure, a stale claimant and the retry change the summary table and nothing else: every other table of the store, the journal included,
 // is the same afterwards. The store holds a running child, an accepted result and a delivery, so the tables the criterion names are not empty.
 func TestSummaryRecoveryTouchesNothingButTheSummary(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	seedExecutionLedger(f)
 	lin := newFakeLinear()

@@ -8,6 +8,7 @@ import (
 // CRW-431: a delete, a rename or a hotspot is exclusive at its own place for the node that declared it, so a conflict in that place is exclusive for the pair even when the other node did not declare it (drift
 // says so), while an ordinary edit the other node did not declare stays local.
 func TestMergeOrderGradeOfAStructuralPlaceTheOtherNodeDidNotDeclare(t *testing.T) {
+	t.Parallel()
 	deleted := Region{Repository: "owner/repo", Path: "c.txt", Kind: "file", Change: "delete"}
 	for name, c := range map[string]struct {
 		d, e      []Region

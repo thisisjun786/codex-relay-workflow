@@ -138,8 +138,9 @@ func Test27_CAP5_input_validation_is_refused_link_not_active(t *testing.T) {
 func Test27_CAP6_ceilings_and_counts_are_separate_facts(t *testing.T) {
 	t.Run("per project and store total", func(t *testing.T) {
 		e := newEnv(t)
+		bindStoreSeat(t, e)
 		e.ceiling("runs", 1, "project", projectA, "runs", true, "")
-		e.ceiling("runs", 3, "store", "store", "runs", true, "")
+		e.ceiling("runs", 3, "store", "store", "runs", true, storeSeatTask)
 		e.take("REL-1")
 		e.take("REL-2")
 		e.take("REL-3", beta, projectB)
@@ -154,7 +155,8 @@ func Test27_CAP6_ceilings_and_counts_are_separate_facts(t *testing.T) {
 	})
 	t.Run("canonical store ceiling applies", func(t *testing.T) {
 		e := newEnv(t)
-		e.ceiling("runs", 1, "store", "store", "runs", true, "")
+		bindStoreSeat(t, e)
+		e.ceiling("runs", 1, "store", "store", "runs", true, storeSeatTask)
 		e.take("REL-1")
 		e.take("REL-2", beta, projectB)
 		e.matchesGolden("cap6_store")
@@ -262,7 +264,8 @@ func Test27_CAP8_no_answer_changes_because_time_passed(t *testing.T) {
 // do; a start barrier lines them up, and the assertions hold under every interleaving.
 func Test27_CAP9_a_ceiling_of_one_admits_exactly_one_of_two_racing_subjects(t *testing.T) {
 	e := newEnv(t)
-	e.ceiling("runs", 1, "store", "store", "runs", true, "")
+	bindStoreSeat(t, e)
+	e.ceiling("runs", 1, "store", "store", "runs", true, storeSeatTask)
 	var start, done sync.WaitGroup
 	start.Add(1)
 	type result struct {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"golang.org/x/sys/unix"
 )
 
@@ -138,7 +139,28 @@ func writeEncodeJSON(value any, indent string) ([]byte, error) {
 // WriteGoalplan is low-level atomic publication (:915-942). New-plan creation
 // may call directly; existing mutations MUST run inside WithGoalplanWriteLock.
 // Only a shallow copy receives the refreshed timestamp, as in the oracle.
+// A failure after the rename published the plan, so it is returned as a
+// *state.PublishedError (CRW-744's type, CRW-793 here) and a caller that has a
+// reconciling step still runs it.
 func WriteGoalplan(cwd string, plan *Goalplan) error {
+	return goalplanPublishedWriteGoalplan(cwd, plan, nil)
+}
+
+// goalplanPublishedOptions is the CRW-793 durability seam: the sync the write path performs on the
+// staged plan and on the directory that holds it. A nil Sync is (*os.File).Sync, so a production call
+// never carries the seam; a caller that passes one drives the published-but-unsynced path. It is an
+// argument, never package state, so one test cannot fault another's write.
+type goalplanPublishedOptions struct{ Sync func(*os.File) error }
+
+// goalplanPublishedSync is the configured sync, defaulting to the real one.
+func goalplanPublishedSync(o *goalplanPublishedOptions) func(*os.File) error {
+	if o != nil && o.Sync != nil {
+		return o.Sync
+	}
+	return (*os.File).Sync
+}
+
+func goalplanPublishedWriteGoalplan(cwd string, plan *Goalplan, o *goalplanPublishedOptions) error {
 	checked, err := GoalplanDir(cwd, plan.Slug)
 	if err != nil {
 		return err
@@ -154,7 +176,7 @@ func WriteGoalplan(cwd string, plan *Goalplan) error {
 	if err != nil {
 		return err
 	}
-	return writePublishAt(dir, real, data)
+	return goalplanPublishedWritePublishAt(dir, real, data, o)
 }
 
 // AppendGoalplanLedger ports :945-963. Existing-plan callers append under their
@@ -278,6 +300,11 @@ func writeIgnoreAt(dir *os.File, real string) error {
 }
 
 func writePublishAt(dir *os.File, real string, data []byte) error {
+	return goalplanPublishedWritePublishAt(dir, real, data, nil)
+}
+
+func goalplanPublishedWritePublishAt(dir *os.File, real string, data []byte, o *goalplanPublishedOptions) error {
+	sync := goalplanPublishedSync(o)
 	if err := boundFile(dir, real, true); err != nil {
 		return err
 	}
@@ -289,7 +316,7 @@ func writePublishAt(dir *os.File, real string, data []byte) error {
 	defer func() { _ = unix.Unlinkat(int(dir.Fd()), name, 0) }()
 	_, err = file.Write(data)
 	if err == nil {
-		err = file.Sync()
+		err = sync(file)
 	}
 	err = errors.Join(err, file.Close())
 	if err != nil {
@@ -310,10 +337,13 @@ func writePublishAt(dir *os.File, real string, data []byte) error {
 		return nil
 	}
 	if err != nil {
-		return err
+		return &state.PublishedError{Err: err}
 	}
 	defer reader.Close()
-	return reader.Sync()
+	if err := sync(reader); err != nil {
+		return &state.PublishedError{Err: err}
+	}
+	return nil
 }
 func writeAppendAt(dir *os.File, real string, data []byte) error {
 	if err := boundFile(dir, real, true); err != nil {

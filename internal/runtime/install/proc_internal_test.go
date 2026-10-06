@@ -178,7 +178,7 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	crw := filepath.Join(directory, "bin", "crw")
-	if err := os.WriteFile(crw, []byte("\x7fELF"), 0o755); err != nil {
+	if err := writeExecutable(crw, []byte("\x7fELF"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("crw", filepath.Join(directory, "bin", "codex-session-relay")); err != nil {

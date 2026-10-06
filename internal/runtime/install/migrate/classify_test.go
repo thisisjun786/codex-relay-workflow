@@ -41,7 +41,7 @@ func TestClassifyLockRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			ws, src, dst := invRowProject(t)
 			entries := map[string]string{
-				"sessions/rec-1.json":           "{}",
+				"sessions/rec-1.json":           "{\"phase\":\"P\"}",
 				"goalplans/rec-1/goalplan.json": "{}",
 				"dispatches/rec-1/d-1.json":     invDispatch("d-1", "complete", "complete"),
 			}
@@ -80,18 +80,18 @@ func TestClassifySubtreeRootRefusals(t *testing.T) {
 		want  Reason
 	}{
 		{"copy root is a link", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 			invLink(t, filepath.Join(src, "plan"), filepath.Join(ws, "elsewhere"))
 		}, ReasonLink},
 		{"skipped root is a link", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 			invLink(t, filepath.Join(src, "release"), filepath.Join(ws, "elsewhere"))
 		}, ReasonLink},
 		{"copy root is a file", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}", "plan/rec-1": "not a directory"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}", "plan/rec-1": "not a directory"})
 		}, ReasonNotDirectory},
 		{"skipped root is a file", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}", "release": "not a directory"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}", "release": "not a directory"})
 		}, ReasonNotDirectory},
 	}
 	for _, c := range cases {
@@ -107,7 +107,7 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	ws, src, dst := invRowProject(t)
 	invTree(t, src, map[string]string{
 		"plan/rec-1/draft.tmp": "ordinary plan data",
-		"sessions/rec-1.json":  "{}",
+		"sessions/rec-1.json":  "{\"phase\":\"P\"}",
 		"sessions/rec-1.json.1234.aabbccdd-eeff-0011-2233-445566778899.tmp": "half a write",
 		"sessions/" + invOldTemp: "an older run's temporary",
 	})
@@ -129,7 +129,7 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	// rewrote nor retimed the temporary (the Lstat below only proves it was not removed).
 	beforeTemp := fingerprint(t, filepath.Join(dst, "sessions"))
 	beforeDestRoot := invRootStamp(t, filepath.Join(dst, "sessions"))
-	invTree(t, src, map[string]string{"sessions/rec-2.json": "{}"})
+	invTree(t, src, map[string]string{"sessions/rec-2.json": "{\"phase\":\"P\"}"})
 	p2, err := invClassify(t, Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
 	it := invWant(t, p2, ScopeProject, "", DispSkip)
@@ -150,7 +150,7 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 func TestClassifyUnknownChildren(t *testing.T) {
 	ws, src, _ := invRowProject(t)
 	invTree(t, src, map[string]string{
-		"sessions/rec-1.json":         "{}",
+		"sessions/rec-1.json":         "{\"phase\":\"P\"}",
 		"sessions/extra.txt":          "unknown",
 		"evidence-attempts/x.txt":     "unknown",
 		"evidence-unrecordable/x.txt": "unknown",
@@ -191,7 +191,7 @@ func TestClassifyRecords(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ws, src, dst := invRowProject(t)
-			entries := map[string]string{"sessions/rec-1.json": "{}"}
+			entries := map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"}
 			for k, v := range c.entries {
 				entries[k] = v
 			}
@@ -260,7 +260,7 @@ func TestClassifyDestinationConflicts(t *testing.T) {
 
 func TestClassifyUnsupportedName(t *testing.T) {
 	ws, src, dst := invRowProject(t)
-	invTree(t, src, map[string]string{"sessions/bad\nname.json": "{}"})
+	invTree(t, src, map[string]string{"sessions/bad\nname.json": "{\"phase\":\"P\"}"})
 	invRowRefusal(t, ws, src, dst, ReasonUnsupported)
 }
 
@@ -288,7 +288,7 @@ func TestClassifyAllScope(t *testing.T) {
 	base := isolate(t)
 	ws := filepath.Join(base, "ws")
 	mkdirs(t, ws)
-	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{}"})
+	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 	invTree(t, filepath.Join(base, "eu"), map[string]string{"subagents.json": "{}"})
 	mkdirs(t, filepath.Join(base, "ev"))
 	invTree(t, filepath.Join(base, "ec"), map[string]string{"config.toml": "cfg"})
@@ -308,7 +308,7 @@ func TestClassifyAllScopeOrder(t *testing.T) {
 	base := isolate(t)
 	ws := filepath.Join(base, "ws")
 	mkdirs(t, ws)
-	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{}"})
+	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 	invTree(t, filepath.Join(base, "eu"), map[string]string{"subagents.json": "{}"})
 	mkdirs(t, filepath.Join(base, "ev"))
 	invTree(t, filepath.Join(base, "ec"), map[string]string{"config.toml": "cfg"})

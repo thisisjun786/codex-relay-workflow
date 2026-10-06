@@ -14,6 +14,24 @@ type childCheckOptions struct {
 	disabled              []string
 }
 
+// childCheckServersUnset is the refusal of a comparison with nothing to compare: no
+// --disabled and no configured list. It is reported before any socket read, and a run that
+// compares nothing never reports ok.
+const childCheckServersUnset hostReadRefusal = "disabled_servers_unset"
+
+// childCheckUsableStatuses are the thread statuses ok may be reported for: only a thread
+// the host holds idle or active can be checked. notLoaded, systemError, an empty status and
+// any other value are mismatches, so a run that could not observe the thread never reports
+// ok.
+var childCheckUsableStatuses = map[string]bool{"idle": true, "active": true}
+
+// childCheckServersUnsetError is the refusal of a comparison with nothing to compare: no
+// --disabled and no configured list. It is a type rather than a sentinel variable because
+// every package-level name this issue adds starts with childCheck.
+type childCheckServersUnsetError struct{}
+
+func (childCheckServersUnsetError) Error() string { return string(childCheckServersUnset) }
+
 type childCheckMatch struct {
 	Expected string `json:"expected"`
 	Actual   string `json:"actual"`
@@ -42,7 +60,19 @@ func childCheckDisabled(cfg *Config, named []string) ([]string, error) {
 	if err := cfg.Section("child_check", &section); err != nil {
 		return nil, err
 	}
-	return section.DisabledServers, nil
+	// The configured names are trimmed and blanks dropped, exactly as the command line's
+	// are, so a list of blanks is not a comparison list: it would otherwise read the socket
+	// and report blank keys as missing servers.
+	configured := make([]string, 0, len(section.DisabledServers))
+	for _, name := range section.DisabledServers {
+		if name = strings.TrimSpace(name); name != "" {
+			configured = append(configured, name)
+		}
+	}
+	if len(configured) == 0 {
+		return nil, childCheckServersUnsetError{}
+	}
+	return configured, nil
 }
 
 // childCheck compares the thread's model, effort, status and servers with what was asked.
@@ -85,7 +115,7 @@ func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*chil
 		}
 	}
 	report.OK = report.Model.Match && report.Effort.Match && report.ThreadStatus != "" &&
-		report.ThreadStatus != "notLoaded" && len(report.NotDisabled) == 0 && len(report.Missing) == 0
+		childCheckUsableStatuses[report.ThreadStatus] && len(report.NotDisabled) == 0 && len(report.Missing) == 0
 	return report, nil
 }
 
@@ -141,11 +171,27 @@ func childCheckRunCommand(ctx context.Context, e *Env, args []string) int {
 	}
 	report, err := childCheck(ctx, coreDefaults(e), opts)
 	if err != nil {
+		var unset childCheckServersUnsetError
+		if errors.As(err, &unset) {
+			// Nothing to compare: refuse by name before the socket is read, so a run that
+			// checked nothing never reports ok.
+			if werr := hostReadWrite(e.Stdout, hostReadFailure{Reason: childCheckServersUnset}); werr != nil {
+				fmt.Fprintf(e.Stderr, "crw manage child-check: error: write output: %v\n", werr)
+				return 1
+			}
+			return usageExit
+		}
 		reason, detail := hostReadReason(err)
-		hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Detail: detail})
+		if werr := hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Detail: detail}); werr != nil {
+			fmt.Fprintf(e.Stderr, "crw manage child-check: error: write output: %v\n", werr)
+			return 1
+		}
 		return 3
 	}
-	hostReadWrite(e.Stdout, report)
+	if werr := hostReadWrite(e.Stdout, report); werr != nil {
+		fmt.Fprintf(e.Stderr, "crw manage child-check: error: write output: %v\n", werr)
+		return 1
+	}
 	if !report.OK {
 		return 1
 	}
