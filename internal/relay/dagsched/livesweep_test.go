@@ -89,6 +89,7 @@ func memberOf(r SweepResult, kind, left, right string) SweepMember {
 // Every pair of the live heads and every head against the tip is measured and recorded, with the sweep's ledger row, in real git: D and E conflict on c.txt with each other and with the tip (which carries
 // I's change to the same line); F conflicts with nothing. I landed, so it is not a live head.
 func TestSweepMeasuresEveryPairAndTip(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D", "E", "F")
@@ -132,6 +133,7 @@ func TestSweepMeasuresEveryPairAndTip(t *testing.T) {
 
 // A repeat measures the same pairs again: every member is a replay (no second observation row), and the ledger keeps a row for the repeat, as dag_passes keeps one per pass.
 func TestSweepRepeatIsReplayedAndLedgered(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	w.accept("D", "E", "F")
 	if _, err := w.sweep(TriggerLanding, "I", "dio-1"); err != nil {
@@ -158,6 +160,7 @@ func TestSweepRepeatIsReplayedAndLedgered(t *testing.T) {
 // A landing or an accepted receipt is swept once: a repeat of its trigger reference finds the sweep and writes nothing, also when two writers meet; a failure inside the recording leaves nothing, and
 // the repeat records exactly one complete sweep.
 func TestSweepOfOneTriggerIsOneRowAndAFailureLeavesNothing(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D", "E", "F")
@@ -213,6 +216,7 @@ func TestSweepOfOneTriggerIsOneRowAndAFailureLeavesNothing(t *testing.T) {
 
 // A conflict on a path a node did not declare is drift for that node, and only for it; a path no node declared is drift for every node that edited it. The tip observation checks the node alone.
 func TestSweepMarksDeclarationDrift(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	// D declared c.txt; E and F declared f.txt only (a declaration is made before the release)
@@ -250,6 +254,7 @@ func TestSweepMarksDeclarationDrift(t *testing.T) {
 
 // No node declared the path: both nodes of the pair drifted, through the manual dag-conflict-observe too.
 func TestObserveConflictsMarksDriftAndLeavesALedgerRow(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D", "E")
@@ -273,6 +278,7 @@ func TestObserveConflictsMarksDriftAndLeavesALedgerRow(t *testing.T) {
 
 // What git cannot be asked is a member with a reason and the sweep goes on: a node with no head, a commit the checkout lacks, a tip that is missing or unreadable, two histories with nothing in common.
 func TestSweepAccountsForWhatItCannotMeasure(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	repo := k.repo
@@ -332,6 +338,7 @@ func TestSweepAccountsForWhatItCannotMeasure(t *testing.T) {
 // The head of a running node is the HEAD of the checkout its child works in, when that is a worktree of the sweep's repository; the parent's word beats it, a current accepted result beats it, and a
 // checkout that is another repository, or the sweep's own working tree, is no source.
 func TestSweepHeadSources(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	repo := k.repo
@@ -393,6 +400,7 @@ func TestSweepHeadSources(t *testing.T) {
 
 // What a sweep refuses, with the relay's existing reasons, and writes nothing.
 func TestSweepRefusals(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D", "E")
@@ -430,6 +438,7 @@ func TestSweepRefusals(t *testing.T) {
 
 // An observation recorded before drift was (dag-conflict-observe of an earlier build: no drift, no ledger row) has its drift marked by its first replay, and stays marked.
 func TestAFirstReplayOfALegacyObservationMarksItsDrift(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D", "E")

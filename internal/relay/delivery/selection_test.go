@@ -24,6 +24,7 @@ import (
 // over by Go. The wrong-socket store names its socket's path, so the socket directory and the home
 // are fixed trees (parityTree).
 func TestCLI_store_selection_refusals_match_python(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		fixture string
@@ -103,6 +104,7 @@ func exitCode(err error) int {
 // pasted into a shell. The store is the one the Python package created (a fixture), taken over by
 // Go: on the other runtime's store, check_start refuses first.
 func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
+	t.Parallel()
 	home := parityTree(t)
 	state := filepath.Join(home, "state")
 	sockets := filepath.Join(home, "sockets")

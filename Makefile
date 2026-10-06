@@ -20,7 +20,7 @@ TEST_TIMEOUT := -timeout 10m
 TEST_BINARY := $(CURDIR)/dist/test/crw
 TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-binary test-part lint dist crw-dev
+.PHONY: build test test-binary test-part lint dist crw-dev gui gui-assets
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
@@ -35,21 +35,23 @@ test-binary:
 # Parts 1-4 name the slowest packages; `rest` is every other package plus the dev-tagged
 # tests, so the parts are disjoint, together equal `make test`, and a new package always
 # lands in `rest`. A renamed package makes its part fail in `go list`, never skip.
-# Balanced on hosted CI times after the slow packages' tests ran in parallel (docs/CI.md has
-# the table). A runner spends about 50 s before its tests (checkout, toolchain, the one crw
-# build) and then runs a few packages at a time, so a leg takes about that plus its slowest
-# package or its packages' total over four CPUs, whichever is longer. runtime/install
-# (100-150 s) and relay/dagsched (100-130 s) are by far the slowest packages; left in rest
-# beside its fifty others they made it the longest leg, about 285 s against 95-170 s for
-# the numbered parts. install now leads part 2 with supervisor and registry, and dagsched
-# leads part 1 with delivery and cli, each listed first. The leg that holds install is now
-# the longest, about 215 s, and no split goes under it while install's own tests take about
-# 140 s. Part 3 is unchanged. The Stop-hook package has wall-clock budgets, so it shares
-# its runner only with light packages (part 4).
-TEST_PART_1 := ./internal/relay/dagsched ./internal/relay/delivery ./internal/relay/cli
-TEST_PART_2 := ./internal/runtime/install ./internal/relay/supervisor ./internal/relay/registry
-TEST_PART_3 := ./internal/contracttest ./internal/relay/store ./internal/relay/mergeturn ./internal/relay/service ./internal/relay/sync ./internal/relay/faults
-TEST_PART_4 := ./internal/relay/hook ./internal/relay/linkage ./internal/relay/evidence ./internal/relay/managed
+# Balanced on hosted CI times (docs/CI.md has the table and the measurements). A runner
+# spends about 55 s before its tests (checkout, toolchain, the one crw build) and the leg
+# compiles its own test binaries before it starts, so a leg takes about that plus its
+# slowest package or its packages' total over four CPUs, whichever is longer; list a slow
+# package first. runtime/install (about 175 s) and relay/dagsched (about 155 s) are by far
+# the slowest packages and both run their tests one after another, so each leads a different
+# part with only small packages beside it: install leads part 2 (registry, hook), dagsched
+# leads part 1 (cli). The other heavy packages are split so that no leg holds two of them
+# and no leg holds one beside a floor: relay/delivery leads part 4 beside the medium
+# packages, and service, contracttest, mergeturn, supervisor, skill, managed and adapter
+# fill part 3. The leg that holds install is the floor, and no split goes under it while
+# install's own tests take about 175 s. The Stop-hook package has wall-clock budgets, so it
+# runs beside install, whose serial tests leave the runner idle.
+TEST_PART_1 := ./internal/relay/dagsched ./internal/relay/cli
+TEST_PART_2 := ./internal/runtime/install ./internal/relay/registry ./internal/relay/hook
+TEST_PART_3 := ./internal/relay/service ./internal/contracttest ./internal/relay/mergeturn ./internal/relay/supervisor ./internal/skill ./internal/relay/managed ./internal/relay/adapter
+TEST_PART_4 := ./internal/relay/delivery ./internal/relay/store ./internal/relay/sync ./internal/relay/faults ./internal/relay/dag ./internal/role ./internal/pyjson ./internal/relay/linkage ./internal/recall ./internal/relay/routing ./internal/relay/childcleanup
 TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4)
 
 test-part: test-binary
@@ -80,3 +82,21 @@ endif
 # The development binary: CI checks as `crw-dev ci <check>`. Never part of a release.
 crw-dev:
 	$(GO) build -tags dev -o dist/crw-dev ./cmd/crw-dev
+
+# The screens: install from the committed lockfile, run the screen tests, build them into a
+# temporary tree under dist/ (gitignored, and never the committed internal/gui/assets), and refuse
+# a build that does not match the committed tree byte for byte. Node is needed here and in the gui
+# CI job, and nowhere on a hook path or in the crw binary: `go build`, `go install` and `make test`
+# never call this target, so a Node-free checkout still produces a crw that serves the screen.
+gui:
+	cd web && npm ci && npm test
+	cd web && npm run build -- --outDir ../dist/gui --emptyOutDir
+	$(GO) run -tags dev ./cmd/crw-dev ci gui-drift --built dist/gui
+
+# Regenerate the committed screens: vite's configured outDir is internal/gui/assets, so this
+# writes the tree that //go:embed compiles and that `make gui` verifies against HEAD. Run it after
+# a web/ change, then commit internal/gui/assets. `make gui` deliberately builds into dist/gui
+# instead, so a verification never rewrites the tree it is checking.
+gui-assets:
+	cd web && npm ci && npm test
+	cd web && npm run build

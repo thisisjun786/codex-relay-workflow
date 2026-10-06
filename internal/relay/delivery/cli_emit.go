@@ -46,11 +46,16 @@ func emitRefuseTurnIDForm(thread, turn string) error {
 // unassigned_turn only when that host answered with an exhausted listing that does not hold it.
 // A store that records no socket, a hook a build leaves nil, and a host that could not be reached
 // or read leave the receipt to stage as before (CRW-675).
-func emitConfirmTurn(c *cliRun, thread, turn string) error {
+//
+// The socket is read from the store connection the emit already opened (CRW-846): going through
+// store.StoreSocket would open and close a descriptor of relay.sqlite3 in a process that may hold
+// the store's WAL connection, which drops that connection's POSIX lock. The query and its answer
+// are the ones storeSocket ran.
+func emitConfirmTurn(c *cliRun, s *store.Store, thread, turn string) error {
 	if EmitConfirmTurn == nil || !emitCodexID.MatchString(thread) {
 		return nil
 	}
-	socket := store.StoreSocket(c.state + "/relay.sqlite3")
+	socket := recordedSocket(c.ctx, s)
 	if socket == "" {
 		return nil
 	}
@@ -62,6 +67,16 @@ func emitConfirmTurn(c *cliRun, thread, turn string) error {
 		return nil
 	}
 	return &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + strconv.Quote(turn) + " does not exist on " + strconv.Quote(thread) + ": the host's listing was exhausted and does not hold it, so take the current turn id from the command output and emit again"}
+}
+
+// recordedSocket is schema_meta.socket_path read from an already-open store: "" when the store
+// records none or the read could not be made, which the caller treats as "stage as before".
+func recordedSocket(ctx context.Context, s *store.Store) string {
+	var value string
+	if err := s.Querier(ctx).QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='socket_path'").Scan(&value); err != nil {
+		return ""
+	}
+	return value
 }
 
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
@@ -86,7 +101,7 @@ func cmdEmit(c *cliRun) (any, error) {
 		return nil, err
 	}
 	if c.socket == "" {
-		if err := emitConfirmTurn(c, thread, turn); err != nil {
+		if err := emitConfirmTurn(c, d.Store, thread, turn); err != nil {
 			return nil, err
 		}
 	}
@@ -180,6 +195,18 @@ func cmdEmit(c *cliRun) (any, error) {
 		// (registry.ReadThrough), and refuses nothing the child could not have known.
 		s := c.s("--supersedes-revision")
 		options.SupersedesRevision = &s
+	}
+	if outcome == "ready_for_review" {
+		// CRW-826: the one judgment emit makes on the receipt's lineage, run inside the intake
+		// transaction over the transaction's own Querier, before anything is written. A receipt that
+		// would leave the generation with no single head is refused revision_ambiguous, and the
+		// detail names the revision the generation reads now, so the child can name it in the same
+		// turn. A first receipt, a duplicate and a generation that already reads no single head are
+		// not refused; the recovery of an already ambiguous generation is a generation opened by
+		// hand (dag-correct), not this check.
+		options.ForkGuard = func(ctx context.Context, q store.Querier, claim store.ReceiptClaim) error {
+			return RefuseNewFork(ctx, q, claim.RelationshipID, claim.Generation, claim.EventID, claim.RevisionHash, options.SupersedesRevision)
+		}
 	}
 	intake := store.ReceiptIntake{Store: d.Store, Now: c.clock.ISO, Minimum: store.BestEffortDetection}
 	stored, err := intake.AcceptChildReceiptWith(c.ctx, []byte(dumps(payload)), store.TurnReference{ThreadID: thread, TurnID: turn, Status: status}, options)

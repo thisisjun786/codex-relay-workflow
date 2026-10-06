@@ -87,6 +87,7 @@ func (h *hl) assertHeld(event, request string) {
 }
 
 func Test21_USL01_an_unknown_send_without_trace_is_held_for_the_parent_by_name(t *testing.T) {
+	t.Parallel()
 	const cls = "AnUnknownSendTheHostKeptNoTraceOf."
 	t.Run("daemon tick", func(t *testing.T) {
 		mirror(t, usl, cls+"test_it_is_held_for_the_parent_by_name_and_never_sent_again", func(h *hl) {
@@ -136,6 +137,7 @@ func Test21_USL01_an_unknown_send_without_trace_is_held_for_the_parent_by_name(t
 }
 
 func Test21_USL02_reconcile_names_the_parent_the_reason_and_the_command(t *testing.T) {
+	t.Parallel()
 	mirror(t, usl, "AnUnknownSendTheHostKeptNoTraceOf.test_reconcile_names_the_parent_the_reason_and_the_command_without_sending", func(h *hl) {
 		event, first := h.unknownSend(true, true)
 		h.clock.Advance(120)
@@ -159,6 +161,7 @@ func withReadUnknownSend(replacement func(context.Context, Adapter, Clock, Row, 
 	body()
 }
 
+// sequential: assigns the package variable readUnknownSend.
 func Test21_USL03_a_hold_that_loses_its_race_to_a_confirmation_reports_the_confirmation(t *testing.T) {
 	mirror(t, usl, "AnUnknownSendTheHostKeptNoTraceOf.test_a_hold_that_loses_its_race_to_a_confirmation_reports_the_confirmation", func(h *hl) {
 		event, first := h.unknownSend(true, true)
@@ -184,6 +187,7 @@ func Test21_USL03_a_hold_that_loses_its_race_to_a_confirmation_reports_the_confi
 }
 
 func Test21_USL04_no_hold_is_named_while_the_daemon_can_still_decide(t *testing.T) {
+	t.Parallel()
 	const cls = "AnUnknownSendTheHostKeptNoTraceOf."
 	t.Run("within the allowance", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_send_too_recent_to_judge_is_read_again_until_it_is_held", func(h *hl) {
@@ -255,6 +259,7 @@ func (h *hl) foldedUnknownSend(later int, running bool, kind string) (string, st
 }
 
 func Test21_USL05_a_message_that_turns_up_later_confirms_the_send_and_clears_the_hold(t *testing.T) {
+	t.Parallel()
 	t.Run("after a lost hold", func(t *testing.T) {
 		mirror(t, usl, "AnUnknownSendTheHostKeptNoTraceOf.test_a_message_that_turns_up_after_the_hold_confirms_the_send_and_clears_it", func(h *hl) {
 			event, first := h.unknownSend(true, true)
@@ -308,6 +313,7 @@ func Test21_USL05_a_message_that_turns_up_later_confirms_the_send_and_clears_the
 }
 
 func Test21_USL06_an_unknown_send_after_a_host_loss_is_held_and_claims_no_dispatch(t *testing.T) {
+	t.Parallel()
 	t.Run("lost: dispatch cleared", func(t *testing.T) {
 		mirror(t, usl, "AnUnknownSendTheHostKeptNoTraceOf.test_an_unknown_send_after_a_host_lost_turn_is_held_and_claims_no_dispatch", func(h *hl) {
 			event, first, turn := h.dispatched()
@@ -350,6 +356,7 @@ func Test21_USL06_an_unknown_send_after_a_host_loss_is_held_and_claims_no_dispat
 }
 
 func Test21_USL07_a_send_folded_into_an_older_turn_is_found_there(t *testing.T) {
+	t.Parallel()
 	const cls = "AnUnknownSendTheHostKeptNoTraceOf."
 	t.Run("folded into an older turn", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_send_folded_into_an_older_turn_is_found_there_and_not_sent_again", func(h *hl) {
@@ -397,6 +404,7 @@ func Test21_USL07_a_send_folded_into_an_older_turn_is_found_there(t *testing.T) 
 }
 
 func Test21_USL08_undecided_readings_are_held_for_the_parent_by_name(t *testing.T) {
+	t.Parallel()
 	heldFolded := func(name string, later func(h *hl)) {
 		t.Run(name, func(t *testing.T) {
 			mirror(t, usl, "AnUnknownSendTheHostKeptNoTraceOf."+name, func(h *hl) {
@@ -489,6 +497,7 @@ func (h *hl) neverReachesTheSend() *hooked {
 }
 
 func Test21_USL09_a_listed_turn_without_an_id_is_not_taken_for_the_sends_turn(t *testing.T) {
+	t.Parallel()
 	mirror(t, usl, "TheListingSinceASendWithNoTurnId.test_a_listed_turn_without_an_id_is_not_taken_for_the_sends_turn", func(h *hl) {
 		hundred, ten := 100.0, 10.0
 		presence, err := FindInListing([]ListingPage{{Turns: []TurnInfo{{TurnID: "", Status: "completed", StartedAt: &hundred}, {TurnID: "older", Status: "completed", StartedAt: &ten}}}}, "", 150.0)
@@ -507,6 +516,7 @@ func Test21_USL09_a_listed_turn_without_an_id_is_not_taken_for_the_sends_turn(t 
 // a numeric string is the time it spells, and a bool, a list, other text, NaN or an infinity is
 // no start at all, in the dispatched-turn listing, after a match, and among the fold candidates.
 func Test21_USL09b_a_listed_turn_start_is_read_as_a_host_time(t *testing.T) {
+	t.Parallel()
 	mirror(t, usl, "AListedTurnStartIsReadAsAHostTime.test_a_listing_reads_each_start_as_a_host_time", func(h *hl) {
 		const sent = 150.0
 		newer := 200.0
@@ -528,6 +538,7 @@ func Test21_USL09b_a_listed_turn_start_is_read_as_a_host_time(t *testing.T) {
 }
 
 func Test21_USL10_a_send_the_transport_has_not_answered_is_held_by_name(t *testing.T) {
+	t.Parallel()
 	const cls = "ASendTheTransportHasNotAnsweredIsHeldByName."
 	unfinished := func(h *hl) (string, string) {
 		h.parentHistory()
@@ -589,6 +600,7 @@ func Test21_USL10_a_send_the_transport_has_not_answered_is_held_by_name(t *testi
 	})
 }
 
+// sequential: assigns the package variable readUnknownSend.
 func Test21_USL11_a_deciding_reading_replaces_an_undecided_hold_and_nothing_else_does(t *testing.T) {
 	const cls = "AnUndecidedReadingIsHeldByName."
 	t.Run("a later deciding reading", func(t *testing.T) {

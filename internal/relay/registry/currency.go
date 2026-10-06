@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,21 +13,25 @@ import (
 
 // currency.py's head_revision, as the assignment view reads it: which revision a generation
 // currently stands on, decided from declared lineage, never from arrival order.
+//
+// CRW-827: this is the one judgment. delivery.HeadRevision, delivery.HeadRevisionFrom,
+// delivery.Currency and delivery.RefuseNewFork are adapters over it, so the assignment view
+// (dag-ready, assignment-show) and the verdict path (dag-accept) cannot read different heads.
 
-// Lineage evidence words (currency.py).
+// Lineage evidence words (currency.py). One declaration, because both readers print them.
 const (
-	evidenceSole               = "sole_revision"
-	evidenceChain              = "declared_chain"
-	evidenceNone               = "no_revision"
-	evidenceFork               = "fork"
-	evidenceCycle              = "cycle"
-	evidenceUnknownPredecessor = "unknown_predecessor"
-	evidenceDisconnected       = "disconnected"
+	EvidenceSole               = "sole_revision"
+	EvidenceChain              = "declared_chain"
+	EvidenceNone               = "no_revision"
+	EvidenceFork               = "fork"
+	EvidenceCycle              = "cycle"
+	EvidenceUnknownPredecessor = "unknown_predecessor"
+	EvidenceDisconnected       = "disconnected"
 	reviewable                 = "ready_for_review"
 )
 
-// ambiguousEvidence is currency.AMBIGUOUS.
-var ambiguousEvidence = []string{evidenceFork, evidenceCycle, evidenceUnknownPredecessor, evidenceDisconnected}
+// AmbiguousEvidence is currency.AMBIGUOUS: the evidence kinds that name no single head.
+var AmbiguousEvidence = []string{EvidenceFork, EvidenceCycle, EvidenceUnknownPredecessor, EvidenceDisconnected}
 
 // Head is head_revision's answer; EventID "" is None.
 type Head struct {
@@ -35,13 +40,19 @@ type Head struct {
 }
 
 // Ambiguous reports whether the head's evidence is one of currency.AMBIGUOUS.
-func (h Head) Ambiguous() bool { return slices.Contains(ambiguousEvidence, h.Evidence) }
+func (h Head) Ambiguous() bool { return slices.Contains(AmbiguousEvidence, h.Evidence) }
 
+// record is head_revision's answer as the dict the relay prints: the same five keys in the same
+// order, with "" for None.
 func (h Head) record() contract.OrderedObject {
 	competitors := anyStrings(h.Competitors)
 	return contract.OrderedObject{{Key: "eventId", Value: nullText(h.EventID)}, {Key: "revisionHash", Value: nullText(h.RevisionHash)},
 		{Key: "evidence", Value: h.Evidence}, {Key: "competitors", Value: competitors}, {Key: "detail", Value: h.Detail}}
 }
+
+// Record is record() for callers outside this package: delivery's adapters print the one judgment's
+// answer, and the Obj is produced here once.
+func (h Head) Record() contract.OrderedObject { return h.record() }
 
 func ambiguousHead(evidence string, nodes []string, detail string) Head {
 	sorted := slices.Clone(nodes)
@@ -54,14 +65,102 @@ func colString(row store.Row, name string) string {
 	return s
 }
 
-// requestedPredecessors is currency._requested_predecessors.
-func requestedPredecessors(ctx context.Context, s *store.Store, rid string, generation int64) (map[string][]string, error) {
-	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
-	before, err := store.LiveGenerationBefore(ctx, s.Querier(ctx), rid, generation)
+// textOf reads a column as Row.Text does: text, or "" for NULL and for any other type.
+func textOf(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	}
+	return ""
+}
+
+// allRows reads every row of a statement through the caller's querier, so a read inside a
+// transaction body sees that transaction's own writes.
+func allRows(ctx context.Context, q store.Querier, query string, args ...any) (_ []store.Row, err error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.All(ctx, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id,"+
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	names, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	var out []store.Row
+	for rows.Next() {
+		values := make([]any, len(names))
+		pointers := make([]any, len(names))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return nil, err
+		}
+		row := make(store.Row, len(names))
+		for i, name := range names {
+			row[i] = store.Column{Name: name, Value: values[i]}
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// Revision is one reviewable revision of a generation as the head judgment reads it: its event, its
+// revision hash and the predecessor hash it declares ("" for none).
+type Revision struct{ ID, Hash, Declared string }
+
+// HeadRevisionSQL reads the reviewable receipts of one generation, each with the predecessor it
+// declares and whether the relay holds it as suppressed, in one statement: a suppressed receipt is
+// no revision, but what it declared is read when a revision names it (CRW-470), and one statement
+// is one moment's answer for both. The lineage row is found by its primary key (relationship,
+// generation, event): joined on event_id alone, SQLite scans the whole of revision_lineage once for
+// every event row, so one judgment cost the revisions of the generation times the lineage rows of
+// the store (CRW-416). The product stores an event and its lineage row together under one
+// relationship and generation, so this reads the rows the event_id join read.
+const HeadRevisionSQL = "SELECT e.event_id, e.revision_hash, l.supersedes_hash, e.suppressed_reason IS NOT NULL FROM events e LEFT JOIN revision_lineage l ON l.relationship_id = e.relationship_id AND l.execution_generation = e.execution_generation AND l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? ORDER BY e.event_id"
+
+// ReadRevisions is every reviewable revision of the generation in event id order, and the suppressed
+// receipts apart: the predecessors they declared by revision hash. Reading the revisions all is what
+// a head is: a fork, a cycle or an unknown predecessor anywhere among them makes the whole
+// generation ambiguous and names every revision as a competitor.
+func ReadRevisions(ctx context.Context, q store.Querier, rid string, generation int64) (_ []Revision, suppressed map[string][]string, err error) {
+	rows, err := q.QueryContext(ctx, HeadRevisionSQL, rid, generation, reviewable)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	var out []Revision
+	for rows.Next() {
+		var id, hash, declared any
+		var held bool
+		if err := rows.Scan(&id, &hash, &declared, &held); err != nil {
+			return nil, nil, err
+		}
+		if held {
+			if suppressed == nil {
+				suppressed = map[string][]string{}
+			}
+			suppressed[textOf(hash)] = append(suppressed[textOf(hash)], textOf(declared))
+			continue
+		}
+		out = append(out, Revision{ID: textOf(id), Hash: textOf(hash), Declared: textOf(declared)})
+	}
+	return out, suppressed, rows.Err()
+}
+
+// RequestedPredecessors is currency._requested_predecessors: only the result whose ruling opened
+// this correction is an external root. A row whose request identity cannot be read is skipped, as
+// delivery read it: the naming then resolves to nothing, so the generation reads
+// unknown_predecessor (ambiguous) rather than a silent single head.
+func RequestedPredecessors(ctx context.Context, q store.Querier, rid string, generation int64) (map[string][]string, error) {
+	// the generation a ruling's correction follows: the one before it, or the nearest one that was not withdrawn (CRW-446)
+	before, err := store.LiveGenerationBefore(ctx, q, rid, generation)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := allRows(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id,"+
 		" g.dispatch_request_id"+
 		" FROM generations g"+
 		" JOIN verdicts v ON v.next_generation = g.execution_generation"+
@@ -81,7 +180,7 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 	for _, row := range rows {
 		request, err := store.RevisionRequestEventID(rid, colString(row, "event_id"), colString(row, "verdict_turn_id"))
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if colString(row, "request_id") == request && colString(row, "dispatch_request_id") == "revision-"+request {
 			hash := colString(row, "revision_hash")
@@ -91,94 +190,120 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 	return anchors, nil
 }
 
-// HeadRevision is currency.head_revision.
-func HeadRevision(ctx context.Context, s *store.Store, rid string, generation int64) (Head, error) {
-	// One statement reads the generation's reviewable receipts, the suppressed ones with the live,
-	// so what a suppressed receipt declared and which receipts are live are one moment's answer.
-	rows, err := s.All(ctx, "SELECT e.event_id, e.revision_hash, l.supersedes_hash,"+
-		"       e.suppressed_reason IS NOT NULL AS suppressed"+
-		"  FROM events e"+
-		"  LEFT JOIN revision_lineage l ON l.event_id = e.event_id"+
-		" WHERE e.relationship_id = ? AND e.execution_generation = ?"+
-		"   AND e.outcome = ?"+
-		" ORDER BY e.event_id", rid, generation, reviewable)
-	if err != nil {
-		return Head{}, err
+// ReadThroughSuppressed returns the revisions with each declared predecessor that names a suppressed
+// receipt of the generation read as naming what that receipt replaced (CRW-470; the rule is
+// ReadThrough's). A suppressed receipt is not a revision, and a child that restarted cannot know its
+// earlier receipt was one. The revisions come back as they were when no receipt is suppressed, which
+// is nearly every judgment; otherwise the answer is a copy, so a caller that judges twice over one
+// reading (RefuseNewFork) keeps its first reading.
+func ReadThroughSuppressed(revisions []Revision, suppressed map[string][]string, anchors map[string][]string) []Revision {
+	if len(suppressed) == 0 {
+		return revisions
 	}
-	var nodes []string
-	hashOf, declaredOf := map[string]string{}, map[string]string{}
-	suppressed := map[string][]string{}
-	for _, row := range rows {
-		if flag, _ := row.Get("suppressed").(int64); flag != 0 {
-			hash := colString(row, "revision_hash")
-			suppressed[hash] = append(suppressed[hash], colString(row, "supersedes_hash"))
-			continue
+	held := make(map[string]int, len(revisions))
+	seen := make(map[string]bool, len(revisions))
+	named := make([]string, 0, len(revisions))
+	// An event id is the events primary key, so each revision is listed once (as in JudgeHead).
+	for _, r := range revisions {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			held[r.Hash]++
 		}
-		id := colString(row, "event_id")
-		if _, seen := hashOf[id]; !seen {
-			nodes = append(nodes, id)
+		named = append(named, r.Declared)
+	}
+	through := ReadThrough(named, func(hash string) int { return held[hash] + len(anchors[hash]) }, suppressed)
+	if len(through) == 0 {
+		return revisions
+	}
+	out := slices.Clone(revisions)
+	for i := range out {
+		if effective, ok := through[out[i].Declared]; ok {
+			out[i].Declared = effective
 		}
-		hashOf[id] = colString(row, "revision_hash")
-		declaredOf[id] = colString(row, "supersedes_hash")
 	}
-	if len(nodes) == 0 {
-		return Head{Evidence: evidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
+	return out
+}
+
+// JudgeHead is currency.head_revision over the generation's reviewable revisions (at least one, in
+// event id order) and its requested correction predecessors.
+func JudgeHead(revisions []Revision, anchors map[string][]string) Head {
+	nodes := make([]string, 0, len(revisions))
+	hashOf := make(map[string]string, len(revisions))
+	declaredOf := make(map[string]string, len(revisions))
+	for _, r := range revisions {
+		// An event id is the events primary key and the lineage row is found by its own key, so it
+		// is listed once; were it repeated, it would keep its first place and its last values.
+		if _, seen := hashOf[r.ID]; !seen {
+			nodes = append(nodes, r.ID)
+		}
+		hashOf[r.ID] = r.Hash
+		declaredOf[r.ID] = r.Declared
 	}
-	byHash := map[string][]string{}
+	byHash := make(map[string][]string, len(nodes))
 	for _, id := range nodes {
 		byHash[hashOf[id]] = append(byHash[hashOf[id]], id)
 	}
-	anchors, err := requestedPredecessors(ctx, s, rid, generation)
-	if err != nil {
-		return Head{}, err
-	}
-	if len(suppressed) > 0 {
-		declared := make([]string, 0, len(nodes))
-		for _, id := range nodes {
-			declared = append(declared, declaredOf[id])
-		}
-		through := ReadThrough(declared, func(hash string) int { return len(byHash[hash]) + len(anchors[hash]) }, suppressed)
-		for _, id := range nodes {
-			if effective, ok := through[declaredOf[id]]; ok {
-				declaredOf[id] = effective
-			}
-		}
-	}
-	edges := map[string]string{}
+	edges := make(map[string]string, len(nodes))
 	var unresolved []string
 	for _, id := range nodes {
 		declared := declaredOf[id]
 		if declared == "" {
 			continue
 		}
-		targets := append(slices.Clone(byHash[declared]), anchors[declared]...)
-		if len(targets) != 1 {
+		held, requested := byHash[declared], anchors[declared]
+		if len(held)+len(requested) != 1 {
 			unresolved = append(unresolved, id+" -> "+declared)
 			continue
 		}
-		edges[id] = targets[0]
+		if len(held) == 1 {
+			edges[id] = held[0]
+		} else {
+			edges[id] = requested[0]
+		}
 	}
 	if len(unresolved) > 0 {
-		return ambiguousHead(evidenceUnknownPredecessor, nodes, "a declared predecessor is neither a unique revision of this generation "+
-			"nor its requested correction predecessor: "+strings.Join(unresolved, ", ")), nil
+		return ambiguousHead(EvidenceUnknownPredecessor, nodes, "a declared predecessor is neither a unique revision of this generation nor its requested correction predecessor: "+strings.Join(unresolved, ", "))
 	}
+	// A revision declares at most one predecessor, so a walk along the declared chain ends or
+	// returns to a revision it has passed. Starts are taken in event id order and the first walk that
+	// returns reports where it started and the revision it returned to. A walk that reaches a
+	// revision an earlier walk finished without returning stops there: what follows was walked then,
+	// and none of it is on the walk so far. Each revision is walked once.
+	const (
+		walking = iota + 1
+		cleared
+	)
+	passed := make(map[string]uint8, len(nodes))
 	for _, start := range nodes {
-		seen := map[string]bool{start: true}
+		if passed[start] == cleared {
+			continue
+		}
+		walk := []string{start}
+		passed[start] = walking
 		for current := start; ; {
 			next, ok := edges[current]
 			if !ok {
 				break
 			}
 			current = next
-			if seen[current] {
-				return ambiguousHead(evidenceCycle, nodes, fmt.Sprintf("the declared chain from %s returns to %s", start, current)), nil
+			if passed[current] == walking {
+				return ambiguousHead(EvidenceCycle, nodes, fmt.Sprintf("the declared chain from %s returns to %s", start, current))
 			}
-			seen[current] = true
+			if passed[current] == cleared {
+				break
+			}
+			passed[current] = walking
+			walk = append(walk, current)
+		}
+		for _, id := range walk {
+			passed[id] = cleared
 		}
 	}
 	predecessors := map[string]int{}
-	for _, target := range edges {
-		predecessors[target]++
+	for _, id := range nodes {
+		if target, ok := edges[id]; ok {
+			predecessors[target]++
+		}
 	}
 	var forked []string
 	for target, count := range predecessors {
@@ -188,7 +313,7 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	}
 	if len(forked) > 0 {
 		slices.Sort(forked)
-		return ambiguousHead(evidenceFork, nodes, "more than one revision declares the same predecessor: "+strings.Join(forked, ", ")), nil
+		return ambiguousHead(EvidenceFork, nodes, "more than one revision declares the same predecessor: "+strings.Join(forked, ", "))
 	}
 	targets := map[string]bool{}
 	for _, t := range edges {
@@ -202,8 +327,7 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	}
 	slices.Sort(tips)
 	if len(tips) != 1 {
-		return ambiguousHead(evidenceFork, nodes, fmt.Sprintf("%d revisions in this generation are unsuperseded, so none of them is "+
-			"the head; a revision that replaces another says so when it is emitted", len(tips))), nil
+		return ambiguousHead(EvidenceFork, nodes, fmt.Sprintf("%d revisions in this generation are unsuperseded, so none of them is the head; a revision that replaces another says so when it is emitted", len(tips)))
 	}
 	tip := tips[0]
 	covered := map[string]bool{tip: true}
@@ -217,14 +341,37 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	}
 	for _, id := range nodes {
 		if !covered[id] {
-			return ambiguousHead(evidenceDisconnected, nodes, "the declared chain from the tip does not reach every revision in this generation"), nil
+			return ambiguousHead(EvidenceDisconnected, nodes, "the declared chain from the tip does not reach every revision in this generation")
 		}
 	}
-	evidence := evidenceChain
+	evidence := EvidenceChain
 	if len(nodes) == 1 && len(edges) == 0 {
-		evidence = evidenceSole
+		evidence = EvidenceSole
 	}
-	return Head{EventID: tip, RevisionHash: hashOf[tip], Evidence: evidence, Competitors: []string{}}, nil
+	return Head{EventID: tip, RevisionHash: hashOf[tip], Evidence: evidence, Competitors: []string{}}
+}
+
+// HeadRevisionFrom is currency.head_revision, read through the caller's snapshot, including a
+// read-only guard connection.
+func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generation int64) (Head, error) {
+	revisions, suppressed, err := ReadRevisions(ctx, q, rid, generation)
+	if err != nil {
+		return Head{}, err
+	}
+	if len(revisions) == 0 {
+		return Head{Evidence: EvidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
+	}
+	anchors, err := RequestedPredecessors(ctx, q, rid, generation)
+	if err != nil {
+		return Head{}, err
+	}
+	return JudgeHead(ReadThroughSuppressed(revisions, suppressed, anchors), anchors), nil
+}
+
+// HeadRevision is currency.head_revision on a store: the entry the assignment view and the fault
+// sweep use.
+func HeadRevision(ctx context.Context, s *store.Store, rid string, generation int64) (Head, error) {
+	return HeadRevisionFrom(ctx, s.Querier(ctx), rid, generation)
 }
 
 // ReadThrough answers, for each revision hash in named that no live revision of the generation

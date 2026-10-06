@@ -9,6 +9,7 @@ import (
 // D-05 stays undecided: the writer only records the evidence a ceiling above the standing cap rests on. A ceiling of 10 is clamped to 6 until the basis for that revision exists, a basis
 // is evidence and so cannot be rewritten, and only the limit's declarer or the project's registered parent can record one.
 func TestRecordCapBasis(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.declareLimit("project", "P-TEST", "runs", 10)

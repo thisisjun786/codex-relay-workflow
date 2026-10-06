@@ -11,7 +11,10 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` or `port/cxc/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)) |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
+| `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
+| `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed; a run that skips them is success |
+| `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir`, `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"` | `gui`: the screens under `web/` build and match the committed `internal/gui/assets` tree byte for byte, on Node 24.20.0, only when a watched path changed ([below](#the-gui-job)); `make gui` runs the same three commands locally |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
 | `CGO_ENABLED=0 make dist` per target | `go-product` leg `dist`: static `crw` for linux/amd64, linux/arm64 and darwin/arm64, uploaded with `SHA256SUMS` |
@@ -26,8 +29,15 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
 integrated commit, the evidence a release needs) and a manual dispatch (which is not release
-evidence). There is no path selection. The Go product legs always ran whatever changed, so
+evidence). There is no path selection, except [the temporary light mode](#the-temporary-light-mode)
+below. The Go product legs always ran whatever changed, so
 selecting the rest by changed paths saved little and put a job before every other one.
+
+Two jobs gate themselves on changed paths. `skill-scripts-node` runs the staged skills' Node
+tests only when a staged skill path changed, and ends successfully without installing Node when
+none did. `gui` runs the screen verification only when `web/`, `internal/gui/assets/` or the gui
+definition changed ([the gui job](#the-gui-job)); it always exists, `dev-gate` waits on it, and
+anything its decision cannot read selects the full run.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
 `make test` builds one `crw` for the run (`dist/test/crw`, release-shaped with `-trimpath`) and
@@ -73,8 +83,139 @@ and environments. CI concurrency cancels obsolete runs within the same PR or bra
 interrupted dev push is not release evidence: rerun that exact push run if the owner later
 chooses its commit.
 
-## The test legs
+## The body-only edit mirror
 
+No job reads a pull request's title or body, but a title or body edit fires the `edited` trigger
+again and used to rerun every job on the same commit. Such a run now mirrors what the
+head has already proved.
+
+An `edited` event whose base did not change (`github.event.action == 'edited' &&
+!github.event.changes.base`) joins the pull request's own concurrency group, so it waits behind a
+running run instead of cancelling it, and a later push cancels it in turn. Every other event,
+a retarget included, still cancels obsolete runs.
+
+`validate`, `secrets`, `skill-scripts-node`, `gui` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
+and only on such an edit. The script reads, with `gh api`, the newest created run of this workflow,
+of this pull request, of this repository, for the same `head_sha`, other than the run it is in, and
+mirrors the job when that run's same-named job's newest attempt concluded `success`. Creation order
+is the run's `run_number`, and the larger `id` when two runs share one: those two values are what a
+rerun leaves alone. `run_started_at` is deliberately not the order, because rerunning only the
+failed jobs moves it forward and would let an older run outrank a newer one whose same-named job
+failed. It answers `mirrored=true` with the run id in its step output and its step summary, or
+`mirrored=false`.
+
+Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
+condition the step already had. The full checkout is one of them, and the sparse checkout of
+`scripts/ci` above the mirror is what has to exist before the script can decide. A mirrored job
+succeeds without running its steps, and nothing is skipped at job level: GitHub reports a skipped
+job's check as success, so a skipped `dev-gate` could hide an earlier red run.
+
+The lookup never fails the job, and an older run is never consulted: the newest created run alone
+answers for the job. No candidate, a failure, a cancellation, a skip, a missing job,
+another head, workflow or repository, an unreadable API and the run itself all answer
+`mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
+unchanged, and the five jobs add only `actions: read` to the workflow's `contents: read`, which is
+what reading the runs and jobs endpoints needs.
+
+Mirroring is safe because it repeats a result this head already has. `dev` is strict, so a merge
+candidate contains dev's tip, and the same `head_sha` is the same tree: the run being mirrored is a
+run of the same pull request's own head, never another tree's.
+
+## The temporary light mode
+
+Until the porting and improvement projects finish, the repository variable `CRW_CI_MODE` can be
+set to `light` by the repository owners alone. While it is, a pull request run that does not
+carry the `crw-lane` label skips the work of the five `go-product` test legs. Child pull request
+pushes are most of the concurrent Actions jobs and the merge lane waits for runners behind them;
+the lane's local `make test` was measured too slow to stand in for a runner, so the full run is
+moved to the one event that needs it. Reverting the mode is deleting the variable, and Jun
+decides when it ends.
+
+The condition is one job-level `env` on `go-product`, `CRW_LIGHT_LEG`, holding
+`github.event_name == 'pull_request' && vars.CRW_CI_MODE == 'light' &&
+!contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-')`.
+A dev push and a manual dispatch fail the first term, a labeled pull request fails the third, and
+`lint` and `dist` fail the fourth, so only the five test legs of an unlabeled pull request can
+be light. `validate`, `secrets`, `skill-scripts-node`, `gui`, `lint` and `dist` always run in
+full, and so does every event other than an unlabeled pull request, whatever the variable says.
+
+A light leg keeps its own name and its own success. Its first step writes
+`light mode: this leg's tests run in full when the merge lane labels the pull request crw-lane`
+to the step summary, and every other step carries `env.CRW_LIGHT_LEG != 'true'` joined with the
+condition it already had, the mirror steps included. The guard is a step condition and never a
+job-level `if`, because GitHub reports a skipped job's check as success and a skipped
+`dev-gate` could hide an earlier red run; no check name moves and no job opts out of its result.
+
+`pull_request.types` gains `labeled` after its five earlier types, so when the merge lane
+labels the pull request the labeled event starts a full run on that head, and every later push
+while the label stays runs in full too. The concurrency expression is unchanged: a labeled run is
+not a body-only edit, so it joins the pull request's main group with `cancel-in-progress: true`
+and cancels the light run still in progress. Adding any other label also starts a run; this
+repository uses no other label.
+
+[The body-only edit mirror](#the-body-only-edit-mirror) refuses to carry a light leg forward. A
+`go-product` test leg is mirrored only when the chosen run's same-named job concluded `success`
+and that job's step `Test and replay the contract corpus (<part>)` also concluded `success`.
+A skipped or missing test step answers `mirrored=false` and the leg runs in full, so a body edit
+right after the label, or after the variable is cleared, cannot replace a full run with an
+untested one. `validate`, `secrets` and the `lint` and `dist` legs keep mirroring on the
+job's conclusion alone, as they did before.
+
+The merge evidence is still the hosted `dev-gate`, and the lane's local `make test` is not
+evidence. While the variable is `light`, a green `dev-gate` of a run without the `crw-lane`
+label is not merge evidence, because that run's test legs did not run their tests: the evidence
+is a run of the same head, started after the label was added, that finished in success. The lane
+adds `crw-lane` when it takes its turn, before it refreshes the base, and removes it when it
+returns the turn without merging.
+
+## The gui job
+
+The screens are a Vite + React package under `web/`, and their build is committed under
+`internal/gui/assets` and embedded in the `crw` binary (`//go:embed all:assets`), so a source
+checkout with no Node still produces a `crw` that serves the dashboard. That makes the committed
+tree a build artifact that must track its source, and the `gui` job keeps the two from drifting
+apart.
+
+The job always exists and `dev-gate` waits on it. Its first step decides from the changed files:
+`scripts/ci/gui_paths.sh` compares a pull request's base with its head, or a push's replaced
+commit with the one it added, over `web/`, `internal/gui/assets/`, `.github/workflows/ci.yml`,
+`Makefile`, `scripts/ci/gui_paths.sh` and `internal/dev/ci/gui_drift.go`, and writes
+`changed=true` to its step output when any of them moved. A manual dispatch, a push that created
+the branch (its before is the all-zeros object, which is no commit) and any git failure also
+answer `changed=true`: the safe direction is the full run, because a screen change that is
+skipped is a committed tree that no longer matches its source.
+
+When the answer is `true` the job installs `actions/setup-go` (the drift check is a `crw-dev ci`
+subcommand) and `actions/setup-node` pinned by commit at Node 24.20.0, runs `npm ci` from the
+committed lockfile, `npm test`, a build into `$RUNNER_TEMP/gui-built`, and then
+`crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"`. When it is `false` the job ends
+successfully without installing Node. `make gui` runs the same three commands locally, and
+`make gui-assets` regenerates the committed tree after a `web/` change: it builds into
+`internal/gui/assets` (vite's configured `outDir`), so the result is what a contributor commits.
+
+The drift check compares three trees. The committed tree comes from git (`git ls-tree -r -l` and
+`git cat-file blob` at the named revision, `HEAD` by default) and never from the working tree. The
+fresh side is the directory `--built` names, which is required and must hold an `index.html`;
+naming the committed tree itself, a directory that was never built, or a tree that cannot be read
+is refused rather than passed, so a run without a build cannot compare the commit against itself.
+The third is the working tree at `internal/gui/assets`, which is what `//go:embed all:assets`
+actually compiles: an untracked file, a modification or a deletion there is refused even when the
+built and committed trees agree, so a local edit cannot be approved and then embedded. The trees
+are compared as sorted path-and-bytes pairs: a built file the commit does not hold, a committed
+file the build does not produce, a renamed asset (which is both) and a byte difference are each
+refused and named, and a committed asset over 2 MiB is refused before the comparison. The refusal
+names `make gui-assets` as the regeneration command.
+`internal/dev/ci/gui_drift_test.go` pins each rejection and the pass;
+`internal/dev/ci/gui_paths_test.go` pins the decision.
+
+The job never reads `CRW_CI_MODE`, so [light mode](#the-temporary-light-mode) cannot skip the
+screen verification: an unlabeled light pull request runs this job exactly as a full one, and only
+the five `go-product` test legs can be light. It takes the same [body-only edit
+mirror](#the-body-only-edit-mirror) pair as the other four jobs, so a mirrored run stands the job
+down only on a completed successful `gui` job on the same head, which is the same-head evidence
+the mirror rule requires.
+
+## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
 pull request waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
 package plus the `dev`-tagged tests, so a package runs in exactly one leg. `internal/dev/ci` holds
@@ -82,25 +223,28 @@ that: it refuses a package named by two parts, a part missing from `TEST_PARTS` 
 subtracts, so its packages would run again in `rest`), a named path with no tests, a pattern, and a
 package of the `dev`-tagged set, which only `rest` runs, with the tag.
 
-A runner spends about 50 s before its tests (checkout, toolchain, the one `crw` build). It then
-runs a few packages at a time on four CPUs, in the order a part lists them, so a leg takes about that
-plus its slowest package, or its packages' total over four CPUs if that is longer; list a slow
-package first. The legs as balanced after the slow packages' tests ran in parallel (CRW-424), with the
-hosted job time before and after (median of four runs before and six after):
+A runner spends about 55 s before its tests (checkout, toolchain, the one `crw` build), and the leg
+compiles its own test binaries before it starts. It then runs a few packages at a time on four CPUs,
+in the order a part lists them, so a leg takes about that plus its slowest package, or its packages'
+total over four CPUs if that is longer; list a slow package first. The legs as rebalanced after the
+slow packages' tests ran in parallel, with the hosted job time before (median of six dev push runs on
+2026-10-06) and after (median of three runs of the change that moved packages between the parts):
 
 | Leg | Packages | Before | After |
 | --- | --- | --- | --- |
-| `test-1` | `relay/dagsched`, `relay/delivery`, `relay/cli` | 159 s | 204.5 s |
-| `test-2` | `runtime/install`, `relay/supervisor`, `relay/registry` | 118.5 s | 214 s |
-| `test-3` | `contracttest`, `relay/store`, `relay/mergeturn`, `relay/service`, `relay/sync`, `relay/faults` | 170.5 s | 169 s |
-| `test-4` | `relay/hook`, `relay/linkage`, `relay/evidence`, `relay/managed` | 95 s | 84 s |
-| `test-rest` | the other 58 packages and the `dev`-tagged tests | 285.5 s | 172.5 s |
+| `test-1` | `relay/dagsched`, `relay/cli` | 245 s | 229 s |
+| `test-2` | `runtime/install`, `relay/registry`, `relay/hook` | 261 s | 259 s |
+| `test-3` | `relay/service`, `contracttest`, `relay/mergeturn`, `relay/supervisor`, `skill`, `relay/managed`, `relay/adapter` | 188.5 s | 246 s |
+| `test-4` | `relay/delivery`, `relay/store`, `relay/sync`, `relay/faults`, `relay/dag`, `role`, `pyjson`, `relay/linkage`, `recall`, `relay/routing`, `relay/childcleanup` | 131.5 s | 184 s |
+| `test-rest` | the other 77 packages and the `dev`-tagged tests | 246 s | 145 s |
 
-`runtime/install` is the floor of the longest leg: its tests run one after another for about 140 s, so
-the leg that holds it takes about 215 s however the others are split, and a sixth leg would not
-shorten the longest one. To rebalance again, read the `ok <package> <seconds>` lines and the job
-times of several hosted runs of one commit (they differ by 20 s or more from run to run), move
-packages, and compare medians.
+`runtime/install` is the floor of the longest leg: its tests run one after another for about 175 s, so
+the leg that holds it takes about 260 s however the others are split, and a sixth leg would not
+shorten the longest one. The packages that do not parallelize well are kept apart for the same
+reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`, `relay/managed` and
+`relay/adapter` sit in `test-3` with the middle tier, so no leg holds two of them. To rebalance
+again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit
+(they differ by 20 s or more from run to run), move packages, and compare medians.
 
 ## Leftover isolation trees
 

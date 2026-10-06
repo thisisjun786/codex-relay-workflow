@@ -301,6 +301,72 @@
       ]
     },
     {
+      "file": "tests/exhibit-contract.test.mjs",
+      "reason": "Move the S-class skill-script test exhibit-contract.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "077bfbadb060b783a7d43c01fb69a1238272782e5ddfe4ae56cc14e6896b85f2"
+    },
+    {
+      "file": "tests/fixtures/visualizer-export-tools.mjs",
+      "reason": "Move the S-class skill-script test crw-dev-visualizer/tests/fixtures/visualizer-export-tools.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "58859a7dafcbc2088ba726ffeed4e53409aed41c2fca0187bc913993e8bcea5c"
+    },
+    {
+      "file": "tests/report-contract.test.mjs",
+      "reason": "Move the S-class skill-script test report-contract.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "ba512af96989f787831476bd68359acd64ad8c075ebabb14ba5b00a6af8ac5a4"
+    },
+    {
+      "file": "tests/report-export.test.mjs",
+      "reason": "Move the S-class skill-script test report-export.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "b4168bec873146f82eda6612e92e597e35825718537f14aa95b696172d777d2b"
+    },
+    {
+      "file": "tests/report-genre-contract.test.mjs",
+      "reason": "Move the S-class skill-script test report-genre-contract.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "1db5f05eff140d6ff6e4e9dd604ce7348a4757c2f873b932834847171e25240a"
+    },
+    {
+      "file": "tests/report-intake.test.mjs",
+      "reason": "Move the S-class skill-script test report-intake.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "fb4bcbf54e497948202b70422b07590480082369d2cfcd234cb066732ab67da8"
+    },
+    {
+      "file": "tests/report-locale.test.mjs",
+      "reason": "Move the S-class skill-script test report-locale.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "a19155331a53065cfcae9679bda24137021ca23e0b06c149e319a14b6c11828c"
+    },
+    {
+      "file": "tests/report-quality-gate.test.mjs",
+      "reason": "Move the S-class skill-script test report-quality-gate.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "53b6d89913bfad0cc958fc67c5902e6a1e748468125118da7763c08148ae2770"
+    },
+    {
+      "file": "tests/report-research-handoff.test.mjs",
+      "reason": "Move the S-class skill-script test report-research-handoff.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "3d987fd506cb81d9cdb1962093a79c12fdfb2e4da93165e5335a11402da01ebd"
+    },
+    {
+      "file": "tests/visualize-inspection.test.mjs",
+      "reason": "Move the S-class skill-script test visualize-inspection.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "444f8c8412ac572b15fa9e29d66113fd00ae10f4457e84065d730a81a61de727"
+    },
+    {
+      "file": "tests/visualizer-packaging.test.mjs",
+      "reason": "Move the S-class skill-script test visualizer-packaging.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "c5fb06e2a0c036c9915303b929e44cfe4c4f26dbbf32cf9a22679ac71b9289d2"
+    },
+    {
       "file": "upstream/visualize-upstream.md",
       "reason": "Restore CodexClaw upstream project attribution, historical snapshots and the complete upstream URL; identify CRW as a downstream port without changing visual output.",
       "hunks": [

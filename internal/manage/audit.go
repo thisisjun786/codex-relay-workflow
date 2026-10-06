@@ -11,11 +11,11 @@ import (
 	"strings"
 )
 
-// The names inside a bundle directory: what the bundle declares itself to be and the file
-// a grader must leave behind. The prompt this product writes beside them is added with the
-// command that writes it.
+// The names inside a bundle directory: what the bundle declares itself to be, the prompt
+// this product writes there, and the file the grader must leave behind.
 const (
 	auditBundleFile = "bundle.json"
+	auditPromptFile = "prompt.md"
 	auditGradeFile  = "grade.json"
 )
 
@@ -29,6 +29,22 @@ const (
 const (
 	auditModePR      = "pr"
 	auditModePackage = "package"
+)
+
+// The status one graded result carries. The ledger row writes the status through, and only
+// an ok result carries a score, so a reader can tell an ungraded run from one that scored
+// zero.
+const (
+	auditStatusOK      = "ok"
+	auditStatusInvalid = "invalid"
+	auditStatusTimeout = "timeout"
+)
+
+// The ledger and the alert queue below the configured state directory. The ledger records
+// every graded result; the alert queue carries only the results a person must act on.
+const (
+	auditLedgerFile = "ledger.jsonl"
+	auditAlertFile  = "alerts.jsonl"
 )
 
 // auditPromptTemplate is the built-in grader prompt. It is embedded rather than read from
@@ -79,6 +95,47 @@ type AuditResult struct {
 	Bundle   string           `json:"bundle"`
 	Criteria []AuditCriterion `json:"criteria"`
 	Defects  []AuditDefect    `json:"defects"`
+}
+
+// auditLedgerRow is one line of the ledger, in the key order the issue fixes. The score is
+// a pointer so a run that left no usable result carries null rather than a misleading zero,
+// and the counts are the P0-P3 tally of the defects the result carries.
+type auditLedgerRow struct {
+	Mode     string `json:"mode"`
+	Subject  string `json:"subject"`
+	Head     string `json:"head"`
+	Issue    string `json:"issue"`
+	Pair     string `json:"pair"`
+	Phase    string `json:"phase"`
+	Round    string `json:"round"`
+	Status   string `json:"status"`
+	Score    *int   `json:"score"`
+	P0       int    `json:"p0"`
+	P1       int    `json:"p1"`
+	P2       int    `json:"p2"`
+	P3       int    `json:"p3"`
+	GradedAt string `json:"graded_at"`
+	Bundle   string `json:"bundle"`
+}
+
+// auditAlertDefect is a defect as an alert line carries it: where it is and what it is,
+// without the reproduction steps, which stay in the bundle the ledger row points at.
+type auditAlertDefect struct {
+	Severity string `json:"severity"`
+	What     string `json:"what"`
+	Where    string `json:"where"`
+}
+
+// auditAlertRow is one line of the alert queue, which the management pump reads.
+type auditAlertRow struct {
+	Mode    string             `json:"mode"`
+	Subject string             `json:"subject"`
+	Issue   string             `json:"issue"`
+	Pair    string             `json:"pair"`
+	Phase   string             `json:"phase"`
+	Round   string             `json:"round"`
+	Score   *int               `json:"score"`
+	Defects []auditAlertDefect `json:"defects"`
 }
 
 // auditBundle is a bundle.json this product has checked.
@@ -158,19 +215,159 @@ func auditPrompt(b *auditBundle) string {
 	out.WriteString(strings.TrimRight(auditPromptTemplate, "\n"))
 	out.WriteString("\n\n## Mode\n\n")
 	if b.Mode == auditModePR {
-		out.WriteString("This is a pull request audit. `candidate/diff.patch` is the change that was merged, `candidate/pr.md` is the description its author wrote, and `candidate/tree/` is the whole source tree as it stands after the merge, for reading the code around the change.")
+		out.WriteString("This is a pull request audit. `" + auditPRDiffFile + "` is the change that was merged, `" + auditPRTaskFile + "` carries the description its author wrote and the criteria it is judged against, and `" + auditPRFilesDir + "/` holds the content of each changed file at the merge commit, for reading the code around the change.")
 	} else {
-		out.WriteString("This is a package audit. There is no single change to review: `candidate/tree/` is the whole source tree, and the criteria and the issue text name what it is judged against. Read the tree as it stands and judge the package.")
+		out.WriteString("This is a package audit. There is no single change to review: `src/` is the whole package at the head, tests and testdata included, `criteria.json` is the criteria it is judged against, `task.md` names the package and those criteria, `reference/` holds the port source it came from, and `known-defects/` holds the defects this repository already records. A file too large to copy is listed in `src/large-files.txt` with its size and sha256 instead. Read the package as it stands and judge it.")
 	}
 	if b.CriteriaUnavailable {
 		out.WriteString("\n\nThis bundle declares `criteria_unavailable`. ")
 		if b.Mode == auditModePR {
-			out.WriteString("Judge against the issue text under `inputs/` and the description in `candidate/pr.md`, and say in each note which of the two you used.")
+			out.WriteString("Judge against the description in `" + auditPRTaskFile + "` and the change in `" + auditPRDiffFile + "` and `" + auditPRFilesDir + "/`, and say in each note which of the two you used.")
 		} else {
-			out.WriteString("There is no criteria file and no description to fall back on: judge the package against the issue text under `inputs/` and what the tree itself shows, and say in each note which file or symbol you used.")
+			out.WriteString("There are no criteria to read and no description to fall back on: judge the package against `task.md`, the source under `src/` and what the package itself shows, and say in each note which file or symbol you used.")
 		}
 	}
 	return out.String()
+}
+
+// auditCounts is how many defects of each severity a result carries.
+func auditCounts(defects []AuditDefect) (p0, p1, p2, p3 int) {
+	for _, defect := range defects {
+		switch defect.Severity {
+		case "P0":
+			p0++
+		case "P1":
+			p1++
+		case "P2":
+			p2++
+		case "P3":
+			p3++
+		}
+	}
+	return p0, p1, p2, p3
+}
+
+// auditStateDir is where the ledger and the alert queue live: the state_dir the
+// configuration names, or the default one when it names none.
+func auditStateDir(e *Env, cfg *Config) string {
+	if cfg != nil && cfg.StateDir != "" {
+		return cfg.StateDir
+	}
+	return coreDefaults(e).StateDir
+}
+
+// auditRecord appends one ledger line per result, and one alert line for every result that
+// carries a P0 or a P1. Both files are opened for append, so a concurrent writer's lines are
+// never rewritten. The alert file is opened only once a result is known to need one, so a
+// run in which nothing reached P0 or P1 leaves no alert file at all. The directory and
+// the files are private to the owner, as the relay store's own state is, because a ledger
+// row names the subject, the issue and the bundle an audit covered.
+func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
+	dir := filepath.Join(auditStateDir(e, cfg), "audit")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	ledgerPath := filepath.Join(dir, auditLedgerFile)
+	ledger, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	// A deferred close cannot be skipped on an early return, and its error is kept: a write
+	// that reached the page cache can still fail on close, and that is not a recorded row.
+	defer func() { err = errors.Join(err, ledger.Close()) }()
+	alerting := false
+	for _, result := range results {
+		if p0, p1, _, _ := auditCounts(result.Defects); p0+p1 > 0 {
+			alerting = true
+		}
+	}
+	var alerts *os.File
+	alertsPath := ""
+	if alerting {
+		alertsPath = filepath.Join(dir, auditAlertFile)
+		if alerts, err = os.OpenFile(alertsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, alerts.Close()) }()
+	}
+	for _, result := range results {
+		p0, p1, p2, p3 := auditCounts(result.Defects)
+		row := auditLedgerRow{
+			Mode: result.Mode, Subject: result.Subject, Head: result.Head, Issue: result.Issue,
+			Pair: result.Pair, Phase: result.Phase, Round: result.Round, Status: result.Status,
+			Score: auditScoreOf(result), P0: p0, P1: p1, P2: p2, P3: p3,
+			GradedAt: result.GradedAt, Bundle: result.Bundle,
+		}
+		if err := auditAppendLine(ledger, ledgerPath, row); err != nil {
+			return err
+		}
+		if p0+p1 == 0 {
+			continue
+		}
+		alert := auditAlertRow{
+			Mode: result.Mode, Subject: result.Subject, Issue: result.Issue, Pair: result.Pair,
+			Phase: result.Phase, Round: result.Round, Score: auditScoreOf(result),
+		}
+		for _, defect := range result.Defects {
+			if defect.Severity != "P0" && defect.Severity != "P1" {
+				continue
+			}
+			alert.Defects = append(alert.Defects, auditAlertDefect{Severity: defect.Severity, What: defect.What, Where: defect.Where})
+		}
+		if err := auditAppendLine(alerts, alertsPath, alert); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// auditScoreOf is the score a ledger or alert line carries, and null when the run left no
+// usable result to score.
+func auditScoreOf(result AuditResult) *int {
+	if result.Status != auditStatusOK {
+		return nil
+	}
+	score := result.Score
+	return &score
+}
+
+// auditAppendLine writes one JSON document as one line. One write per line keeps a
+// concurrent writer's lines intact under O_APPEND, and a file an earlier torn write left
+// without a final line feed gets one first, so the new line is never joined to the
+// fragment. This is the CRW-474 guard the state ledger carries (internal/pabcd/state
+// appendRow), kept alike here because that helper is not importable.
+func auditAppendLine(f *os.File, path string, doc any) error {
+	line, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	line = append(line, '\n')
+	if auditEndsMidLine(f, path) {
+		line = append([]byte{'\n'}, line...)
+	}
+	_, err = f.Write(line)
+	return err
+}
+
+// auditEndsMidLine reports whether an open file already ends in a line with no final
+// line feed. A blank line costs nothing and a joined line loses a record, so an
+// unreadable tail answers yes. A new, empty or non-regular file has no tail to protect.
+func auditEndsMidLine(f *os.File, path string) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return true
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return false
+	}
+	r, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = r.Close() }()
+	var last [1]byte
+	n, _ := r.ReadAt(last[:], info.Size()-1)
+	return n != 1 || last[0] != '\n'
 }
 
 // auditCommand is crw manage audit.
@@ -178,23 +375,121 @@ var auditCommand = Command{Name: "audit", Summary: "grade an audit bundle and re
 
 func init() { Register(auditCommand) }
 
-// auditUsage is the one line the audit command prints.
-const auditUsage = "usage: crw manage audit [-h]"
+// auditUsage is what the audit command prints: the grade line the command shipped with,
+// then the package, round, pr, report and drafts lines the pieces after it add.
+const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--phase X] [--round R]\n" +
+	"       crw manage audit package --round R [--next N] [--head SHA]\n" +
+	"       crw manage audit round {start,status} --name R\n" +
+	"       crw manage audit pr [--max N] [--dry-run]\n" +
+	"       crw manage audit report\n" +
+	"       crw manage audit drafts [--round R | --since T] [--severity P1]"
 
-// auditRun is crw manage audit. This issue registers the command and its help; the
-// subcommand that builds a bundle and the one that grades it arrive in later issues, so
-// every argument other than the help flags is a usage error.
-func auditRun(_ context.Context, e *Env, args []string) int {
-	if len(args) > 0 {
-		switch args[0] {
-		case "-h", "--help", "help":
-			fmt.Fprintln(e.Stdout, auditUsage)
-			return 0
-		}
+// auditRun is crw manage audit. It dispatches the grade subcommand, which grades one bundle
+// the caller already assembled, the package subcommand, which audits the packages a round
+// still holds pending or failed, the round subcommand, which starts a round and reports its
+// progress, the pr subcommand, which selects, bundles and grades newly merged pull requests,
+// the report subcommand, which rebuilds the report from the ledger, and the drafts
+// subcommand, which turns the recorded defects into follow-up issue drafts. The help flags
+// keep their own path so the usage stays reachable without a subcommand.
+func auditRun(ctx context.Context, e *Env, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(e.Stderr, auditUsage)
+		return usageExit
+	}
+	switch args[0] {
+	case "-h", "--help", "help":
+		fmt.Fprintln(e.Stdout, auditUsage)
+		return 0
+	case "grade":
+		return auditRunGrade(ctx, e, args[1:])
+	case "package":
+		return auditRunPackage(ctx, e, args[1:])
+	case "round":
+		return auditRunRound(ctx, e, args[1:])
+	case "pr":
+		return auditPRRun(ctx, e, args[1:])
+	case "report":
+		return auditReportRun(ctx, e, args[1:])
+	case "drafts":
+		return auditRunDrafts(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
-	if len(args) > 0 {
-		fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q\n", args[0])
-	}
+	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'pr', 'report', 'round', 'drafts')\n", args[0])
 	return usageExit
+}
+
+// auditRunGrade is crw manage audit grade. It validates the flags, refuses a grader the
+// configuration does not name, grades the one bundle through the engine and prints the
+// graded result as JSON. The engine writes the ledger and alert rows itself, so this
+// command records nothing of its own.
+func auditRunGrade(ctx context.Context, e *Env, args []string) int {
+	job, err := auditParseGradeArgs(args)
+	if err != nil {
+		fmt.Fprintln(e.Stderr, auditUsage)
+		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
+		return usageExit
+	}
+	cfg := coreDefaults(e)
+	section, err := auditConfigOf(cfg)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
+		return 1
+	}
+	if len(section.Grader) == 0 {
+		fmt.Fprintln(e.Stderr, "crw manage audit: error: grader_unconfigured: the audit section of the configuration names no grader command")
+		return usageExit
+	}
+	results, err := AuditGrade(ctx, e, cfg, []AuditJob{job})
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
+		return 1
+	}
+	data, err := json.Marshal(results)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(e.Stdout, "%s\n", data)
+	return 0
+}
+
+// auditParseGradeArgs reads the grade subcommand's flags, each written --name value or
+// --name=value. A flag that is not one of the four, a flag without a value, a stray
+// argument, or a missing --bundle is an error naming what is wrong.
+func auditParseGradeArgs(args []string) (AuditJob, error) {
+	var job AuditJob
+	for i := 0; i < len(args); i++ {
+		name := args[i]
+		if !strings.HasPrefix(name, "--") {
+			return AuditJob{}, fmt.Errorf("unexpected argument %q", name)
+		}
+		key, value := strings.TrimPrefix(name, "--"), ""
+		if eq := strings.IndexByte(key, '='); eq >= 0 {
+			key, value = key[:eq], key[eq+1:]
+		} else {
+			i++
+			// A following token that starts another option is a missing value, not the
+			// value itself, so a --name=value form stays the way to pass such a string.
+			if i >= len(args) || strings.HasPrefix(args[i], "--") {
+				return AuditJob{}, fmt.Errorf("the option %s needs a value", name)
+			}
+			value = args[i]
+		}
+		switch key {
+		case "bundle":
+			job.Bundle = value
+		case "pair":
+			job.Pair = value
+		case "phase":
+			job.Phase = value
+		case "round":
+			job.Round = value
+		default:
+			return AuditJob{}, fmt.Errorf("unknown option %s", name)
+		}
+	}
+	if job.Bundle == "" {
+		return AuditJob{}, errors.New("--bundle is required")
+	}
+	return job, nil
 }

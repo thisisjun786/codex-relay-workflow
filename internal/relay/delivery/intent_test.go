@@ -28,6 +28,7 @@ func registerOp() markerOp {
 	return markerOp{"op": "register", "relationship_id": rel1}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT01_the_derived_state_follows_the_published_facts(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), markerOp{"op": "state"},
@@ -45,6 +46,7 @@ func TestINT01_the_derived_state_follows_the_published_facts(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT02_two_accepted_task_ids_are_ambiguous_and_ambiguity_outranks_expiry(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(),
@@ -58,6 +60,7 @@ func TestINT02_two_accepted_task_ids_are_ambiguous_and_ambiguity_outranks_expiry
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT03_expiry_is_anchored_on_declaredat_only(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), markerOp{"op": "attempt", "outcome": "accepted", "task_id": task1, "at": intentT40}, markerOp{"op": "state", "now": intentT40},
@@ -73,6 +76,7 @@ func TestINT03_expiry_is_anchored_on_declaredat_only(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT04_a_late_fact_cannot_move_the_state_backwards(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), markerOp{"op": "attempt", "outcome": "accepted", "task_id": task1}, bindOp(), openOp(), registerOp(),
@@ -84,6 +88,7 @@ func TestINT04_a_late_fact_cannot_move_the_state_backwards(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT05_bind_is_create_once_and_a_loser_is_recorded(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), bindOp(), bindOp(), markerOp{"op": "facts"},
@@ -104,6 +109,7 @@ func TestINT05_bind_is_create_once_and_a_loser_is_recorded(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT06_a_bind_naming_nothing_and_a_blank_dispatch_are_refused(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(),
@@ -115,6 +121,7 @@ func TestINT06_a_bind_naming_nothing_and_a_blank_dispatch_are_refused(t *testing
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT07_intent_declaration_is_create_once_on_every_semantic_field(t *testing.T) {
 	base := func(field string, value any) markerOp {
 		op := markerOp{"op": "declare", "criteria_source": "doc-a", "baseline_revision": "rev-1", "issue_key": "REL-1", "db_path": "/first/relay.sqlite3"}
@@ -145,6 +152,7 @@ func TestINT07_intent_declaration_is_create_once_on_every_semantic_field(t *test
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT08_the_dispatch_request_id_is_stored_only_as_its_hash(t *testing.T) {
 	answers := sameOps(t, nil, declareOp(), markerOp{"op": "facts"})
 	intent := ok(t, answers[1]).(map[string]any)["facts"].(map[string]any)["intent"].(map[string]any)
@@ -155,6 +163,7 @@ func TestINT08_the_dispatch_request_id_is_stored_only_as_its_hash(t *testing.T) 
 
 func renderPlain(v any) string { return strings.ReplaceAll(pyvalue.Repr(fromJSON(v)), " ", "") }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT09_registration_is_confirmed_against_the_relay_store(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), bindOp(),
@@ -181,6 +190,7 @@ func TestINT09_registration_is_confirmed_against_the_relay_store(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT10_an_unreadable_missing_or_held_store_refuses_registration(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), bindOp(),
@@ -209,6 +219,7 @@ func TestINT10_an_unreadable_missing_or_held_store_refuses_registration(t *testi
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT11_registration_is_create_once_and_names_a_contradiction(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), bindOp(), openOp(), registerOp(), registerOp(),
@@ -224,6 +235,7 @@ func TestINT11_registration_is_create_once_and_names_a_contradiction(t *testing.
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT12_a_malformed_assignment_id_is_refused(t *testing.T) {
 	var ops []markerOp
 	ops = append(ops, declareOp())
@@ -238,6 +250,7 @@ func TestINT12_a_malformed_assignment_id_is_refused(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT13_the_registration_fact_records_its_generation(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), bindOp(), openOp(),
@@ -274,6 +287,7 @@ func TestINT13_the_registration_fact_records_its_generation(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT14_the_registration_hold_records_nothing_in_the_relay(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(), bindOp(), openOp(),
@@ -287,6 +301,7 @@ func TestINT14_the_registration_hold_records_nothing_in_the_relay(t *testing.T) 
 	requireSameJSON(t, "relay tables across the hold", ok(t, answers[5]), ok(t, answers[3]))
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT15_the_claimant_comes_from_the_path_and_the_body_must_agree(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(),
@@ -310,6 +325,7 @@ func TestINT15_the_claimant_comes_from_the_path_and_the_body_must_agree(t *testi
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT16_a_claim_must_correlate_with_the_intents_dispatch(t *testing.T) {
 	answers := sameOps(t, nil,
 		declareOp(),
@@ -336,6 +352,7 @@ func TestINT16_a_claim_must_correlate_with_the_intents_dispatch(t *testing.T) {
 // the Go side uses its WTF-8 byte spelling so both real implementations receive the value
 // their string model can represent. Removing CorrelationProblem's utf8.ValidString guard
 // compiles and changes only the Go result to claim_dispatch_mismatch.
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT16_unencodable_dispatch_is_unnamed(t *testing.T) {
 	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "unencodable_correlation"},
@@ -349,6 +366,7 @@ func TestINT16_unencodable_dispatch_is_unnamed(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT17_a_contest_clears_only_by_the_bound_identity_and_a_matching_digest(t *testing.T) {
 	second := "claims/second/claim.json"
 	answers := sameOps(t, nil,
@@ -377,6 +395,7 @@ func TestINT17_a_contest_clears_only_by_the_bound_identity_and_a_matching_digest
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT18_pre_bind_ambiguity_survives_disagreeing_or_unaccepted_resolutions(t *testing.T) {
 	everything := []any{"attempts/0", "attempts/1", "claims/" + session1 + "/claim.json", "claims/second/claim.json"}
 	answers := sameOps(t, nil,
@@ -403,6 +422,7 @@ func TestINT18_pre_bind_ambiguity_survives_disagreeing_or_unaccepted_resolutions
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT19_a_malformed_fact_is_reported_by_its_field_path(t *testing.T) {
 	ops := []markerOp{
 		declareOp(),
@@ -435,6 +455,7 @@ func TestINT19_a_malformed_fact_is_reported_by_its_field_path(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT20_a_counter_that_is_not_a_count_is_corruption(t *testing.T) {
 	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "counters", "value": map[string]any{"holdsThisTurn": 0}},
@@ -452,6 +473,7 @@ func TestINT20_a_counter_that_is_not_a_count_is_corruption(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT21_an_identity_used_as_a_directory_name_is_refused_at_every_writer(t *testing.T) {
 	ops := []markerOp{declareOp()}
 	bad := []string{"../escape", "a/b", "..", ".", "", "  ", "../../escaped", "a\\b"}
@@ -475,6 +497,7 @@ func TestINT21_an_identity_used_as_a_directory_name_is_refused_at_every_writer(t
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT22_a_disposition_outside_the_vocabulary_is_refused(t *testing.T) {
 	answers := sameOps(t, nil, declareOp(),
 		markerOp{"op": "disposition", "session": session1, "turn": "turn-1", "outcome": "done"},
@@ -492,6 +515,7 @@ func TestINT22_a_disposition_outside_the_vocabulary_is_refused(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT23_assignment_selection_for_a_workspace(t *testing.T) {
 	answers := sameOps(t, nil,
 		// No intent: not selectable.
@@ -519,6 +543,7 @@ func TestINT23_assignment_selection_for_a_workspace(t *testing.T) {
 
 // The publish path confines every marker write: a symlinked parent inside the subtree cannot
 // carry a create-once write outside the root (marker.confined; the ValueError text is Python's).
+// sequential: t.Setenv("HOME") is process-wide.
 func TestINT21_confinement_refuses_a_symlinked_parent_outside_the_root(t *testing.T) {
 	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "write_raw", "target": "<tree>/outside/.keep", "text": ""},

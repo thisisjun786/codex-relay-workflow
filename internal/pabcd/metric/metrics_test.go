@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -179,7 +180,7 @@ func TestWriteObjectiveKindRemovesItsTempFileWhenTheRenameFails(t *testing.T) {
 	metricsMust(t, WriteObjectiveKind(cwd, "s", Maximize))
 	dir, boom := objectiveKindDir(cwd), errors.New("rename failed")
 	before, _ := os.ReadFile(filepath.Join(dir, "s.json"))
-	err := writeObjectiveKind(cwd, "s", Satisfy, time.Now(), func(string, string) error { return boom })
+	err := writeObjectiveKind(context.Background(), cwd, "s", Satisfy, time.Now(), func(string, string) error { return boom })
 	left, _ := filepath.Glob(filepath.Join(dir, "*.tmp"))
 	if after, _ := os.ReadFile(filepath.Join(dir, "s.json")); !errors.Is(err, boom) || len(left) != 0 || string(after) != string(before) {
 		t.Errorf("err %v, temp files %v, final file now %q", err, left, after)
@@ -221,7 +222,7 @@ func TestWriteObjectiveKindDoesNotFollowASymlinkAtItsTempName(t *testing.T) {
 	metricsMust(t, os.MkdirAll(objectiveKindDir(cwd), 0o777))
 	tmp := fmt.Sprintf("%s.%d.%d.tmp", objectiveKindPath(cwd, "s"), os.Getpid(), now.UnixMilli())
 	metricsMust(t, os.Symlink(victim, tmp))
-	err := writeObjectiveKind(cwd, "s", Maximize, now, crwdir.Rename)
+	err := writeObjectiveKind(context.Background(), cwd, "s", Maximize, now, crwdir.Rename)
 	if got, _ := os.ReadFile(victim); err == nil || string(got) != "keep" {
 		t.Errorf("write error %v, the file the link points at now holds %q", err, got)
 	}

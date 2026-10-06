@@ -1,0 +1,5 @@
+<!-- Original CRW asset: one single-colour mark, replacing the CXC logo/icon PNGs. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="CRW">
+  <rect width="24" height="24" rx="5" fill="#4f8cff" />
+  <path d="M6 12h3l2 4 2-8 2 4h3" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

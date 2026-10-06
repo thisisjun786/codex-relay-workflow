@@ -121,6 +121,7 @@ func (k *integrationKit) mark(a accepted) {
 // Criterion c5 (P-INT), c8: integration is an ancestry FACT the relay reads from a real repository, bound to the parent's merged mark on the same revision: a merge commit on the branch is
 // ancestry, a squashed copy is not, an unmerged head is not, and neither the observation alone nor the mark alone integrates the node.
 func TestIntegratedOnRealGit(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
@@ -178,6 +179,7 @@ func TestIntegratedOnRealGit(t *testing.T) {
 
 // A squash or rebase landing keeps the content and loses the head: the accepted head is not an ancestor, and when a landed merge turn says the head was merged the reading names the contradiction.
 func TestSquashLandingIsNotAncestry(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
@@ -200,6 +202,7 @@ func TestSquashLandingIsNotAncestry(t *testing.T) {
 
 // A terminal node has no outgoing edge, so its target arrives with the first observation (--target); a node with several targets integrates only when every one of them contains the head.
 func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
@@ -248,6 +251,7 @@ func TestObserveTargetsAreTheRequiredSet(t *testing.T) {
 
 // An observation is a replay only when everything it says is what the latest one said: the same tip with another answer about ancestry is a new reading.
 func TestObservationReplayComparesTheAnswer(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	k.declare("g", "I", "x.go")
 	k.acceptOnForge("g", "I", acceptOpts{HeadSHA: head1, PR: 5})
@@ -269,6 +273,7 @@ func TestObservationReplayComparesTheAnswer(t *testing.T) {
 
 // Contract 3.2: nothing new is integrated for a paused or cancelled relationship, and a pause that lands while the tip and the ancestry are being read is seen under the lock.
 func TestObserveRefusesPausedAndCancelled(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")
@@ -333,6 +338,7 @@ func TestObserveRefusesPausedAndCancelled(t *testing.T) {
 }
 
 // The ancestry of a forge repository is the compare API's: a fake gh answers behind_by 0 (ahead or identical) and 2 (diverged).
+// sequential: writes a stand-in gh script and execs it: a concurrent fork in another test can still hold the write descriptor, and Linux refuses such an exec with ETXTBSY.
 func TestGitAncestryForgeCompare(t *testing.T) {
 	dir := t.TempDir()
 	script := func(name, body string) string {
@@ -373,6 +379,7 @@ func TestGitAncestryForgeCompare(t *testing.T) {
 
 // A linked working tree has a .git file, not a directory, and a bare repository has no .git at all: git is asked about the checkout, so the ancestry is proven in either.
 func TestAncestryInLinkedAndBareCheckouts(t *testing.T) {
+	t.Parallel()
 	repo := newGitRepo(t)
 	base := repo.git("rev-parse", "HEAD")
 	repo.git("checkout", "-q", "-b", "feature")

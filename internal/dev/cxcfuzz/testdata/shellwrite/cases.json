@@ -1,0 +1,170 @@
+[
+  {
+    "name": "redirect",
+    "input": "{\"command\": \"echo hi \u003e /m/n.md\"}",
+    "oracle": "[\"/m/n.md\"]",
+    "go": "[\"/m/n.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "append-and-clobber",
+    "input": "{\"command\": \"echo hi \u003e\u003e /m/n.md; echo hi \u003e| /m/o.md\"}",
+    "oracle": "[\"/m/n.md\", \"/m/o.md\"]",
+    "go": "[\"/m/n.md\", \"/m/o.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "stderr-is-not-a-write",
+    "input": "{\"command\": \"rg foo /m/M.md 2\u003e/dev/null\"}",
+    "oracle": "[]",
+    "go": "[]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "heredoc-body-is-not-a-write",
+    "input": "{\"command\": \"cat \u003c\u003cEOF \u003e /w/x.md\\n/memories/n.md\\nEOF\"}",
+    "oracle": "[\"/w/x.md\"]",
+    "go": "[\"/w/x.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "tee-operand",
+    "input": "{\"command\": \"echo hi | tee /m/a.md\"}",
+    "oracle": "[\"/m/a.md\"]",
+    "go": "[\"/m/a.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "sed-in-place",
+    "input": "{\"command\": \"sed -i 's/a/b/' /m/a.md\"}",
+    "oracle": "[\"/m/a.md\"]",
+    "go": "[\"/m/a.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "cp-destination",
+    "input": "{\"command\": \"cp /w/a.md /m/b.md\"}",
+    "oracle": "[\"/m/b.md\"]",
+    "go": "[\"/m/b.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "quoted-operand",
+    "input": "{\"command\": \"echo hi \u003e '/m/a b.md'\"}",
+    "oracle": "[\"/m/a b.md\"]",
+    "go": "[\"/m/a b.md\"]",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "crw583-keyword-escape",
+    "input": "{\"command\": \"python3 -c 'open(file=\\\"\\\\\\\\x2fm/a\\\",mode=\\\"w\\\")'\"}",
+    "oracle": "[]",
+    "go": "[\"\\\\x2fm/a\", \"/m/a\"]",
+    "tag": "intentionally-changed",
+    "record": "known-defects CRW-517 (port: fixed, security): the hardened reading decodes the escape and names /m/a, which the oracle misses"
+  },
+  {
+    "name": "crw583-path-order",
+    "input": "{\"command\": \"python3 -c \\\"from pathlib import Path; Path('/tmp/b', '/m/a').write_text('x')\\\"\"}",
+    "oracle": "[\"/tmp/b', '/m/a\"]",
+    "go": "[\"/tmp/b', '/m/a\", \"/m/a\"]",
+    "tag": "intentionally-changed",
+    "record": "known-defects CRW-517 (port: fixed, security): the hardened reading names the join of the literal parts, /m/a, which the oracle misses"
+  },
+  {
+    "name": "crw650-triple-crlf",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\"\\\"/m/a\\r\\nb\\\"\\\"\\\",\\\"w\\\")'\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a\\nb\"]",
+    "tag": "intentionally-changed",
+    "record": "known-defects CRW-678 (port: fixed, security): the triple-quoted body is read with Python's line breaks, naming /m/a\nb, which the oracle misses"
+  },
+  {
+    "name": "crw650-triple-open",
+    "input": "{\"command\": \"python3 -c 'open(\\\"\\\"\\\"/review/memories/\\\"x\\\"\\\"\\\",\\\"w\\\")'\"}",
+    "oracle": "[\"\\\"\\\"/review/memories/\\\"x\\\"\\\"\"]",
+    "go": "[\"\\\"\\\"/review/memories/\\\"x\\\"\\\"\", \"/review/memories/\\\"x\"]",
+    "tag": "intentionally-changed",
+    "record": "known-defects CRW-650 (port: fixed, security): the triple-quoted literal is read to its end, naming /review/memories/\"x, which the oracle misses"
+  },
+  {
+    "name": "campaign-stderr-target",
+    "input": "{\"command\": \"echo hi \u003e /m/n.md 2\u003e /m/err\"}",
+    "oracle": "[\"/m/n.md\"]",
+    "go": "[\"/m/n.md\", \"/m/err\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-readwrite-target",
+    "input": "{\"command\": \"cat \u003c\u003e /m/a\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-nested-shell",
+    "input": "{\"command\": \"bash -c 'echo x \u003e /m/a'\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-verb-wrapper",
+    "input": "{\"command\": \"env -i sudo tee /m/a\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-verb-wrapper-option",
+    "input": "{\"command\": \"nohup timeout 5 tee /m/a\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-perl-in-place",
+    "input": "{\"command\": \"timeout 5 perl -i -pe 's/a/b/' .\"}",
+    "oracle": "[]",
+    "go": "[\".\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-sudo-tee",
+    "input": "{\"command\": \"sudo -u root tee /m/a\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-tee-bare-slash",
+    "input": "{\"command\": \"a\\ntee /\"}",
+    "oracle": "[]",
+    "go": "[\"/\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  },
+  {
+    "name": "campaign-interpreter-escape",
+    "input": "{\"command\": \"python3 -c \\\"open('/m/a\\\\nb','w')\\\"\"}",
+    "oracle": "[\"/m/a\\\\nb\"]",
+    "go": "[\"/m/a\\\\nb\", \"/m/a\\nb\"]",
+    "tag": "open",
+    "record": "known-defects CRW-517 (port: fixed, security): the port deliberately names this destination and the oracle does not; pinned open so the divergence stays visible and the port cannot silently stop reporting it"
+  }
+]
