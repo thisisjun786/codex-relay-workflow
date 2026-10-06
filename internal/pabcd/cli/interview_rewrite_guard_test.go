@@ -18,7 +18,8 @@ import (
 // tracker shorter than the stored one and loses those records for good. The hook's post-compact write already refuses this
 // through state.RewriteKeepsInterview; these cases pin the same refusal on the cli writers, the orchestrate transition included.
 
-// cliInterviewRefusal is the reason a cli writer gives when the rewrite would drop stored interview records.
+// cliInterviewRefusal is the reason a cli writer gives when the rewrite would drop stored interview records. Each caller keeps
+// its own refusal sentence frame (memory allow-write, evidence resolve, scan record, orchestrate) and takes this reason.
 const cliInterviewRefusal = "session state holds interview records this command cannot rewrite without losing them; refusing to rewrite it"
 
 // cliInterviewContradictions is a stored contradictions array of n valid records.
