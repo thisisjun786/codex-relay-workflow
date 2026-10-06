@@ -1401,4 +1401,3 @@ above (`## CRW-346 — the doctor text renderer stderr slice`).
   port's `HarnessCheck.Repair` was a plain string with `omitempty`, so an explicit empty repair was
   indistinguishable from an absent one and the key was always dropped; this change makes it a
   `*string` (nil absent, a pointer to "" present), so the key survives a round trip; port: fixed.
-

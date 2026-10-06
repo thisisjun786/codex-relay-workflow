@@ -78,3 +78,26 @@ func TestHarnessReportParityEmptyRepairRoundTrips(t *testing.T) {
 		t.Fatalf("absent repair kept in JSON: %s", raw)
 	}
 }
+
+// TestHarnessReportParityInvalidByteIsReplacement pins the JSON path for a byte that is not UTF-8
+// and is not the cut's WTF-8 surrogate: Node's UTF-8 decoder already turned it into U+FFFD in the
+// oracle's stderr string, so both writers spell it U+FFFD, never a \\udcXX escape.
+func TestHarnessReportParityInvalidByteIsReplacement(t *testing.T) {
+	check := HarnessCheck{Name: "features", Severity: HarnessWarn, Evidence: "a\xffb"}
+	report := HarnessReport{SchemaVersion: HarnessSchemaVersion, Overall: HarnessWarn, Checks: []HarnessCheck{check}}
+	var buf bytes.Buffer
+	if err := harnessRunWriteJSON(&buf, report); err != nil {
+		t.Fatal(err)
+	}
+	// JSON.stringify writes U+FFFD as the character itself, not as an escape (only the quote,
+	// the backslash and the controls are escaped), so the oracle's bytes carry it raw.
+	if !strings.Contains(buf.String(), "a\uFFFDb") {
+		t.Fatalf("JSON output does not spell the invalid byte U+FFFD:\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "\\udcff") {
+		t.Fatalf("JSON output spells the invalid byte as a \\udcXX escape:\n%s", buf.String())
+	}
+	if text := RenderHarnessReport(report); !strings.Contains(text, "a\uFFFDb") {
+		t.Fatalf("text output does not spell the invalid byte U+FFFD: %q", text)
+	}
+}

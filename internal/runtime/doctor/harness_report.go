@@ -72,12 +72,15 @@ func harnessReportRepair(s string) *string {
 }
 
 // harnessReportJSONString is JSON.stringify of a string: pyjson's writer with ensure_ascii=false
-// (Unicode) and a WTF-8 surrogate written as its \u escape (SurrogateEscapes). The quote, the
-// backslash and the controls are escaped, every other character -- the em dash included -- stands
-// as it is, and a lone high surrogate harnessReportCut kept is the \udXXX escape (lower-case hex)
-// JSON.stringify writes, where encoding/json alone would write U+FFFD.
+// (Unicode) and ReplacedBytes. A WTF-8 lone surrogate -- the three bytes harnessReportCut keeps --
+// is written as its \u escape (lower-case hex, the \udXXX JSON.stringify writes), while any other
+// byte that is not UTF-8 is written as U+FFFD: that is what Node's UTF-8 decoder already did to
+// the oracle's stderr string, so a probe's invalid byte is U+FFFD in both, where SurrogateEscapes
+// would spell it \udcXX and encoding/json alone would spell the kept surrogate U+FFFD. The quote,
+// the backslash and the controls are escaped and every other character -- the em dash included --
+// stands as it is.
 func harnessReportJSONString(s string) string {
-	return pyjson.Dumps(s, pyjson.Options{Unicode: true, Bytes: pyjson.SurrogateEscapes})
+	return pyjson.Dumps(s, pyjson.Options{Unicode: true, Bytes: pyjson.ReplacedBytes})
 }
 
 // MarshalJSON is JSON.stringify of a check (doctor.ts:25-32 read by cli.ts:84): the four fields
