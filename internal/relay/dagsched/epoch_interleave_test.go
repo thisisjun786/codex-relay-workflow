@@ -8,6 +8,7 @@ import (
 
 // A claim that lands between the build of a correction's manifest and its store refuses the store: the fence and PutManifest are one transaction, so nothing is stored for the stale session.
 func TestAClaimBetweenTheBuildAndTheStoreOfAManifestRefusesTheStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
@@ -43,6 +44,7 @@ func TestAClaimBetweenTheBuildAndTheStoreOfAManifestRefusesTheStore(t *testing.T
 
 // The activation of a project by a claim cannot be got round with a plan nobody claimed, or by the claim of a plan that has no revision yet, and replacing the parent does not undo it.
 func TestCapBasisActivationOfAProject(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	basis := func(plan string) CapBasis {
 		return CapBasis{LimitID: "lim-project-runs", Revision: 1, WMinutes: 30, WSource: "measured", SMinutes: 5, SSource: "measured", DecidedBy: "parent", Plan: plan}

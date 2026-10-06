@@ -59,11 +59,11 @@ a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
 A required check that is not a success has two readings, and they call for different
 actions. `checks_not_run` is the reading for a check that did not succeed because its
-workflow run holds a job that concluded cancelled without beginning a step: no runner ever
-picked it up, so the commit was never tested. `merge-evidence` names the run and the jobs
-that did not run in the problem's detail, so a rerun can be aimed at them. `checks_stale` is
-the reading for every other non-success, a real failure, and the lane returns its turn as
-before.
+workflow run holds a job that concluded `cancelled`, `failure` or `timed_out` without beginning a
+step: no runner ever picked it up, so the commit was never tested. `merge-evidence` names the run
+and the jobs that did not run in the problem's detail, so a rerun can be aimed at them.
+`checks_stale` is the reading for every other non-success, a real failure, and the lane returns
+its turn as before.
 
 What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
 judge owns it, the lane reruns the failed jobs of that run once on the same head
@@ -1175,6 +1175,9 @@ among its commands, the parent does not settle a conflict either.
      settled (entry files both sides add merge as the union), because the file is assembled from those
      fragments. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
+     For the generated case sections of `plugins/crw/skills/crw-run/references/dispatch-verification.md` it is
+     `go run -tags dev ./cmd/crw-dev ci dispatch-cases --write`, which rebuilds that document from the row and
+     block files under `docs/crw-run/dispatch-cases/`.
 
 The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
 `plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular

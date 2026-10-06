@@ -17,6 +17,7 @@ type Check func(args []string, stdout, stderr io.Writer) int
 // Checks is the `crw-dev ci` command table.
 var Checks = map[string]Check{
 	"contracts":        Contracts,
+	"dispatch-cases":   DispatchCases,
 	"operations":       OperationsContract,
 	"plugin":           Plugin,
 	"refactor-backlog": RefactorBacklog,

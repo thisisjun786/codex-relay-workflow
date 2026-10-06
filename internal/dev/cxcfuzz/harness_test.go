@@ -113,9 +113,9 @@ func TestCampaignEchoAgreesWithTheShim(t *testing.T) {
 	}
 }
 
-// A shim-side mutation of one input gives one divergence, and one divergence file holding the
-// input as it was generated.
-func TestShimMutationGivesOneDivergenceHoldingTheGeneratedInput(t *testing.T) {
+// A shim-side mutation of one input gives one divergence, one divergence file, and a shrunk input
+// that still produces the difference.
+func TestShimMutationGivesOneDivergenceAndItsShrunkInput(t *testing.T) {
 	requireNode(t)
 	count := 0
 	target := echoTarget()
@@ -150,8 +150,12 @@ func TestShimMutationGivesOneDivergenceHoldingTheGeneratedInput(t *testing.T) {
 	if d.Kind != Differ {
 		t.Fatalf("kind %q", d.Kind)
 	}
-	if d.Input != `{"mutate": true, "text": "hello"}` {
-		t.Fatalf("the divergence holds %s, want the input as generated", d.Input)
+	shrunk, err := decode(d.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := canonical(shrunk); got != `{"mutate": true, "text": ""}` {
+		t.Fatalf("shrunk input %s", got)
 	}
 	if !strings.HasPrefix(filepath.Base(files[0]), string(Differ)+"-") {
 		t.Fatalf("divergence file %s is not named by kind and input hash", filepath.Base(files[0]))
