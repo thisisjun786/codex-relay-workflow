@@ -387,3 +387,101 @@ func gitInit(t *testing.T, dir string) {
 		}
 	}
 }
+
+// TestLoopInitRefusesToReplaceAnUnreadablePlanFile is the data-loss fix recorded in
+// docs/port-cxc/known-defects/CRW-646.md: the oracle reads a damaged plan file as an absent one and
+// its rename then replaces the bytes, so the port refuses instead and leaves the file as it is.
+func TestLoopInitRefusesToReplaceAnUnreadablePlanFile(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	dir := filepath.Join(cwd, ".crw", "goalplans", "ship-the-export-feature")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	damaged := filepath.Join(dir, "goalplan.json")
+	broken := "{\"objective\": \"Ship the export feature\""
+	if err := os.WriteFile(damaged, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
+	wantPrefix := "loop init: a plan file for slug 'ship-the-export-feature' already exists but could not be read (invalid-json)"
+	if result.Code != 1 || !strings.HasPrefix(result.Output, wantPrefix) || !strings.HasSuffix(result.Output, "Nothing was written.") {
+		t.Fatalf("got %d %q", result.Code, result.Output)
+	}
+	if got, err := os.ReadFile(damaged); err != nil || string(got) != broken {
+		t.Fatalf("the damaged plan was replaced: %q %v", got, err)
+	}
+}
+
+// TestLoopInitRefusesToReplaceUnreadableSessionState is the other data-loss fix: ReadState answers a
+// fresh IDLE state for a file it cannot decode, so binding a slug through it would replace it.
+func TestLoopInitRefusesToReplaceUnreadableSessionState(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	if err := state.WriteState(cwd, state.DefaultState("rec-s1", "")); err != nil {
+		t.Fatal(err)
+	}
+	path := state.StatePath(cwd, "rec-s1")
+	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", "rec-s1")
+	wantPrefix := "loop init: session rec-s1 has unreadable state; refusing to overwrite it"
+	if result.Code != 1 || !strings.HasPrefix(result.Output, wantPrefix) {
+		t.Fatalf("got %d %q", result.Code, result.Output)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "not json" {
+		t.Fatalf("the damaged state was replaced: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".crw", "goalplans")); !os.IsNotExist(err) {
+		t.Fatalf("a refused init wrote a plan: %v", err)
+	}
+}
+
+// TestLoopSessionVerbsRefuseANonCanonicalSession is the security fix: the oracle guards the ready verb
+// alone, so show and validate would resolve a non-canonical id to another session state file.
+func TestLoopSessionVerbsRefuseANonCanonicalSession(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	plan := loopReadyFixturePlan(t, cwd)
+	loopSession(t, cwd, "a-b")
+	bound := state.ReadState(cwd, "a-b")
+	bound.Slug = plan.Slug
+	if err := state.WriteState(cwd, bound); err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"show", "validate", "ready"} {
+		t.Run(verb, func(t *testing.T) {
+			result := loopRun(t, cwd, verb, "--session", "a/b")
+			if result.Code != 1 || result.Output != "loop "+verb+": session id is not canonical" {
+				t.Fatalf("got %d %q", result.Code, result.Output)
+			}
+			if strings.Contains(result.Output, plan.Slug) {
+				t.Fatalf("the refusal leaked the plan slug: %q", result.Output)
+			}
+		})
+	}
+}
+
+// TestLoopReadyJSONKeepsJSONStringifyBytes covers the escaping difference a review found: json.Marshal
+// would print the escape forms of < and of U+2028 where the oracle prints the characters.
+func TestLoopReadyJSONKeepsJSONStringifyBytes(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	plan := loopReadyFixturePlan(t, cwd)
+	plan.WorkPhases[1].Title = "<build> & ship end"
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	result := loopRun(t, cwd, "ready", "--slug", plan.Slug, "--json")
+	if result.Code != 0 {
+		t.Fatalf("ready: %d %q", result.Code, result.Output)
+	}
+	for _, want := range []string{"<build> & ship", " "} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("ready --json escaped %q: %q", want, result.Output)
+		}
+	}
+	for _, escaped := range []string{"\\u003c", "\\u2028"} {
+		if strings.Contains(result.Output, escaped) {
+			t.Fatalf("ready --json used Go escaping %q: %q", escaped, result.Output)
+		}
+	}
+}

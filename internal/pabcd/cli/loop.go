@@ -11,8 +11,10 @@
 package cli
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -63,12 +65,13 @@ func RunLoopCli(args LoopCliArgs) (LoopCliResult, error) {
 	if args.Verb == LoopVerbInit {
 		return loopInit(args)
 	}
-	// Checked BEFORE ResolveLoopSlug(): a non-canonical id would be sanitized into a DIFFERENT session's
-	// state file, and this read-only verb would then print a plan the caller never named (:802-810).
-	if args.Verb == LoopVerbReady {
-		if id := loopSessionID(args); id != "" && !state.IsCanonicalSessionID(id) {
-			return LoopCliResult{Output: "loop ready: session id is not canonical", Code: 1}, nil
-		}
+	// Checked BEFORE ResolveLoopSlug(): state paths sanitize the id, so a non-canonical one would resolve to
+	// a DIFFERENT session's state file and this verb would print or judge a plan the caller never named. The
+	// oracle guards the ready verb alone (:802-810), which leaves show --session a/b reading session a-b's
+	// plan (docs/port-cxc/known-defects/CRW-646.md, port: fixed); the port applies the guard to every verb
+	// that resolves a plan through --session.
+	if id := loopSessionID(args); id != "" && !state.IsCanonicalSessionID(id) {
+		return LoopCliResult{Output: fmt.Sprintf("loop %s: session id is not canonical", args.Verb), Code: 1}, nil
 	}
 	switch args.Verb {
 	case LoopVerbSteer, LoopVerbAsk, LoopVerbDecide, LoopVerbAddCriterion, LoopVerbAddWorkPhase,
@@ -114,8 +117,16 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 			"--surface <logic|web|tui|desktop>\nNothing was written.", Code: 1}, nil
 	}
 	slug := interview.DeriveSlug(objective)
-	if goalplan.ReadGoalplan(args.Cwd, slug) != nil {
-		return LoopCliResult{Output: fmt.Sprintf("loop init: a plan already exists at slug '%s' (use show/validate)", slug), Code: 1}, nil
+	// The oracle asks only whether a plan LOADED, so a truncated or structurally invalid plan file reads as
+	// absent and WriteGoalplan's rename replaces its bytes (docs/port-cxc/known-defects/CRW-646.md,
+	// port: fixed). Refuse whenever the plan file is there, so a damaged plan stays for repair.
+	if read := goalplan.ReadGoalplanDetailed(args.Cwd, slug); read.Diagnostic == nil || loopPlanFileExists(args.Cwd, slug) {
+		if read.Diagnostic == nil {
+			return LoopCliResult{Output: fmt.Sprintf("loop init: a plan already exists at slug '%s' (use show/validate)", slug), Code: 1}, nil
+		}
+		return LoopCliResult{Output: fmt.Sprintf(
+			"loop init: a plan file for slug '%s' already exists but could not be read (%s); refusing to overwrite it\nNothing was written.",
+			slug, read.Diagnostic.Kind), Code: 1}, nil
 	}
 	// #133: a BOUND plan promises a closable cycle. Refuse here when the source identity cannot be resolved,
 	// rather than letting P->A->B->C succeed and then stranding the session at C with no testReceiptPath.
@@ -124,6 +135,13 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if sessionID != "" {
 		if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
 			return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
+		}
+		// ReadState answers a fresh IDLE state for a file it cannot decode, so binding a slug through it would
+		// replace a damaged session state with a default and lose the original bytes
+		// (docs/port-cxc/known-defects/CRW-646.md, port: fixed). Refuse before anything is written, and again
+		// under the session lock at the binding itself.
+		if _, unreadable := state.ReadStateStrict(args.Cwd, sessionID); unreadable {
+			return LoopCliResult{Output: "loop init: session " + sessionID + " has unreadable state; refusing to overwrite it\nNothing was written.", Code: 1}, nil
 		}
 	}
 	criteria := make([]goalplan.NewGoalplanCriterion, 0, len(args.Criteria))
@@ -141,13 +159,30 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 		return LoopCliResult{}, err
 	}
 	if sessionID != "" {
-		next := state.ReadState(args.Cwd, sessionID)
-		next.Slug = slug
-		if err := state.WriteState(args.Cwd, next); err != nil {
+		if err := state.WithSessionLock(args.Cwd, sessionID, func() error {
+			next, unreadable := state.ReadStateStrict(args.Cwd, sessionID)
+			if unreadable {
+				return errors.New("session state is unreadable; refusing to overwrite it")
+			}
+			next.Slug = slug
+			return state.WriteState(args.Cwd, next)
+		}); err != nil {
 			return LoopCliResult{}, err
 		}
 	}
 	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
+}
+
+// loopPlanFileExists reports whether slug's plan file is there as a regular file. A path the slug resolver
+// refuses - a linked state root, say - is not an existing plan file: the write path reports that refusal
+// itself, exactly as the oracle's writeGoalplan does.
+func loopPlanFileExists(cwd, slug string) bool {
+	dir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(dir, goalplan.GoalplanFile))
+	return err == nil && info.Mode().IsRegular()
 }
 
 // loopReadyPhaseRow, loopReadyTaskRow, loopReadyOpenDecisionRow and loopReadyAwaitingRow are runReady's JSON
@@ -258,11 +293,13 @@ func loopReady(args LoopCliArgs, plan *goalplan.Goalplan) LoopCliResult {
 		if hasDecisions {
 			doc.OpenDecisions, doc.AwaitingDecisions = &openDecisions, &awaitingDecisions
 		}
-		encoded, err := json.Marshal(doc)
+		// statusJSON is this package's JSON.stringify: no HTML escaping and U+2028/U+2029 kept, which is what
+		// the oracle prints for a title or a question holding those characters.
+		encoded, err := statusJSON(doc)
 		if err != nil {
 			return LoopCliResult{Output: err.Error(), Code: 1}
 		}
-		return LoopCliResult{Output: string(encoded), Code: 0}
+		return LoopCliResult{Output: encoded, Code: 0}
 	}
 	lines := []string{"[crw loop ready: " + plan.Slug + "]"}
 	lines = append(lines, loopReadyPhaseLine(phases), loopReadyTaskLine(tasks))
