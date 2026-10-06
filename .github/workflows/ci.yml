@@ -97,7 +97,9 @@ jobs:
       - if: steps.paths.outputs.changed == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24'
+          # An exact release, not the floating major: the moved tests are timing- and
+          # runtime-sensitive, so the same commit must meet the same Node.
+          node-version: '24.20.0'
       - name: Run the staged skill-script tests
         if: steps.paths.outputs.changed == 'true'
         run: |
