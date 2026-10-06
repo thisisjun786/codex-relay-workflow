@@ -1357,3 +1357,18 @@ Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` 
 - `dispatchSources` prefixes the message with the project layer's trust warning and strips it back off before it reads a guard block (source :426-427); the port dropped the project layer (decision 7), so the warning is always empty and the strip is the identity, and the port omits it. The route half keeps the same always-empty `trustPrefix` branch, so the omission is the only difference; port: kept.
 - A managed ledger that is missing or unreadable makes the oracle throw a Node error and the port return a Go error, so the deny text `managed dispatch: <error>` carries Node's wording in the oracle and Go's in the port (source :899 and `internal/role/dispatch_ledger.go`, whose header already records this for the ledger port); port: kept as a runtime diagnostic difference. The recorder therefore records no missing-ledger case, and the Go test asserts the port's own text.
 - The one-time recursion grant a subagent presents is consumed before the managed dispatch marker is checked (source :882 before the managed loop :895-907), so a child whose managed dispatch is refused has already spent its grant and cannot retry that spawn with the same one; the port keeps the oracle's order, consuming the grant in `spawnHookAssemble` before `spawnHookManaged`; port: kept (a review comment of the port's pull request found it, and the recorded managed cases keep the oracle's answers).
+
+## Found by the steering op port (CRW-376)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering_ops.go`; the ported ranges are `:39-63,72-153,182-239`.
+
+- The minted criterion id is the highest stored `c-N` plus one in float64, so at or above 2^53 the increment is
+  lost and the new id repeats or falls below the highest stored one: on a plan holding `c-9007199254740993` the
+  next criterion is minted as `c-9007199254740992`, where the comment at `:199-201` promises a dense monotonic
+  sequence (source `steering.ts:199-204`; recorded case `mint-2pow53` in the port's differential, and the plan
+  holding that id is refused by the definition integrity rather than corrupted, so nothing is lost);
+  port: kept.
+- An op that is an array passes the op object test (`:90` is a `typeof` test, and an array is an object) and
+  fails the kind read instead, so the refusal names the missing kind of a value that is not an object at all
+  (source `steering.ts:90-92`; the batch is still rejected whole); port: kept.
