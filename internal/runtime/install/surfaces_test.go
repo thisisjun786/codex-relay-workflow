@@ -17,6 +17,7 @@ import (
 // .absolute(): '..' kept, so the record names, and its digest hashes, the file the kernel opens
 // for that spelling - here through a symbolic link - which is the file the bridge enforces.
 func TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	named := `{"allowed": [{"model": "gpt-5", "efforts": ["high"]}]}`
 	other := `{"allowed": [{"model": "gpt-4", "efforts": ["low"]}]}`
@@ -41,6 +42,7 @@ func TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt(t *testing.T) {
 // plugin's declaration and would run nothing after the swap: an update refuses it and nothing
 // moves, and so does a rollback to the runtime the update replaced.
 func TestAUserRegistrationThroughThePointerIsASecondOwner(t *testing.T) {
+	t.Parallel()
 	userSettings := func(h *host) {
 		write(t, filepath.Join(h.codex, install.SettingsName), `{
   "configVersion": 1,
