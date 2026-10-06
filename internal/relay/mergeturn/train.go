@@ -40,6 +40,7 @@ var TrainExpectedJobs = []string{
 	"validate",
 	"secrets",
 	"skill-scripts-node",
+	"gui",
 	"go-product (lint)",
 	"go-product (test-1)",
 	"go-product (test-2)",
