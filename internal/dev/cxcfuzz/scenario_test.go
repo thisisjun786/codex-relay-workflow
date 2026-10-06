@@ -165,4 +165,8 @@ func TestRootReplacement(t *testing.T) {
 	if got := canonical(stripped); got != `{"list": ["${ROOT}/b"], "path": "${ROOT}/a"}` {
 		t.Fatalf("stripped %s", got)
 	}
+	keyed := pyjson.Object{{Key: one + "/a", Value: "x"}}
+	if got := canonical(stripRoot(keyed, one)); got != `{"${ROOT}/a": "x"}` {
+		t.Fatalf("keyed %s", got)
+	}
 }

@@ -244,7 +244,9 @@ func ReplaceRoot(out, root string) string {
 	return strings.ReplaceAll(out, root, "${ROOT}")
 }
 
-// stripRoot applies ReplaceRoot to every string inside a value, before the two answers compare.
+// stripRoot applies ReplaceRoot to every string inside a value, keys included: a target may key an
+// answer by an absolute path, and the two sides run in different roots, so a key carries the root
+// exactly as a value does. It runs before the two answers compare.
 func stripRoot(value any, root string) any {
 	switch v := value.(type) {
 	case string:
@@ -252,7 +254,7 @@ func stripRoot(value any, root string) any {
 	case pyjson.Object:
 		out := make(pyjson.Object, 0, len(v))
 		for _, item := range v {
-			out = append(out, pyjson.Field{Key: item.Key, Value: stripRoot(item.Value, root)})
+			out = append(out, pyjson.Field{Key: ReplaceRoot(item.Key, root), Value: stripRoot(item.Value, root)})
 		}
 		return out
 	case []any:
@@ -264,7 +266,7 @@ func stripRoot(value any, root string) any {
 	case map[string]any:
 		out := make(map[string]any, len(v))
 		for key, item := range v {
-			out[key] = stripRoot(item, root)
+			out[ReplaceRoot(key, root)] = stripRoot(item, root)
 		}
 		return out
 	default:
