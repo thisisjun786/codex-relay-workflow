@@ -20,9 +20,14 @@ import (
 func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"nope"}, &out, &errOut); code != parserExit ||
-		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,help,version} ...") ||
-		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'help', 'version')") {
+		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,help,version} ...") ||
+		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'help', 'version')") {
 		t.Fatalf("unknown mode: %d %q", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(context.Background(), "crw", []string{"config"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "usage: crw config") {
+		t.Errorf("crw config: %d %q", code, errOut.String())
 	}
 	out.Reset()
 	errOut.Reset()

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
@@ -187,6 +188,7 @@ func modes() []mode {
 			defer stop()
 			return gui.Run(ctx, c.args, c.stdout, c.stderr)
 		}},
+		{"config", true, func(c invocation) int { return crwconfig.Run(c.args, c.stdout, c.stderr, os.Getenv) }},
 		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
 		{"pabcd", false, func(c invocation) int {
 			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())

@@ -216,12 +216,34 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 			bad(where + " states attempt " + quote.Value(value) + ", and attempts are counted from one; a lower value is read as the first attempt and hides the newest one")
 		}
 		if value, present := o.Lookup("notRun"); present {
-			if _, isBool := value.(bool); !isBool {
+			flag, isBool := value.(bool)
+			if !isBool {
 				bad(where + " states notRun as " + quote.Kind(value) + ", not true or false; the collector sets it to say a job began no step, and a value of another type cannot say that")
+			} else if flag && !stepLessConclusion(o.Get("conclusion")) {
+				// A job that began no step concluded cancelled, failure or timed_out, so a restated
+				// record that marks any other conclusion could steer the lane toward a rerun on a
+				// job the collector never produces that way (CRW-681).
+				bad(where + " states notRun true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a job that began no step concluded cancelled, failure or timed_out; another conclusion cannot be a job whose runner never picked it up")
 			}
 		}
 	}
 	return problems
+}
+
+// stepLessConclusion reports whether a conclusion is exactly one a job that began no step can
+// carry: cancelled, failure or timed_out. The comparison is exact rather than normalized, because
+// the collector emits the forge's canonical spelling and a restated record that spells one of these
+// another way must be refused rather than read as one of them (CRW-681).
+func stepLessConclusion(conclusion any) bool {
+	s, ok := conclusion.(string)
+	if !ok {
+		return false
+	}
+	switch s {
+	case "cancelled", "failure", "timed_out":
+		return true
+	}
+	return false
 }
 
 // workflowRun is the workflow run a check entry belongs to, read from the collector's
@@ -252,9 +274,10 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 			continue
 		}
 		o, _ := Object(entry)
-		// Only a cancelled job can be one that began no step: the collector marks nothing else,
-		// and a restated record that says otherwise cannot steer the lane toward a rerun.
-		if o.Get("conclusion") != "cancelled" {
+		// A job that began no step concluded cancelled, failure or timed_out: the collector marks
+		// nothing else, and a restated record that says otherwise cannot steer the lane toward a
+		// rerun (CRW-661, CRW-681).
+		if !stepLessConclusion(o.Get("conclusion")) {
 			continue
 		}
 		flag, isBool := o.Get("notRun").(bool)
@@ -269,27 +292,50 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 
 // beganFailureBeside reports whether the same workflow run and attempt as a required check holds a
 // job other than that check which began a step (the collector did not mark it notRun) and concluded
-// failure. Such a job says the commit was tested and failed, so a not-run sibling cannot make the
-// required failure read as a runner problem (CRW-676). The judged check is excluded by its own run
-// identity, which the collector makes unique per job entry within a run attempt.
-func beganFailureBeside(checks []any, run string, at *big.Int, requiredRunId string) bool {
+// failure or timed_out. Such a job says the commit was tested and failed, so a not-run sibling
+// cannot make the required failure read as a runner problem (CRW-676, CRW-681). The judged check is
+// excluded by its own run identity, which the collector makes unique per job entry within a run
+// attempt. A sibling is read at its own newest attempt, so an older failure the same job later
+// replaced by a success is not a failure standing beside the required check (CRW-681).
+func beganFailureBeside(checks []any, run string, at *big.Int, requiredRunId string, highest map[string]*big.Int) bool {
 	if run == "" {
 		return false
 	}
 	for _, entry := range checks {
-		if textField(entry, "runId") == requiredRunId {
+		runId := textField(entry, "runId")
+		if runId == requiredRunId {
 			continue
 		}
-		if workflowRun(textField(entry, "runId")) != run || attempt(entry).Cmp(at) != 0 {
+		if workflowRun(runId) != run || attempt(entry).Cmp(at) != 0 {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			// An entry the same job superseded is not the job's result: its newest attempt is.
 			continue
 		}
 		o, _ := Object(entry)
-		if o.Get("conclusion") != "failure" {
+		if !failureConclusion(o.Get("conclusion")) {
 			continue
 		}
 		if flag, isBool := o.Get("notRun").(bool); isBool && flag {
 			continue
 		}
+		return true
+	}
+	return false
+}
+
+// failureConclusion reports whether a sibling conclusion is exactly a real failure: failure or
+// timed_out. A cancelled, skipped or neutral job is not a failure standing beside the required
+// check, and a restated record that spells a real failure another way cannot make the lane treat
+// the run as tested (CRW-681).
+func failureConclusion(conclusion any) bool {
+	s, ok := conclusion.(string)
+	if !ok {
+		return false
+	}
+	switch s {
+	case "failure", "timed_out":
 		return true
 	}
 	return false
@@ -390,7 +436,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// A job that began a step and failed for real, in the same run attempt, is the commit
 		// being tested and failing: a not-run sibling cannot make the required failure read as a
 		// runner problem, or the lane reruns a real test failure once as if it were one (CRW-676).
-		if beganFailureBeside(checks, workflowRun(run), attempt(entry), run) {
+		if beganFailureBeside(checks, workflowRun(run), attempt(entry), run, highest) {
 			unexplained = true
 			continue
 		}

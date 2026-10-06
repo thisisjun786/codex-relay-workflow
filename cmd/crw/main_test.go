@@ -92,7 +92,7 @@ func TestRun_doctor_dispatches_to_the_host_doctor(t *testing.T) {
 		t.Fatalf("an unknown doctor form: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
-	if code := run(context.Background(), "crw", []string{"help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{relay,bridge,hook,skill,doctor,install,review,manage,gui,help,version}") {
+	if code := run(context.Background(), "crw", []string{"help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{relay,bridge,hook,skill,doctor,install,review,manage,gui,config,help,version}") {
 		t.Fatalf("usage: %q", stdout.String())
 	}
 }

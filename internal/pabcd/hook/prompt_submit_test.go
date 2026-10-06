@@ -288,26 +288,25 @@ func TestPromptSubmitAppendTurnKeepsTheLastFifty(t *testing.T) {
 	}
 }
 
-// TestPromptSubmitOrchestrateCommandSeamIsNotHandled is the L3b seam (hook.ts:693-702): the chat
-// command is parsed here, its handler belongs to the successor unit, and an unhandled command falls
-// through to the loose path. That path now injects the advisory directive for the phase the command
-// names (hook.ts:755-771, the unit that owns the trigger branch), so the seam is still the seam: the
-// command itself moves no phase and writes no ledger. The corpus command fixtures stay pending until
-// the handler's own unit lands.
-func TestPromptSubmitOrchestrateCommandSeamIsNotHandled(t *testing.T) {
+// TestPromptSubmitOrchestrateCommandSeamIsHandled is the L3b seam (hook.ts:693-702): the chat
+// command is parsed here and handed to its handler (prompt_orchestrate.go, CRW-385), which owns the
+// transition. A command the FSM refuses answers the refusal and moves no phase and writes no ledger;
+// an unhandled command (the goal-mode Interview suppression, and a bound D-close the successor unit
+// ports) still falls through to the loose path (hook.ts:755-771).
+func TestPromptSubmitOrchestrateCommandSeamIsHandled(t *testing.T) {
 	if command := fsm.ParseOrchestrateCommand("orchestrate A"); command == nil {
 		t.Fatal("the recorded command does not parse")
 	}
 	cwd := t.TempDir()
 	answer := promptSubmitAnswer(t, cwd, "s1", "t1", "orchestrate A", true)
-	if !strings.HasPrefix(answer, "[crw: AUDIT]") {
-		t.Errorf("the loose path did not advise the named phase: %q", answer)
+	if want := "[crw \u2014 refused: illegal transition IDLE->A]"; answer != want {
+		t.Errorf("the handler's refusal\n got %q\nwant %q", answer, want)
 	}
 	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle || s.OrchestrationActive {
-		t.Errorf("an unhandled command moved the phase: %+v", s)
+		t.Errorf("a refused command moved the phase: %+v", s)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName, "ledger.jsonl")); err == nil {
-		t.Error("an unhandled command appended a ledger entry")
+		t.Error("a refused command appended a ledger entry")
 	}
 }
 
