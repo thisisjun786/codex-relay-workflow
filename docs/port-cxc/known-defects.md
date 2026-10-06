@@ -1387,3 +1387,14 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoa
 
 - `complete-task` and `meet-criterion` judged the first entry of a duplicated id and then rewrote every entry carrying it, so the other entry's outcome or captured evidence was overwritten (the two lines above under the CRW-542 section); port: fixed by CRW-671 (a data-loss defect, fixed by decision like the parity rule revision of 2026-10-03: the operation refuses, changing nothing, when the work phase id matches more than one phase, the task id more than one task of that phase, or the criterion id more than one criterion, in the shape `DecideGoalplanDecision` already uses; the check runs after the not-in-this-plan refusal and before the already-done/met answer and the readiness check; reads that keep duplicates and every other operation are unchanged).
 - Three recorded cases in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json` move with it and are tagged intentionally-changed in the replay, the recording itself unchanged: `complete_ok_duplicate_task_ids` and `meet_unchanged_duplicate_met_then_open` (named by the issue) and `meet_ok_duplicate_criterion_ids`, which the same rule reaches because it holds two open criteria of one id.
+
+## Found by the producer-intermediate port (CRW-672)
+
+- The M2b classifier matched a producer temporary by name only — any name ending `.tmp`, any name containing `.tmp-`, any
+  name starting `.probe-` (`internal/runtime/install/migrate/classify.go:548-556` at 5a09b73d) — so a durable record whose
+  own id carries a temp-like substring was skipped instead of reaching its row and record judge (`bg/job.tmp-live.json`, a
+  valid record the bg writer accepts through `RunOptions.ID`, so a running job could be copied incompletely), and the
+  evidence rule's millisecond branch never checked the final-name part, so a user file such as
+  `evidence/x/.123.1760000000000.tmp` was skipped (`classify.go:574-597`); port: fixed — the exact temporary shapes of
+  docs/port-cxc/state-migration.md:105 are now matched only inside the directory of the producer that writes them, and the
+  final-name part before `.<pid>.` must be non-empty, with the red-first cases in `inventory_intermediate_test.go`.
