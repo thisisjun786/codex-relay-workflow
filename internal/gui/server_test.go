@@ -189,14 +189,16 @@ func TestStaticFallbackAndAPINotFound(t *testing.T) {
 	}
 }
 
-// The placeholder asset of this issue is embedded in the binary, with the decided text.
-func TestPlaceholderAssetIsEmbedded(t *testing.T) {
+// The screen tree CRW-831 commits is embedded in the binary. TestEmbeddedAssetsHoldTheBuiltScreen
+// (embed_test.go) holds what the tree must contain and that GET / serves it; this test holds the
+// older contract that the index is reachable through the embedded filesystem at its own path.
+func TestTheEmbeddedIndexIsAtItsEmbeddedPath(t *testing.T) {
 	data, err := assetFS.ReadFile("assets/index.html")
 	if err != nil {
 		t.Fatalf("the asset is not embedded: %v", err)
 	}
-	if !strings.Contains(string(data), "CRW GUI: screens are not built into this binary yet") {
-		t.Fatalf("the asset text is %q", data)
+	if !strings.Contains(string(data), `id="root"`) {
+		t.Fatalf("the embedded index.html has no #root mount point: %q", data)
 	}
 }
 

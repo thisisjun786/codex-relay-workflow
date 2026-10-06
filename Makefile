@@ -20,7 +20,7 @@ TEST_TIMEOUT := -timeout 10m
 TEST_BINARY := $(CURDIR)/dist/test/crw
 TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-binary test-part lint dist crw-dev
+.PHONY: build test test-binary test-part lint dist crw-dev gui
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
@@ -82,3 +82,13 @@ endif
 # The development binary: CI checks as `crw-dev ci <check>`. Never part of a release.
 crw-dev:
 	$(GO) build -tags dev -o dist/crw-dev ./cmd/crw-dev
+
+# The screens: install from the committed lockfile, run the screen tests, build them into a
+# temporary tree under dist/ (gitignored, and never the committed internal/gui/assets), and refuse
+# a build that does not match the committed tree byte for byte. Node is needed here and in the gui
+# CI job, and nowhere on a hook path or in the crw binary: `go build`, `go install` and `make test`
+# never call this target, so a Node-free checkout still produces a crw that serves the screen.
+gui:
+	cd web && npm ci && npm test
+	cd web && npm run build -- --outDir ../dist/gui --emptyOutDir
+	$(GO) run -tags dev ./cmd/crw-dev ci gui-drift --built dist/gui

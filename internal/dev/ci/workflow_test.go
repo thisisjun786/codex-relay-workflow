@@ -133,7 +133,8 @@ func TestWorkflow_downloaded_tooling_is_pinned(t *testing.T) {
 }
 
 // Each check runs once: the contract and plugin checks in validate, never again in a Go leg,
-// and nothing runs the Python implementation's suites, which left in todo 44.
+// and nothing runs the Python implementation's suites, which left in todo 44. The screen-drift
+// check (CRW-831) runs once too, in the one job whose subject is the screens.
 func TestWorkflow_each_check_runs_once(t *testing.T) {
 	jobs, _ := workflowJobs(t)
 	for _, check := range []string{"ci validate", "ci plugin", "ci contracts"} {
@@ -147,12 +148,80 @@ func TestWorkflow_each_check_runs_once(t *testing.T) {
 			}
 		}
 	}
+	if !regexp.MustCompile(`(?m)^        run: .*crw-dev ci gui-drift --built .*$`).MatchString(jobs["gui"]) {
+		t.Error("gui does not run crw-dev ci gui-drift")
+	}
+	for name, body := range jobs {
+		if name != "gui" && strings.Contains(body, "ci gui-drift") {
+			t.Errorf("%s runs crw-dev ci gui-drift again", name)
+		}
+	}
 	for name, body := range jobs {
 		for _, word := range []string{"setup-uv", "uv sync", "uv run", "pytest", "unittest", "ci scope", "ci gate"} {
 			if strings.Contains(body, word) {
 				t.Errorf("%s job still names %q", name, word)
 			}
 		}
+	}
+}
+
+// The gui job decides whether to verify the screens from the changed files, before it installs
+// Node, and every step that needs Node or the Go toolchain carries that answer. The build goes to
+// a temporary tree, never to the committed internal/gui/assets, so the drift check compares the
+// commit against a real rebuild rather than against itself (CRW-831).
+func TestWorkflow_the_gui_job_gates_the_screen_verification(t *testing.T) {
+	jobs, _ := workflowJobs(t)
+	steps := workflowSteps(t, jobs["gui"])
+	guard := "steps.paths.outputs.changed == 'true'"
+	gate := -1
+	for i, step := range steps {
+		if step["run"] == "bash scripts/ci/gui_paths.sh" {
+			gate = i
+			if step["id"] != "paths" {
+				t.Errorf("the path gate has id %q, want paths", step["id"])
+			}
+			if !strings.Contains(step["if"], "steps.mirror.outputs.mirrored != 'true'") {
+				t.Errorf("the path gate runs if %q, which does not carry the mirror guard", step["if"])
+			}
+		}
+	}
+	if gate < 0 {
+		t.Fatal("the gui job does not run bash scripts/ci/gui_paths.sh")
+	}
+	// Nothing before the gate may install Node or Go: the point of the gate is that an unrelated
+	// change never pays for a runner's toolchain setup.
+	for i, step := range steps[:gate] {
+		if strings.Contains(step["uses"], "setup-node") || strings.Contains(step["uses"], "setup-go") {
+			t.Errorf("step %d (%q) installs a toolchain before the path gate", i, step["name"])
+		}
+	}
+	built := ""
+	for i, step := range steps[gate+1:] {
+		if !strings.Contains(step["if"], guard) {
+			t.Errorf("step %d (%q) after the gate runs if %q, which does not carry %q", gate+1+i, step["name"], step["if"], guard)
+		}
+		if strings.Contains(step["run"], "npm run build") {
+			built = step["run"]
+			if strings.Contains(step["run"], "internal/gui/assets") {
+				t.Errorf("the build writes the committed tree: %q", step["run"])
+			}
+			if !strings.Contains(step["run"], "RUNNER_TEMP") {
+				t.Errorf("the build does not write a temporary tree: %q", step["run"])
+			}
+		}
+	}
+	if built == "" {
+		t.Error("the gui job never builds the screens")
+	}
+	// The drift check reads the tree that build wrote, not the working tree.
+	drift := ""
+	for _, step := range steps {
+		if strings.Contains(step["run"], "ci gui-drift") {
+			drift = step["run"]
+		}
+	}
+	if !strings.Contains(drift, `--built "$RUNNER_TEMP/gui-built"`) {
+		t.Errorf("the drift check does not read the built tree: %q", drift)
 	}
 }
 
