@@ -118,6 +118,7 @@ type auditDraftReport struct {
 	Created      []auditDraftSummary `json:"created"`
 	Updated      []auditDraftSummary `json:"updated"`
 	OwnerUnknown []string            `json:"owner_unknown"`
+	Skipped      []string            `json:"skipped"`
 	Remaining    int                 `json:"remaining"`
 }
 
@@ -353,6 +354,24 @@ func auditDraftBody(c *auditDraftCandidate) string {
 	return b.String()
 }
 
+// auditDraftSeenSection replaces the Source audit section of a stored body with the rendered
+// sighting list, so a draft a later audit reported names that audit in the body the
+// management session reads. The defect description and the criteria stay as first written.
+func auditDraftSeenSection(body string, seen []auditDraftSeen) string {
+	const startMarker = "## Source audit\n\n"
+	const endMarker = "\n## Criteria\n\n"
+	start := strings.Index(body, startMarker)
+	if start < 0 {
+		return body
+	}
+	rest := body[start+len(startMarker):]
+	end := strings.Index(rest, endMarker)
+	if end < 0 {
+		return body
+	}
+	return body[:start+len(startMarker)] + auditDraftSeenLines(seen) + endMarker + rest[end+len(endMarker):]
+}
+
 // auditDraftLabels is the label list the issue fixes: the source and the severity.
 func auditDraftLabels(severity string) []string {
 	return []string{auditDraftSource, severity}
@@ -367,28 +386,49 @@ func auditDraftSummaryOf(doc *auditDraft) auditDraftSummary {
 }
 
 // auditDraftLedgerRows reads the audit ledger. A ledger that does not exist yet holds no
-// rows, which is not an error: nothing has been graded.
-func auditDraftLedgerRows(e *Env, cfg *Config) ([]auditLedgerRow, error) {
+// rows, which is not an error: nothing has been graded. A line that is not a whole document
+// is the torn tail the ledger writer leaves on its own line when it separates an interrupted
+// append from the rows after it, so it is counted and skipped rather than failing every later
+// run: the rows after it are whole and still count.
+func auditDraftLedgerRows(e *Env, cfg *Config) ([]auditLedgerRow, int, error) {
 	path := filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, 0, nil
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	var rows []auditLedgerRow
+	torn := 0
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		var row auditLedgerRow
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			torn++
+			continue
 		}
 		rows = append(rows, row)
 	}
-	return rows, nil
+	return rows, torn, nil
+}
+
+// auditDraftBundleOf checks that a ledger row's bundle still holds that row's audit. A bundle
+// is a mutable directory: grading into it again replaces its grade.json, and the ledger row
+// keeps only the path. A row whose bundle now declares another mode, subject or head has no
+// grade of its own left to read, so it is named and skipped rather than drafted from another
+// audit's defects.
+func auditDraftBundleOf(row auditLedgerRow) error {
+	bundle, err := auditReadBundle(row.Bundle)
+	if err != nil {
+		return err
+	}
+	if bundle.Mode != row.Mode || bundle.Subject != row.Subject || bundle.Head != row.Head {
+		return fmt.Errorf("the bundle now declares mode=%s subject=%s head=%s", bundle.Mode, bundle.Subject, bundle.Head)
+	}
+	return nil
 }
 
 // auditDraftLoad reads one draft file. A missing file, malformed JSON or another schema is an
@@ -471,6 +511,9 @@ func auditDraftIndexLoad(dir string) (auditDraftIndex, error) {
 	if err := json.Unmarshal(data, &index); err != nil {
 		return auditDraftIndex{}, fmt.Errorf("%s: %w", filepath.Join(dir, auditDraftIndexFile), err)
 	}
+	if index.Schema != auditDraftIndexSchema {
+		return auditDraftIndex{}, fmt.Errorf("%s: schema %q is not %s", filepath.Join(dir, auditDraftIndexFile), index.Schema, auditDraftIndexSchema)
+	}
 	return index, nil
 }
 
@@ -546,6 +589,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		Created:      []auditDraftSummary{},
 		Updated:      []auditDraftSummary{},
 		OwnerUnknown: []string{},
+		Skipped:      []string{},
 	}
 	section, err := auditDraftSectionOf(cfg)
 	if err != nil {
@@ -565,17 +609,19 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		return report, err
 	}
 	defer release()
-	index, err := auditDraftIndexLoad(dir)
+	// The index lists the drafts the directory holds, and it is rewritten from the directory
+	// after every run, so the listing and the artifacts agree. Whether a draft exists is
+	// judged by its file: a listing that names a file the directory no longer holds must not
+	// make every later run fail before it rewrites the index.
+	if _, err := auditDraftIndexLoad(dir); err != nil {
+		return report, err
+	}
+	rows, torn, err := auditDraftLedgerRows(e, cfg)
 	if err != nil {
 		return report, err
 	}
-	known := make(map[string]bool, len(index.Drafts))
-	for _, fingerprint := range index.Drafts {
-		known[fingerprint] = true
-	}
-	rows, err := auditDraftLedgerRows(e, cfg)
-	if err != nil {
-		return report, err
+	if torn > 0 {
+		report.Skipped = append(report.Skipped, fmt.Sprintf("the ledger carries %d torn line(s), which are not whole rows", torn))
 	}
 	candidates := map[string]*auditDraftCandidate{}
 	var order []string
@@ -587,6 +633,13 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		if !matches {
 			continue
 		}
+		if err := auditDraftBundleOf(row); err != nil {
+			report.Skipped = append(report.Skipped, fmt.Sprintf("%s %s %s: %v", row.Mode, row.Subject, row.Head, err))
+			continue
+		}
+		// The bundle still declares this row's audit, so a grade.json it does not carry is an
+		// anomaly and not a reason to report an empty pass: the run fails rather than silently
+		// drafting nothing from an ok row.
 		doc, ok := auditParseResult(filepath.Join(row.Bundle, auditGradeFile))
 		if !ok {
 			return report, fmt.Errorf("the ok ledger row for %s at %s carries no usable %s", row.Subject, row.Head, auditGradeFile)
@@ -620,10 +673,6 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	var fresh, existing []*auditDraftCandidate
 	for _, fingerprint := range order {
 		candidate := candidates[fingerprint]
-		if known[fingerprint] {
-			existing = append(existing, candidate)
-			continue
-		}
 		if _, err := os.Stat(filepath.Join(dir, fingerprint+".json")); err == nil {
 			existing = append(existing, candidate)
 			continue
@@ -669,14 +718,26 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		if err != nil {
 			return report, err
 		}
-		grew := false
+		changed := false
 		for _, entry := range candidate.seen {
 			if !auditDraftSeenHas(doc.Seen, entry) {
 				doc.Seen = append(doc.Seen, entry)
-				grew = true
+				changed = true
 			}
 		}
-		if !grew {
+		if changed {
+			doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
+		}
+		// A later audit that reports the same defect at a higher severity escalates the
+		// draft, so the management session prioritizes it as it now stands. The posted state
+		// and the issue key are kept: the escalation does not open a second issue.
+		if stored, known := auditDraftSeverityRank[doc.Severity]; known && auditDraftSeverityRank[candidate.severity] < stored {
+			doc.Severity = candidate.severity
+			doc.Labels = auditDraftLabels(candidate.severity)
+			doc.Title = auditDraftTitle(candidate.severity, candidate.defect.What)
+			changed = true
+		}
+		if !changed {
 			continue
 		}
 		if err := auditDraftSave(path, doc); err != nil {

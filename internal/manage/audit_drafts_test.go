@@ -69,6 +69,16 @@ func auditDraftFixture(t *testing.T, state string, rows ...auditDraftFixtureRow)
 		if err := os.WriteFile(filepath.Join(bundle, auditGradeFile), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
+		// The bundle declares the row's own audit, so a reader can tell that the grade.json
+		// beside it is that audit's and not another audit's that reused the directory.
+		decl := map[string]any{"schema": auditBundleSchema, "mode": row.mode, "subject": row.subject, "head": row.head, "issue": "CRW-1"}
+		body, err := json.Marshal(decl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bundle, auditBundleFile), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
 		status := row.status
 		if status == "" {
 			status = auditStatusOK
@@ -735,4 +745,169 @@ func auditDraftJSONNames(entries []os.DirEntry) []string {
 		names = append(names, entry.Name())
 	}
 	return names
+}
+
+// A torn ledger tail is not a whole row; the rows after it are, and a run still drafts from
+// them instead of failing at the fragment.
+func TestAuditDraftSkipsATornLedgerLine(t *testing.T) {
+	state := t.TempDir()
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		defects: []AuditDefect{{Severity: "P1", What: "whole row", Where: "a.go:1"}},
+	})
+	ledger := filepath.Join(state, "audit", auditLedgerFile)
+	data, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragment := []byte("{\"mode\":\"pr\",\"subject\":\"half\"\n")
+	if err := os.WriteFile(ledger, append(fragment, data...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	report := auditDraftRunOf(t, cfg, auditDraftScope{})
+	if len(report.Created) != 1 || !strings.Contains(report.Created[0].Title, "whole row") {
+		t.Fatalf("the torn tail hid the whole row: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0], "torn") {
+		t.Errorf("the report does not name the torn line: %+v", report.Skipped)
+	}
+}
+
+// An index that names a draft the directory no longer holds must not stop the run before it
+// rewrites the index: the file decides whether a draft exists.
+func TestAuditDraftIndexNamingAMissingFileDoesNotBlock(t *testing.T) {
+	state := t.TempDir()
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		defects: []AuditDefect{{Severity: "P1", What: "w", Where: "a.go:1"}},
+	})
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	first := auditDraftRunOf(t, cfg, auditDraftScope{})
+	if len(first.Created) != 1 {
+		t.Fatalf("the first run created %d drafts", len(first.Created))
+	}
+	fingerprint := first.Created[0].Fingerprint
+	dir := filepath.Join(state, "drafts")
+	// The index still lists the draft, but its file is gone.
+	if err := os.Remove(filepath.Join(dir, fingerprint+".json")); err != nil {
+		t.Fatal(err)
+	}
+	second := auditDraftRunOf(t, cfg, auditDraftScope{})
+	if len(second.Created) != 1 {
+		t.Fatalf("the index naming a missing file stopped the run: %+v", second)
+	}
+	if draft := auditDraftLoadAt(t, state, fingerprint); draft.Fingerprint != fingerprint {
+		t.Fatalf("the draft was not recreated: %+v", draft)
+	}
+	saved, err := auditDraftIndexLoad(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(saved.Drafts, ",") != fingerprint {
+		t.Errorf("the index reads %v, want the recreated draft", saved.Drafts)
+	}
+}
+
+// A bundle reused for another audit carries another audit's grade.json, so the row that named
+// the old audit is skipped by name instead of drafted from the new audit's defects.
+func TestAuditDraftSkipsARowWhoseBundleNowHoldsAnotherAudit(t *testing.T) {
+	state := t.TempDir()
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "old", head: "oldhead", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		defects: []AuditDefect{{Severity: "P1", What: "the old defect", Where: "a.go:1"}},
+	})
+	ledger := filepath.Join(state, "audit", auditLedgerFile)
+	data, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row auditLedgerRow
+	if err := json.Unmarshal(data[:len(data)-1], &row); err != nil {
+		t.Fatal(err)
+	}
+	score := 9
+	doc := auditGradeDoc{Schema: auditResultSchema, Score: &score, Defects: []AuditDefect{{Severity: "P1", What: "the new defect", Where: "b.go:1"}}}
+	body, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(row.Bundle, auditGradeFile), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	decl := map[string]any{"schema": auditBundleSchema, "mode": auditModePR, "subject": "new", "head": "newhead", "issue": "CRW-1"}
+	declBody, err := json.Marshal(decl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(row.Bundle, auditBundleFile), declBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	report := auditDraftRunOf(t, cfg, auditDraftScope{})
+	if len(report.Created) != 0 {
+		t.Fatalf("the reused bundle drafted another audit's defect: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0], "old") {
+		t.Errorf("the skipped row is not named: %+v", report.Skipped)
+	}
+}
+
+// A later audit that raises a defect's severity escalates the stored draft, keeping the
+// posted state and the issue key.
+func TestAuditDraftEscalatesSeverityOnALaterAudit(t *testing.T) {
+	state := auditDraftHome(t)
+	defect := AuditDefect{Severity: "P1", What: "a crash", Where: "a.go:3"}
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s1", head: "h1", round: "r1", gradedAt: "2026-01-01T00:00:00Z", defects: []AuditDefect{defect},
+	})
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	first := auditDraftRunOf(t, cfg, auditDraftScope{})
+	fingerprint := first.Created[0].Fingerprint
+	e, _, errOut := auditEnv(t)
+	if code := auditRunDrafts(context.Background(), e, []string{"mark", "--fingerprint", fingerprint, "--posted", "CRW-999"}); code != 0 {
+		t.Fatalf("mark: exit %d %q", code, errOut.String())
+	}
+	raised := defect
+	raised.Severity = "P0"
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s2", head: "h2", round: "r2", gradedAt: "2026-02-01T00:00:00Z", defects: []AuditDefect{raised},
+	})
+	second := auditDraftRunOf(t, cfg, auditDraftScope{})
+	if len(second.Updated) != 1 {
+		t.Fatalf("the escalation was not reported as an update: %+v", second)
+	}
+	after := auditDraftLoadAt(t, state, fingerprint)
+	if after.Severity != "P0" || strings.Join(after.Labels, ",") != "audit,P0" || !strings.HasPrefix(after.Title, "P0: ") {
+		t.Errorf("the escalated draft reads %+v", after)
+	}
+	if after.State != auditDraftStatePosted || after.Posted != "CRW-999" {
+		t.Errorf("the escalation lost the posted state: %+v", after)
+	}
+}
+
+// A later sighting reaches the body the management session reads, not only the seen list.
+func TestAuditDraftBodyNamesALaterSighting(t *testing.T) {
+	state := t.TempDir()
+	defect := AuditDefect{Severity: "P1", What: "a defect", Where: "a.go:1"}
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "auditA", head: "h1", round: "r1", gradedAt: "2026-01-01T00:00:00Z", defects: []AuditDefect{defect},
+	})
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	first := auditDraftRunOf(t, cfg, auditDraftScope{})
+	fingerprint := first.Created[0].Fingerprint
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePackage, subject: "auditB", head: "h2", round: "r2", gradedAt: "2026-02-01T00:00:00Z", defects: []AuditDefect{defect},
+	})
+	auditDraftRunOf(t, cfg, auditDraftScope{})
+	after := auditDraftLoadAt(t, state, fingerprint)
+	if !strings.Contains(after.Body, "auditB") {
+		t.Errorf("the body does not name the later audit:\n%s", after.Body)
+	}
+	if !strings.Contains(after.Body, "auditA") {
+		t.Errorf("the body lost the first audit:\n%s", after.Body)
+	}
+	if !strings.Contains(after.Body, "a.go:1") {
+		t.Errorf("the body lost the defect's where:\n%s", after.Body)
+	}
 }
