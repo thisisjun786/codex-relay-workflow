@@ -333,6 +333,7 @@ const capacityUsage = "usage: crw manage capacity [--text] [--dry-run] [--branch
 func capacityRun(ctx context.Context, e *Env, args []string) int {
 	asText, dry := false, false
 	branchAlwaysSet(e, false)
+	defer branchAlwaysForget(e)
 	for _, arg := range args {
 		switch arg {
 		case "--text":

@@ -303,6 +303,69 @@ func TestBranchCandidatesRefuseAnUnreadableThreshold(t *testing.T) {
 	}
 }
 
+// An explicit threshold is honored, and a count below zero is refused: a negative floor or cap is
+// a mistake in the configuration, not a request for the default.
+func TestBranchCandidatesHonorAndRefuseExplicitThresholds(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
+	f.region("A", "a.go", "file", "", "edit", false)
+	f.region("B", "b.go", "file", "", "edit", false)
+	f.region("C", "c.go", "file", "", "edit", false)
+	f.publish()
+	// A floor of one admits each single node as its own bundle, and none of them is the whole plan.
+	f.section["min_branch_nodes"] = 1
+	f.load()
+	if got := branchSummaries(branchList(t, f.run())); len(got) != 3 {
+		t.Fatalf("with min_branch_nodes 1 the three single nodes are candidates: %v", got)
+	}
+	f.section["min_branch_nodes"] = 0
+	f.load()
+	if got := branchSummaries(branchList(t, f.run())); len(got) != 3 {
+		t.Fatalf("with min_branch_nodes 0 the single nodes are still candidates: %v", got)
+	}
+	f.section["min_branch_nodes"] = -1
+	f.load()
+	config := capacityConfig
+	t.Cleanup(func() { capacityConfig = config })
+	capacityConfig = func(*Env) *Config { return f.cfg }
+	if _, err := Capacity(context.Background(), f.env, f.cfg, false); err == nil {
+		t.Fatal("a negative min_branch_nodes judged the plan anyway")
+	}
+	f.section["min_branch_nodes"] = nil
+	f.section["max_branches"] = -2
+	f.load()
+	capacityConfig = func(*Env) *Config { return f.cfg }
+	if _, err := Capacity(context.Background(), f.env, f.cfg, false); err == nil {
+		t.Fatal("a negative max_branches judged the plan anyway")
+	}
+}
+
+// A command run forgets the flag it was given, so a process that runs the command many times
+// retains no Env and a later run of the same process is not handed an earlier run's flag.
+func TestBranchCandidatesForgetTheAlwaysFlagAfterTheRun(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2")
+	f.region("A", "a.go", "file", "", "edit", false)
+	f.region("B", "b.go", "file", "", "edit", false)
+	f.publish()
+	config := capacityConfig
+	t.Cleanup(func() { capacityConfig = config })
+	capacityConfig = func(*Env) *Config { return f.cfg }
+	f.env.Stdout, f.env.Stderr = io.Discard, io.Discard
+	if code := capacityCommand.Run(context.Background(), f.env, []string{"--branches-always", "--dry-run"}); code != 0 {
+		t.Fatalf("the run with the flag: exit %d", code)
+	}
+	if branchAlwaysFor(f.env) {
+		t.Fatal("the flag outlived the command run that was given it")
+	}
+	branchAlwaysMemoMu.Lock()
+	retained := len(branchAlwaysMemo)
+	branchAlwaysMemoMu.Unlock()
+	if retained != 0 {
+		t.Fatalf("the memo holds %d environments after the run, want none", retained)
+	}
+}
+
 // The waiting set is the ready nodes plus the ones deferred for want of capacity, so a bundle
 // whose member is only deferred still counts it.
 func TestBranchCandidatesCountADeferredNodeAsWaiting(t *testing.T) {

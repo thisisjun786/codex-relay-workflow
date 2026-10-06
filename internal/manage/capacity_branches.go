@@ -16,10 +16,10 @@ import (
 // here writes a plan, Linear or the relay: it reads and reports.
 
 // branchAlwaysMemoMu guards branchAlwaysMemo, and branchAlwaysMemo is the --branches-always flag
-// each Env was run with. The flag belongs to one command invocation, not to the process: Env is
-// declared in another issue's file and may not gain a field here, and a library caller that runs
-// Capacity twice in one process must not inherit the first call's flag. Run builds one Env per
-// invocation, so the map holds one live entry per run and is bounded in practice.
+// each Env is currently run with. The flag belongs to one command invocation, not to the process:
+// Env is declared in another issue's file and may not gain a field here, and a library caller that
+// runs Capacity twice in one process must not inherit the first call's flag. capacityRun forgets
+// its entry on every exit, so a process that runs the command many times retains nothing.
 var (
 	branchAlwaysMemoMu sync.Mutex
 	branchAlwaysMemo   = map[*Env]bool{}
@@ -37,6 +37,14 @@ func branchAlwaysFor(e *Env) bool {
 	branchAlwaysMemoMu.Lock()
 	defer branchAlwaysMemoMu.Unlock()
 	return branchAlwaysMemo[e]
+}
+
+// branchAlwaysForget drops one Env's flag, so the map holds only the invocation in flight and no
+// Env, with the streams and closures it carries, is kept reachable past its run.
+func branchAlwaysForget(e *Env) {
+	branchAlwaysMemoMu.Lock()
+	delete(branchAlwaysMemo, e)
+	branchAlwaysMemoMu.Unlock()
 }
 
 const (
@@ -83,18 +91,25 @@ func branchSettingsOf(cfg *Config) (branchSettings, error) {
 	return settings, nil
 }
 
-func branchMinNodes(settings branchSettings) int {
-	if settings.MinBranchNodes == nil || *settings.MinBranchNodes < 1 {
-		return branchMinNodesDefault
+// branchThresholds reads the two thresholds: an omitted key takes its default, an explicit zero is
+// honored (a floor of zero admits a one-node bundle, a cap of zero reports none), and a negative
+// count is refused rather than clamped or defaulted. The sibling keys of this section keep an
+// explicit value too (capacityPick), and a count below zero is a mistake the report must not hide.
+func branchThresholds(settings branchSettings) (int, int, error) {
+	minNodes, maxBranches := branchMinNodesDefault, branchMaxDefault
+	if settings.MinBranchNodes != nil {
+		if *settings.MinBranchNodes < 0 {
+			return 0, 0, fmt.Errorf("capacity: min_branch_nodes is a count of nodes, not %d", *settings.MinBranchNodes)
+		}
+		minNodes = *settings.MinBranchNodes
 	}
-	return *settings.MinBranchNodes
-}
-
-func branchMax(settings branchSettings) int {
-	if settings.MaxBranches == nil || *settings.MaxBranches < 1 {
-		return branchMaxDefault
+	if settings.MaxBranches != nil {
+		if *settings.MaxBranches < 0 {
+			return 0, 0, fmt.Errorf("capacity: max_branches is a count of candidates, not %d", *settings.MaxBranches)
+		}
+		maxBranches = *settings.MaxBranches
 	}
-	return *settings.MaxBranches
+	return minNodes, maxBranches, nil
 }
 
 // branchPlanNode and branchPlanEdge are one live node and one live edge of the plan, as the plan
@@ -176,6 +191,10 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 		return nil, nil
 	}
 	settings, err := branchSettingsOf(cfg)
+	if err != nil {
+		return nil, err
+	}
+	minNodes, maxBranches, err := branchThresholds(settings)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +296,7 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 				started = true
 			}
 		}
-		if started || len(members) < branchMinNodes(settings) || len(members) >= len(live) {
+		if started || len(members) < minNodes || len(members) >= len(live) {
 			continue
 		}
 		inside := map[string]bool{}
@@ -317,8 +336,8 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 		}
 		return a.Nodes[0].NodeID < b.Nodes[0].NodeID
 	})
-	if max := branchMax(settings); len(candidates) > max {
-		candidates = candidates[:max]
+	if len(candidates) > maxBranches {
+		candidates = candidates[:maxBranches]
 	}
 	return &candidates, nil
 }
