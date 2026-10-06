@@ -55,3 +55,21 @@ func planGateRelCwdRoot(t *testing.T) string {
 	}
 	return r
 }
+
+// The entry paths keep the oracle's spelling: resolve(cwd, p) cleans a relative cwd with filepath.Join, so under --cwd
+// "alias/.." the plan unit "unit" is named at the lexical <r>/unit (beside the boundary the OS reaches, <r>/ws) and is
+// refused, while "ws/unit" is named at <r>/ws/unit and passes. The boundary is physical and the entries are the oracle's
+// path.resolve; this pins the two apart (CRW-662, c1).
+func TestPlanGateRelCwdKeepsTheEntrySpelling(t *testing.T) {
+	r := planGateRelCwdRoot(t)
+	write(t, filepath.Join(r, "unit", "000_plan.md"))
+	write(t, filepath.Join(r, "ws", "unit", "000_plan.md"))
+	must(t, os.MkdirAll(filepath.Join(r, "ws", "deep"), 0o755))
+	must(t, os.Symlink(filepath.Join(r, "ws", "deep"), filepath.Join(r, "alias")))
+
+	reasonHas(t, ValidatePlanArtifacts(plan("unit"), "alias/.."),
+		"planUnit unit resolves outside the working directory")
+	if got := ValidatePlanArtifacts(plan("ws/unit"), "alias/.."); !got.OK {
+		t.Errorf("%+v, want OK", got)
+	}
+}
