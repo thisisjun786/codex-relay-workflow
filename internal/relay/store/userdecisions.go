@@ -31,7 +31,6 @@ type UserDecisionFilter struct {
 var (
 	ErrUserDecisionState       = errors.New("store: a raise carries an open or raised record")
 	ErrUserDecisionGeneration  = errors.New("store: the user decision's applied_generation is negative")
-	ErrUserDecisionKind        = errors.New("store: the user decision's kind differs from the stored record's")
 	ErrUserDecisionFingerprint = errors.New("store: the user decision's fingerprint is not its content's")
 )
 
@@ -176,15 +175,13 @@ func validateUserDecision(record decisions.Record) error {
 	return nil
 }
 
-// foldUserDecision folds a second raise of one question into the row that already holds it: the
-// format's merge appends the new observations and refuses a record that differs beyond them, and the
-// stored state advances through the format's state machine when the transition is allowed, which is
-// how a second raise of an open question raises it (open -> raised). A differing kind is a different
-// question wearing one fingerprint, so it is refused rather than folded.
+// foldUserDecision folds a second raise of one question into the row that already holds it. The
+// format owns what makes two statements one question: the fingerprint (its key fields are the
+// context, the blocking subjects and the option ids) and the answer, and the format's Merge appends
+// the new observations to the row that carries them, refusing a record whose answer differs. The
+// stored state then advances through the format's state machine when the transition is allowed,
+// which is how a second raise of an open question raises it (open -> raised).
 func foldUserDecision(stored, incoming decisions.Record) (decisions.Record, error) {
-	if stored.Kind != incoming.Kind {
-		return decisions.Record{}, fmt.Errorf("%w: stored %q, raised %q", ErrUserDecisionKind, stored.Kind, incoming.Kind)
-	}
 	advance := incoming.State != stored.State && decisions.CanTransition(stored.State, incoming.State)
 	sameState := incoming
 	sameState.State = stored.State

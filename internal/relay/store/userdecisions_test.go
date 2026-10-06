@@ -192,8 +192,7 @@ func TestUserDecisionListFiltersByStateAndProject(t *testing.T) {
 }
 
 // A raise carries a record the table can hold: the format's record, in one of the two states a
-// question has before it is answered, with a fingerprint that is its own content's. A record that
-// differs in kind under one fingerprint is a different question, so it is refused too.
+// question has before it is answered, with a fingerprint that is its own content's.
 func TestUserDecisionRaiseRefusesARecordItCannotStore(t *testing.T) {
 	t.Parallel()
 	s := recordStore(t)
@@ -223,14 +222,20 @@ func TestUserDecisionRaiseRefusesARecordItCannotStore(t *testing.T) {
 	if _, _, err := s.Raise(ctx, policy); err != nil {
 		t.Fatalf("a first raise of its own question: %v", err)
 	}
-	dependency := policy
-	dependency.DecisionID = "ud-6"
-	dependency.Kind = decisions.KindDependency
-	if _, _, err := s.Raise(ctx, dependency); !errors.Is(err, ErrUserDecisionKind) {
-		t.Fatalf("a different kind under one fingerprint: %v", err)
+	// One fingerprint is one question: the format's key fields are the context, the blocking
+	// subjects and the option ids, so a second statement folds into the stored row even when a field
+	// outside the fingerprint (here the kind) differs, and the second observation is kept.
+	restated := policy
+	restated.DecisionID = "ud-6"
+	restated.Kind = decisions.KindDependency
+	restated.Seen = []decisions.Seen{{At: "2026-10-06T01:00:00Z", Source: "report:2"}}
+	folded, merged, err := s.Raise(ctx, restated)
+	must(t, err)
+	if !merged || folded.Kind != decisions.KindPolicy || len(folded.Seen) != 2 {
+		t.Fatalf("folded = %+v merged = %v, want the stored statement and both observations", folded, merged)
 	}
 	if got := userDecisionRows(t, s); got != 1 {
-		t.Fatalf("the refused raises wrote %d rows, want the one accepted row", got)
+		t.Fatalf("the raises wrote %d rows, want the one accepted row", got)
 	}
 }
 
