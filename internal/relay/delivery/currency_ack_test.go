@@ -30,6 +30,7 @@ func runVCUAck(t *testing.T, mode string, goSide func(v *vcu, out map[string]any
 }
 
 func TestVCU11_an_offline_ack_is_recorded_intent_and_upgraded_by_a_host(t *testing.T) {
+	t.Parallel()
 	t.Run("without an adapter", func(t *testing.T) {
 		runVCUAck(t, "offline", func(v *vcu, out map[string]any) {
 			e := v.dispatched()
@@ -81,6 +82,7 @@ func TestVCU11_an_offline_ack_is_recorded_intent_and_upgraded_by_a_host(t *testi
 // or a string Python's float() reads as one; anything else (a bool, a list, text that is not a
 // number, NaN, an infinity) is no start at all, and an ack whose turn has no start is unverified.
 func TestAckTurnStartIsReadAsAHostTime(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		kind    string
 		started any
@@ -127,6 +129,7 @@ func (v *vcu) pendingAck() string {
 }
 
 func TestVCU12_a_deferred_ack_promotion_is_rechecked(t *testing.T) {
+	t.Parallel()
 	t.Run("generation advanced", func(t *testing.T) {
 		runVCUAck(t, "advanced", func(v *vcu, out map[string]any) {
 			e := v.pendingAck()

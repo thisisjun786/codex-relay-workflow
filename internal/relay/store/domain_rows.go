@@ -313,6 +313,205 @@ func scanMergeTurns(row scanner) (MergeTurnsRow, error) {
 	return r, err
 }
 
+// CRW-767: the merge train's rows, beside MergeTurnsRow as the decision in docs/port/decisions.md
+// section 79 puts them. A train is one row and a member is one row, both written once by the train
+// commands (a later issue), and every later step is an appended merge_train_events row, because the
+// zone's triggers abort an UPDATE and a DELETE. The train's state is therefore the newest event's
+// kind and never a column (MergeTrainState), the way a plan's head revision is MAX(revision_no) of
+// its log. turn_id is a plain column with no key into merge_turns: the zone forbids a foreign key
+// into a v1 table, so the writer is what keeps it pointing at a real turn.
+
+// MergeTrainRow is one merge_trains row, every column in DDL order.
+type MergeTrainRow struct {
+	TrainID      string
+	TargetKey    string
+	Repository   string
+	BaseRef      string
+	BaseSHA      string
+	LeaderTaskID string
+	CreatedAt    string
+}
+
+const mergeTrainColumns = "train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at"
+
+func scanMergeTrain(row scanner) (MergeTrainRow, error) {
+	var r MergeTrainRow
+	err := row.Scan(&r.TrainID, &r.TargetKey, &r.Repository, &r.BaseRef, &r.BaseSHA, &r.LeaderTaskID, &r.CreatedAt)
+	return r, err
+}
+
+// MergeTrainMemberRow is one merge_train_members row, every column in DDL order. Seq is the
+// member's FIFO place in the train and MemberHead is the head its pull request showed when the
+// train formed.
+type MergeTrainMemberRow struct {
+	TrainID        string
+	Seq            int64
+	TurnID         string
+	PRNumber       int64
+	RelationshipID string
+	MemberHead     string
+}
+
+const mergeTrainMemberColumns = "train_id, seq, turn_id, pr_number, relationship_id, member_head"
+
+func scanMergeTrainMember(row scanner) (MergeTrainMemberRow, error) {
+	var r MergeTrainMemberRow
+	err := row.Scan(&r.TrainID, &r.Seq, &r.TurnID, &r.PRNumber, &r.RelationshipID, &r.MemberHead)
+	return r, err
+}
+
+// MergeTrainEventKind is the closed set of merge_train_events.kind values: a train opened, a member
+// prefix verified, a member landed, the train abandoned or the train done. The train's state is the
+// kind of its newest event, so these five are also its five states.
+const (
+	MergeTrainOpened    = "opened"
+	MergeTrainVerified  = "verified"
+	MergeTrainLanded    = "landed"
+	MergeTrainAbandoned = "abandoned"
+	MergeTrainDone      = "done"
+)
+
+// MergeTrainEventRow is one merge_train_events row, every column in DDL order. DetailJSON is the
+// event's body, the empty object when the kind carries none; a verified event carries the member
+// seq, check_id, prefix_head, prefix_tree and run_id, and a landed event the member seq and
+// landed_sha (the decision in docs/port/decisions.md section 79).
+type MergeTrainEventRow struct {
+	TrainID    string
+	Seq        int64
+	Kind       string
+	Actor      string
+	DetailJSON string
+	RecordedAt string
+}
+
+const mergeTrainEventColumns = "train_id, seq, kind, actor, detail_json, recorded_at"
+
+func scanMergeTrainEvent(row scanner) (MergeTrainEventRow, error) {
+	var r MergeTrainEventRow
+	err := row.Scan(&r.TrainID, &r.Seq, &r.Kind, &r.Actor, &r.DetailJSON, &r.RecordedAt)
+	return r, err
+}
+
+// RecordMergeTrain appends one merge_trains row through the caller's transaction (s.exec runs where
+// ctx points, so the command that opens a train commits this row with the rest of its work) and
+// never opens one of its own. A train is written once: a second row of the same train_id is the
+// table's PRIMARY KEY refusal, and a later change is an appended event, never an update.
+func RecordMergeTrain(ctx context.Context, s *Store, r MergeTrainRow) error {
+	_, err := s.exec(ctx, "INSERT INTO merge_trains ("+mergeTrainColumns+") VALUES (?,?,?,?,?,?,?)",
+		r.TrainID, r.TargetKey, r.Repository, r.BaseRef, r.BaseSHA, r.LeaderTaskID, r.CreatedAt)
+	return err
+}
+
+// RecordMergeTrainMember appends one merge_train_members row through the caller's transaction. A
+// member is written once at its FIFO place: a second row of the same (train_id, seq) is the
+// table's UNIQUE refusal, and a member of a train that does not exist is the foreign key's.
+func RecordMergeTrainMember(ctx context.Context, s *Store, r MergeTrainMemberRow) error {
+	_, err := s.exec(ctx, "INSERT INTO merge_train_members ("+mergeTrainMemberColumns+") VALUES (?,?,?,?,?,?)",
+		r.TrainID, r.Seq, r.TurnID, r.PRNumber, r.RelationshipID, r.MemberHead)
+	return err
+}
+
+// RecordMergeTrainEvent appends one merge_train_events row through the caller's transaction. The
+// table is append-only: an event is never updated or deleted, the pair (train_id, seq) is unique,
+// and the kind is one of the five MergeTrain* constants. The caller sets Seq to the next sequence
+// number of the train, so a repeated step is the UNIQUE refusal rather than a second row.
+func RecordMergeTrainEvent(ctx context.Context, s *Store, r MergeTrainEventRow) error {
+	_, err := s.exec(ctx, "INSERT INTO merge_train_events ("+mergeTrainEventColumns+") VALUES (?,?,?,?,?,?)",
+		r.TrainID, r.Seq, r.Kind, r.Actor, r.DetailJSON, r.RecordedAt)
+	return err
+}
+
+// MergeTrain reads one train by its id. found is false when the train has no row, or when the
+// store predates the zone: neither is an error, the way VerifiedHead answers.
+func MergeTrain(ctx context.Context, s *Store, trainID string) (MergeTrainRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "merge_trains")
+	if err != nil || !present {
+		return MergeTrainRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanMergeTrain, "SELECT "+mergeTrainColumns+" FROM merge_trains WHERE train_id = ?", trainID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MergeTrainRow{}, false, nil
+	}
+	if err != nil {
+		return MergeTrainRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// MergeTrainMembers reads every member of a train, in FIFO order. A store without the table holds
+// none.
+func MergeTrainMembers(ctx context.Context, s *Store, trainID string) ([]MergeTrainMemberRow, error) {
+	present, err := dagZoneTable(ctx, s, "merge_train_members")
+	if err != nil || !present {
+		return nil, err
+	}
+	return queryRows(ctx, s, scanMergeTrainMember, "SELECT "+mergeTrainMemberColumns+" FROM merge_train_members WHERE train_id = ? ORDER BY seq", trainID)
+}
+
+// MergeTrainMember reads one member of a train by its sequence number. found is false when the
+// train holds no such member, or when the store predates the zone.
+func MergeTrainMember(ctx context.Context, s *Store, trainID string, seq int64) (MergeTrainMemberRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "merge_train_members")
+	if err != nil || !present {
+		return MergeTrainMemberRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanMergeTrainMember, "SELECT "+mergeTrainMemberColumns+" FROM merge_train_members WHERE train_id = ? AND seq = ?", trainID, seq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MergeTrainMemberRow{}, false, nil
+	}
+	if err != nil {
+		return MergeTrainMemberRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// MergeTrainEvents reads a train's whole event log, oldest sequence first: the log a reader folds
+// into the train's state. A store without the table holds no event.
+func MergeTrainEvents(ctx context.Context, s *Store, trainID string) ([]MergeTrainEventRow, error) {
+	present, err := dagZoneTable(ctx, s, "merge_train_events")
+	if err != nil || !present {
+		return nil, err
+	}
+	return queryRows(ctx, s, scanMergeTrainEvent, "SELECT "+mergeTrainEventColumns+" FROM merge_train_events WHERE train_id = ? ORDER BY seq", trainID)
+}
+
+// MergeTrainEvent reads one event of a train by its sequence number. found is false when the train
+// holds no such event, or when the store predates the zone.
+func MergeTrainEvent(ctx context.Context, s *Store, trainID string, seq int64) (MergeTrainEventRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "merge_train_events")
+	if err != nil || !present {
+		return MergeTrainEventRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanMergeTrainEvent, "SELECT "+mergeTrainEventColumns+" FROM merge_train_events WHERE train_id = ? AND seq = ?", trainID, seq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MergeTrainEventRow{}, false, nil
+	}
+	if err != nil {
+		return MergeTrainEventRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// MergeTrainState is the state of a train: the kind of its newest event, which is what the zone
+// stores in place of a state column. found is false when the train has no event, or when the store
+// predates the zone. An eventless train is the moment between merge-train-open and its first
+// appended event.
+func MergeTrainState(ctx context.Context, s *Store, trainID string) (string, bool, error) {
+	present, err := dagZoneTable(ctx, s, "merge_train_events")
+	if err != nil || !present {
+		return "", false, err
+	}
+	var kind string
+	err = s.q(ctx).QueryRowContext(ctx, "SELECT kind FROM merge_train_events WHERE train_id = ? ORDER BY seq DESC LIMIT 1", trainID).Scan(&kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return kind, true, nil
+}
+
 // ProductBindingsRow is one product_bindings row, every column in DDL order.
 type ProductBindingsRow struct {
 	ProductKey string

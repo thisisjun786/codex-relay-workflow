@@ -1,0 +1,11 @@
+{
+  "issue": "CRW-385",
+  "identical": [
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_p_enters_plan",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_a_free_pass_from_p",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_illegal_edge_refused",
+    "hook__user-prompt-submit-checking-pabcd-trigger__codexclaw_cxc_override_in_directive"
+  ],
+  "intentionally-changed": []
+}
+
