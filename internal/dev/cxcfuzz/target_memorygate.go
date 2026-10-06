@@ -148,8 +148,11 @@ func memoryGateGenerate(rng *rand.Rand, size int) any {
 		dests = append(dests, alias+"/x.md", "./"+alias+"/x.md")
 	}
 	if rng.Intn(2) == 0 {
-		fs = append(fs, memoryGateLink("work/link", "../codex-home/memories"))
-		dests = append(dests, "~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", "$${ROOT}/memories/n.md")
+		// The home-prefixed destinations must resolve under the case's own HOME (${ROOT}/home), so the
+		// link they follow stands there; the work/link entry gives the absolute and relative forms a
+		// second link to reach.
+		fs = append(fs, memoryGateLink("home/link", "../codex-home/memories"), memoryGateLink("work/link", "../codex-home/memories"))
+		dests = append(dests, "~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder+"/work/link/x.md", "work/link/x.md")
 	}
 	if rng.Intn(2) == 0 {
 		depth := 1 + rng.Intn(45)

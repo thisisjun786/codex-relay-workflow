@@ -249,7 +249,7 @@ func shellWriteProgram(rng *rand.Rand, paths []string) string {
 		"python3 -c\"open('" + dest + "','w')\"",
 		"node -e \"require('fs').writeFileSync('" + dest + "','x')\"",
 		"node --eval \"require('fs').createWriteStream('" + dest + "')\"",
-		"node -erequire('fs').appendFileSync('" + dest + "','x')\"",
+		"node -e\"require('fs').appendFileSync('" + dest + "','x')\"",
 		"node -e \"require('fs').open('" + dest + "','w',()=>{})\"",
 	}
 	return programs[rng.Intn(len(programs))]
@@ -264,7 +264,10 @@ func shellWriteHeredoc(rng *rand.Rand, paths []string) string {
 	if rng.Intn(4) == 0 {
 		operator = "cat <<" + delim + " < /w/in"
 	}
-	return operator + " > " + shellWritePath(rng, paths) + "\n" + shellWritePath(rng, paths) + "\n" + strings.TrimPrefix(delim, "-") + "\necho x > " + shellWritePath(rng, paths)
+	// The terminating line is the delimiter word with its quoting and its `-` taken off: the shell
+	// removes both before it compares the line, so a quoted delimiter must close with the bare word.
+	terminator := strings.Trim(strings.TrimPrefix(delim, "-"), "'\"")
+	return operator + " > " + shellWritePath(rng, paths) + "\n" + shellWritePath(rng, paths) + "\n" + terminator + "\necho x > " + shellWritePath(rng, paths)
 }
 
 // shellWriteNested hides the write one level down, in a shell -c, an eval or an xargs.
