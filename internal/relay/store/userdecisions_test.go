@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -89,28 +90,54 @@ func TestUserDecisionRaiseInsertsOneRowThenMergesTheSameFingerprint(t *testing.T
 		t.Fatalf("rows after the second raise = %d, want 1", got)
 	}
 	if folded.DecisionID != "ud-1" || len(folded.Seen) != 2 || folded.Seen[0].Source != "report:1" || folded.Seen[1].Source != "report:2" {
-		t.Fatalf("merged record = %+v, want the stored id and both observations in order", folded)
+		t.Fatalf("folded record = %+v, want the stored id and both observations in order", folded)
 	}
-
 	listed, err := s.List(ctx, UserDecisionFilter{})
 	must(t, err)
-	if len(listed) != 1 {
-		t.Fatalf("List returned %d records, want 1", len(listed))
+	if len(listed) != 1 || !reflect.DeepEqual(listed[0], folded) {
+		t.Fatalf("List returned %+v, want the folded record %+v", listed, folded)
 	}
-	if !reflect.DeepEqual(listed[0], folded) {
-		t.Fatalf("the stored record did not round trip:\n stored %+v\n listed %+v", folded, listed[0])
+}
+
+// A second raise of an open question raises it: the state advances through the format's state
+// machine, the row is not duplicated, and both observations are kept.
+func TestUserDecisionRaiseAdvancesAnOpenQuestionToRaised(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	ctx := context.Background()
+	open := userDecision("ud-1", "Which default does the retry take?", "PRJ-A", decisions.StateOpen)
+	_, _, err := s.Raise(ctx, open)
+	must(t, err)
+
+	raised := open
+	raised.DecisionID = "ud-2"
+	raised.State = decisions.StateRaised
+	raised.RaisedVia = "management-message"
+	raised.Seen = []decisions.Seen{{At: "2026-10-06T01:00:00Z", Source: "report:2"}}
+	folded, merged, err := s.Raise(ctx, raised)
+	must(t, err)
+	if !merged || folded.State != decisions.StateRaised || len(folded.Seen) != 2 || userDecisionRows(t, s) != 1 {
+		t.Fatalf("folded = %+v merged = %v, want the raised state, two observations and one row", folded, merged)
+	}
+	listed, err := s.List(ctx, UserDecisionFilter{State: decisions.StateRaised})
+	must(t, err)
+	if len(listed) != 1 || listed[0].State != decisions.StateRaised {
+		t.Fatalf("a raise of the question is not visible as raised: %+v", listed)
 	}
 }
 
 // A record that already carries an answer is history: raising its question again is a new record.
-func TestUserDecisionRaiseOfAAnsweredQuestionInsertsANewRow(t *testing.T) {
+func TestUserDecisionRaiseOfAnAnsweredQuestionInsertsANewRow(t *testing.T) {
 	t.Parallel()
 	s := recordStore(t)
 	ctx := context.Background()
 	first := userDecision("ud-1", "Which default does the retry take?", "PRJ-A", decisions.StateOpen)
 	_, _, err := s.Raise(ctx, first)
 	must(t, err)
-	if _, err := s.DB.ExecContext(ctx, "UPDATE dag_user_decisions SET state = 'answered' WHERE decision_id = ?", first.DecisionID); err != nil {
+	// The answer path (a later issue) records the answer on the row, as this does.
+	if _, err := s.DB.ExecContext(ctx, "UPDATE dag_user_decisions SET state = 'answered', answered_at = ?,"+
+		" answered_by = ?, answered_via = ?, answer_text = ? WHERE decision_id = ?",
+		"2026-10-06T02:00:00Z", "task-a", "management-message", "adopt", first.DecisionID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,7 +146,7 @@ func TestUserDecisionRaiseOfAAnsweredQuestionInsertsANewRow(t *testing.T) {
 	raised, merged, err := s.Raise(ctx, second)
 	must(t, err)
 	if merged {
-		t.Fatal("a raise merged into an answered record")
+		t.Fatal("a raise folded into an answered record")
 	}
 	if raised.DecisionID != "ud-2" || userDecisionRows(t, s) != 2 {
 		t.Fatalf("raised %+v, rows %d, want the new record and two rows", raised, userDecisionRows(t, s))
@@ -164,22 +191,65 @@ func TestUserDecisionListFiltersByStateAndProject(t *testing.T) {
 	}
 }
 
-// A record the format refuses, and a fingerprint that is not the record's own, write nothing.
-func TestUserDecisionRaiseRefusesAnInvalidRecord(t *testing.T) {
+// A raise carries a record the table can hold: the format's record, in one of the two states a
+// question has before it is answered, with a fingerprint that is its own content's. A record that
+// differs in kind under one fingerprint is a different question, so it is refused too.
+func TestUserDecisionRaiseRefusesARecordItCannotStore(t *testing.T) {
 	t.Parallel()
 	s := recordStore(t)
 	ctx := context.Background()
-	invalid := userDecision("ud-1", "Which default does the retry take?", "PRJ-A", decisions.StateOpen)
-	invalid.Schema = "crw-user-decision/2"
-	if _, _, err := s.Raise(ctx, invalid); err == nil {
+	const question = "Which default does the retry take?"
+	otherSchema := userDecision("ud-1", question, "PRJ-A", decisions.StateOpen)
+	otherSchema.Schema = "crw-user-decision/2"
+	if _, _, err := s.Raise(ctx, otherSchema); err == nil {
 		t.Fatal("a record of another schema was accepted")
 	}
-	stale := userDecision("ud-2", "Which default does the retry take?", "PRJ-A", decisions.StateOpen)
+	stale := userDecision("ud-2", question, "PRJ-A", decisions.StateOpen)
 	stale.Fingerprint = "0123456789abcdef"
-	if _, _, err := s.Raise(ctx, stale); err == nil {
-		t.Fatal("a fingerprint that is not the record's own was accepted")
+	if _, _, err := s.Raise(ctx, stale); !errors.Is(err, ErrUserDecisionFingerprint) {
+		t.Fatalf("a fingerprint that is not the record's own: %v", err)
 	}
-	if got := userDecisionRows(t, s); got != 0 {
-		t.Fatalf("a refused raise wrote %d rows", got)
+	answered := userDecision("ud-3", question, "PRJ-A", decisions.StateAnswered)
+	answered.AnsweredAt, answered.AnsweredBy, answered.AnswerText = "2026-10-06T02:00:00Z", "task-a", "adopt"
+	if _, _, err := s.Raise(ctx, answered); !errors.Is(err, ErrUserDecisionState) {
+		t.Fatalf("a state the raise path does not own: %v", err)
+	}
+	negative := userDecision("ud-4", question, "PRJ-A", decisions.StateOpen)
+	negative.AppliedGeneration = -1
+	if _, _, err := s.Raise(ctx, negative); !errors.Is(err, ErrUserDecisionGeneration) {
+		t.Fatalf("a generation the table refuses: %v", err)
+	}
+	policy := userDecision("ud-5", question, "PRJ-A", decisions.StateOpen)
+	if _, _, err := s.Raise(ctx, policy); err != nil {
+		t.Fatalf("a first raise of its own question: %v", err)
+	}
+	dependency := policy
+	dependency.DecisionID = "ud-6"
+	dependency.Kind = decisions.KindDependency
+	if _, _, err := s.Raise(ctx, dependency); !errors.Is(err, ErrUserDecisionKind) {
+		t.Fatalf("a different kind under one fingerprint: %v", err)
+	}
+	if got := userDecisionRows(t, s); got != 1 {
+		t.Fatalf("the refused raises wrote %d rows, want the one accepted row", got)
+	}
+}
+
+// A record with no observations yet is stored as an empty list and read back as the value Raise
+// returned, so the write and the read agree.
+func TestUserDecisionRaiseKeepsAnAbsentObservationListStable(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	ctx := context.Background()
+	record := userDecision("ud-1", "Which default does the retry take?", "PRJ-A", decisions.StateOpen)
+	record.Seen = nil
+	raised, merged, err := s.Raise(ctx, record)
+	must(t, err)
+	if merged || raised.Seen == nil || len(raised.Seen) != 0 {
+		t.Fatalf("raise returned %+v merged %v, want an empty observation list", raised, merged)
+	}
+	listed, err := s.List(ctx, UserDecisionFilter{})
+	must(t, err)
+	if len(listed) != 1 || !reflect.DeepEqual(listed[0], raised) {
+		t.Fatalf("listed %+v, want the raised record %+v", listed, raised)
 	}
 }

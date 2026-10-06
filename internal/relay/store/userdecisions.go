@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
 
-// The user-decision record (crw-user-decision/1, internal/relay/decisions) in the additive DAG
-// zone: dag_user_decisions. The table is one column per field of the record's Q1 field list, with
-// the object and array fields held as JSON text, decision_id as the primary key and fingerprint
-// indexed. The format, the fingerprint and the state machine belong to the decisions package; this
-// file only stores a record and reads it back.
+// The user-decision record (crw-user-decision/1, internal/relay/decisions) in the additive DAG zone:
+// dag_user_decisions, one column per field of the record, the object and array fields as JSON text.
+// The format, the fingerprint and the state machine belong to the decisions package. Raise owns the
+// two states a question has before it is answered, open and raised; recording an answer, applying it
+// or withdrawing it is the answer/apply/withdraw path, so a raise carrying one of those states is
+// refused rather than stored.
 
 // UserDecisionFilter narrows List. The zero value lists every record.
 type UserDecisionFilter struct {
@@ -24,53 +27,76 @@ type UserDecisionFilter struct {
 	Project string
 }
 
-// mergeStates are the states a second raise of the same fingerprint merges into. A record that
-// carries an answer or a terminal state is history: a later raise of its question is a new record,
-// because decisions.Merge refuses two records whose answer differs.
-var mergeStates = []decisions.State{decisions.StateOpen, decisions.StateRaised}
+// The named refusals Raise makes beyond decisions.Validate. Use errors.Is.
+var (
+	ErrUserDecisionState       = errors.New("store: a raise carries an open or raised record")
+	ErrUserDecisionGeneration  = errors.New("store: the user decision's applied_generation is negative")
+	ErrUserDecisionKind        = errors.New("store: the user decision's kind differs from the stored record's")
+	ErrUserDecisionFingerprint = errors.New("store: the user decision's fingerprint is not its content's")
+)
 
-// userDecisionColumns is the row's column list, in the order both the INSERT and the SELECT use.
+// raiseStates are the states a raise carries and the states a second raise of one fingerprint folds
+// into: a question that is open or raised has no answer yet, so the same question raised again is
+// the same record. A record that carries an answer is history, and a later raise of its question is
+// a new record with its own decision_id.
+var raiseStates = []decisions.State{decisions.StateOpen, decisions.StateRaised}
+
+// userDecisionColumns is the row's column list, in the order the INSERT and the SELECT use.
 const userDecisionColumns = "decision_id, fingerprint, kind, context, options_json," +
 	" recommendation_json, blocking_json, needed_by, origin_json, source_json, authority_json," +
 	" state, raised_at, raised_via, seen_json, answered_at, answered_by, answered_via, answer_text," +
 	" applied_at, applied_event, applied_generation, withdrawn_reason, expired_reason"
 
-// Raise records a user decision. It validates the record, requires its fingerprint to be its own
-// content's, and then, under one writer transaction, either appends the record's observations to
-// the open or raised record that already carries this fingerprint (merged true, no new row) or
-// inserts the record as a new row (merged false).
+// Raise records a user decision: it validates the record and requires its fingerprint to be its own
+// content's, then, under one writer transaction, either folds the record into the open or raised
+// record that already carries this fingerprint (no new row, merged true) or inserts it (merged
+// false). What it returns is what it stored, so a caller can compare it with what List reads back.
 func (s *Store) Raise(ctx context.Context, record decisions.Record) (decisions.Record, bool, error) {
+	// An absent list is stored as an empty array, so the record Raise returns and the record List
+	// reads back are the same value.
+	if record.Options == nil {
+		record.Options = []decisions.Option{}
+	}
+	if record.Blocking == nil {
+		record.Blocking = []decisions.Blocking{}
+	}
+	if record.Seen == nil {
+		record.Seen = []decisions.Seen{}
+	}
 	if err := validateUserDecision(record); err != nil {
 		return decisions.Record{}, false, err
 	}
-	var merged decisions.Record
-	var didMerge bool
-	err := s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
-		open, err := s.userDecisionByFingerprint(ctx, record.Fingerprint)
+	if !slices.Contains(raiseStates, record.State) {
+		return decisions.Record{}, false, fmt.Errorf("%w: %q", ErrUserDecisionState, record.State)
+	}
+	var answer decisions.Record
+	var merged bool
+	err := s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		stored, err := s.userDecisionByFingerprint(ctx, record.Fingerprint)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			if err := s.insertUserDecision(ctx, record); err != nil {
 				return err
 			}
-			merged, didMerge = record, false
+			answer, merged = record, false
 			return nil
 		case err != nil:
 			return err
 		}
-		folded, err := decisions.Merge(open, record)
+		folded, err := foldUserDecision(stored, record)
 		if err != nil {
 			return err
 		}
-		if err := s.updateUserDecisionSeen(ctx, folded.DecisionID, folded.Seen); err != nil {
+		if err := s.updateUserDecisionObservation(ctx, folded); err != nil {
 			return err
 		}
-		merged, didMerge = folded, true
+		answer, merged = folded, true
 		return nil
 	})
 	if err != nil {
 		return decisions.Record{}, false, err
 	}
-	return merged, didMerge, nil
+	return answer, merged, nil
 }
 
 // List reads the records the filter selects, oldest first. The project predicate reads the stored
@@ -102,10 +128,10 @@ func (s *Store) List(ctx context.Context, filter UserDecisionFilter) ([]decision
 	return out, nil
 }
 
-// userDecisionByFingerprint is the merge candidate: the open or raised record of a fingerprint.
+// userDecisionByFingerprint is the fold candidate: the open or raised record of a fingerprint.
 func (s *Store) userDecisionByFingerprint(ctx context.Context, fingerprint string) (decisions.Record, error) {
 	row, err := s.One(ctx, "SELECT "+userDecisionColumns+" FROM dag_user_decisions"+
-		" WHERE fingerprint = ? AND state IN ('open','raised') ORDER BY raised_at, decision_id LIMIT 1", fingerprint)
+		" WHERE fingerprint = ? AND state IN ("+raiseStatesSQL()+") ORDER BY raised_at, decision_id LIMIT 1", fingerprint)
 	if err != nil {
 		return decisions.Record{}, err
 	}
@@ -122,37 +148,70 @@ func (s *Store) insertUserDecision(ctx context.Context, record decisions.Record)
 	return err
 }
 
-func (s *Store) updateUserDecisionSeen(ctx context.Context, decisionID string, seen []decisions.Seen) error {
-	encoded, err := json.Marshal(seenOrEmpty(seen))
+// updateUserDecisionObservation writes what a fold changes: the observations, and the state when the
+// fold advanced it.
+func (s *Store) updateUserDecisionObservation(ctx context.Context, record decisions.Record) error {
+	encoded, err := json.Marshal(record.Seen)
 	if err != nil {
 		return fmt.Errorf("encode seen: %w", err)
 	}
-	_, err = s.exec(ctx, "UPDATE dag_user_decisions SET seen_json = ? WHERE decision_id = ?", string(encoded), decisionID)
+	_, err = s.exec(ctx, "UPDATE dag_user_decisions SET state = ?, seen_json = ? WHERE decision_id = ?",
+		string(record.State), string(encoded), record.DecisionID)
 	return err
 }
 
-// validateUserDecision is decisions.Validate plus the one thing the store must not store: a
-// fingerprint field that is not the record's own content's fingerprint, which would file two
-// different questions under one key.
+// validateUserDecision is decisions.Validate plus the two things the table would otherwise answer
+// with a constraint failure: a generation its CHECK refuses, and a fingerprint that is not the
+// record's own content's, which would file two different questions under one key.
 func validateUserDecision(record decisions.Record) error {
 	if err := decisions.Validate(record); err != nil {
 		return err
 	}
+	if record.AppliedGeneration < 0 {
+		return fmt.Errorf("%w: %d", ErrUserDecisionGeneration, record.AppliedGeneration)
+	}
 	if content := decisions.Fingerprint(record.Context, record.Blocking, record.Options); content != record.Fingerprint {
-		return fmt.Errorf("user decision %q: fingerprint is %q, its content's is %q", record.DecisionID, record.Fingerprint, content)
+		return fmt.Errorf("%w: %q is not its content's %q", ErrUserDecisionFingerprint, record.Fingerprint, content)
 	}
 	return nil
 }
 
-func seenOrEmpty(seen []decisions.Seen) []decisions.Seen {
-	if seen == nil {
-		return []decisions.Seen{}
+// foldUserDecision folds a second raise of one question into the row that already holds it: the
+// format's merge appends the new observations and refuses a record that differs beyond them, and the
+// stored state advances through the format's state machine when the transition is allowed, which is
+// how a second raise of an open question raises it (open -> raised). A differing kind is a different
+// question wearing one fingerprint, so it is refused rather than folded.
+func foldUserDecision(stored, incoming decisions.Record) (decisions.Record, error) {
+	if stored.Kind != incoming.Kind {
+		return decisions.Record{}, fmt.Errorf("%w: stored %q, raised %q", ErrUserDecisionKind, stored.Kind, incoming.Kind)
 	}
-	return seen
+	advance := incoming.State != stored.State && decisions.CanTransition(stored.State, incoming.State)
+	sameState := incoming
+	sameState.State = stored.State
+	folded, err := decisions.Merge(stored, sameState)
+	if err != nil {
+		return decisions.Record{}, err
+	}
+	if advance {
+		if err := decisions.Transition(&folded, incoming.State); err != nil {
+			return decisions.Record{}, err
+		}
+	}
+	return folded, nil
 }
 
-// encodeUserDecision is the row's values in userDecisionColumns order: the scalar fields as they
-// are and the object and array fields as JSON text.
+// raiseStatesSQL is raiseStates as the lookup's IN list, so the state check and the query cannot
+// drift apart. The values are the vocabulary's own constants.
+func raiseStatesSQL() string {
+	quoted := make([]string, len(raiseStates))
+	for i, state := range raiseStates {
+		quoted[i] = "'" + string(state) + "'"
+	}
+	return strings.Join(quoted, ",")
+}
+
+// encodeUserDecision is the row's values in userDecisionColumns order: the scalar fields as they are
+// and the object and array fields as JSON text. An absent recommendation is the empty text.
 func encodeUserDecision(record decisions.Record) ([]any, error) {
 	recommendation := ""
 	if record.Recommendation != nil {
@@ -162,35 +221,27 @@ func encodeUserDecision(record decisions.Record) ([]any, error) {
 		}
 		recommendation = string(encoded)
 	}
-	arrays := []any{}
-	for _, value := range []any{record.Options, record.Blocking, seenOrEmpty(record.Seen)} {
-		encoded, err := json.Marshal(value)
+	encoded := make([]string, 0, 6)
+	for _, value := range []any{record.Options, record.Blocking, record.Seen, record.Origin, record.Source, record.Authority} {
+		text, err := json.Marshal(value)
 		if err != nil {
 			return nil, fmt.Errorf("encode %T: %w", value, err)
 		}
-		arrays = append(arrays, string(encoded))
-	}
-	objects := []any{}
-	for _, value := range []any{record.Origin, record.Source, record.Authority} {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode %T: %w", value, err)
-		}
-		objects = append(objects, string(encoded))
+		encoded = append(encoded, string(text))
 	}
 	return []any{
 		record.DecisionID, record.Fingerprint, string(record.Kind), record.Context,
-		arrays[0], recommendation, arrays[1], record.NeededBy,
-		objects[0], objects[1], objects[2],
-		string(record.State), record.RaisedAt, record.RaisedVia, arrays[2],
+		encoded[0], recommendation, encoded[1], record.NeededBy,
+		encoded[3], encoded[4], encoded[5],
+		string(record.State), record.RaisedAt, record.RaisedVia, encoded[2],
 		record.AnsweredAt, record.AnsweredBy, record.AnsweredVia, record.AnswerText,
 		record.AppliedAt, record.AppliedEvent, record.AppliedGeneration,
 		record.WithdrawnReason, record.ExpiredReason,
 	}, nil
 }
 
-// decodeUserDecision reads one row back into a record. The row is a boundary: a value that does
-// not decode, or a record that no longer validates, is an error rather than a half-read record.
+// decodeUserDecision reads one row back into a record. The row is a boundary: a value that does not
+// decode, or a record that no longer validates, is an error rather than a half-read record.
 func decodeUserDecision(row Row) (decisions.Record, error) {
 	if row == nil {
 		return decisions.Record{}, sql.ErrNoRows
@@ -221,42 +272,30 @@ func decodeUserDecision(row Row) (decisions.Record, error) {
 		}
 		record.AppliedGeneration = number
 	}
-	if err := decodeJSONColumn(row.Text("options_json"), &record.Options); err != nil {
-		return decisions.Record{}, err
-	}
-	if err := decodeJSONColumn(row.Text("blocking_json"), &record.Blocking); err != nil {
-		return decisions.Record{}, err
-	}
-	if err := decodeJSONColumn(row.Text("seen_json"), &record.Seen); err != nil {
-		return decisions.Record{}, err
-	}
-	if err := decodeJSONColumn(row.Text("origin_json"), &record.Origin); err != nil {
-		return decisions.Record{}, err
-	}
-	if err := decodeJSONColumn(row.Text("source_json"), &record.Source); err != nil {
-		return decisions.Record{}, err
-	}
-	if err := decodeJSONColumn(row.Text("authority_json"), &record.Authority); err != nil {
-		return decisions.Record{}, err
-	}
-	if recommendation := row.Text("recommendation_json"); recommendation != "" {
-		record.Recommendation = &decisions.Recommendation{}
-		if err := decodeJSONColumn(recommendation, record.Recommendation); err != nil {
-			return decisions.Record{}, err
+	var recommendation decisions.Recommendation
+	for _, column := range []struct {
+		name string
+		into any
+	}{
+		{"options_json", &record.Options},
+		{"blocking_json", &record.Blocking},
+		{"seen_json", &record.Seen},
+		{"origin_json", &record.Origin},
+		{"source_json", &record.Source},
+		{"authority_json", &record.Authority},
+		{"recommendation_json", &recommendation},
+	} {
+		if text := row.Text(column.name); text != "" {
+			if err := json.Unmarshal([]byte(text), column.into); err != nil {
+				return decisions.Record{}, fmt.Errorf("decode %s: %w", column.name, err)
+			}
 		}
+	}
+	if row.Text("recommendation_json") != "" {
+		record.Recommendation = &recommendation
 	}
 	if err := validateUserDecision(record); err != nil {
 		return decisions.Record{}, err
 	}
 	return record, nil
-}
-
-func decodeJSONColumn(text string, into any) error {
-	if text == "" {
-		return nil
-	}
-	if err := json.Unmarshal([]byte(text), into); err != nil {
-		return fmt.Errorf("decode %T: %w", into, err)
-	}
-	return nil
 }
