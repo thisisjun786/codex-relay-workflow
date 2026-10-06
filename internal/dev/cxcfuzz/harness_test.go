@@ -28,6 +28,11 @@ const helperEnv = "CXCFUZZ_TEST_HELPER"
 // field because the delay must be in place before the worker reads anything, the way helperEnv is.
 const helperBootDelay = "CXCFUZZ_TEST_BOOT_DELAY"
 
+// helperBadHandshake makes the fake worker answer the start-up handshake (a null input) with a reply
+// that names another request, so the pool's envelope check on the handshake reply can be driven
+// through the pool rather than only through answer.
+const helperBadHandshake = "CXCFUZZ_TEST_BAD_HANDSHAKE"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(helperEnv) == "1" {
 		os.Exit(helperMain())
@@ -64,7 +69,11 @@ func helperMain() int {
 		if strings.Contains(string(request.Input), "STALL") {
 			select {}
 		}
-		reply, _ := json.Marshal(map[string]any{"id": request.ID, "output": request.Input})
+		id := request.ID
+		if os.Getenv(helperBadHandshake) == "1" && string(request.Input) == "null" {
+			id++ // a reply for a request the pool never sent
+		}
+		reply, _ := json.Marshal(map[string]any{"id": id, "output": request.Input})
 		out.Write(append(reply, '\n'))
 		if err := out.Flush(); err != nil {
 			return 1
@@ -79,6 +88,11 @@ func helperEnvFor() []string { return append(os.Environ(), helperEnv+"=1") }
 // helperEnvForBoot is helperEnvFor with a start-up delay before the worker reads anything.
 func helperEnvForBoot(delay time.Duration) []string {
 	return append(helperEnvFor(), helperBootDelay+"="+delay.String())
+}
+
+// helperEnvForBadHandshake is helperEnvFor with a worker that mis-answers the handshake.
+func helperEnvForBadHandshake() []string {
+	return append(helperEnvFor(), helperBadHandshake+"=1")
 }
 
 // helperTarget is a target whose oracle is this test binary, so its campaign needs no Node.

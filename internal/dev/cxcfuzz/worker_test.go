@@ -54,12 +54,32 @@ func TestPoolStartupTimeoutIsReportedAndTheSlotReturns(t *testing.T) {
 	}
 }
 
-// The handshake proves readiness, so a worker that answers garbage is not accepted as ready: its
-// reply is not a valid envelope, and the campaign is not left comparing something the oracle never
-// said. The fake worker's reply for a null input is its own input, so this pins the id match.
+// The handshake proves readiness, so a worker whose reply does not answer the request the pool sent
+// is not accepted as ready: the pool refuses it and its slot goes back, exactly as for a start-up
+// that times out. The fake worker is told to name another request in its handshake reply, so the
+// envelope check is driven through the pool rather than only through answer.
 func TestPoolRejectsAWorkerThatAnswersTheHandshakeWrongly(t *testing.T) {
-	if _, err := answer(1, `{"id":2,"output":null}`); err == nil {
-		t.Fatal("a handshake reply for another request was accepted")
+	target := helperTarget(t, func(rng *rand.Rand, size int) any { return nil })
+	pool, err := NewPool(target.Oracle, 1, time.Second, 5*time.Second, helperEnvForBadHandshake())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Call(`{"text":"ok"}`, "")
+	if err == nil {
+		t.Fatal("a worker that mis-answered the handshake was accepted as ready")
+	}
+	if errors.Is(err, Timeout{}) {
+		t.Fatalf("err = %v, want a reply-envelope failure, not a timeout", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- pool.Close() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return: the rejected worker's slot was not returned")
 	}
 }
 
