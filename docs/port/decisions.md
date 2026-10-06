@@ -5699,11 +5699,11 @@ git log --first-parent origin/dev --since=2026-10-05T23:00:00Z --until=2026-10-0
 | Merges | 45 | `git log --first-parent` above; the 45 `push` runs to `dev` agree |
 | Runs per merge | 7.8 (the issue's expectation is about 2.5 to 3) | 350 / 45 |
 | Job slots | one run is ten jobs, so 3,500 in seven hours, about 8.3 a minute sustained | `.github/workflows/ci.yml:19-149`; the jobs list above |
-| Same-commit reruns | 250 distinct head SHAs, 91 ran more than once, 100 runs beyond the first of their head, and 95 of those extra runs are `pull_request` runs on a head that already had one (79 heads ran twice, 8 three times) | the runs list above |
+| Repeated runs on one head | 250 distinct head SHAs, 91 ran more than once, 100 runs beyond the first of their head, and 95 of those extra runs are `pull_request` runs on a head that already had one (79 heads ran twice, 8 three times). These are repeated runs on one head, not necessarily runs of one tree: a `pull_request` run reports the pull request head as `head_sha` while it tests `refs/pull/<number>/merge` (§79), so a base advance between two of them changes the tree without changing the head | the runs list above |
 | Run wall time, `created_at` to `updated_at` | `pull_request` median 281 s, p90 730 s, max 2132 s; `push` median 275 s; `workflow_dispatch` median 276 s | the runs list above |
 | Job duration | `test-1` 260 s, `test-2` 259 s, `test-rest` 246 s, `test-3` 197 s, `lint` 148 s, `dist` 144 s, `test-4` 128 s, `validate` 35 s, `secrets` 8 s, `dev-gate` 3 s (medians) | the jobs list above, 26 `pull_request` runs sampled across the window, 260 jobs |
 | Runner wait, job `started_at` minus run `created_at` | the 182 matrix jobs: median 4 s, p90 207 s, max 456 s; 23 of 182 (12.6%) waited 155 s or more and 19 (10.4%) waited 270 s or more; the worst wait in a run has median 6 s and p90 271 s | the jobs list above |
-| Cost of cancellation | the 27 cancelled `pull_request` runs held 9,715 s of run wall time before they were cancelled, about 360 s each | the runs list above |
+| Cost of cancellation | 25 of the 27 cancelled `pull_request` runs had jobs that had already started; those jobs ran 26,328 s of job execution time between them, median 1,134 s and max 1,875 s per run, summed per run from each job's `completed_at` minus its `started_at` | the jobs of those runs, read with the jobs endpoint above |
 | Lane CI | §79's measurement of the same day stands: turn median 5.4 min, of which base refresh to CI end 5.2 min. The issue records the lane growing from 4.5 to 11 minutes; the `pull_request` p90 of 12.2 minutes is that tail | the issue body for the lane figure; the runs list above for the tail |
 
 The management session's own observation the same afternoon — 30 jobs running and 14 runs waiting
@@ -5723,8 +5723,17 @@ queueing, and they land on whichever run is unlucky rather than on the lane.
 
 Most of the runs are avoidable. The 41 `workflow_dispatch` runs started on pull request branches are
 11.7% of every run in the window; the packet stopped that practice on 2026-10-06. Another 95 runs
-re-ran a head that already had a pull request run. And cancelling does not return the runners: 31
-runs were cancelled, and the 27 cancelled pull request runs had already held about 360 s each.
+re-ran a head that already had a pull request run. Cancellation does not recover what was already
+spent: 31 runs were cancelled, and the jobs that had already started in the 27 cancelled pull
+request runs had run 26,328 s of job execution time between them. Cancelling does release the
+runners it stops, but only from the moment of the cancellation, so the queue time those runs had
+already cost is not given back.
+
+The pattern repeats outside the window, in this pull request itself: the review bot's append to its
+body started a second full run of all ten jobs on the same head, eight minutes after the first,
+because the edited-run reuse of option 7 has not landed yet. Both runs tested the same commit —
+their jobs all report `head_sha 8e053f26cf` — so the second run was avoidable in the sense §79 (a)
+means.
 
 ### The current concurrency settings, checked against the documentation
 
@@ -5738,16 +5747,22 @@ The documentation confirms the comment's reading:
   same concurrency group will run at a time", and with `cancel-in-progress: true` GitHub "will
   cancel any workflow runs or jobs that are already in progress in the same concurrency group"
   ("Control workflow concurrency"). The group name is case-insensitive.
-- So a push to a pull request branch cancels that pull request's in-progress run — measured, 27
+- A push to a pull request branch starts no run of its own, because the `push` trigger names only
+  `dev` (`.github/workflows/ci.yml:3-5`). What cancels that pull request's in-progress run is the
+  new `pull_request` (synchronize) run, which shares the pull request number's group — measured, 27
   cancelled `pull_request` runs. An edited-body run is in its own group and neither cancels nor is
-  cancelled by the push run. A `workflow_dispatch` run on a pull request branch is grouped by
-  `github.ref`, that is `refs/heads/<branch>`, and likewise stands apart from the pull request run.
+  cancelled by the synchronize run. A `workflow_dispatch` run on a pull request branch is grouped
+  by `github.ref`, that is `refs/heads/<branch>`, and likewise stands apart from the pull request
+  run.
 - Consecutive merges put their `dev` push runs in one group (`refs/heads/dev`), so the later merge
   cancels the earlier one — measured, 1 cancelled `push` run. That sits against `POLICY.md`, whose
   release reads the latest dev push CI for the released SHA: a merge whose dev push run the next
-  merge cancelled has no dev push run of its own, so a release of that SHA has no release evidence
-  until a later push to `dev` covers it. This section records the tension and changes nothing; the
-  rule is part of option 6 below.
+  merge cancelled has no dev push run of its own, and a later push does not cover it, because
+  `release.yml` reads the run by `head_sha=$RELEASE_SHA` in both `release-source`
+  (`.github/workflows/release.yml:114-126`) and `release-publish` (`:211-223`) and requires the
+  returned run's `head_sha` to be that exact commit. The cancelled run has to be rerun, or the
+  release gate changed, before that SHA can be released. This section records the tension and
+  changes nothing; the rule is part of option 6 below.
 
 Source: "Control workflow concurrency"
 (<https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency>),
@@ -5805,9 +5820,9 @@ Sources, read 2026-10-06: "Limits" above, "Billing for GitHub Actions"
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1. Intermediate runs test only changed packages; the lane runs the full suite on the refreshed head and `dev-gate` reads it | Weakened unless the tree is proved identical. The check on the pull request head would rest on a run of another ref, and the next push to that head starts over | Names unchanged. A `workflow_dispatch` run is an admitted source under §79 (a) | The lane's run is the full one and the lane is the bottleneck, so the lane's wait does not fall; total job slots stay near 3,500 | A lane step plus a conditional pull request workflow | The pull request's `dev-gate` stops meaning "every job succeeded on this head", and the tree proof belongs to the tree-keyed reuse node; one region in the workflow | No new trust path | Yes |
 | 2. Run only the legs a changed path or package needs | Weakened: a leg that does not run is not a success | Names unchanged; §79 (a) unaffected | Large for a documentation-only pull request, near zero for a Go change, because almost every leg is reachable | A selection rule in the workflow | Also contradicts `POLICY.md:71`, "Nothing is selected by changed paths". One region | No new trust path | Yes |
-| 3. A lane-dedicated self-hosted runner | Unchanged | Names unchanged; §79 (a) unaffected | The only option that answers "runners first" directly: the lane's run stops competing | A machine, its maintenance, and a new trust path | A new trust path in a public repository; one region, plus a machine and its upkeep | Refused as stated: "self-hosted runners should almost never be used for public repositories on GitHub, because any user can open pull requests against the repository and compromise the environment". A runner that serves only the lane's own `workflow_dispatch` runs, which a fork cannot start, narrows the exposure but does not remove it, because a pull request can still edit any workflow the runner serves | Yes |
+| 3. A lane-dedicated self-hosted runner | Unchanged | Names unchanged; §79 (a) unaffected | The only option that answers "runners first" directly: the lane's run stops competing | Not one machine: `ci.yml` makes nine prerequisite jobs eligible at once, so the lane keeps today's latency only with capacity for at least nine runners per simultaneous run (18 at `k = 2`) or an autoscaling pool, plus maintenance and a new trust path | A new trust path in a public repository; one region, plus a runner pool and its upkeep | Refused as stated: "self-hosted runners should almost never be used for public repositories on GitHub, because any user can open pull requests against the repository and compromise the environment". A pool that serves only the lane's own `workflow_dispatch` runs, which a fork cannot start, narrows the exposure but does not remove it, because a pull request can still edit any workflow the runner serves | Yes |
 | 4. Pro to Team, 60 concurrent jobs | Unchanged | Names unchanged; §79 (a) unaffected | The ceiling rises 40 to 60, so the lane's nine-job run and the children's runs queue less. It does not reduce the 350 runs or the 3,500 job slots that cause the queue | An organization and a repository transfer; monthly prices unread | The transfer cost §79 lists; no code slice, only settings, a ruleset and an organization | No new trust path | Yes |
-| 5. Lighter intermediate pushes, or a draft until handoff | Unchanged | Names unchanged; §79 (a) unaffected | A draft saves no run: `ci.yml:8` lists `opened`, so creating a draft pull request starts the same run a ready one would | None | None; no slice. The saving is fewer pushes, which option 7 covers | No new trust path | No |
+| 5. Lighter intermediate pushes, or a draft until handoff | Unchanged | Names unchanged; §79 (a) unaffected | A draft adds a run rather than saving one: `ci.yml:8` lists `opened` and `ready_for_review`, so opening the draft starts the same run a ready pull request would and marking it ready starts another on the same head | None | None; no slice, and it costs one extra run. Its only saving is fewer pushes, which option 7 covers | No new trust path | No |
 | 6. Reuse or omit the dev push run | Unchanged: with the strict gate and a merge commit the dev push tree is the tree the lane verified, which is §79's premise | Names unchanged. A `push` run to `dev` is an admitted source, so reusing it is consistent with §79 (a) | Minus 45 runs per seven hours, 12.9% of all runs, and minus 450 job slots; also removes the dev push cancel race | `POLICY.md`'s release-evidence paragraph, `docs/releases.md`, the `release.yml` check and its contract tests | The release loses a run of its own and a reused result must be labelled as reused; one region | No new trust path | Yes |
 | 7. (added) Make the packet's run-count rules permanent | Unchanged: nothing is weakened | Names unchanged; §79 (a) unaffected | Minus the 41 dispatch runs (11.7%), minus the edited share of the 95 extra pull request runs (the runs API reports `pull_request` for `opened` and `edited` alike, so that share cannot be read here; the edited-run reuse node owns it), plus a shorter longest leg from the leg-rebalance node | Skill text only | Low; one region of skill text | No new trust path | No |
 
@@ -5879,12 +5894,17 @@ built.
    is refused; a second failed-job rerun on the same head is refused. End condition: the three rules
    are named in the packet template, and `crw-dev ci plugin`, `crw-dev ci validate` and the link
    check pass. About 150 to 250 lines of skill text.
-2. **The dev push run as release evidence** (`POLICY.md` release paragraph, `docs/releases.md`,
-   `.github/workflows/release.yml`, `internal/contracttest/release.go` and
-   `internal/contracttest/release_workflow_test.go`). Contracts to keep: the release refuses a
-   source it cannot read, as it does today. Red first: a release whose SHA has no dev push run of
-   its own is refused; a reused `dev-gate` is labelled reused and is refused as the release's own
-   run. End condition: the rule is written and checked. Waits on Jun's decision on option 6.
+2. **The dev push run as release evidence** (`.github/workflows/ci.yml` — the `push` trigger at
+   `:3-5`, without which the 45 runs keep starting — `POLICY.md` release paragraph,
+   `docs/releases.md`, both exact-push lookups in `.github/workflows/release.yml`,
+   `release-source` (`:114-126`) and `release-publish` (`:211-223`), `internal/contracttest/release.go`
+   and `internal/contracttest/release_workflow_test.go`, and the CI-control contract tests).
+   Contracts to keep: the release refuses a source it cannot read, as it does today. Red first: a
+   release that the replacement evidence admits succeeds, so the positive case fails against
+   today's exact-push rule; the existing negatives (a missing exact-SHA push run, a
+   `workflow_dispatch` run, a stale or unrelated run) stay, and a reused `dev-gate` is labelled
+   reused and refused as the release's own run. End condition: the rule is written and checked in
+   both copies. Waits on Jun's decision on option 6.
 3. **The lane's capacity** (the workflow and the operator page). Contracts to keep: the required
    check name and the job names unchanged; no `pull_request_target`. Red first: a `pull_request`
    run cannot reach a lane runner. End condition: the lane's runs use the new capacity and every
