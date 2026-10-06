@@ -149,6 +149,37 @@ func editMirrorTestStep(part, conclusion string) editMirrorStepFixture {
 	return editMirrorStepFixture{name: "Test and replay the contract corpus (" + part + ")", conclusion: conclusion}
 }
 
+// editMirrorGuiStepNames is the four screen steps the gui job runs, in ci.yml's order. The mirror
+// mirrors the gui job only when its newest attempt concluded each of them as success, so the names
+// have to be the ones ci.yml gives those steps
+// (TestEditMirror_the_gui_screen_step_names_match_the_workflow holds the script's list to this one).
+var editMirrorGuiStepNames = []string{
+	"Install the screen dependencies from the committed lockfile",
+	"Run the screen tests",
+	"Build the screens into a fresh tree",
+	"Refuse a committed tree that is not a fresh build",
+}
+
+// editMirrorGuiSteps is the gui job's four screen steps, each with the conclusion named.
+func editMirrorGuiSteps(conclusion string) []editMirrorStepFixture {
+	steps := make([]editMirrorStepFixture, len(editMirrorGuiStepNames))
+	for i, name := range editMirrorGuiStepNames {
+		steps[i] = editMirrorStepFixture{name: name, conclusion: conclusion}
+	}
+	return steps
+}
+
+// editMirrorGuiStepsFrom is editMirrorGuiSteps with one step's conclusion changed.
+func editMirrorGuiStepsFrom(name, conclusion string) []editMirrorStepFixture {
+	steps := editMirrorGuiSteps("success")
+	for i := range steps {
+		if steps[i].name == name {
+			steps[i].conclusion = conclusion
+		}
+	}
+	return steps
+}
+
 func editMirrorJob(name, conclusion string, attempt int) editMirrorJobFixture {
 	return editMirrorJobFixture{name: name, attempt: attempt, conclusion: conclusion}
 }
@@ -883,4 +914,101 @@ func editMirrorExpectEqual(t *testing.T, label string, got, want any) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("%s = %#v, want %#v", label, got, want)
 	}
+}
+
+// A gui job concludes success without verifying the screens when gui_paths.sh answered
+// changed=false: the job ends before Node is installed, its four screen steps are skipped, and its
+// check still reads success. A body-only edit after such a run must run the screens in full, so the
+// gui job is mirrored only when the same newest attempt concluded all four screen steps as success.
+// The four names are ci.yml's; the step-name test below holds the script's list to them.
+func TestEditMirror_the_gui_job_is_mirrored_only_when_the_screens_were_verified(t *testing.T) {
+	run := editMirrorRun(1111, "2026-10-06T06:00:00Z")
+	for _, c := range []editMirrorCase{
+		{
+			name:    "the four screen steps all succeeded",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("success")...)}},
+			jobName: "gui",
+			want:    "true",
+			wantRun: 1111,
+		},
+		{
+			name:    "the job concluded success with every screen step skipped",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("skipped")...)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name:    "the job carries no steps at all",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJob("gui", "success", 1)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name:    "the screen tests failed",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiStepsFrom(editMirrorGuiStepNames[1], "failure")...)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name:    "one screen step is missing from the steps that ran",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("success")[:3]...)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name: "the newest attempt skipped the screens after an older one ran them",
+			runs: []editMirrorRunFixture{run},
+			jobs: map[int][]editMirrorJobFixture{1111: {
+				editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("success")...),
+				editMirrorJobWithSteps("gui", "success", 2, editMirrorGuiSteps("skipped")...),
+			}},
+			jobName: "gui",
+			want:    "false",
+		},
+	} {
+		runEditMirror(t, c).check(t, c)
+	}
+}
+
+// edit_mirror.sh looks for the gui job's screen steps by name, so the names it holds have to be the
+// ones ci.yml's gui job gives those steps: a rename on either side is a red test here rather than a
+// gui job mirrored without its screens verified.
+func TestEditMirror_the_gui_screen_step_names_match_the_workflow(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(editMirrorRepoRoot(), "scripts", "ci", "edit_mirror.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := editMirrorScriptGuiStepNames(t, string(data))
+	editMirrorExpectEqual(t, "the screen steps the script watches", names, editMirrorGuiStepNames)
+
+	jobs, _ := editMirrorJobs(t)
+	inWorkflow := map[string]bool{}
+	for _, step := range editMirrorSteps(t, jobs["gui"]) {
+		inWorkflow[step["name"]] = true
+	}
+	for _, name := range names {
+		if !inWorkflow[name] {
+			t.Errorf("edit_mirror.sh watches the gui step %q, which ci.yml's gui job does not name", name)
+		}
+	}
+}
+
+// editMirrorScriptGuiStepNames reads the screen step names edit_mirror.sh holds: the quoted lines
+// of its screen_steps array, in order.
+func editMirrorScriptGuiStepNames(t *testing.T, script string) []string {
+	t.Helper()
+	block := regexp.MustCompile(`(?ms)^screen_steps=\(\n(.*?)^\)$`).FindStringSubmatch(script)
+	if block == nil {
+		t.Fatal("edit_mirror.sh does not define a screen_steps array")
+	}
+	var names []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*'(.*)'$`).FindAllStringSubmatch(block[1], -1) {
+		names = append(names, m[1])
+	}
+	return names
 }

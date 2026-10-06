@@ -104,6 +104,14 @@ failed jobs moves it forward and would let an older run outrank a newer one whos
 failed. It answers `mirrored=true` with the run id in its step output and its step summary, or
 `mirrored=false`.
 
+Two jobs carry more than their own conclusion. A `go-product` test leg is mirrored only when its
+own test step also concluded `success`, so [light mode](#the-temporary-light-mode) cannot carry an
+untested leg forward. The `gui` job is mirrored only when all four of its screen steps concluded
+`success` in the same newest attempt: a `gui` job that concluded success with the screens skipped
+(`gui_paths.sh` answered `changed=false`, so the job ended before Node was installed) is not
+mirrored, and the screens run in full. The four names the mirror reads are ci.yml's gui job step
+names, and a test holds the two lists to each other, so a rename on either side is red.
+
 Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
 condition the step already had. The full checkout is one of them, and the sparse checkout of
 `scripts/ci` above the mirror is what has to exist before the script can decide. A mirrored job
@@ -203,8 +211,11 @@ actually compiles: an untracked file, a modification or a deletion there is refu
 built and committed trees agree, so a local edit cannot be approved and then embedded. The trees
 are compared as sorted path-and-bytes pairs: a built file the commit does not hold, a committed
 file the build does not produce, a renamed asset (which is both) and a byte difference are each
-refused and named, and a committed asset over 2 MiB is refused before the comparison. The refusal
-names `make gui-assets` as the regeneration command.
+refused and named, and a screen asset at or over 2 MiB (2,097,152 bytes) is refused before the
+comparison. The size bound is exclusive and applies to both sides, so an asset of exactly
+2,097,152 bytes, whether the commit holds it or a rebuild produces it, is refused rather than
+passed, while 2,097,151 bytes pass on both sides. The refusal names `make gui-assets` as the
+regeneration command.
 `internal/dev/ci/gui_drift_test.go` pins each rejection and the pass;
 `internal/dev/ci/gui_paths_test.go` pins the decision.
 
@@ -212,8 +223,10 @@ The job never reads `CRW_CI_MODE`, so [light mode](#the-temporary-light-mode) ca
 screen verification: an unlabeled light pull request runs this job exactly as a full one, and only
 the five `go-product` test legs can be light. It takes the same [body-only edit
 mirror](#the-body-only-edit-mirror) pair as the other four jobs, so a mirrored run stands the job
-down only on a completed successful `gui` job on the same head, which is the same-head evidence
-the mirror rule requires.
+down only when the newest attempt of that run's `gui` job concluded all four screen steps as
+`success` on the same head, which is the same-head screen evidence the mirror rule requires. A
+`gui` job that concluded success with the screens skipped is not mirrored, and the screens run in
+full.
 
 ## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
