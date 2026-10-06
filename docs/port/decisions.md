@@ -5576,11 +5576,12 @@ frozen table or updates an immutable row:
   refused `disposition_conflict` otherwise, so only the head-of-line parent advances the
   shared record. It does not trust what that caller states: it **reads the run and the prefix
   commit itself** and uses `--prefix-head`, `--prefix-tree` and `--run` only as cross-checks.
-  It reads the run from the forge and requires that it is this repository's `ci.yml`, not a
-  fork's workflow, that its event is one the reuse admits (`workflow_dispatch` or `push` per
-  Question 1), that its reported `head_sha` equals the `--prefix-head` the caller named, and
-  that every job of its newest attempt is a success; it reads the prefix commit's tree from
-  the forge as well. A run it cannot read, or a prefix commit it cannot read, is
+  It reads the run from the forge and requires that its `path` is this repository's
+  `.github/workflows/ci.yml` and its `head_repository` is this repository, not a fork's,
+  that its `event` is one the reuse admits (`workflow_dispatch` or `push` per Question 1),
+  that its `head_sha` equals the `--prefix-head` the caller named, and that every job of the
+  run's newest attempt reads `conclusion: success`; it reads the prefix commit's tree from
+  the forge's commit reading as well. A run it cannot read, or a prefix commit it cannot read, is
   `merge_target_unreadable`; a run of another workflow, a run from a fork, a run whose
   `head_sha` is not the stated prefix head, a run with a job that is not a success on its
   newest attempt, or a tree that differs from the stated `--prefix-tree`, is
