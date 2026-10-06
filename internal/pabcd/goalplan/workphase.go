@@ -41,7 +41,7 @@ type WorkPhaseAdvanceResult struct {
 	Kind        WorkPhaseAdvanceKind `json:"kind"`
 	ClosedID    *string              `json:"closedId,omitempty"`
 	Plan        *Goalplan            `json:"plan,omitempty"`
-	WorkPhaseID string               `json:"workPhaseId,omitempty"`
+	WorkPhaseID *string              `json:"workPhaseId,omitempty"`
 	Pending     []GoalplanTask       `json:"pending,omitempty"`
 }
 
@@ -64,14 +64,19 @@ const (
 // WorkPhaseCloseFixedResult is the oracle's CloseFixedResult union. Reason is one of absent,
 // not_runnable, dependencies_unmet or corrupt on the successor_lost variant; a corrupt marker
 // cannot be fixed by editing the plan, which is why it is its own reason.
+//
+// WorkPhaseID and SuccessorID are pointers because the oracle's variant always carries the key
+// and its value may be the empty string: a plan can hold a work phase with an empty id, and the
+// corrupt marker this type reports is exactly the empty string. A plain string with omitempty
+// would drop the key and lose the marker the refusal exists to report.
 type WorkPhaseCloseFixedResult struct {
 	Kind        WorkPhaseCloseFixedKind `json:"kind"`
 	ClosedID    *string                 `json:"closedId,omitempty"`
 	Plan        *Goalplan               `json:"plan,omitempty"`
-	WorkPhaseID string                  `json:"workPhaseId,omitempty"`
+	WorkPhaseID *string                 `json:"workPhaseId,omitempty"`
 	Pending     []GoalplanTask          `json:"pending,omitempty"`
 	Status      WorkPhaseStatus         `json:"status,omitempty"`
-	SuccessorID string                  `json:"successorId,omitempty"`
+	SuccessorID *string                 `json:"successorId,omitempty"`
 	Reason      string                  `json:"reason,omitempty"`
 	Unmet       []string                `json:"unmet,omitempty"`
 }
@@ -88,12 +93,19 @@ const (
 )
 
 // WorkPhaseResumeAbsentTargetResult is the oracle's ResumeAbsentTargetResult union.
+//
+// SuccessorID is a pointer for the same reason as in WorkPhaseCloseFixedResult: the oracle's
+// variant always carries the key, and an empty string is a value it can hold.
 type WorkPhaseResumeAbsentTargetResult struct {
 	Kind        WorkPhaseResumeAbsentTargetKind `json:"kind"`
 	Plan        *Goalplan                       `json:"plan,omitempty"`
-	SuccessorID string                          `json:"successorId,omitempty"`
+	SuccessorID *string                         `json:"successorId,omitempty"`
 	Reason      string                          `json:"reason,omitempty"`
 }
+
+// workPhaseText boxes an id so the variant field it belongs to keeps the key even when the id
+// is the empty string.
+func workPhaseText(id string) *string { return &id }
 
 // workPhaseDependsOnSeparator is the oracle's `join("\u0000")`: a NUL that no id can hold, so
 // two dependency lists compare equal only when they hold the same ids in the same order.
@@ -140,7 +152,7 @@ func workPhaseCloseFixed(plan *Goalplan, workPhaseID string, recordedNext WorkPh
 		}
 	}
 	if len(pending) > 0 {
-		return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedTasksPending, WorkPhaseID: workPhaseID, Pending: pending}
+		return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedTasksPending, WorkPhaseID: workPhaseText(workPhaseID), Pending: pending}
 	}
 
 	// The oracle builds a new array and a new phase object for the target, and shares the
@@ -171,11 +183,11 @@ func workPhaseCloseFixed(plan *Goalplan, workPhaseID string, recordedNext WorkPh
 		// a close never activates the phase it just finished, and an empty id is a damaged
 		// marker rather than the decision that there is no successor.
 		if len(recorded) == 0 || recorded == workPhaseID {
-			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: recorded, Reason: "corrupt"}
+			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: workPhaseText(recorded), Reason: "corrupt"}
 		}
 		named := queryFindWorkPhase(&closedPlan, recorded)
 		if named == nil {
-			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: recorded, Reason: "absent"}
+			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: workPhaseText(recorded), Reason: "absent"}
 		}
 		if named.Status == WorkPhaseDone {
 			// A finished successor is not a lost one: the recorded phase was started and then
@@ -192,9 +204,9 @@ func workPhaseCloseFixed(plan *Goalplan, workPhaseID string, recordedNext WorkPh
 				}
 			}
 		} else if named.Status != WorkPhasePending && named.Status != WorkPhaseInProgress {
-			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: recorded, Reason: "not_runnable"}
+			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: workPhaseText(recorded), Reason: "not_runnable"}
 		} else if !WorkPhaseReadyConditionsMet(&closedPlan, named) {
-			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: recorded, Reason: "dependencies_unmet"}
+			return WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: workPhaseText(recorded), Reason: "dependencies_unmet"}
 		} else {
 			next = named
 		}
@@ -249,19 +261,19 @@ func workPhaseResumeAbsentTarget(plan *Goalplan, recordedNext string) WorkPhaseR
 	}
 	named := queryFindWorkPhase(plan, recordedNext)
 	if named == nil {
-		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: recordedNext, Reason: "absent"}
+		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: workPhaseText(recordedNext), Reason: "absent"}
 	}
 	// Finished on its own: the activation happened and only the ledger and state rows are owed.
 	if named.Status == WorkPhaseDone {
 		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeCleanup}
 	}
 	if named.Status != WorkPhasePending && named.Status != WorkPhaseInProgress {
-		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: recordedNext, Reason: "not_runnable"}
+		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: workPhaseText(recordedNext), Reason: "not_runnable"}
 	}
 	// Readiness is checked before either branch below, so deleting the target does not decide
 	// the verdict: the same successor waiting on the same unmet dependency is refused either way.
 	if !WorkPhaseReadyConditionsMet(plan, named) {
-		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: recordedNext, Reason: "dependencies_unmet"}
+		return WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: workPhaseText(recordedNext), Reason: "dependencies_unmet"}
 	}
 	// Running: the activation happened too, but only if the cursor agrees. A null or moved
 	// cursor stranding an in_progress phase is exactly the corruption a resume must repair.

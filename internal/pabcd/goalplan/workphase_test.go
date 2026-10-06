@@ -122,14 +122,14 @@ func workPhaseProjectCloseFixed(result WorkPhaseCloseFixedResult) map[string]any
 		out["closedId"] = closed
 		out["plan"] = workPhaseProjectPlan(result.Plan)
 	case WorkPhaseCloseFixedTasksPending:
-		out["workPhaseId"] = result.WorkPhaseID
+		out["workPhaseId"] = *result.WorkPhaseID
 		out["pending"] = workPhaseTaskIDs(result.Pending)
 	case WorkPhaseCloseFixedNotRunnable:
 		out["status"] = string(result.Status)
 	case WorkPhaseCloseFixedDependenciesUnmet:
 		out["unmet"] = workPhaseStringList(result.Unmet)
 	case WorkPhaseCloseFixedSuccessorLost:
-		out["successorId"] = result.SuccessorID
+		out["successorId"] = *result.SuccessorID
 		out["reason"] = result.Reason
 	}
 	return out
@@ -141,7 +141,7 @@ func workPhaseProjectResumeAbsent(result WorkPhaseResumeAbsentTargetResult) map[
 	case WorkPhaseResumeActivate:
 		out["plan"] = workPhaseProjectPlan(result.Plan)
 	case WorkPhaseResumeSuccessorLost:
-		out["successorId"] = result.SuccessorID
+		out["successorId"] = *result.SuccessorID
 		out["reason"] = result.Reason
 	}
 	return out
@@ -158,7 +158,7 @@ func workPhaseProjectAdvance(result WorkPhaseAdvanceResult) map[string]any {
 		out["closedId"] = closed
 		out["plan"] = workPhaseProjectPlan(result.Plan)
 	case WorkPhaseAdvanceTasksPending:
-		out["workPhaseId"] = result.WorkPhaseID
+		out["workPhaseId"] = *result.WorkPhaseID
 		out["pending"] = workPhaseTaskIDs(result.Pending)
 	}
 	return out
@@ -227,14 +227,24 @@ func TestWorkPhaseResultJSONKeys(t *testing.T) {
 		{"close absent", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedAbsent}, []string{"kind"}},
 		{"close not_runnable", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedNotRunnable, Status: WorkPhaseBlocked}, []string{"kind", "status"}},
 		{"close dependencies_unmet", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedDependenciesUnmet, Unmet: []string{"wp-9"}}, []string{"kind", "unmet"}},
-		{"close tasks_pending", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedTasksPending, WorkPhaseID: "wp-1", Pending: pending}, []string{"kind", "pending", "workPhaseId"}},
-		{"close successor_lost", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: "wp-2", Reason: "absent"}, []string{"kind", "reason", "successorId"}},
+		{"close tasks_pending", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedTasksPending, WorkPhaseID: workPhaseText("wp-1"), Pending: pending}, []string{"kind", "pending", "workPhaseId"}},
+		{"close successor_lost", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: workPhaseText("wp-2"), Reason: "absent"}, []string{"kind", "reason", "successorId"}},
 		{"resume activate", WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeActivate, Plan: plan}, []string{"kind", "plan"}},
 		{"resume cleanup", WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeCleanup}, []string{"kind"}},
-		{"resume successor_lost", WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: "wp-2", Reason: "absent"}, []string{"kind", "reason", "successorId"}},
+		{"resume successor_lost", WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: workPhaseText("wp-2"), Reason: "absent"}, []string{"kind", "reason", "successorId"}},
 		{"advance ok", WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceOK, ClosedID: &closed, Plan: plan}, []string{"closedId", "kind", "plan"}},
-		{"advance tasks_pending", WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceTasksPending, WorkPhaseID: "wp-1", Pending: pending}, []string{"kind", "pending", "workPhaseId"}},
+		{"advance tasks_pending", WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceTasksPending, WorkPhaseID: workPhaseText("wp-1"), Pending: pending}, []string{"kind", "pending", "workPhaseId"}},
 		{"advance no_active", WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceNoActive}, []string{"kind"}},
+		// The oracle's variants always carry these keys, and the empty string is a value
+		// they can hold: a plan can name a work phase with an empty id, and the corrupt
+		// marker a fixed close refuses is exactly the empty successor. omitempty on a
+		// plain string dropped both keys, so the fields are pointers and these cases pin
+		// the difference.
+		{"close successor_lost empty id", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedSuccessorLost, SuccessorID: workPhaseText(""), Reason: "corrupt"}, []string{"kind", "reason", "successorId"}},
+		{"close tasks_pending empty phase id", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedTasksPending, WorkPhaseID: workPhaseText(""), Pending: pending}, []string{"kind", "pending", "workPhaseId"}},
+		{"close ok empty closed id", WorkPhaseCloseFixedResult{Kind: WorkPhaseCloseFixedOK, ClosedID: workPhaseText(""), Plan: plan}, []string{"closedId", "kind", "plan"}},
+		{"resume successor_lost empty id", WorkPhaseResumeAbsentTargetResult{Kind: WorkPhaseResumeSuccessorLost, SuccessorID: workPhaseText(""), Reason: "corrupt"}, []string{"kind", "reason", "successorId"}},
+		{"advance tasks_pending empty phase id", WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceTasksPending, WorkPhaseID: workPhaseText(""), Pending: pending}, []string{"kind", "pending", "workPhaseId"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
