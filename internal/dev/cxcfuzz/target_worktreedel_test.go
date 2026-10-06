@@ -1,0 +1,166 @@
+//go:build dev
+
+package cxcfuzz
+
+import (
+	"math/rand"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+)
+
+// The target is in the registry under its own name, so `crw-dev fuzz worktreedel` finds it, and its
+// oracle is the shim beside its cases.
+func TestWorktreeDelTargetIsRegistered(t *testing.T) {
+	target, ok := Lookup("worktreedel")
+	if !ok {
+		t.Fatalf("worktreedel is not registered (registered: %v)", Names())
+	}
+	if target.Generate == nil || target.Go == nil || target.Compare == nil {
+		t.Fatalf("the target is incomplete: %+v", target)
+	}
+	if target.Oracle.Command != "node" || !strings.HasSuffix(target.Oracle.Shim, filepath.Join("testdata", "worktreedel", "shim.mjs")) {
+		t.Fatalf("the oracle is %+v", target.Oracle)
+	}
+}
+
+// The comparison is the issue's: an oracle deny the Go side allows is a miss, a Go-only deny is an
+// extra, and two denies whose reasons differ are a differ.
+func TestWorktreeDelCompareClassifies(t *testing.T) {
+	deny := func(reason string) pyjson.Object {
+		return pyjson.Object{{Key: "decision", Value: "deny"}, {Key: "reason", Value: reason}}
+	}
+	allow := pyjson.Object{{Key: "decision", Value: "allow"}, {Key: "reason", Value: ""}}
+	for _, c := range []struct {
+		name      string
+		goOut     pyjson.Object
+		oracleOut pyjson.Object
+		want      Kind
+	}{
+		{"both allow", allow, allow, Same},
+		{"both deny alike", deny("x"), deny("x"), Same},
+		{"oracle denies and go allows", allow, deny("x"), Miss},
+		{"go denies and oracle allows", deny("x"), allow, Extra},
+		{"both deny with different reasons", deny("x"), deny("y"), Differ},
+	} {
+		if got := worktreeDelCompare(c.goOut, c.oracleOut); got.Kind != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got.Kind, c.want)
+		}
+	}
+}
+
+// The Go side builds the payload from the case, calls the guard in a managed layout, and answers the
+// decision and the reason: the checkout's removal is a deny, an unrelated one is an allow.
+func TestWorktreeDelGoAnswersTheDecision(t *testing.T) {
+	for _, c := range []struct {
+		command string
+		deny    bool
+	}{
+		{"rm -rf .", true},
+		{"rm -rf /tmp/unrelated", false},
+		{"git status", false},
+	} {
+		root := t.TempDir()
+		if err := PrepareRoot(root); err != nil {
+			t.Fatal(err)
+		}
+		input := worktreeDelCaseInput(c.command)
+		if _, err := Scenarios(root, input); err != nil {
+			t.Fatal(err)
+		}
+		value, err := worktreeDelGo(input, RootEnv(root))
+		if err != nil {
+			t.Fatalf("%q: %v", c.command, err)
+		}
+		decision, reason := worktreeDelDecision(value)
+		if c.deny {
+			if decision != "deny" || !strings.Contains(reason, "WORKTREE-GUARD-03") {
+				t.Errorf("%q: %q %q, want a deny naming the guard", c.command, decision, reason)
+			}
+			continue
+		}
+		if decision != "allow" || reason != "" {
+			t.Errorf("%q: %q %q, want an allow with no reason", c.command, decision, reason)
+		}
+	}
+}
+
+// worktreeDelCaseInput is one case in the grammar the target reads: the managed layout and a
+// PreToolUse payload inside the checkout.
+func worktreeDelCaseInput(command string) pyjson.Object {
+	return pyjson.Object{
+		{Key: "fs", Value: worktreeDelLayout()},
+		{Key: "cwd", Value: "home/.codex/worktrees/" + worktreeDelSlot + "/" + worktreeDelRepo},
+		{Key: "command", Value: command},
+		{Key: "tool", Value: "Bash"},
+		{Key: "event", Value: "PreToolUse"},
+	}
+}
+
+// A case that points CODEX_HOME elsewhere is not inside a managed worktree, so the same command is
+// allowed: the case's own environment is what the guard reads.
+func TestWorktreeDelGoFollowsTheCaseEnvironment(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	input := worktreeDelCaseInput("rm -rf .").Set("env", pyjson.Object{{Key: "CODEX_HOME", Value: "home/elsewhere"}})
+	if _, err := Scenarios(root, input); err != nil {
+		t.Fatal(err)
+	}
+	value, err := worktreeDelGo(input, RootEnv(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision, reason := worktreeDelDecision(value); decision != "allow" || reason != "" {
+		t.Fatalf("a case outside the managed root answered %q %q, want an allow", decision, reason)
+	}
+}
+
+// The generator is deterministic for one rng and builds the fields the target reads.
+func TestWorktreeDelGenerateIsDeterministic(t *testing.T) {
+	first := canonical(worktreeDelGenerate(rand.New(rand.NewSource(7)), 1))
+	second := canonical(worktreeDelGenerate(rand.New(rand.NewSource(7)), 1))
+	if first != second {
+		t.Fatalf("the generator is not deterministic:\n%s\n%s", first, second)
+	}
+	value, err := decode(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, ok := value.(pyjson.Object)
+	if !ok {
+		t.Fatalf("the generator answered %T", value)
+	}
+	for _, key := range []string{"fs", "cwd", "command", "tool", "event"} {
+		if _, found := object.Lookup(key); !found {
+			t.Errorf("the case has no %q: %s", key, first)
+		}
+	}
+}
+
+// A generated command is written as content and never executed, so the tree the case declares is
+// still there after the guard has read a whole batch of commands.
+func TestWorktreeDelGenerateNeverRunsItsCommand(t *testing.T) {
+	rng := rand.New(rand.NewSource(3))
+	for i := 0; i < 100; i++ {
+		root := t.TempDir()
+		if err := PrepareRoot(root); err != nil {
+			t.Fatal(err)
+		}
+		input := worktreeDelGenerate(rng, i)
+		if _, err := Scenarios(root, input); err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		if _, err := worktreeDelGo(input, RootEnv(root)); err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		marker := filepath.Join(root, "home", "elsewhere", "build", "keep")
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("case %d: the tree changed: %v", i, err)
+		}
+	}
+}
