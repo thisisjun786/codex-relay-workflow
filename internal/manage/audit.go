@@ -11,11 +11,11 @@ import (
 	"strings"
 )
 
-// The names inside a bundle directory: what the bundle declares itself to be and the file
-// a grader must leave behind. The prompt this product writes beside them is added with the
-// command that writes it.
+// The names inside a bundle directory: what the bundle declares itself to be, the prompt
+// this product writes there, and the file the grader must leave behind.
 const (
 	auditBundleFile = "bundle.json"
+	auditPromptFile = "prompt.md"
 	auditGradeFile  = "grade.json"
 )
 
