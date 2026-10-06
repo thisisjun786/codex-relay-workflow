@@ -696,3 +696,220 @@ func TestImproveCollectKeepsDelimitedValuesApart(t *testing.T) {
 		t.Errorf("the hostile reason did not round-trip: %+v", refusals)
 	}
 }
+
+// TestImproveCollectRefusesAnOutputThatIsAConfiguredSource covers the overwrite guard: a
+// bundle never replaces the evidence it was read from.
+func TestImproveCollectRefusesAnOutputThatIsAConfiguredSource(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	ledger := filepath.Join(s.root, "ledger.jsonl")
+	improveTestWrite(t, ledger, "{\"mode\":\"pr\",\"issue\":\"CRW-1\",\"status\":\"ok\",\"graded_at\":\"2026-10-06T01:00:00Z\"}\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	before, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := improveTestRun(t, s, "--out", ledger)
+	if code == 0 || !strings.Contains(stderr, "never overwrites") {
+		t.Fatalf("an output equal to a configured source: exit %d, stderr %q", code, stderr)
+	}
+	after, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("the refused run changed the ledger: %q -> %q", before, after)
+	}
+}
+
+// TestImproveCollectRefusesAnOutputInsideAConfiguredDirectory covers the guard's prefix
+// rule: a bundle is not written under a configured source directory either.
+func TestImproveCollectRefusesAnOutputInsideAConfiguredDirectory(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	drafts := filepath.Join(s.root, "drafts")
+	if err := os.MkdirAll(drafts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(drafts, "bundle.json"))
+	if code == 0 || !strings.Contains(stderr, "never overwrites") {
+		t.Fatalf("an output inside a configured directory: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestImproveCollectRefusesAnEmptyOutValue covers both --out forms.
+func TestImproveCollectRefusesAnEmptyOutValue(t *testing.T) {
+	s := improveTestSetup(t)
+	for _, args := range [][]string{{"--out", ""}, {"--out="}} {
+		code, stdout, stderr := improveTestRun(t, s, args...)
+		if code != usageExit || stdout != "" || !strings.Contains(stderr, "--out") {
+			t.Errorf("args %q: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
+		}
+	}
+}
+
+// TestImproveCollectDagKeepsMetricValues covers the dag record's description: the metric's
+// values and absence reason survive, so equal sample counts stay distinguishable.
+func TestImproveCollectDagKeepsMetricValues(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	doc := "{\"ok\":true,\"schema\":\"dag-measurements/1\",\"plan_id\":\"p1\",\"parallelism\":{\"samples\":0,\"absent\":\"no_recorded_pass\"},\"conflicts_by_grade\":{\"samples\":3,\"by_grade\":{\"mechanical\":3}}}"
+	improveTestFakeCRW(t, s, doc)
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"dag":   map[string]any{"path": s.stateDir, "pattern": "p1"},
+		},
+	}}})
+	out := filepath.Join(s.root, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	bundle := improveTestReadBundle(t, out)
+	records := improveTestRecordsOf(bundle, improveKindDag)
+	byKey := map[string]improveRecord{}
+	for _, record := range records {
+		byKey[record.Key] = record
+	}
+	if got, ok := byKey["p1:parallelism"]; !ok || !strings.Contains(got.What, "no_recorded_pass") {
+		t.Errorf("the absent parallelism metric lost its reason: %+v", got)
+	}
+	if got, ok := byKey["p1:conflicts_by_grade"]; !ok || !strings.Contains(got.What, "mechanical") {
+		t.Errorf("the conflicts metric lost its values: %+v", got)
+	}
+}
+
+// TestImproveCollectDagWithoutAPatternIsAnError covers the misconfigured dag source.
+func TestImproveCollectDagWithoutAPatternIsAnError(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	improveTestFakeCRW(t, s, improveTestMeasurementDoc)
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"dag":   map[string]any{"path": s.stateDir},
+		},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(s.root, "bundle.json"))
+	if code != 1 || !strings.Contains(stderr, improveReasonSourceUnreadable) {
+		t.Fatalf("a dag source with no pattern: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestImproveCollectCountsOnlyContributingSplitRows covers the source row count: an answer
+// decision is read but contributes no record and is not counted.
+func TestImproveCollectCountsOnlyContributingSplitRows(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES ('ev-a','rel-a',1,?,'decision_reply','parent','t','turn-1','completed',?,'final','2026-10-06T01:00:00Z','2026-10-06T01:00:00Z')", strings.Repeat("0", 64), "{\"decision\":\"answer\",\"note\":\"a note\"}")
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	out := filepath.Join(s.root, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	bundle := improveTestReadBundle(t, out)
+	if got := improveTestSourceOf(t, bundle, improveKindRelay); got.Rows != 0 {
+		t.Errorf("the relay source counted a non-contributing decision: %+v", got)
+	}
+	if got := improveTestRecordsOf(bundle, improveKindSplit); len(got) != 0 {
+		t.Errorf("an answer decision produced split records: %+v", got)
+	}
+}
+
+// TestImproveCollectManageSectionWithoutImproveIsEmpty covers the fallback rule: a stale
+// top-level improve section is not read once the file carries a manage section.
+func TestImproveCollectManageSectionWithoutImproveIsEmpty(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a','manifest_forbidden','detail')")
+	})
+	improveTestConfig(t, s, map[string]any{
+		"manage":  map[string]any{"audit": map[string]any{}},
+		"improve": map[string]any{"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}}},
+	})
+	out := filepath.Join(s.root, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	bundle := improveTestReadBundle(t, out)
+	if got := improveTestSourceOf(t, bundle, improveKindRelay); got.State != improveStateMissing {
+		t.Errorf("a stale top-level improve section was read: %+v", got)
+	}
+}
+
+// TestImproveCollectRefusesANullJSONLine covers the JSONL reader: a null line is not an
+// object and is refused rather than becoming a phantom record.
+func TestImproveCollectRefusesANullJSONLine(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	ledger := filepath.Join(s.root, "ledger.jsonl")
+	improveTestWrite(t, ledger, "null\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(s.root, "bundle.json"))
+	if code != 1 || !strings.Contains(stderr, "not a JSON object") {
+		t.Fatalf("a null ledger line: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestImproveCollectRefusesAnIssueListWithoutIssues covers the issue-list shape.
+func TestImproveCollectRefusesAnIssueListWithoutIssues(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	issues := filepath.Join(s.root, "issues.json")
+	improveTestWrite(t, issues, "{\"error\":\"unauthorized\"}")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources":    map[string]any{"relay": map[string]any{"path": s.stateDir}},
+		"issue_list": issues,
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(s.root, "bundle.json"))
+	if code != 1 || !strings.Contains(stderr, improveReasonSourceUnreadable) {
+		t.Fatalf("an object without issues: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestImproveCollectSplitPrefersTheDecisionNote covers the merge rule: a specific note
+// beats the bare outcome name a blocked receipt carries.
+func TestImproveCollectSplitPrefersTheDecisionNote(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-a','CRW-1','active','parent','host','child','host',1,'[]','[]','2026-10-06T00:00:00Z','2026-10-06T00:00:00Z')")
+		improveTestInsert(t, db, "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-a','project-a','2026-10-06T00:00:00Z')")
+		// The blocked receipt sorts first by event id, and carries only the bare outcome name.
+		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES ('ev-a',?,1,?,'blocked_needs_input','child','t','turn-1','completed',?,'final','2026-10-06T01:00:00Z','2026-10-06T01:00:00Z')", "rel-a", strings.Repeat("0", 64), "{\"outcome\":\"blocked_needs_input\"}")
+		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES ('ev-z',?,1,?,'decision_reply','parent','t','turn-1','completed',?,'final','2026-10-06T02:00:00Z','2026-10-06T02:00:00Z')", "rel-a", strings.Repeat("0", 64), "{\"decision\":\"split_approval\",\"reason\":\"size overrun\"}")
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	out := filepath.Join(s.root, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	bundle := improveTestReadBundle(t, out)
+	splits := improveTestRecordsOf(bundle, improveKindSplit)
+	if len(splits) != 1 {
+		t.Fatalf("split records = %+v, want one merged record", splits)
+	}
+	if splits[0].What != "size overrun" {
+		t.Errorf("the merged split record kept %q, want the decision's reason", splits[0].What)
+	}
+}

@@ -123,7 +123,7 @@ func (a *improveAccumulator) improveAdd(r improveRecord) {
 		if r.LastAt > current.LastAt {
 			current.LastAt = r.LastAt
 		}
-		if current.What == "" {
+		if current.What == "" || (improveGenericReason(current.What) && !improveGenericReason(r.What)) {
 			current.What = r.What
 		}
 		current.Evidence = append(current.Evidence, r.Evidence...)
@@ -131,6 +131,16 @@ func (a *improveAccumulator) improveAdd(r improveRecord) {
 	}
 	a.index[identity] = len(a.records)
 	a.records = append(a.records, r)
+}
+
+// improveGenericReason reports whether a split record description is only the bare outcome
+// name, which a more specific reason from another row of the same record replaces.
+func improveGenericReason(reason string) bool {
+	switch reason {
+	case "blocked_needs_input", "split_approval", "scope_change":
+		return true
+	}
+	return false
 }
 
 // improveIdentity is the merge key of a record: the three fields as a JSON array, which is
@@ -198,6 +208,12 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
 	}
+	if out != "" {
+		if err := improveRefuseInputOutput(out, section); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
+			return 1
+		}
+	}
 	bundle, err := improveCollect(ctx, e, section)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
@@ -227,6 +243,52 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// improveRefuseInputOutput refuses an output that is one of the configured sources, so a
+// bundle can never overwrite the evidence it was read from.
+func improveRefuseInputOutput(out string, section improveSection) error {
+	dest, err := improveResolvedPath(out)
+	if err != nil {
+		return err
+	}
+	for _, source := range improveInputPaths(section) {
+		if source == "" {
+			continue
+		}
+		resolved, err := improveResolvedPath(source)
+		if err != nil {
+			// An unresolvable source is reported by the source read itself.
+			continue
+		}
+		if dest == resolved || strings.HasPrefix(dest, resolved+string(filepath.Separator)) {
+			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", out, source)
+		}
+	}
+	return nil
+}
+
+// improveInputPaths is every path the configuration names.
+func improveInputPaths(section improveSection) []string {
+	paths := make([]string, 0, len(section.Sources)+1)
+	for _, source := range section.Sources {
+		paths = append(paths, source.Path)
+	}
+	return append(paths, section.IssueList)
+}
+
+// improveResolvedPath is a path with its symlinks followed, so two spellings of one file
+// compare equal. A path that does not exist yet keeps its absolute spelling.
+func improveResolvedPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return absolute, nil
+	}
+	return resolved, nil
 }
 
 // improveWriteFile writes the bundle beside its destination and renames it into place, so a
@@ -270,6 +332,9 @@ func improveParseArgs(args []string) (out string, help bool, err error) {
 			}
 			i++
 			out = args[i]
+			if out == "" {
+				return "", false, errors.New("the option --out needs a value")
+			}
 		case strings.HasPrefix(args[i], "--out="):
 			out = strings.TrimPrefix(args[i], "--out=")
 			if out == "" {
@@ -295,14 +360,19 @@ func improveLoadSection(e *Env) (improveSection, error) {
 		return improveSection{}, err
 	}
 	var section improveSection
-	if raw, ok := manage["improve"]; ok {
-		if err := json.Unmarshal(raw, &section); err != nil {
+	// A file with no manage section at all is read at the top level, because the issue body
+	// names the section improve. A file whose manage section carries no improve key names no
+	// source, so a stale top-level improve section is never read instead.
+	if manage == nil {
+		if err := file.Section("improve", &section); err != nil {
 			return improveSection{}, err
 		}
 		return section, nil
 	}
-	if err := file.Section("improve", &section); err != nil {
-		return improveSection{}, err
+	if raw, ok := manage["improve"]; ok {
+		if err := json.Unmarshal(raw, &section); err != nil {
+			return improveSection{}, err
+		}
 	}
 	return section, nil
 }
@@ -456,7 +526,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		rows += len(criteria)
 		for _, row := range criteria {
 			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: row.Text("relationship_id"), Where: row.Text("set_digest"),
-				What: "criteria_set", Count: improveRowInt(row, "criteria_count"),
+				What: "current_set", Count: improveRowInt(row, "criteria_count"),
 				FirstAt: row.Text("first_at"), LastAt: row.Text("last_at"),
 				Evidence: []string{"canonical_criteria:" + row.Text("relationship_id") + ":" + row.Text("set_digest")}})
 		}
@@ -465,7 +535,6 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		if err != nil {
 			return err
 		}
-		rows += len(splits)
 		for _, row := range splits {
 			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
 			if outcome == "decision_reply" {
@@ -480,6 +549,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			if reason == "" {
 				reason = improveStringField(receipt, "outcome", "decision")
 			}
+			rows++
 			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: improveSplitKey(project, issue), Where: row.Text("relationship_id"),
 				What: reason, Count: 1, FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
 				Evidence: []string{"events:" + row.Text("event_id")}})
@@ -508,6 +578,9 @@ func improveReadDag(ctx context.Context, e *Env, source improveSourceConfig, acc
 	cfg := coreDefaults(e)
 	cfg.Relay.State = source.Path
 	plans := improvePatterns(source.Pattern)
+	if len(plans) == 0 {
+		return 0, errors.New("the dag source names no plan pattern")
+	}
 	rows := 0
 	for _, plan := range plans {
 		stdout, code, err := e.Relay(ctx, cfg, "dag-measurements", "--plan", plan)
@@ -539,9 +612,13 @@ func improveReadDag(ctx context.Context, e *Env, source improveSourceConfig, acc
 			if !ok {
 				continue
 			}
+			values, err := json.Marshal(metric)
+			if err != nil {
+				return 0, err
+			}
 			rows++
 			acc.improveAdd(improveRecord{Kind: improveKindDag, Key: planID + ":" + name, Where: planID,
-				What: name, Count: samples,
+				What: string(values), Count: samples,
 				Evidence: []string{"relay:dag-measurements --plan " + plan}})
 		}
 	}
@@ -660,12 +737,15 @@ func improveDecodeIssues(data []byte) ([]map[string]any, error) {
 		return list, nil
 	}
 	var wrapped struct {
-		Issues []map[string]any `json:"issues"`
+		Issues *[]map[string]any `json:"issues"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, err
 	}
-	return wrapped.Issues, nil
+	if wrapped.Issues == nil {
+		return nil, errors.New("the issue list carries neither a top-level array nor an issues array")
+	}
+	return *wrapped.Issues, nil
 }
 
 // improveReadJSONLines reads a JSON-lines file, refusing a line that is not a JSON object.
@@ -682,6 +762,9 @@ func improveReadJSONLines(path string) ([]map[string]any, error) {
 		var object map[string]any
 		if err := json.Unmarshal([]byte(line), &object); err != nil {
 			return nil, fmt.Errorf("line %d: %w", i+1, err)
+		}
+		if object == nil {
+			return nil, fmt.Errorf("line %d: not a JSON object", i+1)
 		}
 		out = append(out, object)
 	}
