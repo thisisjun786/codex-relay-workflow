@@ -160,9 +160,12 @@ func (r *startRun) businessResendReady(ctx context.Context) (string, error) {
 // does, and only after the child is notLoaded again with the standby-only history.
 //
 // thread/archive accepts an active sub-thread and unloads it, so the idle precondition is read
-// again here, immediately before the archive. An archive failure leaves the child as it was and
-// answers recipient_not_idle; an unarchive that fails twice answers lifecycle_unknown and names
-// the archived thread for an operator. A child still loaded afterwards answers recipient_not_idle.
+// again here, immediately before the archive. An archive error does not by itself mean the archive
+// was not applied: the reply can be lost after the host applied it, so the archived listing is
+// asked once and a confirmed archive continues as a successful one. An archive error the archived
+// listing does not confirm leaves the child as it was and answers recipient_not_idle; an unarchive
+// that fails twice answers lifecycle_unknown and names the archived thread for an operator. A child
+// still loaded afterwards answers recipient_not_idle.
 func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	status, code, err := r.businessResendThreadStatus(ctx)
 	if err != nil {
