@@ -336,7 +336,9 @@ const fillIn = s => s.replace(FILL_RE, (_, u, n) => u.repeat(+n));
 const rename2 = s => rename(s).replaceAll('cxc subagents dispatch', 'crw role helper dispatch').replaceAll('CXC selects', 'CRW selects');
 const MARKER_RE = /cxc|codexclaw/i;
 const route = [];
+const managed = [];
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
+process.env.GIT_CEILING_DIRECTORIES = scratch; // keep the oracle's dispatchRoot from climbing out of the scratch tree
 function routeReal(ctx, v) {
   return deep(v, s => fillIn(ctx.blocks.reduce((o, [block, token]) => o.replaceAll(token, block), s)
     .replaceAll('{WS}', ctx.dirs.ws).replace(/\{N(\d+)\}/g, (_, i) => ctx.nonces[i - 1])));
@@ -346,12 +348,18 @@ function routeStep(ctx, spec, prev) {
   if (spec.reapply) {
     template = structuredClone(spec.input);
     template.tool_input = JSON.parse(prev.raw).hookSpecificOutput.updatedInput;
-    real = template;
+    real = realized(ctx, template);
   } else real = spec.raw === undefined ? routeReal(ctx, template) : undefined;
   stdin = spec.raw !== undefined ? fillIn(spec.raw.replaceAll('{WS}', ctx.dirs.ws).replace(/\{N(\d+)\}/g, (_, i) => ctx.nonces[i - 1])) : JSON.stringify(real);
+  if (spec.files) for (const [rel, body] of Object.entries(spec.files)) {
+    const p = path.join(ctx.dirs.ws, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  }
   const raw = hook.runSpawnAttachHook(stdin);
   for (const m of raw.matchAll(GRANT)) if (!ctx.nonces.includes(m[1])) ctx.nonces.push(m[1]);
   const step = { note: spec.note };
+  if (spec.files) step.files = Object.fromEntries(Object.entries(spec.files).map(([rel, body]) => [rename2(rel), rename2(body)]));
   if (spec.raw !== undefined) step.stdin = rename2(spec.raw);
   else step.stdin = JSON.stringify(spec.reapply ? stored(ctx, real) : deep(template, rename2));
   let expect = '', plain = '';
@@ -395,6 +403,13 @@ function recordRoute(name, test, env, specs) {
     out.steps.push(prev.step);
   }
   route.push(out);
+}
+function recordManaged(name, test, env, specs) {
+  const ctx = setup('managed ' + name, env);
+  const out = { name: 'managed: ' + name, test, env: { skills: 'plain', tmp: 'present', store: env?.store ?? null, unreadableCwd: false }, steps: [] };
+  let prev;
+  for (const spec of specs) { prev = routeStep(ctx, spec, prev); out.steps.push(prev.step); }
+  managed.push(out);
 }
 function projectConfig(ctx, roles) {
   const dir = path.join(ctx.dirs.ws, '.codexclaw'), file = path.join(dir, 'subagents.json');
@@ -590,6 +605,42 @@ let itemsCap;
     }
   }
 }
+// CRW-372: the managed dispatch leg. A ledger at ws/.codexclaw/dispatches/<session>/<id>.json with a claimed attempt and a
+// [CXC-DISPATCH:<id>:<attempt>] marker on the message's first line drives the managed allow, the candidate model and effort,
+// the idempotent re-issue and the fixed-text refusals. The ledger is declared on the first step only, so the oracle's own
+// mutation (spawnIssued, toolUseId) carries across the steps, as the Go replay's does.
+const ledgerAttempt = (more = {}) => ({ id: 'att-1', candidate: { model: 'rec/exec-primary', effort: 'high' }, claimed: true,
+  agentId: null, observedModel: null, code: null, taskFailure: null, status: 'claimed', reconciliation: null,
+  spawnIssued: false, toolUseId: null, ...more });
+const ledger = (attempt, role = 'executor', candidates = [{ model: 'rec/exec-primary', effort: 'high' }, { model: 'rec/exec-fallback', effort: null }]) => JSON.stringify({ version: 1, sessionId: 'rec-s1', id: 'one', role,
+  candidates, attempts: [attempt], status: 'active' });
+const ledgerFiles = body => ({ '.codexclaw/dispatches/rec-s1/one.json': body });
+{
+  const S = roleStore({ executor: M('rec/exec-primary', 'high', { fallback: { model: 'rec/exec-fallback', effort: null } }) });
+  const M1 = '[CXC-DISPATCH:one:att-1]';
+  recordManaged('issue once', 'spawn-items-managed.test.ts:27-44; fallback-dispatch.test.ts', { store: S }, [
+    rs(T({ agent_type: 'executor', model: 'wrong-caller', reasoning_effort: 'low', message: M1 + '\nTASK: locate the owner' }, { tool_use_id: 'native-1' }), { files: ledgerFiles(ledger(ledgerAttempt())), note: 'managed allow: the candidate model and effort replace the caller fields' }),
+    rs(T({ agent_type: 'executor', model: 'wrong-caller', reasoning_effort: 'low', message: M1 + '\nTASK: locate the owner' }, { tool_use_id: 'native-1' }), { note: 'the host redelivers the original payload with the same tool_use_id: idempotent' }),
+    rr(T({}, { tool_use_id: 'native-1' }), { note: 're-issued with the same tool_use_id: idempotent' }),
+    rs(T({ agent_type: 'executor', message: M1 + '\nTASK: locate the owner' }, { tool_use_id: 'native-2' }), { note: 'a different tool_use_id is refused' }),
+  ]);
+}
+{
+  const S = roleStore({ executor: M('rec/exec-primary', 'high') });
+  const M1 = '[CXC-DISPATCH:one:att-1]';
+  recordManaged('candidate null effort', 'spawn-items-managed.test.ts:27-44; spawn-attach-hook.ts:1098-1101', { store: S }, [
+    rs(T({ agent_type: 'executor', model: 'wrong-caller', reasoning_effort: 'low', message: M1 + '\nTASK: go' }, { tool_use_id: 'native-1' }),
+      { files: ledgerFiles(ledger(ledgerAttempt({ candidate: { model: 'rec/exec-fallback', effort: null } }), 'executor', [{ model: 'rec/exec-fallback', effort: null }])), note: 'a null candidate effort deletes reasoning_effort from updatedInput' }),
+  ]);
+}
+{
+  const S = roleStore({ executor: M('rec/exec-primary', 'high') });
+  recordManaged('refusals', 'spawn-items-boundaries.test.ts:184-192; fallback-dispatch.test.ts', { store: S }, [
+    rs(T({ agent_type: 'executor', message: '[CXC-DISPATCH:broken]\nTASK: inspect' }), { note: 'an invalid marker is refused before issuance' }),
+    rs(T({ agent_type: 'executor', message: '[CXC-DISPATCH:one:att-1]\nTASK: inspect' }), { files: ledgerFiles(ledger(ledgerAttempt({ claimed: false, status: 'ready' }))), note: 'an unclaimed attempt is refused' }),
+    rs(T({ agent_type: 'executor', message: '[CXC-DISPATCH:one:att-1]\nTASK: inspect', fork_context: true }), { note: 'a full-history fork is refused before the ledger is read' }),
+  ]);
+}
 // The oracle's denyEnvelope (:450-458) is not exported: this replica is checked against the oracle's own deny answers.
 const denyEnvelope = reason => JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }) + '\n';
 assert.equal(denyEnvelope(JSON.parse(DENY_RAW).hookSpecificOutput.permissionDecisionReason), DENY_RAW);
@@ -607,8 +658,10 @@ fs.writeFileSync(output, JSON.stringify({
   affordanceCap: { maxUnits: MAX, cases: capCases },
   cases,
   route,
+  managed,
   deny,
   itemsCap,
 }, null, 1) + '\n');
 const routeSteps = route.reduce((n, c) => n + c.steps.length, 0);
-console.log('Recorded ' + cases.length + ' cases, ' + stepsTotal + ' steps and ' + capCases.length + ' cap cases, ' + route.length + ' route cases, ' + routeSteps + ' route steps and ' + deny.length + ' deny cases.');
+const managedSteps = managed.reduce((n, c) => n + c.steps.length, 0);
+console.log('Recorded ' + cases.length + ' cases, ' + stepsTotal + ' steps and ' + capCases.length + ' cap cases, ' + route.length + ' route cases, ' + routeSteps + ' route steps, ' + managed.length + ' managed cases, ' + managedSteps + ' managed steps and ' + deny.length + ' deny cases.');

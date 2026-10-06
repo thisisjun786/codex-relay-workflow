@@ -10,7 +10,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 ## Seeded from the corpus recording
 
 - `cxc reset --help` is not help: the scope parser defaults to state, so it deletes session state exactly like `reset --state` and exits 0 (fixture `cli__reset__help_is_not_help_and_resets_state`); port: fixed, the one exception.
-- `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: pending.
+- `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: kept (the CRW-618 section carries it as `crw-ops error: unknown hooks option: --help`, the R29-renamed text).
 - `cxc provider` ignores every argument, even `--help`, and runs the same probe (fixture `cli__provider__detect_line_and_ignored_args`); port: pending.
 - `cxc metric parse-line` does not read stdin as its help says: v0.2.40 joins the argv after the verb (the `--session` token included), so the stdin form and the ordinary argv form exit 1 with `null`, and only a form whose session value itself completes the METRIC line, such as `parse-line METRIC --session =1`, succeeds (fixture `cli__metric__record_show_kind_parse_line`; source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:145`); port: kept.
 - `cxc plan init` ignores `--date` whatever its value: the parser reads only `--phases` and `--cwd`, skips every other `--` token and takes the first bare argument as the slug, so the unit date is a YYMMDD prefix of that argument or else the day's date, although the verb's help says `--date` is for callers that carry their own prefix (fixture `cli__plan__init_normalises_slug_and_date`, whose `--date 2026-01-01` coincides with the recorded clock's day; source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:92`, `:95` and `:177`); port: pending.
@@ -1000,6 +1000,10 @@ The same fail-closed rule as the CRW-517 section applies: a destination the orac
 - A string literal written with escapes is named letter for letter, so a path hidden by an escape is never named: `open("\x2fm/a", "w")`, `open("\057m/a", "w")`, `Path("\u002fm/a").write_text(...)` and node's `writeFileSync("\x2fm/a", ...)`, `writeFileSync("\u{2f}m/a", ...)` and template literals report `\x2fm/a` and so on while the write reaches `/m/a` (source `shell-write-destinations.ts:535-549`); port: fixed (security: a Python literal is decoded as Python reads it, with line continuation, the one-character escapes, octal, `\xhh` and, in a str literal, `\uXXXX` and `\UXXXXXXXX`; an unknown escape keeps its backslash, a raw literal stays literal, and a literal Python rejects or whose value holds NUL has no decoded path; an open call (each reading with its own mode) and the first literal argument of a Path call with a single argument or a dynamic part are named in the earlier reading too, which kept every escape but a backslash before the quote or another backslash as written, so the decoded reading adds to what was named and never replaces it; a JavaScript string or template literal is read as JavaScript reads it and its decoded value is appended when it differs from the raw text, and a template with an unescaped placeholder has no decoded value; the oracle's answer is kept first).
 - A `\N{name}` escape is valid Python that the reading does not resolve, because it needs the Unicode name table, so `open("\N{SOLIDUS}m/a", "w")` names `\N{SOLIDUS}m/a` and not `/m/a` (source `shell-write-destinations.ts:535-549`); port: kept (follow-up). A mode written with such an escape counts as writing (it cannot be read, so the gate fails closed), and the earlier reading of the path is still named.
 - A `Path` built with the `/` operator (`Path("/m") / "a"`) names no path, because the call pattern takes the one string literal inside `Path(...)` (source `shell-write-destinations.ts:535-549`); port: kept (follow-up).
+- A Python literal written with three of its quote (a triple-quoted literal) is no literal at all to the reading, which closes on the first of the three and then refuses the junk after it, so the path it names is missed: `Path("/tmp", """review""", "memories", "a").write_text("x")` reaches `/tmp/review/memories/a` and `open("""\x2fm/a""","w")` reaches `/m/a`, while the reading named only `/tmp` and nothing (source `shell-write-destinations.ts:535-549`; the oracle's `(['"])(.*?)\1` body cannot span the quote run); port: fixed (security: in the decoded reading a literal whose quote after the prefix is `'''` or `"""` has its body run to the first unescaped repeat of the same triple quote, followed only by spaces, and is handled as a single-quoted body is — raw kept as written, otherwise decoded; the earlier reading and the oracle's answer stay first and unchanged, so no destination named before is lost).
+- A field-free f-string is decoded without folding its doubled braces, so the reader names `/m/a{{b}}` where Python's value is `/m/a{b}`: `Path('/m', f'a{{b}}')` writes `/m/a{b}` (source `shell-write-destinations.ts:535-549`; the fold is Python's source-level rule, applied before escapes are decoded, so `f'\x7b\x7b'` keeps its two braces); port: fixed (the decoded value of an f-prefixed literal with no replacement field has `{{` and `}}` folded to `{` and `}`; `shellWriteEscapeField` is unchanged and still decides the Path dynamic part, so an f-string with a field stays dynamic).
+- A triple-quoted body that holds a physical CR or CRLF is named as written, while Python's source decoding turns both into LF before the literal is evaluated, so `open("""/m/a<CRLF>b""","w")` writes `/m/a\nb` and `open(r"""/tmp/a<CR>/n.md""","w")` writes `/tmp/a\n/n.md`, while the reading names `/m/a\r\nb` and `/tmp/a\r/n.md` (source `shell-write-destinations.ts:535-549`; the oracle names nothing here, and the base of this change named nothing either, so the miss is neither introduced nor widened by it; found by the Devin Review and the Codex Code Review on this change's PR); port: kept (follow-up: normalize physical CR and CRLF to LF in a triple-quoted body before the raw return and before `shellWriteEscapePython`).
+- The outer scanners that produce a call's argument spans (`shellVerbOpenWrites`, `shellVerbWithoutComments`) track one quote kind, so a triple-quoted body holding an odd number of the same quote desyncs them before the literal is read: `open("""/review/memories/"x""","w")` writes `/review/memories/"x` and the reading names nothing (source `shell-write-destinations.ts:535-549`; the oracle names nothing here either; found by the Codex Code Review on this change's PR); port: kept (follow-up: make the outer scanners recognize a triple-quoted region).
 
 ## Found by the hook trust identity port (CRW-347)
 
@@ -1261,9 +1265,9 @@ Source: `plugins/codexclaw/scripts/hook-observation.mjs` (`readHookObservations`
 
 ## Found by the goalplan lifecycle port (CRW-542)
 
-- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: fixed by CRW-671.
 - `decide` compares the stored answer untrimmed against the trimmed input, so a stored `" yes"` rejects the same `yes` as already having a different answer (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1297`; recorded case `decide_reject_padded_stored_answer`); port: kept.
-- `meet-criterion` judges only the first criterion of a duplicated id, so when that one is already met it answers unchanged and a later open duplicate of the same id can never be met; the plan then never reads complete (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1389-1404`; recorded case `meet_unchanged_duplicate_met_then_open` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `meet-criterion` judges only the first criterion of a duplicated id, so when that one is already met it answers unchanged and a later open duplicate of the same id can never be met; the plan then never reads complete (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1389-1404`; recorded case `meet_unchanged_duplicate_met_then_open` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: fixed by CRW-671.
 
 ## CRW-639 — the deletion guard's shell reader: su's attached program, the depth limit, data operands
 
@@ -1313,6 +1317,76 @@ Source: `plugins/codexclaw/components/pabcd-state/src/plan-gate.ts` at v0.2.40 (
 - A value thrown inside the final-gate identity checks is stringified as `err instanceof Error ? err.message : String(err)`; the Go port recovers the panic and prints `Error()` for an error value and `%v` for anything else, so a thrown object would read differently (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1869`, `:1892`); port: kept.
 - `cmp.detail ?? "changed"` is a nullish test, so a comparison that reports a present but empty detail prints empty parentheses; the Go port's `Comparison.Detail` cannot tell an absent detail from an empty one and prints `changed` (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1913`); port: kept.
 
+
+## Found by the doctor harness assembly and command port (CRW-618)
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` (`runDoctor` :261-360, the inline
+manifest, skills and agents checks :263-323, the metadata :362-378) and
+`plugins/codexclaw/components/cxc-ops/src/cli.ts` (the doctor case :80-93, `parseHookOptions`
+:46-66) at v0.2.40, through the port in `internal/runtime/doctor/harness_run.go`. The whole doctor
+command is exercised by the corpus fixtures `cli__doctor__*`; the assembly and the inline checks
+are pinned by the recorded oracle in `internal/runtime/doctor/testdata/harness/run`.
+
+- The oracle derives its plugin root from its own module path (`pluginRootFrom(metaUrl)`,
+  `plugins/codexclaw/components/cxc-ops/src/cli.ts:27-31`), which a Go binary installed through the
+  runtime pointer (`$HOME/.local/share/crw-runtime/current/bin/`) has no relation to;
+  `crw doctor harness` reads the host-provided `PLUGIN_ROOT` instead (the port's convention,
+  `internal/harness/observation.go:131`, `internal/role/spawn/hook.go:249`), and an unset
+  `PLUGIN_ROOT` is a usage error rather than a report over a guessed root; port: kept (a decision
+  of the port, not an oracle defect).
+- The oracle lists a directory's entries in the filesystem's own order (`readdirSync`), so the
+  `skills` and `agents` evidence can name the entries in any order; the port reads them with
+  `os.ReadDir`, which sorts, so a payload whose directory order differs from sorted order prints a
+  different list (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:301,315`); port: kept as a
+  platform difference.
+- The `manifest` check prints the engine's `SyntaxError` text for an unparseable `plugin.json`
+  (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:277`); the port prints `encoding/json`'s
+  message with the same FAIL severity (asserted by severity and a non-empty evidence in
+  `harness_run_test.go`); port: kept as a runtime diagnostic difference.
+- The oracle's `spawnSync` probe has no bound on a descendant that inherited the output pipe, so
+  a `codex` or `python3` probe whose grandchild holds the pipe can hold the whole report open past
+  its timeout (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:349,620`); the port bounds the
+  wait with `WaitDelay` (the same bound `CodexVersion` uses) and answers the killed status, so a
+  stuck probe degrades to the check's WARN instead of a hang; port: kept as a robustness difference
+  (the oracle's hang cannot be recorded).
+
+## Found by the managed dispatch and final-gate call port (CRW-372)
+
+Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` (`dispatchSources` :420-449, the managed dispatch loop :892-907, the final-gate call :1072-1079, the fallback notice :1081-1082, the no-op bypass :1086 and the issuance :1094-1102) at v0.2.40, through the ports in `internal/role/spawn/hook_managed.go` and `internal/role/spawn/hook_route.go`.
+
+- `dispatchSources` prefixes the message with the project layer's trust warning and strips it back off before it reads a guard block (source :426-427); the port dropped the project layer (decision 7), so the warning is always empty and the strip is the identity, and the port omits it. The route half keeps the same always-empty `trustPrefix` branch, so the omission is the only difference; port: kept.
+- A managed ledger that is missing or unreadable makes the oracle throw a Node error and the port return a Go error, so the deny text `managed dispatch: <error>` carries Node's wording in the oracle and Go's in the port (source :899 and `internal/role/dispatch_ledger.go`, whose header already records this for the ledger port); port: kept as a runtime diagnostic difference. The recorder therefore records no missing-ledger case, and the Go test asserts the port's own text.
+- The one-time recursion grant a subagent presents is consumed before the managed dispatch marker is checked (source :882 before the managed loop :895-907), so a child whose managed dispatch is refused has already spent its grant and cannot retry that spawn with the same one; the port keeps the oracle's order, consuming the grant in `spawnHookAssemble` before `spawnHookManaged`; port: kept (a review comment of the port's pull request found it, and the recorded managed cases keep the oracle's answers).
+
+## Found by the steering op port (CRW-376)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering_ops.go`; the ported ranges are `:39-63,72-153,182-239`.
+
+- The minted criterion id is the highest stored `c-N` plus one in float64, so at or above 2^53 the increment is
+  lost and the new id repeats or falls below the highest stored one: on a plan holding `c-9007199254740993` the
+  next criterion is minted as `c-9007199254740992`, where the comment at `:199-201` promises a dense monotonic
+  sequence (source `steering.ts:199-204`; recorded case `mint-2pow53` in the port's differential, and the plan
+  holding that id is refused by the definition integrity rather than corrupted, so nothing is lost);
+  port: kept.
+- An op that is an array passes the op object test (`:90` is a `typeof` test, and an array is an object) and
+  fails the kind read instead, so the refusal names the missing kind of a value that is not an object at all
+  (source `steering.ts:90-92`; the batch is still rejected whole); port: kept.
+
+## Found by the metric lock-acquired cancellation port (CRW-667)
+
+- The lock-acquired check read the context only when the wait had to wait: `appendRow` read `ctx.Err()` before the write only under `waited`, which `metricLockWait` set when the lock came from a retry, so a lock the first non-blocking `Flock(LOCK_NB)` took at once (a free ledger) was written with no look at the context; a `metric ingest` cancelled right after that Flock therefore left a row that did not exist at the interrupt and answered nil, where the oracle's process dies at the signal and writes none (the oracle has no lock and no signal handler, `pabcd-state/src/metrics.ts:119-137` and `pabcd-state/src/metric-cli.ts:92-151` at v0.2.40; no corpus fixture drives an interrupt); port: fixed (port-introduced, not an upstream defect — the ledger lock is this port's): `appendRow` reads `ctx.Err()` once after the lock is taken, whether or not the wait had to wait, and before it writes, closing the file without a write and returning the context's own error as it is, and `metricLockWait` drops its `waited` return; `context.Background` keeps the blocking `Flock`, so every uninterrupted run is unchanged, and the window between the check and `WriteString` stays (`TestRecordMetricsFromTextContextCancelledAfterTheFirstFlockWritesNoRow` and `TestRecordMetricsFromTextContextCancelledAfterTheFirstFlockWithTwoLinesWritesNoRow`, red on the base with a row written, plus CRW-637's two cases and CRW-627's five unchanged, and `TestRecordMetricsFromTextContextStopsBetweenLines` now expects no row).
+
+## Found by the M2b state-copy classifier port (CRW-655)
+
+- The classifier keeps the 255-byte single-path-component name limit and never reads the destination filesystem's real NAME_MAX, so a destination with a smaller limit (not the ext4 or APFS the design assumes) is refused by the publish step rather than the preflight (docs/port-cxc/state-migration.md:106-108 and :176-187); a limitation of this port, not an oracle defect, port: kept.
+
+## CRW-671 — the goalplan completion and meet operations refuse an ambiguous id
+
+Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoalplanTask` :1351-1382, `meetGoalplanCriterion` :1384-1406) at v0.2.40 (commit 3c1459ac), through `internal/pabcd/goalplan/lifecycle.go`.
+
+- `complete-task` and `meet-criterion` judged the first entry of a duplicated id and then rewrote every entry carrying it, so the other entry's outcome or captured evidence was overwritten (the two lines above under the CRW-542 section); port: fixed by CRW-671 (a data-loss defect, fixed by decision like the parity rule revision of 2026-10-03: the operation refuses, changing nothing, when the work phase id matches more than one phase, the task id more than one task of that phase, or the criterion id more than one criterion, in the shape `DecideGoalplanDecision` already uses; the check runs after the not-in-this-plan refusal and before the already-done/met answer and the readiness check; reads that keep duplicates and every other operation are unchanged).
+- Three recorded cases in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json` move with it and are tagged intentionally-changed in the replay, the recording itself unchanged: `complete_ok_duplicate_task_ids` and `meet_unchanged_duplicate_met_then_open` (named by the issue) and `meet_ok_duplicate_criterion_ids`, which the same rule reaches because it holds two open criteria of one id.
 
 ## Found by the goalplan work-phase close, resume-absent-target and advance port (CRW-642)
 
