@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -46,26 +47,13 @@ const (
 )
 
 // checkpointDueExit is the status of a reading that found a due project; a clean reading exits
-// 0 and one that could not read the store exits checkpointStoreExit.
+// 0 and one that could not read the store exits checkpointStoreExit. An input file the reading
+// cannot read is no longer an exit of its own: it leaves only the signals that depend on it
+// unmeasured, so a broken export is reported rather than fatal.
 const (
 	checkpointDueExit   = 1
-	checkpointInputExit = 2
 	checkpointStoreExit = 3
 )
-
-// checkpointInputError is a failure of one of the two exported input files, which is not a
-// failure to read the store: the exit statuses keep them apart so a caller can tell a broken
-// export from unreadable relay state.
-type checkpointInputError struct{ err error }
-
-func (e *checkpointInputError) Error() string { return e.err.Error() }
-func (e *checkpointInputError) Unwrap() error { return e.err }
-
-// checkpointIsInputError reports whether err is that failure.
-func checkpointIsInputError(err error) bool {
-	var input *checkpointInputError
-	return errors.As(err, &input)
-}
 
 // The two rolling windows the signal names carry, and the instant form the relay writes.
 const (
@@ -81,11 +69,16 @@ type checkpointThresholds struct {
 	NeedsChangesOrSplit int
 	PairEvalP0P1        int
 	BacklogNet          int
+	// ClosedStates are the issue states that mean an issue left the backlog. The backlog signal
+	// reads closure from the state, never from the presence of a completion instant, because an
+	// export may omit completedAt.
+	ClosedStates []string
 }
 
 // checkpointDefaultThresholds is the issue's own set.
 var checkpointDefaultThresholds = checkpointThresholds{
 	Merges: 20, RunningHours: 8, NeedsChangesOrSplit: 3, PairEvalP0P1: 2, BacklogNet: 15,
+	ClosedStates: []string{"Done", "Canceled", "Cancelled", "Duplicate"},
 }
 
 // checkpointSectionDoc is the checkpoint settings section: one optional override per threshold,
@@ -96,6 +89,9 @@ type checkpointSectionDoc struct {
 	NeedsChangesOrSplit *int `json:"needs_changes_or_split_2h"`
 	PairEvalP0P1        *int `json:"pair_eval_p0p1_since_checkpoint"`
 	BacklogNet          *int `json:"backlog_net_4h"`
+	// ClosedStates is a pointer so a section that names it as an empty list is honoured, while one
+	// that omits it leaves the default list in place.
+	ClosedStates *[]string `json:"closed_states"`
 }
 
 // CheckpointOptions is what one reading is asked: the project to narrow to (empty means every
@@ -127,7 +123,12 @@ type CheckpointReport struct {
 	Reasons    []string         `json:"reasons"`
 	Counts     CheckpointCounts `json:"counts"`
 	Unmeasured []string         `json:"unmeasured"`
-	Since      string           `json:"since"`
+	// UnmeasuredReasons explains every signal this reading could not measure, and every named part
+	// of a signal it measured only in part (a milestone whose completion instant is unknown). The
+	// Unmeasured list stays the signal names whose count is absent; the reason map also carries the
+	// partial misses, so a reader can tell a clean zero from a partly measured one.
+	UnmeasuredReasons map[string]string `json:"unmeasured_reasons"`
+	Since             string            `json:"since"`
 }
 
 // checkpointStore is the read-only handle on the relay store. It is opened by the store's own
@@ -136,7 +137,33 @@ type CheckpointReport struct {
 // sidecars were examined, so a component replaced between the examination and the open cannot be
 // read with the other file's parameters. A reading can neither create a table nor write a row,
 // and a table a store predates is an unmeasured reading rather than a repair.
-type checkpointStore struct{ ro *store.ReadOnly }
+type checkpointStore struct {
+	ro *store.ReadOnly
+	// snapshot is the store the reading's queries run on inside checkpointInSnapshot: the same
+	// read-only connection, with the open transaction selected by the context, so every query of
+	// one reading sees one committed state. It is nil outside that call.
+	snapshot *store.Store
+}
+
+// checkpointInSnapshot runs one reading inside a single deferred snapshot. Every query of the
+// reading then sees the same committed state, and the scheduler's own integration judgement reads
+// the same rows as the counts beside it. The read-only store takes no writer lock, so this holds
+// nothing back from a live relay.
+func (s *checkpointStore) checkpointInSnapshot(ctx context.Context, run func(context.Context) error) error {
+	return s.ro.ReadSnapshot(ctx, func(ctx context.Context, st *store.Store) error {
+		s.snapshot = st
+		return run(ctx)
+	})
+}
+
+// checkpointQuerier is where one reading's queries run: the snapshot's transaction when one is
+// open, otherwise the read-only pool.
+func (s *checkpointStore) checkpointQuerier(ctx context.Context) checkpointQueryer {
+	if s.snapshot != nil {
+		return s.snapshot.Q(ctx)
+	}
+	return s.ro
+}
 
 // checkpointOpenStore opens the store at state read-only. A missing file is an error, because a
 // reading of nothing is not a clean reading.
@@ -161,18 +188,33 @@ func (s *checkpointStore) Close() error { return s.ro.Close() }
 // checkpointQueryer is the read-only surface a query needs, which store.ReadOnly satisfies.
 type checkpointQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // checkpointHasTable reports whether the store carries a table. The DAG zone is additive, so a
 // store written before it lacks tables this reading would otherwise read.
 func (s *checkpointStore) checkpointHasTable(ctx context.Context, name string) (bool, error) {
 	var one int
-	err := s.ro.QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&one)
+	err := s.checkpointQuerier(ctx).QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	return true, nil
+}
+
+// checkpointZoneComplete reports whether the store carries every table the integration judgement
+// reads. A store that holds only some of them (an install interrupted between the zone's
+// statements) is not a measured zero: the scheduler answers not-integrated when
+// dag_node_executions is absent, which would read as "no integration" rather than "not measured".
+func (s *checkpointStore) checkpointZoneComplete(ctx context.Context) (bool, error) {
+	for _, table := range checkpointIntegrationTables {
+		present, err := s.checkpointHasTable(ctx, table)
+		if err != nil || !present {
+			return false, err
+		}
 	}
 	return true, nil
 }
@@ -221,7 +263,7 @@ func (s *checkpointStore) checkpointProjects(ctx context.Context) ([]string, err
 	if zoned {
 		query += " UNION SELECT project_key FROM dag_plans WHERE project_key <> ''"
 	}
-	return checkpointRows(ctx, s.ro, query+" ORDER BY 1", nil, func(rows *sql.Rows) (string, error) {
+	return checkpointRows(ctx, s.checkpointQuerier(ctx), query+" ORDER BY 1", nil, func(rows *sql.Rows) (string, error) {
 		var project string
 		return project, rows.Scan(&project)
 	})
@@ -232,7 +274,7 @@ type checkpointProjectInstant struct{ project, at string }
 
 // checkpointMerges reads the landed merge turns, with the instant each landed.
 func (s *checkpointStore) checkpointMerges(ctx context.Context) ([]checkpointProjectInstant, error) {
-	return checkpointRows(ctx, s.ro,
+	return checkpointRows(ctx, s.checkpointQuerier(ctx),
 		"SELECT project_key, COALESCE(NULLIF(closed_at, ''), updated_at) FROM merge_turns WHERE state = 'landed' ORDER BY turn_id",
 		nil, func(rows *sql.Rows) (checkpointProjectInstant, error) {
 			var row checkpointProjectInstant
@@ -242,7 +284,7 @@ func (s *checkpointStore) checkpointMerges(ctx context.Context) ([]checkpointPro
 
 // checkpointVerdicts reads the needs_changes rulings, with the instant each was decided.
 func (s *checkpointStore) checkpointVerdicts(ctx context.Context) ([]checkpointProjectInstant, error) {
-	return checkpointRows(ctx, s.ro,
+	return checkpointRows(ctx, s.checkpointQuerier(ctx),
 		"SELECT s.project_key, v.decided_at FROM verdicts v"+
 			" JOIN events e ON e.event_id = v.event_id"+
 			" JOIN relationship_scope s ON s.relationship_id = e.relationship_id"+
@@ -257,7 +299,7 @@ func (s *checkpointStore) checkpointVerdicts(ctx context.Context) ([]checkpointP
 // instant is the one the receipt recorded.
 func (s *checkpointStore) checkpointSplitDecisions(ctx context.Context) ([]checkpointProjectInstant, error) {
 	type raw struct{ project, receipt, firstSeen string }
-	rows, err := checkpointRows(ctx, s.ro,
+	rows, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
 		"SELECT s.project_key, e.receipt, e.first_seen_at FROM events e"+
 			" JOIN relationship_scope s ON s.relationship_id = e.relationship_id"+
 			" WHERE e.outcome = 'decision_reply' ORDER BY e.event_id",
@@ -289,35 +331,117 @@ func (s *checkpointStore) checkpointSplitDecisions(ctx context.Context) ([]check
 	return out, nil
 }
 
-// checkpointIntegrations reads the effective integration observations, joined to the plan that
-// carries the project. The caller asks only when the store carries the zone.
+// checkpointIntegrationTables are the tables the integration judgement reads: the plan that
+// carries the project, the acceptances it judges, and the executions that say which relationship
+// ran a node. The DAG zone is additive and a store written before it lacks all of them; a store
+// that holds only some (an install interrupted between the ledger's statements) must not read as
+// a measured zero, because dagsched.ExecutionIntegrated answers (false, false, nil) for a store
+// without dag_node_executions.
+var checkpointIntegrationTables = []string{"dag_plans", "dag_acceptances", "dag_node_executions"}
+
+// checkpointAcceptance is one active acceptance of the DAG zone: what the integration judgement
+// is asked about, and the project whose reading counts the answer.
+type checkpointAcceptance struct {
+	acceptanceID string
+	project      string
+	relationship string
+	event        string
+	generation   int64
+	revision     string
+	head         string
+}
+
+// checkpointIntegrations counts the acceptances the relay scheduler itself calls integrated, and
+// the instant each integrated at. The judgement is dagsched's own ExecutionIntegrated (every
+// target of the node plus the parent's merged mark, targets.go nodeIntegrated), so this reading
+// cannot drift from the scheduler's: an acceptance observed in only one of a node's two targets
+// is not counted, and neither is one whose merged mark does not stand on its event, generation
+// and revision.
 //
-// An ancestry observation alone is not an integration: the scheduler's own rule (dagsched
-// integratedAt, P-INT) also requires the parent's merged mark on the acceptance's event,
-// generation and revision, and no LATER observation of the same target that says the head is
-// not contained. This reads those same three conditions, so an unmarked or superseded
-// observation is not counted. It counts each acceptance once, at its earliest satisfying
-// observation, because one integration is one acceptance however many times it was observed;
-// the scheduler additionally requires every target of a multi-target node, which this count
-// does not attempt.
+// The instant is read from the observation records alone: per target, the first satisfying
+// observation of the current containment run, and the acceptance's instant is the latest of those
+// per-target minima. The row selection mirrors dagsched's integratedAt (internal/relay/dagsched/
+// edges.go:395), which is the reference implementation; a later change there does not propagate
+// here, which this issue's scope accepts.
 func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpointProjectInstant, error) {
-	return checkpointRows(ctx, s.ro,
-		"SELECT p.project_key, MIN(o.observed_at) FROM dag_integration_observations o"+
-			" JOIN dag_acceptances a ON a.acceptance_id = o.acceptance_id"+
-			" JOIN dag_plans p ON p.plan_id = a.plan_id"+
-			" JOIN assignment_marks k ON k.relationship_id = a.relationship_id AND k.mark = 'merged'"+
-			"  AND k.event_id = a.event_id AND k.execution_generation = a.execution_generation"+
-			"  AND k.revision_hash = a.revision_hash"+
-			" WHERE o.is_ancestor = 1 AND o.reverted_by IS NULL"+
-			"  AND a.head_sha IS NOT NULL AND a.head_sha <> ''"+
+	// The scheduler's judgement runs on the snapshot's own transaction, so it reads the same
+	// committed state as the counts beside it. A caller that reached here without one would have
+	// the judgement read outside the reading, so it is refused rather than served.
+	if s.snapshot == nil {
+		return nil, errors.New("the integration judgement needs the reading's snapshot")
+	}
+	acceptances, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
+		"SELECT a.acceptance_id, p.project_key, a.relationship_id, a.event_id, a.execution_generation, a.revision_hash, a.head_sha"+
+			" FROM dag_acceptances a JOIN dag_plans p ON p.plan_id = a.plan_id"+
+			" WHERE a.state = 'active' AND a.head_sha IS NOT NULL AND a.head_sha <> ''"+
+			" ORDER BY p.project_key, a.acceptance_id",
+		nil, func(rows *sql.Rows) (checkpointAcceptance, error) {
+			var row checkpointAcceptance
+			return row, rows.Scan(&row.acceptanceID, &row.project, &row.relationship, &row.event, &row.generation, &row.revision, &row.head)
+		})
+	if err != nil {
+		return nil, err
+	}
+	if len(acceptances) == 0 {
+		return nil, nil
+	}
+	scheduler := &dagsched.Scheduler{Store: s.snapshot}
+	var out []checkpointProjectInstant
+	for _, acceptance := range acceptances {
+		applicable, integrated, err := scheduler.ExecutionIntegrated(ctx, acceptance.relationship, acceptance.event, acceptance.generation, acceptance.revision)
+		if err != nil {
+			return nil, err
+		}
+		if !applicable || !integrated {
+			continue
+		}
+		at, err := s.checkpointIntegrationInstant(ctx, acceptance)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, checkpointProjectInstant{project: acceptance.project, at: at})
+	}
+	return out, nil
+}
+
+// checkpointIntegrationInstant is when one integrated acceptance landed everywhere it had to:
+// per target the earliest satisfying observation of the current containment run, and the latest
+// of those across targets (the decided answer's rule). The acceptance is already judged
+// integrated, so this reads the instants of that judgement rather than deciding it again.
+func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acceptance checkpointAcceptance) (string, error) {
+	rows, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
+		"SELECT o.repository, o.base_ref, MIN(o.observed_at)"+
+			" FROM dag_integration_observations o"+
+			" JOIN assignment_marks k ON k.relationship_id = ? AND k.mark = 'merged'"+
+			"  AND k.event_id = ? AND k.execution_generation = ? AND k.revision_hash = ?"+
+			" WHERE o.acceptance_id = ? AND o.subject_sha = ? AND o.is_ancestor = 1 AND o.reverted_by IS NULL"+
+			"  AND (o.merge_turn_id IS NULL OR EXISTS (SELECT 1 FROM merge_turns m WHERE m.turn_id = o.merge_turn_id"+
+			"   AND m.state = 'landed' AND m.candidate_head = ? AND m.repository = o.repository AND m.base_ref = o.base_ref))"+
 			"  AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2"+
 			"   WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository"+
 			"    AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
-			" GROUP BY a.acceptance_id, p.project_key ORDER BY p.project_key",
-		nil, func(rows *sql.Rows) (checkpointProjectInstant, error) {
-			var row checkpointProjectInstant
-			return row, rows.Scan(&row.project, &row.at)
+			" GROUP BY o.repository, o.base_ref ORDER BY o.repository, o.base_ref",
+		[]any{acceptance.relationship, acceptance.event, acceptance.generation, acceptance.revision,
+			acceptance.acceptanceID, acceptance.head, acceptance.head},
+		func(rows *sql.Rows) (string, error) {
+			var repository, baseRef, at string
+			return at, rows.Scan(&repository, &baseRef, &at)
 		})
+	if err != nil {
+		return "", err
+	}
+	latest := ""
+	var latestInstant time.Time
+	for _, at := range rows {
+		instant, ok := checkpointInstant(at)
+		if !ok {
+			continue
+		}
+		if latest == "" || instant.After(latestInstant) {
+			latest, latestInstant = at, instant
+		}
+	}
+	return latest, nil
 }
 
 // checkpointRecordInstants reads the checkpoint records below the manage state directory: the
@@ -425,17 +549,24 @@ func checkpointReadPairEval(path string) ([]checkpointPairEval, error) {
 	return out, nil
 }
 
-// checkpointCompletedStates is the Linear state types that mean an issue left the backlog: the
-// two completed workflow types, and the two words a Linear export's state name carries for them.
-// Matching a substring would read a custom name such as "Incomplete" or "Not Done" as completed.
-var checkpointCompletedStates = map[string]bool{
-	"completed": true, "complete": true, "done": true, "canceled": true, "cancelled": true,
-}
+// checkpointClosedStates is the default set of states that mean an issue left the backlog, the
+// issue's own list. A project may replace it with the checkpoint section's closed_states.
+var checkpointClosedStates = []string{"Done", "Canceled", "Cancelled", "Duplicate"}
 
-// checkpointCompletedState reports whether an exported issue state means the issue left the
-// backlog. The comparison is on the whole state name, case-folded and trimmed.
-func checkpointCompletedState(state string) bool {
-	return checkpointCompletedStates[strings.ToLower(strings.TrimSpace(state))]
+// checkpointClosedState reports whether an exported issue state means the issue left the backlog,
+// given the configured list. The comparison is on the whole state name, case-folded and trimmed,
+// so a custom name such as "Incomplete" or "Not Done" is not read as closed.
+func checkpointClosedState(state string, closedStates []string) bool {
+	name := strings.ToLower(strings.TrimSpace(state))
+	if name == "" {
+		return false
+	}
+	for _, closed := range closedStates {
+		if strings.ToLower(strings.TrimSpace(closed)) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // checkpointCountsAfter counts the instants strictly after a baseline; an empty baseline counts
@@ -460,8 +591,10 @@ func checkpointCountsAfter(instants []checkpointProjectInstant, project string, 
 }
 
 // checkpointCountsInWindow counts the instants inside a rolling window ending at now. The window
-// is half-open at its start and closed at now, so an instant exactly at the edge counts.
-func checkpointCountsInWindow(instants []checkpointProjectInstant, project string, from, now time.Time) int {
+// is closed at now; its start is exclusive when it is the checkpoint baseline (startAtBaseline),
+// so an event the checkpoint already looked at is not counted again, and inclusive when it is the
+// window's own edge.
+func checkpointCountsInWindow(instants []checkpointProjectInstant, project string, from, now time.Time, startAtBaseline bool) int {
 	count := 0
 	for _, row := range instants {
 		if row.project != project {
@@ -471,7 +604,7 @@ func checkpointCountsInWindow(instants []checkpointProjectInstant, project strin
 		if !ok {
 			continue
 		}
-		if instant.Before(from) || instant.After(now) {
+		if instant.Before(from) || (startAtBaseline && !instant.After(from)) || instant.After(now) {
 			continue
 		}
 		count++
@@ -480,15 +613,17 @@ func checkpointCountsInWindow(instants []checkpointProjectInstant, project strin
 }
 
 // checkpointWindowStart is where a rolling window begins: its own edge, or the baseline when the
-// baseline is later. The issue makes the checkpoint record the next calculation's baseline, so a
-// window reaching behind it would keep reporting events the checkpoint already looked at and the
-// signal could never clear.
-func checkpointWindowStart(now time.Time, window time.Duration, since time.Time, hasSince bool) time.Time {
+// baseline is strictly later. The second result is true when the start is the baseline, which
+// makes that instant exclusive: the issue makes the checkpoint record the next calculation's
+// baseline, so a window reaching behind it would keep reporting events the checkpoint already
+// looked at and the signal could never clear. A baseline that merely coincides with the window's
+// own edge is not the baseline start the issue excludes, so that edge stays inclusive.
+func checkpointWindowStart(now time.Time, window time.Duration, since time.Time, hasSince bool) (time.Time, bool) {
 	start := now.Add(-window)
 	if hasSince && since.After(start) {
-		return since
+		return since, true
 	}
-	return start
+	return start, false
 }
 
 // checkpointThresholdsOf is the thresholds a reading runs with: the defaults, overridden by the
@@ -515,6 +650,9 @@ func checkpointThresholdsOf(cfg *Config) (checkpointThresholds, error) {
 			*override.into = *override.value
 		}
 	}
+	if doc.ClosedStates != nil {
+		thresholds.ClosedStates = *doc.ClosedStates
+	}
 	return thresholds, nil
 }
 
@@ -536,65 +674,84 @@ func Checkpoint(ctx context.Context, e *Env, cfg *Config, opts CheckpointOptions
 	}
 	defer st.Close()
 
-	projects, err := st.checkpointProjects(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read the projects: %w", err)
-	}
-	merges, err := st.checkpointMerges(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read the merge turns: %w", err)
-	}
-	verdicts, err := st.checkpointVerdicts(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read the verdicts: %w", err)
-	}
-	decisions, err := st.checkpointSplitDecisions(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read the decisions: %w", err)
-	}
-	zoned, err := st.checkpointHasTable(ctx, "dag_plans")
-	if err != nil {
-		return nil, fmt.Errorf("read the DAG zone: %w", err)
-	}
-	var integrations []checkpointProjectInstant
-	if zoned {
-		if integrations, err = st.checkpointIntegrations(ctx); err != nil {
-			return nil, fmt.Errorf("read the integration observations: %w", err)
-		}
-	}
-
-	records, err := checkpointRecordInstants(auditStateDir(e, cfg))
-	if err != nil {
-		return nil, fmt.Errorf("read the checkpoint records: %w", err)
-	}
-
+	// The two input files are read before the store, because a file the reading cannot use is a
+	// reason for the signals that depend on it rather than a failure of the whole reading.
 	var export *checkpointExport
+	exportReason := ""
 	if opts.LinearExport != "" {
 		read, err := checkpointReadExport(opts.LinearExport)
 		if err != nil {
-			return nil, &checkpointInputError{err: fmt.Errorf("read the linear export: %w", err)}
+			exportReason = fmt.Sprintf("the linear export could not be read: %v", err)
+		} else {
+			export = &read
 		}
-		export = &read
 	}
 	var pairEval []checkpointPairEval
+	pairEvalReason := ""
 	if opts.PairEval != "" {
-		if pairEval, err = checkpointReadPairEval(opts.PairEval); err != nil {
-			return nil, &checkpointInputError{err: fmt.Errorf("read the pair evaluation: %w", err)}
+		read, err := checkpointReadPairEval(opts.PairEval)
+		if err != nil {
+			pairEvalReason = fmt.Sprintf("the pair evaluation could not be read: %v", err)
+		} else {
+			pairEval = read
 		}
 	}
 
-	if opts.Project != "" {
-		projects = []string{opts.Project}
-	}
 	now := e.Now()
-	reports := make([]CheckpointReport, 0, len(projects))
-	for _, project := range projects {
-		reports = append(reports, checkpointBuildReport(checkpointInput{
-			project: project, now: now, thresholds: thresholds,
-			merges: merges, verdicts: verdicts, decisions: decisions, integrations: integrations,
-			zoned: zoned, records: records[project],
-			export: export, pairEval: pairEval,
-		}))
+	var reports []CheckpointReport
+	// One snapshot for the whole reading: the counts and the scheduler's own integration judgement
+	// then read the same committed state.
+	err = st.checkpointInSnapshot(ctx, func(ctx context.Context) error {
+		projects, err := st.checkpointProjects(ctx)
+		if err != nil {
+			return fmt.Errorf("read the projects: %w", err)
+		}
+		merges, err := st.checkpointMerges(ctx)
+		if err != nil {
+			return fmt.Errorf("read the merge turns: %w", err)
+		}
+		verdicts, err := st.checkpointVerdicts(ctx)
+		if err != nil {
+			return fmt.Errorf("read the verdicts: %w", err)
+		}
+		decisions, err := st.checkpointSplitDecisions(ctx)
+		if err != nil {
+			return fmt.Errorf("read the decisions: %w", err)
+		}
+		zoned, err := st.checkpointZoneComplete(ctx)
+		if err != nil {
+			return fmt.Errorf("read the DAG zone: %w", err)
+		}
+		var integrations []checkpointProjectInstant
+		if zoned {
+			if integrations, err = st.checkpointIntegrations(ctx); err != nil {
+				return fmt.Errorf("read the integration observations: %w", err)
+			}
+		}
+
+		records, err := checkpointRecordInstants(auditStateDir(e, cfg))
+		if err != nil {
+			return fmt.Errorf("read the checkpoint records: %w", err)
+		}
+
+		if opts.Project != "" {
+			projects = []string{opts.Project}
+		}
+		reports = make([]CheckpointReport, 0, len(projects))
+		for _, project := range projects {
+			reports = append(reports, checkpointBuildReport(checkpointInput{
+				project: project, now: now, thresholds: thresholds,
+				closedStates: thresholds.ClosedStates,
+				merges:       merges, verdicts: verdicts, decisions: decisions, integrations: integrations,
+				zoned: zoned, records: records[project],
+				export: export, pairEval: pairEval,
+				exportReason: exportReason, pairEvalReason: pairEvalReason,
+			}))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	sort.SliceStable(reports, func(i, j int) bool { return reports[i].Project < reports[j].Project })
 	return reports, nil
@@ -605,6 +762,7 @@ type checkpointInput struct {
 	project      string
 	now          time.Time
 	thresholds   checkpointThresholds
+	closedStates []string
 	merges       []checkpointProjectInstant
 	verdicts     []checkpointProjectInstant
 	decisions    []checkpointProjectInstant
@@ -613,11 +771,25 @@ type checkpointInput struct {
 	records      []time.Time
 	export       *checkpointExport
 	pairEval     []checkpointPairEval
+	// exportReason is why the linear export could not be read or parsed, and pairEvalReason the
+	// same for the pair evaluation. Either one leaves only the signals that depend on that input
+	// unmeasured and the rest of the reading computed.
+	exportReason   string
+	pairEvalReason string
 }
 
 // checkpointBuildReport builds one project's reading.
 func checkpointBuildReport(in checkpointInput) CheckpointReport {
-	report := CheckpointReport{Project: in.project, Reasons: []string{}, Unmeasured: []string{}}
+	report := CheckpointReport{
+		Project: in.project, Reasons: []string{}, Unmeasured: []string{},
+		UnmeasuredReasons: map[string]string{},
+	}
+	// unmeasured records one signal as unmeasured with its reason, so the list and the reason map
+	// cannot drift apart.
+	unmeasured := func(signal, reason string) {
+		report.Unmeasured = append(report.Unmeasured, signal)
+		report.UnmeasuredReasons[signal] = reason
+	}
 	since, hasSince := time.Time{}, false
 	if len(in.records) > 0 {
 		latest := in.records[0]
@@ -634,7 +806,7 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 		// the tool could never say the project was up to date.
 		report.Counts.RunningHours = in.now.Sub(latest).Hours()
 	} else {
-		report.Unmeasured = append(report.Unmeasured, checkpointSignalRunningHours)
+		unmeasured(checkpointSignalRunningHours, "the project has no checkpoint record, so there is no baseline to measure from")
 	}
 
 	report.Counts.MergesSinceCheckpoint = checkpointCountsAfter(in.merges, in.project, since, hasSince)
@@ -644,26 +816,43 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 		count := checkpointCountsAfter(in.integrations, in.project, since, hasSince)
 		report.Counts.IntegrationsSinceCheckpoint = &count
 	} else {
-		report.Unmeasured = append(report.Unmeasured, checkpointSignalIntegrations)
+		unmeasured(checkpointSignalIntegrations, "the store has no DAG zone, so no integration is recorded to read")
 	}
 
-	windowStart := checkpointWindowStart(in.now, checkpointNeedsChangesWindow, since, hasSince)
-	report.Counts.NeedsChangesOrSplit2h = checkpointCountsInWindow(in.verdicts, in.project, windowStart, in.now) +
-		checkpointCountsInWindow(in.decisions, in.project, windowStart, in.now)
+	windowStart, startAtBaseline := checkpointWindowStart(in.now, checkpointNeedsChangesWindow, since, hasSince)
+	report.Counts.NeedsChangesOrSplit2h = checkpointCountsInWindow(in.verdicts, in.project, windowStart, in.now, startAtBaseline) +
+		checkpointCountsInWindow(in.decisions, in.project, windowStart, in.now, startAtBaseline)
 
-	if in.export != nil {
-		milestone, unmeasured := checkpointMilestone(in, since, hasSince)
+	switch {
+	case in.exportReason != "":
+		unmeasured(checkpointSignalMilestone, in.exportReason)
+		unmeasured(checkpointSignalBacklog, in.exportReason)
+	case in.export != nil:
+		milestone, skipped := checkpointMilestone(in, since, hasSince)
 		report.Counts.MilestoneIntegrated = milestone
-		report.Unmeasured = append(report.Unmeasured, unmeasured...)
-		report.Counts.BacklogNet4h = checkpointBacklogNet(in, since, hasSince)
-	} else {
-		report.Unmeasured = append(report.Unmeasured, checkpointSignalMilestone, checkpointSignalBacklog)
+		if milestone == nil {
+			unmeasured(checkpointSignalMilestone, "every fully closed milestone of the project has an unknown completion instant, so when one integrated is unknown")
+		}
+		for _, name := range skipped {
+			report.UnmeasuredReasons[name] = "the milestone " + name + " is fully closed but no issue of it carries a completion instant, so when it integrated is unknown"
+		}
+		backlog, backlogReason, backlogMeasured := checkpointBacklogNet(in, since, hasSince)
+		report.Counts.BacklogNet4h = backlog
+		if !backlogMeasured {
+			unmeasured(checkpointSignalBacklog, backlogReason)
+		}
+	default:
+		unmeasured(checkpointSignalMilestone, "no linear export was given, so no milestone is read")
+		unmeasured(checkpointSignalBacklog, "no linear export was given, so no backlog issue is read")
 	}
-	if in.pairEval != nil {
+	switch {
+	case in.pairEvalReason != "":
+		unmeasured(checkpointSignalPairEval, in.pairEvalReason)
+	case in.pairEval != nil:
 		count := checkpointPairEvalCount(in, since, hasSince)
 		report.Counts.PairEvalP0P1SinceCheckpoint = &count
-	} else {
-		report.Unmeasured = append(report.Unmeasured, checkpointSignalPairEval)
+	default:
+		unmeasured(checkpointSignalPairEval, "no pair evaluation was given, so no P0 or P1 finding is read")
 	}
 
 	report.Reasons = checkpointReasons(in.thresholds, &report)
@@ -695,16 +884,22 @@ func checkpointReasons(thresholds checkpointThresholds, report *CheckpointReport
 	return reasons
 }
 
-// checkpointMilestone counts the project's integrated milestones and reports whether the
-// reading is unmeasured: an export that carries no milestone information cannot measure it, and
-// neither can one whose completed issues carry no completion instant, because whether the
-// milestone integrated after the baseline is then unknowable rather than zero.
+// checkpointMilestone counts the project's integrated milestones. A milestone whose every issue
+// is closed has integrated; the reading is unmeasured only when every fully closed milestone's
+// completion instant is unknown, because whether it integrated after the baseline is then
+// unknowable rather than zero. A single milestone with unknown timing no longer blanks the whole
+// signal: it is skipped and named, so a confirmed milestone beside it is still counted.
+//
+// The second result names the milestones that were skipped for unknown timing, which the report
+// carries as reasons whether or not the signal itself ended up unmeasured.
 func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*int, []string) {
 	type milestone struct {
-		total      int
-		completed  int
-		timingMiss bool
-		latest     time.Time
+		total     int
+		completed int
+		latest    time.Time
+		// timed is true when at least one closed issue of the milestone carried a completion
+		// instant, which is what makes the milestone's own instant knowable.
+		timed bool
 	}
 	seen := map[string]*milestone{}
 	for _, issue := range in.export.Issues {
@@ -717,58 +912,100 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 			seen[issue.Milestone] = entry
 		}
 		entry.total++
-		if !checkpointCompletedState(issue.State) {
+		if !checkpointClosedState(issue.State, in.closedStates) {
 			continue
 		}
 		entry.completed++
 		completed, ok := checkpointInstant(issue.CompletedAt)
 		if !ok {
-			entry.timingMiss = true
 			continue
 		}
+		entry.timed = true
 		if completed.After(entry.latest) {
 			entry.latest = completed
 		}
 	}
 	if len(seen) == 0 {
-		return nil, []string{checkpointSignalMilestone}
+		return nil, nil
 	}
 	count := 0
+	var skipped []string
+	closed := 0
+	timedClosed := 0
 	for _, name := range checkpointSortedKeys(seen) {
 		entry := seen[name]
 		if entry.total == 0 || entry.completed != entry.total {
 			continue
 		}
-		if entry.timingMiss {
-			return nil, []string{checkpointSignalMilestone}
+		closed++
+		if !entry.timed {
+			skipped = append(skipped, name)
+			continue
 		}
+		timedClosed++
 		if hasSince && !entry.latest.After(since) {
 			continue
 		}
 		count++
 	}
-	return &count, nil
+	// The decided answer: the signal is unmeasured only when every fully closed milestone has
+	// unknown timing. A milestone with a known completion before the baseline keeps the signal
+	// measured (0), because the integration instant is knowable and simply predates the baseline.
+	if closed > 0 && timedClosed == 0 {
+		return nil, skipped
+	}
+	return &count, skipped
 }
 
 // checkpointBacklogNet is the backlog's net change over the rolling window: the issues that
-// entered it in the window (created then) minus the issues that left it in the window (completed
-// then). An issue created and completed inside one window therefore counts zero, not minus one,
+// entered it in the window (created then) minus the issues that left it in the window (closed
+// then). An issue created and closed inside one window therefore counts zero, not minus one,
 // which is the change the backlog actually saw.
-func checkpointBacklogNet(in checkpointInput, since time.Time, hasSince bool) *int {
-	from := checkpointWindowStart(in.now, checkpointBacklogWindow, since, hasSince)
+//
+// Whether an issue left the backlog is its state, matched against the configured closed list,
+// never the presence of a completion instant: an export may omit completedAt, and an issue that
+// is closed counts as having left even then. The two results beside the count are the reason and
+// whether the signal was measured: a closed issue with no completion instant that was created
+// outside the window leaves the net unknowable for this reading, because when it left is
+// unknown, so the signal is unmeasured rather than a guess.
+func checkpointBacklogNet(in checkpointInput, since time.Time, hasSince bool) (*int, string, bool) {
+	from, startAtBaseline := checkpointWindowStart(in.now, checkpointBacklogWindow, since, hasSince)
+	inWindow := func(instant time.Time) bool {
+		if instant.Before(from) || instant.After(in.now) {
+			return false
+		}
+		return !startAtBaseline || instant.After(from)
+	}
 	net := 0
 	for _, issue := range in.export.Issues {
 		if issue.Project != in.project {
 			continue
 		}
-		if created, ok := checkpointInstant(issue.CreatedAt); ok && !created.Before(from) && !created.After(in.now) {
+		created, createdOK := checkpointInstant(issue.CreatedAt)
+		createdInside := createdOK && inWindow(created)
+		if createdInside {
 			net++
 		}
-		if completed, ok := checkpointInstant(issue.CompletedAt); ok && !completed.Before(from) && !completed.After(in.now) {
+		// An open issue is still in the backlog whatever completion instant it carries, so only
+		// its creation moves the net; the leftover instant is ignored.
+		if !checkpointClosedState(issue.State, in.closedStates) {
+			continue
+		}
+		completed, completedOK := checkpointInstant(issue.CompletedAt)
+		switch {
+		case completedOK && inWindow(completed):
 			net--
+		case !completedOK && createdInside:
+			// Closed with no completion instant but created inside the window: it entered and
+			// left inside it, so it nets to zero. The subtraction completes the pair.
+			net--
+		case !completedOK:
+			// Closed with no completion instant and not known to have been created inside the
+			// window: when it left is unknown, so the net cannot be stated for this reading.
+			return nil, "a closed issue of " + in.project + " carries no completion instant and was not created inside the window, so when it left the backlog is unknown", false
 		}
 	}
-	return &net
+	return &net, "", true
 }
 
 // checkpointPairEvalCount counts the P0 and P1 findings after the baseline.
@@ -903,9 +1140,6 @@ func checkpointRun(ctx context.Context, e *Env, args []string) int {
 	reports, err := Checkpoint(ctx, e, coreDefaults(e), opts)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage checkpoint: error: %v\n", err)
-		if checkpointIsInputError(err) {
-			return checkpointInputExit
-		}
 		return checkpointStoreExit
 	}
 	data, err := json.Marshal(reports)
