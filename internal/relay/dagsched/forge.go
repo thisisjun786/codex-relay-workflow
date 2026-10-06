@@ -67,7 +67,10 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 		if c["attempt"] != nil {
 			attempt = evidence.Integer(c["attempt"]).Int64()
 		}
-		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Stamp: stamps[textOf(c["runId"])], Attempt: attempt})
+		// The collector's notRun mark is read as a strict boolean, the same read merge-evidence's
+		// notRunJobs uses: anything that is not true reads false (CRW-676).
+		notRun, _ := c["notRun"].(bool)
+		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Stamp: stamps[textOf(c["runId"])], Attempt: attempt, NotRun: notRun})
 	}
 	// the collector holds the declared list as []string when it read it and nil when it could not: nil is "not declared", an empty list is "requires none".
 	switch declared := handoff["requiredDeclared"].(type) {
@@ -89,15 +92,26 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	if pr.RequiredReadable {
 		required = pr.RequiredDeclared
 	}
-	var rows []any
-	for _, c := range pr.Checks {
-		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalText(c.Provider)})
-	}
-	for _, p := range evidence.ChecksProblemsWith(pr.HeadSHA, required, rows, true, pr.RequiredProviders) {
+	for _, p := range evidence.ChecksProblemsWith(pr.HeadSHA, required, forgeRows(pr.Checks), true, pr.RequiredProviders) {
 		pr.CheckProblems = append(pr.CheckProblems, p.Code+": "+p.Detail)
 	}
 	pr.ReviewDigest = reviewDigest(snapshot["findings"])
 	return pr
+}
+
+// forgeRows restates the checks of the head the way the evidence predicate reads them. The
+// collector's notRun mark is written back only when it is set, so a row without it gains no field
+// and an ordinary failure stays an ordinary failure (CRW-676).
+func forgeRows(checks []Check) []any {
+	var rows []any
+	for _, c := range checks {
+		row := map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalText(c.Provider)}
+		if c.NotRun {
+			row["notRun"] = true
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // reviewDigest digests the review findings of a snapshot, so evidence that differs only in what reviewers said still differs.

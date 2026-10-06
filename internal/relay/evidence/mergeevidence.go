@@ -267,6 +267,34 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 	return names
 }
 
+// beganFailureBeside reports whether the same workflow run and attempt as a required check holds a
+// job other than that check which began a step (the collector did not mark it notRun) and concluded
+// failure. Such a job says the commit was tested and failed, so a not-run sibling cannot make the
+// required failure read as a runner problem (CRW-676). The judged check is excluded by its own run
+// identity, which the collector makes unique per job entry within a run attempt.
+func beganFailureBeside(checks []any, run string, at *big.Int, requiredRunId string) bool {
+	if run == "" {
+		return false
+	}
+	for _, entry := range checks {
+		if textField(entry, "runId") == requiredRunId {
+			continue
+		}
+		if workflowRun(textField(entry, "runId")) != run || attempt(entry).Cmp(at) != 0 {
+			continue
+		}
+		o, _ := Object(entry)
+		if o.Get("conclusion") != "failure" {
+			continue
+		}
+		if flag, isBool := o.Get("notRun").(bool); isBool && flag {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // ChecksProblems is mergeevidence.checks_problems with the merge-turn defaults.
 func ChecksProblems(head string, required []string, checks []any) []Problem {
 	return ChecksProblemsWith(head, required, checks, false, nil)
@@ -356,6 +384,13 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// so the answer stays not ready either way (CRW-661).
 		jobs := notRunJobs(checks, workflowRun(run), attempt(entry))
 		if len(jobs) == 0 {
+			unexplained = true
+			continue
+		}
+		// A job that began a step and failed for real, in the same run attempt, is the commit
+		// being tested and failing: a not-run sibling cannot make the required failure read as a
+		// runner problem, or the lane reruns a real test failure once as if it were one (CRW-676).
+		if beganFailureBeside(checks, workflowRun(run), attempt(entry), run) {
 			unexplained = true
 			continue
 		}
