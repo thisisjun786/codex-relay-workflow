@@ -145,7 +145,9 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 	if site, denied := githubPostUnknownGh(words); denied {
 		return site, true
 	}
-	if githubPostMentionsPost(strings.Join(words, " ")) {
+	// A command word that still holds an expansion cannot be judged, and a word list that names a post
+	// in any spelling is refused: the program is normalised first, so a path or quote pieces are seen.
+	if githubPostMentionsWords(words) {
 		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 	}
 	return githubPostSite{}, false
@@ -154,7 +156,13 @@ func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
 // githubPostUnread is the fail-closed judgement for a text that is not one simple command: a text naming
 // a post is refused, and one whose text holds an outer-shell expansion says so.
 func githubPostUnread(command string) (githubPostSite, bool) {
-	if !githubPostMentions(command) {
+	// A command word that still holds an expansion after quote removal cannot be judged, so a command
+	// whose program is such a word and whose rest names a post verb is refused.
+	if words := githubPostSplitTolerant(command); len(words) > 0 &&
+		githubPostHoldsExpansion(githubPostNormal(words[0])) && githubPostNamesPost(words[1:]) {
+		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+	}
+	if !githubPostMentions(command) && !githubPostMentionsWords(githubPostSplitTolerant(command)) {
 		return githubPostSite{}, false
 	}
 	// A text that spells an inline body is the inline-body rule, wherever the body sits.
@@ -186,8 +194,9 @@ func githubPostSimple(command string) ([]string, bool) {
 }
 
 // githubPostWords splits one simple command into its words, keeping each word as written, and reports
-// false when a word or the text as a whole is not literal: an unquoted $, backtick, backslash, *, ?, [,
-// ], ~, {, }, (, ) or redirection character, or a quote that never closes.
+// false when a word or the text as a whole is not literal: an unquoted $, backtick, *, ?, [, ], ~, {, },
+// (, ), < or >, or a quote that never closes. A backslash escapes the character after it, so the pair is
+// literal too.
 func githubPostWords(s string) ([]string, bool) {
 	words, cur := []string{}, strings.Builder{}
 	started := false
@@ -214,9 +223,13 @@ func githubPostWords(s string) ([]string, bool) {
 		case c == '"':
 			j := i + 1
 			for j < len(s) && s[j] != '"' {
-				// A double-quoted word is literal only without $, a backtick or a backslash.
-				if s[j] == '$' || s[j] == 0x60 || s[j] == '\\' {
+				// A double-quoted word is literal only without $ or a backtick; a backslash escapes the
+				// character after it, which the shell removes.
+				if s[j] == '$' || s[j] == 0x60 {
 					return nil, false
+				}
+				if s[j] == '\\' && j+1 < len(s) {
+					j++
 				}
 				j++
 			}
@@ -226,7 +239,11 @@ func githubPostWords(s string) ([]string, bool) {
 			started = true
 			cur.WriteString(s[i : j+1])
 			i = j
-		case c == '$' || c == 0x60 || c == '\\' || c == '*' || c == '?' || c == '[' || c == ']' ||
+		case c == '\\' && i+1 < len(s):
+			started = true
+			cur.WriteString(s[i : i+2])
+			i++
+		case c == '$' || c == 0x60 || c == '*' || c == '?' || c == '[' || c == ']' ||
 			c == '~' || c == '{' || c == '}' || c == '(' || c == ')' || c == '<' || c == '>':
 			return nil, false
 		default:
@@ -238,13 +255,101 @@ func githubPostWords(s string) ([]string, bool) {
 	return words, true
 }
 
+// githubPostNormal is one word as the shell reads it: quote removal and backslash removal, as rule 1's
+// program identity asks. It is tolerant, so a caller can normalise a word it cannot otherwise judge.
+func githubPostNormal(word string) string {
+	out := strings.Builder{}
+	for i := 0; i < len(word); i++ {
+		switch c := word[i]; {
+		case c == '\'':
+			j := strings.IndexByte(word[i+1:], '\'')
+			if j < 0 {
+				return out.String()
+			}
+			out.WriteString(word[i+1 : i+1+j])
+			i += 1 + j
+		case c == '"':
+			j := i + 1
+			for j < len(word) && word[j] != '"' {
+				if word[j] == '\\' && j+1 < len(word) {
+					j++
+				}
+				out.WriteByte(word[j])
+				j++
+			}
+			if j >= len(word) {
+				return out.String()
+			}
+			i = j
+		case c == '\\' && i+1 < len(word):
+			out.WriteByte(word[i+1])
+			i++
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+// githubPostProgram is the program word of a command: the word as the shell reads it, compared by its
+// last path element. The form checks and the mention test share this one function, so a program spelled
+// as a path (/usr/bin/gh, ./gh) or in quote pieces (g”h, g""h, 'g'h) is the same word either way.
+func githubPostProgram(word string) string {
+	normal := githubPostNormal(word)
+	if i := strings.LastIndexByte(normal, '/'); i >= 0 {
+		return normal[i+1:]
+	}
+	return normal
+}
+
+// githubPostSplitWords is one command's words as the shell reads them, without the strict reader's
+// refusal: quotes come off with their escapes and the rest is kept. It is used for the raw-text checks,
+// so a word the strict reader would refuse is still seen as the word the shell builds.
+func githubPostSplitWords(s string) []string {
+	out, cur := []string{}, strings.Builder{}
+	started := false
+	flush := func() {
+		if started {
+			out = append(out, githubPostNormal(cur.String()))
+			cur.Reset()
+			started = false
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n':
+			flush()
+		case c == '\'' || c == '"':
+			started = true
+			j := i + 1
+			for j < len(s) && s[j] != c {
+				if s[j] == '\\' && j+1 < len(s) {
+					j++
+				}
+				j++
+			}
+			if j >= len(s) {
+				j = len(s) - 1
+			}
+			cur.WriteString(s[i : j+1])
+			i = j
+		default:
+			started = true
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return out
+}
+
+// githubPostAssignmentWord is a NAME=value word, the assignment form rule 1 refuses before the program.
 // githubPostLiteralWord is whether one word is literal on its own, for an argv array.
 func githubPostLiteralWord(w string) bool {
 	words, ok := githubPostWords(w)
 	return ok && len(words) == 1
 }
 
-// githubPostAssignmentWord is a NAME=value word, the assignment form rule 1 refuses before the program.
 func githubPostAssignmentWord(w string) bool {
 	name, _, found := strings.Cut(w, "=")
 	if !found || name == "" || strings.HasPrefix(name, "-") {
@@ -263,10 +368,11 @@ func githubPostAssignmentWord(w string) bool {
 // gh post shape at all, so the caller keeps judging; a gh read and every other known gh command are
 // handled and allowed, whatever words follow.
 func githubPostForm(words []string, cwd string) (site githubPostSite, denied, handled bool) {
-	if len(words) < 2 || words[0] != "gh" || !githubPostGhCommand(words[1]) {
+	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || !githubPostGhCommand(githubPostNormal(words[1])) {
 		return githubPostSite{}, false, false
 	}
-	switch words[1] {
+	sub := githubPostNormal(words[1])
+	switch sub {
 	case "alias":
 		// An alias may expand to a post, so the guard never reads it.
 		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
@@ -276,12 +382,25 @@ func githubPostForm(words []string, cwd string) (site githubPostSite, denied, ha
 		if len(words) < 3 {
 			return githubPostSite{}, false, true // a gh pr or gh issue with no subcommand
 		}
-		switch words[2] {
+		switch githubPostNormal(words[2]) {
 		case "comment", "create", "edit", "review", "new":
 			// new is the built-in alias of create, so it is read as the post it is.
 			return githubPostPost(words[3:], cwd)
+		case "list", "view", "status", "checks", "diff":
+			return githubPostSite{}, false, true // the read list, whatever words follow
+		default:
+			// Any other pr or issue subcommand may carry text (close --comment, merge --body or
+			// --subject, and the rest), so it is refused.
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 		}
-		return githubPostSite{}, false, true // a read: whatever words follow
+	case "release":
+		// A release's text arguments post the text; anything else is not a post shape.
+		for _, w := range words[2:] {
+			if name, _, _ := strings.Cut(w, "="); name == "--notes" || name == "--notes-file" || name == "--title" {
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
+			}
+		}
+		return githubPostSite{}, false, true
 	}
 	return githubPostSite{}, false, true // a known gh command that is not a post shape
 }
@@ -495,7 +614,7 @@ func githubPostQuiet(words []string) bool {
 	if len(words) == 0 {
 		return false
 	}
-	switch words[0] {
+	switch githubPostProgram(words[0]) {
 	case "rg":
 		for _, w := range words[1:] {
 			if w == "--pre" || strings.HasPrefix(w, "--pre=") || w == "--pre-glob" || strings.HasPrefix(w, "--pre-glob=") {
@@ -523,7 +642,7 @@ func githubPostQuiet(words []string) bool {
 // githubPostUnknownGh is a simple gh command whose first word after gh is not a known gh command: an
 // alias or a program the guard cannot place may expand to a post.
 func githubPostUnknownGh(words []string) (githubPostSite, bool) {
-	if len(words) < 2 || words[0] != "gh" || githubPostGhCommand(words[1]) {
+	if len(words) < 2 || githubPostProgram(words[0]) != "gh" || githubPostGhCommand(githubPostNormal(words[1])) {
 		return githubPostSite{}, false
 	}
 	return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
@@ -554,12 +673,67 @@ func githubPostInlineShape(s string) bool {
 	return false
 }
 
-// githubPostMentionsPost is rule 4's names-a-post test: gh with pr or issue and a posting subcommand, or
-// githubPostMentions is the fail-closed test for a text the guard cannot take as one simple command: the
-// word gh with pr, issue or api anywhere. A text that is not one simple command is denied when it names
-// a post, and this broader test keeps every such text on the refusing side.
+// githubPostMentions is the raw-text test: the word gh with pr, issue or api anywhere. It is the
+// fail-closed test for a text the guard cannot take as one simple command.
 func githubPostMentions(s string) bool {
 	return githubPostWord(s, "gh") && (githubPostWord(s, "pr") || githubPostWord(s, "issue") || githubPostWord(s, "api"))
+}
+
+// githubPostMentionsWords is rule 2's mention test on a word list: the words hold gh, by the normalised
+// program of the first word (so a path or quote pieces are seen) or as a word anywhere, and a posting
+// subcommand, or api with a field flag, or release with a text flag.
+func githubPostMentionsWords(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	joined := strings.Join(words, " ")
+	if !githubPostWord(joined, "gh") && githubPostProgram(words[0]) != "gh" {
+		return false
+	}
+	if githubPostWord(joined, "pr") || githubPostWord(joined, "issue") {
+		for _, verb := range [...]string{"comment", "create", "edit", "review"} {
+			if githubPostWord(joined, verb) {
+				return true
+			}
+		}
+	}
+	if githubPostWord(joined, "api") {
+		for _, flag := range [...]string{"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "mutation"} {
+			if strings.Contains(joined, flag) {
+				return true
+			}
+		}
+	}
+	if githubPostWord(joined, "release") {
+		for _, flag := range [...]string{"--notes", "--notes-file", "--title"} {
+			if strings.Contains(joined, flag) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// githubPostNamesPost is whether the word list holds a post verb, for the unreadable-program rule.
+func githubPostNamesPost(words []string) bool {
+	for _, w := range words {
+		switch githubPostProgram(w) {
+		case "pr", "issue", "api", "comment", "create", "edit", "review", "mutation":
+			return true
+		}
+	}
+	return false
+}
+
+// githubPostHoldsExpansion is whether a normalised word still holds an expansion or a glob the shell
+// would act on, so the guard cannot know the command it names.
+func githubPostHoldsExpansion(word string) bool {
+	return strings.ContainsAny(word, "$`*?[]~{}()<>")
+}
+
+// githubPostSplitTolerant is githubPostSplitWords, kept for the call sites that name it.
+func githubPostSplitTolerant(s string) []string {
+	return githubPostSplitWords(s)
 }
 
 // api with a field flag.
