@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"bytes"
 	"encoding/json"
 	"math/rand"
 	"os"
@@ -74,9 +75,10 @@ func goalplanAnswer(read goalplan.GoalplanReadResult) pyjson.Object {
 		return answer.Set("plan", nil)
 	}
 	// The plan's text form, indented two spaces as the oracle prints it with JSON.stringify(plan, null,
-	// 2). The comparison is canonical, so key order does not matter and the struct tags give the same
-	// key set the oracle's reviver built.
-	encoded, err := json.MarshalIndent(read.Plan, "", "  ")
+	// 2). jsonStringify does not escape <, > or & as encoding/json does, so a plan holding markup
+	// compares equal instead of a false divergence. The comparison is canonical, so key order does not
+	// matter.
+	encoded, err := jsonStringify(read.Plan)
 	if err != nil {
 		return answer.Set("plan", nil)
 	}
@@ -84,9 +86,44 @@ func goalplanAnswer(read goalplan.GoalplanReadResult) pyjson.Object {
 }
 
 // goalplanCompare compares the read kind, field and revived plan, and the rewritten bytes.
+// jsonStringify is JSON.stringify(value, null, 2) for a value encoding/json can carry: it leaves <, >
+// and & literal and writes U+2028 and U+2029 as themselves, where encoding/json would escape them.
+// The port's own JSON.stringify-compatible encoder (writeEncodeJSON) is private to internal/pabcd/
+// goalplan, so this target keeps its own copy for the read-plan snapshot.
+func jsonStringify(value any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(value); err != nil {
+		return nil, err
+	}
+	in := bytes.TrimSuffix(b.Bytes(), []byte("\n"))
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		switch {
+		case in[i] != '\\':
+			out = append(out, in[i])
+		case bytes.HasPrefix(in[i:], []byte(`\u2028`)):
+			out, i = append(out, "\u2028"...), i+5
+		case bytes.HasPrefix(in[i:], []byte(`\u2029`)):
+			out, i = append(out, "\u2029"...), i+5
+		default:
+			out, i = append(out, in[i], in[i+1]), i+1
+		}
+	}
+	return out, nil
+}
+
 func goalplanCompare(goOut, oracleOut any) Verdict {
 	if canonical(goOut) == canonical(oracleOut) {
 		return Verdict{Kind: Same}
+	}
+	// A refused Go write leaves no written bytes; name that rather than a generic difference.
+	if _, refused := field(goOut, "writeError"); refused {
+		if _, published := field(oracleOut, "written"); published {
+			return Verdict{Kind: Differ, Detail: "the Go write lock refused a rewrite the oracle published"}
+		}
 	}
 	if goKind, ok := field(goOut, "written"); ok {
 		if oracleKind, ok := field(oracleOut, "written"); ok {

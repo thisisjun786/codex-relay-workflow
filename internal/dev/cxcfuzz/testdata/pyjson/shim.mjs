@@ -32,7 +32,10 @@ function run(request) {
   // A missing or non-string text is the empty document, exactly as the Go side reads it, so a
   // shrunk input that dropped the field still compares a document rather than a protocol error.
   const text = input !== null && typeof input === "object" && typeof input.text === "string" ? input.text : "";
-  const argv = ["-m", "json.tool", "--json-lines"];
+  // No --json-lines: the oracle is json.loads/json.dumps over the whole document, and --json-lines
+  // would make it a line-by-line parser (accepting zero lines and refusing a pretty-printed document),
+  // which is not the reader pyjson.Loads replaces.
+  const argv = ["-m", "json.tool"];
   if (input.compact === true) {
     argv.push("--compact");
   } else if (input.indent === 0) {

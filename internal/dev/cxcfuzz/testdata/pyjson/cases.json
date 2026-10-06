@@ -80,6 +80,22 @@
     "record": ""
   },
   {
+    "name": "multiline-document",
+    "input": "{\"text\": \"{\\n  \\\"a\\\": 1\\n}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 1\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 1\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "empty-document",
+    "input": "{\"text\": \"\"}",
+    "oracle": "{\"exit\": 1, \"stderr\": \"Expecting value: line 1 column 1 (char 0)\", \"stdout\": \"\"}",
+    "go": "{\"exit\": 1, \"stderr\": \"Expecting value: line 1 column 1 (char 0)\", \"stdout\": \"\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
     "name": "sorted-compact",
     "input": "{\"text\": \"{\\\"b\\\": 1, \\\"a\\\": [1, 2]}\", \"compact\": true, \"sortKeys\": true}",
     "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\\"a\\\":[1,2],\\\"b\\\":1}\"}",
@@ -104,12 +120,12 @@
     "record": ""
   },
   {
-    "name": "open-empty-document",
-    "input": "{\"text\": \"\"}",
-    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"\"}",
-    "go": "{\"exit\": 1, \"stderr\": \"Expecting value: line 1 column 1 (char 0)\", \"stdout\": \"\"}",
-    "tag": "open",
-    "record": "follow-up: json.tool --json-lines reads zero lines from an empty document and succeeds, where pyjson.Loads refuses it as json.loads does"
+    "name": "markup-not-escaped",
+    "input": "{\"text\": \"{\\\"a\\\": \\\"\u003cb\u003e\u0026\\\"}\", \"compact\": true}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\\"a\\\":\\\"\u003cb\u003e\u0026\\\"}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\\"a\\\":\\\"\u003cb\u003e\u0026\\\"}\"}",
+    "tag": "identical",
+    "record": ""
   },
   {
     "name": "open-lone-surrogate-no-ensure-ascii",
