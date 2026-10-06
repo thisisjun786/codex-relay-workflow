@@ -81,6 +81,13 @@ func newRepo(t *testing.T) *fixtureRepo {
 	r.git("config", "user.name", "CI fixture")
 	r.git("config", "user.email", "ci@example.invalid")
 	r.git("config", "commit.gpgsign", "false")
+	// Automatic maintenance off: after a commit git otherwise starts a detached
+	// `git maintenance run --auto` (or `gc --auto`), which creates and removes files
+	// under .git while t.TempDir removes the tree and fails as ".git: directory not
+	// empty". The large-blob tests commit blobs over 2 MiB several times and hit it
+	// most; internal/dev/cxccorpus turns the same pair off for its fixture repos.
+	r.git("config", "maintenance.auto", "false")
+	r.git("config", "gc.auto", "0")
 	return r
 }
 
