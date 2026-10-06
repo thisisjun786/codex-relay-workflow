@@ -50,7 +50,10 @@ func invDispatchMismatch(session, id, record, attempt, candidate, attemptCandida
 func TestClassifyRecordsDispatchShape(t *testing.T) {
 	empty := `{"version":1,"sessionId":"s1","id":"d-1","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","candidate":{},"claimed":false,"spawnIssued":false,"status":"complete"}],"status":"complete"}`
 	nullID := invDispatchCandidate("s1", "d-1", "complete", "complete", `{"model":null,"effort":null}`, `,"id":null`)
-	noSpawn := invDispatchCandidate("s1", "d-1", "complete", "complete", `{"model":null,"effort":null}`, `,"spawnIssued":null`)
+	// A repeated key ending in null and a genuinely absent key are different inputs to dispatchPinnedDecode, so both are
+	// covered: the first reads null, the second reads undefined, and each is refused for its own reason.
+	spawnNull := invDispatchCandidate("s1", "d-1", "complete", "complete", `{"model":null,"effort":null}`, `,"spawnIssued":null`)
+	spawnAbsent := `{"version":1,"sessionId":"s1","id":"d-1","role":"reviewer","candidates":[{"model":null,"effort":null}],"attempts":[{"id":"a-1","candidate":{"model":null,"effort":null},"claimed":false,"agentId":null,"observedModel":null,"code":null,"taskFailure":null,"status":"complete","reconciliation":null,"toolUseId":null}],"status":"complete"}`
 	cases := []struct {
 		name   string
 		record string
@@ -59,7 +62,8 @@ func TestClassifyRecordsDispatchShape(t *testing.T) {
 		{"empty candidates refuses unreadable", empty, ReasonUnreadable},
 		{"null attempt id refuses unreadable", nullID, ReasonUnreadable},
 		{"attempt candidate differs refuses unreadable", invDispatchMismatch("s1", "d-1", "complete", "complete", `{"model":"one","effort":null}`, `{"model":"other","effort":null}`), ReasonUnreadable},
-		{"missing spawnIssued refuses unreadable", noSpawn, ReasonUnreadable},
+		{"null spawnIssued refuses unreadable", spawnNull, ReasonUnreadable},
+		{"absent spawnIssued refuses unreadable", spawnAbsent, ReasonUnreadable},
 		{"store-shaped complete record copies", invDispatchFull("s1", "d-1", "complete", "complete"), ""},
 		{"store-shaped stopped record copies", invDispatchFull("s1", "d-1", "stopped", "failed"), ""},
 		{"store-shaped main-direct record copies", invDispatchFull("s1", "d-1", "main-direct", "complete"), ""},
