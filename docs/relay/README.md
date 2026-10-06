@@ -341,10 +341,17 @@ both the caller and live worker must report the same policy digest.
 The name the engine gives the child is `child.title` normalized with the request's `issueKey`:
 a title that already starts with the key, followed by the end of the title or a character that
 is neither a letter nor a digit, is sent as it is; any other nonempty title is sent as
-`<issueKey> · <title>` (middle dot U+00B7, one space each side); an empty title sends no name.
-The rule applies to the name the host is given on `thread/start` and again when the engine
-renames the thread after an adopted standby. It never rewrites the stored request or its
-fingerprint, so a repeat of the same request is still the same replay.
+`<issueKey> · <title>` (middle dot U+00B7, one space each side) while that value is at most 500
+bytes, the limit the bridge applies to a create's title, and is otherwise sent unchanged, so the
+prefix never makes a request the bridge refuses. A `managed-start` request cannot carry an empty
+title, because `child.title` is required and non-blank. The rule applies to the name the host is
+given on `thread/start` and again when the engine renames the thread after an adopted standby. It
+never rewrites the stored request or its fingerprint, so a repeat of the same request is still the
+same replay.
+
+A create's parameters carry the title, so a create that a runtime without this rule recorded
+`not_attempted` conflicts when the same request is retried on a runtime with it. The runtime swap
+that brings this rule in is made only while no managed request holds a `not_attempted` create.
 
 The entry reserves the issue before asking the bridge to create a standby task. It then binds
 the returned task and turn to the marker, registry, criteria and settings before sending the

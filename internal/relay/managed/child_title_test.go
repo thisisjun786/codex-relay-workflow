@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,5 +237,95 @@ func TestChildTitleLostCreationIsAdoptedByItsPrefixedName(t *testing.T) {
 	}
 	if k.host.created != 1 {
 		t.Fatalf("a duplicate thread was created: %d creations %q", k.host.created, k.host.startTitles)
+	}
+}
+
+// asciiTitle and koreanTitle build a title of exactly n bytes; the Korean one is multibyte, so a
+// byte limit and a rune limit can be told apart.
+func asciiTitle(n int) string  { return strings.Repeat("a", n) }
+func koreanTitle(n int) string { return strings.Repeat("가", n/3) + strings.Repeat("a", n%3) }
+
+// The prefix is added only while the prefixed value fits the bridge's create title limit. The key
+// CRW-697 and the separator " · " are 11 bytes, so a 489-byte title fills the limit exactly and a
+// 490-byte title would exceed it.
+func TestChildTitleBridgeByteLimit(t *testing.T) {
+	t.Parallel()
+	const key = "CRW-697"
+	const prefixBytes = len("CRW-697") + len(" · ") // 7 + 4 = 11
+	for _, c := range []struct {
+		name  string
+		title func(int) string
+	}{
+		{"ascii", asciiTitle},
+		{"multibyte", koreanTitle},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			for _, b := range []struct {
+				name     string
+				bytes    int
+				prefixed bool
+			}{
+				{"prefixed value is exactly 500 bytes", createTitleByteLimit - prefixBytes, true},
+				{"prefixed value is 501 bytes", createTitleByteLimit - prefixBytes + 1, false},
+			} {
+				t.Run(b.name, func(t *testing.T) {
+					t.Parallel()
+					title := c.title(b.bytes)
+					if len(title) != b.bytes {
+						t.Fatalf("fixture title is %d bytes, want %d", len(title), b.bytes)
+					}
+					prefixed := key + " · " + title
+					if len(prefixed) != b.bytes+prefixBytes || (len(prefixed) <= createTitleByteLimit) != b.prefixed {
+						t.Fatalf("fixture prefixed value is %d bytes, want the limit %v", len(prefixed), b.prefixed)
+					}
+					want := title
+					if b.prefixed {
+						want = prefixed
+					}
+					if got := childTitle(key, title); got != want {
+						t.Fatalf("childTitle sent %d bytes, want %d", len(got), len(want))
+					}
+				})
+			}
+		})
+	}
+}
+
+// Both sends carry the same limited value: the thread/start name and the rename after an adopted
+// standby, for a title that just fits and one that does not.
+func TestChildTitleBridgeByteLimitOnBothSends(t *testing.T) {
+	t.Parallel()
+	const key = "CRW-697"
+	const prefixBytes = len("CRW-697") + len(" · ")
+	for _, b := range []struct {
+		name     string
+		bytes    int
+		prefixed bool
+	}{
+		{"fits exactly", createTitleByteLimit - prefixBytes, true},
+		{"one byte over", createTitleByteLimit - prefixBytes + 1, false},
+	} {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+			title := koreanTitle(b.bytes)
+			want := title
+			if b.prefixed {
+				want = key + " · " + title
+			}
+			// lost-applied: the creation made the thread and its answer was lost, so the engine
+			// adopts it, sends the standby, and renames it - both sends run.
+			k := newTitleKit(t, key, title, "lost-applied")
+			got := k.run()
+			if got["state"] != "admitted" {
+				t.Fatalf("state %v", got)
+			}
+			if len(k.host.startTitles) != 1 || k.host.startTitles[0] != want {
+				t.Fatalf("thread/start sent %q, want the same %d-byte value", k.host.startTitles, len(want))
+			}
+			if len(k.host.renameNames) != 1 || k.host.renameNames[0] != want {
+				t.Fatalf("thread/name/set sent %q, want the same %d-byte value", k.host.renameNames, len(want))
+			}
+		})
 	}
 }
