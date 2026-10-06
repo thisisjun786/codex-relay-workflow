@@ -3,6 +3,7 @@ package evidence
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,16 +13,42 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// Two agents that stop at the same moment each commit their tombstone under the session lock: neither verdict is lost.
+// tombstoneLockRetryLimit is how often the widened lock below calls the session lock again after its
+// wait budget is exhausted.
+const tombstoneLockRetryLimit = 50
+
+// tombstoneWideBudgetLock is the session lock with a wider budget than the oracle's, built from the
+// test side. The oracle's lock (state.WithSessionLock, LOCK_RETRY_DELAYS_MS, 5+10+15+20+25+30+35+40+35+35
+// ms = 250 ms in all) returns the last create error when it cannot be had, and giving up there is
+// deliberate; a slow CI disk can spend that budget on one fsync, which is what this test must not
+// depend on. RecordTombstone takes no lock argument, so the test drives the package's own seam
+// (recordTombstone) the way the tests beside it do, and hands it this lock. The product's budget is
+// untouched, and a lock that is genuinely stuck still refuses after the limit.
+func tombstoneWideBudgetLock() lockFunc {
+	return func(cwd, sessionID string, fn func() error) error {
+		for attempt := 0; ; attempt++ {
+			entered := false
+			err := state.WithSessionLock(cwd, sessionID, func() error { entered = true; return fn() })
+			if entered || !errors.Is(err, fs.ErrExist) || attempt >= tombstoneLockRetryLimit {
+				return err
+			}
+		}
+	}
+}
+
+// Two agents that stop at the same moment each commit their tombstone under the session lock: neither
+// verdict is lost. Each writer holds the lock across a read-modify-write of the session file with
+// fsync, so they run under tombstoneWideBudgetLock rather than the oracle's 250 ms budget.
 func TestRecordTombstoneKeepsConcurrentVerdicts(t *testing.T) {
 	cwd := t.TempDir()
+	lock := tombstoneWideBudgetLock()
 	var wg sync.WaitGroup
 	results := make([]bool, 2)
 	for i, agent := range []string{"racer-a", "racer-b"} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = RecordTombstone(cwd, "s1", Payload{AgentType: "executor", AgentID: agent}, MaxAttempts, nil)
+			results[i] = recordTombstone(cwd, "s1", Payload{AgentType: "executor", AgentID: agent}, MaxAttempts, time.Now(), lock, nil)
 		}()
 	}
 	wg.Wait()
