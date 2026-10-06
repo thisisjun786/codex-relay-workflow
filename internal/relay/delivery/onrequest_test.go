@@ -59,6 +59,7 @@ func replaceApproval(settings, raw string) string {
 }
 
 func TestORD02_resume_params_never_carry_an_approval_policy(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []string{"never", "on-request"} {
 		params := (&TaskSettings{Data: loadsObj(rawSettings("/parent", policy))}).ResumeParams("t-1")
 		if _, present := params.Lookup("approvalPolicy"); present {
@@ -69,6 +70,7 @@ func TestORD02_resume_params_never_carry_an_approval_policy(t *testing.T) {
 }
 
 func TestORD03_an_on_request_parent_is_woken_once(t *testing.T) {
+	t.Parallel()
 	runORD(t, parityTree(t), "woken", func(f *fixture, out map[string]any) {
 		event := f.queuedEvent(regOpts{parentSettings: rawSettings("/parent", "on-request")})
 		f.host.threads[parent].approvalPolicy = "on-request"
@@ -83,6 +85,7 @@ func TestORD03_an_on_request_parent_is_woken_once(t *testing.T) {
 }
 
 func TestORD04_a_parent_waiting_on_its_approver_is_busy_then_woken_once(t *testing.T) {
+	t.Parallel()
 	runORD(t, parityTree(t), "busy", func(f *fixture, out map[string]any) {
 		event := f.queuedEvent(regOpts{parentSettings: rawSettings("/parent", "on-request")})
 		f.host.threads[parent].approvalPolicy = "on-request"
@@ -102,6 +105,7 @@ func TestORD04_a_parent_waiting_on_its_approver_is_busy_then_woken_once(t *testi
 }
 
 func TestORD05_a_folded_start_settles_once_across_restarts(t *testing.T) {
+	t.Parallel()
 	runORD(t, parityTree(t), "folded", func(f *fixture, out map[string]any) {
 		event := f.queuedEvent(regOpts{parentSettings: rawSettings("/parent", "on-request")})
 		f.host.threads[parent].approvalPolicy = "on-request"

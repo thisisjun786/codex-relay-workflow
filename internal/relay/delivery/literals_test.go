@@ -49,6 +49,7 @@ var literalWords = map[string][]string{
 }
 
 func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_them(t *testing.T) {
+	t.Parallel()
 	enum := map[string]bool{}
 	schema, err := os.ReadFile(filepath.Join(repoRoot(t), "contract", "schema", "relay-exit-codes.json"))
 	mustDo(t, err)

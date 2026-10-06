@@ -15,6 +15,7 @@ import (
 // them (harness_test.go scenario).
 
 func TestDEL01_an_accepted_final_event_is_queued_idempotently_and_eligible(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del01")
 	f := newFixture(t, tree)
@@ -32,6 +33,7 @@ func TestDEL01_an_accepted_final_event_is_queued_idempotently_and_eligible(t *te
 }
 
 func TestDEL02_a_staged_event_cannot_be_queued(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del02")
 	f := newFixture(t, tree)
@@ -46,6 +48,7 @@ func TestDEL02_a_staged_event_cannot_be_queued(t *testing.T) {
 }
 
 func TestDEL03_a_recipient_outside_the_authorized_scope_is_refused_before_any_transport(t *testing.T) {
+	t.Parallel()
 	t.Run("out-of-scope recipient at enqueue", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del03", "scope")
@@ -109,6 +112,7 @@ func TestDEL03_a_recipient_outside_the_authorized_scope_is_refused_before_any_tr
 }
 
 func TestDEL04_the_message_carries_the_event_never_a_recipient_turn_or_override(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del04")
 	f := newFixture(t, tree)
@@ -139,6 +143,7 @@ func TestDEL04_the_message_carries_the_event_never_a_recipient_turn_or_override(
 }
 
 func TestDEL05_an_active_recipient_is_deferred_without_an_attempt_or_interruption(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del05")
 	f := newFixture(t, tree)
@@ -162,6 +167,7 @@ func TestDEL05_an_active_recipient_is_deferred_without_an_attempt_or_interruptio
 }
 
 func TestDEL06_a_transport_busy_refusal_produces_a_real_deferred_attempt(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del06")
 	f := newFixture(t, tree)
@@ -179,6 +185,7 @@ func TestDEL06_a_transport_busy_refusal_produces_a_real_deferred_attempt(t *test
 }
 
 func TestDEL07_an_idle_recipient_gets_a_real_turn_and_a_steer_is_recorded(t *testing.T) {
+	t.Parallel()
 	t.Run("idle -> fresh turn", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del07")
@@ -231,6 +238,7 @@ func TestDEL08_dispatched_is_not_delivered(t *testing.T) {
 }
 
 func TestDEL09_request_id_is_distinct_from_the_event_id(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del07")
 	f := newFixture(t, tree)
@@ -244,6 +252,7 @@ func TestDEL09_request_id_is_distinct_from_the_event_id(t *testing.T) {
 }
 
 func TestDEL10_an_unsupported_approval_policy_is_stored_not_woken_and_held(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []string{"on-request", "untrusted"} {
 		t.Run(policy, func(t *testing.T) {
 			tree := parityTree(t)

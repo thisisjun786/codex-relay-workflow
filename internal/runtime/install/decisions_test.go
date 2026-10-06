@@ -24,6 +24,7 @@ import (
 // finished runtime nothing selects is kept and refused, and a directory without a claim is
 // somebody else's.
 func TestAnExistingDirectoryIsDecidedOnItsClaim(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	env := runtimeDir(h, "0.9.0", first, t)
@@ -68,6 +69,7 @@ func TestAnExistingDirectoryIsDecidedOnItsClaim(t *testing.T) {
 // writer holds its lock), the result is exit 3: promoted and in service, the record of it
 // outstanding, with the recovery named - never exit 1, which would read as nothing happened.
 func TestAnInterruptedPromotionIsResumedAndAnUnsettledClaimIsExit3(t *testing.T) {
+	// sequential: shortens record.LockTimeout for the whole process.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, next := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -103,6 +105,7 @@ func TestAnInterruptedPromotionIsResumedAndAnUnsettledClaimIsExit3(t *testing.T)
 // Another run holding the promotion lock (flock, as Python's fcntl.flock takes it) makes the
 // promotion refuse after the build: the candidate is released and nothing moved.
 func TestAHeldPromotionLockRefusesAndReleasesTheCandidate(t *testing.T) {
+	// sequential: shortens record.PromotionTimeout for the whole process.
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	if err := os.MkdirAll(filepath.Dir(h.record), 0o755); err != nil {
@@ -129,6 +132,7 @@ func TestAHeldPromotionLockRefusesAndReleasesTheCandidate(t *testing.T) {
 // one whose staging another run still holds, and anything that is not a bin-* runtime directory
 // directly under the destination, a Python env-* one the retired installer made included.
 func TestRemoveRefusesWhatMayStillBeInUse(t *testing.T) {
+	// sequential: counts the processes the process-wide table holds.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -155,9 +159,7 @@ func TestRemoveRefusesWhatMayStillBeInUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(sleeper, raw, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, sleeper, raw, 0o755)
 	process := exec.Command(sleeper, "30")
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
@@ -208,6 +210,7 @@ func TestRemoveRefusesWhatMayStillBeInUse(t *testing.T) {
 // The command line: `crw install` dispatches its seven commands, rejects an unknown one and a
 // missing directory as usage errors (2), and prints one JSON document.
 func TestTheCommandLine(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	for _, tc := range []struct {
 		args []string
@@ -245,6 +248,7 @@ func TestTheCommandLine(t *testing.T) {
 // A link at the pointer path that this host record never recorded placing is somebody else's:
 // renaming over it would succeed whoever made it, so the promotion refuses and leaves it.
 func TestAnUnrecordedPointerIsNotReplaced(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	elsewhere := filepath.Join(h.home, "somebody-else")
 	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
@@ -271,6 +275,7 @@ func TestAnUnrecordedPointerIsNotReplaced(t *testing.T) {
 // released, and the runtime a host reaches is the one it reached before. A running daemon is
 // TestARunningDaemonOfTheSelectedRuntimeBlocksTheSwap.
 func TestAStoreSchemaTheCandidateNarrowsBlocksTheSwap(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)

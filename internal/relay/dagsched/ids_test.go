@@ -9,6 +9,7 @@ import (
 // formula the contract names (sha256 of the text, lower-case hex, the first 32 or 40 characters). A guard that is green on the baseline: nothing that folds
 // the copies of these formulas may move a byte of them.
 func TestExistingIDsAndDigestsKeepTheirBytes(t *testing.T) {
+	t.Parallel()
 	a40, c40 := strings.Repeat("a", 40), strings.Repeat("c", 40)
 	manifest := dig("manifest")
 	rows := []struct{ name, got, want string }{
@@ -29,6 +30,7 @@ func TestExistingIDsAndDigestsKeepTheirBytes(t *testing.T) {
 // The ids the transactions write, one constructor each, pinned against pre-images hashed outside this code (sha256 of the fields joined by "|", or of their canonical text for the
 // two that hash an object). The head, tip and base values differ from each other, so a call that passes them in another order is not the id pinned here.
 func TestScheduledIDsKeepTheirBytes(t *testing.T) {
+	t.Parallel()
 	a40, b40, c40, d40 := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
 	rows := []struct{ name, got, want string }{
 		{"merge check id", mergeCheckID("acc-1", 2), "dmc-d1c106c2a1aa2e0594c66f3d4fb28703"},
@@ -49,6 +51,7 @@ func TestScheduledIDsKeepTheirBytes(t *testing.T) {
 // The evidence body is the text a merge check stores and its digest the acceptance's evidence digest: a check of another head is left out, the checks and the required names
 // are sorted, and an absent provider or stamp is absent from the row.
 func TestEvidenceBodyKeepsItsBytes(t *testing.T) {
+	t.Parallel()
 	head := strings.Repeat("a", 40)
 	pr := PullRequest{HeadSHA: head, RequiredDeclared: []string{"test", "lint"}, ReviewDigest: "rd", Checks: []Check{
 		{Name: "test", RunID: "2", HeadSHA: head, Conclusion: "failure", Attempt: 2},

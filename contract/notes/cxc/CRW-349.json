@@ -1,0 +1,66 @@
+{
+  "issue": "CRW-349",
+  "pending": [],
+  "identical": [
+    "hook__session-start-healing-declared-features__baseline_empty_workspace",
+    "hook__session-start-healing-declared-features__features_list_failure_is_silent",
+    "hook__session-start-healing-declared-features__mtime_cache_hit_skips_codex",
+    "hook__session-start-healing-declared-features__opted_out_marker_skips_without_codex_call"
+  ],
+  "intentionally-changed": [
+    {
+      "id": "hook__session-start-healing-declared-features__all_enabled_writes_cache_silently",
+      "reason": "J4: report only, no enable and no writes",
+      "remove": [
+        "tree/codex/crw-self-heal.json"
+      ]
+    },
+    {
+      "id": "hook__session-start-healing-declared-features__declines_a_key_it_already_healed",
+      "reason": "J4: report only, no enable and no writes",
+      "set": {
+        "tree/codex/crw-self-heal.json/content": "{\"healedKeys\":[\"default_mode_request_user_input\"]}",
+        "tree/codex/crw-self-heal.json/form": "json-line"
+      }
+    },
+    {
+      "id": "hook__session-start-healing-declared-features__heals_soft_flag_without_manifest",
+      "reason": "J4: report only, no enable and no writes",
+      "remove": [
+        "calls/1",
+        "tree/codex/crw-self-heal.json"
+      ],
+      "set": {
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] The codex feature flag default_mode_request_user_input that crw declares is off. Default 모드에서 질문선택지 UI(request_user_input)가 모델에게 노출되지 않는다. Plan 모드에서는 계속 동작한다. Turn it on with: crw install features enable\\n\"}}"
+      }
+    },
+    {
+      "id": "hook__session-start-healing-declared-features__enable_failure_reported_not_cached",
+      "reason": "J4: report only, no enable and no writes",
+      "remove": [
+        "calls/1",
+        "tree/codex/crw-self-heal.json"
+      ],
+      "set": {
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] The codex feature flag default_mode_request_user_input that crw declares is off. Default 모드에서 질문선택지 UI(request_user_input)가 모델에게 노출되지 않는다. Plan 모드에서는 계속 동작한다. Turn it on with: crw install features enable\\n\"}}"
+      }
+    },
+    {
+      "id": "hook__session-start-healing-declared-features__heal_claims_manifest_ownership",
+      "reason": "J4: report only, no enable and no writes",
+      "given": {
+        "json": {
+          "codex/.codexclaw-install.json": null
+        }
+      },
+      "remove": [
+        "calls/1",
+        "tree/codex/.codexclaw-install.json",
+        "tree/codex/crw-self-heal.json"
+      ],
+      "set": {
+        "steps/0/stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[crw] The codex feature flag default_mode_request_user_input that crw declares is off. Default 모드에서 질문선택지 UI(request_user_input)가 모델에게 노출되지 않는다. Plan 모드에서는 계속 동작한다. Turn it on with: crw install features enable\\n\"}}"
+      }
+    }
+  ]
+}
