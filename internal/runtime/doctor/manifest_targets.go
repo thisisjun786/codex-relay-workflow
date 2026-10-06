@@ -139,9 +139,13 @@ func manifestTargetsRealpath(path string) (string, error) {
 
 // manifestTargetsFollow is one walk of manifestTargetsRealpath: the components before the first symlink
 // keep their spelling, that symlink is replaced by its target resolved against the directory reached so
-// far, and the walk restarts there with the components still left. A component that cannot be read, and a
-// link chain past the depth a realpath follows, answer an error, which sends both paths to the caller's
-// lexical fallback as the oracle's throw does.
+// far, and the walk restarts there with the components still left. The target is joined to those
+// components as it is, without a lexical Clean (CRW-840): the kernel resolves the components in order, so
+// a component that does not exist is ENOENT where it occurs and '..' drops one component only once the
+// component before it resolved to an existing directory. Cleaning first would drop the missing component
+// and answer a resolved path where the kernel answers ENOENT. A component that cannot be read, and a link
+// chain past the depth a realpath follows, answer an error, which sends both paths to the caller's lexical
+// fallback as the oracle's throw does.
 func manifestTargetsFollow(path string, depth int) (string, error) {
 	if depth > 40 {
 		return "", errors.New("ELOOP: too many levels of symbolic links")
@@ -168,12 +172,12 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 			return "", err
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(dir+sep, target)
+			target = dir + sep + target
 		}
 		if rest := strings.Join(parts[i+1:], sep); rest != "" {
-			target = filepath.Join(target, rest)
+			target = target + sep + rest
 		}
-		return manifestTargetsFollow(filepath.Clean(target), depth+1)
+		return manifestTargetsFollow(target, depth+1)
 	}
 	if dir == "" {
 		return sep, nil
