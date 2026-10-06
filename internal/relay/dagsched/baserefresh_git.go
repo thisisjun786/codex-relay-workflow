@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 )
 
 // The proof of a base refresh (CRW-430): in a local checkout, whether a head differs from an accepted head only by merges of the base branch. The relay answers it from git objects alone, which are
@@ -35,8 +37,8 @@ const (
 	MaxBaseLine    = 200000
 )
 
-// RefreshResolved is a path git could not merge in one hop and the blob the head holds for it (empty when the resolution deleted the file): what a hand put there is the one thing the relay cannot prove,
-// Rule is the proved mechanical rule, or empty when the parent must name and review the file.
+// RefreshResolved is a path one hop left to settle and the blob the head holds for it (empty when the resolution deleted the file): a file git could not merge, or the plugin manifest the head recorded
+// again after a clean merge (CRW-732). What a hand put there is the one thing the relay cannot prove; Rule is the proved mechanical rule, or empty when the parent must name and review the file.
 type RefreshResolved struct{ Path, Blob, Rule string }
 
 // RefreshMechanicalChecker evaluates selected conflict paths in one already proved merge.
@@ -48,6 +50,9 @@ type RefreshMechanicalRefusal struct {
 	// Manual is an internal eligibility result, never part of the wire proof.
 	// Empty Detail leaves these paths to the existing exact-name acceptance.
 	Manual []string
+	// Rules is the rule the checker proved for a path it settled, by path (CRW-732). A path absent
+	// from it and from Manual is settled by the rule the proof selected for it itself.
+	Rules map[string]string
 }
 
 var refreshMechanical RefreshMechanicalChecker
@@ -100,13 +105,23 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		if err != nil {
 			return nil, err
 		}
-		var paths, descriptions []string
+		var paths, descriptions, builtin []string
 		rules := map[string]string{}
 		for _, r := range st.Resolved {
 			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && len(sets[r.Path]) > 0 {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
 				rules[r.Path] = rule
+				continue
+			}
+			// The plugin manifest's version line is the one place no declaration has to settle with one
+			// agreed rule: the line is derived from the payload, and the checker applies its built-in
+			// rule to it whether or not a declaration covers it (CRW-732). Every other unproved path
+			// stays manual.
+			if r.Path == pluginversion.ManifestRepoPath {
+				paths = append(paths, r.Path)
+				descriptions = append(descriptions, r.Path)
+				builtin = append(builtin, r.Path)
 			}
 		}
 		if len(paths) == 0 {
@@ -122,6 +137,16 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		if why != nil {
 			for _, path := range why.Manual {
 				delete(rules, path)
+			}
+			// The checker is the one that decided which rule settles the paths it was given, so the
+			// built-in manifest path takes the rule it proved rather than a name assumed here.
+			for path, rule := range why.Rules {
+				rules[path] = rule
+			}
+		}
+		for _, path := range builtin {
+			if _, settled := rules[path]; !settled {
+				rules[path] = BuiltinPluginVersionRule
 			}
 		}
 		for j := range st.Resolved {
@@ -503,7 +528,7 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 			return nil, nil, err
 		}
 		step := RefreshStep{Previous: previous, BaseParent: merged, Head: cur, Tree: headTree}
-		var outside []string
+		var outside, clean []string
 		if headTree != tree {
 			names, err := g.differing(ctx, tree, headTree)
 			if err != nil {
@@ -514,9 +539,17 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 				conflicted[c] = true
 			}
 			for _, d := range names {
-				if !conflicted[d] {
-					outside = append(outside, d)
+				if conflicted[d] {
+					continue
 				}
+				// The plugin manifest's version line is the one clean difference the proof does not
+				// refuse: the line is derived from the payload, and the mechanical step recomputes it
+				// from the head itself (CRW-732). Every other clean difference keeps today's refusal.
+				if d == pluginversion.ManifestRepoPath {
+					clean = append(clean, d)
+					continue
+				}
+				outside = append(outside, d)
 			}
 		}
 		if len(outside) > 0 {
@@ -541,6 +574,15 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 				return nil, nil, err
 			} else if marked {
 				return refuse(RefreshTreeDiffers, "%s commits %s with conflict markers in it, which no one resolved", cur, c)
+			}
+			step.Resolved = append(step.Resolved, RefreshResolved{Path: c, Blob: blob})
+		}
+		// The manifest the head recorded again after a clean merge is settled like a conflicted one:
+		// by the rule the mechanical step proves for it, or by the parent naming it.
+		for _, c := range clean {
+			blob, err := g.blobAt(ctx, cur, c)
+			if err != nil {
+				return nil, nil, err
 			}
 			step.Resolved = append(step.Resolved, RefreshResolved{Path: c, Blob: blob})
 		}

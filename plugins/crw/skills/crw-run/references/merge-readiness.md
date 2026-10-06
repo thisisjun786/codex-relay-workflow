@@ -1157,7 +1157,7 @@ among its commands, the parent does not settle a conflict either.
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
    is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below). The one
-   exception is the plugin manifest's version line, which no declaration has to cover: settle it as the
+   exception is the plugin manifest's version line, which no declaration has to settle with one agreed rule: settle it as the
    paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
@@ -1173,14 +1173,19 @@ among its commands, the parent does not settle a conflict either.
      payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
 
-The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
-`plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
-file in the same mode in both parents and in the head, the check settles it by the built-in rule
+The one file no declaration has to settle with one agreed rule is the plugin manifest's version line. When the
+file is in play (a conflict in `plugins/crw/.codex-plugin/plugin.json`, or a clean merge whose head re-recorded it), no
+declaration given has to touch it at all, and the file is the same regular file in the same mode in both parents and
+in the head, the check settles it by the built-in rule
 `regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
 that version must keep the release component both parents record (the release is the owner's choice, not the
 payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
-(`crw-dev ci plugin` computes it from the payload). A declaration that touches the file keeps its say, even when it
-does not establish one mechanical rule for it. Any other difference in that file, a version that is not the derived
+(`crw-dev ci plugin` computes it from the payload). A declaration that settles the file with one
+rule agreed by every declaration given keeps its say; a declaration that merely touches the file does not take the
+built-in rule's place, because the rule already holds the manifest to both parents apart from the version line and
+to the version the head's own payload derives. The rule applies whether the manifest conflicted or merged cleanly
+and was recorded again at the head, which is the shape a parent's own update leaves when only one side re-recorded
+the version. Any other difference in that file, a version that is not the derived
 one, and every other path keep the refusal they have today, and the proof prints
 `applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
 
