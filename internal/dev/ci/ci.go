@@ -18,6 +18,7 @@ type Check func(args []string, stdout, stderr io.Writer) int
 var Checks = map[string]Check{
 	"contracts":        Contracts,
 	"dispatch-cases":   DispatchCases,
+	"gui-drift":        GuiDrift,
 	"operations":       OperationsContract,
 	"plugin":           Plugin,
 	"refactor-backlog": RefactorBacklog,

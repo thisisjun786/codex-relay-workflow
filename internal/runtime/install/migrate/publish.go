@@ -80,6 +80,10 @@ func (p *Publisher) Publish(dir *Dir, leaf string, src io.ReaderAt, size int64, 
 		return res, nil
 	case refusal(err) != nil:
 		return ResultRefused, err
+	case res == ResultAlreadyEqual:
+		// The destination already held these bytes, so this run wrote nothing: the failure is the directory sync's alone and
+		// the result says so, so a caller never counts it as a write of its own.
+		return res, err
 	}
 	return ResultFailed, err
 }
@@ -182,6 +186,9 @@ func (p *Publisher) settle(dir *Dir, leaf string, src io.ReaderAt, size int64) (
 	if !same {
 		return "", refuse(ReasonDiffers, dir.join(leaf), "")
 	}
+	if err := p.step("dirsync"); err != nil {
+		return ResultAlreadyEqual, err
+	}
 	return ResultAlreadyEqual, dir.Sync()
 }
 
@@ -211,7 +218,14 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 			return nil, err
 		}
 	}
+	made := pair.Dest == nil
 	root, err := pair.EnsureDest(0o777)
+	if err == nil && made {
+		// EnsureDest creates the root 0777 subject to umask, and only a root this call made may be tightened. Give it the
+		// private marker mode here, before the fallible .gitignore publication, so a failure below cannot leave a widened
+		// root that a retry would then find as an existing one.
+		err = applyChmodRaw(root, applyTempRaw)
+	}
 	if err == nil {
 		err = p.step("root")
 	}

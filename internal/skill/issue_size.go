@@ -18,12 +18,15 @@ import (
 // issue that would outgrow one pull request is found before a child is given it.
 //
 // It reads the issue the way the Linear tools give it (id, title, description as markdown) or as
-// fields, counts what the body states, and answers ok or split_recommended with its reasons. Nothing
-// in it judges: the same input is the same bytes. crw-plan owns what a split_recommended answer
-// leads to (the boundary rules) and crw-run owns what it does to dispatch.
+// fields, counts what the body states, and answers ok, over_line or over_line_accepted with its
+// reasons. It is advisory: the count alone never blocks a dispatch, so a readable input exits 0 and
+// the report carries the concept-boundary questions beside the numbers. A --bundle-reason records
+// why an over-baseline bundle was accepted. Nothing in it judges: the same input is the same bytes.
+// crw-plan owns what an over_line answer leads to (the boundary rules) and crw-run owns what it does
+// to dispatch.
 
 const (
-	sizeSchema = "crw-issue-size-check/1"
+	sizeSchema = "crw-issue-size-check/2"
 
 	// The limits were read from 33 recorded issues (P-CRW-101, 114, 115, 116 and P-CRW-64 M2). The 31
 	// that finished small have at most 6 completion plus research criteria and no research row; the
@@ -45,6 +48,17 @@ type sizeLimits struct {
 }
 
 var appliedLimits = sizeLimits{CriteriaTotal: limitCriteriaTotal, Research: limitResearch, Deliverables: limitDeliverables}
+
+// conceptQuestions are the boundary questions the check shows beside the counts. The judgment is the
+// planner's (crw-plan's boundary rules own it); the command only puts the questions where the numbers
+// are read, so a count is never read as a decision. The list is fixed in the binary, not read from
+// the skill documents, so the same input is the same bytes wherever the command runs.
+var conceptQuestions = []string{
+	"Does every part belong to one concept: the same fault class or contract, one package or a shared test fixture, follow-ups of one merged pull request, pieces with no independent value alone, or one package's test reinforcement?",
+	"Does any part need an open decision, mix a decision document with implementation, attach work unrelated to a security fix, reach another project's exclusive area, or block the merge of the rest?",
+	"Can each part pass its own verification, or must the parts land together?",
+	"Is a direct defect found in a pull request about that pull request's own change fixed in that pull request rather than split off?",
+}
 
 // sizeSignalCounts holds what was counted. The criteria counts and the deliverables have a limit; the
 // records show the other two do not separate the small issues from the oversized ones (the oversized
@@ -73,18 +87,19 @@ type sizeException struct {
 }
 
 type sizeReport struct {
-	Schema          string           `json:"schema"`
-	Issue           string           `json:"issue"`
-	Title           string           `json:"title"`
-	Decision        string           `json:"decision"`
-	Assignable      bool             `json:"assignable"`
-	Reasons         []string         `json:"reasons"`
-	Signals         sizeSignalCounts `json:"signals"`
-	Limits          sizeLimits       `json:"limits"`
-	Observed        sizeObserved     `json:"observed"`
-	Proposal        *splitProposal   `json:"proposal,omitempty"`
-	Exception       *sizeException   `json:"exception,omitempty"`
-	ExceptionRecord string           `json:"exception_record,omitempty"`
+	Schema           string           `json:"schema"`
+	Issue            string           `json:"issue"`
+	Title            string           `json:"title"`
+	Decision         string           `json:"decision"`
+	Reasons          []string         `json:"reasons"`
+	Signals          sizeSignalCounts `json:"signals"`
+	Limits           sizeLimits       `json:"limits"`
+	Observed         sizeObserved     `json:"observed"`
+	ConceptQuestions []string         `json:"concept_questions"`
+	Proposal         *splitProposal   `json:"proposal,omitempty"`
+	Exception        *sizeException   `json:"exception,omitempty"`
+	ExceptionRecord  string           `json:"exception_record,omitempty"`
+	BundleReason     string           `json:"bundle_reason,omitempty"`
 
 	// Estimate is the scaled-estimate signal; it is absent when the body states no estimate.
 	Estimate *sizeEstimateReport `json:"estimate,omitempty"`
@@ -612,8 +627,9 @@ func (i sizeIssue) decide() (signals sizeSignalCounts, observed sizeObserved, re
 	return signals, observed, reasons
 }
 
-// check validates an exception against the issue it is for: shape only. Whether it is the user's own
-// approval is what crw-run's text says; the command can only refuse a record that names no one.
+// check validates an exception against the issue it is for: shape only. The exception is a record
+// the report carries, not a gate; whether it is the user's own approval is what crw-run's text says
+// and the command can only refuse a record that names no one.
 func (e sizeException) check(id string) error {
 	switch {
 	case strings.TrimSpace(e.ApprovedBy) == "":
@@ -672,7 +688,7 @@ func checkDepends(depends map[string][]string, completion, research int) error {
 	return nil
 }
 
-func sizeReportFor(in sizeInput) (sizeReport, error) {
+func sizeReportFor(in sizeInput, bundleReason string) (sizeReport, error) {
 	issue, err := readSizeIssue(in)
 	if err != nil {
 		return sizeReport{}, err
@@ -700,17 +716,22 @@ func sizeReportFor(in sizeInput) (sizeReport, error) {
 	if estimate != nil && overCeiling {
 		reasons = append(reasons, sizeEstimateReason(estimate))
 	}
-	report := sizeReport{Schema: sizeSchema, Issue: in.ID, Title: in.Title, Decision: "ok", Assignable: true, Reasons: reasons, Signals: signals, Limits: appliedLimits, Observed: observed, Estimate: estimate}
+	bundleReason = strings.TrimSpace(bundleReason)
+	report := sizeReport{Schema: sizeSchema, Issue: in.ID, Title: in.Title, Decision: "ok", Reasons: reasons, Signals: signals, Limits: appliedLimits, Observed: observed, ConceptQuestions: conceptQuestions, BundleReason: bundleReason, Estimate: estimate}
 	if len(reasons) == 0 {
 		return report, nil
 	}
-	report.Decision, report.Assignable = "split_recommended", false
+	// The check is advisory: the count never decides a dispatch. A non-empty reason records that the
+	// parent accepted the bundle; without one the answer is still only a signal to read.
+	report.Decision = "over_line"
+	if bundleReason != "" {
+		report.Decision = "over_line_accepted"
+	}
 	report.Proposal = proposeSplit(issue.criteria, issue.research, in.DependsOn)
 	if e := in.Exception; e != nil {
 		by, statement := strings.TrimSpace(e.ApprovedBy), strings.Join(strings.Fields(e.Statement), " ")
-		report.Assignable = true
 		report.Exception = &sizeException{e.Issue, by, e.ApprovedOn, statement}
-		report.ExceptionRecord = fmt.Sprintf("size-check exception: %s is split_recommended (%s); approved by %s on %s: %s", in.ID, strings.Join(reasons, "; "), by, e.ApprovedOn, statement)
+		report.ExceptionRecord = fmt.Sprintf("size-check exception: %s is over a baseline (%s); approved by %s on %s: %s", in.ID, strings.Join(reasons, "; "), by, e.ApprovedOn, statement)
 	}
 	return report, nil
 }
@@ -724,6 +745,7 @@ func runIssueSize(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return runIssueSizeCalibrate(args[1:], stdout, stderr)
 	}
 	line := newCommandLine("issue-size", name, "Read one issue as JSON, from the file named or stdin, and print the size answer.").takes("file", 0, 1)
+	bundleReason := line.String("bundle-reason", "", "why a bundle over a baseline is accepted (recorded in the report as bundle_reason)")
 	positionals, code := line.parse(args[1:], stdout, stderr)
 	if code >= 0 {
 		return code
@@ -737,9 +759,8 @@ func runIssueSize(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "Issue size check failed: %s. Nothing was decided.\n", err)
 		return 3
 	}
-	// Exit 1 means split_recommended and nothing else, so a caller that reads only the status stays
-	// fail-closed; an input that cannot be read is 2 whatever is wrong with it (the sibling commands
-	// answer 1 for text that is not UTF-8).
+	// The check is advisory: a readable input exits 0 whatever the count says, and only an input that
+	// cannot be read is 2 (the sibling commands answer 1 for text that is not UTF-8).
 	if !utf8.Valid(raw) {
 		fmt.Fprintln(stderr, "Unreadable issue: the input is "+errNotUTF8.Error())
 		return 2
@@ -749,14 +770,11 @@ func runIssueSize(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "Unreadable issue: "+err.Error())
 		return 2
 	}
-	report, err := sizeReportFor(in)
+	report, err := sizeReportFor(in, *bundleReason)
 	if err != nil {
 		fmt.Fprintln(stderr, "Unreadable issue: "+err.Error())
 		return 2
 	}
 	_ = emit(stdout, report)
-	if report.Assignable {
-		return 0
-	}
-	return 1
+	return 0
 }
