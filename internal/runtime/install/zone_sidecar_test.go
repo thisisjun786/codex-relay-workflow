@@ -40,6 +40,104 @@ func withoutShm(tree map[string]string) map[string]string {
 	return out
 }
 
+// pipeCollision builds the pair the GLM review names for failure class 6: two (link target, resolved source) pairs
+// whose "|"-joined strings are identical although both fields moved. base is the state directory. It returns
+// target1/source1 (the first reading) and target2/source2 (the retarget), all under base.
+//
+// target1|source1 = base/a | base/b|base/c  and  target2|source2 = base/a|base/b | base/c, which join to the same
+// string because "|" is a legal byte in a path.
+func pipeCollision(t *testing.T, base string) (target1, source1, target2, source2 string) {
+	t.Helper()
+	trim := strings.TrimPrefix(base, "/")
+	source1 = filepath.Join(base, "b|", trim, "c")
+	source2 = filepath.Join(base, "c")
+	write(t, source1, "")
+	write(t, source2, "")
+	target1 = base + "/a"
+	target2 = base + "/a|" + base + "/b"
+	if err := os.Symlink(source1, filepath.Join(base, "a")); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(base, "a|", trim, "b")
+	if err := os.MkdirAll(filepath.Dir(second), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(source2, second); err != nil {
+		t.Fatal(err)
+	}
+	return target1, source1, target2, source2
+}
+
+// Failure class 6: the store log is compared by its identity, and the identity must not be a "|"-joined string, because
+// "|" is a legal byte in a link target and in a resolved path. With the review pair both readings join to the same
+// string, so a delimiter-joined comparison sees no change and the backup succeeds although the log moved. Refuses
+// after the fix.
+//
+// sequential: replaces the state-backup seam.
+func TestTheBackupRefusesALogRetargetedToAPathThatCollidesUnderTheDelimiter(t *testing.T) {
+	h, _, second, old, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	target1, source1, target2, source2 := pipeCollision(t, h.relayState)
+	if got := target1 + "|" + source1; got != target2+"|"+source2 {
+		t.Fatalf("the fixture does not collide: %q against %q", got, target2+"|"+source2)
+	}
+	wal := filepath.Join(h.relayState, sidecarWalName)
+	// zoneStore leaves no log; the store's log is this link now
+	_ = os.Remove(wal)
+	if err := os.Symlink(target1, wal); err != nil {
+		t.Fatal(err)
+	}
+	restore := install.ReplaceStateBackupListed(func() error {
+		if err := os.Remove(wal); err != nil {
+			return err
+		}
+		return os.Symlink(target2, wal)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "pipe-wal")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+		t.Fatalf("a retarget that collides under the delimiter must refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	if !strings.Contains(text(at(result, "swapGate", "stateBackup", "error")), "write-ahead log changed") {
+		t.Fatalf("the refusal must name the changed log: %s", golden.Canon(at(result, "swapGate", "stateBackup")))
+	}
+}
+
+// The same construction for an ordinary symlinked file in the state directory: the two full keys (Path, Kind, Size,
+// LinkTarget, source) join to the same string although the link moved. Refuses after the fix.
+//
+// sequential: replaces the state-backup seam.
+func TestTheBackupRefusesAnOrdinaryLinkRetargetedToAPathThatCollidesUnderTheDelimiter(t *testing.T) {
+	h, _, second, old, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	putSidecar(t, h, sidecarWalName, 32)
+	target1, source1, target2, source2 := pipeCollision(t, h.relayState)
+	if got := "linked.txt|link-file|0|" + target1 + "|" + source1; got != "linked.txt|link-file|0|"+target2+"|"+source2 {
+		t.Fatalf("the fixture does not collide: %q", got)
+	}
+	link := filepath.Join(h.relayState, "linked.txt")
+	// zoneStore already places a linked.txt; this test's link replaces it
+	_ = os.Remove(link)
+	if err := os.Symlink(target1, link); err != nil {
+		t.Fatal(err)
+	}
+	restore := install.ReplaceStateBackupListed(func() error {
+		if err := os.Remove(link); err != nil {
+			return err
+		}
+		return os.Symlink(target2, link)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "pipe-link")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.Refused || at(result, "swapGate", "verdict") != "BLOCKED" || h.pointerTarget(t) != old {
+		t.Fatalf("an ordinary link retarget that collides under the delimiter must refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+}
+
 // ---- CRW-862 review fixes ----
 
 // The store sidecars are classified by the resolved database path even when the log cannot be read in place: an

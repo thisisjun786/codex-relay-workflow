@@ -698,6 +698,27 @@ func kindOf(mode fs.FileMode) string {
 }
 
 // listingDiff is how two readings of the state directory differ, or "".
+
+// listingKey is one entry of a listing as the comparison keys it: every field the two readings must agree on for
+// an ordinary entry. It is a struct rather than a delimiter-joined string so that a byte a file name or a link
+// target may legally hold cannot shift a field boundary (CRW-862 generation 2, failure class 6).
+type listingKey struct {
+	Path       string
+	Kind       string
+	Size       int64
+	LinkTarget string
+	Source     string
+}
+
+// listingIdentity is the identity of the store write-ahead log: the fields the two readings must agree on for the
+// log, whose size and presence belong to the sidecar rules instead. A struct for the same reason as listingKey.
+type listingIdentity struct {
+	Path       string
+	Kind       string
+	LinkTarget string
+	Source     string
+}
+
 func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []string) string {
 	// The store's write-ahead log is compared by its identity and not by its size or its presence: another
 	// connection may checkpoint it away and write a fresh one under the copy, so its size and its coming and going
@@ -706,14 +727,17 @@ func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []strin
 	// log whose link target or resolved source moved between the two readings refuses (CRW-862, PR #735 P1 1). The
 	// store's shared-memory index is never listed. relay.sqlite3 itself and every other file keep the full key,
 	// size included, so a store written under the copy is still a change.
-	full := func(e backedUp) string {
-		return fmt.Sprintf("%s|%s|%d|%s|%s", e.Path, e.Kind, e.Size, e.LinkTarget, e.source)
+	// The keys are comparable structs, not delimiter-joined strings: "|" is a legal byte in a file name and in a
+	// link target, so a joined key could read two different entries as one and let a retargeted link pass (CRW-862
+	// generation 2, failure class 6).
+	full := func(e backedUp) listingKey {
+		return listingKey{Path: e.Path, Kind: e.Kind, Size: e.Size, LinkTarget: e.LinkTarget, Source: e.source}
 	}
-	identity := func(e backedUp) string {
-		return fmt.Sprintf("%s|%s|%s|%s", e.Path, e.Kind, e.LinkTarget, e.source)
+	identity := func(e backedUp) listingIdentity {
+		return listingIdentity{Path: e.Path, Kind: e.Kind, LinkTarget: e.LinkTarget, Source: e.source}
 	}
-	var walA, walB *string
-	seen := map[string]bool{}
+	var walA, walB *listingIdentity
+	seen := map[listingKey]bool{}
 	for _, e := range a {
 		if e.storeWal && !e.vanished {
 			value := identity(e)
@@ -743,8 +767,7 @@ func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []strin
 		delete(seen, full(e))
 	}
 	for k := range seen {
-		path, _, _ := strings.Cut(k, "|")
-		changed = append(changed, "gone or changed: "+path)
+		changed = append(changed, "gone or changed: "+k.Path)
 	}
 	// the log is a change only when both readings hold it and its identity moved: its absence from one reading is
 	// the churn the sidecar rules already carry
