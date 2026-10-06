@@ -331,3 +331,44 @@ func TestHookTrustRetrustCASFailsWhenTheFinalDiagnosisDrifts(t *testing.T) {
 		t.Fatalf("the publication did happen and must be recorded: %+v", result)
 	}
 }
+
+// A conflict that follows a post-exchange failure must name the file that really holds the displaced
+// content (in the stderr error and in the stdout report alike), and must still carry the failure
+// detail: an operator following the message must be sent to the right bytes.
+func TestHookTrustRetrustCASConflictNamesTheDisplacedPathAndKeepsTheWarning(t *testing.T) {
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+	raced := "model = \"saved-by-another-process\"\n"
+	kept := filepath.Join(f.root, "displaced.toml")
+	result, _, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			// The exchange ran, the move failed, and what the exchange displaced is not what retrust
+			// read: a conflict whose displaced content is at the reported path, not the backup path.
+			if werr := os.WriteFile(target, next, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.WriteFile(kept, []byte(raced), 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			return []byte(raced), &crwdir.PublishedError{Err: errors.New("injected move failure"), DisplacedAt: kept}
+		},
+	})
+	if err == nil || !result.Conflict || result.DisplacedAt != kept {
+		t.Fatalf("the conflict is wrong: result=%+v err=%v", result, err)
+	}
+	if !strings.Contains(err.Error(), kept) || strings.Contains(err.Error(), f.backupName()) {
+		t.Fatalf("the conflict error does not name the displaced path: %v", err)
+	}
+
+	// The same through the command line: stdout names the displaced path and stderr carries both the
+	// conflict and the warning detail.
+	var stdout, stderr bytes.Buffer
+	hookTrustRetrustReport(&stdout, result)
+	hookTrustRetrustWarn(&stderr, result)
+	if !strings.Contains(stdout.String(), kept) || strings.Contains(stdout.String(), f.backupName()) {
+		t.Fatalf("the report does not name the displaced path: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "injected move failure") {
+		t.Fatalf("the warning detail was dropped: %q", stderr.String())
+	}
+}

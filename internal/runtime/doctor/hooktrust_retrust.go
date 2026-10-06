@@ -406,7 +406,7 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 	}
 	if !bytes.Equal(displaced, raw) {
 		result.Conflict = true
-		return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s and %s holds retrust's content", backupPath, targetPath)
+		return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s and %s holds retrust's content", result.displacedPath(), targetPath)
 	}
 	after, err := os.ReadFile(targetPath)
 	if err != nil {
@@ -649,6 +649,7 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 	fail := func(err error, result HookTrustRetrustResult) int {
 		hookTrustRetrustReport(stdout, result)
 		fmt.Fprintln(stderr, "crw doctor retrust: "+err.Error())
+		hookTrustRetrustWarn(stderr, result)
 		return 1
 	}
 	options, err := hookTrustRetrustOptions(args, env)
@@ -676,12 +677,18 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 	}
 	fmt.Fprintf(stdout, "updated=%d appended=%d\nbackup: %s\n", result.Updated, result.Appended, result.BackupPath)
 	hookTrustRetrustReport(stdout, result)
+	hookTrustRetrustWarn(stderr, result)
+	return 0
+}
+
+// hookTrustRetrustWarn prints the post-publication failure the command counted as a warning. It is
+// printed on a success and on a failure alike: when a conflict or a late write follows a
+// post-exchange failure, the failure detail is the only place the operator learns where the
+// displaced content really is, so dropping it would leave stderr pointing at the wrong file.
+func hookTrustRetrustWarn(stderr io.Writer, result HookTrustRetrustResult) {
 	if result.Warning != "" {
-		// The exchange ran and only the directory sync failed, so the write counts as done and the
-		// failure is a warning rather than a refusal (crwdir.PublishedError).
 		fmt.Fprintln(stderr, "crw doctor retrust: warning: "+result.Warning)
 	}
-	return 0
 }
 
 // hookTrustRetrustReport prints, for a success, a refusal that had a plan and a conflict alike, the
@@ -694,13 +701,7 @@ func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
 	}
 	fmt.Fprintf(stdout, "updated keys: %s\n", hookTrustRetrustList(result.UpdatedKeys))
 	fmt.Fprintf(stdout, "appended keys: %s\n", hookTrustRetrustList(result.AppendedKeys))
-	// displaced names the file that actually holds the content the publication displaced: the backup
-	// path, or, when a failure after the exchange stopped the backup being filled, the file
-	// PublishSwap reports. The report never claims a file holds content it does not.
-	displaced := result.BackupPath
-	if result.DisplacedAt != "" {
-		displaced = result.DisplacedAt
-	}
+	displaced := result.displacedPath()
 	switch {
 	case result.Conflict:
 		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
@@ -711,6 +712,17 @@ func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
 	default:
 		fmt.Fprintf(stdout, "%s unchanged; nothing was published\n", result.ConfigPath)
 	}
+}
+
+// displacedPath names the file that actually holds the content the publication displaced: the backup
+// path, or, when a failure after the exchange stopped the backup being filled, the file PublishSwap
+// reports. The report and the conflict error both use it, so neither claims a file holds content it
+// does not.
+func (r HookTrustRetrustResult) displacedPath() string {
+	if r.DisplacedAt != "" {
+		return r.DisplacedAt
+	}
+	return r.BackupPath
 }
 
 // hookTrustRetrustList spells the keys of one plan item list, or "(none)".
