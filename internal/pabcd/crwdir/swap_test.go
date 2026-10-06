@@ -264,13 +264,3 @@ func TestCrwdirConfigLockWaitsForAShortHolder(t *testing.T) {
 	waited.Release()
 	<-done
 }
-
-// tempsLike lists the directory entries whose name matches pattern.
-func tempsLike(t *testing.T, dir, pattern string) []string {
-	t.Helper()
-	found, err := filepath.Glob(filepath.Join(dir, pattern))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return found
-}
