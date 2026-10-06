@@ -205,6 +205,14 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"single quoted title", "gh pr create -t 'Plain title' --body-file clean.md", "", ""},
 		// A bang is a literal character in the operator's word list, so an unquoted one is allowed.
 		{"unquoted bang in a title", "gh pr create --title Fix! --body-file body.md", "", ""},
+		// The generation-5 ruling's own controls, each a case.
+		{"a full form A create", "gh pr create --base dev --title 'CRW-1: x' --body-file " + githubPostAbs(cwd, "body.md"), "", ""},
+		{"an api file field on a nested path", "gh api repos/o/r/pulls/1/comments/2/replies -F body=@" + githubPostAbs(cwd, "body.md"), "", ""},
+		{"an api input with a clean file", "gh api graphql --input " + githubPostAbs(cwd, "clean.md"), "", ""},
+		{"an issue list with a search", "gh issue list --search review", "", ""},
+		{"a review approval", "gh pr review 1 --approve", "", ""},
+		{"a git log with a grep", "git log --grep 'gh api'", "", ""},
+		{"a pipe naming no post", "echo hi | cat", "", ""},
 		{"single quoted dollar", "gh pr create -t 'v$X' --body-file clean.md", "", ""},
 		{"single quoted backtick", "gh pr create -t 'Fix `make test`' --body-file clean.md", "", ""},
 		{"bare title", "gh pr create --title Plain --body-file clean.md", "", ""},
