@@ -47,9 +47,9 @@ const (
 	harnessRunAgentsDir        = "agents"
 	harnessRunVersionTimeout   = 5 * time.Second
 	harnessRunFeaturesTimeout  = 8 * time.Second
-	// harnessRunPluginName is the plugin folder the installed root sits under in the Codex
+	// harnessRunRootPluginFolder is the plugin folder the installed root sits under in the Codex
 	// home's plugin cache: <codexHome>/plugins/cache/<marketplace>/crw/<version>.
-	harnessRunPluginName = "crw"
+	harnessRunRootPluginFolder = "crw"
 )
 
 // RunHarnessDoctor is runDoctor (doctor.ts:261-360): assemble every check of the CXC plugin slice
@@ -279,7 +279,7 @@ func harnessRunRoot(options HarnessOptions, env host.LookupEnv) (string, error) 
 		return "", err
 	}
 	cacheRoot := filepath.Join(codexHome, "plugins", "cache")
-	found := harnessRunInstalledRoots(cacheRoot)
+	found := harnessRunRootScan(cacheRoot)
 	if len(found) == 1 {
 		return found[0], nil
 	}
@@ -289,18 +289,18 @@ func harnessRunRoot(options HarnessOptions, env host.LookupEnv) (string, error) 
 	return "", fmt.Errorf("%d installed crw plugin roots under %s (%s); set PLUGIN_ROOT to the one to diagnose", len(found), cacheRoot, strings.Join(found, ", "))
 }
 
-// harnessRunInstalledRoots lists the version directories under cacheRoot that hold a plugin
+// harnessRunRootScan lists the version directories under cacheRoot that hold a plugin
 // manifest, the way harnessInstallRootBody scans the same tree (harness_install.go): every
 // marketplace segment, the crw folder, then each version. A cache or marketplace directory that
 // cannot be read contributes nothing rather than failing the scan.
-func harnessRunInstalledRoots(cacheRoot string) []string {
+func harnessRunRootScan(cacheRoot string) []string {
 	markets, err := os.ReadDir(cacheRoot)
 	if err != nil {
 		return nil
 	}
 	found := []string{}
 	for _, market := range markets {
-		dir := filepath.Join(cacheRoot, harnessInstallNodeName(market.Name()), harnessRunPluginName)
+		dir := filepath.Join(cacheRoot, harnessInstallNodeName(market.Name()), harnessRunRootPluginFolder)
 		versions, err := os.ReadDir(dir)
 		if err != nil {
 			continue
