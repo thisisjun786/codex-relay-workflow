@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// C1: a stop at each of steps 1 to 4 calls no later step. The fakes' received calls are the
-// proof: the steps after the stop never ran.
+// C1: a stop at each of steps 1 to 4 calls no later step, proven by the fakes' received calls.
 func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 	commit := upgradeGoodCommit
 	badSums := func(t *testing.T, h *upgradeEnv) {
@@ -62,8 +61,7 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 }
 
 // C4 and C5: a dry run performs steps 1 to 4, calls no service command, and leaves its record
-// and its extract directory behind. A second run in the same UTC second refuses rather than
-// overwriting the first record.
+// and extract directory behind; a second run in the same second refuses rather than overwriting.
 func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
 	if code := h.run("--release-dir", h.release, "--dry-run"); code != 0 {
@@ -99,9 +97,8 @@ func TestUpgradeStartsAfterAFailedUpdate(t *testing.T) {
 }
 
 // C3: when config.toml changes during the run the command exits 4 and names the post-check. The
-// differential is TestUpgradeSucceedsOnAHealthyHost: the same run with the same fakes and the
-// same pointer exits 0 when the configuration is left alone, so the exit 4 here is the
-// configuration comparison and not the service status check.
+// differential is TestUpgradeSucceedsOnAHealthyHost: the same run exits 0 with the configuration
+// left alone, so this exit 4 is the configuration comparison, not the status check.
 func TestUpgradeExitsFourWhenTheConfigChanged(t *testing.T) {
 	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit), pointer: true, mutateConfig: true})
 	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
@@ -112,8 +109,8 @@ func TestUpgradeExitsFourWhenTheConfigChanged(t *testing.T) {
 	}
 }
 
-// The preconditions: an unconfigured repository is refused before any gh call, and an unusable
-// runtime pointer before the service is touched.
+// The preconditions: an unconfigured repository before any gh call, an unusable pointer before
+// the service is touched.
 func TestUpgradeRefusesBeforeTheSteps(t *testing.T) {
 	t.Run("repository", func(t *testing.T) {
 		h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
@@ -158,9 +155,8 @@ func TestUpgradeCommandPrintsItsUsage(t *testing.T) {
 	}
 }
 
-// A released tag version resolves to its commit: the binary prints the tag without -g, so the
-// ref itself (and its v-prefixed form) is what the forge is asked about. A git-describe version
-// still resolves through its short hash.
+// A released tag version resolves through the tag ref (and its v-prefixed form); a git-describe
+// version resolves through its short hash.
 func TestUpgradeCommitRefs(t *testing.T) {
 	for _, tc := range []struct {
 		version string
@@ -177,19 +173,8 @@ func TestUpgradeCommitRefs(t *testing.T) {
 	}
 }
 
-// A released tag version passes the whole gate and reaches its dry-run result.
-func TestUpgradeAcceptsAReleasedTagVersion(t *testing.T) {
-	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.1", gh: map[string]upgradeGhAnswer{
-		"repos/owner/repo/commits/v0.4.1":                               {Body: "{\"sha\":\"" + upgradeGoodCommit + "\"}"},
-		"repos/owner/repo/commits/" + upgradeGoodCommit + "/check-runs": {Body: "{\"check_runs\":[{\"name\":\"dev-gate\",\"conclusion\":\"success\",\"app\":{\"slug\":\"github-actions\"}}]}"},
-	}})
-	if code := h.run("--release-dir", h.release, "--dry-run"); code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-}
-
-// An archive entry that would be written through an existing symlink is refused, so a crafted
-// archive cannot reach a file outside the extract directory.
+// An entry through an existing symlink is refused, so a crafted archive cannot reach a file
+// outside the extract directory.
 func TestUpgradeExtractRefusesASymlinkEscape(t *testing.T) {
 	dir, outside := t.TempDir(), filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(outside, []byte("original"), 0o600); err != nil {
@@ -210,26 +195,34 @@ func TestUpgradeExtractRefusesASymlinkEscape(t *testing.T) {
 	}
 }
 
-// The full success flow: with the pointer in place, an update that succeeds and a service that
-// runs and matches, every step runs and the command exits 0. This is what proves the post-check
-// passes on a healthy host rather than only failing.
+// The full success flow for both version shapes: with the pointer in place, an update that
+// succeeds and a service that runs and matches, every step runs and the command exits 0.
 func TestUpgradeSucceedsOnAHealthyHost(t *testing.T) {
-	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit), pointer: true})
-	if code := h.run("--release-dir", h.release); code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	record := h.recordOf(t)
-	if record.Outcome != "ok" || record.Reason != "" {
-		t.Errorf("the record is %+v", record)
-	}
-	var steps []string
-	for _, s := range record.Steps {
-		steps = append(steps, s.Step)
-	}
-	for _, want := range []string{upgradeStepSums, upgradeStepExtract, upgradeStepCommit, upgradeStepDevGate,
-		upgradeStepAttempts, upgradeStepSnapshot, upgradeStepStop, upgradeStepUpdate, upgradeStepStart, upgradeStepPostCheck} {
-		if !strings.Contains(strings.Join(steps, ","), want) {
-			t.Errorf("the record does not name the step %q: %v", want, steps)
+	tag := upgradeGhPaths(upgradeGoodCommit)
+	delete(tag, "repos/owner/repo/commits/eb2567df7")
+	tag["repos/owner/repo/commits/v0.4.1"] = upgradeGhAnswer{Body: "{\"sha\":\"" + upgradeGoodCommit + "\"}"}
+	for _, tc := range []struct {
+		version string
+		gh      map[string]upgradeGhAnswer
+	}{{"v0.4.0-4633-geb2567df7", upgradeGhPaths(upgradeGoodCommit)}, {"v0.4.1", tag}} {
+		h := upgradeHarness(t, upgradeHarnessOptions{version: tc.version, gh: tc.gh, pointer: true})
+		if code := h.run("--release-dir", h.release); code != 0 {
+			t.Fatalf("%s: exit %d, want 0", tc.version, code)
+		}
+		record := h.recordOf(t)
+		if record.Outcome != "ok" || record.Reason != "" {
+			t.Errorf("%s: the record is %+v", tc.version, record)
+		}
+		var steps []string
+		for _, s := range record.Steps {
+			steps = append(steps, s.Step)
+		}
+		joined := strings.Join(steps, ",")
+		for _, want := range []string{upgradeStepSums, upgradeStepExtract, upgradeStepCommit, upgradeStepDevGate,
+			upgradeStepAttempts, upgradeStepSnapshot, upgradeStepStop, upgradeStepUpdate, upgradeStepStart, upgradeStepPostCheck} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("%s: the record does not name the step %q: %v", tc.version, want, joined)
+			}
 		}
 	}
 }

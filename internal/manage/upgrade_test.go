@@ -147,8 +147,8 @@ func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		h.t.Fatal(err)
 	}
-	// The branches match the whole argument list: the relay is called as
-	// "codex-session-relay --state S --socket K service status", so its flags come first.
+	// Branches match the whole argument list: the relay is called as
+	// "codex-session-relay --state S --socket K service status", flags first.
 	crw := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + coreShellQuote(h.calls) + "\n" +
 		"case \"$*\" in\n" +
@@ -214,7 +214,6 @@ func (h *upgradeEnv) run(args ...string) int {
 	return Run(context.Background(), append([]string{"runtime-upgrade"}, args...), strings.NewReader(""), &out, &errOut)
 }
 
-// upgradeCallLines reads one fake's recorded argument lines; a fake that never ran reads empty.
 func upgradeCallLines(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -224,7 +223,6 @@ func upgradeCallLines(t *testing.T, path string) []string {
 	return strings.Fields(string(data))
 }
 
-// crwCalls is the fake crw's recorded argument lines; ghCallLines is the fake gh's.
 func (h *upgradeEnv) crwCalls() []string    { return upgradeCallLines(h.t, h.calls) }
 func (h *upgradeEnv) ghCallLines() []string { return upgradeCallLines(h.t, h.ghCalls) }
 

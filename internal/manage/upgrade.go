@@ -24,9 +24,8 @@ const (
 	upgradeExitPostCheck    = 4
 )
 
-// upgradeExitUpdateFailed is what a failed install reports. The installer's own codes
-// (Refused 1, Usage 2, Incomplete 3) overlap this command's 2 (a step-1..3 stop) and 3 (open
-// attempts), so they are not passed through: exit 1 keeps the two contracts apart.
+// upgradeExitUpdateFailed is what a failed install reports: the installer's own codes overlap
+// this command's 2 and 3, so exit 1 keeps the two contracts apart.
 const upgradeExitUpdateFailed = upgradeExitUnexpected
 
 const (
@@ -55,7 +54,6 @@ const (
 	upgradeStepPostCheck = "post-check"
 )
 
-// upgradeUsage is the one line the command prints.
 const upgradeUsage = "usage: crw manage runtime-upgrade --release-dir DIR [--issue KEY] [--dry-run]"
 
 type upgradeOptions struct {
@@ -116,8 +114,7 @@ func upgradeRun(ctx context.Context, e *Env, args []string) int {
 	return run.run()
 }
 
-// upgradeParse reads the command line; handled reports a help flag, an unknown argument, or a
-// missing --release-dir.
+// upgradeParse reads the command line; handled reports a help flag, a bad argument or no --release-dir.
 func upgradeParse(args []string) (opts upgradeOptions, code int, handled bool) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -167,7 +164,6 @@ type upgradeRunState struct {
 	steps        []upgradeStepRecord
 }
 
-// run creates the record directory, performs the steps, and leaves record.json behind.
 func (r *upgradeRunState) run() int {
 	r.started = r.e.Now().UTC()
 	r.dir = filepath.Join(r.cfg.StateDir, "upgrades", r.started.Format("20060102T150405Z"))
@@ -223,7 +219,6 @@ func (r *upgradeRunState) execute() (int, string) {
 	return 0, ""
 }
 
-// write leaves W/record.json.
 func (r *upgradeRunState) write(reason string) error {
 	record := upgradeRecord{
 		ReleaseDir: r.opts.ReleaseDir,
@@ -261,4 +256,10 @@ func (r *upgradeRunState) command(ctx context.Context, timeout time.Duration, st
 	out, stderr, code, err := upgradeRunCommand(ctx, exe, args...)
 	r.note(step, append([]string{exe}, args...), code, out+stderr, err)
 	return out, code, err
+}
+
+// refuse records a failed step and returns the status and reason that report it.
+func (r *upgradeRunState) refuse(step, reason, out string, err error) (int, string) {
+	r.note(step, nil, 1, out, err)
+	return upgradeExitRefused, reason
 }

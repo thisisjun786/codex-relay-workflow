@@ -21,23 +21,17 @@ import (
 )
 
 const (
-	// upgradeSumsName is the checksum file a release publishes beside its archives.
-	upgradeSumsName = "SHA256SUMS"
-	// upgradeArchiveGlob is the archive this host installs: the linux/amd64 release build.
-	upgradeArchiveGlob = "crw_*_linux_amd64.tar.gz"
-	// upgradeRuntimeDir is the fixed destination whose current/bin the plugin wiring runs.
-	upgradeRuntimeDir = ".local/share/crw-runtime"
-	// upgradeCommandTimeout bounds one forge call so a hung network answer cannot hold the run.
-	upgradeCommandTimeout = 60 * time.Second
-	// upgradeInstallTimeout bounds one lifecycle command: the installer exercises the bridge and
-	// may copy a large relay state, so the forge bound would kill it midway.
-	upgradeInstallTimeout = 30 * time.Minute
-	// upgradeStoreTimeout bounds the read-only store open.
+	upgradeSumsName     = "SHA256SUMS"
+	upgradeArchiveGlob  = "crw_*_linux_amd64.tar.gz"
+	upgradeRuntimeDir   = ".local/share/crw-runtime"
 	upgradeStoreTimeout = 5 * time.Second
+	// upgradeCommandTimeout bounds one forge call; upgradeInstallTimeout one lifecycle command,
+	// which exercises the bridge and may copy a large relay state.
+	upgradeCommandTimeout = 60 * time.Second
+	upgradeInstallTimeout = 30 * time.Minute
 )
 
-// upgradeRunCommand runs exe and returns its stdout, stderr and exit status: a command that ran
-// and failed is a status with no error, one that could not be started is an error.
+// upgradeRunCommand runs exe and returns its stdout, stderr and exit status.
 func upgradeRunCommand(ctx context.Context, exe string, args ...string) (string, string, int, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, exe, args...)
@@ -57,8 +51,7 @@ func upgradeRunCommand(ctx context.Context, exe string, args ...string) (string,
 	return stdout.String(), stderr.String(), 0, nil
 }
 
-// upgradeRunDir creates the run directory exclusively, so two runs in the same UTC second never
-// share an extract tree or a record.
+// upgradeRunDir creates the run directory exclusively, so two runs in one second never share it.
 func upgradeRunDir(dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return err
@@ -72,7 +65,6 @@ func upgradeRunDir(dir string) error {
 	return nil
 }
 
-// upgradeOutputHead keeps the first upgradeRecordHead bytes of a command's output.
 func upgradeOutputHead(text string) string {
 	if len(text) <= upgradeRecordHead {
 		return text
@@ -108,8 +100,8 @@ func (r *upgradeRunState) verifySums() (string, int, string) {
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
 	r.note(upgradeStepSums, nil, 0, want+"  "+filepath.Base(archive), nil)
-	// Pin the verified bytes so the archive cannot be swapped between the digest check and its
-	// use; the installer rechecks against the SHA256SUMS, so that file is pinned too.
+	// Pin the verified bytes so the archive cannot be swapped after the check; the installer
+	// rechecks against the SHA256SUMS, so that file is pinned too.
 	pinned := filepath.Join(r.dir, filepath.Base(archive))
 	for _, src := range []string{archive, filepath.Join(r.opts.ReleaseDir, upgradeSumsName)} {
 		if err := upgradeCopy(src, filepath.Join(r.dir, filepath.Base(src))); err != nil {
@@ -149,7 +141,6 @@ func upgradeSumsFor(sums, name string) string {
 	return ""
 }
 
-// upgradeFileDigest is a file's sha256, lowercase hex.
 func upgradeFileDigest(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -167,12 +158,10 @@ func upgradeFileDigest(path string) (string, error) {
 func (r *upgradeRunState) extractAndResolve() (int, string) {
 	r.extract = filepath.Join(r.dir, "extract")
 	if err := os.MkdirAll(r.extract, 0o700); err != nil {
-		r.note(upgradeStepExtract, nil, 1, "", err)
-		return upgradeExitRefused, upgradeReasonExtractFailed
+		return r.refuse(upgradeStepExtract, upgradeReasonExtractFailed, "", err)
 	}
 	if err := upgradeExtract(r.archive, r.extract); err != nil {
-		r.note(upgradeStepExtract, nil, 1, "", err)
-		return upgradeExitRefused, upgradeReasonExtractFailed
+		return r.refuse(upgradeStepExtract, upgradeReasonExtractFailed, "", err)
 	}
 	crw := filepath.Join(r.extract, "crw")
 	version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepExtract, crw, "--version")
@@ -196,8 +185,7 @@ func (r *upgradeRunState) extractAndResolve() (int, string) {
 	return upgradeExitRefused, upgradeReasonCommitUnknown
 }
 
-// upgradeCommitRefs is what to ask the forge about: the commit after -g in a git-describe
-// version, else the released tag ref itself (and its v-prefixed form).
+// upgradeCommitRefs is what to ask the forge about: the commit after -g, else the released tag.
 func upgradeCommitRefs(version string) []string {
 	trimmed := strings.TrimSpace(version)
 	if _, rest, found := strings.Cut(trimmed, "-g"); found {
@@ -230,32 +218,28 @@ func (r *upgradeRunState) checkDevGate() (int, string) {
 		} `json:"check_runs"`
 	}
 	if err := json.Unmarshal([]byte(out), &answer); err != nil {
-		r.note(upgradeStepDevGate, nil, 1, out, err)
-		return upgradeExitRefused, upgradeReasonDevGate
+		return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, err)
 	}
 	for _, run := range answer.CheckRuns {
 		if run.Name == "dev-gate" && run.Conclusion == "success" && (run.App.Slug == "" || run.App.Slug == "github-actions") {
 			return 0, ""
 		}
 	}
-	r.note(upgradeStepDevGate, nil, 1, out, fmt.Errorf("no dev-gate check run concluded success"))
-	return upgradeExitRefused, upgradeReasonDevGate
+	return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, fmt.Errorf("no dev-gate check run concluded success"))
 }
 
 // checkOpenAttempts is step 4: read the store read-only and refuse while any attempt is unsettled.
 func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 	state, err := r.relayState()
 	if err != nil {
-		r.note(upgradeStepAttempts, nil, 1, "", err)
-		return upgradeExitRefused, upgradeReasonStoreRead
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, "", err)
 	}
 	r.state = state
 	ctx, cancel := context.WithTimeout(r.ctx, upgradeStoreTimeout)
 	defer cancel()
 	read, err := store.OpenReadOnly(ctx, filepath.Join(state, "relay.sqlite3"), upgradeStoreTimeout)
 	if err != nil {
-		r.note(upgradeStepAttempts, nil, 1, "", err)
-		return upgradeExitRefused, upgradeReasonStoreRead
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, "", err)
 	}
 	defer read.Close()
 	var open int
@@ -284,16 +268,14 @@ func (r *upgradeRunState) relayState() (string, error) {
 func (r *upgradeRunState) snapshot() (int, string) {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
-		r.note(upgradeStepSnapshot, nil, 1, "", err)
-		return upgradeExitRefused, upgradeReasonPointer
+		return r.refuse(upgradeStepSnapshot, upgradeReasonPointer, "", err)
 	}
 	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepSnapshot, filepath.Join(pointer, "bin", "crw"), "install", "status"); err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonPointer
 	}
 	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
 	if err != nil {
-		r.note(upgradeStepSnapshot, nil, 1, "", err)
-		return upgradeExitRefused, upgradeReasonPointer
+		return r.refuse(upgradeStepSnapshot, upgradeReasonPointer, "", err)
 	}
 	r.beforeConfig = digest
 	r.note(upgradeStepSnapshot, nil, 0, pointer+"\n"+digest, nil)
@@ -398,13 +380,11 @@ func upgradePointerTarget(e *Env) (string, error) {
 	return target, nil
 }
 
-// upgradeConfigPath is the configuration file whose digest must not change.
 func upgradeConfigPath(e *Env) string {
 	return filepath.Join(coreHomeDir(e, "CODEX_HOME", ".codex"), "config.toml")
 }
 
-// upgradeExtract unpacks a tar.gz into dir, refusing an entry that escapes it or names an
-// existing symlink (which a write would follow outside the directory).
+// upgradeExtract unpacks a tar.gz into dir, refusing an entry that escapes it or names a symlink.
 func upgradeExtract(archive, dir string) error {
 	f, err := os.Open(archive)
 	if err != nil {
