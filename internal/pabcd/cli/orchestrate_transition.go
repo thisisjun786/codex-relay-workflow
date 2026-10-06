@@ -175,14 +175,25 @@ func orchestrateTransitionDClose(cwd, sessionID, closePhaseID string, cur state.
 // (docs/port-cxc/known-defects.md, "Found by the CRW-609 lossless rewrite guard"): the oracle publishes the
 // state the reader rebuilt, so a stored lone surrogate, invalid UTF-8, a receipt past the cap or a record past
 // the list cap is replaced or dropped. The port refuses instead, as every other session writer here does.
-func orchestrateTransitionStateWritable(cwd, sessionID string, kept state.State) bool {
-	return cliVerdictsIntact(cwd, sessionID, len(kept.UnverifiedSubagents))
+// The interview tracker is the second loss the rebuilt read would publish: ReconstructInterview caps every array at
+// interview.MaxTrackerArray and drops an unnamed ontology entity, so the same write is refused when cliInterviewIntact
+// says the file holds a record the rebuild cannot keep. The reason names which record the caller would lose.
+func orchestrateTransitionStateWritable(cwd, sessionID string, kept state.State) (string, bool) {
+	if !cliVerdictsIntact(cwd, sessionID, len(kept.UnverifiedSubagents)) {
+		return orchestrateTransitionUnverifiedRefusalReason, false
+	}
+	if !cliInterviewIntact(cwd, sessionID) {
+		return cliInterviewRefusalReason, false
+	}
+	return "", true
 }
 
-// orchestrateTransitionStateRefusal is the refusal shared by the three writes this file owns.
-func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb) CliResult {
-	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) +
-		": session state holds records this rewrite would change; refusing to overwrite it. Nothing was written."}
+// orchestrateTransitionUnverifiedRefusalReason is the reason for a rewrite that would cut or retype a stored unverified record.
+const orchestrateTransitionUnverifiedRefusalReason = "session state holds records this rewrite would change; refusing to overwrite it"
+
+// orchestrateTransitionStateRefusal is the refusal shared by the three writes this file owns; reason is why the state is not writable.
+func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb, reason string) CliResult {
+	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + reason + ". Nothing was written."}
 }
 
 // The commit order of this file's three write paths (CRW-811): the session state is published first and
@@ -358,8 +369,8 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 			return CliResult{Code: 0, Output: "orchestrate reset: " + RenderPhaseContext(cur, sessionID) + "; already IDLE"}, nil
 		}
 		if res.State != nil {
-			if !orchestrateTransitionStateWritable(cwd, sessionID, cur) {
-				return orchestrateTransitionStateRefusal(verb), nil
+			if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
+				return orchestrateTransitionStateRefusal(verb, reason), nil
 			}
 			next := *res.State
 			next.OrchestrationActive, next.LastInjectedPhase = false, nil
@@ -451,8 +462,8 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 			next.Phase, next.OrchestrationActive, next.LastInjectedPhase = to, true, &to
 			next.StopBlockPhase, next.StopBlockCount = nil, 0
 			next.PhaseEntrySource, next.PlanUnit, next.PlanEpoch, next.CheckEpoch = nil, nil, nil, nil
-			if !orchestrateTransitionStateWritable(cwd, sessionID, cur) {
-				return orchestrateTransitionStateRefusal(verb), nil
+			if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
+				return orchestrateTransitionStateRefusal(verb, reason), nil
 			}
 			// The override publishes first and appends its row second, as the reset above does.
 			published := orchestrateCommitWrite(seams, cwd, next)
@@ -512,8 +523,8 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 		return orchestrateTransitionDClose(cwd, sessionID, closePhaseID, cur, a.Attest, recoveringDclose)
 	}
 	// The data-loss refusal, before any of this edge's writes, the goalplan housekeeping included.
-	if !orchestrateTransitionStateWritable(cwd, sessionID, cur) {
-		return orchestrateTransitionStateRefusal(verb), nil
+	if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
+		return orchestrateTransitionStateRefusal(verb, reason), nil
 	}
 
 	// L6: a real transition is progress, so the Stop stagnation guard resets. SOURCE-DELTA-01: snapshot the

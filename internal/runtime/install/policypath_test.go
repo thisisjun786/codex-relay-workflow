@@ -24,6 +24,7 @@ import (
 // record with the home and the fake App Server's directory spelled as placeholders). The
 // packaged launcher, which fs-encodes the path back, then starts the Go bridge under that policy.
 func TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 	policy := filepath.Join(h.home, "pol\x80icy.json")
