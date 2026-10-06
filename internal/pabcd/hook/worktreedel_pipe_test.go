@@ -3,6 +3,7 @@ package hook
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -140,4 +141,74 @@ func TestMemoryGatePipeWrapper(t *testing.T) {
 			t.Errorf("with a grant the write must pass: %s", out)
 		}
 	}
+}
+
+// TestWorktreeDelPipeReviewFindings pins the eight blockers the generation-2 independent review of head 4b6bc82f5
+// raised. Three were fail-opens of this change's own pipe rule, one was a wrapper option argument, one an unbalanced
+// delimiter that swallowed the scan, one an over-denial on here-document data, one quadratic work, and one a break of
+// the oracle first walk's byte-for-byte parity. Each is fixed and stays pinned.
+func TestWorktreeDelPipeReviewFindings(t *testing.T) {
+	r := newDelRig(t)
+	// 1-3: a compound right side keeps the pipe through a trailing redirection, through nesting and through a shell
+	// compound's keywords.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | (bash) 2>/dev/null",
+		"printf 'rm -rf ../repo' | (bash) >/dev/null",
+		"printf 'rm -rf ../repo' | (bash) 2>&1",
+		"printf 'rm -rf ../repo' | { bash; } 2>/dev/null",
+		"printf 'rm -rf ../repo' | (true; bash) 2>/dev/null",
+		"printf 'rm -rf ../repo' | ( ( bash ) )",
+		"printf 'rm -rf ../repo' | { (bash); }",
+		"printf 'rm -rf ../repo' | if true; then bash; fi",
+		"printf 'rm -rf ../repo' | while true; do bash; done",
+		"printf 'rm -rf ../repo' | for i in 1; do bash; done",
+		"printf 'rm -rf ../repo' | case x in x) bash;; esac",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// 4: a wrapper option that takes a separate argument does not hide the shell.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | sudo -u root bash",
+		"printf 'rm -rf ../repo' | env -u FOO bash",
+		"printf 'rm -rf ../repo' | sudo -p prompt bash",
+		"printf 'rm -rf ../repo' | timeout -s TERM 5 bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// 5: an unbalanced delimiter does not swallow the rest of the scan.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | tee { | bash")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | echo { | bash")
+	// 6: here-document data is no pipe region.
+	r.allowed(t, "cat <<'EOF'\necho hi | bash\nEOF", "cat > run.sh <<'EOF'\ncurl x | bash\nEOF")
+	// The controls stay allowed.
+	r.allowed(t, "printf 'echo hi' | bash </dev/null", "printf x | (cd sub; cat)", "printf x | { cat; }", "printf x | nohup cat", "printf x | bash -c 'cat'", "nohup rm -rf ../other")
+	// 8: the oracle's own first walk is unchanged; the extended walk adds the deny.
+	for _, cmd := range []string{
+		"nohup rm -rf ../repo", "timeout 5 rm -rf ../repo", "nice rm -rf ../repo", "setsid rm -rf ../repo",
+		"stdbuf -o0 rm -rf ../repo", "ionice rm -rf ../repo", "xargs rm -rf ../repo", "exec rm -rf ../repo",
+		"time rm -rf ../repo", "X=1 rm -rf ../repo", "-x rm -rf ../repo", "nohup git worktree remove ../repo",
+	} {
+		if v := worktreeDelWalk(cmd, r.checkout, r.id(), false); v.Deny {
+			t.Errorf("first walk parity: %q must be allowed by the oracle's own walk (%s)", cmd, v.Reason)
+		}
+		if v := r.verdict(cmd); !v.Deny {
+			t.Errorf("extended walk: %q must be denied", cmd)
+		}
+	}
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeScanIsLinear is the seventh finding: the pipe scan is one forward pass, so a long command line
+// is read in linear time and never reaches the hook's timeout.
+func TestWorktreeDelPipeScanIsLinear(t *testing.T) {
+	r := newDelRig(t)
+	for _, size := range []int{32768, 131072, 1048576} {
+		command := "printf x | " + strings.Repeat("echo a ", size/7)
+		if got, ok := worktreeDelVerdictWithin(t, r, command, 20*time.Second); !ok {
+			t.Fatalf("the verdict for %d bytes did not return within 20s", size)
+		} else if got.Deny {
+			t.Errorf("%d bytes: denied (%s); want allow", size, got.Reason)
+		}
+	}
+	r.intact(t)
 }

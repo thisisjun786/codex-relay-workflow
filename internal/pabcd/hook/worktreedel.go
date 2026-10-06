@@ -137,47 +137,108 @@ func isAssignment(token string) bool {
 }
 
 // worktreeDelCommandPrefix is the index of the word that names the command, from i on: it steps over the wrapper words
-// worktreeDelQuoteWrappers lists, and over the options, assignments, numbers and option arguments that may stand before
-// the command, the way the walk's own program reader does. ok is false when every word from i on is a prefix. Every
-// reader that has to find a command word shares this one walk, so no reader keeps a second wrapper list (CRW-726,
-// c15(c)).
+// worktreeDelQuoteWrappers lists, each with the options it may carry and the separate option arguments those options
+// take, and over the assignments and numbers that may stand before a command. ok is false when every word from i on is
+// a prefix. Every reader that has to find a command word shares this one walk and the one wrapper table, so no reader
+// keeps a second list (CRW-726, c15(c)).
 func worktreeDelCommandPrefix(words []string, i int) (next int, ok bool) {
+	wrapper := ""
 	for ; i < len(words); i++ {
 		word := words[i]
-		if !(strings.Contains(worktreeDelQuoteWrappers, " "+basename(word)+" ") ||
-			strings.HasPrefix(word, "-") || isAssignment(word) ||
-			word != "" && word[0] >= '0' && word[0] <= '9') {
-			return i, true
+		name := basename(word)
+		if strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") {
+			wrapper = name
+			continue
 		}
+		if isAssignment(word) || word != "" && word[0] >= '0' && word[0] <= '9' {
+			continue
+		}
+		if strings.HasPrefix(word, "-") {
+			// an option of the wrapper before it: it may take the next word as its argument, which is then no command
+			if worktreeDelWrapperOptionArg(wrapper, word) && i+1 < len(words) {
+				i++
+			}
+			continue
+		}
+		return i, true
 	}
 	return i, false
 }
 
-// worktreeDelCommandPrefixEnv is worktreeDelCommandPrefix with env's own NAME=value operands consumed, so that
-// `env FOO=1 rm -rf x` names rm. The wrapper table and the option rules stay in one place.
-func worktreeDelCommandPrefixEnv(words []string, i int) (next int, ok bool) {
-	for i < len(words) {
-		name := basename(words[i])
-		if name != "env" && name != "sudo" && name != "command" && name != "builtin" {
-			break
-		}
-		i++
-		if name == "env" {
-			for i < len(words) && (isAssignment(words[i]) || strings.HasPrefix(words[i], "-")) {
-				i++
-			}
-		}
+// worktreeDelWrapperOptionArg says whether an option word of the command named name takes the next word as its own
+// argument, so that `sudo -u root bash`, `timeout -s TERM 5 bash`, `nice -n 5 rm` and `xargs -n 1 rm` name their
+// command after the argument. An option that carries its argument attached (`stdbuf -o0 rm`, `ionice -c3 rm`, an
+// option ending in `=`) takes none. The wrapper set is worktreeDelQuoteWrappers; this is the one table that reads it.
+func worktreeDelWrapperOptionArg(name, option string) bool {
+	if len(option) < 2 || option[0] != '-' {
+		return false
 	}
+	if strings.Contains(option, "=") { // --opt=value carries its own argument
+		return false
+	}
+	if strings.HasPrefix(option, "--") { // a long option takes the next word only for the wrappers below
+		switch name {
+		case "sudo", "env", "timeout", "nice", "ionice", "stdbuf", "xargs":
+			return true
+		}
+		return false
+	}
+	if len(option) != 2 { // a bare single-letter option: -o0 and -c3 carry their argument attached
+		return false
+	}
+	// worktreeDelWrapperArgs are the single-letter options of each wrapper that take the next word as their argument.
+	switch name {
+	case "sudo":
+		return strings.ContainsRune("ugpChrtUTace", rune(option[1]))
+	case "env":
+		return strings.ContainsRune("uCS", rune(option[1]))
+	case "timeout":
+		return strings.ContainsRune("sk", rune(option[1]))
+	case "nice":
+		return option[1] == 'n'
+	case "ionice":
+		return strings.ContainsRune("cnp", rune(option[1]))
+	case "stdbuf":
+		return strings.ContainsRune("ioe", rune(option[1]))
+	case "xargs":
+		return strings.ContainsRune("nIadELsP", rune(option[1]))
+	}
+	return false
+}
+
+// worktreeDelCommandPrefixEnv is worktreeDelCommandPrefix over the same table: the wrapper words are read there, and
+// env's own NAME=value operands are assignments, so `env FOO=1 rm -rf x` names rm.
+func worktreeDelCommandPrefixEnv(words []string, i int) (next int, ok bool) {
 	return worktreeDelCommandPrefix(words, i)
 }
 
-// stripPrefixes drops the wrappers that stand before a command: the wrapper words worktreeDelQuoteWrappers lists, each
-// with its own options and arguments, and env's NAME=value operands. The oracle strips only sudo, command, builtin and
-// env (worktree-guard.ts:262-267), so a removal behind nohup, timeout, nice, setsid or stdbuf was never named and was
-// allowed; the shared prefix walk names it (CRW-726, c15(d); port: fixed, a security fix). It can only add denies: a
-// word it now skips was a verb the walk never reached.
+// stripPrefixes drops leading sudo, command and builtin, and env with the NAME=value words that follow it. A prefix is
+// recognised by its basename; sudo's and env's own options are not understood (known defect). The oracle's first walk
+// must stay byte for byte (worktree-guard.ts:262-267), so this keeps the oracle's own prefix set: the wider set is
+// stripPrefixesExtended, which only the extended walk uses (CRW-726, c15(d)).
 func stripPrefixes(tokens []string) []string {
-	i, ok := worktreeDelCommandPrefixEnv(tokens, 0)
+	for len(tokens) > 0 {
+		switch basename(tokens[0]) {
+		case "sudo", "command", "builtin":
+			tokens = tokens[1:]
+		case "env":
+			tokens = tokens[1:]
+			for len(tokens) > 0 && isAssignment(tokens[0]) {
+				tokens = tokens[1:]
+			}
+		default:
+			return tokens
+		}
+	}
+	return tokens
+}
+
+// stripPrefixesExtended is stripPrefixes over the wider wrapper set worktreeDelQuoteWrappers lists, with the options
+// and arguments each wrapper may carry. The oracle strips only sudo, command, builtin and env, so a removal behind
+// nohup, timeout, nice, setsid or stdbuf was never named and was allowed; the extended walk names it (CRW-726, c15(d);
+// port: fixed, a security fix). It can only add denies, and the first walk keeps stripPrefixes.
+func stripPrefixesExtended(tokens []string) []string {
+	i, ok := worktreeDelCommandPrefix(tokens, 0)
 	if !ok {
 		return nil
 	}
@@ -222,7 +283,11 @@ func isProtectedTarget(target, segCwd string, id WorktreeIdentity, extended bool
 // evaluateSegment is the verdict of one segment, and false when it has none. rm and rmdir are the POSIX removals, git
 // worktree remove the other; unlink is a file removal and never threatens a worktree.
 func evaluateSegment(segment, cwd string, id WorktreeIdentity, extended, quoting bool) (GuardVerdict, bool) {
-	tokens := stripPrefixes(worktreeDelQuoteTokens(segment, quoting))
+	prefix := stripPrefixes
+	if extended {
+		prefix = stripPrefixesExtended // the extended walk names a verb behind any wrapper; the first walk stays the oracle's
+	}
+	tokens := prefix(worktreeDelQuoteTokens(segment, quoting))
 	if len(tokens) == 0 {
 		return GuardVerdict{}, false
 	}
@@ -2276,9 +2341,9 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 	if refusal, ok := s.heredocs(text, cwd, depth, named); ok {
 		return refusal, true
 	}
-	// The pipe rule reads the whole text, because a subshell or a brace group keeps the pipe that fed it and the
-	// segment cut splits at the parentheses inside it (CRW-726, c15(b)).
-	if what, ok := worktreeDelUnreadablePipes(text); ok {
+	// The pipe rule reads the whole text with the here-document bodies that are data masked out, because a subshell or a
+	// brace group keeps the pipe that fed it and the segment cut splits at the parentheses inside it (CRW-726, c15(b)).
+	if what, ok := worktreeDelUnreadablePipes(worktreeDelUnreadableDataMask(text)); ok {
 		return worktreeDelUnreadableRefusal{what: what}, true
 	}
 	for _, reading := range worktreeDelReadings(worktreeDelUnreadableDataMask(text)) {
@@ -2348,34 +2413,13 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 
 // worktreeDelUnreadablePipes is the pipe rule of the whole text: a listed shell that stands to the right of a single |
 // and has no -c program, no script operand and no file replacing its own standard input reads its program from that
-// pipe. The right side is read whole to the next separator at its own depth, so a subshell or a brace group keeps the
-// pipe: every simple command inside one of those is read too (CRW-726, c15(b)).
+// pipe. The right side is read whole to the next separator at its own depth, so a subshell, a brace group or a shell
+// compound keeps the pipe: every simple command inside one of those is read too (CRW-726, c15(b)). The scan is one
+// forward pass: worktreeDelUnreadablePipeEnd reads from the byte after each operator and the caller resumes there, so
+// the cost is linear in the text.
 func worktreeDelUnreadablePipes(text string) (string, bool) {
-	r := worktreeDelQuoteReader{prev: ' '}
-	depth := 0
 	for i := 0; i < len(text); i++ {
-		c := text[i]
-		if r.escapes(text, i) {
-			r.pair()
-			i++
-			continue
-		}
-		state := r.state
-		r.step(c)
-		if state != worktreeDelQuotePlain {
-			continue
-		}
-		switch c {
-		case '(', '{':
-			depth++
-			continue
-		case ')', '}':
-			if depth > 0 {
-				depth--
-			}
-			continue
-		case '|':
-		default:
+		if text[i] != '|' {
 			continue
 		}
 		if i+1 < len(text) && text[i+1] == '|' { // a logical or, not a pipe
@@ -2383,6 +2427,9 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 			continue
 		}
 		end := worktreeDelUnreadablePipeEnd(text, i+1)
+		if worktreeDelUnreadableOpensCompound(strings.TrimSpace(text[i+1 : end])) {
+			end = worktreeDelUnreadableCompoundEnd(text, i+1) // a shell compound keeps the pipe to its closing keyword
+		}
 		if what, ok := worktreeDelUnreadablePipeRegion(strings.TrimSpace(text[i+1 : end])); ok {
 			return what, true
 		}
@@ -2391,12 +2438,95 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 	return "", false
 }
 
+// worktreeDelUnreadableOpensCompound says whether a text opens a shell compound whose body continues past a separator:
+// if, while, until, for and case.
+func worktreeDelUnreadableOpensCompound(text string) bool {
+	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
+	if len(plain) == 0 {
+		return false
+	}
+	switch basename(plain[0]) {
+	case "if", "while", "until", "for", "case":
+		return true
+	}
+	return false
+}
+
+// worktreeDelUnreadableCompoundEnd is the byte that closes the shell compound a pipe feeds, from the byte after the
+// operator: the matching fi, done or esac that stands as a word of its own, or the end of the text when none does.
+func worktreeDelUnreadableCompoundEnd(text string, from int) int {
+	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text[from:]))
+	for i := 0; i < len(plain); i++ {
+		switch basename(plain[i]) {
+		case "fi", "done", "esac":
+			return worktreeDelUnreadableWordEnd(text, from, i+1)
+		}
+	}
+	return len(text)
+}
+
+// worktreeDelUnreadableWordEnd is the byte just past the n-th word of a text, counted from `from`.
+func worktreeDelUnreadableWordEnd(text string, from, n int) int {
+	r := worktreeDelQuoteReader{prev: ' '}
+	seen := 0
+	for i := from; i < len(text); i++ {
+		c := text[i]
+		if r.escapes(text, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(c)
+		if state != worktreeDelQuotePlain || r.state != worktreeDelQuotePlain {
+			continue
+		}
+		if strings.IndexByte(" \t\r\n;&|(){}", c) >= 0 {
+			continue
+		}
+		if i == from || strings.IndexByte(" \t\r\n;&|(){}", text[i-1]) >= 0 {
+			seen++
+			if seen == n {
+				for j := i; j < len(text); j++ {
+					if strings.IndexByte(" \t\r\n;&|(){}", text[j]) >= 0 {
+						return j
+					}
+				}
+				return len(text)
+			}
+		}
+	}
+	return len(text)
+}
+
 // worktreeDelUnreadablePipeEnd is the byte that ends the command a pipe feeds, from the byte after the operator: the next
-// separator that stands at the same depth.
+// separator that stands at the same depth. It reads from `from` on, so the caller resumes at its answer and the whole
+// scan stays linear. An unbalanced delimiter does not swallow the rest: a depth that never returns to zero still ends
+// the region at the next separator at depth zero or, failing that, at the end of the text.
 func worktreeDelUnreadablePipeEnd(text string, from int) int {
 	r := worktreeDelQuoteReader{prev: ' '}
 	depth := 0
-	for i := 0; i < len(text); i++ {
+	for i := 0; i < from; i++ { // replay the reader over the prefix so the quote state at `from` is right
+		if r.escapes(text, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(text[i])
+		if state == worktreeDelQuotePlain {
+			switch text[i] {
+			case '(', '{':
+				depth++
+			case ')', '}':
+				if depth > 0 {
+					depth--
+				}
+			}
+		}
+	}
+	start := depth
+	for i := from; i < len(text); i++ {
 		c := text[i]
 		if r.escapes(text, i) {
 			r.pair()
@@ -2416,11 +2546,11 @@ func worktreeDelUnreadablePipeEnd(text string, from int) int {
 				depth--
 			}
 		case ';', '&', '\n':
-			if i >= from && depth == 0 {
+			if depth <= start {
 				return i
 			}
 		case '|':
-			if i >= from && depth == 0 {
+			if depth <= start {
 				return i
 			}
 		}
@@ -2428,55 +2558,118 @@ func worktreeDelUnreadablePipeEnd(text string, from int) int {
 	return len(text)
 }
 
-// worktreeDelUnreadablePipeRegion is the pipe rule for the text one | feeds: the text itself when it is one simple
-// command, or every simple command inside a subshell or a brace group.
+// worktreeDelUnreadablePipeRegion is the pipe rule for the text one | feeds. It reads the text as a shell does: the
+// region is cut at its separators and at its delimiters, and every simple command the shell would run with the pipe on
+// its standard input is judged. `(bash) 2>/dev/null`, `( ( bash ) )`, `{ (bash); }` and `if true; then bash; fi` all
+// reach bash, so all are refused (CRW-726, c15(b)).
 func worktreeDelUnreadablePipeRegion(text string) (string, bool) {
-	if !worktreeDelUnreadableCompound(text) {
-		return worktreeDelUnreadablePipeShell(text)
-	}
-	for _, inner := range worktreeDelUnreadableCuts(worktreeDelUnreadableCompoundText(text)) {
-		if inner.text == "(" || inner.text == ")" || inner.text == "{" || inner.text == "}" {
-			continue
-		}
-		if what, ok := worktreeDelUnreadablePipeShell(inner.text); ok {
+	for _, piece := range worktreeDelUnreadablePipePieces(text) {
+		if what, ok := worktreeDelUnreadablePipePiece(piece); ok {
 			return what, true
 		}
 	}
 	return "", false
 }
 
-// worktreeDelUnreadableCompound says whether a command text is a subshell or a brace group: it opens with ( or { and
-// closes with the matching ) or }.
-func worktreeDelUnreadableCompound(text string) bool {
-	text = strings.TrimSpace(text)
-	return len(text) > 1 && (text[0] == '(' && text[len(text)-1] == ')' || text[0] == '{' && text[len(text)-1] == '}')
+// worktreeDelUnreadablePipePieces is the text one | feeds, split at every separator and at every delimiter that is no
+// part of a word: the simple commands and the command texts a subshell, a brace group or a shell compound holds.
+func worktreeDelUnreadablePipePieces(region string) []string {
+	var pieces []string
+	r := worktreeDelQuoteReader{prev: ' '}
+	start := 0
+	cut := func(i int) {
+		if piece := text.Trim(region[start:i]); piece != "" {
+			pieces = append(pieces, piece)
+		}
+		start = i + 1
+	}
+	for i := 0; i < len(region); i++ {
+		c := region[i]
+		if r.escapes(region, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(c)
+		if state != worktreeDelQuotePlain || r.state != worktreeDelQuotePlain {
+			continue
+		}
+		switch {
+		case c == ';' || c == '&' || c == '\n' || c == '|':
+			cut(i)
+		case (c == '(' || c == '{' || c == ')' || c == '}') && worktreeDelUnreadableDelimiterEdge(region, i):
+			cut(i)
+		}
+	}
+	if piece := text.Trim(region[start:]); piece != "" {
+		pieces = append(pieces, piece)
+	}
+	return pieces
 }
 
-// worktreeDelUnreadableCompoundText is the inside of a subshell or a brace group, without its delimiters.
-func worktreeDelUnreadableCompoundText(text string) string {
-	text = strings.TrimSpace(text)
-	if !worktreeDelUnreadableCompound(text) {
-		return text
+// worktreeDelUnreadableDelimiterEdge says whether the delimiter at i opens or closes a word, the way a subshell or a
+// group is written: a `(` or a `{` opens one when it stands at the start of a word, a `)` or a `}` closes one when it
+// stands at the end of a word. `(bash) 2>/dev/null` is the delimiters and the command between them.
+func worktreeDelUnreadableDelimiterEdge(text string, i int) bool {
+	edge := func(b byte) bool { return strings.IndexByte(" \t\r\n;&|(){}", b) >= 0 }
+	switch text[i] {
+	case '(', '{':
+		return i == 0 || edge(text[i-1])
+	case ')', '}':
+		return i+1 == len(text) || edge(text[i+1])
 	}
-	return strings.TrimSpace(text[1 : len(text)-1])
+	return false
 }
 
-// worktreeDelUnreadablePipeShell is the pipe rule for one simple command: a listed shell with no -c program, no script
-// operand and no file replacing its own standard input reads its program from the pipe that feeds it.
-func worktreeDelUnreadablePipeShell(text string) (string, bool) {
-	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
-	i := worktreeDelUnreadableCommandWord(plain)
-	if i < 0 {
-		return "", false
-	}
-	name := basename(plain[i])
-	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
-		return "", false
-	}
-	if !worktreeDelUnreadableStdinRedirected(plain[i+1:]) {
-		return "a shell program read from a pipe", true
+// worktreeDelUnreadablePipePiece is the pipe rule for one piece of a pipe region: a listed shell that reads its program
+// from the pipe, or a piece that is no command of its own and is skipped.
+func worktreeDelUnreadablePipePiece(piece string) (string, bool) {
+	if _, operands, ok := worktreeDelUnreadableShellCommand(piece); ok {
+		if !worktreeDelUnreadableStdinRedirected(operands) {
+			return "a shell program read from a pipe", true
+		}
 	}
 	return "", false
+}
+
+// worktreeDelUnreadableShellCommand is the name and operands of the listed shell that opens a text, when it opens with
+// one that has no -c program and no script operand: the command word may stand after the wrappers, the redirections and
+// the compound keywords that may precede it.
+func worktreeDelUnreadableShellCommand(text string) (name string, operands []string, ok bool) {
+	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
+	if i, found := worktreeDelUnreadableCompoundKeyword(plain); found {
+		plain = plain[i:]
+	}
+	i := worktreeDelUnreadableCommandWord(plain)
+	if i < 0 {
+		return "", nil, false
+	}
+	name = basename(plain[i])
+	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
+		return "", nil, false
+	}
+	return name, plain[i+1:], true
+}
+
+// worktreeDelUnreadableCompoundKeyword is the index of the first word after a shell compound keyword and its clause
+// introducer (`if true; then bash; fi` runs bash), and false when the text opens with no such keyword.
+func worktreeDelUnreadableCompoundKeyword(words []string) (int, bool) {
+	if len(words) == 0 {
+		return 0, false
+	}
+	switch basename(words[0]) {
+	case "then", "do", "else", "elif":
+		return 1, true // the clause introducer of a compound already opened
+	case "if", "while", "until", "for", "case":
+		for i, word := range words {
+			if word == "then" || word == "do" {
+				return i + 1, true
+			}
+		}
+		return len(words), true
+	}
+	return 0, false
 }
 
 // heredocs judges every here-document of a text that a listed shell reads as its program: with a delimiter word that
