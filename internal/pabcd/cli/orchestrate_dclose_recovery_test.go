@@ -691,6 +691,37 @@ func TestOrchestrateDcloseRecoveryAbsentTarget(t *testing.T) {
 			t.Fatalf("the refusal wrote a goalplan row: %+v", rows)
 		}
 	})
+	t.Run("refuses-a-successor-that-is-not-runnable", func(t *testing.T) {
+		// resumeAbsentTarget answers successor_lost with one of three reasons. absent and
+		// dependencies_unmet are covered by the subtests around this one; this is not_runnable: the
+		// target is gone and the recorded successor is blocked, so the close refuses rather than
+		// activating a phase that cannot run.
+		cwd := orchestrateDcloseTestCwd(t)
+		id, slug := "cli-recovery-successor-blocked", "cli-recovery-successor-blocked-plan"
+		orchestrateDcloseRecoverySeed(t, cwd, id, slug)
+		plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "absent target, blocked successor"})
+		plan.Slug = slug
+		plan.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp-2", Title: "next", Status: goalplan.WorkPhaseBlocked, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}}}
+		plan.ActiveWorkPhaseID = nil
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+		planPath := filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")
+		before := orchestrateDcloseSnapshot(t, planPath)
+
+		got, err := orchestrateDcloseRecoveryRun(t, cwd, id, orchestrateDcloseSeam{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Code != 1 || !strings.Contains(got.Output, "the successor wp-2 it recorded can no longer be started") ||
+			!strings.Contains(got.Output, "The marker was kept") {
+			t.Fatalf("refusal: %+v", got)
+		}
+		orchestrateDcloseAssertUnchanged(t, before)
+		if after := state.ReadState(cwd, id); after.DcloseRecovery == nil {
+			t.Fatalf("state: %+v", after)
+		}
+	})
 }
 
 // TestOrchestrateDcloseRecoveryResumesAnAbsentTarget is "CLI D-close recovery resumes when the marker
