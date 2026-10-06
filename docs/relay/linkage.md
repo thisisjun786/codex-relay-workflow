@@ -106,6 +106,14 @@ model already had, not a limit of the command. The seat is also what such a sess
 speak for the store scope: `limit-declare --scope-kind store` reads its declarer from a live
 supervisor binding, and the seat is the binding a session that manages the store holds.
 
+The seat has no handover yet. `linkage-handover` maps its role back to the role's own level, so
+`--role supervisor --scope store` looks for an initiative named `store` and refuses
+`unregistered_scope`; the incumbent re-binding is a no-op, and no other command archives a
+binding. A second task asking for a seat that is already held is therefore told to hand it over
+deliberately, which for this one scope no command yet does. Replacing the store-scope owner needs
+either `linkage-handover` to select the scope kind or a lifecycle operation of its own, and that
+is a decision this command does not make.
+
 ## The transaction protocol
 
 Every write path validates completely before its first mutation:
