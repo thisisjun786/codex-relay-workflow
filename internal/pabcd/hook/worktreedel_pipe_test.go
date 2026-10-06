@@ -328,3 +328,27 @@ func TestWorktreeDelPipeCompoundSelect(t *testing.T) {
 	r.allowed(t, "printf x | select y in a; do cat; break; done", "printf x | select y in a; do echo $y; done")
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeBraceQuotedClose pins the ${...} expansion whose closing } stands inside quotes or is escaped:
+// bash reads such a } as data and ends the expansion at the real one, so the # after it is no comment and the | and
+// the shell are read. A counter that decrements on any } closes the expansion early, the # then opens a comment and
+// swallows the rest of the line: on the head this test was written against, printf 'rm -rf ../repo' ${x:-"}" #} | bash
+// was allowed while bash ran the piped program (checked in bash 5.3.9 with a touch stand-in for rm).
+func TestWorktreeDelPipeBraceQuotedClose(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' ${x:-\"}\" #} | bash",
+		"printf 'rm -rf ../repo' ${x:-a\"}\"b #} | bash",
+		"printf 'rm -rf ../repo' ${x:-\"}\" #} |& bash",
+		"printf 'rm -rf ../repo' ${x:-\"}\" #} |\\nbash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A } that really ends the expansion, and a # right after the expansion, stay as they were.
+	r.allowed(t,
+		"echo ${x:- #}",
+		"printf x ${x:- #} | cat",
+		"printf x | # c\\ncat",
+	)
+	r.intact(t)
+}

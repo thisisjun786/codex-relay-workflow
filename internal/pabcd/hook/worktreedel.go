@@ -2427,7 +2427,6 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 func worktreeDelUnreadablePipes(text string) (string, bool) {
 	r := worktreeDelQuoteReader{prev: ' '}
 	depth := 0
-	brace := 0 // the ${...} parameter expansions the reader stands in: a # inside one is data, never a comment (c13)
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		if r.escapes(text, i) {
@@ -2436,7 +2435,13 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 			continue
 		}
 		state := r.state
-		worktreeDelUnreadablePipeStep(&r, text, i, &brace)
+		if state == worktreeDelQuotePlain {
+			if next, ok := worktreeDelUnreadablePipeSkip(text, i, &r); ok { // a ${...}: a # inside it is data (c13)
+				i = next - 1
+				continue
+			}
+		}
+		r.step(c)
 		if state != worktreeDelQuotePlain {
 			continue
 		}
@@ -2452,8 +2457,8 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 				i++
 				continue
 			}
-			start := worktreeDelUnreadablePipeStart(text, i+1, &r, &brace)
-			end := worktreeDelUnreadablePipeEnd(text, start, &r, &depth, &brace)
+			start := worktreeDelUnreadablePipeStart(text, i+1, &r)
+			end := worktreeDelUnreadablePipeEnd(text, start, &r, &depth)
 			region := strings.TrimSpace(text[start:end])
 			if worktreeDelUnreadableOpensCompound(region) {
 				end = len(text) // a compound keeps the pipe to its own end, which a separator or a case pattern can hide
@@ -2468,30 +2473,32 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 	return "", false
 }
 
-// worktreeDelUnreadablePipeStep steps the reader over one byte of the pipe scan and keeps the ${...} parameter
-// expansion depth, the way worktreeDelSubstitutions does it: a # inside an expansion is data and never opens a comment
-// (CRW-726, c13), so a reader that read the # of ${x:- #} as a comment would swallow the | and the shell after it.
-func worktreeDelUnreadablePipeStep(r *worktreeDelQuoteReader, text string, i int, brace *int) {
-	if r.state == worktreeDelQuotePlain || r.state == worktreeDelQuoteDouble {
-		switch {
-		case text[i] == '$' && i+1 < len(text) && text[i+1] == '{':
-			*brace++
-		case text[i] == '}' && *brace > 0:
-			*brace--
-		}
+// worktreeDelUnreadablePipeSkip is the index after the ${...} parameter expansion that opens at i, when one does.
+// The whole expansion is read at once by worktreeDelBraceEnd, which ends it at the } that really closes it: a } inside
+// the expansion's own quotes or escaped by a backslash is data, so it does not close the expansion early and the #
+// after it opens no comment (CRW-726, c13). The reader's prev is set to a word byte, because the expansion is part of
+// the word it stands in and a # right after it is data too. A | inside the expansion is either data or inside a
+// substitution, whose body the substitution reader judges at its own depth, so nothing is missed by skipping it.
+func worktreeDelUnreadablePipeSkip(text string, i int, r *worktreeDelQuoteReader) (int, bool) {
+	if i+1 >= len(text) || text[i] != '$' || text[i+1] != '{' {
+		return i, false
 	}
-	r.brace = *brace > 0
-	r.step(text[i])
+	n := worktreeDelBraceEnd(text[i+2:]) + 2
+	if i+n > len(text) {
+		n = len(text) - i
+	}
+	r.prev = 'x'
+	return i + n, true
 }
 
 // worktreeDelUnreadablePipeStart is the first byte of the command a pipe feeds. The operator's own suffix is skipped:
 // the & of |& pipes the standard error as well, and a pipeline continues on the next line, so whitespace and a comment
 // after the operator are no command either. The reader is stepped over the skipped bytes, so it stands where the shell
 // reads the command (CRW-726, c15(b)).
-func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteReader, brace *int) int {
+func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteReader) int {
 	i := from
 	if i < len(text) && text[i] == '&' && r.state == worktreeDelQuotePlain { // the & of |&
-		worktreeDelUnreadablePipeStep(r, text, i, brace)
+		r.step(text[i])
 		i++
 	}
 	for i < len(text) {
@@ -2502,12 +2509,12 @@ func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteRe
 			continue
 		}
 		if r.state == worktreeDelQuoteComment {
-			worktreeDelUnreadablePipeStep(r, text, i, brace)
+			r.step(c)
 			i++
 			continue
 		}
 		if r.state == worktreeDelQuotePlain && (strings.IndexByte(" \t\r\n", c) >= 0 || c == '#') {
-			worktreeDelUnreadablePipeStep(r, text, i, brace)
+			r.step(c)
 			i++
 			continue
 		}
@@ -2536,7 +2543,7 @@ func worktreeDelUnreadableOpensCompound(text string) bool {
 // caller resumes at the answer without replaying the prefix and the whole scan stays linear. The byte it returns has
 // not been stepped, so the caller steps it once. An unbalanced delimiter does not swallow the rest: a depth that never
 // returns to zero still ends the region at the next separator at that depth or, failing that, at the end of the text.
-func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteReader, depth, brace *int) int {
+func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteReader, depth *int) int {
 	start := *depth
 	for i := from; i < len(text); i++ {
 		c := text[i]
@@ -2548,11 +2555,11 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 		if r.state == worktreeDelQuotePlain {
 			switch c {
 			case '(', '{':
-				worktreeDelUnreadablePipeStep(r, text, i, brace)
+				r.step(c)
 				*depth++
 				continue
 			case ')', '}':
-				worktreeDelUnreadablePipeStep(r, text, i, brace)
+				r.step(c)
 				if *depth > 0 {
 					*depth--
 				}
@@ -2563,7 +2570,7 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 				}
 			}
 		}
-		worktreeDelUnreadablePipeStep(r, text, i, brace)
+		r.step(c)
 	}
 	return len(text)
 }
