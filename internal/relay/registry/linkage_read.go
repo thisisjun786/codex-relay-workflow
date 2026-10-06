@@ -15,6 +15,14 @@ import (
 
 func unreadableDetail(err error) string { return store.StoredSQLiteError(err) }
 
+// StoreScopeSupervisor is the live store-scope supervisor: the seat a session that manages the
+// store itself holds (CRW-450), the one supervisor scope no Linear level owns. The store's kind
+// and key stay in this package, with the other scope constants, so a reader of the walk names the
+// seat without spelling its scope itself.
+func (r *Registry) StoreScopeSupervisor(ctx context.Context) ([]contract.OrderedObject, error) {
+	return r.Owners(ctx, scopeStore, scopeStore)
+}
+
 // raised is the part of a reader's failure Python does not answer as unreadable: the
 // UnicodeEncodeError a str sqlite3 cannot bind raises (it catches sqlite3.Error only), or nil.
 func raised(err error) error {

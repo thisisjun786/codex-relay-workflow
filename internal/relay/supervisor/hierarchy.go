@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -50,11 +51,95 @@ func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolutio
 	if key, ok := strings.CutPrefix(relationshipID, "project:"); ok {
 		return c.resolveNoticeProject(ctx, key)
 	}
-	reading, err := c.Linkage.Up(ctx, relationshipID)
+	reading, err := c.hierarchyReading(ctx, relationshipID)
 	if err != nil {
 		return Resolution{}, err
 	}
 	return resolveReading(reading, "relationship "+pyvalue.StrRepr(relationshipID))
+}
+
+// scopeKindStore is the store scope's kind: the one supervisor seat no Linear level owns, which
+// CRW-450 made bindable (a supervisor's own scope is an initiative; the store seat is the one
+// exception). resolveReading recognises it so a recipient read from the seat is recorded as
+// coming from the store instead of being given an initiative key it does not have.
+const scopeKindStore = "store"
+
+// hierarchyReading is the hierarchy a resolution is decided from: the linkage walk, with the
+// store-scope supervisor folded in as a level of its own when the walk named no initiative
+// supervisor. The folded level keeps the seat's own scope kind, and that is the record of the
+// substitution: the recipient came from the store scope, not from an initiative.
+func (c *Channel) hierarchyReading(ctx context.Context, relationshipID string) (map[string]any, error) {
+	reading, err := c.Linkage.Up(ctx, relationshipID)
+	if err != nil {
+		return nil, err
+	}
+	return c.withStoreSeat(ctx, reading, "relationship "+pyvalue.StrRepr(relationshipID))
+}
+
+// withStoreSeat folds the store seat into a readable walk that named a project owner and no
+// initiative supervisor. The order is the decided one: the initiative execution owner first, the
+// store-scope supervisor second, and unregistered_scope when neither exists. A walk that names an
+// initiative supervisor, or whose project owner is missing, is handed back untouched, so a seat
+// that could not answer for a report the initiative owns never decides one.
+func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, where string) (map[string]any, error) {
+	if c.Store == nil || reading["readable"] != true {
+		return reading, nil
+	}
+	levels, _ := reading["levels"].([]any)
+	project, initiative := false, false
+	for _, raw := range levels {
+		level, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch level["scopeKind"] {
+		case "project":
+			project = levelOwner(level) != ""
+		case "initiative":
+			initiative = levelOwner(level) != ""
+		}
+	}
+	if initiative || !project {
+		return reading, nil
+	}
+	held, err := (&registry.Registry{Store: c.Store}).StoreScopeSupervisor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(held) > 1 {
+		candidates := make([]any, len(held))
+		for i, one := range held {
+			candidates[i] = one.Get("taskId")
+		}
+		return nil, Refusal{"duplicate_scope_owner", "the store scope has more than one live supervisor above " + where + "; this sender will not choose between them: " + pythonRepr(candidates)}
+	}
+	if len(held) == 0 {
+		return reading, nil
+	}
+	seat := held[0]
+	folded := make([]any, 0, len(levels)+1)
+	folded = append(folded, levels...)
+	folded = append(folded, map[string]any{"scopeKind": seat.Get("scopeKind"), "scopeKey": seat.Get("scopeKey"),
+		"owner": map[string]any{"taskId": seat.Get("taskId")}, "depth": len(levels)})
+	out := make(map[string]any, len(reading)+1)
+	for key, value := range reading {
+		out[key] = value
+	}
+	out["levels"] = folded
+	return out, nil
+}
+
+// levelOwner reads the task a linkage level names, whether the walk wrote the owner as a task id
+// or as the object it is recorded in.
+func levelOwner(level map[string]any) string {
+	switch value := level["owner"].(type) {
+	case string:
+		return value
+	case map[string]any:
+		owner, _ := value["taskId"].(string)
+		return owner
+	}
+	return ""
 }
 
 func resolveReading(reading map[string]any, where string) (Resolution, error) {
@@ -93,19 +178,15 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 			if !ok {
 				continue
 			}
-			owner := ""
-			switch value := level["owner"].(type) {
-			case string:
-				owner = value
-			case map[string]any:
-				owner, _ = value["taskId"].(string)
-			}
+			owner := levelOwner(level)
 			key, _ := level["scopeKey"].(string)
 			switch level["scopeKind"] {
 			case "project":
 				result.ProjectKey, result.Sender = key, owner
 			case "initiative":
 				result.InitiativeKey, result.Recipient = key, owner
+			case scopeKindStore:
+				result.Recipient = owner
 			}
 		}
 	}
