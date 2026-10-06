@@ -18,8 +18,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// upgradeEnv is one run's environment: temporary homes, a fake crw and a fake gh, a release
-// directory holding one verified archive, and a temporary relay store.
+// upgradeEnv is one run's environment: temporary homes, a fake crw and gh, a release directory
+// holding one verified archive, and a temporary relay store.
 type upgradeEnv struct {
 	t       *testing.T
 	home    string
@@ -28,10 +28,8 @@ type upgradeEnv struct {
 	release string
 	calls   string
 	ghCalls string
-	path    string
 }
 
-// upgradeHarnessOptions is what one harness leaves in place.
 type upgradeHarnessOptions struct {
 	version      string
 	openAttempts int
@@ -41,13 +39,11 @@ type upgradeHarnessOptions struct {
 	mutateConfig bool
 }
 
-// upgradeGhAnswer is what the fake gh answers for one API path, and its exit status.
 type upgradeGhAnswer struct {
 	Body string
 	Exit int
 }
 
-// upgradeHarness builds the temporary tree and the fakes.
 func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 	t.Helper()
 	home := t.TempDir()
@@ -66,17 +62,16 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 	}
 	h := &upgradeEnv{t: t, home: home, codex: codex, state: state, release: t.TempDir(),
 		calls: filepath.Join(home, "crw-calls.jsonl"), ghCalls: filepath.Join(home, "gh-calls.jsonl")}
-	h.writeArchive(opts.version, opts.installExit, opts.mutateConfig)
+	h.writeArchive(opts)
 	h.writeStore(opts.openAttempts)
 	h.writeFakes(opts.gh)
 	h.installPointer(opts.pointer)
 	return h
 }
 
-// writeArchive builds a release directory holding one linux/amd64 archive and its SHA256SUMS.
-func (h *upgradeEnv) writeArchive(version string, installExit int, mutateConfig bool) {
+func (h *upgradeEnv) writeArchive(opts upgradeHarnessOptions) {
 	h.t.Helper()
-	body := upgradeTarGz(h.t, map[string]string{"crw": fakeCRWScript(version, installExit, mutateConfig)})
+	body := upgradeTarGz(h.t, map[string]string{"crw": fakeCRWScript(opts.version, opts.installExit, opts.mutateConfig)})
 	name := "crw_0.4.0_linux_amd64.tar.gz"
 	if err := os.WriteFile(filepath.Join(h.release, name), body, 0o600); err != nil {
 		h.t.Fatal(err)
@@ -88,8 +83,8 @@ func (h *upgradeEnv) writeArchive(version string, installExit int, mutateConfig 
 	}
 }
 
-// fakeCRWScript is the shell body of the extracted archive's crw: it records its arguments,
-// answers --version, and ends install with the given status.
+// fakeCRWScript is the extracted archive's crw: it answers --version and ends install with the
+// given status, optionally having changed the configuration first.
 func fakeCRWScript(version string, installExit int, mutateConfig bool) string {
 	mutate := ""
 	if mutateConfig {
@@ -101,7 +96,6 @@ func fakeCRWScript(version string, installExit int, mutateConfig bool) string {
 		"exit 0\n"
 }
 
-// upgradeTarGz is a gzip-compressed tar holding the named files.
 func upgradeTarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -124,7 +118,6 @@ func upgradeTarGz(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// writeStore leaves a relay store with the given number of attempts that are not settled.
 func (h *upgradeEnv) writeStore(openAttempts int) {
 	h.t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(h.state, "relay.sqlite3"))
@@ -135,40 +128,37 @@ func (h *upgradeEnv) writeStore(openAttempts int) {
 	if _, err := db.Exec("CREATE TABLE attempts (request_id TEXT, internal_state TEXT)"); err != nil {
 		h.t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
-		if _, err := db.Exec("INSERT INTO attempts VALUES (?, 'settled')", fmt.Sprintf("settled-%d", i)); err != nil {
-			h.t.Fatal(err)
+	for i := 0; i < 3+openAttempts; i++ {
+		state := "settled"
+		if i >= 3 {
+			state = "in_flight"
 		}
-	}
-	for i := 0; i < openAttempts; i++ {
-		if _, err := db.Exec("INSERT INTO attempts VALUES (?, 'in_flight')", fmt.Sprintf("open-%d", i)); err != nil {
+		if _, err := db.Exec("INSERT INTO attempts VALUES (?, ?)", fmt.Sprintf("row-%d", i), state); err != nil {
 			h.t.Fatal(err)
 		}
 	}
 }
 
-// writeFakes places the fake crw and gh on PATH. The fake crw records its arguments, answers
-// doctor and --version, and answers service status; the fake gh answers the API paths asked.
+// writeFakes places the fake crw and gh on PATH: crw records its arguments and answers doctor,
+// --version and service status; gh answers the API paths asked.
 func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
 	h.t.Helper()
 	bin := filepath.Join(h.home, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		h.t.Fatal(err)
 	}
-	doctor := "{\"stateSelection\":{\"path\":\"" + h.state + "\"}}"
-	status := "{\"running\":true,\"launchPolicy\":{\"matchesRunning\":\"same\"}}"
 	crw := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + coreShellQuote(h.calls) + "\n" +
-		"if [ \"$2\" = \"doctor\" ]; then printf '%s\\n' " + coreShellQuote(doctor) + "; exit 0; fi\n" +
+		"if [ \"$2\" = \"doctor\" ]; then printf '%s\\n' " + coreShellQuote("{\"stateSelection\":{\"path\":\""+h.state+"\"}}") + "; exit 0; fi\n" +
 		"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + coreShellQuote("v0.4.0-4633-geb2567df7") + "; exit 0; fi\n" +
-		"if [ \"$1\" = \"service\" ] && [ \"$3\" = \"status\" ]; then printf '%s\\n' " + coreShellQuote(status) + "; exit 0; fi\n" +
+		"if [ \"$1\" = \"service\" ] && [ \"$3\" = \"status\" ]; then printf '%s\\n' " + coreShellQuote("{\"running\":true,\"launchPolicy\":{\"matchesRunning\":\"same\"}}") + "; exit 0; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(bin, "crw"), []byte(crw), 0o700); err != nil {
 		h.t.Fatal(err)
 	}
 	var body strings.Builder
 	body.WriteString("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + coreShellQuote(h.ghCalls) + "\n")
-	body.WriteString("path=\"$2\"\ncase \"$path\" in\n")
+	body.WriteString("case \"$2\" in\n")
 	for path, answer := range gh {
 		body.WriteString(coreShellQuote(path) + ") printf '%s\\n' " + coreShellQuote(answer.Body) + "; exit " + fmt.Sprint(answer.Exit) + ";;\n")
 	}
@@ -176,12 +166,11 @@ func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(body.String()), 0o700); err != nil {
 		h.t.Fatal(err)
 	}
-	h.path = os.Getenv("PATH")
-	h.t.Setenv("PATH", bin+string(os.PathListSeparator)+h.path)
+	h.t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// installPointer places the runtime pointer the run reads, with the fake crw and relay in its
-// bin directory, so the snapshot and stop steps call the fake too.
+// installPointer places the runtime pointer, with the fakes in its bin so the snapshot and stop
+// steps call them too.
 func (h *upgradeEnv) installPointer(want bool) {
 	h.t.Helper()
 	if !want {
@@ -191,22 +180,20 @@ func (h *upgradeEnv) installPointer(want bool) {
 	if err := os.MkdirAll(filepath.Join(target, "bin"), 0o700); err != nil {
 		h.t.Fatal(err)
 	}
+	body, err := os.ReadFile(filepath.Join(h.home, "bin", "crw"))
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	for _, name := range []string{"crw", "codex-session-relay"} {
-		body, err := os.ReadFile(filepath.Join(h.home, "bin", "crw"))
-		if err != nil {
-			h.t.Fatal(err)
-		}
 		if err := os.WriteFile(filepath.Join(target, "bin", name), body, 0o700); err != nil {
 			h.t.Fatal(err)
 		}
 	}
-	link := filepath.Join(h.home, ".local", "share", "crw-runtime", "current")
-	if err := os.Symlink(target, link); err != nil {
+	if err := os.Symlink(target, filepath.Join(h.home, ".local", "share", "crw-runtime", "current")); err != nil {
 		h.t.Fatal(err)
 	}
 }
 
-// run performs the command with the harness configuration and returns its exit status.
 func (h *upgradeEnv) run(args ...string) int {
 	h.t.Helper()
 	old := upgradeConfig
@@ -223,32 +210,20 @@ func (h *upgradeEnv) run(args ...string) int {
 	return Run(context.Background(), append([]string{"runtime-upgrade"}, args...), strings.NewReader(""), &out, &errOut)
 }
 
-// crwCalls is the fake crw's recorded argument lines.
-func (h *upgradeEnv) crwCalls() []string { return upgradeCallLines(h.t, h.calls) }
-
-// ghCallLines is the fake gh's recorded argument lines.
-func (h *upgradeEnv) ghCallLines() []string { return upgradeCallLines(h.t, h.ghCalls) }
-
-// upgradeCallLines reads one fake's recorded argument lines.
+// upgradeCallLines reads one fake's recorded argument lines; a fake that never ran reads empty.
 func upgradeCallLines(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	var out []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
+	return strings.Fields(string(data))
 }
 
-// recordOf reads the run's record.json.
+// crwCalls is the fake crw's recorded argument lines; ghCallLines is the fake gh's.
+func (h *upgradeEnv) crwCalls() []string    { return upgradeCallLines(h.t, h.calls) }
+func (h *upgradeEnv) ghCallLines() []string { return upgradeCallLines(h.t, h.ghCalls) }
+
 func (h *upgradeEnv) recordOf(t *testing.T) upgradeRecord {
 	t.Helper()
 	root := filepath.Join(h.home, "manage-state", "upgrades")
@@ -270,10 +245,8 @@ func (h *upgradeEnv) recordOf(t *testing.T) upgradeRecord {
 	return record
 }
 
-// upgradeGoodCommit is the full SHA the fake's short hash resolves to.
 const upgradeGoodCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-// upgradeGhPaths answers the two API paths a healthy run asks for.
 func upgradeGhPaths(commit string) map[string]upgradeGhAnswer {
 	return map[string]upgradeGhAnswer{
 		"repos/owner/repo/commits/eb2567df7":                 {Body: "{\"sha\":\"" + commit + "\"}"},

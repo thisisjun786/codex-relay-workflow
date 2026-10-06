@@ -10,15 +10,13 @@ import (
 	"time"
 )
 
-// runtime-upgrade replaces the relay runtime from a release archive whose commit is green on
-// the dev gate, after proving that no relay attempt is still open. It is the management tool
-// runtime_upgrade.sh as a product surface: the host values come from the configuration, and
-// every step's command, exit status and output head is left behind in W/record.json.
+// runtime-upgrade replaces the relay runtime from a release archive whose commit is green on the
+// dev gate, after proving no relay attempt is still open. Every step's command, exit status and
+// output head is left in W/record.json.
 
 // upgradeRecordHead is how many bytes of a command's output the record keeps.
 const upgradeRecordHead = 2000
 
-// The exit statuses the command reports.
 const (
 	upgradeExitUnexpected   = 1
 	upgradeExitRefused      = 2
@@ -26,7 +24,6 @@ const (
 	upgradeExitPostCheck    = 4
 )
 
-// The refusal names, written to the record and to stderr.
 const (
 	upgradeReasonRepository    = "repository_unconfigured"
 	upgradeReasonSumsFailed    = "sums_failed"
@@ -40,7 +37,6 @@ const (
 	upgradeReasonUpdateFailed  = "update_failed"
 )
 
-// The step names the record uses.
 const (
 	upgradeStepSums      = "sums"
 	upgradeStepExtract   = "extract"
@@ -57,19 +53,16 @@ const (
 // upgradeUsage is the one line the command prints.
 const upgradeUsage = "usage: crw manage runtime-upgrade --release-dir DIR [--issue KEY] [--dry-run]"
 
-// upgradeOptions is a parsed command line.
 type upgradeOptions struct {
 	ReleaseDir string
 	Issue      string
 	DryRun     bool
 }
 
-// upgradeConfig is the configuration a run reads. It is a variable so a test can supply a
-// repository and a relay state before the configuration file's loader lands; the command
-// otherwise reads the package's defaults, which name no repository and no relay state.
+// upgradeConfig is the configuration a run reads: a variable, so a test can supply a repository
+// and a relay state before the configuration file's loader lands. The defaults name neither.
 var upgradeConfig = func(e *Env) *Config { return coreDefaults(e) }
 
-// upgradeStepRecord is one step as record.json keeps it.
 type upgradeStepRecord struct {
 	Step    string   `json:"step"`
 	Command []string `json:"command,omitempty"`
@@ -77,7 +70,6 @@ type upgradeStepRecord struct {
 	Output  string   `json:"output,omitempty"`
 }
 
-// upgradeRecord is W/record.json: what the run did, step by step.
 type upgradeRecord struct {
 	ReleaseDir string              `json:"release_dir"`
 	Issue      string              `json:"issue,omitempty"`
@@ -90,7 +82,6 @@ type upgradeRecord struct {
 	Steps      []upgradeStepRecord `json:"steps"`
 }
 
-// upgradeCommand is crw manage runtime-upgrade.
 var upgradeCommand = Command{
 	Name:    "runtime-upgrade",
 	Summary: "replace the relay runtime from a verified release archive",
@@ -100,7 +91,7 @@ var upgradeCommand = Command{
 func init() { Register(upgradeCommand) }
 
 // upgradeRun is crw manage runtime-upgrade. The repository is a precondition: without it the
-// first gh call could not be made, so the command refuses before any step runs.
+// first gh call could not be made.
 func upgradeRun(ctx context.Context, e *Env, args []string) int {
 	opts, code, handled := upgradeParse(args)
 	if handled {
@@ -120,8 +111,8 @@ func upgradeRun(ctx context.Context, e *Env, args []string) int {
 	return run.run()
 }
 
-// upgradeParse reads the command line. handled reports that it is finished with: a help flag,
-// an unknown argument, or a missing --release-dir.
+// upgradeParse reads the command line; handled reports a help flag, an unknown argument, or a
+// missing --release-dir.
 func upgradeParse(args []string) (opts upgradeOptions, code int, handled bool) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -154,7 +145,6 @@ func upgradeParse(args []string) (opts upgradeOptions, code int, handled bool) {
 	return opts, 0, false
 }
 
-// upgradeRunState is one run: what it reads, where it records, and the steps it has taken.
 type upgradeRunState struct {
 	ctx  context.Context
 	e    *Env
@@ -166,18 +156,19 @@ type upgradeRunState struct {
 	archive string
 	commit  string
 	state   string
+	started time.Time
 
 	beforeConfig string
-
-	steps []upgradeStepRecord
+	steps        []upgradeStepRecord
 }
 
 // run creates the record directory, performs the steps, and leaves record.json behind.
 func (r *upgradeRunState) run() int {
-	r.dir = filepath.Join(r.cfg.StateDir, "upgrades", r.e.Now().UTC().Format("20060102T150405Z"))
-	if err := os.MkdirAll(r.dir, 0o700); err != nil {
+	r.started = r.e.Now().UTC()
+	r.dir = filepath.Join(r.cfg.StateDir, "upgrades", r.started.Format("20060102T150405Z"))
+	if err := upgradeRunDir(r.dir); err != nil {
 		fmt.Fprintf(r.e.Stderr, "crw manage runtime-upgrade: error: %v\n", err)
-		return upgradeExitUnexpected
+		return upgradeExitRefused
 	}
 	code, reason := r.execute()
 	if err := r.write(reason); err != nil {
@@ -217,11 +208,12 @@ func (r *upgradeRunState) execute() (int, string) {
 	updateCode := r.stopAndUpdate()
 	r.start()
 
-	if code, reason = r.postCheck(); code != 0 {
-		return code, reason
-	}
+	postCode, postReason := r.postCheck()
 	if updateCode != 0 {
 		return updateCode, upgradeReasonUpdateFailed
+	}
+	if postCode != 0 {
+		return postCode, postReason
 	}
 	return 0, ""
 }
@@ -232,7 +224,7 @@ func (r *upgradeRunState) write(reason string) error {
 		ReleaseDir: r.opts.ReleaseDir,
 		Issue:      r.opts.Issue,
 		DryRun:     r.opts.DryRun,
-		StartedAt:  r.e.Now().UTC().Format(time.RFC3339),
+		StartedAt:  r.started.Format(time.RFC3339),
 		Directory:  r.dir,
 		ExtractDir: r.extract,
 		Outcome:    "ok",
@@ -249,7 +241,6 @@ func (r *upgradeRunState) write(reason string) error {
 	return os.WriteFile(filepath.Join(r.dir, "record.json"), append(data, '\n'), 0o600)
 }
 
-// note appends one step to the record.
 func (r *upgradeRunState) note(step string, argv []string, code int, out string, err error) {
 	text := out
 	if err != nil {
@@ -258,9 +249,11 @@ func (r *upgradeRunState) note(step string, argv []string, code int, out string,
 	r.steps = append(r.steps, upgradeStepRecord{Step: step, Command: argv, Exit: code, Output: upgradeOutputHead(text)})
 }
 
-// command runs a command, records it under step, and returns its stdout and exit status.
-func (r *upgradeRunState) command(step, exe string, args ...string) (string, int, error) {
-	out, code, err := upgradeRunCommand(r.ctx, exe, args...)
-	r.note(step, append([]string{exe}, args...), code, out, err)
+// command runs one command under its own timeout and records it.
+func (r *upgradeRunState) command(ctx context.Context, timeout time.Duration, step, exe string, args ...string) (string, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, stderr, code, err := upgradeRunCommand(ctx, exe, args...)
+	r.note(step, append([]string{exe}, args...), code, out+stderr, err)
 	return out, code, err
 }

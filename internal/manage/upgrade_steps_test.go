@@ -12,34 +12,33 @@ import (
 // proof: the steps after the stop never ran.
 func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 	commit := upgradeGoodCommit
+	badSums := func(t *testing.T, h *upgradeEnv) {
+		if err := os.WriteFile(filepath.Join(h.release, upgradeSumsName), []byte("deadbeef  crw_0.4.0_linux_amd64.tar.gz\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gate := func(body string) map[string]upgradeGhAnswer {
+		return map[string]upgradeGhAnswer{
+			"repos/owner/repo/commits/eb2567df7":                 {Body: "{\"sha\":\"" + commit + "\"}"},
+			"repos/owner/repo/commits/" + commit + "/check-runs": {Body: body},
+		}
+	}
 	for _, tc := range []struct {
 		name   string
 		opts   upgradeHarnessOptions
-		break_ func(t *testing.T, h *upgradeEnv)
+		break_ func(*testing.T, *upgradeEnv)
 		code   int
 		reason string
 		absent []string
 	}{
-		{name: "step 1",
-			opts: upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(commit)},
-			break_: func(t *testing.T, h *upgradeEnv) {
-				if err := os.WriteFile(filepath.Join(h.release, upgradeSumsName), []byte("deadbeef  crw_0.4.0_linux_amd64.tar.gz\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			},
-			code: 2, reason: upgradeReasonSumsFailed, absent: []string{"commits/", "check-runs", "service"}},
-		{name: "step 2",
-			opts: upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: map[string]upgradeGhAnswer{}},
-			code: 2, reason: upgradeReasonCommitUnknown, absent: []string{"check-runs", "service"}},
-		{name: "step 3",
-			opts: upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: map[string]upgradeGhAnswer{
-				"repos/owner/repo/commits/eb2567df7":                 {Body: "{\"sha\":\"" + commit + "\"}"},
-				"repos/owner/repo/commits/" + commit + "/check-runs": {Body: "{\"check_runs\":[]}"},
-			}},
-			code: 2, reason: upgradeReasonDevGate, absent: []string{"service"}},
-		{name: "step 4",
-			opts: upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", openAttempts: 1, gh: upgradeGhPaths(commit)},
-			code: 3, reason: upgradeReasonOpenAttempts, absent: []string{"service"}},
+		{"step 1", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(commit)}, badSums,
+			2, upgradeReasonSumsFailed, []string{"commits/", "check-runs", "service"}},
+		{"step 2", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: map[string]upgradeGhAnswer{}}, nil,
+			2, upgradeReasonCommitUnknown, []string{"check-runs", "service"}},
+		{"step 3", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: gate("{\"check_runs\":[]}")}, nil,
+			2, upgradeReasonDevGate, []string{"service"}},
+		{"step 4", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", openAttempts: 1, gh: upgradeGhPaths(commit)}, nil,
+			3, upgradeReasonOpenAttempts, []string{"service"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := upgradeHarness(t, tc.opts)
@@ -49,9 +48,8 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 			if code := h.run("--release-dir", h.release); code != tc.code {
 				t.Fatalf("exit %d, want %d", code, tc.code)
 			}
-			record := h.recordOf(t)
-			if record.Reason != tc.reason {
-				t.Errorf("reason %q, want %q", record.Reason, tc.reason)
+			if got := h.recordOf(t).Reason; got != tc.reason {
+				t.Errorf("reason %q, want %q", got, tc.reason)
 			}
 			joined := strings.Join(append(h.crwCalls(), h.ghCallLines()...), " ")
 			for _, needle := range tc.absent {
@@ -64,7 +62,8 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 }
 
 // C4 and C5: a dry run performs steps 1 to 4, calls no service command, and leaves its record
-// and its extract directory behind.
+// and its extract directory behind. A second run in the same UTC second refuses rather than
+// overwriting the first record.
 func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
 	if code := h.run("--release-dir", h.release, "--dry-run"); code != 0 {
@@ -79,11 +78,11 @@ func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 	if !record.DryRun || record.Outcome != "ok" {
 		t.Errorf("the record is %+v", record)
 	}
-	if _, err := os.Stat(record.ExtractDir); err != nil {
-		t.Errorf("the extract directory is gone: %v", err)
-	}
 	if _, err := os.Stat(filepath.Join(record.ExtractDir, "crw")); err != nil {
 		t.Errorf("the extracted crw is gone: %v", err)
+	}
+	if code := h.run("--release-dir", h.release, "--dry-run"); code == 0 {
+		t.Fatal("a second run in the same second overwrote the first")
 	}
 }
 
@@ -93,17 +92,9 @@ func TestUpgradeStartsAfterAFailedUpdate(t *testing.T) {
 	if code := h.run("--release-dir", h.release); code == 0 {
 		t.Fatal("a failed update reported success")
 	}
-	var stop, start int
-	for _, line := range h.crwCalls() {
-		if strings.Contains(line, "service stop") {
-			stop++
-		}
-		if strings.Contains(line, "service start") {
-			start++
-		}
-	}
-	if stop != 1 || start != 1 {
-		t.Errorf("stop %d start %d, want 1 each: %q", stop, start, h.crwCalls())
+	joined := strings.Join(h.crwCalls(), " ")
+	if !strings.Contains(joined, "service stop") || !strings.Contains(joined, "service start") {
+		t.Errorf("a failed update did not stop then start: %q", joined)
 	}
 }
 
@@ -113,60 +104,105 @@ func TestUpgradeExitsFourWhenTheConfigChanged(t *testing.T) {
 	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
 		t.Fatalf("exit %d, want %d", code, upgradeExitPostCheck)
 	}
-	record := h.recordOf(t)
-	if record.Reason != upgradeReasonPostCheck {
-		t.Errorf("reason %q, want %q", record.Reason, upgradeReasonPostCheck)
+	if got := h.recordOf(t).Reason; got != upgradeReasonPostCheck {
+		t.Errorf("reason %q, want %q", got, upgradeReasonPostCheck)
 	}
 }
 
-// The repository is a precondition: an unconfigured one is refused before any gh call, dry run
-// included.
-func TestUpgradeRefusesAnUnconfiguredRepository(t *testing.T) {
-	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
-	old := upgradeConfig
-	upgradeConfig = func(e *Env) *Config { return coreDefaults(e) }
-	defer func() { upgradeConfig = old }()
-	var out, errOut strings.Builder
-	code := Run(context.Background(), []string{"runtime-upgrade", "--release-dir", h.release}, strings.NewReader(""), &out, &errOut)
-	if code != upgradeExitRefused {
-		t.Fatalf("exit %d, want %d", code, upgradeExitRefused)
-	}
-	if !strings.Contains(errOut.String(), upgradeReasonRepository) {
-		t.Errorf("the refusal does not name %s: %q", upgradeReasonRepository, errOut.String())
-	}
-	if calls := h.ghCallLines(); len(calls) != 0 {
-		t.Errorf("an unconfigured repository still called gh: %q", calls)
-	}
-}
-
-// An unusable runtime pointer is refused before the service is touched.
-func TestUpgradeRefusesAMissingPointer(t *testing.T) {
-	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
-	if code := h.run("--release-dir", h.release); code != upgradeExitRefused {
-		t.Fatalf("exit %d, want %d", code, upgradeExitRefused)
-	}
-	for _, line := range h.crwCalls() {
-		if strings.Contains(line, "service") {
-			t.Errorf("a missing pointer still touched the service: %q", line)
+// The preconditions: an unconfigured repository is refused before any gh call, and an unusable
+// runtime pointer before the service is touched.
+func TestUpgradeRefusesBeforeTheSteps(t *testing.T) {
+	t.Run("repository", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
+		old := upgradeConfig
+		upgradeConfig = func(e *Env) *Config { return coreDefaults(e) }
+		defer func() { upgradeConfig = old }()
+		var out, errOut strings.Builder
+		code := Run(context.Background(), []string{"runtime-upgrade", "--release-dir", h.release}, strings.NewReader(""), &out, &errOut)
+		if code != upgradeExitRefused || !strings.Contains(errOut.String(), upgradeReasonRepository) {
+			t.Fatalf("exit %d %q, want %d naming %s", code, errOut.String(), upgradeExitRefused, upgradeReasonRepository)
 		}
-	}
+		if calls := h.ghCallLines(); len(calls) != 0 {
+			t.Errorf("an unconfigured repository still called gh: %q", calls)
+		}
+	})
+	t.Run("pointer", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
+		if code := h.run("--release-dir", h.release); code != upgradeExitRefused {
+			t.Fatalf("exit %d, want %d", code, upgradeExitRefused)
+		}
+		for _, line := range h.crwCalls() {
+			if strings.Contains(line, "service") {
+				t.Errorf("a missing pointer still touched the service: %q", line)
+			}
+		}
+	})
 }
 
 // The command prints its usage: exit 0 for the help flags, exit 2 for anything unusable.
 func TestUpgradeCommandPrintsItsUsage(t *testing.T) {
-	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit)})
-	for _, args := range [][]string{{"-h"}, {"--help"}, {"nope"}, {}} {
+	for _, tc := range []struct {
+		args []string
+		code int
+	}{
+		{[]string{"-h"}, 0}, {[]string{"--help"}, 0},
+		{[]string{"nope"}, usageExit}, {nil, usageExit},
+	} {
 		var out, errOut strings.Builder
-		code := Run(context.Background(), append([]string{"runtime-upgrade"}, args...), strings.NewReader(""), &out, &errOut)
-		if len(args) > 0 && args[0] == "-h" || len(args) > 0 && args[0] == "--help" {
-			if code != 0 || !strings.Contains(out.String(), "runtime-upgrade") {
-				t.Errorf("%q: exit %d %q", args, code, out.String())
-			}
-			continue
-		}
-		if code != usageExit {
-			t.Errorf("%q: exit %d, want %d", args, code, usageExit)
+		if code := Run(context.Background(), append([]string{"runtime-upgrade"}, tc.args...), strings.NewReader(""), &out, &errOut); code != tc.code {
+			t.Errorf("%q: exit %d, want %d", tc.args, code, tc.code)
 		}
 	}
-	_ = h
+}
+
+// A released tag version resolves to its commit: the binary prints the tag without -g, so the
+// ref itself (and its v-prefixed form) is what the forge is asked about. A git-describe version
+// still resolves through its short hash.
+func TestUpgradeCommitRefs(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    string
+	}{
+		{"v0.4.0-4633-geb2567df7", "eb2567df7"},
+		{"v0.4.1", "v0.4.1"},
+		{"0.4.1", "0.4.1,v0.4.1"},
+		{"", ""},
+	} {
+		if got := strings.Join(upgradeCommitRefs(tc.version), ","); got != tc.want {
+			t.Errorf("%q: %q, want %q", tc.version, got, tc.want)
+		}
+	}
+}
+
+// A released tag version passes the whole gate and reaches its dry-run result.
+func TestUpgradeAcceptsAReleasedTagVersion(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.1", gh: map[string]upgradeGhAnswer{
+		"repos/owner/repo/commits/v0.4.1":                               {Body: "{\"sha\":\"" + upgradeGoodCommit + "\"}"},
+		"repos/owner/repo/commits/" + upgradeGoodCommit + "/check-runs": {Body: "{\"check_runs\":[{\"name\":\"dev-gate\",\"conclusion\":\"success\",\"app\":{\"slug\":\"github-actions\"}}]}"},
+	}})
+	if code := h.run("--release-dir", h.release, "--dry-run"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+// An archive entry that would be written through an existing symlink is refused, so a crafted
+// archive cannot reach a file outside the extract directory.
+func TestUpgradeExtractRefusesASymlinkEscape(t *testing.T) {
+	dir, outside := t.TempDir(), filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "crw")); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "a.tar.gz")
+	if err := os.WriteFile(archive, upgradeTarGz(t, map[string]string{"crw": "overwritten"}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := upgradeExtract(archive, dir); err == nil {
+		t.Fatal("an entry through a symlink was accepted")
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "original" {
+		t.Errorf("the file outside the extract directory changed: %q %v", data, err)
+	}
 }

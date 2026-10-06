@@ -20,43 +20,56 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// upgradeSumsName is the checksum file a release publishes beside its archives.
-const upgradeSumsName = "SHA256SUMS"
+const (
+	// upgradeSumsName is the checksum file a release publishes beside its archives.
+	upgradeSumsName = "SHA256SUMS"
+	// upgradeArchiveGlob is the archive this host installs: the linux/amd64 release build.
+	upgradeArchiveGlob = "crw_*_linux_amd64.tar.gz"
+	// upgradeRuntimeDir is the fixed destination whose current/bin the plugin wiring runs.
+	upgradeRuntimeDir = ".local/share/crw-runtime"
+	// upgradeCommandTimeout bounds one forge call so a hung network answer cannot hold the run.
+	upgradeCommandTimeout = 60 * time.Second
+	// upgradeInstallTimeout bounds one lifecycle command: the installer exercises the bridge and
+	// may copy a large relay state, so the forge bound would kill it midway.
+	upgradeInstallTimeout = 30 * time.Minute
+	// upgradeStoreTimeout bounds the read-only store open.
+	upgradeStoreTimeout = 5 * time.Second
+)
 
-// upgradeArchiveGlob is the archive this host installs: the linux/amd64 release build.
-const upgradeArchiveGlob = "crw_*_linux_amd64.tar.gz"
-
-// upgradeRuntimeDir is the fixed destination whose current/bin the plugin wiring runs.
-const upgradeRuntimeDir = ".local/share/crw-runtime"
-
-// upgradeCommandTimeout bounds one gh call so a hung network answer cannot hold the run.
-const upgradeCommandTimeout = 60 * time.Second
-
-// upgradeStoreTimeout bounds the read-only store open.
-const upgradeStoreTimeout = 5 * time.Second
-
-// upgradeRunCommand runs exe and returns its stdout and exit status. A command that ran and
-// failed is a status with no error; one that could not be started is an error.
-func upgradeRunCommand(ctx context.Context, exe string, args ...string) (string, int, error) {
-	ctx, cancel := context.WithTimeout(ctx, upgradeCommandTimeout)
-	defer cancel()
+// upgradeRunCommand runs exe and returns its stdout, stderr and exit status: a command that ran
+// and failed is a status with no error, one that could not be started is an error.
+func upgradeRunCommand(ctx context.Context, exe string, args ...string) (string, string, int, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	out := stdout.String()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return out, exit.ExitCode(), nil
+			return stdout.String(), stderr.String(), exit.ExitCode(), nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return out, 0, ctxErr
+			return stdout.String(), stderr.String(), 0, ctxErr
 		}
-		return out, 0, err
+		return stdout.String(), stderr.String(), 0, err
 	}
-	return out, 0, nil
+	return stdout.String(), stderr.String(), 0, nil
+}
+
+// upgradeRunDir creates the run directory exclusively, so two runs in the same UTC second never
+// share an extract tree or a record.
+func upgradeRunDir(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("a run already took %s; try again a second later", dir)
+		}
+		return err
+	}
+	return nil
 }
 
 // upgradeOutputHead keeps the first upgradeRecordHead bytes of a command's output.
@@ -67,8 +80,7 @@ func upgradeOutputHead(text string) string {
 	return text[:upgradeRecordHead]
 }
 
-// verifySums is step 1: find the archive in the release directory and verify it against the
-// SHA256SUMS beside it.
+// verifySums is step 1: find the archive and verify it against the SHA256SUMS beside it.
 func (r *upgradeRunState) verifySums() (string, int, string) {
 	matches, err := filepath.Glob(filepath.Join(r.opts.ReleaseDir, upgradeArchiveGlob))
 	if err != nil || len(matches) == 0 {
@@ -91,22 +103,46 @@ func (r *upgradeRunState) verifySums() (string, int, string) {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	r.note(upgradeStepSums, nil, 0, want+"  "+filepath.Base(archive), nil)
 	if !strings.EqualFold(got, want) {
 		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s does not match %s", filepath.Base(archive), upgradeSumsName))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	return archive, 0, ""
+	r.note(upgradeStepSums, nil, 0, want+"  "+filepath.Base(archive), nil)
+	// Pin the verified bytes so the archive cannot be swapped between the digest check and its
+	// use; the installer rechecks against the SHA256SUMS, so that file is pinned too.
+	pinned := filepath.Join(r.dir, filepath.Base(archive))
+	for _, src := range []string{archive, filepath.Join(r.opts.ReleaseDir, upgradeSumsName)} {
+		if err := upgradeCopy(src, filepath.Join(r.dir, filepath.Base(src))); err != nil {
+			r.note(upgradeStepSums, nil, 1, "", err)
+			return "", upgradeExitRefused, upgradeReasonSumsFailed
+		}
+	}
+	return pinned, 0, ""
+}
+
+// upgradeCopy copies src to dst, so a later reader cannot be given different bytes.
+func upgradeCopy(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // upgradeSumsFor is the digest SHA256SUMS lists for name, or "" when it lists none.
 func upgradeSumsFor(sums, name string) string {
 	for _, line := range strings.Split(sums, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		if strings.TrimPrefix(fields[1], "*") == name {
+		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == name {
 			return fields[0]
 		}
 	}
@@ -127,8 +163,7 @@ func upgradeFileDigest(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractAndResolve is step 2: unpack the archive into W/extract and resolve the version's
-// short commit hash to a full SHA through the forge API.
+// extractAndResolve is step 2: unpack the archive and resolve the version to a full commit SHA.
 func (r *upgradeRunState) extractAndResolve() (int, string) {
 	r.extract = filepath.Join(r.dir, "extract")
 	if err := os.MkdirAll(r.extract, 0o700); err != nil {
@@ -140,46 +175,48 @@ func (r *upgradeRunState) extractAndResolve() (int, string) {
 		return upgradeExitRefused, upgradeReasonExtractFailed
 	}
 	crw := filepath.Join(r.extract, "crw")
-	version, code, err := r.command(upgradeStepExtract, crw, "--version")
+	version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepExtract, crw, "--version")
 	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonExtractFailed
 	}
-	short := upgradeShortHash(version)
-	if short == "" {
-		r.note(upgradeStepCommit, nil, 1, "", fmt.Errorf("the version %q carries no -g hash", strings.TrimSpace(version)))
-		return upgradeExitRefused, upgradeReasonCommitUnknown
+	for _, ref := range upgradeCommitRefs(version) {
+		out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepCommit, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+ref)
+		if err != nil || code != 0 {
+			continue
+		}
+		var answer struct {
+			SHA string `json:"sha"`
+		}
+		if json.Unmarshal([]byte(out), &answer) == nil && answer.SHA != "" {
+			r.commit = answer.SHA
+			return 0, ""
+		}
 	}
-	out, code, err := r.command(upgradeStepCommit, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+short)
-	if err != nil || code != 0 {
-		return upgradeExitRefused, upgradeReasonCommitUnknown
-	}
-	var answer struct {
-		SHA string `json:"sha"`
-	}
-	if err := json.Unmarshal([]byte(out), &answer); err != nil || answer.SHA == "" {
-		r.note(upgradeStepCommit, nil, 1, out, fmt.Errorf("the commit answer names no sha"))
-		return upgradeExitRefused, upgradeReasonCommitUnknown
-	}
-	r.commit = answer.SHA
-	return 0, ""
+	r.note(upgradeStepCommit, nil, 1, "", fmt.Errorf("the version %q did not resolve to a commit", strings.TrimSpace(version)))
+	return upgradeExitRefused, upgradeReasonCommitUnknown
 }
 
-// upgradeShortHash is the hash after -g in a version string, or "".
-func upgradeShortHash(version string) string {
-	_, rest, found := strings.Cut(strings.TrimSpace(version), "-g")
-	if !found {
-		return ""
+// upgradeCommitRefs is what to ask the forge about: the commit after -g in a git-describe
+// version, else the released tag ref itself (and its v-prefixed form).
+func upgradeCommitRefs(version string) []string {
+	trimmed := strings.TrimSpace(version)
+	if _, rest, found := strings.Cut(trimmed, "-g"); found {
+		if hash := strings.TrimSpace(rest); hash != "" && !strings.ContainsAny(hash, " \t\r\n") {
+			return []string{hash}
+		}
 	}
-	hash := strings.TrimSpace(rest)
-	if hash == "" || strings.ContainsAny(hash, " \t\r\n") {
-		return ""
+	if trimmed == "" {
+		return nil
 	}
-	return hash
+	if strings.HasPrefix(trimmed, "v") {
+		return []string{trimmed}
+	}
+	return []string{trimmed, "v" + trimmed}
 }
 
 // checkDevGate is step 3: the commit's dev-gate check run must have concluded success.
 func (r *upgradeRunState) checkDevGate() (int, string) {
-	out, code, err := r.command(upgradeStepDevGate, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+r.commit+"/check-runs")
+	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepDevGate, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+r.commit+"/check-runs")
 	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonDevGate
 	}
@@ -187,6 +224,9 @@ func (r *upgradeRunState) checkDevGate() (int, string) {
 		CheckRuns []struct {
 			Name       string `json:"name"`
 			Conclusion string `json:"conclusion"`
+			App        struct {
+				Slug string `json:"slug"`
+			} `json:"app"`
 		} `json:"check_runs"`
 	}
 	if err := json.Unmarshal([]byte(out), &answer); err != nil {
@@ -194,7 +234,7 @@ func (r *upgradeRunState) checkDevGate() (int, string) {
 		return upgradeExitRefused, upgradeReasonDevGate
 	}
 	for _, run := range answer.CheckRuns {
-		if run.Name == "dev-gate" && run.Conclusion == "success" {
+		if run.Name == "dev-gate" && run.Conclusion == "success" && (run.App.Slug == "" || run.App.Slug == "github-actions") {
 			return 0, ""
 		}
 	}
@@ -202,8 +242,7 @@ func (r *upgradeRunState) checkDevGate() (int, string) {
 	return upgradeExitRefused, upgradeReasonDevGate
 }
 
-// checkOpenAttempts is step 4: read the relay store read-only and refuse when any attempt is
-// not settled. The store is opened in place and never created.
+// checkOpenAttempts is step 4: read the store read-only and refuse while any attempt is unsettled.
 func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 	state, err := r.relayState()
 	if err != nil {
@@ -232,8 +271,7 @@ func (r *upgradeRunState) checkOpenAttempts() (int, string) {
 	return 0, ""
 }
 
-// relayState is the state directory the run reads and stops: the configured one, else the one
-// the relay's own doctor answer selects.
+// relayState is the state directory the run reads and stops: configured, else the doctor's.
 func (r *upgradeRunState) relayState() (string, error) {
 	if r.cfg.Relay.State != "" {
 		return r.cfg.Relay.State, nil
@@ -249,7 +287,7 @@ func (r *upgradeRunState) snapshot() (int, string) {
 		r.note(upgradeStepSnapshot, nil, 1, "", err)
 		return upgradeExitRefused, upgradeReasonPointer
 	}
-	if _, code, err := r.command(upgradeStepSnapshot, filepath.Join(pointer, "bin", "crw"), "install", "status"); err != nil || code != 0 {
+	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepSnapshot, filepath.Join(pointer, "bin", "crw"), "install", "status"); err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonPointer
 	}
 	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
@@ -262,16 +300,16 @@ func (r *upgradeRunState) snapshot() (int, string) {
 	return 0, ""
 }
 
-// stopAndUpdate is step 6: stop the service with the running executable, then install the
-// archive with the extracted one. It returns the update's exit status.
+// stopAndUpdate is step 6: stop with the running executable, then install with the extracted one.
 func (r *upgradeRunState) stopAndUpdate() int {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
 		r.note(upgradeStepStop, nil, 1, "", err)
 		return upgradeExitRefused
 	}
-	if _, _, err := r.command(upgradeStepStop, filepath.Join(pointer, "bin", "codex-session-relay"),
-		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil {
+	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepStop,
+		filepath.Join(pointer, "bin", "codex-session-relay"),
+		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil || code != 0 {
 		return upgradeExitRefused
 	}
 	args := []string{"install", "update", "--from", r.archive, "--state", r.state,
@@ -279,38 +317,40 @@ func (r *upgradeRunState) stopAndUpdate() int {
 	if r.opts.Issue != "" {
 		args = append(args, "--issue", r.opts.Issue)
 	}
-	_, code, err := r.command(upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
+	_, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
 	if err != nil {
 		return upgradeExitRefused
 	}
 	return code
 }
 
-// start is step 7: start the service from the new pointer's executable. It is called whether
-// or not the update succeeded, so a failed update never leaves the service stopped.
+// start is step 7: start from the new pointer's executable, whether or not the update succeeded.
 func (r *upgradeRunState) start() {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
 		r.note(upgradeStepStart, nil, 1, "", err)
 		return
 	}
-	_, _, _ = r.command(upgradeStepStart, filepath.Join(pointer, "bin", "codex-session-relay"),
+	// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
+	defer cancel()
+	_, _, _ = r.command(ctx, upgradeInstallTimeout, upgradeStepStart, filepath.Join(pointer, "bin", "codex-session-relay"),
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start")
 }
 
-// postCheck is step 8: the new pointer, the new version, the service running and matching the
-// launch policy, and the configuration file unchanged.
+// postCheck is step 8: the new pointer and version, the service running and matching, and an
+// unchanged configuration file.
 func (r *upgradeRunState) postCheck() (int, string) {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
 		r.note(upgradeStepPostCheck, nil, 1, "", err)
 		return upgradeExitPostCheck, upgradeReasonPostCheck
 	}
-	version, code, err := r.command(upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
+	version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
 	if err != nil || code != 0 || strings.TrimSpace(version) == "" {
 		return upgradeExitPostCheck, upgradeReasonPostCheck
 	}
-	out, code, err := r.command(upgradeStepPostCheck, filepath.Join(pointer, "bin", "codex-session-relay"),
+	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "codex-session-relay"),
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "status")
 	if err != nil || code != 0 {
 		return upgradeExitPostCheck, upgradeReasonPostCheck
@@ -327,8 +367,7 @@ func (r *upgradeRunState) postCheck() (int, string) {
 	return 0, ""
 }
 
-// upgradeServiceRunning reports whether a service status answer says the daemon runs and
-// matches the launch policy.
+// upgradeServiceRunning reports whether a status answer says the daemon runs and matches.
 func upgradeServiceRunning(out string) bool {
 	var answer struct {
 		Running      *bool `json:"running"`
@@ -364,7 +403,8 @@ func upgradeConfigPath(e *Env) string {
 	return filepath.Join(coreHomeDir(e, "CODEX_HOME", ".codex"), "config.toml")
 }
 
-// upgradeExtract unpacks a tar.gz into dir, refusing an entry that would escape it.
+// upgradeExtract unpacks a tar.gz into dir, refusing an entry that escapes it or names an
+// existing symlink (which a write would follow outside the directory).
 func upgradeExtract(archive, dir string) error {
 	f, err := os.Open(archive)
 	if err != nil {
@@ -385,10 +425,11 @@ func upgradeExtract(archive, dir string) error {
 		if err != nil {
 			return err
 		}
-		target, err := upgradeJoin(dir, header.Name)
-		if err != nil {
-			return err
+		clean := filepath.ToSlash(filepath.Clean(header.Name))
+		if filepath.IsAbs(header.Name) || clean == ".." || strings.HasPrefix(clean, "../") {
+			return fmt.Errorf("the archive entry %q is not a path inside the extract directory", header.Name)
 		}
+		target := filepath.Join(dir, header.Name)
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o700); err != nil {
@@ -398,36 +439,25 @@ func upgradeExtract(archive, dir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
-			if err := upgradeWrite(target, reader, header); err != nil {
+			// A name already a symlink would be followed outside the directory.
+			if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("the archive entry %q names an existing symlink", header.Name)
+			}
+			mode := os.FileMode(header.Mode).Perm()
+			if mode == 0 {
+				mode = 0o600
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, reader); err != nil {
+				out.Close()
+				return err
+			}
+			if err := out.Close(); err != nil {
 				return err
 			}
 		}
 	}
-}
-
-// upgradeJoin is dir/name. A name that is absolute or that walks out of dir is refused rather
-// than neutralized, because an archive carrying one is not a release archive.
-func upgradeJoin(dir, name string) (string, error) {
-	clean := filepath.ToSlash(filepath.Clean(name))
-	if filepath.IsAbs(name) || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("the archive entry %q is not a path inside the extract directory", name)
-	}
-	return filepath.Join(dir, name), nil
-}
-
-// upgradeWrite writes one archive entry.
-func upgradeWrite(target string, body io.Reader, header *tar.Header) error {
-	mode := os.FileMode(header.Mode).Perm()
-	if mode == 0 {
-		mode = 0o600
-	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, body); err != nil {
-		return err
-	}
-	return nil
 }
