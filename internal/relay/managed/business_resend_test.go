@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Synthetic version of the copied legacy receipt: the adapter stored a resume
@@ -110,32 +113,79 @@ func TestBusinessResendHostHistoryWithholds(t *testing.T) {
 		reason string
 	}{
 		{"another", []any{map[string]any{"id": "standby"}, map[string]any{"id": "other"}}, nil, nil, "business_identity_unobserved"},
+		{"another-more", []any{map[string]any{"id": "standby"}, map[string]any{"id": "other"}}, "more", nil, "business_identity_unobserved"},
+		{"another-first-more", []any{map[string]any{"id": "other"}, map[string]any{"id": "standby"}}, "more", nil, "business_identity_unobserved"},
 		{"wrong-anchor", []any{map[string]any{"id": "other"}}, nil, nil, "business_identity_unobserved"},
 		{"empty", []any{}, nil, nil, "lifecycle_unknown"},
 		{"malformed", "bad", nil, nil, "lifecycle_unknown"},
 		{"missing-id", []any{map[string]any{}}, nil, nil, "lifecycle_unknown"},
+		{"missing-id-after-standby", []any{map[string]any{"id": "standby"}, map[string]any{}}, nil, nil, "lifecycle_unknown"},
+		{"malformed-before-standby", []any{42, map[string]any{"id": "standby"}}, nil, nil, "lifecycle_unknown"},
+		{"missing-id-before-foreign-more", []any{map[string]any{}, map[string]any{"id": "other"}}, "more", nil, "business_identity_unobserved"},
+		{"foreign-before-missing-id-more", []any{map[string]any{"id": "other"}, map[string]any{}}, "more", nil, "business_identity_unobserved"},
+		{"duplicate-standby", []any{map[string]any{"id": "standby"}, map[string]any{"id": "standby"}}, nil, nil, "lifecycle_unknown"},
 		{"more", []any{map[string]any{"id": "standby"}}, "more", nil, "lifecycle_unknown"},
 		{"bad-cursor", []any{map[string]any{"id": "standby"}}, 3, nil, "lifecycle_unknown"},
 		{"read-error", nil, nil, errors.New("observation failed"), "lifecycle_unknown"},
 		{"no-rollout", nil, nil, errors.New("thread/turns/list: no rollout found"), "lifecycle_unknown"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			k, _, _ := businessResendKit(t)
+			k, business, _ := businessResendKit(t)
 			k.start.Adapter = &businessResendObservationApp{Adapter: k.host, list: func() (map[string]any, error) {
 				return map[string]any{"data": scenario.rows, "nextCursor": scenario.cursor}, scenario.err
 			}}
-			if got := k.run(); got["reason"] != scenario.reason {
-				t.Fatalf("history refusal: %v", got)
+			state := "incomplete"
+			if scenario.reason == "business_identity_unobserved" {
+				state = "refused"
 			}
-			if len(k.host.sends) != 0 {
+			k.expect(k.run(), state, scenario.reason, "")
+			if len(k.host.sends) != 0 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
 				t.Fatal("unobserved/foreign history consumed operation")
 			}
 		})
 	}
 }
 
+func TestBusinessResendPaginatedFinalGuardWithholds(t *testing.T) {
+	for _, scenario := range []struct {
+		name   string
+		rows   []any
+		reason string
+	}{
+		{"another-more", []any{map[string]any{"id": "standby"}, map[string]any{"id": "other"}}, "business_identity_unobserved"},
+		{"another-first-more", []any{map[string]any{"id": "other"}, map[string]any{"id": "standby"}}, "business_identity_unobserved"},
+		{"standby-more", []any{map[string]any{"id": "standby"}}, "lifecycle_unknown"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			k, business, _ := businessResendKit(t)
+			final := false
+			k.start.Adapter = &businessResendObservationApp{Adapter: k.host, list: func() (map[string]any, error) {
+				if final {
+					return map[string]any{"data": scenario.rows, "nextCursor": "more"}, nil
+				}
+				return map[string]any{"data": []any{map[string]any{"id": "standby"}}}, nil
+			}}
+			k.host.beforeSend = func(in SendRequest) {
+				final = true
+				withhold, err := in.BeforeStart(t.Context())
+				if err != nil || withhold["code"] != scenario.reason {
+					t.Fatalf("final history guard: %v %v", withhold, err)
+				}
+			}
+			k.expect(k.run(), "incomplete", "business_failed", "")
+			if !final || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+				t.Fatal("final history guard consumed operation or was not reached")
+			}
+		})
+	}
+}
+
 func TestBusinessResendLoadObservationIsLast(t *testing.T) {
-	k, business, _ := businessResendKit(t)
+	k, business, failure := businessResendKit(t)
+	// This test is about ordering, not about the unload: a non-settings pre-turn failure keeps
+	// the loaded child on the plain recipient_not_idle path it has always taken.
+	failure["attemptedEffects"], failure["delivery"] = []any{"thread/resume"}, "not_delivered"
+	delete(failure, "rpcError")
 	k.start.Adapter = &businessResendObservationApp{Adapter: k.host, list: func() (map[string]any, error) {
 		k.host.threads["t-1"].status = "idle"
 		return map[string]any{"data": []any{map[string]any{"id": "standby"}}}, nil
@@ -276,5 +326,216 @@ func TestBusinessResendIDStability(t *testing.T) {
 		if got := businessResendID("managed-1", "original-dispatch", attempt); got != want {
 			t.Fatalf("attempt %d: got %s, want %s", attempt, got, want)
 		}
+	}
+}
+
+// businessResendUnloadApp serves the archive/unarchive pair the resend gate uses to lower an
+// idle child the host holds loaded under other MCP settings. scriptedApp and managedFake serve
+// neither method, so the unload tests wrap them with this.
+type businessResendUnloadApp struct {
+	Adapter
+	host           *scriptedApp
+	archiveErr     error
+	unarchiveErr   error
+	onUnarchive    func()
+	stayLoaded     bool
+	archiveCalls   []string
+	unarchiveCalls []string
+}
+
+func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	id := pyjson.Text(params["threadId"])
+	switch method {
+	case "thread/archive":
+		a.archiveCalls = append(a.archiveCalls, id)
+		if a.archiveErr != nil {
+			return nil, a.archiveErr
+		}
+		if !a.stayLoaded {
+			a.host.threads[id].status = "notLoaded"
+		}
+		return map[string]any{}, nil
+	case "thread/unarchive":
+		a.unarchiveCalls = append(a.unarchiveCalls, id)
+		if a.onUnarchive != nil {
+			a.onUnarchive()
+		}
+		if a.unarchiveErr != nil {
+			return nil, a.unarchiveErr
+		}
+		return map[string]any{}, nil
+	}
+	return a.Adapter.HostCall(ctx, method, params)
+}
+
+func businessResendJournalCount(t *testing.T, k *reconcileKit, kind string) int {
+	t.Helper()
+	var n int
+	if err := k.start.Store.DB.QueryRow("SELECT COUNT(*) FROM journal WHERE kind=?", kind).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// A child the host holds loaded under other MCP settings, idle with exactly its standby turn, is
+// lowered once and then resent: archive, unarchive, notLoaded, one business turn, one journal row.
+func TestBusinessResendUnloadsIdleStandbyOnlyChild(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	got := k.run()
+	if got["state"] != "admitted" || got["businessTurnId"] != "business" {
+		t.Fatalf("loaded idle child did not recover: %v %v", got["state"], got["reason"])
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("archive/unarchive exactly once: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+	if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"standby", "business"}) {
+		t.Fatalf("business turn count: %v", k.host.threads["t-1"].turns)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+		t.Fatalf("unload journal rows: %d", n)
+	}
+}
+
+// Only an idle child whose immediately preceding business failure is the structured settings
+// refusal is lowered; every other case holds without touching the thread.
+func TestBusinessResendUnloadOnlyForIdleSettingsMismatch(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		change        func(*reconcileKit, map[string]any)
+		state, reason string
+	}{
+		{"active", func(k *reconcileKit, _ map[string]any) { k.host.threads["t-1"].status = "busy" }, "incomplete", "recipient_not_idle"},
+		{"foreign-history", func(k *reconcileKit, _ map[string]any) {
+			k.host.threads["t-1"].turns = []string{"standby", "other"}
+			k.host.threads["t-1"].status = "idle"
+		}, "refused", "business_identity_unobserved"},
+		{"not-settings", func(_ *reconcileKit, failure map[string]any) {
+			failure["attemptedEffects"], failure["delivery"] = []any{"thread/resume"}, "not_delivered"
+			delete(failure, "rpcError")
+		}, "incomplete", "recipient_not_idle"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k, _, failure := businessResendKit(t)
+			app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host}
+			k.start.Adapter = app
+			k.host.threads["t-1"].status = "idle"
+			c.change(k, failure)
+			for range 2 {
+				k.expect(k.run(), c.state, c.reason, "")
+			}
+			if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
+				t.Fatalf("held case touched the thread: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+			}
+			if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+				t.Fatalf("held case wrote %d unload rows", n)
+			}
+		})
+	}
+}
+
+// An archive error answers incomplete recipient_not_idle with no unarchive, no send and no row:
+// the thread was never lowered.
+func TestBusinessResendUnloadArchiveErrorHolds(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveErr: errors.New("thread/archive: host refused")}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	for range 2 {
+		k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	}
+	if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
+		t.Fatalf("archive failure unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+		t.Fatalf("archive failure wrote %d unload rows", n)
+	}
+}
+
+// An unarchive that fails twice answers incomplete lifecycle_unknown, records the archived thread
+// in the journal detail with the operator hint, and never sends.
+func TestBusinessResendUnloadUnarchiveErrorHolds(t *testing.T) {
+	k, business, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, unarchiveErr: errors.New("thread/unarchive: host refused")}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	k.expect(k.run(), "incomplete", "lifecycle_unknown", "")
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || len(app.unarchiveCalls) != 2 || k.host.sent != 0 || len(k.host.sends) != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+		t.Fatalf("unarchive retry/withhold: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+	}
+	var detail string
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
+		t.Fatalf("unarchive failure detail: %s", detail)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+		t.Fatalf("unload journal rows: %d", n)
+	}
+}
+
+// A thread still loaded after the unload answers incomplete recipient_not_idle with no send.
+func TestBusinessResendUnloadStillLoadedHolds(t *testing.T) {
+	k, business, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, stayLoaded: true}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) || k.host.sent != 0 || len(k.host.sends) != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+		t.Fatalf("still loaded case sent: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+	}
+	// A replay reconstructs the same attempt, so the one-lowering-per-attempt bound has to be
+	// durable: the row the first lowering wrote is what stops the second one.
+	k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("replay lowered the child again: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+		t.Fatalf("unload journal rows: %d", n)
+	}
+}
+
+// The archive is a host effect, and the engine asks readiness again before each one: a policy
+// that went away while the gate was reading withholds the archive and answers its code.
+func TestBusinessResendUnloadRechecksReadinessBeforeArchive(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host}
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	k.start.Readiness = func(context.Context, map[string]any) (string, error) { return "worker_policy_unconfigured", nil }
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1")}
+	if code, err := r.businessResendUnload(t.Context()); code != "worker_policy_unconfigured" || err != nil {
+		t.Fatalf("readiness recheck: %q %v", code, err)
+	}
+	if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 {
+		t.Fatalf("archive ran without readiness: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+}
+
+// Once the archive has succeeded the child is archived, so the row recording it has to survive the
+// caller's cancellation: an archived child with no row leaves an operator nothing to read.
+func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.host, host: k.host, unarchiveErr: errors.New("thread/unarchive: cancelled"), onUnarchive: cancel}
+	k.host.threads["t-1"].status = "idle"
+	k.start.Adapter = app
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled unarchive: %q %v", code, err)
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("archive/unarchive calls: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+	var detail string
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
+		t.Fatalf("cancelled unload detail: %s", detail)
 	}
 }

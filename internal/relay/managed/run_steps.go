@@ -44,6 +44,7 @@ type startRun struct {
 	reg                 *registry.Registry
 	record              registry.Relationship
 	sent                map[string]any // the host's receipt for the business send
+	resendFailure       map[string]any // the immediately preceding certain pre-turn failure, when one licensed a successor
 	turn                string         // the business turn the host accepted
 	businessOperationID string         // internal ledger attempt; dispatch identity stays unchanged
 	businessAttempt     int
@@ -372,7 +373,14 @@ func (r *startRun) businessTurn(ctx context.Context) (contract.OrderedObject, er
 		if sent == nil || sent["status"] == "not_attempted" && !businessResendTurnPossible(sent) {
 			break
 		}
-		if !businessResendSafe(sent, r.task) || r.businessAttempt+1 == maxBusinessResendAttempts {
+		safe := businessResendSafe(sent, r.task)
+		if safe {
+			// The loop overwrites r.sent with the successor lookup, so the failure that licensed
+			// this successor is kept here: the narrow unload reads it as the immediately
+			// preceding business failure.
+			r.resendFailure = sent
+		}
+		if !safe || r.businessAttempt+1 == maxBusinessResendAttempts {
 			if r.businessAttempt > 0 && sent["status"] == "accepted" {
 				// The retained ID might belong to other arguments. Send's ledger
 				// lookup proves this exact packet before replaying, with no effect.

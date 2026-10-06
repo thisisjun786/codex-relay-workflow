@@ -210,7 +210,10 @@ completed durable turn and confirmation of a resumable rollout, release all subs
 `thread/read` reporting `notLoaded`; another client's subscription can retain it, and the host decides
 when it unloads. An operator can use `thread/archive` then `thread/unarchive` if it remains loaded. The
 next relay delivery sends the recorded profile again. Never unload a never-run root. This is advice in
-the relay's detail, not automatic recovery; the bridge's own loaded-settings refusal remains generic.
+the relay's detail and not automatic recovery, with one narrow exception: the managed resend gate
+lowers an idle child itself when its immediately preceding business failure is the structured
+`settings_not_preserved` refusal, once per business attempt, and resends only after the child is
+`notLoaded` again; the bridge's own loaded-settings refusal remains generic.
 
 Not covered yet. `create_worktree_thread` sends no overrides, and `create_thread` has no input to name a
 profile. A thread created outside managed start, or before a policy declared profiles, is resumed by the relay under what

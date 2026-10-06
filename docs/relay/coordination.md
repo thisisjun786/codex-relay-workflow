@@ -551,11 +551,15 @@ usage error without `--restate`). Otherwise the payload is exactly what it was.
   bytes; its status against the artifact's; the artifact's head against the forge's current candidate
   head (the collected snapshot's pinned `headSha`, or the head under restatement when the forge reports
   none); and every kept P0, P1 or security finding of the artifact against the dispositions. The head
-  matches when it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`: a
-  base refresh does not change the patch, and a head whose patch-id is unchanged is not reviewed again.
-  The relay does not compute the patch-id; the parent confirms the stated one with the diff the review
-  bundle builds (command below; its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain
-  `git diff` differs on binary files).
+  matches when it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`
+  and the candidate head is the head the record is about: a base refresh does not change the patch, and a
+  head whose patch-id is unchanged is not reviewed again. The item's `headPatchId` describes the head the
+  record is about, not the candidate head, so a candidate head the record does not describe is warned
+  about and the stated patch-id is not reused: whether the candidate's code changed after the review is
+  told from a base refresh only when the record already covers that candidate. The relay does not compute
+  the patch-id; the parent confirms the stated one with the diff the review bundle builds (command below;
+  its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain `git diff` differs on binary
+  files).
 - **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
   `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
   `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the
