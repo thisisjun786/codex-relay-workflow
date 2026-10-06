@@ -192,3 +192,42 @@ func TestGoalplanPublishedPreRenameFailureIsAnError(t *testing.T) {
 		}
 	}
 }
+
+// The write itself, without the steering transaction around it: a directory sync failure after the
+// rename is reported as CRW-744's PublishedError with the cause still reachable, and the plan at the
+// final path is the new one. WriteGoalplan is a one-line delegate to this function with no seam, so
+// this is also what its callers receive.
+func TestGoalplanPublishedWriteReportsPublished(t *testing.T) {
+	cwd := t.TempDir()
+	plan := BuildGoalplan(NewGoalplanInput{Objective: "published write fixture"})
+	if err := WriteGoalplan(cwd, plan); err != nil {
+		t.Fatalf("seed plan: %v", err)
+	}
+	before := steeringApplyPlanText(t, cwd, plan.Slug)
+	updated := ReadGoalplan(cwd, plan.Slug)
+	if updated == nil {
+		t.Fatal("the seeded plan did not read back")
+	}
+	updated.Objective = "published write fixture, updated"
+	calls := []string{}
+	err := goalplanPublishedWriteGoalplan(cwd, updated, goalplanPublishedDirectorySync(&calls))
+	if err == nil {
+		t.Fatal("a directory sync failure returned no error")
+	}
+	if !state.Published(err) {
+		t.Fatalf("a post-rename failure is not reported as published: %v", err)
+	}
+	if !errors.Is(err, syscall.EIO) {
+		t.Fatalf("errors.Is(err, syscall.EIO) is false through Unwrap: %v", err)
+	}
+	if len(calls) != 2 || calls[0] != "file" || calls[1] != "directory" {
+		t.Fatalf("sync calls = %v, want [file directory]", calls)
+	}
+	after := steeringApplyPlanText(t, cwd, plan.Slug)
+	if after == before {
+		t.Error("the published plan at the final path is still the old one")
+	}
+	if stored := ReadGoalplan(cwd, plan.Slug); stored == nil || stored.Objective != "published write fixture, updated" {
+		t.Fatalf("the plan at the final path does not hold the new objective: %#v", stored)
+	}
+}

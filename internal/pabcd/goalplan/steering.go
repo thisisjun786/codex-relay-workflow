@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
 // SteeringBatchOptions is ApplyOptions (:155-163): the clock the entry stamps, and the shared
@@ -56,6 +57,14 @@ func steeringLedgerWarning(slug string, err error) string {
 		steeringLedgerPathText(slug) +
 		" (" + err.Error() + "). " +
 		"Re-running is a no-op because the key is recorded."
+}
+
+// goalplanPublishedWarning is CRW-793's durability warning: the plan at the final path is the new one,
+// so the batch stands and its key is recorded, but the directory that holds it could not be synced and
+// the publication may not survive a crash. The oracle never syncs that directory, so it has no
+// counterpart; the wording is the issue's own.
+func goalplanPublishedWarning(slug string, err error) string {
+	return "goalplan '" + slug + "' was published but its directory could not be synced: " + err.Error()
 }
 
 // ApplySteeringBatch ports applySteeringBatch (:253-333): one application per idempotency key,
@@ -129,8 +138,16 @@ func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now
 	// The commit point: a fresh slice, so the plan the lock read is never mutated in place.
 	next := *applied
 	next.SteeringLog = append(append([]SteeringEntry{}, plan.SteeringLog...), entry)
+	// A write that published and then failed to sync the plan's directory is a written plan: the key is
+	// already visible to idempotency, so a retry would answer duplicate and this batch's rows could never
+	// be written at all. The durability failure is carried as a warning and the ledger work below runs as
+	// on a clean write. A failure before the rename published nothing and stays an error.
+	warning := ""
 	if err := goalplanPublishedWriteGoalplan(cwd, &next, publish); err != nil {
-		return SteerResult{}, err
+		if !state.Published(err) {
+			return SteerResult{}, err
+		}
+		warning = goalplanPublishedWarning(slug, err)
 	}
 	if err := AppendGoalplanLedger(cwd, slug, GoalplanLedgerEntry{
 		Ts: entry.AppliedAt, Slug: slug, Event: EventSteered,
@@ -151,5 +168,5 @@ func steeringApplyLocked(cwd, slug string, plan *Goalplan, batch SteerBatch, now
 			return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: steeringLedgerWarning(slug, err)}, nil
 		}
 	}
-	return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry}, nil
+	return SteerResult{Kind: SteerResultApplied, Plan: &next, Entry: &entry, Warning: warning}, nil
 }

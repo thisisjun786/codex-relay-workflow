@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"golang.org/x/sys/unix"
 )
 
@@ -138,6 +139,9 @@ func writeEncodeJSON(value any, indent string) ([]byte, error) {
 // WriteGoalplan is low-level atomic publication (:915-942). New-plan creation
 // may call directly; existing mutations MUST run inside WithGoalplanWriteLock.
 // Only a shallow copy receives the refreshed timestamp, as in the oracle.
+// A failure after the rename published the plan, so it is returned as a
+// *state.PublishedError (CRW-744's type, CRW-793 here) and a caller that has a
+// reconciling step still runs it.
 func WriteGoalplan(cwd string, plan *Goalplan) error {
 	return goalplanPublishedWriteGoalplan(cwd, plan, nil)
 }
@@ -333,10 +337,13 @@ func goalplanPublishedWritePublishAt(dir *os.File, real string, data []byte, o *
 		return nil
 	}
 	if err != nil {
-		return err
+		return &state.PublishedError{Err: err}
 	}
 	defer reader.Close()
-	return sync(reader)
+	if err := sync(reader); err != nil {
+		return &state.PublishedError{Err: err}
+	}
+	return nil
 }
 func writeAppendAt(dir *os.File, real string, data []byte) error {
 	if err := boundFile(dir, real, true); err != nil {
