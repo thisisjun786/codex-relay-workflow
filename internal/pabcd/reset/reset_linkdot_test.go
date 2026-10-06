@@ -158,3 +158,42 @@ func TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved(t *testing.T) {
 		t.Errorf("the link must stay: %v", statErr)
 	}
 }
+
+// TestResetLinkDotTargetFromACwdOutsideTheProcessDirectory: RunReset takes its workspace as an argument,
+// which need not be the process working directory. The dot-ending branch stats the root's own path, so
+// that path must stay absolute and name the pinned directory: os.OpenRoot keeps the name it was given and
+// Root.OpenRoot joins the parent's name with the child's, so the check concerns the supplied cwd, not the
+// process directory. The dot-ending link is removed and its target survives.
+func TestResetLinkDotTargetFromACwdOutsideTheProcessDirectory(t *testing.T) {
+	process, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if root == process {
+		t.Fatal("the test workspace must differ from the process directory")
+	}
+	crw := filepath.Join(root, ".crw")
+	if err := os.MkdirAll(filepath.Join(crw, "sessions", "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(crw, "sessions", "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("keep/.", filepath.Join(crw, "sessions", "a.json")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RunReset(root, State)
+	if err != nil {
+		t.Fatalf("RunReset: %v", err)
+	}
+	if len(got.Removed) != 1 || got.Removed[0] != filepath.Join(root, ".crw", "sessions", "a.json") {
+		t.Fatalf("removed = %v, want the dot-ending link", got.Removed)
+	}
+	if _, err := os.Lstat(filepath.Join(crw, "sessions", "a.json")); !os.IsNotExist(err) {
+		t.Errorf("link remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(crw, "sessions", "keep", "inner.txt")); err != nil {
+		t.Errorf("target directory lost: %v", err)
+	}
+}
