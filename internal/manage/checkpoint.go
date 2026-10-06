@@ -78,7 +78,7 @@ type checkpointThresholds struct {
 // checkpointDefaultThresholds is the issue's own set.
 var checkpointDefaultThresholds = checkpointThresholds{
 	Merges: 20, RunningHours: 8, NeedsChangesOrSplit: 3, PairEvalP0P1: 2, BacklogNet: 15,
-	ClosedStates: []string{"Done", "Canceled", "Cancelled", "Duplicate"},
+	ClosedStates: checkpointClosedStates,
 }
 
 // checkpointSectionDoc is the checkpoint settings section: one optional override per threshold,
