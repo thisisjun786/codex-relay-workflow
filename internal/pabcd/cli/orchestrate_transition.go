@@ -158,8 +158,12 @@ func orchestrateCommitSupersedeStaleRounds(cwd, slug, sessionID, epoch string, p
 // orchestrateTransitionDClose is the D close (:725-1064), ported in orchestrate_dclose.go. This body stays a
 // one-line call so a sibling issue's rewrite of the ordinary edge of this file merges without touching the D
 // place, and the commit-hook seam lives on the inner function the D close tests call directly.
-func orchestrateTransitionDClose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
-	return orchestrateDclose(cwd, sessionID, closePhaseID, cur, att, recovering, orchestrateDcloseSeam{})
+func orchestrateTransitionDClose(ctx context.Context, seams *orchestrateCommitSeams, cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
+	seam := orchestrateDcloseSeam{}
+	if seams != nil {
+		seam.interrupt = seams.interrupt
+	}
+	return orchestrateDcloseContext(ctx, cwd, sessionID, closePhaseID, cur, att, recovering, seam)
 }
 
 // orchestrateTransitionStateWritable is this writer's half of the port's data-loss rule for the session file
@@ -230,8 +234,18 @@ type orchestrateCommitSeams struct {
 // Interrupted (130). The seam runs first, so a test can cancel the context exactly here; the returned
 // error is the context's own.
 func orchestrateInterruptCheck(ctx context.Context, seams *orchestrateCommitSeams) error {
-	if seams != nil && seams.interrupt != nil {
-		seams.interrupt()
+	var interrupt func()
+	if seams != nil {
+		interrupt = seams.interrupt
+	}
+	return orchestrateInterruptCheckWith(ctx, interrupt)
+}
+
+// orchestrateInterruptCheckWith is orchestrateInterruptCheck for a caller that holds the hook itself
+// (the D close's own seam). The hook runs first, so a test can cancel the invocation exactly here.
+func orchestrateInterruptCheckWith(ctx context.Context, interrupt func()) error {
+	if interrupt != nil {
+		interrupt()
 	}
 	return ctx.Err()
 }
@@ -286,11 +300,18 @@ func orchestrateCommitLock(seams *orchestrateCommitSeams) orchestrateCommitLockF
 // holds, then this goalplan lock; no path in this tree takes them the other way. A busy lock refuses with
 // its reason and publishes nothing; an absent or unreadable goalplan stays fail-open, as the unlocked read
 // did; any other lock failure is a Go error, as it is for the other writers of this package.
-func orchestrateCommitPublish(seams *orchestrateCommitSeams, a OrchestrateCliArgs, cwd, sessionID string, cur, next state.State, to state.Phase, recoveringDclose bool, binding *orchestrateTransitionPlanBinding) orchestrateCommitOutcome {
+func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams, a OrchestrateCliArgs, cwd, sessionID string, cur, next state.State, to state.Phase, recoveringDclose bool, binding *orchestrateTransitionPlanBinding) orchestrateCommitOutcome {
 	if !attest.IsGated(cur.Phase, to) || cur.Slug == "" || recoveringDclose {
 		return orchestrateCommitWrite(seams, cwd, next)
 	}
 	locked, err := orchestrateCommitLock(seams)(cwd, cur.Slug, func(plan *goalplan.Goalplan) (orchestrateCommitOutcome, error) {
+		// CRW-871: this callback runs inside the goalplan write lock, which is not context-aware, so the
+		// invocation's context is read once more immediately before the callback's first durable effect
+		// (the 032 housekeeping's plan write, or the state publication below). Cancelled while the caller
+		// waited for this lock, nothing is written and the caller answers Interrupted (130).
+		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+			return orchestrateCommitOutcome{}, err
+		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
 			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}}, nil
 		}
@@ -316,9 +337,17 @@ func orchestrateCommitPublish(seams *orchestrateCommitSeams, a OrchestrateCliArg
 		}
 		return *locked.Value
 	case "locked":
+		// Nothing was published, so a context that ended while the lock was held answers Interrupted
+		// rather than the busy refusal (CRW-871).
+		if err := ctx.Err(); err != nil {
+			return orchestrateCommitOutcome{err: err}
+		}
 		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason}}
 	}
 	// unreadable: fail-open, as the unlocked read did. The publication runs outside the lock.
+	if err := ctx.Err(); err != nil {
+		return orchestrateCommitOutcome{err: err}
+	}
 	return orchestrateCommitWrite(seams, cwd, next)
 }
 
@@ -578,10 +607,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	if to == state.PhaseD {
 		// CRW-871: the D close's first write is its recovery marker or its state publication, both inside
 		// the close. Cancelled before entering it, the close writes nothing and the row answers Interrupted.
-		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
-			return CliResult{}, err
-		}
-		return orchestrateTransitionDClose(cwd, sessionID, closePhaseID, cur, a.Attest, recoveringDclose)
+		return orchestrateTransitionDClose(ctx, seams, cwd, sessionID, closePhaseID, cur, a.Attest, recoveringDclose)
 	}
 	// The data-loss refusal, before any of this edge's writes, the goalplan housekeeping included.
 	if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
@@ -631,7 +657,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	if err := orchestrateInterruptCheck(ctx, seams); err != nil {
 		return CliResult{}, err
 	}
-	published := orchestrateCommitPublish(seams, a, cwd, sessionID, cur, next, result.State.Phase, recoveringDclose, binding)
+	published := orchestrateCommitPublish(ctx, seams, a, cwd, sessionID, cur, next, result.State.Phase, recoveringDclose, binding)
 	if published.refusal != nil {
 		return *published.refusal, nil
 	}

@@ -26,6 +26,7 @@ package cli
 // program start and there is no init().
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -53,6 +54,9 @@ type orchestrateDcloseSeam struct {
 	afterPabcdLedgerAppend   func() error
 	afterStateWrite          func() error
 	writeState               func(cwd string, next state.State) error
+	// interrupt runs immediately before this close's pre-write cancellation check inside each
+	// critical section (CRW-871). A field, never package state; nil means no hook.
+	interrupt func()
 }
 
 // orchestrateDcloseRunHook runs one hook, or nothing when the test left it nil.
@@ -269,6 +273,17 @@ func orchestrateDcloseAppendPabcdRow(cwd string, cur state.State, checkEpoch, cl
 // already held. It takes only the goalplan write lock (never the session lock again: the repository
 // lock order is session outside, goalplan inside), and the hooks are the oracle's commit seam.
 func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool, seam orchestrateDcloseSeam) (CliResult, error) {
+	return orchestrateDcloseContext(context.Background(), cwd, sessionID, closePhaseID, cur, att, recovering, seam)
+}
+
+// orchestrateDcloseContext is orchestrateDclose for a caller that can be interrupted (the orchestrate
+// row's D edge, CRW-871). The close takes its own goalplan write lock, which is not context-aware, so
+// the invocation's context is read once more at the top of each critical section, before that
+// section's first durable effect: the unbound write, and the callback of the first goalplan lock
+// (whose first effect is the recovery marker, the all-done PABCD row, or the closed plan). Once the
+// first write has started the close runs to the end and answers as it did before, because the later
+// critical section is cleanup of a close that is already visible.
+func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool, seam orchestrateDcloseSeam) (CliResult, error) {
 	// The recovery branch reads the marker it is resuming. The caller decides recovering with
 	// state.MatchesDcloseRecovery, which is false without one, so a nil marker here is a caller bug and
 	// taking the normal path is the safe reading of it: no marker means no recorded close decision.
@@ -301,6 +316,10 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 	if cur.Slug == "" {
 		next := fsm.ClearedIdle(cur)
 		next.StopBlockPhase, next.StopBlockCount = nil, 0
+		// CRW-871: the unbound close takes no goalplan lock, so this is its only pre-write check.
+		if err := orchestrateInterruptCheckWith(ctx, seam.interrupt); err != nil {
+			return CliResult{}, err
+		}
 		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
 		if err != nil {
 			return CliResult{}, err
@@ -322,6 +341,12 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 	locked, err := goalplan.WithGoalplanWriteLock(cwd, slug, func(plan *goalplan.Goalplan) (orchestrateDcloseLockAnswer, error) {
 		refuse := func(output string) (orchestrateDcloseLockAnswer, error) {
 			return orchestrateDcloseLockAnswer{Code: 1, AllDone: false, Output: output}, nil
+		}
+		// CRW-871: this callback's first durable effect is the recovery marker, the all-done PABCD row
+		// or the closed plan. A cancellation that landed while this process waited for the goalplan lock
+		// (which is not context-aware) leaves everything untouched and ends the close with 130.
+		if err := orchestrateInterruptCheckWith(ctx, seam.interrupt); err != nil {
+			return orchestrateDcloseLockAnswer{}, err
 		}
 		// §5: integrity is checked inside the lock, before marker or any write.
 		integrityReasons := append([]string{}, goalplan.GoalplanDefinitionIntegrityReasons(plan)...)

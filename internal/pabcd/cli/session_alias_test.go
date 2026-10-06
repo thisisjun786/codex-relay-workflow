@@ -207,3 +207,39 @@ func TestSessionAliasCanonicalIDsAreUntouched(t *testing.T) {
 		t.Fatalf("reserved cli bootstrap: %+v", other)
 	}
 }
+
+// TestSessionAliasScanLibraryRefuses covers a direct caller of the scan library entry, which the
+// parser guard cannot protect: RunScanCli takes a caller-built ScanCliArgs, and its lock, read and
+// write all sanitise the key, so a raw id would rewrite a DIFFERENT session's file.
+func TestSessionAliasScanLibraryRefuses(t *testing.T) {
+	cwd := sessionAliasWorkspace(t)
+	beforeRaw := sessionAliasRead(t, cwd, sessionAliasRaw)
+	beforeKey := sessionAliasRead(t, cwd, sessionAliasKey)
+	got := RunScanCli(ScanCliArgs{Action: ScanActionRecord, SessionID: sessionAliasRaw, Cwd: cwd})
+	if got.Code != 1 || got.Output != "scan record: "+sessionAliasText {
+		t.Fatalf("library scan record with a non-canonical id: %+v", got)
+	}
+	if after := sessionAliasRead(t, cwd, sessionAliasRaw); after != beforeRaw {
+		t.Fatalf("the library scan refusal rewrote the raw file: %q", after)
+	}
+	if after := sessionAliasRead(t, cwd, sessionAliasKey); after != beforeKey {
+		t.Fatalf("the library scan refusal rewrote the sanitised file: %q", after)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".crw", "interviews")); err == nil {
+		t.Fatal("the library scan refusal wrote an interview ledger")
+	}
+	if _, err := os.Lstat(sessionAliasLockPath(cwd, sessionAliasRaw)); !os.IsNotExist(err) {
+		t.Fatalf("the library scan refusal left a lock file: %v", err)
+	}
+}
+
+// TestSessionAliasAttestErrorStillRefusesFirst pins the ordering the issue asks for: the canonical-id
+// judgement runs before the attestation-error branch, so a phase verb with a broken attest and a raw id
+// answers the refusal instead of reading the sanitised session's phase.
+func TestSessionAliasAttestErrorStillRefusesFirst(t *testing.T) {
+	cwd := sessionAliasWorkspace(t)
+	got := orchestrateTransitionRun(t, cwd, "A", "--session", sessionAliasRaw, "--attest", "{bad")
+	if got.Code != 1 || got.Output != "orchestrate A: "+sessionAliasText {
+		t.Fatalf("a broken attest with a raw id: %+v", got)
+	}
+}
