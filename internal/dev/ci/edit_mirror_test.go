@@ -122,19 +122,50 @@ func (r editMirrorRunFixture) json() string {
 		r.id, r.headSHA, r.event, r.status, r.path, r.repository, r.startedAt, strings.Join(pulls, ","))
 }
 
-// editMirrorJobFixture is one entry of a run's jobs: one attempt of one job name.
+// editMirrorJobFixture is one entry of a run's jobs: one attempt of one job name, with the steps
+// the jobs endpoint reports for that attempt. A nil steps slice omits the key, as the API does for
+// a job it reports no steps for.
 type editMirrorJobFixture struct {
 	name       string
 	attempt    int
 	conclusion string
+	steps      []editMirrorStepFixture
+}
+
+// editMirrorStepFixture is one step of one job attempt.
+type editMirrorStepFixture struct {
+	name       string
+	conclusion string
+}
+
+func (s editMirrorStepFixture) json() string {
+	return fmt.Sprintf(`{"name":%q,"conclusion":%q,"status":"completed"}`, s.name, s.conclusion)
+}
+
+// editMirrorTestStep is the step a go-product test leg runs, as ci.yml names it.
+func editMirrorTestStep(part, conclusion string) editMirrorStepFixture {
+	return editMirrorStepFixture{name: "Test and replay the contract corpus (" + part + ")", conclusion: conclusion}
 }
 
 func editMirrorJob(name, conclusion string, attempt int) editMirrorJobFixture {
 	return editMirrorJobFixture{name: name, attempt: attempt, conclusion: conclusion}
 }
 
+// editMirrorJobWithSteps is editMirrorJob with the steps that attempt ran.
+func editMirrorJobWithSteps(name, conclusion string, attempt int, steps ...editMirrorStepFixture) editMirrorJobFixture {
+	return editMirrorJobFixture{name: name, attempt: attempt, conclusion: conclusion, steps: steps}
+}
+
 func (j editMirrorJobFixture) json() string {
-	return fmt.Sprintf(`{"name":%q,"run_attempt":%d,"conclusion":%q,"status":"completed"}`, j.name, j.attempt, j.conclusion)
+	body := fmt.Sprintf(`{"name":%q,"run_attempt":%d,"conclusion":%q,"status":"completed"`, j.name, j.attempt, j.conclusion)
+	if j.steps != nil {
+		parts := make([]string, len(j.steps))
+		for i, step := range j.steps {
+			parts[i] = step.json()
+		}
+		body += `,"steps":[` + strings.Join(parts, ",") + `]`
+	}
+	return body + "}"
 }
 
 // editMirrorCase is one run of the script: what the API answers and the decision it must reach.
@@ -284,9 +315,10 @@ func TestEditMirror_a_ref_qualified_workflow_path_is_the_same_workflow(t *testin
 // another leg's success is not this leg's.
 func TestEditMirror_a_matrix_leg_mirrors_only_its_own_leg(t *testing.T) {
 	c := editMirrorCase{
-		name:    "the leg's own job succeeded",
-		runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
-		jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJob("go-product (test-2)", "success", 1)}},
+		name: "the leg's own job succeeded",
+		runs: []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+		// A test leg is mirrored on the leg's test step, so the fixture carries it.
+		jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (test-2)", "success", 1, editMirrorTestStep("test-2", "success"))}},
 		jobName: "go-product (test-2)",
 		want:    "true",
 		wantRun: 1111,
@@ -303,8 +335,95 @@ func TestEditMirror_a_matrix_leg_mirrors_only_its_own_leg(t *testing.T) {
 	runEditMirror(t, other).check(t, other)
 }
 
-// Everything but a successful same-named job in a candidate run leaves the job to run in
-// full: the script answers mirrored=false and exits 0, so a lookup that cannot establish the
+// A go-product test leg is mirrored on its test step as well as its conclusion: CRW-790's
+// temporary light mode lets a leg conclude success with its tests skipped, and such a leg must
+// run in full in a later body-only edit rather than be carried forward untested.
+func TestEditMirror_a_test_leg_is_mirrored_only_on_its_test_step(t *testing.T) {
+	for _, c := range []editMirrorCase{
+		{
+			name:    "the test step was skipped in a light run",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (test-2)", "success", 1, editMirrorTestStep("test-2", "skipped"))}},
+			jobName: "go-product (test-2)",
+			want:    "false",
+		},
+		{
+			name:    "the test step failed",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (test-2)", "success", 1, editMirrorTestStep("test-2", "failure"))}},
+			jobName: "go-product (test-2)",
+			want:    "false",
+		},
+		{
+			name:    "the job carries no steps at all",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJob("go-product (test-2)", "success", 1)}},
+			jobName: "go-product (test-2)",
+			want:    "false",
+		},
+		{
+			name:    "the test step is absent from the steps that ran",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (test-2)", "success", 1, editMirrorStepFixture{name: "actions/checkout", conclusion: "success"})}},
+			jobName: "go-product (test-2)",
+			want:    "false",
+		},
+		{
+			name:    "the test step succeeded",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (test-2)", "success", 1, editMirrorTestStep("test-2", "success"))}},
+			jobName: "go-product (test-2)",
+			want:    "true",
+			wantRun: 1111,
+		},
+		{
+			name: "the newest attempt skipped the test step after an older one ran it",
+			runs: []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs: map[int][]editMirrorJobFixture{1111: {
+				editMirrorJobWithSteps("go-product (test-2)", "success", 1, editMirrorTestStep("test-2", "success")),
+				editMirrorJobWithSteps("go-product (test-2)", "success", 2, editMirrorTestStep("test-2", "skipped")),
+			}},
+			jobName: "go-product (test-2)",
+			want:    "false",
+		},
+		{
+			name:    "another leg's test step is not this leg's",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (test-3)", "success", 1, editMirrorTestStep("test-3", "success"))}},
+			jobName: "go-product (test-2)",
+			want:    "false",
+		},
+	} {
+		runEditMirror(t, c).check(t, c)
+	}
+}
+
+// Lint and dist are not test legs: no light mode reaches them and they carry no test step, so
+// they keep mirroring on the job conclusion alone.
+func TestEditMirror_the_other_legs_still_mirror_on_the_conclusion_alone(t *testing.T) {
+	for _, c := range []editMirrorCase{
+		{
+			name:    "the lint leg concluded success",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("go-product (lint)", "success", 1, editMirrorStepFixture{name: "Lint", conclusion: "success"})}},
+			jobName: "go-product (lint)",
+			want:    "true",
+			wantRun: 1111,
+		},
+		{
+			name:    "the dist leg concluded success",
+			runs:    []editMirrorRunFixture{editMirrorRun(1111, "2026-10-06T06:00:00Z")},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJob("go-product (dist)", "success", 1)}},
+			jobName: "go-product (dist)",
+			want:    "true",
+			wantRun: 1111,
+		},
+	} {
+		runEditMirror(t, c).check(t, c)
+	}
+}
+
+// Everything but a successful same-named job in a candidate run leaves the job to run in// full: the script answers mirrored=false and exits 0, so a lookup that cannot establish the
 // answer never narrows the run.
 func TestEditMirror_nothing_else_is_mirrored(t *testing.T) {
 	const older, newer = 1111, 2222
@@ -486,8 +605,8 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := string(data)
-	if !strings.Contains(workflow, "types: [opened, reopened, synchronize, ready_for_review, edited]") {
-		t.Error("the pull_request types no longer carry edited")
+	if !strings.Contains(workflow, "types: [opened, reopened, synchronize, ready_for_review, edited, labeled]") {
+		t.Error("the pull_request types no longer carry edited and labeled")
 	}
 	if !strings.Contains(workflow, "\npermissions:\n  contents: read\n") {
 		t.Error("the workflow's own permissions changed")
@@ -536,10 +655,16 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 		if got := steps[mirror]["run"]; got != "bash scripts/ci/edit_mirror.sh" {
 			t.Errorf("%s runs %q as its mirror step", job, got)
 		}
-		if got := steps[mirror]["if"]; got != bodyEdit {
-			t.Errorf("%s runs the mirror if %q, want %q", job, got, bodyEdit)
+		// CRW-790 appends the light guard inside the braces of the two mirror steps, so an
+		// unlabeled light run does not repeat a leg whose tests did not run.
+		wantMirrorIf := bodyEdit
+		if job == "go-product" {
+			wantMirrorIf = "${{ github.event.action == 'edited' && !github.event.changes.base && env.CRW_LIGHT_LEG != 'true' }}"
 		}
-		if mirror == 0 || steps[mirror-1]["uses"] == "" || steps[mirror-1]["if"] != bodyEdit {
+		if got := steps[mirror]["if"]; got != wantMirrorIf {
+			t.Errorf("%s runs the mirror if %q, want %q", job, got, wantMirrorIf)
+		}
+		if mirror == 0 || steps[mirror-1]["uses"] == "" || steps[mirror-1]["if"] != wantMirrorIf {
 			t.Errorf("%s does not check out the script on a body-only edit before the mirror", job)
 		}
 		for i, step := range steps[mirror+1:] {
