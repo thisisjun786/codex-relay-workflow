@@ -39,8 +39,21 @@ process.chdir(scratch); // a relative cwd in a payload resolves inside the scrat
 
 const FOLDERS = ['dev', 'search', 'dev-testing'];
 const BODY = f => '---\nname: cxc-' + f + '\ndescription: "Synthetic ' + f + ' skill for hook oracle tests."\n---\n# ' + f + '\nUse $cxc-search only if the task calls for it.\n';
-const rename = s => s.replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('CXC-', 'CRW-')
-  .replaceAll('cxc orchestrat', 'crw orchestrat').replaceAll('cxc loop', 'crw loop').replace(/\bcodexclaw\b/g, 'crw')
+// The cli rows of contract/schema/cxc/name-substitution.json drive the command renames, as the Go replay's
+// verbPass does (internal/dev/cxccorpus/schema.go): the longest cxc verb first, and a \b after the verb, so
+// "cxc orchestrate" becomes "crw pabcd orchestrate". The bare-cxc form follows R33, which the cli table does
+// not carry: the V1 guard notice's noun "cxc orchestration" is renamed to "crw orchestration" (the old
+// boundary-free replaceAll did this too; a \b after the verb would not, because "orchestrate" is followed by
+// a word character).
+const cliRows = (() => {
+  const table = JSON.parse(fs.readFileSync(new URL('../../../../../contract/schema/cxc/name-substitution.json', import.meta.url), 'utf8'));
+  const esc = w => w.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+  const rules = table.cli.filter(r => r.crw !== null).sort((a, b) => b.cxc.length - a.cxc.length)
+    .map(r => [new RegExp('\\bcxc ' + r.cxc.map(esc).join(' ') + '\\b', 'g'), 'crw ' + r.crw.join(' ')]);
+  return s => { for (const [re, to] of rules) s = s.replace(re, to); return s; };
+})();
+const rename = s => cliRows(s).replaceAll('cxc orchestration', 'crw orchestration').replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('CXC-', 'CRW-')
+  .replace(/\bcodexclaw\b/g, 'crw')
   .replace(/\{SKILLS\}\/(dev|search|dev-testing)\//g, '{SKILLS}/crw-$1/');
 const deep = (v, fn) => typeof v === 'string' ? fn(v) : Array.isArray(v) ? v.map(x => deep(x, fn))
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x, fn)])) : v;
@@ -333,7 +346,9 @@ assert.deepEqual(capCases.map(c => c.appended), [true, false, true, false]);
 import { execFileSync } from 'node:child_process';
 const FILL_RE = /\{\{FILL:([^:}]*):(\d+)\}\}/g;
 const fillIn = s => s.replace(FILL_RE, (_, u, n) => u.repeat(+n));
-const rename2 = s => rename(s).replaceAll('cxc subagents dispatch', 'crw role helper dispatch').replaceAll('CXC selects', 'CRW selects');
+// rename already maps "cxc subagents dispatch" through the cli table; the kept replaceAll is a harmless no-op
+// kept for the reader. "CXC selects" is the bare-CXC rule R31, which the cli table does not carry.
+const rename2 = s => rename(s).replaceAll('CXC selects', 'CRW selects');
 const MARKER_RE = /cxc|codexclaw/i;
 const route = [];
 const managed = [];

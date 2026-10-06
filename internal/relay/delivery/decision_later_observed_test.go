@@ -31,6 +31,7 @@ func (d *decWorld) observedEnd(turn, outcome string) string {
 // refused superseded_revision with a wording that says the relay saw the later end; the newer end
 // is answered.
 func TestDecisionObservedEnd01_AnOlderObservedEndIsNotAnsweredAfterANewerOne(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	older := d.blocked
 	d.clock.Advance(5)
@@ -54,6 +55,7 @@ func TestDecisionObservedEnd01_AnOlderObservedEndIsNotAnsweredAfterANewerOne(t *
 // c1/c2: the newer end must be later in the order the relay saw the receipts. An observed end that
 // came first does not block an answer to the end that came after it.
 func TestDecisionObservedEnd02_TheNewestObservedEndIsTheOneAnswered(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "failed")
 	older := d.blocked
 	d.clock.Advance(5)
@@ -71,6 +73,7 @@ func TestDecisionObservedEnd02_TheNewestObservedEndIsTheOneAnswered(t *testing.T
 // c1/c2: a queued answer to the older observed end is superseded once a newer end of the same
 // generation arrives, so it is never sent.
 func TestDecisionObservedEnd03_AQueuedAnswerIsSupersededByANewerObservedEnd(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	if state := d.row(event).S("state"); state != Queued {
@@ -91,6 +94,7 @@ func TestDecisionObservedEnd03_AQueuedAnswerIsSupersededByANewerObservedEnd(t *t
 // c1/c2: the child's own later receipt keeps its wording, so the refusal still names the child when
 // the child, not the relay, reported again.
 func TestDecisionObservedEnd04_AChildsLaterReceiptKeepsItsWording(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	d.clock.Advance(5)
 	d.emit("failed", "completed", store.AcceptOptions{})

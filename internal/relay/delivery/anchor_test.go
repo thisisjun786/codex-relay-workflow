@@ -94,6 +94,7 @@ func (a *anb) dispatchRevision(script string) string {
 }
 
 func TestANB01_every_route_to_dispatched_binds_the_new_anchor(t *testing.T) {
+	t.Parallel()
 	t.Run("a later tick", func(t *testing.T) {
 		runANB(t, "tick", func(a *anb, out map[string]any) {
 			rev := a.dispatchRevision("")
@@ -205,6 +206,7 @@ func TestBindPendingAnchors_recovers_acknowledged_revision(t *testing.T) {
 }
 
 func TestANB02_an_unbound_generation_refuses_the_childs_receipt(t *testing.T) {
+	t.Parallel()
 	runANB(t, "unbound", func(a *anb, out map[string]any) {
 		rev := a.dispatchRevision("")
 		out["record"] = a.mustAttempt(rev, at(a.clock.Now()))
@@ -217,6 +219,7 @@ func TestANB02_an_unbound_generation_refuses_the_childs_receipt(t *testing.T) {
 }
 
 func TestANB03_a_disagreeing_promotion_is_recorded_not_swallowed(t *testing.T) {
+	t.Parallel()
 	runANB(t, "conflict", func(a *anb, out map[string]any) {
 		a.lostSettleWrite()
 		_, err := BindAnchor(a.ctx, a.store, a.clock, a.rid, 2, "a-different-turn")
@@ -229,6 +232,7 @@ func TestANB03_a_disagreeing_promotion_is_recorded_not_swallowed(t *testing.T) {
 	})
 }
 
+// sequential: assigns the package variable forceCurrent.
 func TestANB04_a_stale_reconciliation_binds_nothing(t *testing.T) {
 	runANB(t, "stale", func(a *anb, out map[string]any) {
 		rev, _ := a.lostSettleWrite()
@@ -246,6 +250,7 @@ func TestANB04_a_stale_reconciliation_binds_nothing(t *testing.T) {
 }
 
 func TestANB05_a_revision_request_is_retired_once_the_child_answers(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"retired_ready", "retired_failed", "retired_daemon"} {
 		t.Run(mode, func(t *testing.T) {
 			runANB(t, mode, func(a *anb, out map[string]any) {
@@ -280,6 +285,7 @@ func TestANB05_a_revision_request_is_retired_once_the_child_answers(t *testing.T
 }
 
 func TestANB06_binding_is_idempotent_and_needs_a_dispatch(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"idempotent", "never"} {
 		t.Run(mode, func(t *testing.T) {
 			runANB(t, mode, func(a *anb, out map[string]any) {

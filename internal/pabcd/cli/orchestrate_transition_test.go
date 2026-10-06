@@ -592,18 +592,31 @@ func TestOrchestrateTransitionSupersedesStaleRounds(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionDCloseNotPorted pins the split boundary: this issue refuses the D close.
-func TestOrchestrateTransitionDCloseNotPorted(t *testing.T) {
+// TestOrchestrateTransitionDCloseUnboundCloses is the split boundary this file used to pin as a
+// refusal (CRW-756 ports the close): an unbound session's D closes the cycle to IDLE with the oracle's
+// text. The bound and recovery paths are covered in orchestrate_dclose_test.go and
+// orchestrate_dclose_recovery_test.go.
+func TestOrchestrateTransitionDCloseUnboundCloses(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id := "d-close"
 	orchestrateTransitionSession(t, cwd, id, `{"phase":"C","checkEpoch":"c-1"}`)
 	got, err := orchestrateTransitionTry(t, cwd, "D", "--session", id, "--attest",
 		`{"from":"C","to":"D","did":"verified","checkOutput":"tests passed","exitCode":0}`)
-	if err == nil || err.Error() != "orchestrate D close is not ported yet" {
-		t.Fatalf("D close: %+v %v", got, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if state.ReadState(cwd, id).Phase != state.PhaseC || len(orchestrateTransitionLedger(t, cwd)) != 0 {
-		t.Fatal("the unported D close wrote state")
+	want := "orchestrate D: current=C -> IDLE (C \u2192 IDLE, cycle closed, session " + id + ")"
+	if got.Code != 0 || got.Output != want {
+		t.Fatalf("D close: %+v", got)
+	}
+	after := state.ReadState(cwd, id)
+	if after.Phase != state.PhaseIdle || after.CheckEpoch != nil || after.OrchestrationActive {
+		t.Fatalf("cleared state: %+v", after)
+	}
+	rows := orchestrateTransitionLedger(t, cwd)
+	if len(rows) != 1 || rows[0]["from"] != "C" || rows[0]["to"] != "IDLE" || rows[0]["reason"] != "done" ||
+		rows[0]["evidence"] != "verified" {
+		t.Fatalf("done row: %+v", rows)
 	}
 }
 
