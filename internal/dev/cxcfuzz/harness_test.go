@@ -240,3 +240,44 @@ func TestAnswerRejectsAnUnmatchedOrEmptyReply(t *testing.T) {
 		t.Fatalf("an explicit null output: %q, %v", got, err)
 	}
 }
+
+// A case root carries the homes and the temporary directory a target reads, so a target that makes
+// its own file under TMPDIR finds a directory that exists.
+func TestPrepareRootMakesTheHomesAndTmp(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	env := RootEnv(root)
+	for _, dir := range []string{env.Home, env.CodexHome, env.CrwHome, env.TmpDir} {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			t.Fatalf("%s: %v", dir, err)
+		}
+	}
+}
+
+// A campaign refuses an output directory that already holds results, so a second run cannot leave
+// its divergences beside another run's summary.
+func TestRunRefusesANonEmptyOutputDirectory(t *testing.T) {
+	requireNode(t)
+	out := t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "summary.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"echo", "--cases", "1", "--out", out}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "is not empty") {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+// A comparator that answers outside the four kinds is a campaign error, not a silent zero.
+func TestCampaignRejectsAnUnknownVerdictKind(t *testing.T) {
+	target := helperTarget(t, func(rng *rand.Rand, size int) any { return "x" })
+	target.Compare = func(goOut, oracleOut any) Verdict { return Verdict{Kind: "sameish"} }
+	_, err := Campaign(Config{Target: target, Cases: 1, Seed: 1, Workers: 1, Out: t.TempDir(), Env: helperEnvFor()})
+	if err == nil || !strings.Contains(err.Error(), "unknown verdict kind") {
+		t.Fatalf("err = %v", err)
+	}
+}

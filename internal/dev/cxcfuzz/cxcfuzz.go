@@ -122,6 +122,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	} else {
 		cfg.Out = filepath.Join(DefaultOutRoot, target.Name, time.Now().UTC().Format("20060102T150405Z"))
 	}
+	// A campaign refuses a directory that already holds results: a second run there would overwrite
+	// summary.json and leave the first run's divergence files beside it.
+	if entries, err := os.ReadDir(cfg.Out); err == nil && len(entries) > 0 {
+		fmt.Fprintf(stderr, "crw-dev fuzz: error: the output directory %s is not empty\n", cfg.Out)
+		return 2
+	}
 	if err := os.MkdirAll(cfg.Out, 0o755); err != nil {
 		fmt.Fprintf(stderr, "crw-dev fuzz: %v\n", err)
 		return 1
@@ -184,7 +190,11 @@ func Campaign(cfg Config) (Summary, error) {
 			summary.Timeouts++
 			continue
 		case err != nil:
-			return summary, err
+			// The worker died, or its reply was unreadable: the issue records that input as a
+			// timeout case and carries on with the replacement worker, so one transient death
+			// does not discard the run. It is not an agreement either.
+			summary.Timeouts++
+			continue
 		}
 		switch verdict.Kind {
 		case Same:
@@ -196,6 +206,8 @@ func Campaign(cfg Config) (Summary, error) {
 			summary.Extra++
 		case Differ:
 			summary.Differ++
+		default:
+			return summary, fmt.Errorf("the target's Compare answered an unknown verdict kind %q", verdict.Kind)
 		}
 		if err := writeDivergence(cfg.Out, Divergence{
 			Kind:    verdict.Kind,
@@ -245,6 +257,11 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 		return Verdict{}, "", "", err
 	}
 	defer func() { _ = os.RemoveAll(oracleRoot) }()
+	for _, root := range []string{goRoot, oracleRoot} {
+		if err := PrepareRoot(root); err != nil {
+			return Verdict{}, "", "", err
+		}
+	}
 	value, err := decode(text)
 	if err != nil {
 		return Verdict{}, "", "", err
@@ -262,10 +279,8 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	goStripped := stripRoot(goOut, goRoot)
-	oracleStripped := stripRoot(oracleValue, oracleRoot)
-	verdict := c.cfg.Target.Compare(goStripped, oracleStripped)
-	return verdict, canonical(goStripped), canonical(oracleStripped), nil
+	verdict := c.cfg.Target.Compare(goOut, oracleValue)
+	return verdict, canonical(goOut), canonical(oracleValue), nil
 }
 
 // writeDivergence writes one divergence file, once per input hash.

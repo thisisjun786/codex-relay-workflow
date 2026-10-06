@@ -28,11 +28,14 @@ function echo(input) {
 }
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one.
+// CODEXCLAW_HOME is the oracle's own state root (CRW_HOME is the port's name for it): leaving it
+// pointing at the host would let a case read or mutate real CXC state.
 function run(request) {
   if (typeof request.root === "string" && request.root !== "") {
     process.env.HOME = request.root + "/home";
     process.env.CODEX_HOME = request.root + "/codex-home";
     process.env.CRW_HOME = request.root + "/crw-home";
+    process.env.CODEXCLAW_HOME = request.root + "/codexclaw-home";
     process.env.TMPDIR = request.root + "/tmp";
   }
   return echo(request.input);
