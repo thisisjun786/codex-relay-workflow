@@ -1,9 +1,10 @@
 {
-  "schema": "crw-user-decision-fingerprint-vectors/1",
-  "algorithm": "sha256(normalize(context) + \"|\" + blocking subject + \"|\" + sorted normalized option ids); first 16 hex characters, lowercase",
+  "algorithm": "sha256(json([normalize(context), sorted [[normalize(kind), normalize(ref)], ...], sorted [normalize(option id), ...]])); first 16 hex characters, lowercase",
+  "ambiguity": "Validate still refuses a '|' in the context, a ',' in an option id and a ':' or ',' in a blocking ref, as a second guard behind the encoding",
+  "encoding": "the material is the compact JSON encoding Go's encoding/json produces (json.Marshal): no spaces between elements, and the quotation mark, the reverse solidus, the controls below U+0020, the HTML characters \u003c \u003e \u0026 and the separators U+2028 U+2029 written as \\uXXXX escapes; every other rune, non-ASCII included, written as UTF-8 as it is. An encoder with different escaping or spacing fingerprints the same question differently, so this rule is part of the format.",
   "normalization": "ASCII letters lowercased only (A-Z to a-z; every other rune unchanged); each run of whitespace collapses to one space; leading and trailing whitespace dropped",
-  "ambiguity": "Validate refuses a '|' in the context, a ',' in an option id and a ':' or ',' in a blocking ref, so the three '|'-joined components and the ','-joined lists cannot be confused",
   "note": "Fixed input/output pairs. This vector is the reference a second implementation is compared against; the Go test internal/relay/decisions must reproduce every fingerprint here.",
+  "schema": "crw-user-decision-fingerprint-vectors/1",
   "vectors": [
     {
       "name": "host-window",
@@ -23,7 +24,7 @@
         "between-runs",
         "later"
       ],
-      "fingerprint": "7d19f239a5cbeed4"
+      "fingerprint": "82af00a939d14aac"
     },
     {
       "name": "case-and-space",
@@ -38,7 +39,7 @@
         "now",
         "later"
       ],
-      "fingerprint": "2f496821c09ca92e"
+      "fingerprint": "9357a1148d23f358"
     },
     {
       "name": "case-and-space-same",
@@ -53,7 +54,7 @@
         "later",
         "now"
       ],
-      "fingerprint": "2f496821c09ca92e"
+      "fingerprint": "9357a1148d23f358"
     },
     {
       "name": "option-order-a",
@@ -68,7 +69,7 @@
         "adopt",
         "defer"
       ],
-      "fingerprint": "3d5b3751e59e1144"
+      "fingerprint": "b0c3706630143ab0"
     },
     {
       "name": "option-order-b",
@@ -83,7 +84,7 @@
         "defer",
         "adopt"
       ],
-      "fingerprint": "3d5b3751e59e1144"
+      "fingerprint": "b0c3706630143ab0"
     },
     {
       "name": "blocking-order-a",
@@ -102,7 +103,7 @@
         "right-after-r3",
         "with-r3"
       ],
-      "fingerprint": "fc5bae329ee43c1b"
+      "fingerprint": "0e6552cd80e4ef7a"
     },
     {
       "name": "blocking-order-b",
@@ -121,7 +122,7 @@
         "with-r3",
         "right-after-r3"
       ],
-      "fingerprint": "fc5bae329ee43c1b"
+      "fingerprint": "0e6552cd80e4ef7a"
     },
     {
       "name": "no-blocking",
@@ -131,7 +132,7 @@
         "email",
         "chat"
       ],
-      "fingerprint": "84b442120142606f"
+      "fingerprint": "70c800851745daea"
     },
     {
       "name": "two-options",
@@ -146,7 +147,7 @@
         "right-after-r3",
         "with-r3"
       ],
-      "fingerprint": "c09b2cd27f4a5c18"
+      "fingerprint": "3f9c12be32b7fd61"
     },
     {
       "name": "three-options",
@@ -162,7 +163,7 @@
         "leave",
         "escalate"
       ],
-      "fingerprint": "9c88bdb9a3561e8a"
+      "fingerprint": "cf2f49ecf3bdd5e7"
     },
     {
       "name": "mixed-case-option-ids",
@@ -177,7 +178,7 @@
         "A-first",
         "B-first"
       ],
-      "fingerprint": "cc245ed7f5eb6231"
+      "fingerprint": "190e055a7c454951"
     },
     {
       "name": "non-ascii-unchanged",
@@ -192,7 +193,7 @@
         "İst",
         "Σnd"
       ],
-      "fingerprint": "f393089768f3e903"
+      "fingerprint": "378e45a35cb3a705"
     },
     {
       "name": "non-ascii-hangul",
@@ -207,7 +208,87 @@
         "ㄱ",
         "ㄲ"
       ],
-      "fingerprint": "b7ec159f7cdc9560"
+      "fingerprint": "142cad12f8fff0de"
+    },
+    {
+      "name": "delimiter-pair-a",
+      "context": "c",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "x"
+        }
+      ],
+      "optionIds": [
+        "a",
+        "issue:y|z",
+        "zz"
+      ],
+      "fingerprint": "3690b6914736be83"
+    },
+    {
+      "name": "delimiter-pair-b",
+      "context": "c",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "x|a"
+        },
+        {
+          "kind": "issue",
+          "ref": "y"
+        }
+      ],
+      "optionIds": [
+        "z",
+        "zz"
+      ],
+      "fingerprint": "2fa2fbe0d0c650e5"
+    },
+    {
+      "name": "html-escapes",
+      "context": "R\u0026D \u003cwindow\u003e at 10:00",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "c608945c5c867550"
+    },
+    {
+      "name": "line-separators",
+      "context": "first\u2028second\u2029third",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "92e2e2ed038aed29"
+    },
+    {
+      "name": "html-escapes-in-option",
+      "context": "Pick the channel.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "a\u003cb",
+        "c\u0026d"
+      ],
+      "fingerprint": "17bde3a14eb9e7e8"
     }
   ]
 }

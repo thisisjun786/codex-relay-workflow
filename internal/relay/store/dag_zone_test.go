@@ -68,6 +68,9 @@ var zoneInventory = map[string][]string{
 	"dag_pass_release_policy": {"plan_id", "pass_seq", "policy_json"},
 	// CRW-468 (appended statement): the host memory bound a recorded pass saw.
 	"dag_pass_host_memory": {"plan_id", "pass_seq", "state", "reading_limit", "host_json"},
+	// CRW-728 (appended statements): the proof dag-accept records when it accepts a head the parent's ruling verified, and the head a ruling verified.
+	"dag_acceptance_refreshes": {"refresh_id", "acceptance_id", "refresh_seq", "relationship_id", "execution_generation", "event_id", "revision_hash", "head_sha", "verified_head_sha", "base_repository", "base_ref", "base_tip_sha", "proof_json", "resolved_paths_json", "recorded_by_task_id", "coordinator_epoch", "recorded_at"},
+	"dag_verified_heads":       {"event_id", "relationship_id", "execution_generation", "verdict_turn_id", "head_sha", "recorded_by_task_id", "recorded_at"},
 	// CRW-736 (appended statement): the user-decision record, one column per field of crw-user-decision/1
 	// with the object and array fields as JSON text.
 	"dag_user_decisions": {"decision_id", "fingerprint", "kind", "context", "options_json", "recommendation_json", "blocking_json", "needed_by", "origin_json", "source_json", "authority_json", "state", "raised_at", "raised_via", "seen_json", "answered_at", "answered_by", "answered_via", "answer_text", "applied_at", "applied_event", "applied_generation", "withdrawn_reason", "expired_reason"},
