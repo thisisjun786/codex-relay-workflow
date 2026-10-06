@@ -1,10 +1,9 @@
 // Package decisions holds the relay's user-decision record: the crw-user-decision/1 field set,
 // the kind and state vocabularies with their allowed transitions, validation, the fingerprint
-// and the in-memory merge of two records that carry the same fingerprint.
-//
-// It holds no store and no command; the table that persists a record and the
-// decision-raise/decision-list commands are other issues that build on this format. The
-// fingerprint's fixed input/output pairs live in testdata/fingerprint_vectors.json.
+// and the in-memory merge of two records that carry the same fingerprint. It holds no store and
+// no command; the table that persists a record and the decision-raise/decision-list commands are
+// other issues that build on this format. The fingerprint's fixed input/output pairs live in
+// testdata/fingerprint_vectors.json.
 package decisions
 
 import (
@@ -77,7 +76,9 @@ var (
 	ErrUnknownAuthority    = errors.New("decisions: unknown authority kind")
 	ErrBadNeededBy         = errors.New("decisions: needed_by is not an RFC3339 timestamp")
 	ErrRecommendation      = errors.New("decisions: the recommendation names no option")
+	ErrAmbiguousField      = errors.New("decisions: a field holds one of the fingerprint's delimiters")
 	ErrTransition          = errors.New("decisions: that transition is not allowed")
+	ErrMergeConflict       = errors.New("decisions: the two records differ beyond their seen entries")
 	ErrFingerprintMismatch = errors.New("decisions: the two records have different fingerprints")
 )
 
@@ -216,61 +217,49 @@ func Transition(record *Record, to State) error {
 	return nil
 }
 
-// Normalize is the fingerprint's normalization: lowercase, collapse each whitespace run to one
-// space, and drop leading and trailing whitespace.
-func Normalize(text string) string {
-	return strings.Join(strings.Fields(strings.ToLower(text)), " ")
+// asciiLower lowercases A-Z only. Go's strings.ToLower and Python's str.lower disagree on a few
+// code points, so neither is used and every other rune is left as it is.
+func asciiLower(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	for _, r := range text {
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
-// blockingSubject is each entry's normalized kind and ref joined by a colon, sorted, comma-joined.
-func blockingSubject(blocking []Blocking) string {
+// Normalize is the fingerprint's normalization: ASCII-lowercase, collapse each whitespace run to
+// one space, and drop leading and trailing whitespace.
+func Normalize(text string) string {
+	return strings.Join(strings.Fields(asciiLower(text)), " ")
+}
+
+// Fingerprint is the question's identity: the first 16 hex characters of the SHA-256 of the
+// normalized context, blocking subject and sorted option ids joined by "|". Two statements of
+// one question that normalize alike are one record; Validate keeps the material unambiguous.
+func Fingerprint(context string, blocking []Blocking, options []Option) string {
 	entries := make([]string, 0, len(blocking))
 	for _, entry := range blocking {
 		entries = append(entries, Normalize(entry.Kind)+":"+Normalize(entry.Ref))
 	}
 	sort.Strings(entries)
-	return Normalize(strings.Join(entries, ","))
-}
-
-// optionIDs is the normalized option ids, sorted and comma-joined, so their order does not matter.
-func optionIDs(options []Option) string {
 	ids := make([]string, 0, len(options))
 	for _, option := range options {
 		ids = append(ids, Normalize(option.ID))
 	}
 	sort.Strings(ids)
-	return Normalize(strings.Join(ids, ","))
-}
-
-// Fingerprint is the question's identity: the first 16 hex characters of the SHA-256 of
-// normalize(context), the blocking subject and the sorted option ids, joined by "|". Two
-// statements of one question that normalize alike, block the same subjects and offer the same
-// options share a fingerprint and are one record.
-func Fingerprint(context string, blocking []Blocking, options []Option) string {
-	material := Normalize(context) + "|" + blockingSubject(blocking) + "|" + optionIDs(options)
+	material := Normalize(context) + "|" + Normalize(strings.Join(entries, ",")) + "|" + Normalize(strings.Join(ids, ","))
 	sum := sha256.Sum256([]byte(material))
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// Stamp fills the schema id, the open state and the content's fingerprint, refusing a bad record.
-func Stamp(record Record) (Record, error) {
-	if record.Schema == "" {
-		record.Schema = Schema
-	}
-	if record.State == "" {
-		record.State = StateOpen
-	}
-	if err := Validate(record); err != nil {
-		return Record{}, err
-	}
-	record.Fingerprint = Fingerprint(record.Context, record.Blocking, record.Options)
-	return record, nil
-}
-
 // Validate refuses a record that is not a well-formed crw-user-decision/1: a wrong schema id, an
 // unknown kind or state, an empty context, an option set that is not 2 or 3 options with unique
-// non-empty ids, a blocking kind outside the vocabulary, an answer class that is set but outside
-// the vocabulary, a needed_by that is not RFC3339, or a recommendation naming no option.
+// non-empty ids, a vocabulary miss, a needed_by that is not RFC3339, a recommendation naming no
+// option, or a field carrying a fingerprint delimiter.
 func Validate(record Record) error {
 	if record.Schema != Schema {
 		return fmt.Errorf("%w: %q", ErrSchema, record.Schema)
@@ -284,6 +273,9 @@ func Validate(record Record) error {
 	if strings.TrimSpace(record.Context) == "" {
 		return ErrEmptyContext
 	}
+	if strings.Contains(record.Context, "|") {
+		return fmt.Errorf("%w: context contains %q", ErrAmbiguousField, "|")
+	}
 	if len(record.Options) < MinOptions || len(record.Options) > MaxOptions {
 		return fmt.Errorf("%w: got %d", ErrOptionCount, len(record.Options))
 	}
@@ -292,6 +284,9 @@ func Validate(record Record) error {
 		id := strings.TrimSpace(option.ID)
 		if id == "" {
 			return ErrEmptyOptionID
+		}
+		if strings.Contains(id, ",") {
+			return fmt.Errorf("%w: option id %q contains %q", ErrAmbiguousField, id, ",")
 		}
 		if ids[id] {
 			return fmt.Errorf("%w: %q", ErrDuplicateOptionID, id)
@@ -302,12 +297,17 @@ func Validate(record Record) error {
 		if !IsBlockingKind(entry.Kind) {
 			return fmt.Errorf("%w: %q", ErrUnknownBlockingKind, entry.Kind)
 		}
+		if strings.ContainsAny(entry.Ref, ":,") {
+			return fmt.Errorf("%w: blocking ref %q contains %q or %q", ErrAmbiguousField, entry.Ref, ":", ",")
+		}
 	}
 	if record.Authority.Kind != "" && !IsAuthorityKind(record.Authority.Kind) {
 		return fmt.Errorf("%w: %q", ErrUnknownAuthority, record.Authority.Kind)
 	}
 	if record.NeededBy != "" {
-		if _, err := time.Parse(time.RFC3339, record.NeededBy); err != nil {
+		// time.Parse accepts a comma fractional separator, which RFC 3339 does not.
+		parsed, err := time.Parse(time.RFC3339, record.NeededBy)
+		if err != nil || parsed.Format(time.RFC3339) != record.NeededBy {
 			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
 		}
 	}
@@ -317,24 +317,31 @@ func Validate(record Record) error {
 	return nil
 }
 
-// Merge folds a second statement of the same question into the first: they must carry the same
-// fingerprint and the second one's seen entries are appended to the first one's, so a question
-// raised again is one record with a longer seen. No store is involved. Each stored fingerprint
-// is checked against its content, so a stale field cannot merge two different questions.
+// answer is what a second observation must agree on, so merging cannot drop a later answer.
+func answer(record Record) string {
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s",
+		record.State, record.AnsweredAt, record.AnsweredBy, record.AnsweredVia, record.AnswerText,
+		record.AppliedAt, record.AppliedEvent, record.AppliedGeneration, record.WithdrawnReason, record.ExpiredReason)
+}
+
+// Merge folds a second statement of the same question into the first: the same fingerprint, the
+// same answer and lifecycle, and the second one's seen entries appended to the first one's. A
+// stored fingerprint is checked against its content, and a record differing beyond its seen is
+// refused rather than overwritten, so no stale field and no later answer is lost.
 func Merge(first, second Record) (Record, error) {
-	if err := Validate(first); err != nil {
-		return Record{}, err
-	}
-	if err := Validate(second); err != nil {
-		return Record{}, err
-	}
 	for _, record := range []Record{first, second} {
+		if err := Validate(record); err != nil {
+			return Record{}, err
+		}
 		if content := Fingerprint(record.Context, record.Blocking, record.Options); content != record.Fingerprint {
 			return Record{}, fmt.Errorf("%w: %s is not its content's %s", ErrFingerprintMismatch, record.Fingerprint, content)
 		}
 	}
 	if first.Fingerprint != second.Fingerprint {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)
+	}
+	if answer(first) != answer(second) {
+		return Record{}, fmt.Errorf("%w: %s and %s", ErrMergeConflict, first.State, second.State)
 	}
 	merged := first
 	merged.Seen = append(append([]Seen{}, first.Seen...), second.Seen...)

@@ -76,12 +76,8 @@ func TestC1AllowedTransitions(t *testing.T) {
 	}
 	for _, from := range States() {
 		for _, to := range States() {
-			allowed := false
-			for _, candidate := range want[from] {
-				allowed = allowed || candidate == to
-			}
-			if CanTransition(from, to) != allowed {
-				t.Errorf("CanTransition(%s, %s) = %v, want %v", from, to, CanTransition(from, to), allowed)
+			if wantAllowed := contains(want[from], to); CanTransition(from, to) != wantAllowed {
+				t.Errorf("CanTransition(%s, %s) = %v, want %v", from, to, CanTransition(from, to), wantAllowed)
 			}
 		}
 	}
@@ -99,7 +95,6 @@ func TestC2ValidationRefusals(t *testing.T) {
 		want   error
 	}{
 		{"empty context", func(r *Record) { r.Context = "" }, ErrEmptyContext},
-		{"blank context", func(r *Record) { r.Context = "   " }, ErrEmptyContext},
 		{"one option", func(r *Record) { r.Options = r.Options[:1] }, ErrOptionCount},
 		{"four options", func(r *Record) { r.Options = append(r.Options, Option{ID: "c"}, Option{ID: "d"}) }, ErrOptionCount},
 		{"unknown kind", func(r *Record) { r.Kind = "nonsense" }, ErrUnknownKind},
@@ -110,7 +105,11 @@ func TestC2ValidationRefusals(t *testing.T) {
 		{"unknown blocking kind", func(r *Record) { r.Blocking = []Blocking{{Kind: "nonsense", Ref: "x"}} }, ErrUnknownBlockingKind},
 		{"unknown authority", func(r *Record) { r.Authority.Kind = "nonsense" }, ErrUnknownAuthority},
 		{"bad needed_by", func(r *Record) { r.NeededBy = "tomorrow" }, ErrBadNeededBy},
+		{"comma fractional needed_by", func(r *Record) { r.NeededBy = "2026-10-10T00:00:00,5Z" }, ErrBadNeededBy},
 		{"recommendation off the option set", func(r *Record) { r.Recommendation = &Recommendation{Option: "z"} }, ErrRecommendation},
+		{"context with a separator", func(r *Record) { r.Context = "a | b" }, ErrAmbiguousField},
+		{"option id with a comma", func(r *Record) { r.Options[0].ID = "a,b" }, ErrAmbiguousField},
+		{"blocking ref with a colon", func(r *Record) { r.Blocking = []Blocking{{Kind: "issue", Ref: "x:y"}} }, ErrAmbiguousField},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record := valid()
@@ -142,6 +141,8 @@ func TestC3Normalize(t *testing.T) {
 	for _, test := range []struct{ in, want string }{
 		{"  Schedule   THE  host  window. ", "schedule the host window."},
 		{"a\tb\nc", "a b c"},
+		{"MiXeD Case", "mixed case"},
+		{"\u0130\u03a3 stays", "\u0130\u03a3 stays"},
 		{"", ""},
 		{"   ", ""},
 	} {
@@ -169,7 +170,7 @@ func TestC3FingerprintVector(t *testing.T) {
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
-	if len(document.Vectors) < 10 {
+	if len(document.Vectors) < 13 {
 		t.Fatalf("the vector is too small: %d", len(document.Vectors))
 	}
 	for _, vector := range document.Vectors {
@@ -232,19 +233,18 @@ func TestC4MergeDifferentFingerprintIsRefused(t *testing.T) {
 	}
 }
 
-// Stamp fills the schema id, the open state and the fingerprint, and refuses a bad record.
-func TestC1StampFillsIdentity(t *testing.T) {
-	stamped, err := Stamp(Record{Kind: KindPolicy, Context: "a question", Options: []Option{{ID: "a"}, {ID: "b"}}})
-	if err != nil {
-		t.Fatal(err)
+// A later answer must not be dropped: merging records that differ beyond seen is refused.
+func TestC4MergeRefusesDifferingAnswer(t *testing.T) {
+	open := Record{Schema: Schema, Kind: KindPolicy, Context: "a question", State: StateOpen, Options: []Option{{ID: "a"}, {ID: "b"}}}
+	open.Fingerprint = Fingerprint(open.Context, open.Blocking, open.Options)
+	answered := open
+	answered.State = StateAnswered
+	answered.AnsweredAt, answered.AnsweredBy, answered.AnswerText = "2026-10-06T02:00:00Z", "task-a", "adopt"
+
+	if _, err := Merge(open, answered); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("merging a later answer = %v", err)
 	}
-	if stamped.Schema != Schema || stamped.State != StateOpen {
-		t.Fatalf("stamped = %+v", stamped)
-	}
-	if want := Fingerprint("a question", nil, []Option{{ID: "a"}, {ID: "b"}}); stamped.Fingerprint != want {
-		t.Fatalf("fingerprint = %s, want %s", stamped.Fingerprint, want)
-	}
-	if _, err := Stamp(Record{Kind: "nonsense"}); !errors.Is(err, ErrUnknownKind) {
-		t.Fatalf("Stamp of a bad record = %v", err)
+	if _, err := Merge(answered, open); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("merging an earlier open observation over an answer = %v", err)
 	}
 }

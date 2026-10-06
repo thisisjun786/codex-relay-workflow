@@ -1,7 +1,8 @@
 {
   "schema": "crw-user-decision-fingerprint-vectors/1",
   "algorithm": "sha256(normalize(context) + \"|\" + blocking subject + \"|\" + sorted normalized option ids); first 16 hex characters, lowercase",
-  "normalization": "lowercase; each run of whitespace collapses to one space; leading and trailing whitespace dropped",
+  "normalization": "ASCII letters lowercased only (A-Z to a-z; every other rune unchanged); each run of whitespace collapses to one space; leading and trailing whitespace dropped",
+  "ambiguity": "Validate refuses a '|' in the context, a ',' in an option id and a ':' or ',' in a blocking ref, so the three '|'-joined components and the ','-joined lists cannot be confused",
   "note": "Fixed input/output pairs. This vector is the reference a second implementation is compared against; the Go test internal/relay/decisions must reproduce every fingerprint here.",
   "vectors": [
     {
@@ -177,6 +178,36 @@
         "B-first"
       ],
       "fingerprint": "cc245ed7f5eb6231"
+    },
+    {
+      "name": "non-ascii-unchanged",
+      "context": "Turkish dotted capital I and Greek capital sigma stay as they are: İΣ.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "İst",
+        "Σnd"
+      ],
+      "fingerprint": "f393089768f3e903"
+    },
+    {
+      "name": "non-ascii-hangul",
+      "context": "한국어 문장은 변형되지 않는다.",
+      "blocking": [
+        {
+          "kind": "project",
+          "ref": "CRW-129"
+        }
+      ],
+      "optionIds": [
+        "ㄱ",
+        "ㄲ"
+      ],
+      "fingerprint": "b7ec159f7cdc9560"
     }
   ]
 }
