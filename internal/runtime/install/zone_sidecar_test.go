@@ -170,6 +170,18 @@ func TestTheBackupStillRefusesWhatChangedOtherwise(t *testing.T) {
 			},
 			want: "could not be copied",
 		},
+		"another file changes size between the listing and its copy": {
+			setup: func(t *testing.T, h *host) {},
+			step: func(t *testing.T, h *host, step string) error {
+				if step != "listed" {
+					return nil
+				}
+				// its bytes are copied as they are now, but its size in the comparison stays the one the first listing
+				// recorded, so a file that changed size under the copy is still the change it always was
+				return os.WriteFile(filepath.Join(h.relayState, "ledger.log"), []byte("line one\n"), 0o640)
+			},
+			want: "changed",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _, second, old, _ := zoneInstalled(t)

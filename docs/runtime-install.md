@@ -388,6 +388,8 @@ sidecars follow SQLite's WAL mode: `relay.sqlite3-shm` is never listed, copied o
 open, and `relay.sqlite3-wal` is copied when it is there at its copy, while one that goes or appears between the listing and the copy is not a
 refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which of
 the four happened); `relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses.
+A copied `-wal` that is still there at the verification must digest to what was copied, and one that a checkpoint has taken away by then is not a
+refusal either: `relay.sqlite3` itself is the consistency the verification keeps, and it still refuses when it changes.
 Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):

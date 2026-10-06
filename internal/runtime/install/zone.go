@@ -251,8 +251,12 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			return failure(true, "%s could not be copied: %v", e.Path, err)
 		}
 		e.SHA256 = digest
-		e.Size = size
 		if e.Path == walSidecar {
+			// Only the log's entry takes the size of the bytes copied. Every other file keeps the size of the first
+			// listing, so a file that changed size between that listing and its copy is still a change the comparison
+			// below catches: the store's log is the one file another connection may rewrite under the copy, and its
+			// entry has to describe what the copy holds.
+			e.Size = size
 			walCopied = true
 		}
 		copied = append(copied, e)
