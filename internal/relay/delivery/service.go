@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 )
@@ -1248,6 +1249,12 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		if _, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?, dispatch_evidence = ?, dispatch_turn_id = ?, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ?", state, when, hold, evidence, facts.TurnID, d.Clock.ISO(), eventID); err != nil {
 			return err
 		}
+		// A keeping decision (answer, stop) continues the child in this turn: the turn is not the
+		// generation's anchor, so nothing else admits it and the daemon's census never reads it. The
+		// relay carried the message, so it admits the turn itself, in this transaction (CRW-669).
+		if err := d.admitKeptDecisionTurnIn(ctx, eventID, state, facts); err != nil {
+			return err
+		}
 		safe, _ := record.Lookup("retrySafe")
 		if err := journal(ctx, d.Store, "delivery_attempted", eventID, Obj{{Key: "requestId", Value: requestID}, {Key: "state", Value: state}, {Key: "retrySafe", Value: safe}, {Key: "turnPreviouslyObserved", Value: previously}, {Key: "hold", Value: hold}, {Key: "settingsRefusal", Value: settingsRefusal}}, d.Clock.ISO()); err != nil {
 			return err
@@ -1258,4 +1265,56 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		return nil
 	})
 	return stored, err
+}
+
+// admitKeptDecisionTurnIn is the admission of the continuation turn a keeping decision was
+// dispatched into (CRW-669). An answer or a stop continues the child in a new turn of the same
+// generation (facts.TurnID, stored as the delivery's dispatch_turn_id just above), and that turn is
+// neither the generation's anchor nor admitted by anything else, so the daemon's census — which
+// polls staged turns, unsettled anchors and admitted turns (daemon/census.go) — never reads it, and
+// a turn that dies again without a receipt is invisible to the parent. The relay carried the
+// message, so the relay is the actor that admits it: one generation_turns row bound to the
+// generation's own dispatch turn, the same evidence the registry's AdmitExplicitly writes, and one
+// turn_admitted journal row. No parent intervention is recorded (this is not a message sent outside
+// the relay's routes, and AdmitExplicitly, which records one, is not used), no refusal reason and no
+// output field are added.
+//
+// It runs inside settle's transaction, so the event row and the generation row it reads are the ones
+// the transaction wrote, and the admission commits or rolls back with the send it describes. An
+// existing row for the same turn is left exactly as it is (ON CONFLICT DO NOTHING): an earlier
+// admission, or the child's own claim, already holds the turn. A generation with no dispatch turn id
+// admits nothing, because there is no anchor to bind the evidence to.
+func (d *Service) admitKeptDecisionTurnIn(ctx context.Context, eventID, state string, facts Facts) error {
+	if state != Dispatched {
+		return nil
+	}
+	turn, _ := facts.TurnID.(string)
+	if strings.TrimSpace(turn) == "" {
+		return nil
+	}
+	event, err := d.eventRow(ctx, eventID)
+	if err != nil || event == nil {
+		return err
+	}
+	if !keepsAnchor(event) {
+		return nil
+	}
+	rid, generation := event.S("relationship_id"), event.I("execution_generation")
+	row, err := one(ctx, d.Store, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, generation)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return nil
+	}
+	anchor := strings.TrimSpace(row.S("dispatch_turn_id"))
+	if anchor == "" {
+		return nil
+	}
+	now := d.Clock.ISO()
+	if _, err := execSQL(ctx, d.Store, "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id, evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id, execution_generation, turn_id) DO NOTHING",
+		rid, generation, turn, registry.BoundExplicitPrefix+anchor, "relay", "decision reply "+eventID, now); err != nil {
+		return err
+	}
+	return journal(ctx, d.Store, "turn_admitted", turn, Obj{{Key: "relationship", Value: rid}, {Key: "generation", Value: generation}, {Key: "actor", Value: "relay"}}, now)
 }
