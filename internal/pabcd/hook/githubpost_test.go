@@ -239,6 +239,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"pr diff", "gh pr diff 1", "", ""},
 		{"issue view", "gh issue view 3", "", ""},
 		{"api read", "gh api repos/o/r/pulls/1", "", ""},
+		{"read only with a body word", "gh pr view 1 --json body", "", ""},
 		{"api other field", "gh api repos/o/r/pulls/1 -f state=open", "", ""},
 		{"repo view", "gh repo view thisisjun786/codex-relay-workflow", "", ""},
 		{"backticked date", "echo \"`date`\"", "", ""},
@@ -304,6 +305,19 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"heredoc program with a variable", "bash <<'EOF'\ngh pr comment 1 -b \"$TOKEN\"\nEOF\n", githubPostRuleExpand, githubPostWhereCommand},
 		{"heredoc program with a secret", "bash <<'EOF'\ngh pr comment 1 -b " + githubPostFake("sk-", 16) + "\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
 		{"herestring with a secret", "gh pr comment 1 --body-file - <<< " + githubPostFake("sk-", 16), githubPostRuleUnread, githubPostWhereCommand},
+		// A command word the shell would expand names a command the guard cannot read, so the text it
+		// runs is judged as unreadable rather than passed; a text naming no post is nothing to judge.
+		{"expanded command word", "G=gh; $G pr comment 1 --body x", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded quoted command word", "GH=gh; \"$GH\" api repos/o/r/issues/1/comments -F body=@f", githubPostRuleUnread, githubPostWhereCommand},
+		{"substituted command word", "$(echo gh) issue comment 1 --body x", githubPostRuleUnread, githubPostWhereCommand},
+		{"braced command word", "GH=gh; ${GH} pr comment 1 --body x", githubPostRuleUnread, githubPostWhereCommand},
+		{"backticked command word", "G=gh; `echo $G` pr comment 1 --body x", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded command word behind a wrapper", "G=gh; sudo $G pr comment 1 --body x", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded command word with a variable only", "G=gh; $G pr comment 1 --body \"$TOKEN\"", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded command word without a post", "$EDITOR notes.md", "", ""},
+		{"expanded quoted command word without a post", "\"$PAGER\" README.md", "", ""},
+		{"single quoted command word", "'$G' pr comment 1 --body x", "", ""},
+		{"expanded command word alone", "$G", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)

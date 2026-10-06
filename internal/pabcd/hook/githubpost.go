@@ -95,7 +95,11 @@ type githubPostLine struct {
 // githubPostScan is one payload's judgement: its working directory, the bodies and writes of the line it
 // reads, and the depth left.
 type githubPostScan struct {
-	cwd    string
+	cwd string
+	// whole is the shell text being judged at this level. A command word the shell would expand names a
+	// command the guard cannot read, and the text it runs is judged as unreadable against this text, not
+	// against the segment alone (which may not hold the word gh the rule's fail-closed test needs).
+	whole  string
 	bodies []string
 	writes []string
 	depth  int
@@ -129,6 +133,7 @@ func (s *githubPostScan) text(command string) (githubPostSite, bool) {
 	if !balanced {
 		return githubPostUnread(command)
 	}
+	s.whole = command
 	for _, line := range lines {
 		s.bodies, s.writes = line.bodies, ShellWriteDestinations(line.text)
 		for _, segment := range githubPostSegments(line.text) {
@@ -164,6 +169,11 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 	}
 	if len(rest) == 0 {
 		return githubPostSite{}, false
+	}
+	// The shell decides which command a word holding an expansion runs, so the guard cannot read it: the
+	// text is judged as unreadable against the whole command text, not the segment alone.
+	if githubPostExpands(rest[0].raw, false) {
+		return githubPostUnread(s.whole)
 	}
 	verb := shellVerbName(rest[0].text)
 	if verb == "gh" {
