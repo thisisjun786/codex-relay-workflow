@@ -143,6 +143,17 @@ func improveGenericReason(reason string) bool {
 	return false
 }
 
+// improveAnnotate appends evidence to an existing record and reports whether it was there,
+// so one source can mark a record another created without counting it twice.
+func (a *improveAccumulator) improveAnnotate(kind, key, where, evidence string) bool {
+	at, ok := a.index[improveIdentity(kind, key, where)]
+	if !ok {
+		return false
+	}
+	a.records[at].Evidence = append(a.records[at].Evidence, evidence)
+	return true
+}
+
 // improveIdentity is the merge key of a record: the three fields as a JSON array, which is
 // unambiguous whatever characters the fields carry.
 func improveIdentity(kind, key, where string) string {
@@ -519,16 +530,44 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 				Evidence: []string{fmt.Sprintf("generations:%s:%d", row.Text("relationship_id"), improveRowInt(row, "execution_generation"))}})
 		}
 
+		// The criteria-registration round trip is in the journal: every registration records
+		// the set digest and its size, so a re-registered relationship shows every set it has
+		// worked under, not only the one canonical_criteria currently holds.
+		registered, err := s.All(ctx, "SELECT seq, subject, detail, at FROM journal WHERE kind = 'criteria_registered' ORDER BY seq")
+		if err != nil {
+			return err
+		}
+		rows += len(registered)
+		for _, row := range registered {
+			detail := improveParseJSONObject(row.Text("detail"))
+			digest := improveStringField(detail, "setDigest")
+			size, ok := improveNumberField(detail, "count")
+			if !ok {
+				size = 0
+			}
+			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: row.Text("subject"), Where: digest,
+				What: "registered", Count: size,
+				FirstAt: row.Text("at"), LastAt: row.Text("at"),
+				Evidence: []string{fmt.Sprintf("journal:%d", improveRowInt(row, "seq"))}})
+		}
+
+		// The current set is what canonical_criteria holds; a digest the journal already carries
+		// gains that evidence, and one it does not (a pruned journal) becomes its own record.
 		criteria, err := s.All(ctx, "SELECT relationship_id, set_digest, COUNT(*) AS criteria_count, MIN(recorded_at) AS first_at, MAX(recorded_at) AS last_at FROM canonical_criteria GROUP BY relationship_id, set_digest ORDER BY relationship_id, set_digest")
 		if err != nil {
 			return err
 		}
 		rows += len(criteria)
 		for _, row := range criteria {
-			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: row.Text("relationship_id"), Where: row.Text("set_digest"),
+			rid, digest := row.Text("relationship_id"), row.Text("set_digest")
+			evidence := "canonical_criteria:" + rid + ":" + digest
+			if acc.improveAnnotate(improveKindCriteria, rid, digest, evidence) {
+				continue
+			}
+			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: rid, Where: digest,
 				What: "current_set", Count: improveRowInt(row, "criteria_count"),
 				FirstAt: row.Text("first_at"), LastAt: row.Text("last_at"),
-				Evidence: []string{"canonical_criteria:" + row.Text("relationship_id") + ":" + row.Text("set_digest")}})
+				Evidence: []string{evidence}})
 		}
 
 		splits, err := s.All(ctx, "SELECT e.event_id, e.relationship_id, COALESCE(r.issue_key,'') AS issue_key, e.outcome, e.receipt, e.first_seen_at, e.last_seen_at, COALESCE(s.project_key,'') AS project_key FROM events e LEFT JOIN relationships r ON r.relationship_id = e.relationship_id LEFT JOIN relationship_scope s ON s.relationship_id = e.relationship_id WHERE e.stage = 'final' AND e.outcome IN ('blocked_needs_input','decision_reply') ORDER BY e.event_id")

@@ -913,3 +913,37 @@ func TestImproveCollectSplitPrefersTheDecisionNote(t *testing.T) {
 		t.Errorf("the merged split record kept %q, want the decision's reason", splits[0].What)
 	}
 }
+
+// TestImproveCollectRecordsTheCriteriaRefreshHistory covers the criteria-registration
+// round trip: the relay journals every registration with its set digest, so a relationship
+// whose criteria were re-registered shows both sets, not only the current one.
+func TestImproveCollectRecordsTheCriteriaRefreshHistory(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO canonical_criteria (relationship_id, criterion_id, title, required, set_digest, recorded_at) VALUES ('rel-a','c1','only',1,'digest-b','2026-10-06T02:00:00Z')")
+		improveTestInsert(t, db, "INSERT INTO journal (at, kind, subject, detail) VALUES ('2026-10-06T01:00:00Z','criteria_registered','rel-a','{\"setDigest\":\"digest-a\",\"count\":2}')")
+		improveTestInsert(t, db, "INSERT INTO journal (at, kind, subject, detail) VALUES ('2026-10-06T02:00:00Z','criteria_registered','rel-a','{\"setDigest\":\"digest-b\",\"count\":1}')")
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	out := filepath.Join(s.root, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	bundle := improveTestReadBundle(t, out)
+	criteria := improveTestRecordsOf(bundle, improveKindCriteria)
+	if len(criteria) != 2 {
+		t.Fatalf("criteria records = %+v, want the registered set digest-a and the current digest-b", criteria)
+	}
+	seen := map[string]improveRecord{}
+	for _, record := range criteria {
+		seen[record.Where] = record
+	}
+	if got, ok := seen["digest-a"]; !ok || got.Count != 2 {
+		t.Errorf("the registered set digest-a = %+v, want the journal's count 2", got)
+	}
+	if _, ok := seen["digest-b"]; !ok {
+		t.Errorf("the current set digest-b is missing: %+v", criteria)
+	}
+}
