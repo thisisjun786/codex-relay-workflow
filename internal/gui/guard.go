@@ -36,7 +36,9 @@ const (
 	codeBadPath   = "bad_path"
 	codeTooLarge  = "too_large"
 	codeNotFound  = "not_found"
-	codeInternal  = "internal"
+	// codeBadRequest answers a write whose body could not be read at all.
+	codeBadRequest = "bad_request"
+	codeInternal   = "internal"
 )
 
 // jsonError is the whole error body shape: {"error":"<code>"} and a newline.
@@ -115,6 +117,15 @@ func hostAllowed(host string, port int) bool {
 	return true
 }
 
+// absoluteForm reports whether the request line carried an absolute URI. net/http promotes that
+// URI's authority to r.Host and drops the Host header, so an absolute-form request could name an
+// allowed authority while its Host header names another host: the check would pass on a value
+// the client did not send as a Host. This server takes origin-form only, so the form itself is
+// refused before any host comparison.
+func absoluteForm(r *http.Request) bool {
+	return r.URL.Host != "" || strings.HasPrefix(strings.ToLower(r.RequestURI), "http://") || strings.HasPrefix(strings.ToLower(r.RequestURI), "https://")
+}
+
 // originAllowed reports whether a present Origin header names this server.
 func originAllowed(origin string, port int) bool {
 	origin = strings.ToLower(strings.TrimSpace(origin))
@@ -164,7 +175,7 @@ func readBody(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, r, http.StatusRequestEntityTooLarge, codeTooLarge)
 			return false
 		}
-		writeError(w, r, http.StatusBadRequest, codeInternal)
+		writeError(w, r, http.StatusBadRequest, codeBadRequest)
 		return false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(data))
@@ -178,6 +189,10 @@ func readBody(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w, r)
+		if absoluteForm(r) {
+			writeError(w, r, http.StatusForbidden, codeForbidden)
+			return
+		}
 		if traversalSegment(r) {
 			writeError(w, r, http.StatusBadRequest, codeBadPath)
 			return

@@ -1,14 +1,17 @@
 package gui
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 // The guard tests build a Server with a fixed port and token, so every rejection and every
@@ -242,6 +245,59 @@ func TestGuardReadNeedsNoWriteCheck(t *testing.T) {
 	}
 }
 
+// An absolute-form request line is refused. net/http promotes the request-line authority to
+// r.Host and drops the Host header, so `GET http://127.0.0.1:<port>/... ` with `Host: evil`
+// would otherwise pass the Host check while naming another host. This server takes origin-form
+// only, so the raw request is written over a socket where net/http really parses it.
+func TestGuardRefusesAbsoluteForm(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	// The server's port is the listener's, so the Host check would pass for the loopback
+	// spelling; the point of the test is that an absolute-form request line must not.
+	server, err := New(Options{
+		Port:    port,
+		Token:   guardToken,
+		Version: "test-version",
+		Routes: []Route{{Method: http.MethodGet, Path: "/api/thing", Handler: func(*Env, *http.Request) (Response, error) {
+			return Response{Status: http.StatusOK, Body: map[string]any{"ok": true}}, nil
+		}}},
+		Assets: fstest.MapFS{"assets/index.html": &fstest.MapFile{Data: []byte("<html>placeholder</html>")}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	httpServer := &http.Server{Handler: server.Handler()}
+	go func() { _ = httpServer.Serve(listener) }()
+	defer httpServer.Close()
+	for _, request := range []string{
+		"GET http://127.0.0.1:%d/api/thing HTTP/1.1\r\nHost: evil.example:%d\r\nConnection: close\r\n\r\n",
+		"GET http://evil.example:%d/api/thing HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nConnection: close\r\n\r\n",
+	} {
+		t.Run(fmt.Sprintf("%q", strings.Split(request, "\r\n")[0]), func(t *testing.T) {
+			conn, err := net.DialTimeout("tcp", listener.Addr().String(), 2*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := fmt.Fprintf(conn, request, port, port); err != nil {
+				t.Fatal(err)
+			}
+			status, err := bufio.NewReader(conn).ReadString('\n')
+			if err != nil {
+				t.Fatalf("no response: %v", err)
+			}
+			if !strings.Contains(status, "403") {
+				t.Fatalf("status line %q, want a 403", strings.TrimSpace(status))
+			}
+		})
+	}
+}
+
 // A write handler receives the request context, so a durable effect can check cancellation
 // immediately before it commits (the decided answer's requirement for write handles).
 func TestWriteHandlerSeesTheRequestContext(t *testing.T) {
@@ -260,10 +316,7 @@ func TestWriteHandlerSeesTheRequestContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	request, err := http.NewRequestWithContext(context.WithValue(context.Background(), marker, "carried"), http.MethodPost, "http://"+guardHost+"/api/ctx", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	request := httptest.NewRequest(http.MethodPost, "/api/ctx", strings.NewReader(`{}`)).WithContext(context.WithValue(context.Background(), marker, "carried"))
 	request.Host = guardHost
 	for name, value := range writeHeaders() {
 		request.Header.Set(name, value)

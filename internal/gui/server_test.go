@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -315,5 +314,3 @@ func waitForLine(t *testing.T, out *lineWriter) string {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
-
-var _ = httptest.NewRecorder
