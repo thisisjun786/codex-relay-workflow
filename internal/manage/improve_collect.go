@@ -309,7 +309,7 @@ func improveRefuseInputOutput(dest string, section improveSection) error {
 			// An unresolvable source is reported by the source read itself.
 			continue
 		}
-		if dest == resolved || strings.HasPrefix(dest, resolved+string(filepath.Separator)) {
+		if dest == resolved || strings.HasPrefix(dest, improvePrefix(resolved)) {
 			return fmt.Errorf("the output %s is the configured source %s: a bundle never overwrites its own evidence", dest, source)
 		}
 		if same, err := improveSameFile(dest, resolved); err == nil && same {
@@ -317,6 +317,17 @@ func improveRefuseInputOutput(dest string, section improveSection) error {
 		}
 	}
 	return nil
+}
+
+// improvePrefix is the directory prefix a containment check compares against: the resolved
+// directory with one trailing separator. A directory that is already a separator (the
+// filesystem root) keeps it, so every absolute path is under it; appending another would
+// build a prefix no cleaned path carries and let every destination through.
+func improvePrefix(dir string) string {
+	if strings.HasSuffix(dir, string(filepath.Separator)) {
+		return dir
+	}
+	return dir + string(filepath.Separator)
 }
 
 // improveSameFile reports whether two paths name the same existing file.

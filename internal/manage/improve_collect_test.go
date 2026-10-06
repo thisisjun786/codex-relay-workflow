@@ -1039,3 +1039,49 @@ func TestImproveCollectRefusesAnOutputWithNoParentDirectory(t *testing.T) {
 		t.Fatalf("an output with no parent directory: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputParent)
 	}
 }
+
+// TestImproveCollectRefusesAHardLinkedOutput covers the os.SameFile guard: an --out that is
+// a hard link to a configured source file names the same file by a different spelling, so
+// the prefix comparison alone would not catch it.
+func TestImproveCollectRefusesAHardLinkedOutput(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	ledger := filepath.Join(s.root, "ledger.jsonl")
+	improveTestWrite(t, ledger, "{\"mode\":\"pr\",\"issue\":\"CRW-1\",\"status\":\"ok\",\"graded_at\":\"2026-10-06T01:00:00Z\"}\n")
+	out := filepath.Join(s.root, "out.json")
+	if err := os.Link(ledger, out); err != nil {
+		t.Skipf("hard links are unavailable here: %v", err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"audit": map[string]any{"path": ledger},
+		},
+	}}})
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 1 || !strings.Contains(stderr, "never overwrites") {
+		t.Fatalf("a hard-linked output: exit %d, stderr %q", code, stderr)
+	}
+	data, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\"mode\"") {
+		t.Errorf("the ledger behind the hard link was replaced: %q", data)
+	}
+}
+
+// TestImproveCollectRefusesAnOutputUnderARootSource covers the containment predicate at the
+// root: a source resolving to the filesystem root must refuse every destination, rather than
+// building a // prefix that no cleaned path carries.
+func TestImproveCollectRefusesAnOutputUnderARootSource(t *testing.T) {
+	s := improveTestSetup(t)
+	section := improveSection{Sources: map[string]improveSourceConfig{"audit": {Path: string(filepath.Separator)}}}
+	out := filepath.Join(s.root, "bundle.json")
+	if err := improveRefuseInputOutput(out, section); err == nil {
+		t.Errorf("a destination under a root source was allowed: %s", out)
+	}
+	if err := improveRefuseInputOutput(out, improveSection{}); err != nil {
+		t.Errorf("a destination with no configured source was refused: %v", err)
+	}
+}
