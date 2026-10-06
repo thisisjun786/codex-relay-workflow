@@ -385,8 +385,7 @@ func TestOrchestrateTransitionInterviewGate(t *testing.T) {
 	})
 }
 
-// TestOrchestrateTransitionIllegalEdge ports "illegal edge from IDLE is refused" (:432): the refusal names the
-// phase context the way the oracle renders it.
+// TestOrchestrateTransitionIllegalEdge ports the illegal-edge refusal (:432).
 func TestOrchestrateTransitionIllegalEdge(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id := "illegal-edge"
@@ -464,8 +463,7 @@ func TestOrchestrateTransitionOrdinaryWrite(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionBuildEntrySnapshot ports "entering B snapshots the source, and leaving B clears it"
-// (:1074) and the check epoch entering C mints.
+// TestOrchestrateTransitionBuildEntrySnapshot ports "entering B snapshots the source, and leaving B clears it" (:1074).
 func TestOrchestrateTransitionBuildEntrySnapshot(t *testing.T) {
 	cwd := orchestrateTransitionRepo(t)
 	for _, name := range []string{"HOME", "CODEX_HOME", "CRW_HOME"} {
@@ -499,8 +497,7 @@ func TestOrchestrateTransitionBuildEntrySnapshot(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionCheckEpoch ports the :1075-1077 rule directly: entering C mints, staying in C keeps
-// the session's own epoch, and every other edge drops it, so re-checking invalidates the old receipt.
+// TestOrchestrateTransitionCheckEpoch ports the :1075-1077 rule directly.
 func TestOrchestrateTransitionCheckEpoch(t *testing.T) {
 	kept := "c-existing"
 	for _, c := range []struct {
@@ -538,8 +535,7 @@ func TestOrchestrateTransitionCheckEpoch(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionSupersedesStaleRounds ports "P-to-A continues when stale-round housekeeping cannot
-// acquire the common lock" (:2603) and the supersede it performs when the lock is free.
+// TestOrchestrateTransitionSupersedesStaleRounds ports the stale-round supersede (:2603) and its held-lock fail-open.
 func TestOrchestrateTransitionSupersedesStaleRounds(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id, slug := "replan", "replan-plan"
@@ -592,8 +588,7 @@ func TestOrchestrateTransitionSupersedesStaleRounds(t *testing.T) {
 	}
 }
 
-// TestOrchestrateTransitionDCloseNotPorted pins the split boundary: the D close belongs to CRW-756 and CRW-757,
-// so this issue refuses the edge instead of half-closing a cycle.
+// TestOrchestrateTransitionDCloseNotPorted pins the split boundary: this issue refuses the D close.
 func TestOrchestrateTransitionDCloseNotPorted(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id := "d-close"

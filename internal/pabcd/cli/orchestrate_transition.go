@@ -154,8 +154,8 @@ func orchestrateTransitionSupersedeStaleRounds(cwd, slug, sessionID, epoch strin
 	}, nil)
 }
 
-// orchestrateTransitionReviewBinding is the A>B review binding check (validateReviewBinding, :49-92, :688-691).
-// CRW-755 ports it, the security fix for a recorded verdict without a binding included; until then it passes.
+// orchestrateTransitionReviewBinding is the A>B review binding check (validateReviewBinding, :49-92, :688-691),
+// which CRW-755 ports; until then it passes.
 func orchestrateTransitionReviewBinding(cur state.State, a OrchestrateCliArgs, sessionID string) *CliResult {
 	return nil
 }
@@ -402,21 +402,22 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 		next.BoundSourceRoot = entrySource.SourceRoot
 	}
 	next.PlanUnit, next.PlanEpoch, next.CheckEpoch = unit, epoch, checkEpoch
-	if err := state.WriteState(cwd, next); err != nil {
-		return CliResult{}, err
-	}
-	// C-RENDER-GROUNDING-01: a new cycle starts at P, so the render ledger is cleared (stale rows misfire).
-	if result.State.Phase == state.PhaseP {
-		hook.ResetRenderLedger(cwd)
-	}
 	from := cur.Phase
 	row := state.LedgerEntry{TS: orchestrateTransitionTimestamp(), SessionID: cur.SessionID, From: &from, To: result.State.Phase, Reason: "cli"}
 	if a.Attest != nil && a.Attest.Did != "" {
 		did := a.Attest.Did
 		row.Evidence = &did
 	}
+	// The row goes first, so a failed append leaves the session untouched and the caller can retry this verb.
 	if err := state.AppendLedger(cwd, row); err != nil {
 		return CliResult{}, err
+	}
+	if err := state.WriteState(cwd, next); err != nil {
+		return CliResult{}, err
+	}
+	// C-RENDER-GROUNDING-01: a new cycle starts at P, so the render ledger is cleared (stale rows misfire).
+	if result.State.Phase == state.PhaseP {
+		hook.ResetRenderLedger(cwd)
 	}
 	arrow := string(cur.Phase) + " \u2192 " + string(result.State.Phase)
 	return CliResult{Code: 0, Output: orchestrateTransitionWithArchitectHint(result.State.Phase,
