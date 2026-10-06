@@ -59,8 +59,9 @@ const ManifestSuffix = ".manifest.json"
 // The store's two sidecars. SQLite keeps a write-ahead log beside the database while a connection is open, and a
 // shared-memory index beside that; the last connection to close deletes them. The index is an accelerator SQLite
 // rebuilds from the log when it next opens the file, so a backup never carries it. The log holds the commits, so a
-// backup carries it when it is there at the copy and neither refuses nor invents one that goes or arrives while the
-// copy is being made: the store's own file has to be what was read either way, and that check stays.
+// backup carries it when it is there at its copy. An empty log that goes or arrives while the copy is being made is
+// tolerated — that is the churn this route exists for — but one that was not copied and holds frames in the second
+// listing refuses: its commits would otherwise be lost without the store's own file changing to show it.
 const (
 	walSidecar = "relay.sqlite3-wal"
 	shmSidecar = "relay.sqlite3-shm"
@@ -73,6 +74,11 @@ const (
 	sidecarGone     = "gone before its copy"
 	sidecarAppeared = "appeared after the listing, not copied"
 )
+
+// walHeaderBytes is SQLite's write-ahead log header: a log no longer than it holds no frame. It is the threshold that
+// tells a log another connection left empty (the case the backup route exists for) from one that carries a commit the
+// copy does not hold.
+const walHeaderBytes = 32
 
 // storeSidecarWal is the manifest's reading of the store's write-ahead log from what happened to it while the backup
 // was made: its bytes were copied, it was listed and had gone by its copy, it was absent from the first listing and
@@ -282,6 +288,18 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	}
 	// The appeared reading is the log absent from the first listing and present in the second, so it was not copied.
 	walAppeared := !walCopied && !walGone && !listingHas(entries, walSidecar) && listingHas(again, walSidecar)
+	// A log that was not copied but holds frames in the second listing is a commit the copy does not hold. Another
+	// connection wrote it while the copy was being made, and a commit that stays in the log does not touch
+	// relay.sqlite3 until a checkpoint, so the digest check below would not see it: the backup would report success
+	// while the live store held a row the copy lacks. An empty log (SQLite's header or less) holds no frame and stays
+	// tolerated, which is the case this route exists for: a read-only open of a store no connection holds leaves one.
+	if !walCopied {
+		for _, e := range again {
+			if e.Path == walSidecar && e.Size > walHeaderBytes {
+				return failure(true, "relay.sqlite3-wal holds commits that were not copied (%d bytes appeared or were left after the first listing), so the backup is not a copy of any one moment", e.Size)
+			}
+		}
+	}
 	if diff := listingDiff(copied, skipped, again, againSkipped); diff != "" {
 		return failure(true, "the state directory changed under the copy (%s), so the backup is not a copy of any one moment", diff)
 	}

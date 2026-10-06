@@ -182,6 +182,22 @@ func TestTheBackupStillRefusesWhatChangedOtherwise(t *testing.T) {
 			},
 			want: "changed",
 		},
+		"a log that was not copied holds commits in the second listing": {
+			setup: func(t *testing.T, h *host) {},
+			step: func(t *testing.T, h *host, step string) error {
+				switch step {
+				case "listed":
+					// the empty log the gate's own read left is deleted before its copy, so it is dropped
+					return os.Remove(filepath.Join(h.relayState, sidecarWalName))
+				case "copied":
+					// and another connection commits into a fresh log before the second listing: a commit that stays
+					// in the log does not touch relay.sqlite3 until a checkpoint, so the digest check cannot see it
+					return os.WriteFile(filepath.Join(h.relayState, sidecarWalName), make([]byte, 64), 0o600)
+				}
+				return nil
+			},
+			want: "holds commits that were not copied",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _, second, old, _ := zoneInstalled(t)

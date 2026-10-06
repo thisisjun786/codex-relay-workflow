@@ -385,11 +385,14 @@ or deleted, here or on a failure. Directories and regular files are copied with 
 file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal`
 is copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. The store's two
 sidecars follow SQLite's WAL mode: `relay.sqlite3-shm` is never listed, copied or compared, because SQLite rebuilds that index from the log on
-open, and `relay.sqlite3-wal` is copied when it is there at its copy, while one that goes or appears between the listing and the copy is not a
-refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which of
-the four happened); `relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses.
-A copied `-wal` that is still there at the verification must digest to what was copied, and one that a checkpoint has taken away by then is not a
-refusal either: `relay.sqlite3` itself is the consistency the verification keeps, and it still refuses when it changes.
+open, and `relay.sqlite3-wal` is copied when it is there at its copy, while an empty one that goes or appears between the listing and the copy is
+not a refusal (a log listed and gone is dropped, one that appeared after the listing is not copied, and the manifest's `storeSidecars` records which
+of the four happened). An empty log is the case this route exists for: a read-only open of a store no connection holds leaves one. A log that was
+not copied and holds frames in the second listing refuses instead, because a commit that stays in the log does not touch `relay.sqlite3` until a
+checkpoint, so the digest check alone would not see it and the backup would claim success while the live store held a row the copy lacks.
+`relay.sqlite3` itself and every other file keep the rule above, so a store that was written under the copy still refuses, and a copied `-wal` that
+is still there at the verification must digest to what was copied: one that a checkpoint has taken away by then is not a refusal either, and
+`relay.sqlite3` is the consistency the verification keeps.
 Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
