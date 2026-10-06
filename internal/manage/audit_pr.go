@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -460,6 +461,12 @@ func auditPRDiffPaths(patch []byte) []string {
 		case strings.HasPrefix(line, "diff --git "):
 			flush()
 			header, newPath, renameTo, deleted, inHunk = auditPRGitHeader(strings.TrimPrefix(line, "diff --git ")), "", "", false, false
+		case strings.HasPrefix(line, "deleted file mode "):
+			// A deleted file has no `+++ /dev/null` line when it is binary or empty, so the
+			// extended header is the only mark the block carries. Without this, the block
+			// falls back to the header path, and reading a deleted path at the merge commit
+			// fails the whole run on a pull request that can never be recorded.
+			deleted = true
 		case strings.HasPrefix(line, "@@"):
 			// The hunk's content follows; nothing after this is a header until the next block.
 			inHunk = true
@@ -629,28 +636,25 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	if err := auditPRWriteFile(filepath.Join(dir, auditPRDiffFile), auditPRScrub(source.Patch, section.Scrub)); err != nil {
 		return "", err
 	}
+	// A path is a bundle entry name as well as a source path, so it goes through the same scrub
+	// as the bytes inside it: a changed path that carries a configured string would otherwise
+	// hand the grader by directory listing exactly the value every file's content redacts.
+	placed := map[string]string{}
 	for _, path := range auditPRDiffPaths(source.Patch) {
-		target := filepath.Join(dir, auditPRFilesDir, filepath.FromSlash(path))
+		name := string(auditPRScrub([]byte(path), section.Scrub))
+		if other, taken := placed[name]; taken {
+			return "", fmt.Errorf("the pull request paths %q and %q both redact to %q", other, path, name)
+		}
+		placed[name] = path
+		target := filepath.Join(dir, auditPRFilesDir, filepath.FromSlash(name))
 		if !auditPkgContained(dir, target) {
 			return "", fmt.Errorf("the pull request names %q, which leaves the bundle", path)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return "", err
-		}
-		file, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-		if err != nil {
-			return "", err
-		}
 		body, err := auditPRBlob(ctx, co, source.Target.Merge, path)
 		if err != nil {
-			_ = file.Close()
 			return "", err
 		}
-		if _, err := file.Write(auditPRScrub(body, section.Scrub)); err != nil {
-			_ = file.Close()
-			return "", err
-		}
-		if err := file.Close(); err != nil {
+		if err := auditPRWriteBlob(target, auditPRScrub(body, section.Scrub)); err != nil {
 			return "", err
 		}
 	}
@@ -682,6 +686,24 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 		return "", err
 	}
 	return dir, nil
+}
+
+// auditPRWriteBlob writes one changed file into the bundle. The open refuses to follow a
+// symbolic link at the path, so a link planted at a bundle entry cannot redirect this write
+// outside the bundle even though the lexical containment check passed.
+func auditPRWriteBlob(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // auditPRBlob reads one file of the merge commit out of the checkout.

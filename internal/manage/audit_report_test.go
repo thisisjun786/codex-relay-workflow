@@ -100,6 +100,53 @@ func TestAuditReportLedgerRefusesAnUnreadableLine(t *testing.T) {
 	}
 }
 
+// A pair or phase label is configuration text, so a pipe or a line break in it must not forge
+// rows or columns in the report a person reads.
+func TestAuditReportEscapesTableLabels(t *testing.T) {
+	cfg := auditReportLedgerFixture(t,
+		auditReportLedgerLine(t, auditModePR, "pr-1", "sol|live", "live\n| forged | forged | 9.99 | 0 | 0 |", auditStatusOK, auditReportScore(5), 0, 0),
+	)
+	e, _, _ := auditTestEnv(t)
+	rows, err := auditReportLedger(e, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdown := auditReportMarkdown(rows, e.Now())
+	lines := strings.Split(strings.TrimSpace(markdown), "\n")
+	var table []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "|") {
+			table = append(table, line)
+		}
+	}
+	// The header, the separator and exactly one row: an injected pipe or newline must not add
+	// a line or a column.
+	if len(table) != 3 {
+		t.Fatalf("the report has %d table lines, want 3:\n%s", len(table), markdown)
+	}
+	if cells := auditReportUnescapedPipes(table[2]); cells != 7 {
+		t.Errorf("the row has %d column separators, want 7:\n%s", cells, table[2])
+	}
+	if strings.Contains(table[2], "forged | forged") {
+		t.Errorf("a label forged a row:\n%s", table[2])
+	}
+	if !strings.Contains(table[2], "sol\\|live") {
+		t.Errorf("the pipe in the label was not escaped:\n%s", table[2])
+	}
+}
+
+// auditReportUnescapedPipes counts the pipe characters that are not escaped, which are the
+// table's own column separators.
+func auditReportUnescapedPipes(line string) int {
+	count := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] == '|' && (i == 0 || line[i-1] != '\\') {
+			count++
+		}
+	}
+	return count
+}
+
 // C4: the report is written atomically, so the file is either the previous report or the
 // new one and never a half-written document, and a rebuild with the same ledger is the
 // same bytes.

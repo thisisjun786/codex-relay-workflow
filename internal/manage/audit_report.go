@@ -95,6 +95,9 @@ func auditReportGroups(rows []auditLedgerRow) []auditReportGroup {
 
 // auditReportMarkdown renders the report: the ok rows of mode pr, one line per pair and
 // phase. It is English product text, and it names no model, pair or child id of its own.
+//
+// A pair or phase label is configuration text, so it is escaped before it reaches the table: a
+// label carrying a pipe or a newline would otherwise forge rows or columns in the report.
 func auditReportMarkdown(rows []auditLedgerRow, now time.Time) string {
 	groups := auditReportGroups(rows)
 	var out strings.Builder
@@ -104,9 +107,18 @@ func auditReportMarkdown(rows []auditLedgerRow, now time.Time) string {
 	out.WriteString("| --- | --- | --- | --- | --- | --- |\n")
 	for _, group := range groups {
 		fmt.Fprintf(&out, "| %s | %s | %d | %.2f | %d | %d |\n",
-			group.Pair, group.Phase, group.PRs, float64(group.ScoreSum)/float64(group.PRs), group.P0, group.P1)
+			auditReportLabel(group.Pair), auditReportLabel(group.Phase), group.PRs,
+			float64(group.ScoreSum)/float64(group.PRs), group.P0, group.P1)
 	}
 	return out.String()
+}
+
+// auditReportLabel makes a pair or phase safe inside a Markdown table cell. Both are
+// configuration text, so a label carrying a pipe or a line break would otherwise forge rows
+// or columns in the report a person reads.
+func auditReportLabel(label string) string {
+	label = strings.NewReplacer("|", "\\|", "\r\n", " ", "\r", " ", "\n", " ").Replace(label)
+	return label
 }
 
 // auditReportWrite rebuilds the report from the ledger and writes it atomically, so a reader

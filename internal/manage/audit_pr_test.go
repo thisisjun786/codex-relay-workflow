@@ -513,6 +513,15 @@ func TestAuditPRDiffPathsReadsThePatchHeaders(t *testing.T) {
 	if paths := auditPRDiffPaths([]byte(withHunk)); strings.Join(paths, ",") != "internal/a.go" {
 		t.Errorf("a hunk whose content starts with pluses gave %v, want the real path only", paths)
 	}
+	// A deleted binary or empty file has no `+++ /dev/null` line: the extended header is the
+	// only mark. Missing it reads a deleted path at the merge commit, which fails the whole
+	// run on a pull request that can never then be recorded.
+	deletedBinary := "diff --git a/img/logo.png b/img/logo.png\ndeleted file mode 100644\nindex 111..000\nBinary files a/img/logo.png and /dev/null differ\n" +
+		"diff --git a/empty.txt b/empty.txt\ndeleted file mode 100644\nindex 111..000\n" +
+		"diff --git a/internal/a.go b/internal/a.go\n--- a/internal/a.go\n+++ b/internal/a.go\n@@ -1 +1 @@\n-old\n+new\n"
+	if paths := auditPRDiffPaths([]byte(deletedBinary)); strings.Join(paths, ",") != "internal/a.go" {
+		t.Errorf("a deleted binary or empty file gave %v, want the surviving path only", paths)
+	}
 }
 
 // The fetch brings the branch target discovery queries, not the checkout section's
@@ -824,6 +833,106 @@ func TestAuditPRBuildWritesTheFixedLayout(t *testing.T) {
 	}
 	if !bytes.Equal(patch, []byte(auditPRPatch)) {
 		t.Error("diff.patch is not the patch gh answered with")
+	}
+}
+
+// A changed path is scrubbed like the bytes inside it, so a directory listing cannot recover a
+// configured string that every file's content redacts.
+func TestAuditPRBuildScrubsChangedPaths(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{"pr_since": "2026-10-01T00:00:00Z"})
+	patch := "diff --git a/models/inferhub-deepseek/config.json b/models/inferhub-deepseek/config.json\n" +
+		"--- a/models/inferhub-deepseek/config.json\n" +
+		"+++ b/models/inferhub-deepseek/config.json\n" +
+		"@@ -1 +1 @@\n-old\n+new\n"
+	auditPRFakeCheckout(t, "m12", map[string]string{"models/inferhub-deepseek/config.json": "{}\n"})
+	e, _, _ := auditTestEnv(t)
+	co, err := auditPkgCheckoutOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := auditPRBuild(context.Background(), e, cfg, auditPRSection{Scrub: []string{"inferhub-deepseek"}}, co, auditPRSource{
+		Target: auditPRTarget{Number: 12, Issue: "CRW-12", Merge: "m12"}, Patch: []byte(patch),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	err = filepath.WalkDir(filepath.Join(dir, auditPRFilesDir), func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		listed = append(listed, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(listed, ",")
+	if strings.Contains(joined, "inferhub-deepseek") {
+		t.Errorf("a changed path kept the configured string: %v", listed)
+	}
+	if !strings.Contains(joined, auditPRRedacted) {
+		t.Errorf("the changed path was not redacted: %v", listed)
+	}
+	// The content is still read from the real path at the merge commit.
+	body, err := os.ReadFile(filepath.Join(dir, auditPRFilesDir, "models", auditPRRedacted, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "{}\n" {
+		t.Errorf("the bundle holds %q", body)
+	}
+}
+
+// Two paths that redact to one name are refused rather than silently sharing a bundle entry.
+func TestAuditPRBuildRefusesCollidingRedactedPaths(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{"pr_since": "2026-10-01T00:00:00Z"})
+	patch := "diff --git a/child-1/a.txt b/child-1/a.txt\n--- a/child-1/a.txt\n+++ b/child-1/a.txt\n@@ -1 +1 @@\n-x\n+y\n" +
+		"diff --git a/child-2/a.txt b/child-2/a.txt\n--- a/child-2/a.txt\n+++ b/child-2/a.txt\n@@ -1 +1 @@\n-x\n+y\n"
+	auditPRFakeCheckout(t, "m12", map[string]string{"child-1/a.txt": "x\n", "child-2/a.txt": "x\n"})
+	e, _, _ := auditTestEnv(t)
+	co, err := auditPkgCheckoutOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = auditPRBuild(context.Background(), e, cfg, auditPRSection{Scrub: []string{"child-1", "child-2"}}, co, auditPRSource{
+		Target: auditPRTarget{Number: 12, Issue: "CRW-12", Merge: "m12"}, Patch: []byte(patch),
+	})
+	if err == nil {
+		t.Fatal("two paths that redact to one name were accepted")
+	}
+}
+
+// A symbolic link left in place of a changed file is never followed, so it cannot redirect the
+// write outside the bundle.
+func TestAuditPRWriteBlobRefusesASymlinkedTarget(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "internal", "a.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, target); err != nil {
+		t.Skipf("this host cannot make a symbolic link: %v", err)
+	}
+	if err := auditPRWriteBlob(target, []byte("overwritten\n")); err == nil {
+		t.Fatal("a symlinked bundle entry was written through")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep me\n" {
+		t.Errorf("the file outside the bundle was overwritten: %q", data)
 	}
 }
 
