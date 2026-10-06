@@ -311,17 +311,16 @@ func capacityWriteState(path string, state capacityState) error {
 		return err
 	}
 	name := temp.Name()
-	if _, err := temp.Write(append(data, '\n')); err == nil {
-		err = temp.Close()
-	} else {
-		temp.Close()
+	_, writeErr := temp.Write(append(data, '\n'))
+	if closeErr := temp.Close(); writeErr == nil {
+		writeErr = closeErr
 	}
-	if err == nil {
-		err = os.Rename(name, path)
+	if writeErr == nil {
+		writeErr = os.Rename(name, path)
 	}
-	if err != nil {
+	if writeErr != nil {
 		os.Remove(name)
-		return err
+		return writeErr
 	}
 	return nil
 }
