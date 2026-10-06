@@ -19,7 +19,8 @@ func TestWorktreeDelOperandSubstitutions(t *testing.T) {
 	} {
 		r.denied(t, cmd, "rm -r ../repo")
 	}
-	r.denied(t, "bash -c 'echo OK' <(rm -rf ../repo)", "rm -r ../repo") // a process substitution too
+	r.denied(t, "sh -c 'echo OK' x \"$(rm -rf ../repo)\"", "rm -r ../repo") // the same for sh, whose later operands are data too
+	r.denied(t, "bash -c 'echo OK' <(rm -rf ../repo)", "rm -r ../repo")     // a process substitution too
 	// The body reader follows the whole substitution, not just up to the first parenthesis it meets: a cd is judged before it
 	// moves the directory, a # after a backtick substitution does not open a comment, a ${...} parameter expansion does not
 	// close the substitution, and a quote inside the body does not end the outer double quote.
@@ -46,6 +47,7 @@ func TestWorktreeDelOperandDataStaysData(t *testing.T) {
 		"bash -c 'echo OK' '$(rm -rf ../repo)'", // single quotes keep the substitution as data
 		"bash -c 'echo OK' \"$(rm -rf ../other)\"",
 		"bash -c 'echo OK' \"$(rm -rf ./build)\"",
+		"echo \"$(rm -rf ../other)\"", // a substitution in a plain word resolves outside the worktree
 	)
 	r.denied(t, "bash -c 'eval \"$0\"' 'rm -rf ../repo'", "rm -r ../repo")
 	r.denied(t, "bash -c 'eval `printf \"\\x24\\x31\"`' -c 'rm -rf ../repo'", "rm -r ../repo")                                         // a program that synthesizes $1 is not certain
