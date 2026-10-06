@@ -441,7 +441,8 @@ the copy is of one moment or it is not made. The backup, its manifest and the di
 inside the runtime destination tree (a failed run removes its candidate runtime, and a backup there would go with it); the free space on its
 filesystem must cover the directory. Before the record is written the copy passes the integrity gate: a scratch duplicate of the copied store (its
 `relay.sqlite3` and, when copied, its `-wal`) is opened with SQLite and asked `PRAGMA integrity_check`. The duplicate is what SQLite touches, never
-the copy, so the backup's bytes are unchanged by the check, and the duplicate is removed afterwards. The manifest records `integrityCheck` (SQLite's
+the copy, so the backup’s bytes are unchanged by the check, and the duplicate is removed afterwards. The destination’s free-space preflight covers
+the backup and that duplicate together. The manifest records `integrityCheck` (SQLite’s
 answer) and `restoreCandidate` (true only when the check passed), and a copy that fails the check is not a restore candidate and refuses. The
 record is written last, beside the backup and not inside it (`DIR.manifest.json`: source, destination,
 time, issue, every entry with its size, mode and digest, what was skipped, an aggregate digest, `integrityCheck` and `restoreCandidate`), and the command's
@@ -516,8 +517,10 @@ options, like `features`, `config` and `migrate-state`: it takes its own `--to` 
 
 It refuses while the relay service runs, reading the relay the same way the swap gate does: the selected relay’s own `service status`. Stopping
 the service is the operator’s job. A reading that could not be taken refuses too, so a backup is never taken on the strength of an unasked
-service. While it copies, it holds the store’s write gate (`<state>/write-gate.lock`) exclusively, so no relay writer reaches the store under
-the copy; a writer that already holds it refuses the command rather than waiting, and the command takes no other lock.
+service. While it copies, it holds the store’s write gate exclusively, so no relay writer reaches the store under the copy: the gate is the one
+the relay writers lock, beside the database as SQLite resolves it (`holdGate`), which is the state directory’s own `write-gate.lock` in the
+ordinary layout and the linked file’s directory otherwise. A writer that already holds it refuses the command rather than waiting, and the
+command takes no other lock.
 
 What this command does not do: it does not stop or start the service, it does not restore, and it does not schedule anything. The online
 `sqlite3_backup` snapshot and its schedule are a separate decision and are not built here.

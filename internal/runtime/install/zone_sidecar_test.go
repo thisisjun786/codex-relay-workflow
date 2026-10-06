@@ -40,6 +40,78 @@ func withoutShm(tree map[string]string) map[string]string {
 	return out
 }
 
+// ---- CRW-862 review fixes ----
+
+// The store sidecars are classified by the resolved database path even when the log cannot be read in place: an
+// unclean shutdown leaves a linked store with a -wal holding frames and no -shm, and InPlaceRead refuses that state,
+// but the sidecars still sit beside the file the link names. Before the fix sidecarsFor fell back to the top-level
+// names, so the real log was walked as an ordinary nested file and the copy could lose its committed frames.
+//
+// sequential: none (a white-box reading).
+func TestTheSidecarsAreResolvedEvenWhenTheLogCannotBeReadInPlace(t *testing.T) {
+	h, _, _, _, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	real := filepath.Join(h.relayState, "data", "real.sqlite3")
+	testsupport.Create(t, real, "", "go")
+	// frames in the log, no index: InPlaceRead refuses this state
+	write(t, real+"-wal", strings.Repeat("x", 64))
+	if err := os.Remove(filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	wal, shm := install.SidecarsFor(h.relayState, filepath.Join(h.relayState, "relay.sqlite3"))
+	if wal != real+"-wal" || shm != real+"-shm" {
+		t.Fatalf("sidecars = (%q, %q), want (%q, %q): the resolved file sidecars, not the top-level names", wal, shm, real+"-wal", real+"-shm")
+	}
+}
+
+// A log that goes during the SECOND listing walk is absence, not a change: the comparison must not read its empty
+// vanished entry as a moved identity. Before the fix that entry identity (with no source) differed from the copied
+// log identity and the backup refused, so the same checkpoint race passed or failed on timing.
+//
+// sequential: replaces the state-backup walk seam.
+func TestTheBackupDoesNotRefuseALogThatGoesDuringTheSecondListing(t *testing.T) {
+	h, _, second, _, next := zoneInstalled(t)
+	zoneStore(t, h)
+	putSidecar(t, h, sidecarWalName, 32)
+	wal := filepath.Join(h.relayState, sidecarWalName)
+	listings := 0
+	restore := install.ReplaceStateBackupWalk(func(path string) error {
+		if path == wal {
+			listings++
+			// the first listing and the copy see the log; the second listing loses it between its read and its Info
+			if listings >= 2 {
+				return os.Remove(path)
+			}
+		}
+		return nil
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = backupOf(h, "second-listing-gone")
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "promoted") != true || h.pointerTarget(t) != next {
+		t.Fatalf("a log that goes during the second listing must not refuse: exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+}
+
+// The integrity gate scratch duplicate is charged against the destination free space: the preflight must hold the
+// backup and the duplicate at once, so a destination that fits the backup alone refuses before it copies.
+//
+// sequential: none (a white-box reading).
+func TestTheSpacePreflightCoversTheIntegrityScratchDuplicate(t *testing.T) {
+	need := install.ScratchNeed(map[string]int64{
+		"relay.sqlite3":     90 << 20,
+		"relay.sqlite3-wal": 4 << 20,
+		"ledger.log":        1 << 20,
+	})
+	if want := int64(94 << 20); need != want {
+		t.Fatalf("scratch need = %d, want %d (the store and its log, not the other files)", need, want)
+	}
+}
+
 // ---- CRW-862: the three PR #735 P1s and the integrity gate ----
 
 // P1 1: the store's write-ahead log is compared by its identity, not dropped from the comparison. A log that is

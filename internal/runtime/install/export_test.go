@@ -89,6 +89,22 @@ func ServiceCell(answer any, readable bool, detail string) Object {
 	return Object{field("answer", answer), field("readable", readable), field("detail", detail), field("command", nil), field("evidence", nil)}
 }
 
+// SidecarsFor is the store's resolved -wal and -shm paths, the identity the listing and the comparison use.
+func SidecarsFor(source, dbPath string) (wal, shm string) {
+	s := sidecarsFor(source, dbPath)
+	return s.wal, s.shm
+}
+
+// ScratchNeed is the bytes the integrity gate's scratch duplicate needs for a backup whose copied files have
+// these sizes and names.
+func ScratchNeed(entries map[string]int64) int64 {
+	var list []backedUp
+	for path, size := range entries {
+		list = append(list, backedUp{Path: path, Kind: "file", Size: size})
+	}
+	return scratchNeed(list)
+}
+
 // StoreSidecarWal is the manifest's reading of the store's write-ahead log, from what happened to it while the backup
 // was made: its bytes were copied, it was listed and had gone by its copy, it was absent from the first listing and
 // appeared in the second so it was not copied, or it was absent from both. The appeared reading cannot be reached end

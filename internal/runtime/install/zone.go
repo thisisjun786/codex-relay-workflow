@@ -123,12 +123,25 @@ func storeSidecarWal(copied, gone, appeared bool) string {
 type storeSidecars struct{ wal, shm string }
 
 // sidecarsFor is the store's sidecars: the resolved database path's -wal and -shm, or the state
-// directory's own two names when the store's path cannot be resolved.
+// directory's own two names when the store's path cannot be resolved at all.
 func sidecarsFor(source, dbPath string) storeSidecars {
-	if resolved, _, err := store.InPlaceRead(dbPath); err == nil {
-		return storeSidecars{wal: resolved + "-wal", shm: resolved + "-shm"}
+	resolved, err := resolveStorePath(dbPath)
+	if err != nil {
+		return storeSidecars{wal: filepath.Join(source, walSidecar), shm: filepath.Join(source, shmSidecar)}
 	}
-	return storeSidecars{wal: filepath.Join(source, walSidecar), shm: filepath.Join(source, shmSidecar)}
+	return storeSidecars{wal: resolved + "-wal", shm: resolved + "-shm"}
+}
+
+// resolveStorePath is the path SQLite resolves the database to, whether or not its sidecars can be
+// read in place: store.InPlaceRead's answer where it gives one, and otherwise the resolved path it
+// examined before it refused. InPlaceRead refuses a log that holds frames with no usable index
+// (an unclean shutdown), and the database's directory is what the sidecars sit in either way, so a
+// linked store whose log has frames and no index still has its sidecars recognised (CRW-862).
+func resolveStorePath(dbPath string) (string, error) {
+	if resolved, _, err := store.InPlaceRead(dbPath); err == nil {
+		return resolved, nil
+	}
+	return store.Realpath(dbPath)
 }
 
 func (s storeSidecars) isWal(path string) bool { return path == s.wal }
@@ -243,7 +256,9 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	for _, e := range entries {
 		total += e.Size
 	}
-	if err := enoughRoom(filepath.Dir(dest), total); err != nil {
+	// The integrity gate duplicates the copied store beside the backup before the manifest is written, so
+	// the destination's filesystem must hold the backup and that scratch duplicate at once (CRW-862).
+	if err := enoughRoom(filepath.Dir(dest), total+scratchNeed(entries)); err != nil {
 		return failure(false, "%v", err)
 	}
 	// the nearest directory that exists now: the directories made below it are synced, up to it, once the backup is whole
@@ -611,8 +626,10 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 		return nil, nil, err
 	}
 	// the store's log file, when its database is a link to a file elsewhere in the state directory or outside it (its
-	// -shm is never listed): it is copied beside the link's own copy under the restore-compatible name
-	if resolved, _, err := store.InPlaceRead(dbPath); err == nil && resolved != filepath.Join(source, "relay.sqlite3") {
+	// -shm is never listed): it is copied beside the link's own copy under the restore-compatible name. The resolved
+	// path is used whether or not its log can be read in place, so a log that holds frames with no usable index is
+	// still carried (CRW-862).
+	if resolved, err := resolveStorePath(dbPath); err == nil && resolved != filepath.Join(source, "relay.sqlite3") {
 		have := map[string]bool{}
 		for _, e := range entries {
 			have[e.Path] = true
@@ -673,18 +690,26 @@ func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []strin
 	var walA, walB *string
 	seen := map[string]bool{}
 	for _, e := range a {
-		if e.storeWal {
+		if e.storeWal && !e.vanished {
 			value := identity(e)
 			walA = &value
+			continue
+		}
+		if e.storeWal {
+			// the log went during this reading's walk: it is absent from the reading, as a log that went
+			// before the walk is, so its identity is not compared
 			continue
 		}
 		seen[full(e)] = true
 	}
 	var changed []string
 	for _, e := range b {
-		if e.storeWal {
+		if e.storeWal && !e.vanished {
 			value := identity(e)
 			walB = &value
+			continue
+		}
+		if e.storeWal {
 			continue
 		}
 		if !seen[full(e)] {
@@ -789,6 +814,51 @@ func digestOf(path string) (string, error) {
 }
 
 // sqliteIntegrityCheck is the integrity gate of a backup copy: it duplicates the copied store beside the copy and
+
+// scratchNeed is the bytes the integrity gate scratch duplicate needs on the backup filesystem: the
+// copied store own files (relay.sqlite3 and, when copied, its log), which the gate duplicates there.
+func scratchNeed(entries []backedUp) int64 {
+	var need int64
+	for _, e := range entries {
+		if e.Kind != "dir" && strings.HasPrefix(e.Path, "relay.sqlite3") {
+			need += e.Size
+		}
+	}
+	return need
+}
+
+// copyFileInto copies source to target (created, never replaced) with a fixed buffer, so a file of any size
+// is duplicated without holding it in memory. The target is not synced: it is a scratch file the caller removes.
+func copyFileInto(source, target string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 1<<20)
+	for {
+		n, readErr := in.Read(buf)
+		if n > 0 {
+			if _, err := out.Write(buf[:n]); err != nil {
+				_ = out.Close()
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			_ = out.Close()
+			return readErr
+		}
+	}
+	return out.Close()
+}
+
 // asks SQLite PRAGMA integrity_check on the duplicate. The copy itself is never opened: opening a database
 // checkpoints its write-ahead log and would change the bytes the backup holds, so the duplicate is the one SQLite
 // touches. The duplicate holds the copy's log too when the backup carries one, so a store whose commits live only
@@ -805,16 +875,13 @@ func sqliteIntegrityCheck(dest string, copied []backedUp) (string, error) {
 		if e.Kind == "dir" || !strings.HasPrefix(e.Path, "relay.sqlite3") {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dest, filepath.FromSlash(e.Path)))
-		if err != nil {
-			return "", fmt.Errorf("the copy of %s could not be read for the integrity check: %v", e.Path, err)
-		}
-		target := filepath.Join(scratch, filepath.Base(e.Path))
-		if err := os.WriteFile(target, raw, 0o600); err != nil {
+		// streamed with a fixed buffer, as the backup's own copy is: a store of any size is duplicated
+		// without holding it in memory
+		if err := copyFileInto(filepath.Join(dest, filepath.FromSlash(e.Path)), filepath.Join(scratch, filepath.Base(e.Path))); err != nil {
 			return "", fmt.Errorf("the integrity check's duplicate of %s could not be written: %v", e.Path, err)
 		}
 		if e.Path == "relay.sqlite3" {
-			database = target
+			database = filepath.Join(scratch, filepath.Base(e.Path))
 		}
 	}
 	if database == "" {

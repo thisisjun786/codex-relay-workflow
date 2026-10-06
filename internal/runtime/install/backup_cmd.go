@@ -88,7 +88,7 @@ func runBackupState(ctx context.Context, args []string, env scope.Env, stdout, s
 		fmt.Fprintln(stderr, "crw install backup-state: error: argument --to: the directory the state directory is copied to is required")
 		return Usage
 	}
-	if why := notUTF8([]namedValue{{"--to", *to}}); why != "" {
+	if why := notUTF8([]namedValue{{"--to", *to}, {"--state", *state}, {"--socket", *socket}, {"--codex-home", *codexHome}, {"--record", *recordPath}}); why != "" {
 		fmt.Fprintln(stderr, "crw install backup-state: error: "+why)
 		return Usage
 	}
@@ -132,11 +132,13 @@ func BackupState(ctx context.Context, o Options, dest string) (Object, int) {
 	if err != nil {
 		return refusedResult("backup-state", "the state directory could not be resolved: "+err.Error(), "nothing was read and nothing was copied.")
 	}
-	source, err := filepath.EvalSymlinks(selection.Path)
+	// The relay's write gate sits beside the database as SQLite resolves it (holdGate), which is the state
+	// directory's own relay.sqlite3 in the ordinary layout and the linked file's directory otherwise.
+	resolved, err := resolveStorePath(selection.DBPath())
 	if err != nil {
-		return refusedResult("backup-state", "the state directory "+selection.Path+" could not be read: "+err.Error(), "nothing was read and nothing was copied.")
+		return refusedResult("backup-state", "the store's database path could not be resolved: "+err.Error(), "nothing was read and nothing was copied.")
 	}
-	gatePath := filepath.Join(source, "write-gate.lock")
+	gatePath := filepath.Join(filepath.Dir(resolved), "write-gate.lock")
 	if _, err := os.Lstat(gatePath); errors.Is(err, fs.ErrNotExist) {
 		return refusedResult("backup-state", "no relay store write gate exists at "+gatePath+", so the store cannot be held still for a copy",
 			"nothing was read and nothing was copied.")

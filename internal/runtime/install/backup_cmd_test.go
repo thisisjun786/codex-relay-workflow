@@ -6,7 +6,9 @@ package install_test
 // faked reading): no daemon is started and no live relay state is touched.
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -18,6 +20,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+
+	_ "modernc.org/sqlite"
 )
 
 // backupStateHost is a host with a relay state directory holding a whole store (a database, its write gate and its
@@ -28,6 +32,97 @@ func backupStateHost(t *testing.T) *host {
 	testsupport.Create(t, filepath.Join(h.relayState, "relay.sqlite3"), "", "go")
 	write(t, filepath.Join(h.relayState, "ledger.log"), "line one\n")
 	return h
+}
+
+// ---- CRW-862 review fixes ----
+
+// The write gate the command locks is the one the relay writers lock: beside the database as SQLite resolves it
+// (holdGate), which for a linked store is the linked file directory and not the state directory root. Before the fix
+// the command locked the state directory gate, so a writer holding the resolved gate kept writing under the copy.
+//
+// sequential: takes the real write gate and replaces the service reading.
+func TestTheOperatorCommandLocksTheGateBesideTheResolvedStore(t *testing.T) {
+	h := backupStateHost(t)
+	real := filepath.Join(h.relayState, "data", "real.sqlite3")
+	testsupport.Create(t, real, "", "go")
+	if err := os.Remove(filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+		return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+	})
+	defer restore()
+	// a relay writer holds the gate beside the resolved database
+	held, err := ownership.Lock(filepath.Join(filepath.Dir(real), "write-gate.lock"), true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	dest := filepath.Join(h.home, "operator-backup")
+	result, code := install.BackupState(context.Background(), h.options(), dest)
+	if code != install.Refused || at(result, "applied") != false || !strings.Contains(text(at(result, "refused")), "write gate") {
+		t.Fatalf("a held resolved gate must refuse: exit %d\n%s", code, golden.Canon(result))
+	}
+	nothingAt(t, dest)
+}
+
+// A --state holding a byte that is not UTF-8 is refused as usage: the manifest would otherwise record a source path
+// with the bytes replaced, naming no real directory. Before the fix only --to was validated.
+//
+// sequential: none.
+func TestTheOperatorCommandRefusesANonUTF8State(t *testing.T) {
+	h := backupStateHost(t)
+	var stdout, stderr strings.Builder
+	code := install.Main(context.Background(), []string{"backup-state", "--to", filepath.Join(h.home, "b"), "--state", string([]byte{0xff, 0xfe})}, h.env, &stdout, &stderr)
+	if code != install.Usage || !strings.Contains(stderr.String(), "not UTF-8") {
+		t.Fatalf("exit %d stderr=%q", code, stderr.String())
+	}
+}
+
+// The integrity gate duplicates a store of any size with a fixed buffer: a multi-megabyte store is duplicated and
+// checked without the process holding it in memory, and the copy is byte-identical.
+//
+// sequential: replaces the service reading.
+func TestTheOperatorCommandDuplicatesALargeStoreWithoutHoldingItInMemory(t *testing.T) {
+	// a store several times the 1 MiB copy buffer, written through SQLite so it is a real database
+	h := newHost(t)
+	big := filepath.Join(h.relayState, "relay.sqlite3")
+	testsupport.Create(t, big, "", "go")
+	db, err := sql.Open("sqlite", big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("CREATE TABLE filler (id INTEGER PRIMARY KEY, blob BLOB)"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 64; i++ {
+		if _, err := db.Exec("INSERT INTO filler (blob) VALUES (randomblob(65536))"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(big)
+	if err != nil || info.Size() < 4<<20 {
+		t.Fatalf("the fixture store is %v bytes: %v", info, err)
+	}
+	restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+		return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+	})
+	defer restore()
+	dest := filepath.Join(h.home, "operator-backup")
+	result, code := install.BackupState(context.Background(), h.options(), dest)
+	if code != install.OK || at(result, "stateBackup", "restoreCandidate") != true {
+		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
+	}
+	if !bytes.Equal(mustRead(t, filepath.Join(dest, "relay.sqlite3")), mustRead(t, big)) {
+		t.Fatal("the copy of a large store is not byte-identical")
+	}
 }
 
 // The command takes the same artifact outside an install: the copy, its manifest and the integrity gate, with the
