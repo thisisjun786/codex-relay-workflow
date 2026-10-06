@@ -528,6 +528,11 @@ func TestLoopInitRefusesToRewriteASessionStateItCannotKeep(t *testing.T) {
 	for i := range contradictions {
 		contradictions[i] = `{"contradictionId":"c` + fmt.Sprint(i) + `","severity":"high","summary":"s"}`
 	}
+	// A dimension's known list longer than interview.MaxTrackerArray, so the reader drops its oldest entries.
+	known := make([]string, interview.MaxTrackerArray+1)
+	for i := range known {
+		known[i] = `"k` + fmt.Sprint(i) + `"`
+	}
 	for _, c := range []struct {
 		name string
 		body string
@@ -536,6 +541,7 @@ func TestLoopInitRefusesToRewriteASessionStateItCannotKeep(t *testing.T) {
 		{"an unverified list longer than the reader keeps", `{"phase":"IDLE","sessionId":"rec-s9","unverifiedSubagents":[` + strings.Join(overflow, ",") + `]}`},
 		{"a legacy D-close marker", `{"phase":"IDLE","sessionId":"rec-s9","dcloseRecovery":{"sessionId":"rec-s9","checkEpoch":"e","closedWorkPhaseId":"wp1","nextWorkPhaseId":7}}`},
 		{"an interview tracker longer than the reader keeps", `{"phase":"IDLE","sessionId":"rec-s9","interview":{"roundId":0,"contradictions":[` + strings.Join(contradictions, ",") + `]}}`},
+		{"a dimension known list longer than the reader keeps", `{"phase":"IDLE","sessionId":"rec-s9","interview":{"contradictions":[],"assumptions":[],"dimensions":{"goal":{"known":[` + strings.Join(known, ",") + `]}}}}`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cwd := loopReadWorkspace(t)

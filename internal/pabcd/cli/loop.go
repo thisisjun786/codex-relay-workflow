@@ -11,8 +11,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -185,13 +183,13 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
 }
 
-// loopStateRewritable says whether writing next back over raw would keep every record the file stores. It is a copy of
-// sessionHookStateRewritable and sessionHookInterviewKeepsStored of internal/pabcd/hook/session_hooks.go, whose package
-// is not this issue's edit region, so the logic is copied rather than moved or exported (the parent records the
-// consolidation as a follow-up). The reader normalises what it handles, so a write-back that only means to bind a slug
-// can still drop or change records: ReconstructUnverified stops at MaxUnverifiedSubagents, cuts a receiptClaimed to
-// MaxReceiptClaimLen and replaces a field of the wrong type (state.RewriteKeepsUnverified), ReconstructInterview caps
-// every tracker array at interview.MaxTrackerArray, and a legacy D-close marker loses its distinction.
+// loopStateRewritable says whether writing next back over raw would keep every record the file stores. The reader
+// normalises what it handles, so a write-back that only means to bind a slug can still drop or change records:
+// ReconstructUnverified stops at MaxUnverifiedSubagents, cuts a receiptClaimed to MaxReceiptClaimLen and replaces a
+// field of the wrong type (state.RewriteKeepsUnverified); ReconstructInterview caps contradictions, assumptions, each
+// dimension's known/unknown lists and each ontology entry's fields and relationships at interview.MaxTrackerArray, and
+// drops an unnamed entity and a relationship with no target (state.RewriteKeepsInterview); and a legacy D-close marker
+// loses its distinction. All three live in the state package, so nothing here is copied from the hook package.
 func loopStateRewritable(raw []byte, next state.State) bool {
 	if next.DcloseRecovery != nil && next.DcloseRecovery.Legacy {
 		return false
@@ -199,68 +197,7 @@ func loopStateRewritable(raw []byte, next state.State) bool {
 	if !state.RewriteKeepsUnverified(raw, next.UnverifiedSubagents) {
 		return false
 	}
-	return loopInterviewKeepsStored(raw, next.Interview)
-}
-
-// loopInterviewKeepsStored says whether the tracker the write would publish still holds every entry the file stores. A
-// stored array longer than the rebuilt one is a record the write-back would lose. The rebuilt tracker cannot be compared
-// instead: the reader normalises a dimension (an absent array becomes empty, an unknown level becomes low), so a value
-// comparison would refuse every write. A tracker the file does not hold, or holds as null, holds no entry to lose.
-func loopInterviewKeepsStored(raw []byte, kept *interview.Tracker) bool {
-	stored, ok := loopStateJSONField(raw, "interview")
-	if !ok {
-		return false
-	}
-	object, _ := stored.(map[string]any)
-	contradictions, _ := object["contradictions"].([]any)
-	assumptions, _ := object["assumptions"].([]any)
-	ontology, _ := object["ontologySchema"].([]any)
-	if kept == nil {
-		return len(contradictions) == 0 && len(assumptions) == 0 && len(ontology) == 0
-	}
-	if len(contradictions) > len(kept.Contradictions) || len(assumptions) > len(kept.Assumptions) || len(ontology) > len(kept.OntologySchema) {
-		return false
-	}
-	for i, entity := range ontology {
-		record, _ := entity.(map[string]any)
-		relationships, _ := record["relationships"].([]any)
-		if len(relationships) > len(kept.OntologySchema[i].Relationships) {
-			return false
-		}
-	}
-	return true
-}
-
-// loopStateJSONField is one top-level key of a state document, decoded as the reader decodes it: numbers stay json.Number.
-// A document that is not one JSON object is refused; a key the document does not hold is the nil value.
-func loopStateJSONField(doc []byte, key string) (any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(doc))
-	dec.UseNumber()
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, false
-	}
-	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-		return nil, false
-	}
-	for dec.More() {
-		name, err := dec.Token()
-		if err != nil {
-			return nil, false
-		}
-		if field, ok := name.(string); ok && field == key {
-			var value any
-			if dec.Decode(&value) != nil {
-				return nil, false
-			}
-			return value, true
-		}
-		var skip json.RawMessage
-		if dec.Decode(&skip) != nil {
-			return nil, false
-		}
-	}
-	return nil, true
+	return state.RewriteKeepsInterview(raw, next.Interview)
 }
 
 // loopPlanFileExists reports whether slug's plan file is there as a regular file. A path the slug resolver
