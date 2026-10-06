@@ -20,6 +20,13 @@ import { spawnSync } from "node:child_process";
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one.
 function run(request) {
+  // The pool's start-up handshake is one request with a null input and an empty root (CRW-854). It
+  // is a readiness probe whose reply is discarded, so answer it inertly without running python3:
+  // the handshake must not pay for an oracle process per worker start.
+  const handshake = request.input;
+  if (handshake === null || typeof handshake !== "object" || Array.isArray(handshake)) {
+    return null;
+  }
   const root = typeof request.root === "string" ? request.root : "";
   if (root !== "") {
     process.env.HOME = root + "/home";

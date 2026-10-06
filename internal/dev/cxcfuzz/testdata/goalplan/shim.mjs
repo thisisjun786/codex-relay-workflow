@@ -91,6 +91,14 @@ function maskUpdatedAt(text) {
 // run puts the homes the case declared under its own root, so a shim never reads a real one, then
 // reads, rewrites and re-reads the plan the way the port does.
 function run(request) {
+  // The pool's start-up handshake is one request with a null input and an empty root (CRW-854). It
+  // is a readiness probe whose reply is discarded, so answer it inertly before any path is built,
+  // any file is mirrored or read, and any plan is written: a shim that instead ran the case would
+  // write .codexclaw/... into the worker's own working directory on every worker start.
+  const input = request.input;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
   const root = typeof request.root === "string" ? request.root : "";
   if (root !== "") {
     process.env.HOME = root + "/home";
