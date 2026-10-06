@@ -1478,3 +1478,17 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
   the shared lock builds (`goalplan '<slug>' does not exist`), exactly as the oracle compares its own
   lock's reason (`:327`). The two spellings are kept in step by `TestSteeringApplyUnboundSlugIsRefused`,
   which pins the resulting `no goalplan found at slug '<slug>'` text and the fact that no state is created.
+
+## Found by the producer-intermediate port (CRW-672)
+
+- The M2b classifier matched a producer temporary by name only — any name ending `.tmp`, any name containing `.tmp-`, any
+  name starting `.probe-` (`internal/runtime/install/migrate/classify.go:548-556` at 5a09b73d) — so a durable record whose
+  own id carries a temp-like substring was skipped instead of reaching its row and record judge (`bg/job.tmp-live.json`, a
+  valid record the bg writer accepts through `RunOptions.ID`, so a running job could be copied incompletely), and the
+  evidence rule's millisecond branch never checked the final-name part, so a user file such as
+  `evidence/x/.123.1760000000000.tmp` was skipped (`classify.go:574-597`); port: fixed — the exact temporary shapes of
+  docs/port-cxc/state-migration.md:105 are now matched only inside the directory of the producer that writes them, and the
+  final-name part before `.<pid>.` must be non-empty, with the red-first cases in `inventory_intermediate_test.go`.
+  Consequence of the fix, disclosed: a `.tmp` or `.probe-` name of a producer row 105 does not name (the `dispatches/`,
+  `objective-kind/` and `divergence/` writers) now reports `not in the inventory` instead of `producer intermediate`; the
+  disposition is unchanged (skip, never copied).
