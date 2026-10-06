@@ -34,6 +34,34 @@ func backupStateHost(t *testing.T) *host {
 	return h
 }
 
+// The standalone backup records the route that took it: the operator command takes no swap and reads no in-flight
+// cells, so its manifest and result must not claim the guarded install route's checks. Before the fix both carried
+// the install route's words, which could be mistaken for evidence from the swap gate.
+//
+// sequential: replaces the service reading.
+func TestTheOperatorCommandRecordsItsOwnRoute(t *testing.T) {
+	h := backupStateHost(t)
+	restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+		return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+	})
+	defer restore()
+	dest := filepath.Join(h.home, "operator-backup")
+	result, code := install.BackupState(context.Background(), h.options(), dest)
+	if code != install.OK || at(result, "stateBackup", "takenBy") != "operator" {
+		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
+	}
+	var manifest struct {
+		TakenBy string `json:"takenBy"`
+		Meaning string `json:"meaning"`
+	}
+	if err := json.Unmarshal(mustRead(t, dest+install.ManifestSuffix), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.TakenBy != "operator" || strings.Contains(manifest.Meaning, "before the swap") {
+		t.Fatalf("the manifest claims the install route: %+v", manifest)
+	}
+}
+
 // ---- CRW-862 review fixes ----
 
 // The write gate the command locks is the one the relay writers lock: beside the database as SQLite resolves it

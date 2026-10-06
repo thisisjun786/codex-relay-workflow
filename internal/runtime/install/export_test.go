@@ -67,9 +67,11 @@ func ReplaceStateBackupVerified(verified func() error) (restore func()) {
 
 // ReplaceIntegrityCheck makes the backup's integrity gate go through check until restored, so a test that cannot
 // corrupt a real store substitutes the answer instead.
-func ReplaceIntegrityCheck(check func(dest string, copied []BackedUp) (string, error)) (restore func()) {
+func ReplaceIntegrityCheck(check func(ctx context.Context, dest string, copied []BackedUp) (string, error)) (restore func()) {
 	saved := integrityCheckPath
-	integrityCheckPath = func(dest string, copied []backedUp) (string, error) { return check(dest, copied) }
+	integrityCheckPath = func(ctx context.Context, dest string, copied []backedUp) (string, error) {
+		return check(ctx, dest, copied)
+	}
 	return func() { integrityCheckPath = saved }
 }
 

@@ -251,7 +251,7 @@ func TestTheBackupRecordsIntegrityAndRefusesACorruptedCopy(t *testing.T) {
 	t.Run("a corrupted copy", func(t *testing.T) {
 		h, _, second, old, _ := zoneInstalled(t)
 		zoneStore(t, h)
-		restore := install.ReplaceIntegrityCheck(func(dest string, copied []install.BackedUp) (string, error) {
+		restore := install.ReplaceIntegrityCheck(func(_ context.Context, dest string, copied []install.BackedUp) (string, error) {
 			return "Page 5 is never used", errors.New("PRAGMA integrity_check answered a corruption")
 		})
 		defer restore()

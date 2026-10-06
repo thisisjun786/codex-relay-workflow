@@ -55,6 +55,13 @@ var stateBackupVerified = func() error { return nil }
 // nil runs the real check. A test that cannot corrupt a real store substitutes the answer instead.
 var integrityCheckPath = sqliteIntegrityCheck
 
+// The two routes that take the backup: the install swap gate (OPS-4.5) and the operator command (CRW-862). The
+// manifest and the result say which one took the copy, because the checks they rest on are not the same.
+const (
+	backupForSwap     = "swap"
+	backupForOperator = "operator"
+)
+
 // stateBackupWalk is a seam: it is called for each entry of a listing after the directory was read and before the
 // entry's own information is asked, which is where another connection to the store makes a sidecar go. It is called
 // with the entry's path.
@@ -184,7 +191,7 @@ func swapGate(ctx context.Context, o Options, rec Object, candidate string, cand
 		}
 		return gate
 	}
-	backup, err := backupState(ctx, o, o.StateBackup)
+	backup, err := backupState(ctx, o, o.StateBackup, backupForSwap)
 	if err != nil {
 		gate = record.Set(gate, "stateBackup", backup)
 		blocked, _ := record.Get(gate, "blockedBy").([]any)
@@ -221,7 +228,7 @@ func (r *run) refusedAfterGate(detail, note string, extra ...contract.Field) (Ob
 // (a failed run removes its candidate runtime, and a backup there would go with it); every regular file is
 // copied with its bytes, hashed while it is read, then the source is read again and every file, the listing
 // and the store's three files must be what was copied. A partial copy after an error stays where it is.
-func backupState(ctx context.Context, o Options, dest string) (Object, error) {
+func backupState(ctx context.Context, o Options, dest, route string) (Object, error) {
 	failure := func(created bool, format string, args ...any) (Object, error) {
 		err := fmt.Errorf(format, args...)
 		return Object{field("requested", true), field("made", false), field("destination", dest), field("partial", created), field("kept", created), field("error", err.Error())}, err
@@ -411,7 +418,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	// restore candidate when PRAGMA integrity_check passes on it. The check runs on a scratch duplicate beside the
 	// copy, never on the copy itself, because opening a database checkpoints its write-ahead log and would change the
 	// bytes the backup holds. The duplicate is removed either way.
-	integrity, err := integrityCheckPath(dest, copied)
+	integrity, err := integrityCheckPath(ctx, dest, copied)
 	restoreCandidate := err == nil
 	if err != nil && integrity == "" {
 		integrity = err.Error()
@@ -421,8 +428,8 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		"schema": "crw-state-backup/1", "source": source, "destination": dest, "issue": o.Issue, "at": o.stamp(),
 		"files": files, "bytes": bytes, "aggregateDigest": aggregate, "skipped": skipped, "entries": copied,
 		"storeSidecars":  map[string]string{shmSidecar: "not copied: the WAL index SQLite rebuilds from the log on open", walSidecar: storeSidecarWal(walCopied, walGone, walAppeared)},
-		"integrityCheck": integrity, "restoreCandidate": restoreCandidate,
-		"meaning": "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte",
+		"integrityCheck": integrity, "restoreCandidate": restoreCandidate, "takenBy": route,
+		"meaning": backupMeaning(route),
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -463,8 +470,26 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	}
 	return Object{field("requested", true), field("made", true), field("destination", dest), field("manifest", manifestPath), field("source", source),
 		field("files", files), field("bytes", bytes), field("skipped", strs(skipped)), field("aggregateDigest", aggregate), field("kept", true), field("at", o.stamp()),
-		field("integrityCheck", integrity), field("restoreCandidate", restoreCandidate),
-		field("meaning", "the state directory was copied, byte for byte, after the daemon and in-flight cells answered and before the swap; nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)")}, nil
+		field("integrityCheck", integrity), field("restoreCandidate", restoreCandidate), field("takenBy", route),
+		field("meaning", backupResultMeaning(route))}, nil
+}
+
+// backupMeaning is the manifest's account of what the copy is, in the route's own words: the install route takes
+// it before the swap, and the operator command takes it outside any install, so neither describes the other's
+// checks (CRW-862).
+func backupMeaning(route string) string {
+	if route == backupForOperator {
+		return "a copy of the relay state directory taken by crw install backup-state outside an install, with the relay service known stopped and the store's write gate held exclusively; copy only, byte for byte"
+	}
+	return "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte"
+}
+
+// backupResultMeaning is the result's account of the copy, in the route's own words.
+func backupResultMeaning(route string) string {
+	if route == backupForOperator {
+		return "the state directory was copied, byte for byte, with the relay service known stopped and the store's write gate held exclusively; nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)"
+	}
+	return "the state directory was copied, byte for byte, after the daemon and in-flight cells answered and before the swap; nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)"
 }
 
 // refuseDestination is why dest cannot hold a backup, or nil: it lies in the source, or in the install's own
@@ -864,7 +889,7 @@ func copyFileInto(source, target string) error {
 // touches. The duplicate holds the copy's log too when the backup carries one, so a store whose commits live only
 // in the log is checked with them. The duplicate is removed either way, and the copy's bytes are not touched. The
 // answer is SQLite's own, joined when it is several rows; an error is why the copy is not a restore candidate.
-func sqliteIntegrityCheck(dest string, copied []backedUp) (string, error) {
+func sqliteIntegrityCheck(ctx context.Context, dest string, copied []backedUp) (string, error) {
 	scratch, err := os.MkdirTemp(filepath.Dir(dest), ".crw-integrity-")
 	if err != nil {
 		return "", fmt.Errorf("the scratch directory for the integrity check could not be created: %v", err)
@@ -893,7 +918,7 @@ func sqliteIntegrityCheck(dest string, copied []backedUp) (string, error) {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	rows, err := db.Query("PRAGMA integrity_check")
+	rows, err := db.QueryContext(ctx, "PRAGMA integrity_check")
 	if err != nil {
 		return "", fmt.Errorf("the integrity check could not run: %v", err)
 	}

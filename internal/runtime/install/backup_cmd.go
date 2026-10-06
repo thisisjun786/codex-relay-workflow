@@ -151,7 +151,7 @@ func BackupState(ctx context.Context, o Options, dest string) (Object, int) {
 			"nothing was read and nothing was copied: stop the relay service and run this command again.")
 	}
 	defer gate.Close()
-	backup, err := backupState(ctx, o, dest)
+	backup, err := backupState(ctx, o, dest, backupForOperator)
 	if err != nil {
 		return Object{field("command", "backup-state"), field("applied", false), field("refused", err.Error()), field("stateBackup", backup),
 			field("note", "nothing but what is reported under stateBackup was written: a partial copy stays where it is and is never vouched for by a manifest it did not write.")}, Refused
