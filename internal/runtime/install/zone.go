@@ -133,7 +133,6 @@ func sidecarsFor(source, dbPath string) storeSidecars {
 
 func (s storeSidecars) isWal(path string) bool { return path == s.wal }
 func (s storeSidecars) isShm(path string) bool { return path == s.shm }
-func (s storeSidecars) is(path string) bool    { return s.isWal(path) || s.isShm(path) }
 
 // listingHasWal is whether a listing holds the store's write-ahead log.
 func listingHasWal(entries []backedUp) bool {
