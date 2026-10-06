@@ -22,6 +22,7 @@ import (
 // entries and outgoing dropped. The test reruns itself inside bwrap; it is skipped where bwrap
 // cannot bind.
 func TestRemoveKnowsARuntimeByIdentityNotSpelling(t *testing.T) {
+	// sequential: re-execs the test binary in bwrap and counts the processes the process-wide table holds.
 	a, b := os.Getenv("CRW_ALIAS_A"), os.Getenv("CRW_ALIAS_B")
 	if a == "" {
 		bwrap, err := exec.LookPath("bwrap")
@@ -84,9 +85,7 @@ func TestRemoveKnowsARuntimeByIdentityNotSpelling(t *testing.T) {
 		t.Fatal(err)
 	}
 	sleeper := filepath.Join(old, "bin", "sleep")
-	if err := os.WriteFile(sleeper, []byte(readFile(t, source)), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, sleeper, []byte(readFile(t, source)), 0o755)
 	process := exec.Command(alias(sleeper), "30")
 	if err := process.Start(); err != nil {
 		t.Fatal(err)

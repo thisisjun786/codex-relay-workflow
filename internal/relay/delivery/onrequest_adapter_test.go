@@ -73,6 +73,7 @@ func guarded(t *testing.T, input map[string]any) (Obj, []any) {
 }
 
 func TestORD06_an_on_request_thread_is_started_and_its_difference_noted(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"transmitted", "settings_free"} {
 		t.Run(route, func(t *testing.T) {
 			receipt, _ := guarded(t, ordAdapter(t, route))
@@ -85,6 +86,7 @@ func TestORD06_an_on_request_thread_is_started_and_its_difference_noted(t *testi
 }
 
 func TestORD07_untrusted_stays_stored_not_woken(t *testing.T) {
+	t.Parallel()
 	receipt, methods := guarded(t, ordAdapter(t, "untrusted"))
 	golden.CheckJSON(t, "delivery_state", Classify(receipt).DeliveryState)
 	if f := Classify(receipt); f.DeliveryState != InboxOnly || len(methods) != 2 {
@@ -93,6 +95,7 @@ func TestORD07_untrusted_stays_stored_not_woken(t *testing.T) {
 }
 
 func TestORD08_a_supervisor_push_follows_the_same_policy_rule(t *testing.T) {
+	t.Parallel()
 	// The channel's own record (withheld_pre_send carrying transportDeliveryState inbox_only)
 	// is todo 24's; what it rests on here is the transport classification of the two answers.
 	for _, tc := range []struct{ mode, policy, transport string }{
@@ -128,6 +131,7 @@ func rawResume(cwd, approval string) string {
 const TurnPredatesSend = "turn_predates_send"
 
 func TestORD09_a_push_folded_into_a_running_turn_is_not_a_completion(t *testing.T) {
+	t.Parallel()
 	// The readback of the folded push (turn_predates_send, the message staying dispatched and
 	// nothing resent) is the supervisor channel's, todo 24's; the chronology rule it rests on is
 	// judged here on the start and send times the Python channel read.
@@ -186,6 +190,7 @@ func without(o Obj, key string) Obj {
 // not one. The facts of a failed receipt whose resume was answered and whose error carries the
 // code are checked against the golden, which began as transport.classify_operation_receipt's.
 func Test25_SPR10_every_settings_refusal_is_a_pre_send_refusal(t *testing.T) {
+	t.Parallel()
 	codes := append(slices.Clone(SettingsRefusals), "thread_busy", "unknown", "unsupported_approval_policy")
 	classified := map[string]any{}
 	for _, code := range codes {

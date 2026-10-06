@@ -50,6 +50,7 @@ func memberJSON(t *testing.T, answer map[string]any, kind, left, right string) m
 
 // A receipt that is not accepted yet (E is running, its report arrived) is swept by the command: E's head is its child's checkout HEAD, D's is its accepted head, and the tip is the one --target names.
 func TestCLISweepOfAReceiptBeforeAcceptance(t *testing.T) {
+	t.Parallel()
 	w, state := cliWorld(t)
 	repo := w.k.repo.path
 	closeStore(t, w)
@@ -81,6 +82,7 @@ func TestCLISweepOfAReceiptBeforeAcceptance(t *testing.T) {
 // Without --target the tip is the base frozen in the manifest of the node's CURRENT execution. A manifest stored for the same node and never bound (a prepared correction, another plan's) is not it, and no base
 // at all leaves the tips unmeasured.
 func TestCLISweepTakesTheTipFromTheCurrentManifest(t *testing.T) {
+	t.Parallel()
 	prepare := func(withBase bool) (*sweepWorld, string, string) {
 		w, state := cliWorld(t)
 		k := w.k
@@ -115,6 +117,7 @@ func TestCLISweepTakesTheTipFromTheCurrentManifest(t *testing.T) {
 
 // The landing command carries its sweep in the answer, a repeat finds it done, and dag-conflict-observe carries its drift.
 func TestCLICarriesTheSweepAndTheDrift(t *testing.T) {
+	t.Parallel()
 	w, state := cliWorld(t)
 	k := w.k
 	repo := k.repo.path

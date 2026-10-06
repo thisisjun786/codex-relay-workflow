@@ -418,9 +418,26 @@ func projectCap(findings []any) Obj {
 // replaced by needs_changes (the correction opens as for a first needs_changes ruling) and every
 // other different verdict is refused with disposition_conflict. An open re-review is decided first,
 // as before: it is the route for a criteria set that moved, accepted head or not.
-func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn string, criteria, findings []any, reason, expected any) (Obj, error) {
+//
+// verifiedHead is the head a verified ruling fixed, recorded in the ruling's own transaction so a
+// later acceptance proves a parent-made refresh against the head the ruling handled rather than the
+// head the forge shows at accept time (CRW-742). It is optional and trailing: absent, the ruling
+// fixes no head and behaves exactly as before. Only a verified ruling may name one, one event keeps
+// one head, and the record is read back from dag_verified_heads rather than returned, so the answer
+// is unchanged.
+func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn string, criteria, findings []any, reason, expected any, verifiedHead ...string) (Obj, error) {
 	if !slices.Contains(verdicts, verdict) {
 		return nil, refuse(DispositionConflict, "unknown verdict %s", strconv.Quote(verdict))
+	}
+	head := ""
+	for _, candidate := range verifiedHead {
+		if candidate != "" {
+			head = candidate
+			break
+		}
+	}
+	if head != "" && verdict != "verified" {
+		return nil, refuse(DispositionConflict, "%s was asked for %s with a verified head, and a verified head is recorded only with a verified ruling: rule verified with the head, or leave the option out", strconv.Quote(eventID), strconv.Quote(verdict))
 	}
 	normalised, err := NormaliseFindings(criteria, findings)
 	if err != nil {
@@ -440,11 +457,27 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 				return err
 			}
 		}
+		// the head this event already fixed, if any: one event keeps one verified head, so a second
+		// ruling may name the same head (a replay, or a re-review under a moved criteria set) and is
+		// refused for another
+		var headRecorded store.VerifiedHeadRow
+		headFound := false
+		if head != "" {
+			if headRecorded, headFound, err = store.VerifiedHead(ctx, a.Store, eventID); err != nil {
+				return err
+			}
+			if headFound && headRecorded.HeadSHA != head {
+				return refuse(DispositionConflict, "%s already records verified head %s (ruled at %s), and one event keeps the head its verified ruling fixed: rule %s with that head, or open a fresh execution generation for the new one", strconv.Quote(eventID), strconv.Quote(headRecorded.HeadSHA), strconv.Quote(headRecorded.VerdictTurnID), strconv.Quote(head))
+			}
+		}
 		if settled != nil && !reReview {
 			recorded := settled.S("verdict")
 			move, route := rulingTransition(recorded, verdict, settled.I("next_generation"))
 			switch move {
 			case moveReplay:
+				if head != "" && !headFound {
+					return refuse(DispositionConflict, "%s is a replay of the verified ruling on record, which fixed no head: a verified head is recorded with the ruling that fixes it, so rule again on a fresh execution generation instead of attaching a head to a replay", strconv.Quote(eventID))
+				}
 				record = append(loadsObj(settled.S("record")), F{Key: "_replay", Value: true})
 				return nil
 			case moveRefuse:
@@ -558,6 +591,11 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		if _, err := execSQL(ctx, a.Store, "INSERT INTO verdicts (event_id, record, verdict, next_generation, verdict_turn_id, decided_at) VALUES (?,?,?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET record = excluded.record, verdict = excluded.verdict, next_generation = excluded.next_generation, verdict_turn_id = excluded.verdict_turn_id, decided_at = excluded.decided_at",
 			eventID, dumps(record), verdict, next, verdictTurn, now); err != nil {
 			return err
+		}
+		if head != "" && !headFound {
+			if err := store.RecordVerifiedHead(ctx, a.Store, store.VerifiedHeadRow{EventID: eventID, RelationshipID: event.S("relationship_id"), ExecutionGeneration: event.I("execution_generation"), VerdictTurnID: verdictTurn, HeadSHA: head, RecordedByTaskID: relationship.Parent.TaskID, RecordedAt: now}); err != nil {
+				return err
+			}
 		}
 		if err := journal(ctx, a.Store, "verdict_recorded", eventID, Obj{{Key: "verdict", Value: verdict}}, now); err != nil {
 			return err

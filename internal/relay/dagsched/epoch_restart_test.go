@@ -34,6 +34,7 @@ func (k *releaseKit) resumeOf(s *Scheduler, plan, actor, node string) (RestartNo
 }
 
 func TestRestartOfTheSameTaskAtEveryBoundaryOfARelease(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		crash        func(k *releaseKit, s *Scheduler)
@@ -164,6 +165,7 @@ func equalRows(a, b map[string][]map[string]any) bool {
 // The boundaries after the child is bound: its result stored, the ruling stored, the acceptance written. Each is crashed after, a new session of the same task starts, and what was stored before the crash
 // is what the new session uses: nothing is adopted again and nothing is asked of the child twice.
 func TestRestartOfTheSameTaskAfterTheResultAndTheRuling(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	deleteRuling := func(k *releaseKit) (restore func()) {
 		var event, revision, set string
@@ -257,6 +259,7 @@ func TestRestartOfTheSameTaskAfterTheResultAndTheRuling(t *testing.T) {
 // Time decides nothing. Whatever lease, heartbeat or deadline a store holds, a node that has an owner is not ready again because a day passed, and a reading or a restart report is the same
 // with a clock a year ahead.
 func TestTimeReassignsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
@@ -295,6 +298,7 @@ func TestTimeReassignsNothing(t *testing.T) {
 
 // An unknown creation stays unknown until the host's record of it is read, and is never created again; an unknown merge turn stays unknown until the head is observed, and no second turn is requested.
 func TestUnknownEffectsAreNotRerun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	t.Run("a creation whose response was lost, across three sessions", func(t *testing.T) {
 		k := newReleaseKit(t)
@@ -378,6 +382,7 @@ func replace(t *testing.T) replacement {
 }
 
 func TestAReplacementParentAdoptsTheLiveChild(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := replace(t)
 	k := r.k
@@ -443,6 +448,7 @@ func TestAReplacementParentAdoptsTheLiveChild(t *testing.T) {
 }
 
 func TestAdoptionSurvivesACeilingLoweredBelowUse(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := replace(t)
 	k := r.k
@@ -466,6 +472,7 @@ func TestAdoptionSurvivesACeilingLoweredBelowUse(t *testing.T) {
 // The slot of a node is returned as its recorded holder only when the holder is the parent of a relationship in the node's own execution chain and the slot is held for the plan's project;
 // any other holder keeps it and the caller is refused, as capacity refuses it.
 func TestAForeignSlotIsNotReturnedAsItsHolder(t *testing.T) {
+	t.Parallel()
 	// a former parent of the node: a relationship of the node's own chain that the parent former held
 	inChain := func(k *releaseKit) {
 		now := k.clock()
@@ -517,6 +524,7 @@ func TestAForeignSlotIsNotReturnedAsItsHolder(t *testing.T) {
 }
 
 func TestAdoptRefusals(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	t.Run("a node that has an acceptance", func(t *testing.T) {
 		r := replace(t)
@@ -567,6 +575,7 @@ func TestAdoptRefusals(t *testing.T) {
 // What a replacement parent cannot recover is said, not hidden: a release that never bound its child (the managed start is frozen under the previous parent) and a result that is accepted and
 // not landed (its merge turn and merged mark belong to the previous parent) read needs_operator, and no child is created for either.
 func TestAReplacementParentNamesWhatItCannotRecover(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	t.Run("a release that never bound its child", func(t *testing.T) {
 		k := newReleaseKit(t)

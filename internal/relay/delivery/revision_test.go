@@ -73,6 +73,7 @@ func runRVR(t *testing.T, mode string, goSide func(v *vcu, out map[string]any), 
 }
 
 func TestRVR01_a_correction_by_the_same_child_supersedes_then_verifies_and_replays(t *testing.T) {
+	t.Parallel()
 	verified := []any{finding("c1", "verified", "")}
 	t.Run("roundtrip and replay", func(t *testing.T) {
 		runRVR(t, "roundtrip", func(v *vcu, out map[string]any) {
@@ -114,6 +115,7 @@ func TestRVR01_a_correction_by_the_same_child_supersedes_then_verifies_and_repla
 }
 
 func TestRVR02_only_the_requested_result_anchors_a_correction(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mode string
 		run  func(v *vcu)
@@ -161,6 +163,7 @@ func TestRVR02_only_the_requested_result_anchors_a_correction(t *testing.T) {
 }
 
 func TestRVR03_two_corrections_of_the_requested_result_are_a_fork(t *testing.T) {
+	t.Parallel()
 	runRVR(t, "fork", func(v *vcu, out map[string]any) {
 		req := v.requestCorrection(v.acknowledged(""))
 		v.emitCorrection(pyjson.Text(req.Get("supersedesRevisionHash")), "one")
@@ -173,6 +176,7 @@ func TestRVR03_two_corrections_of_the_requested_result_are_a_fork(t *testing.T) 
 }
 
 func TestRVR04_an_old_unruled_event_is_not_made_current_by_a_correction(t *testing.T) {
+	t.Parallel()
 	runRVR(t, "old_unruled", func(v *vcu, out map[string]any) {
 		first := v.acknowledged("")
 		s := v.emitCorrection(v.revisionHash(first), "successor")
@@ -187,6 +191,7 @@ func TestRVR04_an_old_unruled_event_is_not_made_current_by_a_correction(t *testi
 }
 
 func TestRVR05_the_correction_has_its_own_anchor_in_the_new_generation(t *testing.T) {
+	t.Parallel()
 	for _, reemit := range []bool{false, true} {
 		name := map[bool]string{false: "queued correction, no completion yet", true: "after the child re-emits"}[reemit]
 		t.Run(name, func(t *testing.T) {

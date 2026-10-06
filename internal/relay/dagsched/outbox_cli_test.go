@@ -42,6 +42,7 @@ func objectOf(t *testing.T, m map[string]any, key string) map[string]any {
 // Criterion c3, through the binary: from the first open to the last write, every command of the parent's flow, a lost response and its recovery included, changes the summary table
 // and nothing else in the store (the journal sequence, every other table and every object stay as they were), and the flow's answers are the ones the skill relies on.
 func TestCLISummaryFlowTouchesOnlyTheSummaryTable(t *testing.T) {
+	t.Parallel()
 	state := summaryState(t)
 	db := filepath.Join(state, "relay.sqlite3")
 	stage := func(what string, run func()) {
@@ -141,6 +142,7 @@ func TestCLISummaryFlowTouchesOnlyTheSummaryTable(t *testing.T) {
 // The commands that only read open the store read-only: a store that still owes the repairs a writer's open makes is left exactly as it is, and a state directory with no store is
 // the refusal every read-only command gives.
 func TestCLISummaryReadOnlyCommandsChangeNothing(t *testing.T) {
+	t.Parallel()
 	state, db := owingState(t)
 	if out := summaryRun(t, state, 0, "dag-summary-status", "--plan", "p1"); len(out["documents"].([]any)) != 0 {
 		t.Fatalf("a plan with no summary reads %v", out)
@@ -168,6 +170,7 @@ func TestCLISummaryReadOnlyCommandsChangeNothing(t *testing.T) {
 
 // A refusal is exit 2 with an existing reason and writes nothing.
 func TestCLISummaryRefusals(t *testing.T) {
+	t.Parallel()
 	state := summaryState(t)
 	db := filepath.Join(state, "relay.sqlite3")
 	before := dumpStore(t, db)
@@ -197,6 +200,7 @@ func TestCLISummaryRefusals(t *testing.T) {
 // block at the start and a second container after 1.5 MiB of text; a reader that stopped at 1 MiB would say already_written. A document over the limit is a usage error (exit 4), and an option that is missing is the
 // parser's (exit 2, usage on stderr, nothing on stdout).
 func TestCLISummaryDocumentsAreReadWholeOrRefused(t *testing.T) {
+	t.Parallel()
 	state := summaryState(t)
 	enq := summaryRun(t, state, 0, "dag-summary-enqueue", "--plan", "p1", "--actor", "parent", "--document", "doc-1")
 	id := objectOf(t, enq, "entry")["summary_id"].(string)

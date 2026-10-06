@@ -38,6 +38,8 @@ type NodeReading struct {
 	Release *ReleaseJudgement
 	// MergeOrder is the node's place in the merge order when a measured conflict of two live nodes asks for one (CRW-410); nil otherwise, and then no key is printed.
 	MergeOrder *MergeOrder
+	// Stagnation is how often the node has failed the same way and which repair comes next (CRW-801, section 80 S-1); nil below the threshold of 2 and for a node that landed, and then no key is printed.
+	Stagnation *Stagnation
 }
 
 // PassSummary is the capacity side of one reading.
@@ -52,6 +54,35 @@ type PassSummary struct {
 	OrderConstraints int
 	// HostMemory is what the host memory bound said of its sample (CRW-468); nil when the scheduler carries no bound, and then no key is printed.
 	HostMemory *HostMemoryVerdict
+	// Stagnation counts the nodes that carry a stagnation object, by the rung the reading named (CRW-801); every rung is printed, zero when nothing stagnates.
+	Stagnation StagnationCounts
+}
+
+// StagnationCounts are the nodes at each rung of the repair ladder, as one pass counts them.
+type StagnationCounts struct{ RetrySamePacket, EditPacket, SplitNode, NeighbourRepair, FullReplan int }
+
+func (c *StagnationCounts) add(rung string) {
+	switch rung {
+	case RungRetrySamePacket:
+		c.RetrySamePacket++
+	case RungEditPacket:
+		c.EditPacket++
+	case RungSplitNode:
+		c.SplitNode++
+	case RungNeighbourRepair:
+		c.NeighbourRepair++
+	case RungFullReplan:
+		c.FullReplan++
+	}
+}
+
+func (c StagnationCounts) object() contract.OrderedObject {
+	return contract.OrderedObject{{Key: RungRetrySamePacket, Value: c.RetrySamePacket}, {Key: RungEditPacket, Value: c.EditPacket},
+		{Key: RungSplitNode, Value: c.SplitNode}, {Key: RungNeighbourRepair, Value: c.NeighbourRepair}, {Key: RungFullReplan, Value: c.FullReplan}}
+}
+
+func (c StagnationCounts) canonical() map[string]any {
+	return map[string]any{RungRetrySamePacket: c.RetrySamePacket, RungEditPacket: c.EditPacket, RungSplitNode: c.SplitNode, RungNeighbourRepair: c.NeighbourRepair, RungFullReplan: c.FullReplan}
 }
 
 // Reading is the ready set of one plan at one revision, computed from stored rows only. Ready is in release order; Nodes holds every live
@@ -87,6 +118,9 @@ func (n NodeReading) object() contract.OrderedObject {
 	}
 	if n.MergeOrder != nil {
 		o = append(o, contract.Field{Key: "merge_order", Value: n.MergeOrder.object()})
+	}
+	if n.Stagnation != nil {
+		o = append(o, contract.Field{Key: "stagnation", Value: n.Stagnation.object()})
 	}
 	if n.Lifecycle != "" {
 		o = append(o, contract.Field{Key: "lifecycle", Value: n.Lifecycle})
@@ -127,6 +161,7 @@ func (r Reading) Object() contract.OrderedObject {
 		{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
 		{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
 		{Key: "overlap_count", Value: r.Pass.Overlaps.Counted()}, {Key: "overlaps", Value: r.Pass.Overlaps.object()}, {Key: "order_constraints", Value: r.Pass.OrderConstraints},
+		{Key: "stagnation", Value: r.Pass.Stagnation.object()},
 	}
 	if r.Pass.HostMemory != nil {
 		pass = append(pass, contract.Field{Key: "host_memory", Value: r.Pass.HostMemory.object()})

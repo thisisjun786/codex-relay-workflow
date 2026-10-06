@@ -68,7 +68,8 @@ state that separately from installation and successful live operation.
 CI runs every check on every event, in parallel, and reports one result-only
 `dev-gate`: validation, plugin identity, offline contracts, secret scanning and the
 Go product checks (lint, the test parts, the release binaries and the isolated-home
-install). Nothing is selected by changed paths. See [CI operation](docs/CI.md).
+install). Nothing is selected by changed paths, except the temporary light mode below.
+See [CI operation](docs/CI.md).
 
 Every PR base receives the checks and the final gate, including explicit dependent
 PRs; main-target PRs fail. A push to `dev` also runs CI on the integrated commit,
@@ -122,8 +123,28 @@ never baseline away an unexplained finding. Keep private receipts, session
 transcripts, personal paths and credentials out of commits and public reports.
 Do not bundle dependencies or runtime state to make CI green.
 
-## Issues, dependencies and release scope
+### Temporary CI light mode (CRW-790)
 
+Until the porting and improvement projects finish, a pull request run that does not carry the
+`crw-lane` label skips the work of the five `go-product` test legs. The repository variable
+`CRW_CI_MODE` decides it: the repository owners alone set it to `light` and clear it, and
+reverting the mode is deleting the variable. Jun decides when it ends. A labeled pull request,
+a push to `dev` and a manual dispatch always run every check in full, and so do `validate`,
+`secrets`, `lint` and `dist` whatever the variable says; the mode skips steps inside the five
+test legs, never a job, so no check name moves and no job can opt out of its result.
+
+The merge evidence stays the hosted `dev-gate`, and the lane's local `make test` is not evidence:
+the lane measured it too slow to stand in for a runner. While the variable is `light`, a green
+`dev-gate` of a run without the `crw-lane` label is not merge evidence, because that run's test
+legs did not run their tests. The evidence is a run of the same head, started after the label was
+added, that finished in success. The lane adds `crw-lane` when it takes its turn, before it
+refreshes the base, and removes the label when it returns the turn without merging.
+
+The body-only edit mirror refuses to carry a light leg forward: a `go-product` test leg is
+mirrored only when the leg's test step also concluded success, so a skipped test step makes the
+later edit run the leg in full. See [CI operation](docs/CI.md#the-temporary-light-mode).
+
+## Issues, dependencies and release scope
 One coherent result per PR. An issue is useful for coordinated product work,
 but an external contributor need not access private Linear records to propose
 a fix. PRs must explain the expected behavior and acceptance criteria in text;
