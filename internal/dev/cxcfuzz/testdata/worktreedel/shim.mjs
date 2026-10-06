@@ -11,6 +11,7 @@
 // (contract/schema/cxc/name-substitution.json, rules R2 and R32) before it is compared.
 import { createInterface } from "node:readline";
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
 
 // The harness always sets ORACLE_ROOT from the target's Oracle.Root, so the worker needs no
 // built-in path: the oracle tree is a caller-supplied input, not a value of this repository.
@@ -24,10 +25,24 @@ function rename(text) {
   return text.replaceAll("codexclaw:cxc-", "crw:crw-").replaceAll("codexclaw", "crw");
 }
 
+// asGivenRoot rewrites a resolved spelling of the case root back to the spelling the harness gave,
+// which is the one the harness replaces with its own placeholder on both answers. The guard
+// canonicalizes the cwd before it names the slot, so on a root reached through a link (macOS's
+// /private/var, for one) the reason would otherwise carry the resolved path and the two sides would
+// be written differently. The Go side does the same in worktreeDelAsGivenRoot.
+function asGivenRoot(text, root) {
+  if (root === "") return text;
+  let resolved;
+  try {
+    resolved = realpathSync.native(root);
+  } catch {
+    return text;
+  }
+  return resolved === root ? text : text.split(resolved).join(root);
+}
+
 // The environment the guard reads: the case's own homes, then the case's extra worktree roots, with
-// a listed variable deleted (which the oracle's resolveCodexHome reads as unset). Nothing here
-// rewrites the case root: the harness replaces each side's own root on both answers, and the Go side
-// rewrites a resolved root back to the given one, so the two answers are written the same way.
+// a listed variable deleted (which the oracle's resolveCodexHome reads as unset).
 function answer(request) {
   const input = request.input;
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -72,7 +87,7 @@ function answer(request) {
   }
   const specific = parsed && parsed.hookSpecificOutput;
   if (!specific || specific.permissionDecision !== "deny") return { decision: "allow", reason: "" };
-  return { decision: "deny", reason: rename(String(specific.permissionDecisionReason ?? "")) };
+  return { decision: "deny", reason: asGivenRoot(rename(String(specific.permissionDecisionReason ?? "")), root) };
 }
 
 const lines = createInterface({ input: process.stdin, terminal: false });
