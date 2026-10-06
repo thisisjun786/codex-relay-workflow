@@ -26,7 +26,8 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
 integrated commit, the evidence a release needs) and a manual dispatch (which is not release
-evidence). There is no path selection. The Go product legs always ran whatever changed, so
+evidence). There is no path selection, except [the temporary light mode](#the-temporary-light-mode)
+below. The Go product legs always ran whatever changed, so
 selecting the rest by changed paths saved little and put a job before every other one.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
@@ -106,8 +107,54 @@ Mirroring is safe because it repeats a result this head already has. `dev` is st
 candidate contains dev's tip, and the same `head_sha` is the same tree: the run being mirrored is a
 run of the same pull request's own head, never another tree's.
 
-## The test legs
+## The temporary light mode
 
+Until the porting and improvement projects finish, the repository variable `CRW_CI_MODE` can be
+set to `light` by the repository owners alone. While it is, a pull request run that does not
+carry the `crw-lane` label skips the work of the five `go-product` test legs. Child pull request
+pushes are most of the concurrent Actions jobs and the merge lane waits for runners behind them;
+the lane's local `make test` was measured too slow to stand in for a runner, so the full run is
+moved to the one event that needs it. Reverting the mode is deleting the variable, and Jun
+decides when it ends.
+
+The condition is one job-level `env` on `go-product`, `CRW_LIGHT_LEG`, holding
+`github.event_name == 'pull_request' && vars.CRW_CI_MODE == 'light' &&
+!contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-')`.
+A dev push and a manual dispatch fail the first term, a labeled pull request fails the third, and
+`lint` and `dist` fail the fourth, so only the five test legs of an unlabeled pull request can
+be light. `validate`, `secrets`, `lint` and `dist` always run in full, and so does every
+event other than an unlabeled pull request, whatever the variable says.
+
+A light leg keeps its own name and its own success. Its first step writes
+`light mode: this leg's tests run in full when the merge lane labels the pull request crw-lane`
+to the step summary, and every other step carries `env.CRW_LIGHT_LEG != 'true'` joined with the
+condition it already had, the mirror steps included. The guard is a step condition and never a
+job-level `if`, because GitHub reports a skipped job's check as success and a skipped
+`dev-gate` could hide an earlier red run; no check name moves and no job opts out of its result.
+
+`pull_request.types` gains `labeled` after its five earlier types, so when the merge lane
+labels the pull request the labeled event starts a full run on that head, and every later push
+while the label stays runs in full too. The concurrency expression is unchanged: a labeled run is
+not a body-only edit, so it joins the pull request's main group with `cancel-in-progress: true`
+and cancels the light run still in progress. Adding any other label also starts a run; this
+repository uses no other label.
+
+[The body-only edit mirror](#the-body-only-edit-mirror) refuses to carry a light leg forward. A
+`go-product` test leg is mirrored only when the chosen run's same-named job concluded `success`
+and that job's step `Test and replay the contract corpus (<part>)` also concluded `success`.
+A skipped or missing test step answers `mirrored=false` and the leg runs in full, so a body edit
+right after the label, or after the variable is cleared, cannot replace a full run with an
+untested one. `validate`, `secrets` and the `lint` and `dist` legs keep mirroring on the
+job's conclusion alone, as they did before.
+
+The merge evidence is still the hosted `dev-gate`, and the lane's local `make test` is not
+evidence. While the variable is `light`, a green `dev-gate` of a run without the `crw-lane`
+label is not merge evidence, because that run's test legs did not run their tests: the evidence
+is a run of the same head, started after the label was added, that finished in success. The lane
+adds `crw-lane` when it takes its turn, before it refreshes the base, and removes it when it
+returns the turn without merging.
+
+## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
 pull request waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
 package plus the `dev`-tagged tests, so a package runs in exactly one leg. `internal/dev/ci` holds
