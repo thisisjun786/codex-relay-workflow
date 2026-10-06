@@ -34,14 +34,16 @@ func migrateApplyReviewRenames(t *testing.T) (*Publisher, func() []string) {
 
 // F1: a source that gains a byte after its own publication is refused as a changed source and SourceVerified is false.
 func TestMigrateApplyReviewRefusesASourceThatMovedAfterItsPublish(t *testing.T) {
-	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "abc"}, nil)
+	// The body is a session record the state reader reads (CRW-682 validates retained records with the real reader);
+	// only the source recheck below is under test, and the recheck reads the source directly, not through that reader.
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, nil)
 	src := filepath.Join(ws, ProjectSourceName, "sessions", "a.json")
 	pub := newPub(t)
 	real := pub.rename
 	pub.rename = func(dirfd int, oldName, newName string) error {
 		if newName == "a.json" {
 			// The temporary already holds the plan's bytes, so the write itself still lands them.
-			put(t, src, "abcd", 0o644)
+			put(t, src, "{\"phase\":\"P\"}x", 0o644)
 		}
 		return real(dirfd, oldName, newName)
 	}
@@ -56,21 +58,21 @@ func TestMigrateApplyReviewRefusesASourceThatMovedAfterItsPublish(t *testing.T) 
 	if res.WritesCompleted != 1 {
 		t.Errorf("the file that landed must still be counted: %d", res.WritesCompleted)
 	}
-	if got := get(t, apDst(ws, "sessions/a.json")); got != "abc" {
+	if got := get(t, apDst(ws, "sessions/a.json")); got != "{\"phase\":\"P\"}" {
 		t.Errorf("the plan's bytes must still land: %q", got)
 	}
 }
 
 // F1: a file published early that moves while a later file publishes is caught by the end-of-run recheck.
 func TestMigrateApplyReviewRefusesASourceThatMovedDuringTheRun(t *testing.T) {
-	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "abc", "sessions/b.json": "xyz"}, nil)
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}", "sessions/b.json": "{\"phase\":\"B\"}"}, nil)
 	src := filepath.Join(ws, ProjectSourceName, "sessions", "a.json")
 	pub := newPub(t)
 	real := pub.rename
 	pub.rename = func(dirfd int, oldName, newName string) error {
 		if newName == "b.json" {
 			// a.json is already published and checked; only the end-of-run pass can still see this.
-			put(t, src, "abcd", 0o644)
+			put(t, src, "{\"phase\":\"P\"}x", 0o644)
 		}
 		return real(dirfd, oldName, newName)
 	}
@@ -198,13 +200,13 @@ func TestMigrateApplyReviewPublishesTheInstallRecordLast(t *testing.T) {
 
 // F4: a copied file is counted even when its own source recheck fails, so a moved source never erases a completed write.
 func TestMigrateApplyReviewCountsAWriteWhoseSourceThenMoved(t *testing.T) {
-	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "abc", "sessions/b.json": "xyz"}, nil)
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}", "sessions/b.json": "{\"phase\":\"B\"}"}, nil)
 	src := filepath.Join(ws, ProjectSourceName, "sessions", "a.json")
 	pub := newPub(t)
 	real := pub.rename
 	pub.rename = func(dirfd int, oldName, newName string) error {
 		if newName == "a.json" {
-			put(t, src, "abcd", 0o644)
+			put(t, src, "{\"phase\":\"P\"}x", 0o644)
 		}
 		return real(dirfd, oldName, newName)
 	}
