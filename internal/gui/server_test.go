@@ -1,9 +1,11 @@
 package gui
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -195,6 +197,56 @@ func TestPlaceholderAssetIsEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "CRW GUI: screens are not built into this binary yet") {
 		t.Fatalf("the asset text is %q", data)
+	}
+}
+
+// An `OPTIONS *` request reaches the guard. net/http answers it itself with a general OPTIONS
+// handler that never consults the server's handler, so without disabling that handler the
+// request would skip the Host check and every security header and be answered 200.
+func TestServerRefusesGeneralOptions(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := &lineWriter{}
+	served := make(chan error, 1)
+	go func() { served <- Serve(ctx, Options{Port: 0, Token: "options-token", Version: "v"}, out) }()
+	line := waitForLine(t, out)
+	address := strings.TrimPrefix(strings.SplitN(line, "/#token=", 2)[0], "crw gui: serving http://")
+	for _, request := range []string{
+		"OPTIONS * HTTP/1.1\r\nHost: " + address + "\r\nConnection: close\r\n\r\n",
+		"OPTIONS * HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n",
+	} {
+		t.Run(strings.Split(request, "\r\n")[1], func(t *testing.T) {
+			conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := fmt.Fprint(conn, request); err != nil {
+				t.Fatal(err)
+			}
+			reader := bufio.NewReader(conn)
+			status, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("no response: %v", err)
+			}
+			if strings.Contains(status, "200") {
+				t.Fatalf("an OPTIONS * request was answered %q, so it skipped the guard", strings.TrimSpace(status))
+			}
+			// The refusal carries the security headers, which proves the guard answered it.
+			headers := map[string]bool{}
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil || strings.TrimSpace(line) == "" {
+					break
+				}
+				name, _, _ := strings.Cut(line, ":")
+				headers[strings.ToLower(strings.TrimSpace(name))] = true
+			}
+			if !headers["content-security-policy"] {
+				t.Fatalf("the refusal carries no security headers: %v", headers)
+			}
+		})
 	}
 }
 

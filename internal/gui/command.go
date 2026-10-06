@@ -91,6 +91,10 @@ func Serve(ctx context.Context, opts Options, stdout io.Writer) error {
 		Handler:           server.Handler(),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
+		// net/http answers `OPTIONS *` itself with a general OPTIONS handler that never
+		// consults Handler, so without this the request would skip the guard, the Host check
+		// and every security header. Disabling it sends the request through the guard.
+		DisableGeneralOptionsHandler: true,
 	}
 	served := make(chan error, 1)
 	go func() { served <- httpServer.Serve(listener) }()
