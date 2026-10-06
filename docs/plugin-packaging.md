@@ -211,8 +211,9 @@ operator waiting for a hook that is working exactly as installed.
 Nothing automatic changes the user's Codex configuration. Only a command the user runs
 explicitly does: `crw doctor retrust` records hook trust in `config.toml`, and `crw
 install` and its subcommands write the settings they manage, including the subagent role
-files under `~/.codex/agents/<role>.toml`. Each of those writes leaves a timestamped
-backup first and restores it when the write or its verification fails.
+files under `~/.codex/agents/<role>.toml`. Each writes a backup before it replaces an
+existing file, and `crw doctor retrust` restores that backup when the write or its
+verification fails.
 
 ## Install
 
@@ -302,8 +303,8 @@ not carry, and each needs a step the installation cannot take for you.
    backs up `config.toml` before it writes and restores that backup when the write or its
    verification fails. `crw install` and its subcommands are the other explicit writers
    of the Codex configuration, the subagent role files under `~/.codex/agents/<role>.toml`
-   among them, and each leaves a backup too. A session without trust runs the hook zero
-   times and says so nowhere.
+   among them, and each writes a backup before it replaces an existing file. A session
+   without trust runs the hook zero times and says so nowhere.
 
 Step 3 is what makes an installed hook look broken while it is working exactly as
 installed. Steps 1 and 2 may run in either order; step 3 is last, because it is trust in

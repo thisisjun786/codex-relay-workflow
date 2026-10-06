@@ -25,10 +25,11 @@ permissions and the user's task scope remain the boundary. Review source changes
 before updating a linked installation: edits become visible through symlinks.
 
 Nothing automatic changes the user's Codex configuration. Only commands the user runs
-explicitly do — `crw doctor retrust`, which records hook trust in `config.toml`, and
+explicitly do: `crw doctor retrust`, which records hook trust in `config.toml`, and
 `crw install` with its subcommands, which includes the subagent role files it writes
-under `~/.codex/agents/<role>.toml` — and each of those leaves a timestamped backup
-first and restores it when the write or its verification fails.
+under `~/.codex/agents/<role>.toml`. Each writes a backup before it replaces an existing
+file, and `crw doctor retrust` restores that backup when the write or its verification
+fails.
 
 Report defects in a separately installed bridge or relay to that
 component's maintainer unless the problem is in this repository's instructions

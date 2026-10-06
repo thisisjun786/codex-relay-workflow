@@ -344,6 +344,67 @@ func TestHookTrustRetrust_writes_a_symlinked_config_target(t *testing.T) {
 	}
 }
 
+// TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback is the concurrency guard the port adds
+// over the oracle: a settings writer that publishes while the verification probe runs is never
+// replaced by the rollback, which reports the conflict and keeps the backup instead.
+func TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback(t *testing.T) {
+	f := newRetrustFixture(t, "")
+	f.write(f.config(), f.installed())
+	concurrent := "model = \"written-by-another-process\"\n"
+	runner := func(string, []string, []string) doctor.HookTrustRetrustRun {
+		// Another settings writer publishes during the probe.
+		if err := os.WriteFile(f.config(), []byte(concurrent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		failed := 1
+		return doctor.HookTrustRetrustRun{Status: &failed}
+	}
+	_, _, err := doctor.HookTrustRetrust(f.home, f.plugin, f.key, true, runner, f.env(), f.now())
+	if err == nil || !strings.Contains(err.Error(), "backup kept at "+f.backupName()) {
+		t.Fatalf("the rollback did not report the kept backup: %v", err)
+	}
+	if got := f.read(f.config()); got != concurrent {
+		t.Fatalf("the concurrent edit was replaced: %q", got)
+	}
+	if f.read(f.backupName()) != f.installed() {
+		t.Fatal("the backup does not hold the pre-write bytes")
+	}
+}
+
+// TestHookTrustRetrust_resolves_the_plugin_root_from_the_cache covers the user-run path: with no
+// PLUGIN_ROOT and no --plugin-root, the one plugin package under the Codex home's plugin cache is
+// the package the hooks are read from.
+func TestHookTrustRetrust_resolves_the_plugin_root_from_the_cache(t *testing.T) {
+	f := newRetrustFixture(t, "")
+	f.write(f.config(), f.installed())
+	cached := filepath.Join(f.home, "plugins", "cache", "local", "crw", "0.4.0")
+	for _, rel := range []string{".codex-plugin/plugin.json", "hooks/one.json", "hooks/two.json"} {
+		src := filepath.Join(f.plugin, rel)
+		dst := filepath.Join(cached, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	code := doctor.HookTrustRetrustCLI([]string{"--bootstrap-ok"}, &stdout, &stderr, f.env(), retrustRunner, "", f.now())
+	if code != 0 {
+		t.Fatalf("cache resolution: code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "updated=0 appended=2") {
+		t.Fatalf("the cached plugin's hooks were not trusted: %q", stdout.String())
+	}
+}
+
+// TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback covers the guard the port adds over the
+// oracle: a settings writer that publishes while the verification probe runs is not replaced by the
+// rollback, which reports the conflict and keeps the backup instead.
 func TestHookTrustRetrustCLI_unknown_option(t *testing.T) {
 	f := newRetrustFixture(t, "")
 	f.write(f.config(), f.installed())
