@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
 // supervisorUnconfigured is the refusal of a run whose configuration names no management thread or
@@ -164,8 +166,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 		return supervisorRelayFailure(e, err)
 	}
 	if code != 0 {
-		supervisorPassThrough(e, bound)
-		return supervisorExitRefused
+		return supervisorRelayStatus(e, bound, code)
 	}
 	record := []string{"settings-record", "--task", section.TaskID, "--role", "supervisor",
 		"--settings", "@" + section.SettingsFile, "--source", supervisorSource}
@@ -174,11 +175,21 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 		return supervisorRelayFailure(e, err)
 	}
 	if code != 0 {
-		supervisorPassThrough(e, recorded)
-		return supervisorExitRefused
+		// The bind stands and the pair does not. Re-running register converges: the seat keeps one
+		// live owner, so the bind is a no-op and only the pair is written.
+		fmt.Fprintf(e.Stderr, "crw manage supervisor: the store binding was recorded and the pair was not; re-running register completes the pair\n")
+		return supervisorRelayStatus(e, recorded, code)
+	}
+	boundValue, ok := supervisorAnswer(bound)
+	if !ok {
+		return supervisorUnreadableAnswer(e, "linkage-bind", bound)
+	}
+	recordedValue, ok := supervisorAnswer(recorded)
+	if !ok {
+		return supervisorUnreadableAnswer(e, "settings-record", recorded)
 	}
 	supervisorWrite(e.Stdout, supervisorRecord{OK: true, TaskID: section.TaskID,
-		Binding: supervisorJSONOrNull(bound), Settings: supervisorJSONOrNull(recorded)})
+		Binding: boundValue, Settings: recordedValue})
 	return 0
 }
 
@@ -205,16 +216,18 @@ func supervisorShow(ctx context.Context, e *Env, args []string) int {
 		return supervisorRelayFailure(e, err)
 	}
 	if code != 0 {
-		supervisorPassThrough(e, settings)
-		return code
+		return supervisorRelayStatus(e, settings, code)
 	}
 	linkage, code, err := e.Relay(ctx, cfg, "linkage-up", "--task", section.TaskID)
 	if err != nil {
 		return supervisorRelayFailure(e, err)
 	}
 	if code != 0 {
-		supervisorPassThrough(e, linkage)
-		return code
+		return supervisorRelayStatus(e, linkage, code)
+	}
+	settingsValue, ok := supervisorAnswer(settings)
+	if !ok {
+		return supervisorUnreadableAnswer(e, "settings-show", settings)
 	}
 	levels, ok := supervisorLevels(linkage)
 	if !ok {
@@ -225,7 +238,7 @@ func supervisorShow(ctx context.Context, e *Env, args []string) int {
 		return supervisorExitHost
 	}
 	supervisorWrite(e.Stdout, supervisorReport{OK: true, TaskID: section.TaskID,
-		Settings: supervisorJSONOrNull(settings), Binding: supervisorStoreBinding(levels)})
+		Settings: settingsValue, Binding: supervisorStoreBinding(levels)})
 	return 0
 }
 
@@ -261,14 +274,35 @@ func supervisorStoreBinding(levels []supervisorLevel) json.RawMessage {
 	return json.RawMessage("null")
 }
 
-// supervisorJSONOrNull is a relay answer spliced in unchanged; an empty or unreadable answer is
-// null, so the report is always one JSON object.
-func supervisorJSONOrNull(data []byte) json.RawMessage {
+// supervisorAnswer is a relay answer the report embeds, spliced in unchanged. ok is false when the
+// answer is empty or not one JSON value, which is an unreadable answer rather than an absence: a
+// report must not turn a command that answered nothing usable into a success.
+func supervisorAnswer(data []byte) (json.RawMessage, bool) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || !json.Valid(trimmed) {
-		return json.RawMessage("null")
+		return nil, false
 	}
-	return json.RawMessage(trimmed)
+	return json.RawMessage(trimmed), true
+}
+
+// supervisorRelayStatus is what a relay command that ran and failed means here: the relay's own
+// refusal is this command's refusal, and any other failure is a host failure, so a caller can tell
+// a contested seat from a store it could not read. The relay's own stdout is passed through either
+// way, and a settings-record refusal after a successful bind is not rewritten.
+func supervisorRelayStatus(e *Env, stdout []byte, code int) int {
+	supervisorPassThrough(e, stdout)
+	if code == contract.ExitRefused {
+		return supervisorExitRefused
+	}
+	return supervisorExitHost
+}
+
+// supervisorUnreadableAnswer reports a relay command that exited 0 with an answer this command
+// cannot read, as a host failure, keeping the bytes for the caller.
+func supervisorUnreadableAnswer(e *Env, command string, stdout []byte) int {
+	supervisorPassThrough(e, stdout)
+	fmt.Fprintf(e.Stderr, "crw manage supervisor: the %s answer is not one JSON value\n", command)
+	return supervisorExitHost
 }
 
 // supervisorPassThrough writes the relay's own stdout unchanged, so a caller sees the relay's
