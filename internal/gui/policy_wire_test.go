@@ -1,7 +1,6 @@
 package gui
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -49,5 +48,4 @@ func TestPolicyCheckRejectsAGoSpelledField(t *testing.T) {
 	if code != http.StatusOK || body["valid"] != false {
 		t.Fatalf("a request carrying a stray field was accepted: %d %v", code, body)
 	}
-	_ = json.Valid
 }
