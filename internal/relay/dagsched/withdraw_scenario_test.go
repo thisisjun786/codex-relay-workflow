@@ -129,6 +129,7 @@ func (w *withdrawKit) lane(expectedEvent string) IntegrationResult {
 // The state CRW-446 is about, on the code without a way out: generation 1 is ruled verified, generation 2 was opened by hand and neither bound nor sent. Every route the scheduler has refuses the node
 // for the reason of its own, and each refusal writes nothing (the withdrawal below is the route out).
 func TestAnUnsentGenerationLeavesNoRouteButTheWithdrawal(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	k.openUnsent()
 	k.refreshBranch()
@@ -169,6 +170,7 @@ func TestAnUnsentGenerationLeavesNoRouteButTheWithdrawal(t *testing.T) {
 // is accepted on the head the forge shows, merged inside the merge lane, the merge is marked on the event of generation 1 (the one the relationship stands on again), and the observation reads it
 // integrated and returns the execution slot. The generation is kept, and the next one takes the number 3.
 func TestWithdrawingTheUnsentGenerationLetsTheNodeBeAcceptedMergedAndIntegrated(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	ctx := context.Background()
 	k.openUnsent()

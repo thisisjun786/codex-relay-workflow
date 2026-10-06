@@ -96,9 +96,10 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data. The runtime, installer and CI do not depend on Python: CI installs none and runs
-no skill script, and a helper script in a skill's `scripts/` or `examples/` is an original
-asset an agent runs when it needs it. Pin any
+data. The runtime, installer and CI do not depend on Python: CI installs none, and the only
+skill scripts it runs are the staged skills' Node tests in the path-gated skill-scripts-node
+job (Node 24.20.0); no hook path or crw binary needs Node, and a helper script in a skill's
+`scripts/` or `examples/` is an original asset an agent runs when it needs it. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
 contributor's Codex, CXC, Linear account, App Server socket or user

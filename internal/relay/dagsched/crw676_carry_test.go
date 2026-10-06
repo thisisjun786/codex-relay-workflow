@@ -7,6 +7,7 @@ import "testing"
 
 // The projection carries notRun for the jobs that began no step and leaves it false otherwise.
 func TestCRW676ForgeProjectionCarriesNotRun(t *testing.T) {
+	t.Parallel()
 	pr := crw676IncidentScript(false).read(t)
 	carried := map[string]bool{}
 	for _, c := range pr.Checks {
@@ -19,6 +20,7 @@ func TestCRW676ForgeProjectionCarriesNotRun(t *testing.T) {
 
 // A row without notRun gains no field, and a row with it keeps the field set to true.
 func TestCRW676RebuiltRowsCarryNotRunOnlyWhenSet(t *testing.T) {
+	t.Parallel()
 	rows := forgeRows([]Check{
 		{RunID: "check-run:1", Name: "dev-gate", HeadSHA: forgeHead, Conclusion: "failure", Attempt: 1},
 		{RunID: "workflow-run:9:validate#0", Name: "validate", HeadSHA: forgeHead, Conclusion: "cancelled", Attempt: 1, NotRun: true},
@@ -39,6 +41,7 @@ func TestCRW676RebuiltRowsCarryNotRunOnlyWhenSet(t *testing.T) {
 // A restated handoff record that states notRun as anything but a boolean reads false, the same
 // strict read merge-evidence's notRunJobs uses.
 func TestCRW676ANonBooleanNotRunReadsFalse(t *testing.T) {
+	t.Parallel()
 	for _, value := range []any{"true", 1, nil} {
 		snapshot := map[string]any{"pinned": map[string]any{"state": "open", "headSha": forgeHead},
 			"handoff": map[string]any{"checks": []any{map[string]any{"runId": "check-run:1", "name": "dev-gate", "headSha": forgeHead, "conclusion": "cancelled", "attempt": 1, "notRun": value}}}}
