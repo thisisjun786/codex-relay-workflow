@@ -735,7 +735,6 @@ func classifyJudgeObject(path string, data []byte) error {
 	return nil
 }
 
-// classifyJudgeBG judges a job record by the store of internal/relay/job (registry.go): the record must be the shape the store
 // classifyJudgeRenderObservations judges the render-observation ledger with the hook package's own rule
 // (hook.RenderObsLedgerMalformed, the check NativeObservationLedgerMalformed applies). This is the one JSONL row this
 // change judges: the row reader skips a damaged line, but the hook's own malformed check refuses the whole file for one,
@@ -748,6 +747,7 @@ func classifyJudgeRenderObservations(path string, data []byte) error {
 	return nil
 }
 
+// classifyJudgeBG judges a job record by the store of internal/relay/job (registry.go): the record must be the shape the store
 // writes and name the id of its file; only complete, failed and cancelled copy, and running or an unknown state refuses.
 func classifyJudgeBG(path string, data []byte) error {
 	var shape map[string]json.RawMessage
