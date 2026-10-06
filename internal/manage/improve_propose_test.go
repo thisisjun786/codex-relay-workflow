@@ -254,6 +254,24 @@ func improveProposeTestReport(t *testing.T, stdout string) improveProposeReport 
 	return report
 }
 
+// TestImproveProposeWritesNothingWhenTheContextEnds covers the cancellation rule: a context
+// that ended before the drafts were written produces no draft at all.
+func TestImproveProposeWritesNothingWhenTheContextEnds(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, improveProposeTestEightCases())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr strings.Builder
+	code := improveRunPropose(ctx, improveProposeTestEnv(w, &stdout, &stderr), []string{"--bundle", bundle})
+	if code != 1 {
+		t.Fatalf("a cancelled propose: exit %d, stderr %q", code, stderr.String())
+	}
+	if drafts := improveProposeTestDrafts(t, w); len(drafts) != 0 {
+		t.Errorf("a cancelled run wrote %v", drafts)
+	}
+}
+
 // improveProposeTestRecord is one bundle record of any kind.
 func improveProposeTestRecord(kind, key, where, what string, count int, evidence ...string) improveRecord {
 	return improveRecord{Kind: kind, Key: key, Where: where, What: what, Count: count,

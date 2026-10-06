@@ -201,7 +201,7 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 	if code := improveRunCollect(ctx, e, []string{"--out", bundlePath}); code != 0 {
 		return "", fmt.Errorf("collect exited with status %d", code)
 	}
-	report, err := improveProposeRun(e, bundlePath, false)
+	report, err := improveProposeRun(ctx, e, bundlePath, false)
 	if err != nil {
 		return "", err
 	}

@@ -491,8 +491,9 @@ func improveProposeDraft(candidate improveProposeCandidate) *auditDraft {
 // improveProposeRun turns one bundle into drafts. It holds the drafts lock for the whole
 // read-modify-write, so two proposes cannot create or grow one draft at once, and it only
 // grows the seen list of a draft that already exists, so a rerun over the same bundle creates
-// nothing new.
-func improveProposeRun(e *Env, bundlePath string, dryRun bool) (improveProposeReport, error) {
+// nothing new. A context that ended before the lock or during the write loop produces no new
+// draft: an interrupted run never looks like a completed one.
+func improveProposeRun(ctx context.Context, e *Env, bundlePath string, dryRun bool) (improveProposeReport, error) {
 	report := improveProposeReport{
 		Schema: improveProposeReportSchema, BundlePath: bundlePath,
 		Candidates: []improveProposeCandidate{},
@@ -540,12 +541,20 @@ func improveProposeRun(e *Env, bundlePath string, dryRun bool) (improveProposeRe
 		return report, err
 	}
 	defer release()
+	if err := ctx.Err(); err != nil {
+		return report, err
+	}
 	dir := auditDraftDir(e, cfg)
 	if _, err := auditDraftIndexLoad(dir); err != nil {
 		return report, err
 	}
 	fresh := 0
 	for _, candidate := range append(append([]improveProposeCandidate{}, kept...), suppressedExisting...) {
+		// The context is checked before each durable effect, so a cancellation during the
+		// write loop stops before the next draft rather than after it.
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
 		path := filepath.Join(dir, candidate.Key+".json")
 		doc, err := auditDraftLoad(path)
 		if err != nil {
@@ -610,7 +619,7 @@ func improveProposeRun(e *Env, bundlePath string, dryRun bool) (improveProposeRe
 }
 
 // improveRunPropose is crw manage improve propose. It prints the report one run produced.
-func improveRunPropose(_ context.Context, e *Env, args []string) int {
+func improveRunPropose(ctx context.Context, e *Env, args []string) int {
 	bundle, dryRun, help, err := improveProposeParseArgs(args)
 	if help {
 		fmt.Fprintln(e.Stdout, improveProposeUsage)
@@ -621,7 +630,7 @@ func improveRunPropose(_ context.Context, e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage improve propose: error: %v\n", err)
 		return usageExit
 	}
-	report, err := improveProposeRun(e, bundle, dryRun)
+	report, err := improveProposeRun(ctx, e, bundle, dryRun)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve propose: error: %v\n", err)
 		return 1
