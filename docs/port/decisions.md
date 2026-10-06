@@ -5715,11 +5715,29 @@ Python's `DatabaseError`), so the codes are readable today and only the reaction
 Decision: (a). The marker is a file outside the database, in the state directory S, in the
 same durability class as `takeover.json` - published write, fsync, rename, directory fsync
 as `ownership.Publish` does it (`internal/relay/store/ownership/record.go:424`) - and never
-a row inside the store. The split between writers and readers follows decision 76's split
-(`docs/port/decisions.md`, section 76): a writable open refuses, and a read-only command
-still answers, because the reading is how an operator finds out what happened. A refusal
-reason is required and no existing reason has this meaning: the registered reasons were read
-from `contract/schema/relay-exit-codes.json` (`refusalReasons`, 112 entries), and the only
+a row inside the store.
+
+The daemon and the CLI behave differently, and the difference is decided here. The daemon,
+on seeing any of the three codes from a write or from its own observation, writes the marker
+and then stops accepting writes: it does not retry the write, does not record a ledger row
+for it, and leaves the deliveries it was carrying where the next daemon can pick them up
+rather than reporting success for work it did not do. That is the 13:44-to-13:52 window
+turned into a stop, and it is the fail-open class the incident's own evidence names. A CLI
+writable command refuses at the open, in the words the preflight already has
+(`internal/relay/store/ownership.go:96-131`), and a read-only command still answers -
+the split decision 76 fixed (`docs/port/decisions.md`, section 76) - because the
+reading is how an operator finds out what happened, and `doctor` is the command that
+proves the store's identity after the restore.
+
+The release procedure is also decided here, in the order the incident's own recovery used:
+restore the store (item 2), then reconcile it (item 5), and only then clear the marker, by an
+explicit operator command that takes the write gate exclusively. The clear refuses while
+either of the first two steps has not left a reading the operator can point at, so the marker
+is never removed on the strength of "it opens now". The set and the clear are both journaled,
+with the marker's own sequence and timestamp.
+
+A refusal reason is required and no existing reason has this meaning: the registered reasons
+were read from `contract/schema/relay-exit-codes.json` (`refusalReasons`, 112 entries), and the only
 one near this surface is `store_owned_by_other` (`:119`), which names a foreign owner and
 would send the operator to the ownership page for a problem that is not about ownership. Per
 D-02 the new reason is registered in `contract/schema/relay-exit-codes.json` and the
