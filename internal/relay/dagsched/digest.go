@@ -117,6 +117,9 @@ type wireCheck struct {
 	Provider   string `json:"provider"`
 	Stamp      string `json:"stamp"`
 	Attempt    int64  `json:"attempt"`
+	// NotRun mirrors Check.NotRun so the two types still convert; object() never writes it, so no
+	// stored evidence_json, digest or golden changes (CRW-676).
+	NotRun bool `json:"not_run"`
 }
 
 // parseEvidence reads a stored evidence_json back into the body it was written from.
