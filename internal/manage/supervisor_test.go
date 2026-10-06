@@ -84,15 +84,31 @@ func supervisorEnv(exe string) (e *Env, out, errOut *strings.Builder) {
 	return &Env{Stdin: strings.NewReader(""), Stdout: out, Stderr: errOut, Getenv: os.Getenv, Now: time.Now, Executable: exe}, out, errOut
 }
 
-// supervisorScript writes a fake crw that records each call's arguments on one line and prints the
-// answer for the command it was given, keyed by the command name.
+// supervisorFailEnv is supervisorEnv whose stdout refuses every write, so a command that ignores a
+// write failure reads as success while its report never left.
+func supervisorFailEnv(exe string) (e *Env, errOut *strings.Builder) {
+	errOut = &strings.Builder{}
+	return &Env{Stdin: strings.NewReader(""), Stdout: coreFailWriter{}, Stderr: errOut, Getenv: os.Getenv, Now: time.Now, Executable: exe}, errOut
+}
+
+// supervisorFakeCallMarker separates the argument blocks the fake crw records, one per invocation.
+const supervisorFakeCallMarker = "CALL"
+
+// supervisorHostValuesMessage is the note a run that passes a host value on the command line is
+// given: the issue's own wording, pinned here so the test reads the required text rather than the
+// implementation's constant.
+const supervisorHostValuesMessage = "host values come from the supervisor section of the configuration"
+
+// supervisorScript writes a fake crw that records every argument it is given, one argument per
+// line, and prints the answer for the command it was given, keyed by the command name. Nothing here
+// reaches the real relay: every answer comes from a file in the test's own temporary directory.
 func supervisorScript(t *testing.T, answers map[string]string) (exe, record string) {
 	t.Helper()
 	dir := t.TempDir()
-	record = filepath.Join(dir, "calls.txt")
+	record = filepath.Join(dir, "argv.txt")
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\n")
-	script.WriteString("printf '%s\\n' \"$*\" >> " + supervisorQuote(record) + "\n")
+	script.WriteString("{ printf '%s\\n' " + supervisorFakeCallMarker + "; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; } >> " + supervisorQuote(record) + "\n")
 	script.WriteString("case \"$*\" in\n")
 	for _, name := range []string{"linkage-bind", "settings-record", "settings-show", "linkage-up"} {
 		answer, ok := answers[name]
@@ -115,8 +131,9 @@ func supervisorScript(t *testing.T, answers map[string]string) (exe, record stri
 
 func supervisorQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
-// supervisorCalls is the recorded command lines of supervisorScript, in call order.
-func supervisorCalls(t *testing.T, record string) []string {
+// supervisorCalls reads the fake crw's record back as one slice of arguments per invocation, so a
+// test compares the argument boundaries the helper gave the relay and not a joined command line.
+func supervisorCalls(t *testing.T, record string) [][]string {
 	t.Helper()
 	data, err := os.ReadFile(record)
 	if err != nil {
@@ -125,30 +142,54 @@ func supervisorCalls(t *testing.T, record string) []string {
 		}
 		t.Fatal(err)
 	}
-	var calls []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line != "" {
-			calls = append(calls, line)
+	var calls [][]string
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		switch {
+		case line == "":
+		case line == supervisorFakeCallMarker:
+			calls = append(calls, nil)
+		default:
+			if len(calls) == 0 {
+				t.Fatalf("the record starts with an argument and no call marker: %q", line)
+			}
+			calls[len(calls)-1] = append(calls[len(calls)-1], line)
 		}
 	}
 	return calls
 }
 
-// supervisorCheckCalls compares the recorded command lines with the expected ones, in order.
-func supervisorCheckCalls(t *testing.T, record string, want []string) {
+// supervisorCheckCalls compares the recorded argument vectors with the expected ones, in order and
+// element by element.
+func supervisorCheckCalls(t *testing.T, record string, want [][]string) {
 	t.Helper()
-	if got := supervisorCalls(t, record); !slices.Equal(got, want) {
-		t.Fatalf("the fake saw %q, want %q", got, want)
-	}
+	coreCheckCalls(t, supervisorCalls(t, record), want)
 }
 
-// supervisorReportOut is the JSON object crw manage supervisor show writes.
+// supervisorReportOut is the JSON object crw manage supervisor show writes for a binding it could
+// report.
 type supervisorReportOut struct {
 	OK       bool            `json:"ok"`
 	TaskID   string          `json:"taskId"`
 	Settings json.RawMessage `json:"settings"`
 	Binding  json.RawMessage `json:"binding"`
 }
+
+// supervisorRefusalOut is the JSON object show writes when the linkage answer is a contested or
+// unknown binding: the reason and the relay's own state and contention, verbatim.
+type supervisorRefusalOut struct {
+	OK     bool            `json:"ok"`
+	Reason string          `json:"reason"`
+	Detail json.RawMessage `json:"detail"`
+}
+
+// supervisorResolved is the linkage-up answer of a store whose supervisor seat is bound.
+const supervisorResolved = `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+	`"owner":{"bindingId":"bnd-1","role":"supervisor","scopeKind":"store","scopeKey":"store",` +
+	`"taskId":"task-supervisor","hostId":"host-supervisor","status":"active","revision":1},"depth":0}],` +
+	`"gaps":[],"contention":[]}`
+
+// supervisorUnregistered is the linkage-up answer of a store that holds no binding for the task.
+const supervisorUnregistered = `{"state":"unregistered","readable":true,"levels":[],"gaps":[],"contention":[]}`
 
 // C1: register binds the store scope first and records the settings pair second, with exactly the
 // decided argument vectors in the decided order.
@@ -163,11 +204,12 @@ func TestSupervisorRegisterBindsTheStoreScopeThenRecordsSettings(t *testing.T) {
 	if code := supervisorRegister(context.Background(), e, nil); code != 0 {
 		t.Fatalf("register: exit %d, stderr %q", code, errOut.String())
 	}
-	supervisorCheckCalls(t, record, []string{
-		"relay --state /state --socket /socket linkage-bind --role supervisor --scope-kind store --scope store" +
-			" --task task-supervisor --host host-supervisor --cwd /work/management",
-		"relay --state /state --socket /socket settings-record --task task-supervisor --role supervisor" +
-			" --settings @/work/management/settings.json --source crw manage supervisor register",
+	supervisorCheckCalls(t, record, [][]string{
+		{"relay", "--state", "/state", "--socket", "/socket", "linkage-bind", "--role", "supervisor",
+			"--scope-kind", "store", "--scope", "store", "--task", "task-supervisor", "--host", "host-supervisor",
+			"--cwd", "/work/management"},
+		{"relay", "--state", "/state", "--socket", "/socket", "settings-record", "--task", "task-supervisor",
+			"--role", "supervisor", "--settings", "@/work/management/settings.json", "--source", "crw manage supervisor register"},
 	})
 	var report supervisorRecord
 	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
@@ -180,25 +222,52 @@ func TestSupervisorRegisterBindsTheStoreScopeThenRecordsSettings(t *testing.T) {
 	}
 }
 
-// The command line overrides the section's cwd and settings file, and omitting cwd leaves the flag
-// off the bind call entirely.
-func TestSupervisorRegisterTakesCwdAndSettingsFileFromTheCommandLine(t *testing.T) {
+// C2: the host values come from the configuration, so --cwd and --settings-file are refused as
+// usage errors before the relay is called, and the removal is named.
+func TestSupervisorRegisterRejectsTheRemovedHostValueOptions(t *testing.T) {
+	for _, args := range [][]string{
+		{"--cwd", "/override"},
+		{"--settings-file", "/override/settings.json"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			record := supervisorFakeProcess(t, 0)
+			section := supervisorTestSection()
+			section.Cwd, section.SettingsFile = "", "/other/settings.json"
+			supervisorUseConfig(t, supervisorTestConfig(&section))
+			code, _, errOut := supervisorRunLine(t, append([]string{"supervisor", "register"}, args...)...)
+			if code != usageExit {
+				t.Fatalf("exit %d, want %d (stderr %q)", code, usageExit, errOut)
+			}
+			if !strings.Contains(errOut, supervisorHostValuesMessage) {
+				t.Errorf("stderr %q does not name %q", errOut, supervisorHostValuesMessage)
+			}
+			if calls := supervisorRecordedCalls(t, record); len(calls) != 0 {
+				t.Errorf("the relay was called %q", calls)
+			}
+		})
+	}
+}
+
+// The configuration's cwd reaches the relay as one argv element even when it carries a space, so
+// the argument boundary is preserved rather than the value being split or re-quoted.
+func TestSupervisorRegisterPassesASpacedCwdAsOneArgument(t *testing.T) {
 	exe, record := supervisorScript(t, map[string]string{
 		"linkage-bind":    `{"bindingId":"bnd-1"}`,
 		"settings-record": `{"taskId":"task-supervisor","settings":{}}`,
 	})
 	section := supervisorTestSection()
-	section.Cwd, section.SettingsFile = "", "/other/settings.json"
+	section.Cwd = "/work/management dir"
 	supervisorUseConfig(t, supervisorTestConfig(&section))
 	e, _, errOut := supervisorEnv(exe)
-	if code := supervisorRegister(context.Background(), e, []string{"--cwd", "/override", "--settings-file", "/override/settings.json"}); code != 0 {
+	if code := supervisorRegister(context.Background(), e, nil); code != 0 {
 		t.Fatalf("register: exit %d, stderr %q", code, errOut.String())
 	}
-	supervisorCheckCalls(t, record, []string{
-		"relay --state /state --socket /socket linkage-bind --role supervisor --scope-kind store --scope store" +
-			" --task task-supervisor --host host-supervisor --cwd /override",
-		"relay --state /state --socket /socket settings-record --task task-supervisor --role supervisor" +
-			" --settings @/override/settings.json --source crw manage supervisor register",
+	supervisorCheckCalls(t, record, [][]string{
+		{"relay", "--state", "/state", "--socket", "/socket", "linkage-bind", "--role", "supervisor",
+			"--scope-kind", "store", "--scope", "store", "--task", "task-supervisor", "--host", "host-supervisor",
+			"--cwd", "/work/management dir"},
+		{"relay", "--state", "/state", "--socket", "/socket", "settings-record", "--task", "task-supervisor",
+			"--role", "supervisor", "--settings", "@/work/management/settings.json", "--source", "crw manage supervisor register"},
 	})
 }
 
@@ -215,11 +284,11 @@ func TestSupervisorRegisterOmitsCwdWhenNoneIsConfigured(t *testing.T) {
 	if code := supervisorRegister(context.Background(), e, nil); code != 0 {
 		t.Fatalf("register: exit %d, stderr %q", code, errOut.String())
 	}
-	supervisorCheckCalls(t, record, []string{
-		"relay --state /state --socket /socket linkage-bind --role supervisor --scope-kind store --scope store" +
-			" --task task-supervisor --host host-supervisor",
-		"relay --state /state --socket /socket settings-record --task task-supervisor --role supervisor" +
-			" --settings @/work/management/settings.json --source crw manage supervisor register",
+	supervisorCheckCalls(t, record, [][]string{
+		{"relay", "--state", "/state", "--socket", "/socket", "linkage-bind", "--role", "supervisor",
+			"--scope-kind", "store", "--scope", "store", "--task", "task-supervisor", "--host", "host-supervisor"},
+		{"relay", "--state", "/state", "--socket", "/socket", "settings-record", "--task", "task-supervisor",
+			"--role", "supervisor", "--settings", "@/work/management/settings.json", "--source", "crw manage supervisor register"},
 	})
 }
 
@@ -284,14 +353,11 @@ func TestSupervisorRegisterDoesNotRecordSettingsWhenTheBindIsRefused(t *testing.
 }
 
 // C4: show reads the recorded settings and the recorded store binding and writes them as one JSON
-// object.
+// object. The resolved answer is the control: it keeps its output.
 func TestSupervisorShowReadsTheBindingAndSettings(t *testing.T) {
 	exe, record := supervisorScript(t, map[string]string{
 		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management","model":"m"},"usable":true,"deliverable":true,"missing":[],"recordFinding":null}`,
-		"linkage-up": `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
-			`"owner":{"bindingId":"bnd-1","role":"supervisor","scopeKind":"store","scopeKey":"store",` +
-			`"taskId":"task-supervisor","hostId":"host-supervisor","status":"active","revision":1},"depth":0}],` +
-			`"gaps":[],"contention":[]}`,
+		"linkage-up":    supervisorResolved,
 	})
 	section := supervisorTestSection()
 	supervisorUseConfig(t, supervisorTestConfig(&section))
@@ -299,11 +365,10 @@ func TestSupervisorShowReadsTheBindingAndSettings(t *testing.T) {
 	if code := supervisorShow(context.Background(), e, nil); code != 0 {
 		t.Fatalf("show: exit %d, stderr %q", code, errOut.String())
 	}
-	if calls := supervisorCalls(t, record); len(calls) != 2 ||
-		!strings.Contains(calls[0], "settings-show --task task-supervisor") ||
-		!strings.Contains(calls[1], "linkage-up --task task-supervisor") {
-		t.Fatalf("show called %q", calls)
-	}
+	supervisorCheckCalls(t, record, [][]string{
+		{"relay", "--state", "/state", "--socket", "/socket", "settings-show", "--task", "task-supervisor"},
+		{"relay", "--state", "/state", "--socket", "/socket", "linkage-up", "--task", "task-supervisor"},
+	})
 	var report supervisorReportOut
 	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
 		t.Fatalf("the output is not one JSON object: %v\n%s", err, out.String())
@@ -319,12 +384,90 @@ func TestSupervisorShowReadsTheBindingAndSettings(t *testing.T) {
 	}
 }
 
+// C1: a walk that contends is not an absence. The relay answers state ambiguous with a
+// competing_owners contention and an empty level list, and show must refuse rather than report a
+// null binding.
+func TestSupervisorShowReportsAContestedBindingAsAmbiguous(t *testing.T) {
+	contention := `{"contention":"competing_owners","scopeKind":"store","scopeKey":"store",` +
+		`"candidates":["bnd-1","bnd-2"]}`
+	linkage := `{"state":"ambiguous","readable":true,"levels":[],"gaps":[],"contention":[` + contention + `]}`
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    linkage,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, errOut := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != supervisorExitRefused {
+		t.Fatalf("exit %d, want %d (stderr %q)", code, supervisorExitRefused, errOut.String())
+	}
+	var refusal supervisorRefusalOut
+	if err := json.Unmarshal([]byte(out.String()), &refusal); err != nil {
+		t.Fatalf("the output is not one JSON object: %v\n%s", err, out.String())
+	}
+	if refusal.OK || refusal.Reason != "binding_ambiguous" {
+		t.Errorf("refusal %+v", refusal)
+	}
+	if !strings.Contains(string(refusal.Detail), `"state":"ambiguous"`) ||
+		!strings.Contains(string(refusal.Detail), "competing_owners") {
+		t.Errorf("detail = %s, want the relay's own state and contention", refusal.Detail)
+	}
+}
+
+// C1: a resolved walk that carries any contention at all is refused the same way, because the
+// reader leaves the state resolved only when the contention it found is not one of the two
+// competing ones.
+func TestSupervisorShowReportsAContentionListAsAmbiguous(t *testing.T) {
+	linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+		`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],` +
+		`"contention":[{"contention":"owner_drift","linkId":"lnk-1","recorded":"a","live":"b"}]}`
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    linkage,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, _ := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != supervisorExitRefused {
+		t.Fatalf("exit %d, want %d", code, supervisorExitRefused)
+	}
+	var refusal supervisorRefusalOut
+	if err := json.Unmarshal([]byte(out.String()), &refusal); err != nil {
+		t.Fatal(err)
+	}
+	if refusal.OK || refusal.Reason != "binding_ambiguous" || !strings.Contains(string(refusal.Detail), "owner_drift") {
+		t.Errorf("refusal %+v", refusal)
+	}
+}
+
+// C1: a state this command does not know is closed as a failure rather than read as an absence.
+func TestSupervisorShowReportsAnUnknownStateAsUnknown(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    `{"state":"something_else","readable":true,"levels":[],"gaps":[],"contention":[]}`,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, _ := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != supervisorExitRefused {
+		t.Fatalf("exit %d, want %d", code, supervisorExitRefused)
+	}
+	var refusal supervisorRefusalOut
+	if err := json.Unmarshal([]byte(out.String()), &refusal); err != nil {
+		t.Fatal(err)
+	}
+	if refusal.OK || refusal.Reason != "binding_state_unknown" ||
+		!strings.Contains(string(refusal.Detail), `"state":"something_else"`) {
+		t.Errorf("refusal %+v", refusal)
+	}
+}
+
 // A task with no recorded store binding is reported as a null binding, not as a failure: the store
-// answered and there is nothing.
+// answered and there is nothing. The unregistered answer is the second control.
 func TestSupervisorShowReportsNoBindingAsNull(t *testing.T) {
 	exe, _ := supervisorScript(t, map[string]string{
 		"settings-show": `{"task":"task-supervisor","settings":null,"usable":false}`,
-		"linkage-up":    `{"state":"unregistered","readable":true,"levels":[],"gaps":[],"contention":[]}`,
+		"linkage-up":    supervisorUnregistered,
 	})
 	section := supervisorTestSection()
 	supervisorUseConfig(t, supervisorTestConfig(&section))
@@ -403,7 +546,7 @@ func TestSupervisorRegisterPassesThroughARelayHostFailure(t *testing.T) {
 func TestSupervisorShowReportsAnUnreadableSettingsAnswer(t *testing.T) {
 	exe, _ := supervisorScript(t, map[string]string{
 		"settings-show": "not json at all",
-		"linkage-up":    `{"state":"unregistered","readable":true,"levels":[],"gaps":[],"contention":[]}`,
+		"linkage-up":    supervisorUnregistered,
 	})
 	section := supervisorTestSection()
 	supervisorUseConfig(t, supervisorTestConfig(&section))
@@ -474,10 +617,10 @@ func TestSupervisorShowPassesThroughARelayHostFailure(t *testing.T) {
 // relay's own refusal, and the command exits 1.
 func TestSupervisorRegisterPassesThroughARefusedSettingsRecord(t *testing.T) {
 	dir := t.TempDir()
-	record := filepath.Join(dir, "calls.txt")
+	record := filepath.Join(dir, "argv.txt")
 	exe := filepath.Join(dir, "crw")
 	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" >> " + supervisorQuote(record) + "\n" +
+		"{ printf '%s\\n' " + supervisorFakeCallMarker + "; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; } >> " + supervisorQuote(record) + "\n" +
 		"case \"$*\" in\n" +
 		"  *linkage-bind*) printf '%s\\n' '{\"binding\":{\"bindingId\":\"bnd-1\"}}' ;;\n" +
 		"  *settings-record*) printf '%s\\n' '{\"error\":\"refused\",\"reason\":\"settings_unavailable\"}'; exit 2 ;;\n" +
@@ -506,6 +649,40 @@ func TestSupervisorReportsARelayThatCannotRun(t *testing.T) {
 	e, _, errOut := supervisorEnv(filepath.Join(t.TempDir(), "no-such-crw"))
 	if code := supervisorShow(context.Background(), e, nil); code != 3 {
 		t.Fatalf("exit %d, want 3 (stderr %q)", code, errOut.String())
+	}
+}
+
+// C3: a stdout write that fails ends show with exit 1 rather than a silent success.
+func TestSupervisorShowReportsAWriteFailure(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    supervisorResolved,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, errOut := supervisorFailEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != 1 {
+		t.Fatalf("exit %d, want 1 (stderr %q)", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "crw manage supervisor: error: write output:") {
+		t.Errorf("stderr = %q, want the write failure", errOut.String())
+	}
+}
+
+// C3: the same rule holds for register.
+func TestSupervisorRegisterReportsAWriteFailure(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"linkage-bind":    `{"bindingId":"bnd-1"}`,
+		"settings-record": `{"taskId":"task-supervisor","settings":{}}`,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, errOut := supervisorFailEnv(exe)
+	if code := supervisorRegister(context.Background(), e, nil); code != 1 {
+		t.Fatalf("exit %d, want 1 (stderr %q)", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "crw manage supervisor: error: write output:") {
+		t.Errorf("stderr = %q, want the write failure", errOut.String())
 	}
 }
 

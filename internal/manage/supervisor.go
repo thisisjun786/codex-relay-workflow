@@ -26,6 +26,11 @@ const supervisorExitRefused = 1
 // directory could not be resolved, or the relay could not be started.
 const supervisorExitHost = 3
 
+// supervisorHostValuesNote is what a run that passes a host value on the command line is told:
+// every host value comes from the supervisor section of the configuration, so the command line
+// cannot carry one.
+const supervisorHostValuesNote = "host values come from the supervisor section of the configuration"
+
 // supervisorSection is the configuration document's supervisor section: the management thread, the
 // host it runs on, its working directory and the settings file the pair record cites. Every value
 // is a host fact and comes from the configuration only, so no private path, thread id or host name
@@ -65,9 +70,18 @@ type supervisorRecord struct {
 	Settings json.RawMessage `json:"settings"`
 }
 
+// supervisorRefusal is crw manage supervisor show's refusal of a binding it will not report: the
+// reason (binding_ambiguous or binding_state_unknown) and the relay's linkage-up answer whole, so
+// the state and the contention a caller reads are the relay's own bytes.
+type supervisorRefusal struct {
+	OK     bool            `json:"ok"`
+	Reason string          `json:"reason"`
+	Detail json.RawMessage `json:"detail"`
+}
+
 const (
 	supervisorUsage         = "usage: crw manage supervisor {register,show} ..."
-	supervisorRegisterUsage = "usage: crw manage supervisor register [--cwd DIR] [--settings-file FILE]"
+	supervisorRegisterUsage = "usage: crw manage supervisor register"
 	supervisorShowUsage     = "usage: crw manage supervisor show"
 )
 
@@ -123,30 +137,48 @@ func supervisorConfigured(e *Env, section supervisorSection) bool {
 	return false
 }
 
+// supervisorHostValueOption is one command-line option a run may no longer pass: every host value
+// is a host fact and comes from the configuration, so a command line that carries one is refused
+// before the relay is called rather than silently overriding the configuration.
+var supervisorHostValueOption = map[string]bool{"--cwd": true, "--settings-file": true}
+
+// supervisorRegisterArgs reads register's own arguments: no option at all is the accepted command
+// line, -h and --help report the usage, and an option that names a host value is refused with the
+// note that says where host values come from. The refusal happens here, before any relay call, so a
+// run that passes one neither binds nor records anything.
+func supervisorRegisterArgs(e *Env, args []string) int {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprintln(e.Stdout, supervisorRegisterUsage)
+			return 0
+		}
+	}
+	for _, arg := range args {
+		if supervisorHostValueOption[arg] {
+			fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
+			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %s\n", supervisorHostValuesNote)
+			return usageExit
+		}
+	}
+	if len(args) > 0 {
+		fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
+		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: unexpected argument %q\n", args[0])
+		return usageExit
+	}
+	return 0
+}
+
 // supervisorRegister is crw manage supervisor register: the store-scope supervisor binding first,
 // the settings pair second. A refused bind is reported as the relay's own refusal and the pair is
 // not recorded.
 func supervisorRegister(ctx context.Context, e *Env, args []string) int {
-	values, help, err := hostReadParse(args, map[string]bool{"cwd": true, "settings-file": true})
-	if help {
-		fmt.Fprintln(e.Stdout, supervisorRegisterUsage)
-		return 0
-	}
-	if err != nil {
-		fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %v\n", err)
-		return usageExit
+	if code := supervisorRegisterArgs(e, args); code != 0 {
+		return code
 	}
 	cfg := supervisorConfig(e)
 	section, code := supervisorSectionOf(e, cfg)
 	if code != 0 {
 		return code
-	}
-	if values["cwd"] != "" {
-		section.Cwd = values["cwd"]
-	}
-	if values["settings-file"] != "" {
-		section.SettingsFile = values["settings-file"]
 	}
 	if !supervisorConfigured(e, section) {
 		return usageExit
@@ -189,8 +221,10 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 	if !ok {
 		return supervisorUnreadableAnswer(e, "settings-record", recorded)
 	}
-	supervisorWrite(e.Stdout, supervisorRecord{OK: true, TaskID: section.TaskID,
-		Binding: boundValue, Settings: recordedValue})
+	if err := supervisorWrite(e.Stdout, supervisorRecord{OK: true, TaskID: section.TaskID,
+		Binding: boundValue, Settings: recordedValue}); err != nil {
+		return supervisorWriteFailure(e, err)
+	}
 	return 0
 }
 
@@ -252,16 +286,30 @@ func supervisorShow(ctx context.Context, e *Env, args []string) int {
 	if !ok {
 		return supervisorUnreadableAnswer(e, "settings-show", settings)
 	}
-	levels, ok := supervisorLevels(linkage)
+	answer, ok := supervisorLinkageOf(linkage)
 	if !ok {
 		// A store that could not be read is not a store with no binding: the reader answers
 		// readable:false and exits 0, so reporting null here would claim the store said there is
 		// nothing. Pass the answer through as a host failure instead.
-		supervisorPassThrough(e, linkage)
-		return supervisorExitHost
+		return supervisorPassThrough(e, linkage, supervisorExitHost)
 	}
-	supervisorWrite(e.Stdout, supervisorReport{OK: true, TaskID: section.TaskID,
-		Settings: settingsValue, Binding: supervisorStoreBinding(levels)})
+	if answer.State != "resolved" && answer.State != "unregistered" {
+		// A walk that contends is not an absence, and a state this command does not know is not
+		// one either: both are refused with the relay's own state and contention in detail, so a
+		// caller never reads a contested seat as an unbound one.
+		reason := "binding_state_unknown"
+		if answer.State == "ambiguous" || len(answer.Contention) > 0 {
+			reason = "binding_ambiguous"
+		}
+		return supervisorRefuse(e, reason, linkage)
+	}
+	if len(answer.Contention) > 0 {
+		return supervisorRefuse(e, "binding_ambiguous", linkage)
+	}
+	if err := supervisorWrite(e.Stdout, supervisorReport{OK: true, TaskID: section.TaskID,
+		Settings: settingsValue, Binding: supervisorStoreBinding(answer.Levels)}); err != nil {
+		return supervisorWriteFailure(e, err)
+	}
 	return 0
 }
 
@@ -272,17 +320,26 @@ type supervisorLevel struct {
 	Owner     json.RawMessage `json:"owner"`
 }
 
-// supervisorLevels reads the levels of a linkage-up answer. ok is false when the answer is not JSON
-// or says the store could not be read (readable:false), which is a failure rather than an absence.
-func supervisorLevels(linkage []byte) ([]supervisorLevel, bool) {
-	var answer struct {
-		Readable bool              `json:"readable"`
-		Levels   []supervisorLevel `json:"levels"`
-	}
+// supervisorLinkage is the linkage-up answer as this command reads it: the state the walk settled
+// on, whether the store could be read at all, the levels it holds and the contention it found.
+// Reading the state and the contention is the point: an answer whose state is ambiguous, or which
+// carries any contention at all, is a contested binding rather than an absent one, and the levels
+// of such an answer are empty.
+type supervisorLinkage struct {
+	State      string            `json:"state"`
+	Readable   bool              `json:"readable"`
+	Levels     []supervisorLevel `json:"levels"`
+	Contention []json.RawMessage `json:"contention"`
+}
+
+// supervisorLinkageOf reads the linkage-up answer. ok is false when the answer is not JSON or says
+// the store could not be read (readable:false), which is a failure rather than an absence.
+func supervisorLinkageOf(linkage []byte) (supervisorLinkage, bool) {
+	var answer supervisorLinkage
 	if err := json.Unmarshal(linkage, &answer); err != nil {
-		return nil, false
+		return supervisorLinkage{}, false
 	}
-	return answer.Levels, answer.Readable
+	return answer, answer.Readable
 }
 
 // supervisorStoreBinding is the store-scope supervisor binding out of a linkage-up answer's levels:
@@ -313,40 +370,64 @@ func supervisorAnswer(data []byte) (json.RawMessage, bool) {
 // a contested seat from a store it could not read. The relay's own stdout is passed through either
 // way, and a settings-record refusal after a successful bind is not rewritten.
 func supervisorRelayStatus(e *Env, stdout []byte, code int) int {
-	supervisorPassThrough(e, stdout)
 	if code == contract.ExitRefused {
-		return supervisorExitRefused
+		return supervisorPassThrough(e, stdout, supervisorExitRefused)
 	}
-	return supervisorExitHost
+	return supervisorPassThrough(e, stdout, supervisorExitHost)
 }
 
 // supervisorUnreadableAnswer reports a relay command that exited 0 with an answer this command
 // cannot read, as a host failure, keeping the bytes for the caller.
 func supervisorUnreadableAnswer(e *Env, command string, stdout []byte) int {
-	supervisorPassThrough(e, stdout)
 	fmt.Fprintf(e.Stderr, "crw manage supervisor: the %s answer is not one JSON value\n", command)
-	return supervisorExitHost
+	return supervisorPassThrough(e, stdout, supervisorExitHost)
 }
 
 // supervisorPassThrough writes the relay's own stdout unchanged, so a caller sees the relay's
-// refusal rather than a rewritten one.
-func supervisorPassThrough(e *Env, stdout []byte) {
+// refusal rather than a rewritten one, and returns the exit status the run ends with. A write that
+// fails is a failure of the run rather than of the pass-through: the answer never left, so the
+// command reports it and ends with exit 1 instead of the status it was about to return.
+func supervisorPassThrough(e *Env, stdout []byte, code int) int {
 	if len(stdout) == 0 {
-		return
+		return code
 	}
 	if _, err := e.Stdout.Write(stdout); err != nil {
-		fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %v\n", err)
+		return supervisorWriteFailure(e, err)
 	}
+	return code
 }
 
-// supervisorWrite writes one JSON value and a newline.
-func supervisorWrite(w io.Writer, value any) {
+// supervisorRefuse writes this command's own refusal: the reason and the relay's linkage-up answer
+// whole, so the state and the contention a caller reads are the relay's own bytes rather than a
+// rewrite of them.
+func supervisorRefuse(e *Env, reason string, linkage []byte) int {
+	detail, ok := supervisorAnswer(linkage)
+	if !ok {
+		detail = json.RawMessage("null")
+	}
+	if err := supervisorWrite(e.Stdout, supervisorRefusal{OK: false, Reason: reason, Detail: detail}); err != nil {
+		return supervisorWriteFailure(e, err)
+	}
+	return supervisorExitRefused
+}
+
+// supervisorWrite writes one JSON value and a newline, and reports a write that failed so a command
+// whose report never left can end with a failure rather than a silent success.
+func supervisorWrite(w io.Writer, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil {
-		fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error())
-		return
+		_, werr := fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"encode_failed\",\"detail\":%q}\n", err.Error())
+		return werr
 	}
-	fmt.Fprintf(w, "%s\n", data)
+	_, err = fmt.Fprintf(w, "%s\n", data)
+	return err
+}
+
+// supervisorWriteFailure reports a report that could not be written, as a failure of the run: the
+// caller sees the write failure on stderr and the run ends with exit 1.
+func supervisorWriteFailure(e *Env, err error) int {
+	fmt.Fprintf(e.Stderr, "crw manage supervisor: error: write output: %v\n", err)
+	return 1
 }
 
 // supervisorRelayFailure reports a relay command the helper could not carry out at all, as a host
