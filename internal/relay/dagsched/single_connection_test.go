@@ -67,4 +67,19 @@ func TestReadyOnTheSingleConnectionStoreDoesNotStallOnACorrectionGeneration(t *t
 			dig("manifest sc A 3"))
 		assertSingleConnectionRead(t, f, "sc", "B")
 	})
+
+	t.Run("two relationships at one generation are read once, as before", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		singleConnectionPlan(f, "sc")
+		// one node whose correction generation is carried by two relationships: the reading walks the rows in
+		// (generation, relationship) order and keeps the FIRST relationship of each generation, the de-duplication the
+		// collection step must preserve. Both rows are read before either lookup runs, so the answer is the same and the
+		// reading still completes on the one connection.
+		f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES ('sc', 'A', 'rel-sc-A', 2, ?, 'correction')",
+			dig("manifest sc A 2"))
+		f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES ('sc', 'A', 'rel-sc-A2', 2, ?, 'correction')",
+			dig("manifest sc A2 2"))
+		assertSingleConnectionRead(t, f, "sc", "B")
+	})
 }
