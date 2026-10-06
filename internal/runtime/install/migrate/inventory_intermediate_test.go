@@ -174,8 +174,10 @@ func TestInventoryProducerTempFinalName(t *testing.T) {
 	}{
 		{".123.1760000000000.tmp", false},
 		{"a.json.123.1760000000000.tmp", true},
+		{".a.json.123.1760000000000.tmp", true},
 		{"." + invUUID + ".tmp", false},
 		{"a.json." + invUUID + ".tmp", true},
+		{".a.json." + invUUID + ".tmp", true},
 		{".test-receipt.json." + invRun + ".tmp", true},
 		{tempSuffix, false},
 		{"a.json", false},
