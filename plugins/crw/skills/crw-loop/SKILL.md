@@ -12,7 +12,7 @@ Loading it does not make the goal the default again, and an ordinary project exe
 [crw-run](../crw-run/SKILL.md)'s, not this skill's.
 
 One parent coordinates one project; one independent child owns one issue and its
-one delivery PR, under the shared
+delivery, one issue per PR today under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration), under the shared
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 Run and Loop have the same project scope. This skill adds the
 parent's host goal, automatic continuation and goal completion decision.

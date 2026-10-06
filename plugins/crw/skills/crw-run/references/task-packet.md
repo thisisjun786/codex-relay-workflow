@@ -26,7 +26,8 @@ this default. This convention names issue children; the management task above th
 is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
 including the product-family prefix that no child title carries.
 Each implementation packet names its
-one issue and intended PR. A batch retains separate packets and issue/PR pairs;
+one issue and intended PR, which is today's operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration);
+several packets for one feature are allowed by policy and switch on when their support lands. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile
 the mapping through `crw-plan` before new implementation dispatch.
@@ -53,8 +54,8 @@ authorized work. Task identity and recovery always use stable IDs, not title mat
 
 ## Launch packet
 
-This packet targets a verified independent implementation task for one issue/PR
-pair, or an explicitly non-PR result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
+This packet targets a verified independent implementation task for one issue and its
+one intended PR, or an explicitly non-PR result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
 before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
 For non-PR work, remove inapplicable Git/worktree/PR/OPS delivery fields and steps
@@ -306,7 +307,9 @@ Execution:
   as soon as the implementation is reviewable, then request the review the repository
   requires and this assignment authorizes, and confirm it actually started. An optional
   reviewer that cannot start or stalls is recorded as a gap and does not hold you, except that you
-  wait for the one run each of Devin and Codex makes on the open pull request to end, or to be skipped,
+  wait for the one run each of Devin and Codex makes on the open pull request within the
+  [waiting budget](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) — past
+  it a run still going is recorded as pending, not complete — or until it is skipped,
   before you emit ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates));
   a required gate does. Findings, pending CI and your own revision pushes do not send
   it back to draft; fix on the open pull request and refresh only the review evidence

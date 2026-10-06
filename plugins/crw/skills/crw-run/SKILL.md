@@ -911,7 +911,7 @@ After verification, the coordinator applies [Default dev integration](../crw-pla
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
 Devin and Codex reviews are references there and not gates: the merge waits for neither, and the child
-waits for the one run of each before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
+waits for the one run of each within its waiting budget before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
 Serialize integrations that share a target, verify the landing, and update the
 coordination record. Work inside a relay merge turn never runs in the background and records
 its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the

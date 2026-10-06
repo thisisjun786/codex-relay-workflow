@@ -166,7 +166,7 @@ private source to another service.
 Devin Review and the GitHub Codex review are references. Neither is a merge gate, and a run that is
 skipped or never shows is not waited for. Each runs once per pull request, Devin when the pull request
 becomes ready for review and Codex when it is opened, and the merge waits for neither. The child does wait
-for that one run of each to end before it emits its receipt. A review thread that reaches the head after the receipt is found outside
+for that one run of each, within the waiting budget below, before it emits its receipt. A review thread that reaches the head after the receipt is found outside
 the record's `threadsSeen` when the parent restates it, and the handoff no longer describes the candidate.
 A thread the parent judges minor it dispositions itself
 ([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)); for any
