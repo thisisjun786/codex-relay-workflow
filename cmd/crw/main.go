@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review/command"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role/dispatchhost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -183,7 +184,12 @@ func modes() []mode {
 		{"pabcd", false, func(c invocation) int {
 			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
 		}},
-		{"role", false, func(c invocation) int { return role.CLI(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv) }},
+		{"role", false, func(c invocation) int {
+			// The role package stays offline; the binary installs the App Server opener the
+			// dispatch CLI's stopped close reads through (internal/role/dispatchhost).
+			role.OpenDispatchHost = dispatchhost.Open
+			return role.CLI(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv)
+		}},
 		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.stdout) }},
 		{"map", false, runRepoMap},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
