@@ -79,8 +79,18 @@ function answer(doctor, input) {
 // report never has -- and the port's HarnessCheck.MarshalJSON writes the oracle's order, so the
 // two documents would differ on key order alone. repair is present only when the input names it,
 // which is the oracle's three states (a repair, a present empty repair, no repair).
+//
+// name, severity and evidence are required and are read as the empty string when the input omits
+// them, which is how the port's HarnessCheck reads a missing field (it has no absent state for
+// them; only repair is optional). Filling them keeps the two sides reading one malformed check the
+// same way. Leaving them undefined would make the oracle print "undefined" and omit the key while
+// the port prints an empty string and keeps it, and the shrinker -- which deletes an object's keys
+// while it keeps the verdict kind (internal/dev/cxcfuzz/shrink.go reduce) -- could then pin a
+// difference it manufactured by deleting a required field instead of the input that really
+// differed. No check the oracle's own builders produce can omit these, so filling them cannot hide
+// a divergence the oracle can actually reach.
 function oracleCheck(c) {
-  const out = { name: c.name, severity: c.severity, evidence: c.evidence };
+  const out = { name: c.name ?? "", severity: c.severity ?? "", evidence: c.evidence ?? "" };
   if (Object.prototype.hasOwnProperty.call(c, "repair")) out.repair = c.repair;
   return out;
 }

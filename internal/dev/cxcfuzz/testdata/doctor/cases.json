@@ -62,5 +62,13 @@
     "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list': xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\\udced\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list': xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ufffd\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
     "tag": "open",
     "record": "follow-up proposal: harnessReportCut counts a WTF-8 lone surrogate as three UTF-16 units"
+  },
+  {
+    "name": "check-missing-required-fields-reads-empty-on-both-sides",
+    "input": "{\"report\": {\"checks\": [{\"evidence\": \"e\"}, {\"name\": \"n\"}]}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"e\\\"\\n    },\\n    {\\n      \\\"name\\\": \\\"n\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[] : e\\n[] n: \\noverall: PASS\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"e\\\"\\n    },\\n    {\\n      \\\"name\\\": \\\"n\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[] : e\\n[] n: \\noverall: PASS\"}",
+    "tag": "identical",
+    "record": ""
   }
 ]

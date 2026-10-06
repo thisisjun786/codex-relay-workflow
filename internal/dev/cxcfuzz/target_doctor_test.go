@@ -9,6 +9,7 @@ package cxcfuzz
 
 import (
 	"math/rand"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,6 +231,145 @@ func TestDoctorOpenCaseIsTheCutDivergence(t *testing.T) {
 	}
 	if !strings.Contains(open.Go, "\\udced") {
 		t.Fatalf("the pinned Go answer does not hold the cut WTF-8 surrogate: %s", open.Go)
+	}
+}
+
+// TestDoctorMissingRequiredFieldsReadEmpty pins the port half of the check contract the shrinker
+// depends on: name, severity and evidence are required and have no absent state, so a check the
+// generic reducer has stripped a field from reads as the empty string and the JSON keeps the key.
+// The shim fills the same three fields with the empty string, so the two sides read one malformed
+// check the same way. Without that, a shrink candidate that deleted a required field would still
+// return Differ -- for a reason the shrinker invented -- and could replace the input that really
+// differed in a saved divergence.
+func TestDoctorMissingRequiredFieldsReadEmpty(t *testing.T) {
+	input := "{\"report\":{\"checks\":[{\"evidence\":\"e\"},{\"name\":\"n\"}]}}"
+	value, err := decode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := doctorGo(value, RootEnv(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, jsonText, err := doctorAnswer(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "[] : e\n[] n: \noverall: PASS"; text != want {
+		t.Fatalf("text = %q, want %q", text, want)
+	}
+	for _, want := range []string{`"name": ""`, `"severity": ""`, `"evidence": ""`} {
+		if !strings.Contains(jsonText, want) {
+			t.Fatalf("json does not carry %s:\n%s", want, jsonText)
+		}
+	}
+}
+
+// TestDoctorMalformedCheckAgreesAcrossSides is the regression the campaign exposed: the generic
+// reducer deletes an object keys before it reduces values, so a shrink candidate can lose a
+// check required fields. That candidate must not become a difference of its own, or the shrinker
+// (which keeps any candidate with the same verdict kind) would pin a malformed-input artifact in
+// place of the input that really differed. The oracle side of the same input is the answer the
+// shim produces: the three required fields filled with the empty string.
+func TestDoctorMalformedCheckAgreesAcrossSides(t *testing.T) {
+	target, ok := Lookup("doctor")
+	if !ok {
+		t.Fatal("the doctor target is not registered")
+	}
+	root, err := os.MkdirTemp("", "cxcfuzz-doctor-shrink-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	malformed, err := decode(`{"report":{"checks":[{"evidence":"e"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goValue, err := target.Go(malformed, RootEnv(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracle, err := decode(`{"text":"[] : e\noverall: PASS","json":"{\n  \"schemaVersion\": 1,\n  \"overall\": \"PASS\",\n  \"checks\": [\n    {\n      \"name\": \"\",\n      \"severity\": \"\",\n      \"evidence\": \"e\"\n    }\n  ]\n}\n"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict := target.Compare(goValue, oracle); verdict.Kind != Same {
+		t.Fatalf("a check missing its required fields reads differently on the two sides: %s", verdict.Detail)
+	}
+}
+
+// TestDoctorShrinkStaysInsideTheCheckContract drives the real reducer and the real oracle over an
+// input that differs inside a check, which is the shape the shrinker would have wandered out of:
+// the reducer deletes an object keys before it reduces values, so its candidates can lose a
+// check required fields. Every candidate that does must compare Same (both sides read the missing
+// field the same way), so the keep test rejects it and the shrunk input the campaign saves still
+// carries the fields -- the difference that is pinned stays the difference that was found.
+func TestDoctorShrinkStaysInsideTheCheckContract(t *testing.T) {
+	requireNode(t)
+	target, ok := Lookup("doctor")
+	if !ok {
+		t.Fatal("the doctor target is not registered")
+	}
+	pool, err := NewPool(target.Oracle, 1, DefaultTimeout, os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pool.Close() }()
+	evaluate := func(value any) Verdict {
+		root, err := os.MkdirTemp("", "cxcfuzz-doctor-shrink-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.RemoveAll(root) }()
+		if err := PrepareRoot(root); err != nil {
+			t.Fatal(err)
+		}
+		goValue, goErr := target.Go(value, RootEnv(root))
+		var goOut any = goValue
+		if goErr != nil {
+			goOut = errorValue(goErr)
+		}
+		oracleText, err := pool.Call(canonical(value), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oracleValue, err := decode(oracleText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return target.Compare(goOut, oracleValue)
+	}
+	// The difference is the WTF-8 lone surrogate harnessReportCut measures as three units; it sits
+	// in the run stderr, and a check sits beside it so the reducer has fields to delete.
+	input, err := decode(`{"report":{"checks":[{"name":"n","severity":"WARN","evidence":"e"}]},"run":{"stderr":"` + strings.Repeat("x", 157) + `\udced\udca0"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict := evaluate(input); verdict.Kind != Differ {
+		t.Fatalf("the input does not differ: %s", verdict.Detail)
+	}
+	shrunk, _ := Shrink(input, ShrinkAttempts, func(candidate any) bool {
+		return evaluate(candidate).Kind == Differ
+	})
+	// The pinned input is still the one that really differs.
+	if !strings.Contains(canonical(shrunk), `\udced`) {
+		t.Fatalf("the shrunk input no longer carries the difference: %s", canonical(shrunk))
+	}
+	if verdict := evaluate(shrunk); verdict.Kind != Differ {
+		t.Fatalf("the shrunk input does not differ: %s", verdict.Detail)
+	}
+	// The manufactured candidate the shrinker must never keep: a check missing its required
+	// fields, with no run. Both sides read it the same way, so it compares Same and the keep
+	// predicate rejects it.
+	manufactured, err := decode(`{"report":{"checks":[{"evidence":"e"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict := evaluate(manufactured); verdict.Kind != Same {
+		t.Fatalf("a check missing its required fields is a difference the shrinker could pin: %s", verdict.Detail)
 	}
 }
 
