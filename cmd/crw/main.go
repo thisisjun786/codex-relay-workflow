@@ -27,6 +27,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tools"
 
 	// The relay commands register in the relay command table when their packages load; cli
 	// brings its own and the registry, delivery and fault families.
@@ -181,6 +182,7 @@ func modes() []mode {
 		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"manage", true, func(c invocation) int { return manage.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
 		{"config", true, func(c invocation) int { return crwconfig.Run(c.args, c.stdout, c.stderr, os.Getenv) }},
+		{"tools", true, func(c invocation) int { return tools.Run(c.ctx, c.args, c.stdout, c.stderr, nil) }},
 		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
 		{"pabcd", false, func(c invocation) int {
 			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
