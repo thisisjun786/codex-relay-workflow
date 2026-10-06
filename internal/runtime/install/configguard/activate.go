@@ -60,6 +60,23 @@ func activationPublish(path string, b []byte) error {
 	return crwdir.Publish(path, b)
 }
 
+// activationPublishConfig is activationPublish under the sidecar lock every CRW writer of
+// config.toml takes (CRW-844): the read, the decision and the publish are serialized against
+// retrust and any other CRW writer, so two writers never interleave on one config.toml. The lock is
+// taken only where this package publishes config.toml; the other files it publishes (the install
+// manifest, the self-heal marker) are not shared with another writer and keep activationPublish.
+func activationPublishConfig(path string, b []byte) error {
+	lock, e := crwdir.LockConfig(path, activationLockWait)
+	if e != nil {
+		return e
+	}
+	defer lock.Release()
+	return activationPublish(lock.Target, b)
+}
+
+// activationLockWait is how long the activation publish waits for another CRW writer's sidecar lock.
+const activationLockWait = 2 * time.Second
+
 // activationBackup keeps staging private through Publish, then gives it the source mode.
 // Publish owns content writes and fsync; Rename publishes the completed backup, preserving links.
 func activationBackup(path string, b []byte, mode fs.FileMode) (err error) {
@@ -198,7 +215,7 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 			continue
 		}
 		if res.Changed {
-			if e = activationPublish(path, []byte(res.Content)); e != nil {
+			if e = activationPublishConfig(path, []byte(res.Content)); e != nil {
 				return nil, e
 			}
 		}

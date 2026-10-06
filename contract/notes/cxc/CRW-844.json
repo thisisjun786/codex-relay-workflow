@@ -1,0 +1,35 @@
+{
+  "issue": "CRW-844",
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__hooks__retrust_safety_pin_refuses_all_drifted",
+      "reason": "Parent-approved claim handover from CRW-362: the safety pin itself is unchanged (one existing trust entry, no hash matching its recomputation, refused with and without --bootstrap-ok, config.toml untouched). CRW-844 added the sidecar lock, so the refusal now also prints the planned items and the target's state, and the sidecar config.toml.crw-lock stays in the Codex home (never unlinked, docs/port/decisions.md 7).",
+      "given": {
+        "env": {
+          "PLUGIN_ROOT": "${PLUGIN_ROOT}"
+        },
+        "files": {
+          "codex/config.toml": "model = \"gpt-5.5\"\n\n[plugins.\"crw@local\"]\nenabled = true\n\n[hooks.state.\"crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
+        }
+      },
+      "set": {
+        "steps/0/stderr": "crw doctor retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n",
+        "steps/1/stderr": "crw doctor retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n",
+        "steps/0/form": "text",
+        "steps/1/form": "text",
+        "steps/0/stdout": "updated keys: crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\nappended keys: (none)\n${CODEX_HOME}/config.toml unchanged; nothing was published\n",
+        "steps/1/stdout": "updated keys: crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\nappended keys: (none)\n${CODEX_HOME}/config.toml unchanged; nothing was published\n",
+        "tree/codex/config.toml/content": "model = \"gpt-5.5\"\n\n[plugins.\"crw@local\"]\nenabled = true\n\n[hooks.state.\"crw@local:wiring/hooks/stop-recording-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n",
+        "tree/codex/config.toml.crw-lock/type": "file",
+        "tree/codex/config.toml.crw-lock/mode": "0644",
+        "tree/codex/config.toml.crw-lock/form": "empty",
+        "tree/codex/config.toml.crw-lock/sha256": "",
+        "tree/codex/config.toml.crw-lock/size": "",
+        "tree/codex/config.toml.crw-lock/target": "",
+        "tree/codex/config.toml.crw-lock/content": ""
+      }
+    }
+  ]
+}
+
