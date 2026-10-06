@@ -239,14 +239,27 @@ func TestTheTwoHeadJudgmentsAgreeOnTheIssuesShapes(t *testing.T) {
 }
 
 // The two readers must honour the same connection inside one transaction: a read on the
-// transaction's own connection sees the transaction's writes, and both entry points route through
-// the ctx-aware querier (store/records.go). The comparison is the same byte-for-byte one.
+// transaction's own connection sees the transaction's own uncommitted writes, and both entry points
+// route through the ctx-aware querier (store/records.go). A reader that used the pool instead would
+// not see the revision written inside the transaction at all, so the new revision is written there
+// and both readers must report it as the head.
 func TestTheTwoHeadJudgmentsAgreeInsideOneTransaction(t *testing.T) {
 	t.Parallel()
 	g := newParityStore(t)
 	seeded := g.seed(0, parityCase{name: "a chain", events: []parityEvent{pv("e1", "h1", ""), pv("e2", "h2", "h1")}, evidence: "declared_chain", head: "e2"})
 	err := g.store.Transaction(g.ctx, func(ctx context.Context, _ *sql.Conn) error {
-		g.compare(t, seeded, ctx)
+		// A revision and its lineage row, written inside the transaction and not yet committed.
+		third := seeded.prefix + "e3"
+		if _, err := g.store.Querier(ctx).ExecContext(ctx, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?, ?, 1, 'h3', 'ready_for_review', 'child', 'child-parity', ?, 'completed', '{}', 'final', 'x', 'x')", third, seeded.rid, "turn-"+third); err != nil {
+			return err
+		}
+		if _, err := g.store.Querier(ctx).ExecContext(ctx, "INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, supersedes_hash, declared_by, recorded_at) VALUES (?, 1, ?, 'h3', 'h2', 'child_declared', 'x')", seeded.rid, third); err != nil {
+			return err
+		}
+		head := g.compare(t, seeded, ctx)
+		if head.EventID != third {
+			t.Fatalf("the head is %q, and the revision written in the transaction is %q: a reader did not see the transaction's own writes", head.EventID, third)
+		}
 		return nil
 	})
 	if err != nil {
