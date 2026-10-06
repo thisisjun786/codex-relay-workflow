@@ -552,14 +552,19 @@ func (r *startRun) standbyTurnDecision(base reconciliation, thread string, rows 
 	return decision{}, false
 }
 
-// standbyTurnInput is the text of a summary turn's first user message: the first userMessage item and that item's first text part. A turn
-// with no user message, or one whose content cannot be read, answers "", which never equals the bootstrap.
+// standbyTurnInput is the text of a summary turn's first user message: the first userMessage item's own text, or, when the item carries
+// none, its first text part. A summary item may state the text directly on the item or nest it in content, and the bridge's own reads
+// accept both (delivery.itemText reads an item's text first). A turn with no user message, or one whose text cannot be read, answers "",
+// which never equals the bootstrap.
 func standbyTurnInput(row map[string]any) string {
 	items, _ := row["items"].([]any)
 	for _, item := range items {
 		message := pyjson.Map(item)
 		if pyjson.Text(message["type"]) != "userMessage" {
 			continue
+		}
+		if text := pyjson.Text(message["text"]); text != "" {
+			return text
 		}
 		content, _ := message["content"].([]any)
 		for _, part := range content {

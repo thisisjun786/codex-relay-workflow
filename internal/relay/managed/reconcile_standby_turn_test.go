@@ -43,6 +43,12 @@ func userText(text string) map[string]any {
 	return map[string]any{"type": "userMessage", "id": "user-1", "content": []any{map[string]any{"type": "text", "text": text}}}
 }
 
+// userTextFlat is a userMessage item that states its text directly, the shape the bridge's own summary-turn fixtures use
+// (internal/bridge/owned_read_host_test.go's message) and the one delivery.itemText reads first.
+func userTextFlat(text string) map[string]any {
+	return map[string]any{"type": "userMessage", "id": "user-flat", "text": text}
+}
+
 // listing answers one thread's turns with rows and, when cursor is non-empty, a next page.
 func listing(rows []any, cursor string) func(string) (map[string]any, error) {
 	return func(string) (map[string]any, error) {
@@ -74,6 +80,37 @@ func (k *reconcileKit) noSecondTurn() {
 	}
 	if len(k.host.creates) != 1 || len(k.host.named) != 0 {
 		k.t.Fatalf("creations %v, names %v", k.host.creates, k.host.named)
+	}
+}
+
+// The summary view may state the user message's text on the item itself rather than nesting it in content, and the bridge's own reads
+// accept both. The recognised standby turn must be read the same way in either shape.
+func TestStandbyTurnReadsBothItemTextShapes(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		item map[string]any
+		ok   bool
+	}{
+		{"nested content", userText(bootstrap), true},
+		{"text on the item", userTextFlat(bootstrap), true},
+		{"text on the item, one character off", userTextFlat(bootstrap + "!"), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			k, _ := standbyKit(t, "turn-timeout", listing([]any{summaryRow("standby-turn", "completed", c.item)}, ""))
+			got := k.run()
+			if !c.ok {
+				k.expect(got, "incomplete", "creation_unknown", "thread_has_turn")
+				k.noSecondTurn()
+				return
+			}
+			k.expect(got, "admitted", "", "adopted")
+			if got["standbyTurnId"] != "standby-turn" {
+				t.Fatalf("the flat item's turn was not recorded as the standby: %v", got["standbyTurnId"])
+			}
+			k.noSecondTurn()
+		})
 	}
 }
 
