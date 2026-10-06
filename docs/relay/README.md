@@ -614,12 +614,15 @@ end normally. A turn that ends failed or interrupted suppresses the claim instea
 An emit refuses `unassigned_turn`, writing nothing, in two cases before the receipt is taken. A
 `--turn-id` that does not have the Codex id form (36 lowercase hex digits in 8-4-4-4-12 groups) of a
 `--turn-thread` that does is refused, with or without `--socket`; a thread that is not a Codex id is
-not checked. Without `--socket`, and after that check, emit reads the turn read-only through
-`Adapter.ReadTurn` on the App Server socket the store recorded (`schema_meta.socket_path`), and
-refuses the same way when an exhausted listing does not hold the turn. Everything else stages as it
-did: a listed turn, a store that records no socket, and a host that could not be reached or read
-(a page budget that ran out is not evidence of absence). With `--socket` only the form check is new;
-the host read is the one the flag already made.
+not checked. That form check reads only the arguments, so it runs before emit opens the store: a
+refused malformed turn id leaves no `schema_meta.socket_path` recorded, and a later emit with a
+different `--socket` is not refused for a socket mismatch. Without `--socket`, and after that check,
+emit opens the store and reads the turn read-only through `Adapter.ReadTurn` on the App Server socket
+the store recorded (`schema_meta.socket_path`), and refuses the same way when an exhausted listing
+does not hold the turn. That read keeps no operations ledger, so neither a refused nor a staged emit
+leaves one behind. Everything else stages as it did: a listed turn, a store that records no socket,
+and a host that could not be reached or read (a page budget that ran out is not evidence of absence).
+With `--socket` only the form check is new; the host read is the one the flag already made.
 
 A child that itself reports `failed` or `interrupted` from its own live turn states how the turn
 ended: `--turn-status failed` or `--turn-status interrupted`, which is a claim and makes the receipt

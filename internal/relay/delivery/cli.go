@@ -31,7 +31,10 @@ type commandSpec struct {
 }
 
 var deliveryCommands = []commandSpec{
-	{dispatch.Command{Name: "emit", Defaults: map[string]any{"attempt": int64(1), "turn-status": "inProgress"}}, cmdEmit},
+	// emit opens its own store (OwnAdmission): dispatch's admission would open it and bind the
+	// command's --socket to schema_meta.socket_path before the handler ran, so a refused malformed
+	// turn id could not leave the store unbound (CRW-680). The handler's c.services() opens it.
+	{dispatch.Command{Name: "emit", OwnAdmission: true, Defaults: map[string]any{"attempt": int64(1), "turn-status": "inProgress"}}, cmdEmit},
 	{dispatch.Command{Name: "deliver", Defaults: map[string]any{"limit": int64(4)}}, needsHost},
 	{dispatch.Command{Name: "reconcile"}, needsHost},
 	{dispatch.Command{Name: "recover"}, needsHost},
