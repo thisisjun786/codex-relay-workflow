@@ -347,7 +347,8 @@ func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool,
 	}
 	result := HookTrustRetrustResult{BackupPath: backupPath}
 	if err := hookTrustRetrustReplace(targetPath, original, next); err != nil {
-		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, next, err)
+		// A failed write left the target as it was, so the rollback compares against the original.
+		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, original, err)
 	}
 	if err := hookTrustRetrustVerify(codexHome, runner); err != nil {
 		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, next, err)
