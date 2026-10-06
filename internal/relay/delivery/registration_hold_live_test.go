@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// sequential: t.Setenv("XDG_STATE_HOME") is process-wide.
 func Test21_RegistrationHold_refuses_resolved_live_state(t *testing.T) {
 	root := t.TempDir()
 	live := filepath.Join(root, "xdg", "codex-session-relay", "default")

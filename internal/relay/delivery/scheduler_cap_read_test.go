@@ -256,6 +256,7 @@ func TestCapRead_a_refusal_marker_that_is_not_a_key_is_no_marker(t *testing.T) {
 
 // A recipient whose rows were taken between the read of the recipients and the read of its rows has no queue.
 func TestCapRead_a_recipient_without_rows_has_no_queue(t *testing.T) {
+	t.Parallel()
 	w := &parentWalk{parent: "p", share: 2}
 	w.add("gone", "", nil)
 	w.add("here", "", []Row{{"event_id": "e"}})
@@ -290,6 +291,7 @@ func TestCapRead_a_first_parent_whose_rows_vanish_costs_no_one_a_second_turn(t *
 // delivery direction the contract defines, but they are not events the relay produced, so an attempt
 // on one is refused, which is the same cost before and after the change. The number of rows the tick
 // reads is the measurement; the time is only bounded.
+// sequential: asserts a three-second wall-clock bound on a Deliver tick, which a host running the package's tests in parallel can exceed.
 func TestCapRead_a_backlog_of_ten_thousand_rows_is_not_read_by_the_tick(t *testing.T) {
 	const backlog = 10000
 	w := newScaleWorld(t, 2)

@@ -24,6 +24,7 @@ func (k *releaseKit) bindParent(id, task, project string) {
 // there, and what had already happened (a child the host created) is the only thing it left. Each boundary is driven by a claim that lands exactly there.
 
 func TestAClaimBetweenTheStartOfAReleaseAndItsIntentRefusesTheIntent(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	stale := k.sched
@@ -45,6 +46,7 @@ func TestAClaimBetweenTheStartOfAReleaseAndItsIntentRefusesTheIntent(t *testing.
 }
 
 func TestAClaimBeforeTheReplayTransactionOfAReleaseRefusesTheReplay(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	stale := k.sched
@@ -73,6 +75,7 @@ func TestAClaimBeforeTheReplayTransactionOfAReleaseRefusesTheReplay(t *testing.T
 }
 
 func TestAClaimAfterTheManagedStartRefusesTheBindAndTheNewSessionBindsTheSameChild(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	stale := k.sched
@@ -102,6 +105,7 @@ func TestAClaimAfterTheManagedStartRefusesTheBindAndTheNewSessionBindsTheSameChi
 
 // The stale_head row a release appends when the forge shows a moved head is a write of that release: a session that lost the epoch while the forge was read appends nothing and is told it is stale.
 func TestAClaimWhileAPinnedPredecessorIsReadRefusesTheStaleHeadRow(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	stale := k.sched
@@ -120,6 +124,7 @@ func TestAClaimWhileAPinnedPredecessorIsReadRefusesTheStaleHeadRow(t *testing.T)
 
 // Closing an abandoned release lets the node be released again, so it is a decision: a stale session cannot close one, and the session that holds the epoch can.
 func TestAStaleSessionCannotCloseAnAbandonedRelease(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	stale := k.sched
@@ -144,6 +149,7 @@ func TestAStaleSessionCannotCloseAnAbandonedRelease(t *testing.T) {
 
 // A plan that has no revision belongs to the project it was claimed for: a parent of another project does not take it over before its first revision, and a replacement parent of the first project does.
 func TestAHeaderlessPlanStaysWithTheProjectItWasClaimedFor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	if _, err := k.sched.ClaimEpoch(ctx, "fresh", ClaimInput{Actor: "parent", SessionNonce: "s1", Project: "P-TEST"}); err != nil {

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # A body-only edit of a pull request (the "edited" action with no base change) reruns no job
 # that already succeeded on the same head. ci.yml runs this script as the first step of
-# validate, secrets, skill-scripts-node and go-product on such an edit only, and guards
-# every later step of those jobs with its answer. It reads the newest completed run of
-# this workflow, of this pull
+# validate, secrets, skill-scripts-node and go-product on such an edit only, and guards every later step of those
+# jobs with its answer. It reads the newest created run of this workflow, of this pull
 # request, of this repository, for this head, other than the run it is in, and mirrors the job
-# when that run's same-named job concluded success. A go-product (test-*) job is mirrored only when
-# that job's test step concluded success too: CRW-790's temporary light mode lets a leg succeed
+# when that run's same-named job concluded success. Creation order is run_number and then id, the
+# two values a rerun never rewrites: run_started_at moves forward when only the failed jobs are
+# rerun, so ordering by it can mistake an older run for the newest one. A go-product (test-*) job
+# is mirrored only when that job's test step concluded success too: CRW-790's light mode lets a leg succeed
 # with its tests skipped, and such a leg must not be carried into a later run.
 #
 # The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing
@@ -33,11 +34,12 @@ reason='the head, pull request, repository or job name is missing'
 
 if [[ -n $job_name && -n $head_sha && -n $pull_number && -n $self_run && -n $repository ]]; then
   reason='no completed run of this workflow for this pull request and head'
-  # Every page is read and the newest candidate is picked by its own timestamp, so the answer
-  # never rests on the API's page order.
+  # Every page is read and the newest candidate is picked by the order it was created in
+  # (run_number, then id), so the answer never rests on the API's page order and a rerun of an
+  # older run's failed jobs cannot promote that run past a newer one.
   runs=$(gh api --paginate \
     "repos/$repository/actions/workflows/ci.yml/runs?head_sha=$head_sha&event=pull_request&status=completed&per_page=100" \
-    --jq '.workflow_runs[] | {id, path, event, status, head: .head_sha, repository: .head_repository.full_name, pulls: [.pull_requests[]? | {number, head: .head.sha}], started: .run_started_at}' 2>/dev/null) || runs=
+    --jq '.workflow_runs[] | {id, number: .run_number, path, event, status, head: .head_sha, repository: .head_repository.full_name, pulls: [.pull_requests[]? | {number, head: .head.sha}]}' 2>/dev/null) || runs=
   # A run of this workflow is judged by what it is, not only by the request that listed it: its
   # path (a ref-qualified one is the same workflow), its event and completed state, its head
   # sha, its head repository, its pull request and its head inside that pull request. Two pull
@@ -54,7 +56,7 @@ if [[ -n $job_name && -n $head_sha && -n $pull_number && -n $self_run && -n $rep
       | select(.repository == $repository)
       | select([.pulls[]? | select((.number | tostring) == $pull and .head == $head)] | length > 0)
       | select((.id | tostring) != $self) ]
-    | sort_by(.started, .id) | last | .id // empty') || mirror_run=
+    | sort_by(.number, .id) | last | .id // empty') || mirror_run=
 
   if [[ -n $mirror_run ]]; then
     reason="run $mirror_run has no successful $job_name job"

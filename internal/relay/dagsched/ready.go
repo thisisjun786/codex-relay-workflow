@@ -85,12 +85,20 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	var live []orderHolder
 	var candidates []candidate
 	var hashes []string
+	var stagnating StagnationCounts
 	for i, n := range nodes {
 		state, err := s.stateOf(ctx, q, plan, snap, n)
 		if err != nil {
 			return Reading{}, err
 		}
 		reading := &NodeReading{NodeID: n.NodeID, IssueKey: n.IssueKey, Kind: n.Kind, State: state.State}
+		// how often the node has failed the same way, and the repair the ladder names next (CRW-801): a reading of the rows the store already keeps, so nothing is written and no clock is read
+		if reading.Stagnation, err = s.Stagnation(ctx, q, plan, snap, n); err != nil {
+			return Reading{}, err
+		}
+		if reading.Stagnation != nil {
+			stagnating.add(reading.Stagnation.Rung)
+		}
 		readings[n.NodeID] = reading
 		life := lifeOf(snap, n)
 		if state.Owned {
@@ -184,6 +192,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	})
 
 	pass := PassSummary{FreeSlots: capacity.Free, Ceiling: capacity.Ceiling, Held: capacity.Held, CeilingSource: capacity.Source, DecidingLimit: LimitNone, HostMemory: host}
+	pass.Stagnation = stagnating
 	observed := &observations{ctx: ctx, q: q, plan: plan}
 	var ready []NodeReading
 	selected := 0
@@ -359,6 +368,10 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 			// the constraint depends on measurements that nothing else in the digest carries
 			nodes[i].(map[string]any)["merge_order"] = n.MergeOrder.canonical()
 		}
+		if n.Stagnation != nil {
+			// the count rests on correction and merge-check rows that nothing else in the digest carries
+			nodes[i].(map[string]any)["stagnation"] = n.Stagnation.canonical()
+		}
 	}
 	order := make([]any, len(r.Ready))
 	for i, n := range r.Ready {
@@ -384,6 +397,10 @@ func inputDigest(r Reading, c Capacity, hashes []string) string {
 	if r.Pass.HostMemory != nil {
 		// absent when the scheduler carries no bound; the sample is part of what the reading saw, so a changed value is a changed digest
 		digest["host_memory"] = r.Pass.HostMemory.object()
+	}
+	if (r.Pass.Stagnation != StagnationCounts{}) {
+		// absent when nothing stagnates, so a reading of a plan nobody has corrected twice digests as it did
+		digest["stagnation"] = r.Pass.Stagnation.canonical()
 	}
 	return dag.Digest(digest)
 }

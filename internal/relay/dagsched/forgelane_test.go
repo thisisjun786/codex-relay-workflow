@@ -116,6 +116,7 @@ func forgeLaneCheck(t *testing.T, service *mergeturn.Service, pulls *forgeLanePu
 // forge shows now can make the comparison fail. A pull request that shows another head is refused as another candidate, one nobody seeded is unreadable, and the pull request showing the candidate passes and
 // is decided by the forge.
 func TestLaneCheckComparesTheHeadWithThePullRequestTheForgeShows(t *testing.T) {
+	t.Parallel()
 	k := newLaneKit(t)
 	ctx := context.Background()
 	service := forgeLaneService(k.sched, k.s, k.pulls)
