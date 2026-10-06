@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,7 +121,7 @@ func coreCheckCalls(t *testing.T, got, want [][]string) {
 		t.Fatalf("the fake saw %d calls %q, want %d %q", len(got), got, len(want), want)
 	}
 	for i := range want {
-		if strings.Join(got[i], " ") != strings.Join(want[i], " ") {
+		if !slices.Equal(got[i], want[i]) {
 			t.Errorf("call %d = %q, want %q", i, got[i], want[i])
 		}
 	}
