@@ -137,12 +137,25 @@ func resetRmIfExists(root *os.Root, name, display string, result *ResetResult) e
 // after the stat; otherwise the verdict could describe another directory than
 // the one the removal acts on. Callers pass a bare leaf name.
 func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
-	_, err := root.Stat(name)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+	return resetLinkTargetExistsWith(root, name, root.Stat)
+}
+
+// resetLinkTargetExistsWith is resetLinkTargetExists with the root stat passed in, so a test can
+// watch whether a link's target is opened through the pinned descriptor. statRoot is root.Stat.
+func resetLinkTargetExistsWith(root *os.Root, name string, statRoot func(string) (os.FileInfo, error)) (bool, error) {
+	// A target whose final component is "." or ".." makes statRoot open the target directory itself
+	// (O_DIRECTORY, read only), which CRW-554 forbids; such a target is judged on the root's own path
+	// instead, like any other target the descriptor cannot resolve. A Readlink failure keeps the
+	// descriptor path.
+	target, readErr := root.Readlink(name)
+	if readErr != nil || !resetLinkDotEnding(target) {
+		_, err := statRoot(name)
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
 	}
 	pinned, err := root.Stat(".")
 	if err != nil {
@@ -164,6 +177,19 @@ func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
 		return false, err
 	}
 	return statErr == nil, nil
+}
+
+// resetLinkDotEnding reports whether target's final path component is "." or "..".
+func resetLinkDotEnding(target string) bool {
+	sep := string(filepath.Separator)
+	trimmed := strings.TrimRight(target, sep)
+	if trimmed == "" {
+		return false
+	}
+	if i := strings.LastIndex(trimmed, sep); i >= 0 {
+		trimmed = trimmed[i+1:]
+	}
+	return trimmed == "." || trimmed == ".."
 }
 
 func resetSessions(root *os.Root, base string, result *ResetResult) error {
