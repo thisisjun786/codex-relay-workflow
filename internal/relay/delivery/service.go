@@ -1267,54 +1267,69 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 	return stored, err
 }
 
-// admitKeptDecisionTurnIn is the admission of the continuation turn a keeping decision was
-// dispatched into (CRW-669). An answer or a stop continues the child in a new turn of the same
-// generation (facts.TurnID, stored as the delivery's dispatch_turn_id just above), and that turn is
-// neither the generation's anchor nor admitted by anything else, so the daemon's census — which
-// polls staged turns, unsettled anchors and admitted turns (daemon/census.go) — never reads it, and
-// a turn that dies again without a receipt is invisible to the parent. The relay carried the
-// message, so the relay is the actor that admits it: one generation_turns row bound to the
-// generation's own dispatch turn, the same evidence the registry's AdmitExplicitly writes, and one
-// turn_admitted journal row. No parent intervention is recorded (this is not a message sent outside
-// the relay's routes, and AdmitExplicitly, which records one, is not used), no refusal reason and no
-// output field are added.
-//
-// It runs inside settle's transaction, so the event row and the generation row it reads are the ones
-// the transaction wrote, and the admission commits or rolls back with the send it describes. An
-// existing row for the same turn is left exactly as it is (ON CONFLICT DO NOTHING): an earlier
-// admission, or the child's own claim, already holds the turn. A generation with no dispatch turn id
-// admits nothing, because there is no anchor to bind the evidence to.
+// admitKeptDecisionTurnIn is settle's side of the admission: the turn this send just dispatched.
 func (d *Service) admitKeptDecisionTurnIn(ctx context.Context, eventID, state string, facts Facts) error {
 	if state != Dispatched {
 		return nil
 	}
 	turn, _ := facts.TurnID.(string)
-	if strings.TrimSpace(turn) == "" {
-		return nil
-	}
-	event, err := d.eventRow(ctx, eventID)
+	return admitKeptDecisionTurn(ctx, d.Store, d.Clock, eventID, turn)
+}
+
+// admitKeptDecisionTurn admits turn as the continuation turn a keeping decision (answer, stop)
+// started (CRW-669). An answer or a stop continues the child in a new turn of the same generation,
+// and that turn is neither the generation's anchor nor admitted by anything else, so the daemon's
+// census — which polls staged turns, unsettled anchors and admitted turns (daemon/census.go) —
+// never reads it, and a turn that dies again without a receipt is invisible to the parent. The relay
+// carried the message, so the relay is the actor that admits it: one generation_turns row bound to
+// the generation's own dispatch turn, the same evidence the registry's AdmitExplicitly writes, and
+// one turn_admitted journal row. No parent intervention is recorded (this is not a message sent
+// outside the relay's routes, and AdmitExplicitly, which records one, is not used), no refusal
+// reason and no output field are added.
+//
+// It runs inside the caller's transaction, so the rows it reads are the ones that transaction wrote,
+// and the admission commits or rolls back with the delivery it describes. Both ways a delivery
+// reaches dispatched go through it: the send (settle) and the recovery that finds a lost response's
+// turn (Reconciler.write), so whether the first transport response arrived does not decide whether
+// the parent can see the continuation's end. A turn the caller does not name is read from the
+// delivery row. An existing row for the same turn is left exactly as it is (ON CONFLICT DO NOTHING):
+// an earlier admission, or the child's own claim, already holds the turn. A generation with no
+// dispatch turn id admits nothing, because there is no anchor to bind the evidence to.
+func admitKeptDecisionTurn(ctx context.Context, s *store.Store, clock Clock, eventID, turn string) error {
+	event, err := one(ctx, s, "SELECT relationship_id, execution_generation, outcome, receipt FROM events WHERE event_id = ?", eventID)
 	if err != nil || event == nil {
 		return err
 	}
 	if !keepsAnchor(event) {
 		return nil
 	}
+	if strings.TrimSpace(turn) == "" {
+		row, err := one(ctx, s, "SELECT dispatch_turn_id FROM deliveries WHERE event_id = ?", eventID)
+		if err != nil || row == nil {
+			return err
+		}
+		turn = row.S("dispatch_turn_id")
+	}
+	if strings.TrimSpace(turn) == "" {
+		return nil
+	}
 	rid, generation := event.S("relationship_id"), event.I("execution_generation")
-	row, err := one(ctx, d.Store, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, generation)
-	if err != nil {
+	row, err := one(ctx, s, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, generation)
+	if err != nil || row == nil {
 		return err
 	}
-	if row == nil {
+	// The anchor enters the evidence exactly as it is stored, trimmed only to decide whether there is
+	// one at all (as AdmitExplicitly does): the census and the receipt identity check compare the
+	// evidence against the generation's own dispatch_turn_id, so a trimmed copy of a padded id would
+	// be an admission nothing finds.
+	anchor := row.S("dispatch_turn_id")
+	if strings.TrimSpace(anchor) == "" {
 		return nil
 	}
-	anchor := strings.TrimSpace(row.S("dispatch_turn_id"))
-	if anchor == "" {
-		return nil
-	}
-	now := d.Clock.ISO()
-	if _, err := execSQL(ctx, d.Store, "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id, evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id, execution_generation, turn_id) DO NOTHING",
+	now := clock.ISO()
+	if _, err := execSQL(ctx, s, "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id, evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id, execution_generation, turn_id) DO NOTHING",
 		rid, generation, turn, registry.BoundExplicitPrefix+anchor, "relay", "decision reply "+eventID, now); err != nil {
 		return err
 	}
-	return journal(ctx, d.Store, "turn_admitted", turn, Obj{{Key: "relationship", Value: rid}, {Key: "generation", Value: generation}, {Key: "actor", Value: "relay"}}, now)
+	return journal(ctx, s, "turn_admitted", turn, Obj{{Key: "relationship", Value: rid}, {Key: "generation", Value: generation}, {Key: "actor", Value: "relay"}}, now)
 }

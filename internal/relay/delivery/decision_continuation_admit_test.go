@@ -177,3 +177,67 @@ func TestDCA05_AGenerationWithoutADispatchTurnAdmitsNothing(t *testing.T) {
 		t.Fatalf("a generation with no dispatch turn journalled %d admissions", n)
 	}
 }
+
+// c1: a decision whose send response was lost is recovered by the daemon's reconciliation, which
+// promotes the delivery to dispatched from the turn it finds in the child's thread. That is the same
+// settle as a send, so it admits the continuation turn too: whether the first transport response
+// arrived does not decide whether the parent can see that turn's end.
+func TestDCA07_ARecoveredDecisionAdmitsItsContinuationTurn(t *testing.T) {
+	d := newObsWorld(t, "interrupted")
+	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
+	// the send's response is lost: the attempt is left held_uncertain, with no turn id
+	d.host.script = []string{"in_progress"}
+	record := d.mustAttempt(event, nil)
+	request := pyjson.Text(record.Get("requestId"))
+	if state := pyjson.Text(record.Get("deliveryState")); state != HeldUncertain {
+		t.Fatalf("the lost send settled %s, want held_uncertain", state)
+	}
+	if turn := d.row(event).S("dispatch_turn_id"); turn != "" {
+		t.Fatalf("the lost send recorded turn %q, want none", turn)
+	}
+	if n := d.count("SELECT COUNT(*) AS c FROM generation_turns WHERE relationship_id = ?", d.rid); n != 0 {
+		t.Fatalf("a lost send admitted %d turns", n)
+	}
+
+	// the message did reach the child, in a turn that carries the request id
+	turn := d.host.startTurn(child, "turn-recovered", "inProgress", "[codex-session-relay] parent decision\nrequestId: "+request+"\n")
+	now := d.clock.Now()
+	if _, err := NewReconciler(d.delivery).ReconcileAttempt(d.ctx, request, d.host, &now); err != nil {
+		t.Fatalf("the recovery: %v", err)
+	}
+	row := d.row(event)
+	if row.S("state") != Dispatched || row.S("dispatch_turn_id") != turn.TurnID {
+		t.Fatalf("the recovered delivery = %v, want dispatched into %s", row, turn.TurnID)
+	}
+	admitted := d.admittedTurn(turn.TurnID)
+	if admitted == nil {
+		t.Fatalf("the recovered turn %s was not admitted: no generation_turns row", turn.TurnID)
+	}
+	if admitted.S("evidence") != admitBound || admitted.S("actor") != "relay" || admitted.S("detail") != "decision reply "+event {
+		t.Fatalf("the admission of the recovered turn = %v, want evidence %q, actor relay and detail %q", admitted, admitBound, "decision reply "+event)
+	}
+	if n := d.count("SELECT COUNT(*) AS c FROM journal WHERE kind = 'turn_admitted' AND subject = ?", turn.TurnID); n != 1 {
+		t.Fatalf("turn_admitted journal rows for the recovered turn: %d, want 1", n)
+	}
+	if n := d.count("SELECT COUNT(*) AS c FROM journal WHERE kind = 'direct_parent_intervention'"); n != 0 {
+		t.Fatalf("direct_parent_intervention journal rows: %d, want none", n)
+	}
+}
+
+// c1: a recovered turn the child then reports from needs no claim either, exactly as the sent one.
+func TestDCA08_ARecoveredTurnIsAcceptedWithoutAClaim(t *testing.T) {
+	d := newObsWorld(t, "interrupted")
+	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
+	d.host.script = []string{"in_progress"}
+	record := d.mustAttempt(event, nil)
+	request := pyjson.Text(record.Get("requestId"))
+	turn := d.host.startTurn(child, "turn-recovered-2", "inProgress", "[codex-session-relay] parent decision\nrequestId: "+request+"\n")
+	now := d.clock.Now()
+	if _, err := NewReconciler(d.delivery).ReconcileAttempt(d.ctx, request, d.host, &now); err != nil {
+		t.Fatalf("the recovery: %v", err)
+	}
+	payload := d.executionPayload(d.rid, 1, "failed", 4, turnRef{child, turn.TurnID, "completed"})
+	if _, err := d.accept(payload, store.AcceptOptions{}); err != nil {
+		t.Fatalf("a receipt from the recovered turn without a claim: %v", err)
+	}
+}
