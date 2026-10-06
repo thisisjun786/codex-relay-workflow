@@ -20,18 +20,28 @@ import (
 // spawnParityNodeError is the oracle's Error.message for err: a filesystem failure whose errno
 // spawnParityErrno names becomes `<NAME>: <description>, <op> '<path>'`, with the path left out for
 // write and close; anything else keeps err.Error().
+//
+// Only a direct *os.PathError is converted. errors.As would find one inside a wrapper, but the port
+// wraps some failures with text of its own (a dispatch-lock-clear's "(a dispatch-lock-clear of this
+// session is running)", a lock abandon's "lock ... left behind") that has no oracle counterpart;
+// rewriting the whole message from the inner PathError would drop that text. The oracle-reachable
+// failures (dispatchRead's os.Lstat, and the plain errors beside it) arrive here unconverted.
 func spawnParityNodeError(err error) string {
-	output := err.Error()
-	var path *os.PathError
+	path, ok := err.(*os.PathError)
+	if !ok {
+		return err.Error()
+	}
 	var errno syscall.Errno
-	if errors.As(err, &path) && errors.As(err, &errno) {
-		name, desc := spawnParityErrno(errno)
-		if name != "" {
-			output = name + ": " + desc + ", " + path.Op
-			if path.Op != "write" && path.Op != "close" {
-				output += " '" + path.Path + "'"
-			}
-		}
+	if !errors.As(path.Err, &errno) {
+		return err.Error()
+	}
+	name, desc := spawnParityErrno(errno)
+	if name == "" {
+		return err.Error()
+	}
+	output := name + ": " + desc + ", " + path.Op
+	if path.Op != "write" && path.Op != "close" {
+		output += " '" + path.Path + "'"
 	}
 	return output
 }
