@@ -60,6 +60,12 @@ func TestDeliverClassifyTheContractInputs(t *testing.T) {
 		{"an error text without the flag", deliverToolSend, deliverReply{Text: "Error executing tool send_message_to_thread: nope"}, deliverClassRefused},
 		{"a contradictory receipt fails closed", deliverToolSend, deliverReply{Payload: map[string]any{"status": "refused", "delivery": "turn_started"}}, deliverClassRefused},
 		{"an accepted delivery of the wrong tool", deliverToolSend, deliverReply{Payload: map[string]any{"delivery": "accepted_not_applied"}}, deliverClassUnknown},
+		{"a steer refused because the turn went idle", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "thread_idle"}}}, deliverClassRefused},
+		{"a steer refused because the thread is not loaded", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "thread_not_loaded"}}}, deliverClassRefused},
+		{"a steer refused by a thread system error", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "thread_system_error"}}}, deliverClassRefused},
+		{"a steer refused because the turn moved on", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "expected_turn_mismatch"}}}, deliverClassRefused},
+		{"a steer that landed in another turn stays unknown", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "steered_turn_mismatch"}}}, deliverClassUnknown},
+		{"an unknown rpcError code stays unknown", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "something_new"}}}, deliverClassUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -85,26 +91,20 @@ func TestDeliverNewRecordCarriesTheIdentityAndTheDigest(t *testing.T) {
 	if record.CreatedAt != stamp.Format(time.RFC3339) {
 		t.Errorf("created_at = %q, want %q", record.CreatedAt, stamp.Format(time.RFC3339))
 	}
-	// The digest of the three bytes h, e, l, l, o is the well known sha256 below.
+	// The digest of the five bytes h, e, l, l, o is the well known sha256 below.
 	const helloDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 	if record.MessageSHA256 != helloDigest {
 		t.Errorf("message_sha256 = %q, want %s", record.MessageSHA256, helloDigest)
 	}
 }
 
-// The record is written through a temporary file, synced and renamed, and reads back equal.
+// The record carries all nine fields and its attempts, is written through a temporary file and a
+// rename, and reads back equal. Every state round-trips too, so the state is the one written.
 func TestDeliverRecordRoundTripsAtomically(t *testing.T) {
 	cfg := deliverTestConfig(t)
 	record := deliverRecord{
-		LogicalID:     "m1",
-		RequestID:     "m1",
-		Tool:          deliverToolSend,
-		TargetThread:  "thread-1",
-		MessageSHA256: "abc",
-		CreatedAt:     "2026-10-06T07:30:00Z",
-		State:         deliverStateUnknown,
-		Received:      true,
-		Applied:       false,
+		LogicalID: "m1", RequestID: "m1", Tool: deliverToolSend, TargetThread: "thread-1",
+		MessageSHA256: "abc", CreatedAt: "2026-10-06T07:30:00Z", State: deliverStateUnknown, Received: true,
 		Attempts: []deliverAttempt{
 			{At: "2026-10-06T07:30:00Z", Class: deliverClassUnknown, ReceiptExcerpt: "outcome_unknown"},
 			{At: "2026-10-06T07:31:00Z", Class: deliverClassAccepted, ReceiptExcerpt: "reconciled with get_operation"},
@@ -113,8 +113,8 @@ func TestDeliverRecordRoundTripsAtomically(t *testing.T) {
 	if err := deliverSave(cfg, record); err != nil {
 		t.Fatalf("deliverSave: %v", err)
 	}
-	if _, err := os.Stat(deliverOutboxPath(cfg, "m1") + ".tmp"); !os.IsNotExist(err) {
-		t.Errorf("the temporary file survived the rename: %v", err)
+	if entries, err := os.ReadDir(filepath.Join(cfg.StateDir, "outbox")); err != nil || len(entries) != 1 {
+		t.Fatalf("the outbox holds %v %v, want only the committed record", entries, err)
 	}
 	got := deliverRecordOf(t, cfg, "m1")
 	if got.LogicalID != record.LogicalID || got.RequestID != record.RequestID || got.Tool != record.Tool ||
@@ -131,20 +131,13 @@ func TestDeliverRecordRoundTripsAtomically(t *testing.T) {
 	if loaded, known, err := deliverLoad(cfg, "m1"); err != nil || !known || loaded.RequestID != "m1" {
 		t.Errorf("deliverLoad: %+v %v %v", loaded, known, err)
 	}
-}
-
-// Every state the record can hold reads back equal, so the state is the one that was written.
-func TestDeliverRecordStatesRoundTrip(t *testing.T) {
-	cfg := deliverTestConfig(t)
-	for _, state := range []string{deliverStatePending, deliverStateAccepted, deliverStateRefused, deliverStateUnknown} {
-		t.Run(state, func(t *testing.T) {
-			if err := deliverSave(cfg, deliverRecord{LogicalID: "s-" + state, RequestID: "s", State: state}); err != nil {
-				t.Fatalf("deliverSave: %v", err)
-			}
-			if got := deliverRecordOf(t, cfg, "s-"+state); got.State != state {
-				t.Errorf("state read back as %q, want %q", got.State, state)
-			}
-		})
+	for _, state := range []string{deliverStatePending, deliverStateAccepted, deliverStateRefused} {
+		if err := deliverSave(cfg, deliverRecord{LogicalID: "s-" + state, RequestID: "s", State: state}); err != nil {
+			t.Fatalf("deliverSave %s: %v", state, err)
+		}
+		if got := deliverRecordOf(t, cfg, "s-"+state); got.State != state {
+			t.Errorf("state read back as %q, want %q", got.State, state)
+		}
 	}
 }
 
@@ -157,11 +150,13 @@ func TestDeliverLoadOfAMissingRecord(t *testing.T) {
 	}
 }
 
-// A logical id that is not one path element is refused, and nothing is written anywhere.
+// A logical id that is not one path element, or that leaves no room for the retry suffix, is
+// refused and nothing is written anywhere.
 func TestDeliverRefusesAnUnsafeLogicalID(t *testing.T) {
 	cfg := deliverTestConfig(t)
 	backslash := string(rune(0x5c))
-	for _, id := range []string{"", ".", "..", "a/b", "a" + backslash + "b", "../escape", "a/../b"} {
+	room := deliverRequestIDLimit - deliverRetrySuffixRoom
+	for _, id := range []string{"", ".", "..", "a/b", "a" + backslash + "b", "../escape", "a/../b", strings.Repeat("a", room+1)} {
 		if err := deliverPathComponent(id, "logical id"); err == nil {
 			t.Errorf("the logical id %q was accepted", id)
 		}
@@ -169,7 +164,7 @@ func TestDeliverRefusesAnUnsafeLogicalID(t *testing.T) {
 			t.Errorf("a record was written for the logical id %q", id)
 		}
 	}
-	for _, safe := range []string{"m1", "m1-r1", "0123456789abcdef"} {
+	for _, safe := range []string{"m1", "m1-r1", strings.Repeat("a", room)} {
 		if err := deliverPathComponent(safe, "logical id"); err != nil {
 			t.Errorf("the safe logical id %q was refused: %v", safe, err)
 		}
@@ -179,6 +174,21 @@ func TestDeliverRefusesAnUnsafeLogicalID(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(cfg.StateDir), "escape.json")); !os.IsNotExist(err) {
 		t.Errorf("a record escaped the state directory: %v", err)
+	}
+}
+
+// An outbox directory that is a symlink is refused, so a planted link cannot redirect a write.
+func TestDeliverRefusesASymlinkedOutboxDirectory(t *testing.T) {
+	cfg := deliverTestConfig(t)
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(cfg.StateDir, "outbox")); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	if err := deliverSave(cfg, deliverRecord{LogicalID: "m1", RequestID: "m1", State: deliverStatePending}); err == nil {
+		t.Errorf("a record was written through a symlinked outbox directory")
+	}
+	if entries, err := os.ReadDir(elsewhere); err == nil && len(entries) != 0 {
+		t.Errorf("the write followed the link: %v", entries)
 	}
 }
 
@@ -225,7 +235,8 @@ func TestDeliverRetryable(t *testing.T) {
 	}
 }
 
-// The excerpt is the receipt text, or the transport error, cut to the limit.
+// The excerpt is the receipt text, or the transport error, cut to the limit and never inside a
+// character, and the stored evidence still round-trips.
 func TestDeliverExcerpt(t *testing.T) {
 	receipt := "status outcome_unknown delivery outcome_unknown"
 	if got := deliverExcerpt(deliverReply{Text: receipt}); got != receipt {
@@ -234,27 +245,23 @@ func TestDeliverExcerpt(t *testing.T) {
 	if got := deliverExcerpt(deliverReply{Err: errors.New("the bridge closed its output")}); got != "the bridge closed its output" {
 		t.Errorf("deliverExcerpt of a transport failure = %q", got)
 	}
-	long := deliverExcerpt(deliverReply{Text: strings.Repeat("x", deliverExcerptLimit+50)})
-	if len(long) != deliverExcerptLimit {
+	if long := deliverExcerpt(deliverReply{Text: strings.Repeat("x", deliverExcerptLimit+50)}); len(long) != deliverExcerptLimit {
 		t.Errorf("the excerpt is %d bytes, want %d", len(long), deliverExcerptLimit)
 	}
-}
-
-// A cut lands on a character boundary, so a receipt holding a multi-byte character is not left
-// with a broken rune. The receipt below is one byte short of the limit followed by three-byte
-// characters, so a byte cut would land inside one.
-func TestDeliverExcerptCutsOnACharacterBoundary(t *testing.T) {
+	// One byte short of the limit followed by three-byte characters, so a byte cut lands inside
+	// one and the stored evidence would hold a broken rune.
 	text := strings.Repeat("x", deliverExcerptLimit-1) + strings.Repeat(string(rune(0xac00)), 5)
-	got := deliverExcerpt(deliverReply{Text: text})
-	if len(got) > deliverExcerptLimit {
-		t.Fatalf("the excerpt is %d bytes, over the limit", len(got))
+	cut := deliverExcerpt(deliverReply{Text: text})
+	if len(cut) > deliverExcerptLimit || !utf8.ValidString(cut) {
+		t.Fatalf("the excerpt is %d bytes and valid=%v, want at most %d and valid", len(cut), utf8.ValidString(cut), deliverExcerptLimit)
 	}
-	if !utf8.ValidString(got) {
-		t.Errorf("the excerpt holds a broken rune: %q", got)
+	cfg := deliverTestConfig(t)
+	record := deliverRecord{LogicalID: "m1", RequestID: "m1", State: deliverStateUnknown,
+		Attempts: []deliverAttempt{{At: "2026-10-06T07:30:00Z", Class: deliverClassUnknown, ReceiptExcerpt: cut}}}
+	if err := deliverSave(cfg, record); err != nil {
+		t.Fatalf("deliverSave: %v", err)
 	}
-	for _, r := range got {
-		if r == utf8.RuneError {
-			t.Fatalf("the excerpt holds the replacement rune")
-		}
+	if got := deliverRecordOf(t, cfg, "m1"); len(got.Attempts) != 1 || got.Attempts[0].ReceiptExcerpt != cut {
+		t.Errorf("the excerpt read back as %+v, want %q", got.Attempts, cut)
 	}
 }
