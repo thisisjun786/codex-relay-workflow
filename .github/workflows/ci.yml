@@ -5,7 +5,7 @@ on:
     branches: [dev]
   workflow_dispatch:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, edited]
+    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]
 
 permissions:
   contents: read
@@ -115,6 +115,13 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # CRW-790: while the repository variable CRW_CI_MODE is light, a pull request the merge lane
+    # has not labeled crw-lane skips the five test legs' work, and the labeled event -- and every
+    # later push while the label stays -- runs them in full. One definition, read by the steps
+    # below, so lint and dist can never be light and neither can a dev push or a manual dispatch.
+    # A skipped job's check still reads success, so a light leg skips its steps and never the job.
+    env:
+      CRW_LIGHT_LEG: ${{ github.event_name == 'pull_request' && vars.CRW_CI_MODE == 'light' && !contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-') }}
     strategy:
       fail-fast: false
       matrix:
@@ -122,8 +129,15 @@ jobs:
         # `make test` (the contract corpus included); the static release binaries.
         part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]
     steps:
+      # A light leg says so in its summary and does none of the leg's work. The condition is a
+      # step condition, never a job-level if: GitHub reports a skipped job's check as success, so
+      # a skipped leg could hide an earlier red run behind a green dev-gate.
+      - name: Light mode notice
+        if: env.CRW_LIGHT_LEG == 'true'
+        run: |
+          printf '%s\n' "light mode: this leg's tests run in full when the merge lane labels the pull request crw-lane" >> "$GITHUB_STEP_SUMMARY"
       - name: Check out scripts/ci for the body-only edit mirror
-        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base && env.CRW_LIGHT_LEG != 'true' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
@@ -131,7 +145,7 @@ jobs:
           sparse-checkout: scripts/ci
       - name: Mirror the jobs this head already ran
         id: mirror
-        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base && env.CRW_LIGHT_LEG != 'true' }}
         run: bash scripts/ci/edit_mirror.sh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -141,23 +155,23 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           JOB_NAME: go-product (${{ matrix.part }})
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: steps.mirror.outputs.mirrored != 'true'
+        if: steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: steps.mirror.outputs.mirrored != 'true'
+        if: steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         with:
           go-version-file: go.mod
       - name: Lint
-        if: matrix.part == 'lint' && steps.mirror.outputs.mirrored != 'true'
+        if: matrix.part == 'lint' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         run: make lint
       - name: Test and replay the contract corpus (${{ matrix.part }})
-        if: startsWith(matrix.part, 'test-') && steps.mirror.outputs.mirrored != 'true'
+        if: startsWith(matrix.part, 'test-') && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         env:
           PART: ${{ matrix.part }}
         run: make test-part TEST_PART="${PART#test-}"
       - name: Build the static binaries for every published target
-        if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
+        if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         run: |
           for target in linux/amd64 linux/arm64 darwin/arm64; do
             os=${target%/*}
@@ -169,29 +183,29 @@ jobs:
       # home and the plugin's declared wiring runs against it. CGO_ENABLED=0 and -trimpath are
       # the dist build's, so the test reuses its compiled packages and only relinks.
       - name: Install and wire the release binary in an isolated home
-        if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
+        if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         env:
           CGO_ENABLED: '0'
         run: CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...
-      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_linux_amd64
           path: dist/crw_linux_amd64/crw
           if-no-files-found: error
-      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_linux_arm64
           path: dist/crw_linux_arm64/crw
           if-no-files-found: error
-      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_darwin_arm64
           path: dist/crw_darwin_arm64/crw
           if-no-files-found: error
-      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true'
+      - if: matrix.part == 'dist' && steps.mirror.outputs.mirrored != 'true' && env.CRW_LIGHT_LEG != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SHA256SUMS
