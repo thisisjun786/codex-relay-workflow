@@ -338,11 +338,14 @@ func TestCreatedSessionLockReleaseFailureIsReported(t *testing.T) {
 			stuck := filepath.Join(filepath.Dir(createdArchivedRecord(ws, "x")), tc.lock, "stuck")
 			t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
 			// While the call holds the lock, a file in a read-only directory inside it makes the removal of the lock fail.
-			h := &createdLockHost{status: "idle", onRead: func() {
+			// The close reads the host once for the identity and once for the newest turn, so the plant is made at the first
+			// read and has to survive the second.
+			plant := sync.OnceFunc(func() {
 				check(t, os.Mkdir(stuck, 0o700))
 				check(t, os.WriteFile(filepath.Join(stuck, "f"), nil, 0o600))
 				check(t, os.Chmod(stuck, 0o500))
-			}}
+			})
+			h := &createdLockHost{status: "idle", onRead: plant}
 			one := createdArchivedSession(t, ws, env, "task-one")
 			input := createdArchivedReport("task-one", one, "child-a")
 			if tc.stop {
