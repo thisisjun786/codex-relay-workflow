@@ -566,7 +566,8 @@ func TestOrchestrateTransitionSupersedesStaleRounds(t *testing.T) {
 		!strings.Contains(string(raw), `"roundId":"r1"`) {
 		t.Fatalf("goalplan ledger: %s %v", raw, err)
 	}
-	// A held lock leaves the edge to proceed and the round untouched (fail-open housekeeping).
+	// A held lock refuses the gated edge (CRW-811): the work-phase gate runs inside the goalplan write lock,
+	// so a busy lock refuses with its reason, publishes nothing and leaves the round untouched.
 	held := "replan-held"
 	plan2 := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "held lock"})
 	plan2.Slug, plan2.ActiveWorkPhaseID = held, new("wp1")
@@ -580,26 +581,42 @@ func TestOrchestrateTransitionSupersedesStaleRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	orchestrateTransitionPut(t, filepath.Join(lock, "owner.json"), "{\"pid\":4242}\n")
-	if got := orchestrateTransitionRun(t, cwd, "A", "--session", held, "--attest", `{"from":"P","to":"A","did":"audited the plan","planUnit":"`+unit+`","workPhaseId":"wp1"}`); got.Code != 0 {
-		t.Fatalf("a held lock must not block: %+v", got)
+	if got := orchestrateTransitionRun(t, cwd, "A", "--session", held, "--attest", `{"from":"P","to":"A","did":"audited the plan","planUnit":"`+unit+`","workPhaseId":"wp1"}`); got.Code != 1 || !strings.Contains(got.Output, "is busy") {
+		t.Fatalf("a busy goalplan lock must refuse the gated edge: %+v", got)
 	}
-	if state.ReadState(cwd, held).Phase != state.PhaseA {
-		t.Fatal("the held-lock P>A did not advance")
+	if state.ReadState(cwd, held).Phase != state.PhaseP {
+		t.Fatal("the refused P>A moved the session")
+	}
+	if saved := goalplan.ReadGoalplan(cwd, held); saved == nil || len(saved.ReviewRounds) != 1 || saved.ReviewRounds[0].Status != goalplan.ReviewInFlight {
+		t.Fatalf("the refused P>A touched the round: %+v", saved)
 	}
 }
 
-// TestOrchestrateTransitionDCloseNotPorted pins the split boundary: this issue refuses the D close.
-func TestOrchestrateTransitionDCloseNotPorted(t *testing.T) {
+// TestOrchestrateTransitionDCloseUnboundCloses is the split boundary this file used to pin as a
+// refusal (CRW-756 ports the close): an unbound session's D closes the cycle to IDLE with the oracle's
+// text. The bound and recovery paths are covered in orchestrate_dclose_test.go and
+// orchestrate_dclose_recovery_test.go.
+func TestOrchestrateTransitionDCloseUnboundCloses(t *testing.T) {
 	cwd := orchestrateTransitionRoot(t)
 	id := "d-close"
 	orchestrateTransitionSession(t, cwd, id, `{"phase":"C","checkEpoch":"c-1"}`)
 	got, err := orchestrateTransitionTry(t, cwd, "D", "--session", id, "--attest",
 		`{"from":"C","to":"D","did":"verified","checkOutput":"tests passed","exitCode":0}`)
-	if err == nil || err.Error() != "orchestrate D close is not ported yet" {
-		t.Fatalf("D close: %+v %v", got, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if state.ReadState(cwd, id).Phase != state.PhaseC || len(orchestrateTransitionLedger(t, cwd)) != 0 {
-		t.Fatal("the unported D close wrote state")
+	want := "orchestrate D: current=C -> IDLE (C \u2192 IDLE, cycle closed, session " + id + ")"
+	if got.Code != 0 || got.Output != want {
+		t.Fatalf("D close: %+v", got)
+	}
+	after := state.ReadState(cwd, id)
+	if after.Phase != state.PhaseIdle || after.CheckEpoch != nil || after.OrchestrationActive {
+		t.Fatalf("cleared state: %+v", after)
+	}
+	rows := orchestrateTransitionLedger(t, cwd)
+	if len(rows) != 1 || rows[0]["from"] != "C" || rows[0]["to"] != "IDLE" || rows[0]["reason"] != "done" ||
+		rows[0]["evidence"] != "verified" {
+		t.Fatalf("done row: %+v", rows)
 	}
 }
 
@@ -694,22 +711,26 @@ func TestOrchestrateTransitionHoldsTheSessionLock(t *testing.T) {
 	}
 }
 
-// orchestrateTransitionListing is the entry names under ~/.codex and ~/.crw, or "absent".
-// TestOrchestrateTransitionRowBeforeState pins the commit order: a row that cannot be written leaves the
-// session untouched, so the same verb can be retried (the oracle's state-first order advanced the FSM).
-func TestOrchestrateTransitionRowBeforeState(t *testing.T) {
-	cwd, id := orchestrateTransitionRoot(t), "row-order"
+// TestOrchestrateTransitionStateBeforeRow pins the commit order CRW-811 restores: the state is published
+// first and the row appended second, the oracle's own order, so a row that cannot be written is a warning on
+// a success answer and the transition stands. The pre-publication half (a write that fails before the rename
+// writes no row) is TestOrchestrateCommitPrePublicationFailure.
+func TestOrchestrateTransitionStateBeforeRow(t *testing.T) {
+	cwd, id := orchestrateTransitionRoot(t), "commit-order"
 	orchestrateTransitionSession(t, cwd, id, `{"phase":"IDLE"}`)
 	if err := os.MkdirAll(filepath.Join(cwd, ".crw", "ledger.jsonl"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orchestrateTransitionTry(t, cwd, "P", "--session", id); err == nil {
-		t.Fatal("a transition whose row cannot be written reported success")
+	got := orchestrateTransitionRun(t, cwd, "P", "--session", id)
+	if got.Code != 0 || !strings.Contains(got.Output, "warning: ledger row for IDLE -> P could not be written: ") {
+		t.Fatalf("a transition whose row cannot be written must answer success with a warning: %+v", got)
 	}
-	if state.ReadState(cwd, id).Phase != state.PhaseIdle {
-		t.Fatal("the session moved although its row could not be written")
+	if state.ReadState(cwd, id).Phase != state.PhaseP {
+		t.Fatal("the published transition did not move the session")
 	}
 }
+
+// orchestrateTransitionListing is the entry names under ~/.codex and ~/.crw, or "absent".
 
 func orchestrateTransitionListing(t *testing.T, home string) string {
 	t.Helper()

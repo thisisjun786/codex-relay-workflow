@@ -181,6 +181,18 @@ func cmdEmit(c *cliRun) (any, error) {
 		s := c.s("--supersedes-revision")
 		options.SupersedesRevision = &s
 	}
+	if outcome == "ready_for_review" {
+		// CRW-826: the one judgment emit makes on the receipt's lineage, run inside the intake
+		// transaction over the transaction's own Querier, before anything is written. A receipt that
+		// would leave the generation with no single head is refused revision_ambiguous, and the
+		// detail names the revision the generation reads now, so the child can name it in the same
+		// turn. A first receipt, a duplicate and a generation that already reads no single head are
+		// not refused; the recovery of an already ambiguous generation is a generation opened by
+		// hand (dag-correct), not this check.
+		options.ForkGuard = func(ctx context.Context, q store.Querier, claim store.ReceiptClaim) error {
+			return RefuseNewFork(ctx, q, claim.RelationshipID, claim.Generation, claim.EventID, claim.RevisionHash, options.SupersedesRevision)
+		}
+	}
 	intake := store.ReceiptIntake{Store: d.Store, Now: c.clock.ISO, Minimum: store.BestEffortDetection}
 	stored, err := intake.AcceptChildReceiptWith(c.ctx, []byte(dumps(payload)), store.TurnReference{ThreadID: thread, TurnID: turn, Status: status}, options)
 	if err != nil {

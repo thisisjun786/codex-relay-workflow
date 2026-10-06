@@ -338,6 +338,21 @@ described under [authorized execution settings](#authorized-execution-settings).
 pair is the exact model and reasoning effort declared for that role by the execution policy;
 both the caller and live worker must report the same policy digest.
 
+The name the engine gives the child is `child.title` normalized with the request's `issueKey`:
+a title that already starts with the key, followed by the end of the title or a character that
+is neither a letter nor a digit, is sent as it is; any other nonempty title is sent as
+`<issueKey> · <title>` (middle dot U+00B7, one space each side) while that value is at most 500
+bytes, the limit the bridge applies to a create's title, and is otherwise sent unchanged, so the
+prefix never makes a request the bridge refuses. A `managed-start` request cannot carry an empty
+title, because `child.title` is required and non-blank. The rule applies to the name the host is
+given on `thread/start` and again when the engine renames the thread after an adopted standby. It
+never rewrites the stored request or its fingerprint, so a repeat of the same request is still the
+same replay.
+
+A create's parameters carry the title, so a create that a runtime without this rule recorded
+`not_attempted` conflicts when the same request is retried on a runtime with it. The runtime swap
+that brings this rule in is made only while no managed request holds a `not_attempted` create.
+
 The entry reserves the issue before asking the bridge to create a standby task. It then binds
 the returned task and turn to the marker, registry, criteria and settings before sending the
 business prompt. The standby prompt does no implementation work. A missing or mismatching live
@@ -632,6 +647,16 @@ to pass. With `--socket` the relay reads the status from the host and ignores `-
 live turn reads `inProgress` there: such an emit is made without `--socket`, with `--state` naming the
 store this emit used. `blocked_needs_input` takes no `--turn-status` and stays staged.
 
+A `ready_for_review` receipt is also judged on its lineage, inside the transaction that stores it:
+the relay reads the generation with the receipt and without it, and refuses `revision_ambiguous`,
+writing no event and no lineage row, when the generation reads one head without the receipt and no
+single head with it (a second root, a cycle, an unknown predecessor or a disconnected revision).
+The refusal's detail names the revision the generation reads now, so the child fixes it in the same
+turn by naming that revision with `--supersedes-revision`. A first receipt, a duplicate, and a
+generation that already reads no single head are answered as they were; recovering such a generation
+is the route the refusal table of [Ruling an event that is already ruled](#ruling-an-event-that-is-already-ruled)
+records for a plan node.
+
 A loop spanning several turns completes on a turn that is not the anchor, and says so in the same
 call:
 
@@ -726,7 +751,7 @@ When a step refuses, the refusal names what to do:
 | the work is marked merged, or a turn landed it | `disposition_conflict` | a merged result is corrected by new work, not by a second ruling |
 | a merge turn is merging or of unknown effect | `disposition_conflict` | resolve the turn (`merge-turn-resolve` reads the branch), then rule again |
 | the event is not the head | `stale_generation` or `superseded_revision` | rule the head the assignment shows |
-| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node this build records no route, so report it (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
+| the head is ambiguous | `revision_ambiguous` | outside a plan, a fresh execution generation; for a plan node whose result is not accepted yet, the generation opened by hand: `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened under that id (`generation-open`), the instruction line is sent to the child, the turn that carried it is bound (`generation-bind`) and `dag-correct --manifest-digest` records it as a correction, after which the child emits one receipt in that generation; a plan node whose accepted result is stale has its own route above (read `revision-head` first: a re-emit that named a suppressed receipt of its own generation may read a head) |
 | the relationship is not active | `relationship_not_active` | `relationship-resume`, then rule again |
 
 Two limits are part of the contract. The same verdict again is a replay even when its findings differ, so a `needs_changes` ruling that was already given cannot be given again with other words: the verdict does not resend (see [Return corrections to the existing task](../../plugins/crw/skills/crw-run/SKILL.md#return-corrections-to-the-existing-task)). And an installed relay older than this change answers a different verdict with the recorded ruling marked `_replay` and exit 0; read the answer (a ruling that is still `verified` and marked `_replay` changed nothing) and `assignment-show`, never the exit code.

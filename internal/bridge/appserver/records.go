@@ -24,6 +24,38 @@ type PhaseBounds struct{ Establish, Transmit, Ack time.Duration }
 
 var DefaultBounds = PhaseBounds{20 * time.Second, 20 * time.Second, 20 * time.Second}
 
+// ackBoundKey carries a per-call ack bound on the context. A call whose context holds one uses it
+// instead of the client's PhaseBounds.Ack; the establish and transmit bounds are unchanged. The
+// managed create path is the one caller: under App Server load its thread/start, thread/name/set
+// and turn/start answers have taken longer than the default 20 s, and a lost answer leaves a
+// creation receipt that says outcome_unknown while the host did the work.
+type ackBoundKey struct{}
+
+// WithAckBound returns a context whose App Server calls acknowledge within d. A non-positive d is
+// ignored, so a caller cannot accidentally disable the bound.
+func WithAckBound(ctx context.Context, d time.Duration) context.Context {
+	if d <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, ackBoundKey{}, d)
+}
+
+// ackBound is the ack bound this call uses: the context's when it holds a positive one, else the
+// client's configured bound. A caller that already holds an earlier deadline keeps it, so a raised
+// bound never reports itself as the wait that expired.
+func (c *Client) ackBound(ctx context.Context) time.Duration {
+	d, ok := ctx.Value(ackBoundKey{}).(time.Duration)
+	if !ok || d <= 0 {
+		return c.bounds.Ack
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < d {
+			return remaining
+		}
+	}
+	return d
+}
+
 type PhaseTimeout struct {
 	Method, Phase string
 	Bound         time.Duration

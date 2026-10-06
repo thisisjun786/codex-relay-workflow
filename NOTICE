@@ -3,9 +3,10 @@ NOTICE
 Codex Relay Workflow is distributed under the MIT License in LICENSE. Its Go
 runtime also ports the behavior of CodexClaw (CXC) v0.2.40, and this file carries
 the notices that port owes: CodexClaw's own, and those of the third-party
-material CodexClaw credits. Where a Go source file is translated from a file of
-that work, the notice below applies to the Go file as well. The bridge's
-separate upstream notice stays in packages/codex-thread-bridge/LICENSE.
+material CodexClaw credits. Where a Go source file, or a screen source under web/,
+is translated from a file of that work, the notice below applies to the ported file
+as well. The bridge's separate upstream notice stays in
+packages/codex-thread-bridge/LICENSE.
 
 Release archives do not include this file yet. Adding it to them belongs to the
 distribution work, not to the change that introduced it.
@@ -144,6 +145,16 @@ License:   Apache License 2.0; the full text is in docs/port-acr/LICENSE,
 Copyright: the upstream LICENSE names no copyright owner; the work is by
            Rich Haase (https://github.com/richhaase)
 
+
+6. CodexClaw GUI (web/)
+----------------------
+
+The screen sources under web/ are ported from CodexClaw's local GUI,
+plugins/codexclaw/gui, at the same tag and commit as section 1, under the same MIT
+licence and copyright. Each ported source file carries a header comment naming its
+upstream path and line range (the package manifests cannot, being JSON);
+docs/port-cxc/provenance.md records the copy that was compared, and
+docs/port-cxc/known-defects/ records the defects the port kept.
 
 Other separately licensed material and dependencies keep their own licenses and
 notices; this file does not relicense them.

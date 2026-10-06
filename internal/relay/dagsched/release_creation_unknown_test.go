@@ -43,6 +43,11 @@ type leftovers struct {
 	notLoaded bool // the threads read as not loaded, with no rollout to read their turns from
 	rejects   map[string]bool
 	dropFirst bool // the first creation leaves no thread
+	// lostFirstTitle drops the connection when the first creation's thread/name/set arrives, so
+	// the creation receipt says outcome_unknown although the thread exists. The create path's ack
+	// bound is 60 s and a fake answer cannot outlast it, so the lost answer is produced by the
+	// transport ending rather than by a delayed reply.
+	lostFirstTitle bool
 }
 
 func rpcFailure(message string) fakehost.Reply {
@@ -82,12 +87,17 @@ func keepThreads(k *realKit) *leftovers {
 		if st.started > 1 {
 			id = fmt.Sprintf("real-child-%d", st.started)
 		}
-		if st.started != 1 || !st.dropFirst {
+		drop := st.started == 1 && st.dropFirst
+		if !drop {
 			st.known = append(st.known, id)
 		}
 		st.mu.Unlock()
-		if st.started == 1 && st.dropFirst {
-			return fakehost.Reply{Result: k.startReply(id), Delay: time.Second}
+		if drop {
+			// The connection ends with this answer lost and the host leaves no thread: the bridge
+			// keeps an outcome_unknown receipt listing thread/start. The create path's ack bound is
+			// 60 s and a fake answer cannot outlast it, so the lost answer is produced by the
+			// transport ending rather than by a delayed reply.
+			return fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1011, Reason: "host lost the answer"}}
 		}
 		return fakehost.Reply{Result: k.startReply(id)}
 	})
@@ -160,6 +170,19 @@ func keepThreads(k *realKit) *leftovers {
 			return rpcFailure("no rollout found for thread id " + id)
 		}
 		return fakehost.Reply{Result: k.startReply(id)}
+	})
+	h.Handle("thread/name/set", func(raw json.RawMessage) fakehost.Reply {
+		st.mu.Lock()
+		lost := st.lostFirstTitle && st.started == 1
+		st.lostFirstTitle = false
+		st.mu.Unlock()
+		if lost {
+			// The connection ends with this answer lost: the host holds the thread it started, and
+			// the bridge keeps an outcome_unknown receipt whose attempted effects are
+			// [thread/start, thread/name/set] (turn/start is never reached).
+			return fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1011, Reason: "host lost the answer"}}
+		}
+		return fakehost.Reply{}
 	})
 	return st
 }
@@ -293,7 +316,9 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 			})
 			reload()
 			if named {
-				k.host.Script("thread/name/set", fakehost.Reply{Result: map[string]any{}, Delay: time.Second})
+				st.mu.Lock()
+				st.lostFirstTitle = true
+				st.mu.Unlock()
 				k.host.Script("thread/read", rpcFailure("host busy"))
 			} else {
 				st.dropFirst = true

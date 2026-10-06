@@ -22,7 +22,7 @@ import (
 // allRows is every row of every table of the store, the DAG zone included: the oracle of "a refusal changed nothing".
 func allRows(t testing.TB, db *sql.DB) map[string][]map[string]any {
 	t.Helper()
-	return testsupport.TableRows(t, db, "name LIKE 'dag\\_%' ESCAPE '\\' OR name NOT LIKE 'dag\\_%' ESCAPE '\\'")
+	return testsupport.AllTableRows(t, db)
 }
 
 func isStale(err error) bool { return refusalReason(err) == "stale_coordinator_epoch" }
