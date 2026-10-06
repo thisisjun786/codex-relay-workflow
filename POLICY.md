@@ -138,7 +138,7 @@ publishing an existing private repository.
 Keep the skills and their shared references consistent. CXC v0.2.40 (lidge-jun/codexclaw,
 MIT) is being self-ported into the Go runtime with its MIT notice kept: [NOTICE](NOTICE)
 carries the notices, [provenance](docs/port-cxc/provenance.md) the origin and
-[known defects](docs/port-cxc/known-defects.md) the upstream defects the port records.
+[known defects](docs/port-cxc/known-defects.md) the upstream defects the port records, one file per issue in [docs/port-cxc/known-defects/](docs/port-cxc/known-defects/).
 Until the port is switched on, installed skills and hooks still run against the
 installed CXC plugin. The task bridge and the
 session relay began as imported source under `packages/`; their Go ports are the product,
