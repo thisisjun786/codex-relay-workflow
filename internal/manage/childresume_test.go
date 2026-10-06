@@ -35,7 +35,7 @@ func resumeRelayScript(t *testing.T, assignment, settings string, exit int) (exe
 	script := "#!/bin/sh\n" +
 		"{ printf '%s\\n' " + resumeFakeCallMarker + "; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; } >> " + resumeShellQuote(record) + "\n" +
 		"case \"$*\" in\n" +
-		"  *doctor*) printf '%s\\n' '{\"stateSelection\":{\"path\":\"/tmp/state\"}}' ;;\n" +
+		"  *doctor*) printf '%s\\n' '{\"stateSelection\":{\"path\":\"/tmp/relay-store\"}}' ;;\n" +
 		"  *assignment-show*) cat " + resumeShellQuote(assignmentPath) + " ;;\n" +
 		"  *settings-show*) cat " + resumeShellQuote(settingsPath) + " ;;\n" +
 		"esac\n" +
@@ -139,7 +139,7 @@ func resumeHostRequests(host *fakehost.Server) []fakehost.Request {
 // child_check section naming the servers to stop.
 func resumeConfig(host *fakehost.Server, disabled ...string) *Config {
 	cfg := hostReadConfig(host.SocketPath)
-	cfg.Relay.State = "/tmp/state"
+	cfg.Relay.State = "/tmp/relay-store"
 	if len(disabled) > 0 {
 		list, err := json.Marshal(map[string]any{"disabled_servers": disabled})
 		if err != nil {
