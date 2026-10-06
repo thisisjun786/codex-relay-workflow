@@ -51,6 +51,7 @@ func nodeJSON(t *testing.T, list any, id string) map[string]any {
 // Criterion c4: the reading says how each judged node is released and on what basis. q overlaps p on a.go as local against local; the plan's recent observations
 // are the evidence on that place: five observations, one of which conflicted on a.go of this repository, one on b.go, one with no file recorded, one clean and one on a.go of another repository.
 func TestReleaseRuleAndBasisAreRecorded(t *testing.T) {
+	t.Parallel()
 	f, _ := gradedFixture(t, map[string][]Region{"p": {gr("a.go", "local", "")}, "q": {gr("a.go", "local", ""), gr("c.go", "local", "")}}, "p", "q")
 	f.observe("o1", "n1", "n2", 1, "a.go")
 	f.observe("o2", "n1", "n3", 1, "b.go")
@@ -106,6 +107,7 @@ func TestReleaseRuleAndBasisAreRecorded(t *testing.T) {
 
 // The reason of a deferral names the rule and the row that decided it, and is still the reason the release path refuses with.
 func TestDeferredReasonCarriesTheRuleAndTheDecidingRow(t *testing.T) {
+	t.Parallel()
 	_, reading := gradedFixture(t, map[string][]Region{"p": {gr("a.go", "local", ""), gr("b.go", "exclusive", "")}, "q": {gr("a.go", "local", ""), gr("b.go", "mechanical", "union")}}, "p", "q")
 	q := reading.node("q")
 	if q.Reason != DeferEditOverlap || q.Disposition != DispDefer {
@@ -127,6 +129,7 @@ func TestDeferredReasonCarriesTheRuleAndTheDecidingRow(t *testing.T) {
 
 // The basis is the plan's latest twenty observations; an older one is history.
 func TestBasisReadsTheLatestObservationsOnly(t *testing.T) {
+	t.Parallel()
 	f, _ := gradedFixture(t, map[string][]Region{"p": {gr("a.go", "local", "")}, "q": {gr("a.go", "local", "")}}, "p", "q")
 	for i := 0; i < 5; i++ {
 		f.observe(fmt.Sprintf("old%d", i), "n1", "n2", 1, "a.go")
@@ -146,6 +149,7 @@ func TestBasisReadsTheLatestObservationsOnly(t *testing.T) {
 
 // A tree region covers the files under it; a file region covers its file; a symbol region its file. The row's place is the deeper of the two paths.
 func TestBasisPlaceFollowsTheRegionKinds(t *testing.T) {
+	t.Parallel()
 	f, _ := gradedFixture(t, map[string][]Region{
 		"p": {{Repository: "owner/repo", Path: "internal", Kind: "tree", Change: "edit", Grade: "local"}},
 		"q": {gr("internal/x/y.go", "local", "")},
@@ -161,6 +165,7 @@ func TestBasisPlaceFollowsTheRegionKinds(t *testing.T) {
 
 // No more than MaxBasisRows rows are kept, worst grade first; the count says how many were left out, and the overlap counts still cover every overlap.
 func TestBasisIsBounded(t *testing.T) {
+	t.Parallel()
 	var p, q []Region
 	for i := 0; i < MaxBasisRows+4; i++ {
 		p = append(p, gr(fmt.Sprintf("f%02d.go", i), "local", ""))
@@ -175,6 +180,7 @@ func TestBasisIsBounded(t *testing.T) {
 
 // Two readings of one store state are equal, and a change of grade that releases the same nodes is still a different reading.
 func TestReleaseRuleIsPartOfTheReadingDigest(t *testing.T) {
+	t.Parallel()
 	_, mechanical := gradedFixture(t, map[string][]Region{"p": {gr("a.go", "mechanical", "union")}, "q": {gr("a.go", "mechanical", "union")}}, "p", "q")
 	f, local := gradedFixture(t, map[string][]Region{"p": {gr("a.go", "mechanical", "union")}, "q": {gr("a.go", "mechanical", "renumber")}}, "p", "q")
 	if strings.Join(mechanical.readyIDs(), ",") != "p,q" || strings.Join(local.readyIDs(), ",") != "p,q" {
@@ -193,6 +199,7 @@ func TestReleaseRuleIsPartOfTheReadingDigest(t *testing.T) {
 
 // A store whose zone predates the two tables (a runtime older than this build opened it last, and a read-only open creates nothing) reads as it always did.
 func TestReadingToleratesAZoneWithoutTheGradeTables(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("g", 0, "g-r1", addNode("p", dag.NodeImplementation), addNode("q", dag.NodeImplementation))
@@ -215,6 +222,7 @@ func TestReadingToleratesAZoneWithoutTheGradeTables(t *testing.T) {
 // dag-conflict-observe leaves the conflicted files with the observation, under each name the observed checkout is known by (its path with links resolved and, when its origin remote
 // names owner/name, that slug), and a repeat of the observation leaves the rows alone.
 func TestObserveConflictsRecordsTheConflictedFiles(t *testing.T) {
+	t.Parallel()
 	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	repo.commit("c.txt", lines(12, nil))
@@ -290,6 +298,7 @@ func TestObserveConflictsRecordsTheConflictedFiles(t *testing.T) {
 // A recorded conflict on a place does not hold a release: the decision follows the grades, and the conflict is in the basis for whoever reads it. A mechanical and a local pair whose
 // place has just conflicted are still released, and an exclusive one is still cut.
 func TestObservedConflictsAreEvidenceAndNotAGate(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name      string
 		p, q      Region
@@ -318,6 +327,7 @@ func TestObservedConflictsAreEvidenceAndNotAGate(t *testing.T) {
 
 // The command line: grade and rule in the declaration document, in its answer, and in what dag-ready prints.
 func TestCLIRegionGrades(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	regions := `[{"repository":"owner/repo","path":"internal/x.go","kind":"file","grade":"mechanical","rule":"union"},{"repository":"owner/repo","path":"b.go","kind":"file","grade":"local"},{"repository":"owner/repo","path":"c.go","kind":"file"}]`
 	out, code := crw(t, state, "dag-region-declare", "--plan", "p1", "--node", "impl-a", "--actor", "parent", "--regions", regions)

@@ -104,8 +104,8 @@ func TestCRW661NotRunOfAnOlderAttemptStaysChecksStale(t *testing.T) {
 	}
 }
 
-// Only a cancelled job can be one that began no step. A record that marks a job which succeeded
-// cannot steer the lane toward a rerun.
+// A record that marks a job which succeeded cannot steer the lane toward a rerun: the collector
+// never marks a success, and a restated record that says one is cannot make the lane rerun.
 func TestCRW661NotRunOnANonCancelledJobDoesNotSteer(t *testing.T) {
 	checks := []any{
 		crw661Entry("workflow-run:100:dev-gate#0", "dev-gate", "failure", 1, false),
@@ -114,6 +114,21 @@ func TestCRW661NotRunOnANonCancelledJobDoesNotSteer(t *testing.T) {
 	problems := ChecksProblems(crw661Head, []string{"dev-gate"}, checks)
 	if len(problems) != 1 || problems[0].Code != ChecksStale {
 		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+}
+
+// A step-less job that ended failure or timed_out is now one that began no step, so a record that
+// marks it does steer the lane toward a rerun; a success still does not (CRW-681 widened CRW-661).
+func TestCRW661NotRunOnAStepLessFailureOrTimeoutSteers(t *testing.T) {
+	for _, conclusion := range []string{"failure", "timed_out"} {
+		checks := []any{
+			crw661Entry("workflow-run:100:dev-gate#0", "dev-gate", "failure", 1, false),
+			crw661Entry("workflow-run:100:test-1#0", "test-1", conclusion, 1, true),
+		}
+		problems := ChecksProblems(crw661Head, []string{"dev-gate"}, checks)
+		if len(problems) != 1 || problems[0].Code != ChecksNotRun {
+			t.Fatalf("a step-less %s must steer toward %s, got %v", conclusion, ChecksNotRun, problems)
+		}
 	}
 }
 
@@ -166,8 +181,9 @@ func TestCRW661ShapeAcceptsTheOptionalNotRun(t *testing.T) {
 	}
 }
 
-// The collector marks the step-less cancelled job and no other, in the check entry and in the
-// checkDetail entry alike.
+// The collector marks the step-less job of each conclusion it can carry - cancelled, failure and
+// timed_out (CRW-681 widened CRW-661) - and no other, in the check entry and in the checkDetail
+// entry alike.
 func TestCRW661CollectorMarksOnlyStepLessCancelledJobs(t *testing.T) {
 	jobs := []any{
 		map[string]any{"id": 11, "name": "dev-gate", "run_attempt": 1, "status": "completed", "conclusion": "failure", "started_at": "2026-10-05T19:11:00Z", "steps": []any{map[string]any{"name": "Prerequisites", "started_at": "2026-10-05T19:11:01Z"}}},
@@ -175,6 +191,8 @@ func TestCRW661CollectorMarksOnlyStepLessCancelledJobs(t *testing.T) {
 		map[string]any{"id": 13, "name": "secrets", "run_attempt": 1, "status": "completed", "conclusion": "cancelled", "started_at": nil, "completed_at": nil},
 		map[string]any{"id": 14, "name": "test-1", "run_attempt": 1, "status": "completed", "conclusion": "cancelled", "started_at": "2026-10-05T19:12:00Z", "steps": []any{map[string]any{"name": "Set up job", "started_at": "2026-10-05T19:12:01Z"}}},
 		map[string]any{"id": 15, "name": "test-2", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-05T19:13:00Z", "steps": []any{map[string]any{"name": "Run tests", "started_at": "2026-10-05T19:13:01Z"}}},
+		map[string]any{"id": 16, "name": "test-3", "run_attempt": 1, "status": "completed", "conclusion": "failure", "started_at": nil, "completed_at": nil, "steps": []any{}},
+		map[string]any{"id": 17, "name": "test-4", "run_attempt": 1, "status": "completed", "conclusion": "timed_out", "started_at": nil, "completed_at": nil, "steps": []any{}},
 	}
 	snapshot, _ := Collect(fixedForge(&collectorScript{
 		threads: 1, unresolved: map[int]bool{},
@@ -192,8 +210,8 @@ func TestCRW661CollectorMarksOnlyStepLessCancelledJobs(t *testing.T) {
 			got[strOf(entry["name"])] = true
 		}
 	}
-	if !got["validate"] || !got["secrets"] {
-		t.Fatalf("the step-less cancelled jobs must carry notRun: %v", got)
+	if !got["validate"] || !got["secrets"] || !got["test-3"] || !got["test-4"] {
+		t.Fatalf("the step-less jobs must carry notRun: %v", got)
 	}
 	for _, name := range []string{"dev-gate", "test-1", "test-2"} {
 		if got[name] {
@@ -210,7 +228,7 @@ func TestCRW661CollectorMarksOnlyStepLessCancelledJobs(t *testing.T) {
 			}
 		}
 	}
-	if !detail["validate"] || !detail["secrets"] || detail["dev-gate"] {
+	if !detail["validate"] || !detail["secrets"] || !detail["test-3"] || !detail["test-4"] || detail["dev-gate"] {
 		t.Fatalf("checkDetail must carry the same value: %v", detail)
 	}
 }

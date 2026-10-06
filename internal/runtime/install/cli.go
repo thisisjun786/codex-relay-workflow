@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/migrate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -28,13 +29,14 @@ const DefaultIssue = "CRW-158"
 const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone, or ordinary indexes on tables the store already holds, to a store that lacks them; the acknowledgement that route needs"
 
 // Commands are `crw install`'s subcommands.
-var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config"}
+var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook", "register-service", "features", "config", "migrate-state"}
 
 func usage(w io.Writer) {
-	// The installer help is a frozen contract; features has its own help surface.
+	// The installer help is a frozen contract; features, config and migrate-state have their own help
+	// surfaces, so the frozen line still names only the commands it named before.
 	var legacy []string
 	for _, command := range Commands {
-		if command != "features" && command != "config" {
+		if command != "features" && command != "config" && command != "migrate-state" {
 			legacy = append(legacy, command)
 		}
 	}
@@ -89,6 +91,11 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	}
 	if command == "config" {
 		return runConfig(rest, env, stdout, stderr)
+	}
+	if command == "migrate-state" {
+		// Routed before the generic install options, as features and config are: it takes its own
+		// flags and prints its own text or JSON report, not the installer's envelope.
+		return migrate.Run(ctx, rest, env, stdout, stderr)
 	}
 	flags := flag.NewFlagSet("crw install "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)

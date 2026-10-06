@@ -19,14 +19,19 @@
 package doctor
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 )
 
@@ -46,18 +51,65 @@ const HarnessSchemaVersion = 1
 
 // HarnessCheck is CheckResult (doctor.ts:25-32): one check, its severity and the concrete
 // evidence behind it (a path, a count or a parsed value, never a bare verdict), with the repair
-// command a non-PASS severity may carry.
+// command a non-PASS severity may carry. Repair keeps the oracle's three states (repair?:
+// string): nil is an absent repair, which --json omits and the text drops, while a pointer to an
+// empty string is a present empty value, which --json keeps and the text still drops.
 type HarnessCheck struct {
 	Name     string          `json:"name"`
 	Severity HarnessSeverity `json:"severity"`
 	Evidence string          `json:"evidence"`
-	Repair   string          `json:"repair,omitempty"`
+	Repair   *string         `json:"repair,omitempty"`
+}
+
+// harnessReportRepair is the repair this port's own builders pass: they use "" for an omitted
+// repair (the oracle's builders either set a repair or leave it undefined, doctor.ts:138-162,
+// :410-443), so an empty s is nil and any other s is a present value. A present-but-empty repair
+// is expressible with a pointer to "" directly; no builder here produces one, because no oracle
+// builder does.
+func harnessReportRepair(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// harnessReportJSONString is JSON.stringify of a string: pyjson's writer with ensure_ascii=false
+// (Unicode) and ReplacedBytes. A WTF-8 lone surrogate -- the three bytes harnessReportCut keeps --
+// is written as its \u escape (lower-case hex, the \udXXX JSON.stringify writes), while any other
+// byte that is not UTF-8 is written as U+FFFD: that is what Node's UTF-8 decoder already did to
+// the oracle's stderr string, so a probe's invalid byte is U+FFFD in both, where SurrogateEscapes
+// would spell it \udcXX and encoding/json alone would spell the kept surrogate U+FFFD. The quote,
+// the backslash and the controls are escaped and every other character -- the em dash included --
+// stands as it is.
+func harnessReportJSONString(s string) string {
+	return pyjson.Dumps(s, pyjson.Options{Unicode: true, Bytes: pyjson.ReplacedBytes})
+}
+
+// MarshalJSON is JSON.stringify of a check (doctor.ts:25-32 read by cli.ts:84): the four fields
+// in that order, the repair key present only when Repair is non-nil, and every string quoted as
+// harnessReportJSONString quotes it. The encoder re-indents these bytes to the report's indent, so
+// the --json output matches JSON.stringify(report, null, 2) byte for byte.
+func (c HarnessCheck) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteString(`{"name":`)
+	b.WriteString(harnessReportJSONString(c.Name))
+	b.WriteString(`,"severity":`)
+	b.WriteString(harnessReportJSONString(string(c.Severity)))
+	b.WriteString(`,"evidence":`)
+	b.WriteString(harnessReportJSONString(c.Evidence))
+	if c.Repair != nil {
+		b.WriteString(`,"repair":`)
+		b.WriteString(harnessReportJSONString(*c.Repair))
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
 }
 
 // HarnessReport is DoctorReport (doctor.ts:34-45): the checks, their rollup, and the versions
 // the header shows. The three optional strings keep the oracle three states: nil is an undefined
 // field, which --json omits and the header drops, while a pointer to an empty string is a
-// present empty value, which --json keeps and the header still drops.
+// present empty value, which --json keeps and the header still drops. MarshalJSON below keeps
+// that shape while writing every string the way JSON.stringify writes it.
 type HarnessReport struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Overall       HarnessSeverity `json:"overall"`
@@ -189,9 +241,11 @@ func harnessReportSoft(key string) bool {
 // permanently red); and an unreachable codex warns rather than fails, because a diagnostic
 // must not manufacture a verdict about state it could not read.
 func HarnessFeaturesCheck(run HarnessRun) HarnessCheck {
+	// The runner's killed marker is the oracle's null status: spawnSync answers status null when its
+	// timeout ended the probe, so no exit number belongs in the evidence (harnessRunExec, doctor.ts:352).
 	if run.Status == nil || *run.Status != 0 {
 		evidence := "could not read 'codex features list'"
-		if run.Status != nil {
+		if run.Status != nil && *run.Status != harnessDriftKilled {
 			evidence += fmt.Sprintf(" (exit %d)", *run.Status)
 		}
 		if stderr := text.Trim(run.Stderr); stderr != "" {
@@ -201,7 +255,7 @@ func HarnessFeaturesCheck(run HarnessRun) HarnessCheck {
 			Name:     "features",
 			Severity: HarnessWarn,
 			Evidence: evidence,
-			Repair:   "ensure the `codex` binary is on PATH, then re-run `crw doctor harness`",
+			Repair:   harnessReportRepair("ensure the `codex` binary is on PATH, then re-run `crw doctor harness`"),
 		}
 	}
 	state := ParseHarnessFeatures(run.Stdout)
@@ -231,21 +285,22 @@ func HarnessFeaturesCheck(run HarnessRun) HarnessCheck {
 			Name:     "features",
 			Severity: HarnessFail,
 			Evidence: fmt.Sprintf("%d/%d enabled; crw requires [%s]", total-len(off), total, strings.Join(hardOff, ", ")),
-			Repair:   "crw install features enable",
+			Repair:   harnessReportRepair("crw install features enable"),
 		}
 	}
 	return HarnessCheck{
 		Name:     "features",
 		Severity: HarnessWarn,
 		Evidence: fmt.Sprintf("%d/%d enabled; optional [%s] off — request_user_input is not exposed in Default mode (Plan mode is unaffected)", total-len(off), total, strings.Join(off, ", ")),
-		Repair:   "codex features enable " + strings.Join(off, " "),
+		Repair:   harnessReportRepair("codex features enable " + strings.Join(off, " ")),
 	}
 }
 
 // harnessReportCut is the JavaScript slice(0, n) measured in UTF-16 code units (doctor.ts:137).
-// When the cut falls inside a surrogate pair the oracle keeps the lone high surrogate, and UTF-8
-// encoding writes that as U+FFFD on the way to a terminal or a file, so this returns the kept
-// prefix plus U+FFFD for that one case.
+// When the cut falls inside a surrogate pair the oracle keeps the lone high surrogate: this
+// returns the kept prefix with that surrogate's WTF-8 bytes (ED A0..BF 80..BF), the representation
+// internal/pyjson reads, so the JSON writer spells it as the \udXXX escape JSON.stringify writes
+// and the text renderer spells it as the U+FFFD the UTF-8 encoder writes.
 func harnessReportCut(s string, n int) string {
 	units := 0
 	for i, r := range s {
@@ -255,13 +310,50 @@ func harnessReportCut(s string, n int) string {
 		}
 		if units+size > n {
 			if units == n-1 && size == 2 {
-				return s[:i] + "\uFFFD"
+				return s[:i] + harnessReportWTF8HighSurrogate(r)
 			}
 			return s[:i]
 		}
 		units += size
 	}
 	return s
+}
+
+// harnessReportWTF8HighSurrogate is the three WTF-8 bytes of r's high surrogate (r is the astral
+// rune whose pair the cut split): the encoding of a lone surrogate a Go string can hold, which
+// pyjson.CodePoint reads as that surrogate again.
+func harnessReportWTF8HighSurrogate(r rune) string {
+	high := rune(0xD800 + (r-0x10000)>>10)
+	return string([]byte{byte(0xE0 | high>>12), byte(0x80 | (high>>6)&0x3F), byte(0x80 | high&0x3F)})
+}
+
+// harnessReportText is the text the UTF-8 encoder writes for s: a lone high surrogate (the three
+// WTF-8 bytes harnessReportCut keeps) becomes U+FFFD, as Node's encoder and toWellFormed() write
+// it. Every other character stands as it is.
+func harnessReportText(s string) string {
+	lone := false
+	for i := 0; i < len(s); {
+		r, size := pyjson.CodePoint(s, i)
+		if pyjson.IsSurrogate(r) {
+			lone = true
+			break
+		}
+		i += size
+	}
+	if !lone {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := pyjson.CodePoint(s, i)
+		if pyjson.IsSurrogate(r) {
+			b.WriteRune(utf8.RuneError)
+		} else {
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return b.String()
 }
 
 // HarnessWslCheck is the branch checkWslResidency takes off WSL (doctor.ts:193-196). The WSL
@@ -277,18 +369,69 @@ func HarnessWslCheck() HarnessCheck {
 func RenderHarnessReport(report HarnessReport) string {
 	lines := make([]string, 0, len(report.Checks)+3)
 	for _, check := range report.Checks {
-		line := "[" + string(check.Severity) + "] " + check.Name + ": " + check.Evidence
-		if check.Repair != "" && check.Severity != HarnessPass {
-			line += "\n    repair: " + check.Repair
+		line := "[" + string(check.Severity) + "] " + harnessReportText(check.Name) + ": " + harnessReportText(check.Evidence)
+		if check.Repair != nil && *check.Repair != "" && check.Severity != HarnessPass {
+			line += "\n    repair: " + harnessReportText(*check.Repair)
 		}
 		lines = append(lines, line)
 	}
 	if report.PluginVersion != nil && *report.PluginVersion != "" {
-		lines = append([]string{"crw v" + *report.PluginVersion}, lines...)
+		lines = append([]string{harnessReportText("crw v" + *report.PluginVersion)}, lines...)
 	}
 	if report.CodexVersion != nil && *report.CodexVersion != "" {
-		lines = append([]string{"codex v" + *report.CodexVersion}, lines...)
+		lines = append([]string{harnessReportText("codex v" + *report.CodexVersion)}, lines...)
 	}
 	lines = append(lines, "overall: "+string(report.Overall))
 	return strings.Join(lines, "\n")
 }
+
+// MarshalJSON is JSON.stringify of the report (doctor.ts:34-45 read by cli.ts:83-84): the six
+// fields in the oracle's order, each optional string present only when it is not undefined, and
+// every string quoted as harnessReportJSONString quotes it -- so a lone surrogate the manifest
+// version, the codex version or the active surface carries is written as its escape, not as the
+// U+FFFD the text renderer writes for the same string. The checks array is marshalled by
+// encoding/json, which delegates each element to HarnessCheck.MarshalJSON.
+func (r HarnessReport) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteString(`{"schemaVersion":`)
+	b.WriteString(strconv.Itoa(r.SchemaVersion))
+	b.WriteString(`,"overall":`)
+	b.WriteString(harnessReportJSONString(string(r.Overall)))
+	b.WriteString(`,"checks":`)
+	checks, err := harnessReportChecksJSON(r.Checks)
+	if err != nil {
+		return nil, err
+	}
+	b.Write(checks)
+	if r.PluginVersion != nil {
+		b.WriteString(`,"pluginVersion":`)
+		b.WriteString(harnessReportJSONString(*r.PluginVersion))
+	}
+	if r.CodexVersion != nil {
+		b.WriteString(`,"codexVersion":`)
+		b.WriteString(harnessReportJSONString(*r.CodexVersion))
+	}
+	if r.ActiveSurface != nil {
+		b.WriteString(`,"activeSurface":`)
+		b.WriteString(harnessReportJSONString(*r.ActiveSurface))
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
+// harnessReportChecksJSON is JSON.stringify of the checks array (cli.ts:84): encoding/json with HTML
+// escaping off, so an evidence or repair string holding <, > or & keeps the character JSON.stringify
+// writes instead of encoding/json's \u003c, \u003e and \u0026. Each element is still written by
+// HarnessCheck.MarshalJSON, so the lone-surrogate representation is kept; the encoder's own newline
+// is trimmed, since the array sits inside this object.
+func harnessReportChecksJSON(checks []HarnessCheck) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(checks); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
+}
+
+// HarnessOptions is DoctorOptions (doctor.ts:47-62), minus wslDeps (WSL is out of scope).

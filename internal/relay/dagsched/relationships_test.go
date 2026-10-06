@@ -8,6 +8,7 @@ import (
 // The words of the refusals the relationship and parent checks share are the relay's output and do not move: the held-by form (accept, merge judgement, integration observation), the short form
 // (correction, withdrawal), and the project parent's.
 func TestRelationshipAndParentRefusalsKeepTheirWords(t *testing.T) {
+	t.Parallel()
 	rel := relRow{ID: "rel-1", Status: "active", ParentTaskID: "p1"}
 	if got := relationshipState(relRow{Status: "paused", Superseded: true}); got != "superseded" {
 		t.Errorf("a superseded relationship is named %q", got)
