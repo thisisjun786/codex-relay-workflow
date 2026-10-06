@@ -768,6 +768,14 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		// The last boundary before the first durable effect.
 		return refused(append(base, field("outcome", Interrupted), field("detail", interrupted(err))), "nothing was written")
 	}
+	// The last moment another writer can still be seen: the seam runs here, between the decision and
+	// the backup, so a test can act as an editor does. What it changes is caught by the checks below -
+	// a record that moved answers record_changed_underneath, one that went away answers
+	// record_update_failed, and a rewritten policy answers record_policy_changed - so no writer that
+	// ignores the ownership lock is silently overwritten.
+	if !r.DryRun {
+		beforeWriteLock(recordPath)
+	}
 	// The backup holds the bytes the decision was made from, not whatever a later look would find, so
 	// it can always restore exactly the record this run replaced.
 	backup, err := backupBridgeRecord(recordPath, o, before.raw)
@@ -776,14 +784,8 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("detail", "the record could not be backed up ("+err.Error()+"), so nothing was written"),
 			field("repair", "check that the directory holding the record can be written")), "nothing was written")
 	}
-	// The record is looked at once more, immediately before the replacement: a writer that does not
-	// take the ownership lock, such as an editor, is refused here rather than overwritten, and the
-	// backup above still holds exactly the document this decision was made from.
-	if !r.DryRun {
-		// The seam a test uses to act as such a writer does: it runs after the backup and before the
-		// replacement, which is the last moment a change can still be seen.
-		beforeWriteLock(recordPath)
-	}
+	// The record is looked at once more, immediately before the replacement, and the backup above still
+	// holds exactly the document this decision was made from.
 	if again := lookAt(recordPath); !again.same(before) {
 		return refused(append(base, field("outcome", RecordChangedUnderneath),
 			field("detail", "the record at "+recordPath+" changed while this run was backing it up (another file, size, modification time or bytes), so it was not replaced"),

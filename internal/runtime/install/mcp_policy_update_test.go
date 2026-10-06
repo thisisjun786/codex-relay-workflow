@@ -311,6 +311,15 @@ func TestReRegisterPolicyRefusesAndWritesNothing(t *testing.T) {
 		t.Fatalf("a record this installer did not write: exit %d\n%s", code, golden.Canon(nonCanonical))
 	}
 	write(t, recordPath, before)
+	// Another writer removes the record after the decision: there is nothing to back up, so the
+	// replacement never happens and the answer says so.
+	restoreRemoval := install.ReplaceBeforeWriteLock(func(path string) { os.Remove(path) })
+	gone, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+	restoreRemoval()
+	if code != install.Refused || at(gone, "outcome") != install.RecordUpdateFailed || at(gone, "applied") != false || at(gone, "wrote") != false {
+		t.Fatalf("a record removed after the decision: exit %d\n%s", code, golden.Canon(gone))
+	}
+	write(t, recordPath, before)
 	// A record reached through a symbolic link: the replacement would turn the link into a regular
 	// file and leave its target behind, so it is refused with the target untouched.
 	target := filepath.Join(h.home, "record-target.json")
