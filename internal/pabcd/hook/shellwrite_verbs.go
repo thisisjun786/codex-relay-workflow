@@ -714,12 +714,7 @@ const shellWriteExecMaxDepth = 32
 // "(a program the gate cannot read: " + what + ")"; CRW-754, criterion c1).
 const shellWriteExecUnreadableWhat = "a Python program passed to exec, eval or compile"
 
-// shellWriteExecCallee reports whether the bracket c at i opens a call to exec, eval or compile, called directly or through
-// builtins. or __builtins.: the word before the bracket is one of the three and is not the tail of a longer identifier. What
-// stands in front of that word decides the rest: another dot makes it an attribute of whatever precedes the module name, so
-// only those two module names count, and any other character (a newline, a semicolon, a comma, an opening bracket, the start
-// of the program) leaves a plain call. Any other attribute chain is a different callee and is left to the dynamic routes this
-// issue records as out of scope.
+// shellWriteExecCallee reports whether the bracket c at i opens a call to exec, eval or compile (shellWriteExecCalleeExpr).
 func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 	if c != '(' {
 		return false
@@ -727,19 +722,45 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 	for i > 0 && shellVerbSpaceRune(rs[i-1]) {
 		i--
 	}
-	ident := func(j int) bool {
-		return j >= 0 && (rs[j] >= 128 || rs[j] == '_' || shellVerbLetter(byte(rs[j]), true))
+	return shellWriteExecCalleeExpr(rs, i)
+}
+
+// shellWriteExecCalleeExpr reports whether the expression that ends just before rs[end] is exec, eval or compile, called
+// directly or through builtins. or __builtins. Parentheses around the whole callee expression do not change it, so
+// (exec)(...) and (builtins.exec)(...) count (CRW-754 review). A dot before the name makes it an attribute of whatever
+// precedes the module name, so only those two module names count; any other attribute chain is a different callee and is left
+// to the dynamic routes this issue records as out of scope. Any other character (a newline, a semicolon, a comma, an opening
+// bracket, the start of the program) leaves a plain call, and a def or async def header binds a name instead.
+func shellWriteExecCalleeExpr(rs []rune, end int) bool {
+	for end > 0 && shellVerbSpaceRune(rs[end-1]) {
+		end--
+	}
+	if end == 0 {
+		return false
+	}
+	if rs[end-1] == ')' {
+		close := end - 1
+		open := shellWriteExecMatchParen(rs, close)
+		// A group that is the whole expression is stripped and its content read again; one that follows a value is a call
+		// whose result is being called, which is not this callee.
+		if open < 0 || open > 0 && shellWriteExecValueRune(rs[open-1]) {
+			return false
+		}
+		return shellWriteExecCalleeExpr(rs, close)
 	}
 	for _, name := range []string{"exec", "eval", "compile"} {
 		n := len(name)
-		if i < n || string(rs[i-n:i]) != name || ident(i-n-1) {
+		if end < n || string(rs[end-n:end]) != name || shellWriteExecIdentRune(rs, end-n-1) {
 			continue
 		}
-		j := i - n - 1
+		j := end - n - 1
+		for j >= 0 && shellVerbSpaceRune(rs[j]) {
+			j-- // legal spacing around the attribute operator: runner . exec(src)
+		}
 		if j >= 0 && rs[j] == '.' {
 			for _, module := range []string{"builtins", "__builtins__"} {
 				m := len(module)
-				if j < m || string(rs[j-m:j]) != module || ident(j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
+				if j < m || string(rs[j-m:j]) != module || shellWriteExecIdentRune(rs, j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
 					continue
 				}
 				return true
@@ -752,6 +773,33 @@ func shellWriteExecCallee(rs []rune, i int, c rune) bool {
 		return true // a plain call: nothing, or a character that is no identifier, stands before the name
 	}
 	return false
+}
+
+// shellWriteExecMatchParen is the index of the ( that matches the ) at close, or -1 when the program has none.
+func shellWriteExecMatchParen(rs []rune, close int) int {
+	depth := 0
+	for j := close; j >= 0; j-- {
+		switch rs[j] {
+		case ')':
+			depth++
+		case '(':
+			if depth--; depth == 0 {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
+// shellWriteExecIdentRune reports whether rs[j] can stand inside an identifier, so a name ending at j is not a word of its own.
+func shellWriteExecIdentRune(rs []rune, j int) bool {
+	return j >= 0 && (rs[j] >= 128 || rs[j] == '_' || shellVerbLetter(byte(rs[j]), true))
+}
+
+// shellWriteExecValueRune reports whether r can end a value, so a group that follows it is a call or an index of that value
+// rather than the whole callee expression.
+func shellWriteExecValueRune(r rune) bool {
+	return r >= 128 || r == '_' || shellVerbLetter(byte(r), true) || r == '.' || r == ')' || r == ']' || r == '}'
 }
 
 // shellWriteExecDefHeader reports whether the name that ends just before rs[j] is the one a def or async def header binds, so
@@ -864,13 +912,66 @@ func shellWriteExecProgram(rs []rune, spans [][2]int, depth int) ([]string, stri
 		if !ok {
 			return nil, shellWriteExecUnreadableWhat
 		}
+		if shellWriteExecBytesLiteral(arg) && shellWriteExecCodingDecl(program) {
+			// A bytes literal carrying a source-encoding declaration is decoded by Python under that codec, which changes
+			// the program text this reader sees (CRW-754 review). The codec is not modelled here, so fail closed. A bytes
+			// literal with no declaration decodes as UTF-8, which is what this reader already reads.
+			return nil, shellWriteExecUnreadableWhat
+		}
 		return shellWriteExecScan(shellVerbWithoutComments(program, true), true, depth+1)
 	}
 	return nil, shellWriteExecUnreadableWhat
 }
 
+// shellWriteExecBytesLiteral reports whether arg is a bytes string literal (a b or B in its prefix), whose bytes Python
+// decodes under its own source-encoding rules rather than as the text this reader reads (CRW-754 review).
+func shellWriteExecBytesLiteral(arg []rune) bool {
+	i := 0
+	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
+		i++
+	}
+	bytes := false
+	for ; i < len(arg) && strings.ContainsRune("rRuUbBfF", arg[i]); i++ {
+		bytes = bytes || arg[i] == 'b' || arg[i] == 'B'
+	}
+	return bytes && i < len(arg) && (arg[i] == '\'' || arg[i] == '"')
+}
+
+// shellWriteExecCodingDecl reports whether program holds a source-encoding declaration (PEP 263) in its first two lines, so
+// the bytes it came from are decoded under a codec this reader does not model (CRW-754 review). A str literal is not decoded
+// that way, but the same text there is no declaration either, so the check costs nothing on one.
+func shellWriteExecCodingDecl(program string) bool {
+	for line, rest := 0, program; line < 2 && rest != ""; line++ {
+		text, next, found := strings.Cut(rest, "\n")
+		if at := strings.IndexByte(text, '#'); at >= 0 && shellWriteExecCodingLine(text[at+1:]) {
+			return true
+		}
+		if !found {
+			break
+		}
+		rest = next
+	}
+	return false
+}
+
+// shellWriteExecCodingLine reports whether a comment body names a source encoding, as PEP 263's coding[:=] does.
+func shellWriteExecCodingLine(comment string) bool {
+	at := strings.Index(comment, "coding")
+	if at < 0 {
+		return false
+	}
+	rest := strings.TrimLeft(comment[at+len("coding"):], " \t\f")
+	if rest == "" || rest[0] != ':' && rest[0] != '=' {
+		return false
+	}
+	rest = strings.TrimLeft(rest[1:], " \t\f")
+	return rest != "" && (shellVerbLetter(rest[0], true) || rest[0] == '-' || rest[0] == '_' || rest[0] == '.')
+}
+
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
-// quote in a comment opens no string and a comment inside a call is no argument.
+// quote in a comment opens no string and a comment inside a call is no argument. A comment ends at a \n or at a lone \r,
+// because Python's source decoding reads a lone CR as a line break too (CRW-754 review); ending it only at \n let the code
+// after a \r stay hidden inside the comment while Python ran it.
 func shellVerbWithoutComments(script string, python bool) []rune {
 	rs, out := []rune(script), []rune{}
 	for i := 0; i < len(rs); {
@@ -881,7 +982,7 @@ func shellVerbWithoutComments(script string, python bool) []rune {
 			i = end
 		case c == '#':
 			i++
-			for i < len(rs) && rs[i] != '\n' {
+			for i < len(rs) && rs[i] != '\n' && rs[i] != '\r' {
 				i++
 			}
 		default:

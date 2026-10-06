@@ -254,6 +254,56 @@ func TestShellWriteExecReviewCases(t *testing.T) {
 	}
 }
 
+// TestShellWriteExecCodexCases pins the four findings of the Codex review on this pull request: a parenthesized callee, the
+// legal spacing around an attribute dot, a bytes program with a source-encoding declaration, and a lone carriage return.
+func TestShellWriteExecCodexCases(t *testing.T) {
+	// A parenthesized callee is still the built-in; a call's result or an index is not.
+	for _, c := range []struct{ name, program string }{
+		{"parenthesized builtins.exec", "import builtins; (builtins.exec)('open(\"/m/a\", \"w\")')"},
+		{"doubly parenthesized", "import builtins; ((builtins.exec))('open(\"/m/a\", \"w\")')"},
+		{"parenthesized exec", "(exec)('open(\"/m/a\", \"w\")')"},
+		{"parenthesized builtins.eval", "(builtins.eval)('open(\"/m/a\", \"w\")')"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shellVerbOpenWrites(c.program); !slices.Contains(got, "/m/a") {
+				t.Errorf("%q named %q, want /m/a", c.program, got)
+			}
+		})
+	}
+	for _, c := range []struct{ name, program string }{
+		{"a call result is no callee", "f()('open(\"/m/a\", \"w\")')"},
+		{"an index is no callee", "a[0]('open(\"/m/a\", \"w\")')"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shellVerbOpenWrites(c.program); len(got) != 0 {
+				t.Errorf("%q named %q", c.program, got)
+			}
+		})
+	}
+	// Legal spacing around the attribute dot keeps it an attribute, so it is no built-in call.
+	for _, program := range []string{"runner . exec(src)", "runner.exec(src)", "runner\t.\texec(src)"} {
+		if got, ok := shellWriteFStringUnreadableProgram(program); ok {
+			t.Errorf("%q reported unreadable %q; an attribute call is out of scope, not unreadable", program, got)
+		}
+	}
+	// A bytes program declaring a source encoding is decoded under a codec this reader does not model, so it fails closed.
+	bytes := "exec(b'# coding: unicode_escape\\nopen(\"/m/a\",\"w\")\\n')"
+	if got, ok := shellWriteFStringUnreadableProgram(bytes); !ok || got != shellWriteExecWhatWant {
+		t.Errorf("a bytes program with a coding declaration: got %q, %v; want %q, true", got, ok, shellWriteExecWhatWant)
+	}
+	// A bytes literal with no declaration still reads as the issue requires.
+	if got := shellVerbOpenWrites("exec(b'open(\"/m/a\", \"w\")')"); !slices.Contains(got, "/m/a") {
+		t.Errorf("a bytes literal with no declaration named %q, want /m/a", got)
+	}
+	// A lone carriage return is a line break to Python, so a comment ends there.
+	if got := shellVerbOpenWrites("exec('# ignored\ropen(\"/m/a\",\"w\")')"); !slices.Contains(got, "/m/a") {
+		t.Errorf("a lone CR comment named %q, want /m/a", got)
+	}
+	if got, ok := shellWriteFStringUnreadable("python3 -c \"exec('# ignored\ropen(\"/m/a\",mode=\"w\")\""); ok {
+		t.Errorf("a lone CR comment reported unreadable %q", got)
+	}
+}
+
 // TestShellWriteExecDepthStaysBounded is the bound case: a program nested far past the limit is refused at the limit
 // instead of walked to the bottom. The chain grows by a constant amount per level (each level writes the quote and
 // backslash characters of the level below as hex escapes), so a 200-level input is a few kilobytes and the reader
