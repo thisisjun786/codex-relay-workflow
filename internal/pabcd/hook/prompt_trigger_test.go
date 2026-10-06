@@ -488,36 +488,33 @@ func TestPromptTriggerPassiveInterviewReinjectsWithoutAGoal(t *testing.T) {
 
 // TestPromptTriggerKeepsAParticipatingWritersUpdate is the data-loss fix on this unit's writes: the
 // oracle reads the state, changes fields and writes the whole state back with no lock, so an update a
-// participating writer lands between the read and the write is overwritten and lost. The lock stands in
-// for the writer, which the handler cannot be timed against.
+// participating writer (the memory gate, the idle-edit counter, another hook of the same session)
+// lands between the read and the write is overwritten and lost. The lock stands in for that writer,
+// which the handler cannot be timed against.
 func TestPromptTriggerKeepsAParticipatingWritersUpdate(t *testing.T) {
 	for _, c := range []struct {
-		name    string
-		prompt  string
-		state   func(*state.State)
-		loopArm bool
-		turn    string
+		name   string
+		prompt string
+		state  func(*state.State)
 	}{
-		{name: "the trigger branch", prompt: "Use crw-pabcd to start Plan phase", turn: "rec-t1"},
-		{name: "the fail-closed agbrowse branch", prompt: "agbrowse를 통해서 질문해줘", turn: "rec-t1"},
-		{name: "mode 2", prompt: "here is my work", turn: "rec-t1",
-			state: func(s *state.State) {
-				phase := state.PhaseP
-				s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseA, true, &phase
-			}},
-		{name: "mode 3", prompt: "more work", turn: "rec-t1",
-			state: func(s *state.State) {
-				phase := state.PhaseA
-				s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseA, true, &phase
-			}},
+		{name: "the trigger branch", prompt: "Use crw-pabcd to start Plan phase"},
+		{name: "the fail-closed agbrowse branch", prompt: "agbrowse를 통해서 질문해줘"},
+		{name: "mode 2", prompt: "here is my work", state: func(s *state.State) {
+			phase := state.PhaseP
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseA, true, &phase
+		}},
+		{name: "mode 3", prompt: "more work", state: func(s *state.State) {
+			phase := state.PhaseA
+			s.Phase, s.OrchestrationActive, s.LastInjectedPhase = state.PhaseA, true, &phase
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cwd := t.TempDir()
-			if c.state != nil {
-				promptSubmitStateFile(t, cwd, "rec-s1", c.state)
-			} else {
-				promptSubmitStateFile(t, cwd, "rec-s1", func(*state.State) {})
-			}
+			promptSubmitStateFile(t, cwd, "rec-s1", func(s *state.State) {
+				if c.state != nil {
+					c.state(s)
+				}
+			})
 			writer := func(cwd, sessionID string, fn func() error) error {
 				s := state.ReadState(cwd, sessionID)
 				s.MemoryWriteGrant = true
@@ -527,7 +524,7 @@ func TestPromptTriggerKeepsAParticipatingWritersUpdate(t *testing.T) {
 				return state.WithSessionLock(cwd, sessionID, fn)
 			}
 			answer := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "rec-s1", Prompt: c.prompt,
-				TurnID: c.turn, PabcdEnabled: true}, "", promptSubmitHost(cwd), writer)
+				TurnID: "rec-t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), writer)
 			if answer == "" {
 				t.Fatal("the branch answered nothing")
 			}
@@ -535,17 +532,17 @@ func TestPromptTriggerKeepsAParticipatingWritersUpdate(t *testing.T) {
 			if !s.MemoryWriteGrant {
 				t.Errorf("the participating writer's update was lost: %+v", s)
 			}
-			if !slices.Contains(s.InjectedTurns, c.turn) {
+			if !slices.Contains(s.InjectedTurns, "rec-t1") {
 				t.Errorf("the turn was not recorded: %+v", s.InjectedTurns)
 			}
 		})
 	}
 }
 
-// TestPromptTriggerReinjectionNamesThePhaseInTheCursor is the other half of the mode 2 and
-// stage-marker writes: the oracle stores `lastInjectedPhase: state.phase`, the phase the handler read,
-// not the phase a fresh read might hold.
-func TestPromptTriggerReinjectionNamesThePhaseInTheCursor(t *testing.T) {
+// TestPromptTriggerReinjectionNamesTheReadPhase is the other half of the stage-marker and mode 2
+// writes: the oracle stores `lastInjectedPhase: state.phase`, the phase the handler read, never the
+// phase a later read might hold.
+func TestPromptTriggerReinjectionNamesTheReadPhase(t *testing.T) {
 	cwd := t.TempDir()
 	phase := state.PhaseP
 	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
