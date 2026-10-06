@@ -1,6 +1,8 @@
 package delivery
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -239,5 +241,50 @@ func TestDCA08_ARecoveredTurnIsAcceptedWithoutAClaim(t *testing.T) {
 	payload := d.executionPayload(d.rid, 1, "failed", 4, turnRef{child, turn.TurnID, "completed"})
 	if _, err := d.accept(payload, store.AcceptOptions{}); err != nil {
 		t.Fatalf("a receipt from the recovered turn without a claim: %v", err)
+	}
+}
+
+// c1: the admission is in the same transaction as the send it describes. When the settle fails after
+// it, the delivery row and the admission roll back together: there is no dispatched delivery whose
+// turn nothing admitted, and no admission for a send that did not settle.
+func TestDCA09_TheAdmissionRollsBackWithTheSettleThatFailed(t *testing.T) {
+	d := newObsWorld(t, "interrupted")
+	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
+	// The journal row settle writes after the admission is refused, so the whole transaction aborts.
+	d.exec("CREATE TEMP TRIGGER crw669_fail_attempted BEFORE INSERT ON journal WHEN NEW.kind = 'delivery_attempted' BEGIN SELECT RAISE(ABORT, 'the settle failed after the admission'); END")
+	if _, err := d.attempt(event, nil); err == nil {
+		t.Fatal("the settle succeeded although its journal write was refused")
+	}
+	d.exec("DROP TRIGGER crw669_fail_attempted")
+	if n := d.count("SELECT COUNT(*) AS c FROM generation_turns WHERE relationship_id = ?", d.rid); n != 0 {
+		t.Fatalf("a failed settle left %d generation_turns rows", n)
+	}
+	if n := d.count("SELECT COUNT(*) AS c FROM journal WHERE kind = 'turn_admitted'"); n != 0 {
+		t.Fatalf("a failed settle left %d turn_admitted journal rows", n)
+	}
+	if state := d.row(event).S("state"); state == Dispatched {
+		t.Fatalf("the delivery is %s although the settle rolled back", state)
+	}
+}
+
+// c1: the admission follows the event's own generation. A relationship that moved past the decision's
+// generation before the send is attempted never reaches the settle: the delivery is superseded as a
+// stale generation, so the turn is admitted into no generation at all.
+func TestDCA10_ADecisionOnAStaleGenerationAdmitsNothing(t *testing.T) {
+	d := newObsWorld(t, "interrupted")
+	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
+	mustDo(t, d.store.Transaction(d.ctx, func(ctx context.Context, _ *sql.Conn) error {
+		_, err := OpenGenerationIn(ctx, d.store, d.clock, d.rid, "other-dispatch", "initial_assignment", nil)
+		return err
+	}))
+	record := d.mustAttempt(event, nil)
+	if state := pyjson.Text(record.Get("deliveryState")); state != Superseded {
+		t.Fatalf("the decision on a stale generation settled %s, want superseded", state)
+	}
+	if n := d.count("SELECT COUNT(*) AS c FROM generation_turns WHERE relationship_id = ?", d.rid); n != 0 {
+		t.Fatalf("a decision on a stale generation admitted %d turns", n)
+	}
+	if n := d.count("SELECT COUNT(*) AS c FROM journal WHERE kind = 'turn_admitted'"); n != 0 {
+		t.Fatalf("a decision on a stale generation journalled %d admissions", n)
 	}
 }
