@@ -263,6 +263,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"xargs runner", "xargs gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"xargs runner with a variable", "xargs -n 1 gh pr comment 1 -b \"$TOKEN\"", githubPostRuleExpand, githubPostWhereCommand},
 		{"find exec runner", "find . -exec gh pr comment 1 -b plain \\;", githubPostRuleInline, githubPostWhereCommand},
+		{"siblings keep their depth", "sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'gh pr comment 1 -b \"$TOKEN\"'", githubPostRuleExpand, githubPostWhereCommand},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
