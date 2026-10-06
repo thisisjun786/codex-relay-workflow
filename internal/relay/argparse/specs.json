@@ -81,6 +81,7 @@
 {"name":"linkage-bind","options":[
   {"flag":"--role","required":true,"choices":["supervisor","parent","child"]},
   {"flag":"--scope","required":true},
+  {"flag":"--scope-kind","choices":["store"],"help":"the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. Omit it and the binding takes the role's own level (supervisor initiative, parent project, child issue)"},
   {"flag":"--task","required":true},
   {"flag":"--host","required":true},
   {"flag":"--cwd"},

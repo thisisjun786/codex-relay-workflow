@@ -68,6 +68,13 @@ var zoneInventory = map[string][]string{
 	"dag_pass_release_policy": {"plan_id", "pass_seq", "policy_json"},
 	// CRW-468 (appended statement): the host memory bound a recorded pass saw.
 	"dag_pass_host_memory": {"plan_id", "pass_seq", "state", "reading_limit", "host_json"},
+	// CRW-728 (appended statements): the proof dag-accept records when it accepts a head the parent's ruling verified, and the head a ruling verified.
+	"dag_acceptance_refreshes": {"refresh_id", "acceptance_id", "refresh_seq", "relationship_id", "execution_generation", "event_id", "revision_hash", "head_sha", "verified_head_sha", "base_repository", "base_ref", "base_tip_sha", "proof_json", "resolved_paths_json", "recorded_by_task_id", "coordinator_epoch", "recorded_at"},
+	"dag_verified_heads":       {"event_id", "relationship_id", "execution_generation", "verdict_turn_id", "head_sha", "recorded_by_task_id", "recorded_at"},
+	// CRW-767 (appended statements): the merge train's relay record (the decision in docs/port/decisions.md section 79). A train and a member are written once and an event is appended, and the train's state is the newest event's kind rather than a column. The names carry no dag_ prefix, as the decision names them; the zone is derived from these statements and not from a name prefix.
+	"merge_trains":        {"train_id", "target_key", "repository", "base_ref", "base_sha", "leader_task_id", "created_at"},
+	"merge_train_members": {"train_id", "seq", "turn_id", "pr_number", "relationship_id", "member_head"},
+	"merge_train_events":  {"train_id", "seq", "kind", "actor", "detail_json", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -141,6 +148,37 @@ func zoneStringMap(t *testing.T, db *sql.DB, query string) map[string]string {
 	return out
 }
 
+// zoneCatalogWhere is the catalog of path ("type name" to SQL) filtered to the objects whose table
+// keep accepts. An object's table is its own name for a table and tbl_name for an index or a trigger.
+// Zone membership is the frozen v1 script's and not a name prefix: the merge-lane tables the zone
+// appends carry no dag_ prefix and are the zone's like any other (testsupport.IsV1Table).
+func zoneCatalogWhere(t *testing.T, path string, keep func(table string) bool) map[string]string {
+	t.Helper()
+	db := zoneRawDB(t, path)
+	out := map[string]string{}
+	for _, row := range testsupport.Rows(t, db, "SELECT type, name, tbl_name, COALESCE(sql, '') AS sql FROM sqlite_master WHERE lower(substr(name,1,7)) <> 'sqlite_'") {
+		kind, name, table, text := row["type"].(string), row["name"].(string), row["tbl_name"].(string), row["sql"].(string)
+		if keep(table) {
+			out[kind+" "+name] = text
+		}
+	}
+	return out
+}
+
+// zoneV1Catalog is the catalog of path restricted to the frozen v1 schema: every object whose table
+// the frozen v1 script creates.
+func zoneV1Catalog(t *testing.T, path string) map[string]string {
+	t.Helper()
+	return zoneCatalogWhere(t, path, func(table string) bool { return testsupport.IsV1Table(t, table) })
+}
+
+// zoneOnlyCatalog is the catalog of path restricted to the additive DAG zone: every object whose
+// table the frozen v1 script does not create.
+func zoneOnlyCatalog(t *testing.T, path string) map[string]string {
+	t.Helper()
+	return zoneCatalogWhere(t, path, func(table string) bool { return !testsupport.IsV1Table(t, table) })
+}
+
 func zoneOpenClose(t *testing.T, path string) {
 	t.Helper()
 	s, err := fixtureOpen(context.Background(), path, "")
@@ -155,8 +193,10 @@ func zoneOpenClose(t *testing.T, path string) {
 func zoneTables(t *testing.T, path string) []string {
 	t.Helper()
 	var names []string
-	for key := range zoneCatalog(t, path, "type='table' AND name LIKE 'dag\\_%' ESCAPE '\\'") {
-		names = append(names, strings.TrimPrefix(key, "table "))
+	for key := range zoneCatalogWhere(t, path, func(table string) bool { return !testsupport.IsV1Table(t, table) }) {
+		if name, ok := strings.CutPrefix(key, "table "); ok {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 	return names
@@ -190,7 +230,7 @@ func TestDAGZonePreDAGStoreOpensAndKeepsItsRows(t *testing.T) {
 	if got := zoneTables(t, path); !reflect.DeepEqual(got, want) {
 		t.Fatalf("zone tables after open = %v, want %v", got, want)
 	}
-	after := testsupport.TableRows(t, zoneRawDB(t, path), "name NOT LIKE 'dag\\_%' ESCAPE '\\'")
+	after := testsupport.V1TableRows(t, zoneRawDB(t, path))
 	// The one row the open adds to a store from before the marker is the marker of the settlements
 	// backfill (the open ran it, and a store without observations has nothing to fill).
 	want1 := map[string][]map[string]any{}
@@ -201,7 +241,7 @@ func TestDAGZonePreDAGStoreOpensAndKeepsItsRows(t *testing.T) {
 	if !reflect.DeepEqual(after, want1) {
 		t.Fatalf("v1 rows changed by the open beyond the backfill marker:\n before %v\n after  %v", before, after)
 	}
-	v1After := zoneCatalog(t, path, "name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\'")
+	v1After := zoneV1Catalog(t, path)
 	if !reflect.DeepEqual(v1After, v1Before) {
 		t.Fatal("a v1 schema object changed (text or presence) when the zone was created")
 	}
@@ -286,7 +326,7 @@ func zoneShipped(t *testing.T) map[string]string {
 func zoneObjects(t *testing.T, path string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for key, text := range zoneCatalog(t, path, "name LIKE 'dag\\_%' ESCAPE '\\' OR tbl_name LIKE 'dag\\_%' ESCAPE '\\'") {
+	for key, text := range zoneOnlyCatalog(t, path) {
 		out[key] = normalizeSQL(text)
 	}
 	return out
@@ -354,8 +394,8 @@ func TestDAGZoneOlderRuntimeStillOpensAStoreWithTheZone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	zoneBefore := testsupport.TableRows(t, db, "name LIKE 'dag\\_%' ESCAPE '\\'")
-	v1Before := testsupport.TableRows(t, db, "name NOT LIKE 'dag\\_%' ESCAPE '\\'")
+	zoneBefore := testsupport.ZoneTableRows(t, db)
+	v1Before := testsupport.V1TableRows(t, db)
 	ctx := context.Background()
 	if err := ValidateOwnershipSchema(ctx, db); err != nil {
 		t.Fatalf("the frozen-table validation refuses a store that carries the zone: %v", err)
@@ -372,10 +412,10 @@ func TestDAGZoneOlderRuntimeStillOpensAStoreWithTheZone(t *testing.T) {
 			t.Fatalf("a v1 guard index fails on a store that carries the zone: %v", err)
 		}
 	}
-	if got := testsupport.TableRows(t, db, "name LIKE 'dag\\_%' ESCAPE '\\'"); !reflect.DeepEqual(got, zoneBefore) {
+	if got := testsupport.ZoneTableRows(t, db); !reflect.DeepEqual(got, zoneBefore) {
 		t.Fatal("the v1 script changed zone rows")
 	}
-	if got := testsupport.TableRows(t, db, "name NOT LIKE 'dag\\_%' ESCAPE '\\'"); !reflect.DeepEqual(got, v1Before) {
+	if got := testsupport.V1TableRows(t, db); !reflect.DeepEqual(got, v1Before) {
 		t.Fatal("the v1 script changed v1 rows")
 	}
 }

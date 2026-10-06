@@ -19,6 +19,7 @@ import (
 // the reinstall keeps it - and says what the operator does about a staging that was never
 // promoted, not remove's recovery for a runtime a daemon was started from.
 func TestReclaimWithoutAProcessTableSaysHowToRecover(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -48,6 +49,7 @@ func TestReclaimWithoutAProcessTableSaysHowToRecover(t *testing.T) {
 // malformed claim there refused it). Every answer that rests on the process table says what it
 // cannot see: another PID namespace, another host; and a remove names the relay records it read.
 func TestRemoveReadsTheRelayDaemonRecords(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -85,6 +87,7 @@ func TestRemoveReadsTheRelayDaemonRecords(t *testing.T) {
 // go the directory and its entries are still there; so does a reinstall interrupted while its
 // reclaim waits.
 func TestAnInterruptedWaitRemovesNothing(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -121,6 +124,7 @@ func TestAnInterruptedWaitRemovesNothing(t *testing.T) {
 // runtime_install.py's resume do: a remove waiting for the directory's lock holds nothing else,
 // so it never stalls a promotion elsewhere on the host.
 func TestRemoveTakesTheDirectoryLockBeforeThePromotionLock(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -148,6 +152,7 @@ func TestRemoveTakesTheDirectoryLockBeforeThePromotionLock(t *testing.T) {
 // names it, and remove - of the name or of the tombstone - finishes it: the entries and the
 // outgoing selection naming it are dropped and the tombstone deleted.
 func TestAnInterruptedRemovalIsFinished(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)

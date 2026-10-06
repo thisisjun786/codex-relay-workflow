@@ -114,12 +114,14 @@ func newRepo(t *testing.T) (*Repo, *store.Store, string) {
 	return &Repo{Store: s, Now: func() string { n++; return fmt.Sprintf("2026-10-02T00:00:%02d.000000+00:00", n) }}, s, path
 }
 
-// zoneRows is every row of every dag_ table, for "nothing changed" comparisons.
+// zoneRows is every row of every table of the additive DAG zone, for "nothing changed" comparisons.
+// The zone is the tables the frozen v1 script does not create, not the dag_ ones: the merge-lane
+// tables the zone appends carry no dag_ prefix (testsupport.ZoneTableRows).
 func zoneRows(t testing.TB, db interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }) map[string][]map[string]any {
 	t.Helper()
-	return testsupport.TableRows(t, db, "name LIKE 'dag\\_%' ESCAPE '\\'")
+	return testsupport.ZoneTableRows(t, db)
 }
 
 func total(rows map[string][]map[string]any) int {

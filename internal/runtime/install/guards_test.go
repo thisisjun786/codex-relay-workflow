@@ -17,6 +17,7 @@ import (
 // the pointer as unowned. So a blank or whitespace issue is refused before any lock is taken or
 // anything read or written, as install refuses it.
 func TestARollbackNeedsAnIssue(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	h.mustInstall(t, "install", first)
@@ -45,6 +46,7 @@ func TestARollbackNeedsAnIssue(t *testing.T) {
 // written; crw install rollback to it, which moves no pointer, selects every component, after
 // which it is already installed.
 func TestASplitSelectionIsNotReportedInstalled(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
