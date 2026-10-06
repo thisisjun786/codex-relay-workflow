@@ -2,31 +2,50 @@ package doctor
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestHookTrustRetrustReplace_refuses_a_changed_file covers the compare-and-swap before the write,
-// the one guard the command line cannot reach in a test (nothing else writes between the read and
-// the write). Its rollback twin is exercised end to end by
-// TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback.
-func TestHookTrustRetrustReplace_refuses_a_changed_file(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+// TestHookTrustRetrustVerifyNext covers the package-internal step the command line cannot isolate:
+// next is proven in a temporary Codex home, and a failure refuses with the issue's message and
+// publishes nothing. The real config.toml is untouched because this function never writes to it;
+// crwdir's own tests prove the exchange keeps what it displaced.
+func TestHookTrustRetrustVerifyNext(t *testing.T) {
+	f := newCASFixture(t, "")
 	original := "model = \"gpt-5.5\"\n"
-	concurrent := "model = \"another-writer\"\n"
-	if err := os.WriteFile(path, []byte(concurrent), 0o644); err != nil {
-		t.Fatal(err)
+	f.write(f.config(), original)
+	// A next that trusts both declared hooks is what a passing probe accepts; the same bytes with a
+	// failing probe are refused, and the real config.toml is never touched either way.
+	trusted := original
+	for _, entry := range f.entries {
+		trusted += "[hooks.state.\"" + entry.Key + "\"]\ntrusted_hash = \"" + entry.Hash + "\"\n"
 	}
-	err := hookTrustRetrustReplace(path, original, "model = \"rewritten\"\n")
-	if err == nil || !strings.Contains(err.Error(), "changed while retrust was running") {
-		t.Fatalf("a changed file was replaced: %v", err)
+
+	err := hookTrustRetrustVerifyNext(f.plugin, f.key, trusted, failingRunner)
+	if err == nil || !strings.Contains(err.Error(), "pre-write verification failed") || !strings.Contains(err.Error(), "config.toml unchanged") {
+		t.Fatalf("the refusal text is wrong: %v", err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	if got := f.read(f.config()); got != original {
+		t.Fatalf("the refusal changed config.toml: %q", got)
 	}
-	if string(got) != concurrent {
-		t.Fatalf("the refused write changed the file: %q", got)
+	// The temporary home is removed: the real home still holds only config.toml.
+	entries, rerr := os.ReadDir(f.home)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "config.toml" {
+			t.Fatalf("the verification left %q in the real home", entry.Name())
+		}
+	}
+	// A passing probe accepts the same next.
+	if err := hookTrustRetrustVerifyNext(f.plugin, f.key, trusted, okRunner); err != nil {
+		t.Fatalf("a good next was refused: %v", err)
+	}
+	// A next that does not trust the hooks is refused even with a passing probe: the pre-write check
+	// is the post-write diagnosis moved ahead of the publication.
+	err = hookTrustRetrustVerifyNext(f.plugin, f.key, original, okRunner)
+	if err == nil || !strings.Contains(err.Error(), "post-write verification failed") {
+		t.Fatalf("an untrusted next was accepted: %v", err)
 	}
 }

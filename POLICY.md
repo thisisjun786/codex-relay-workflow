@@ -68,7 +68,11 @@ state that separately from installation and successful live operation.
 CI runs every check on every event, in parallel, and reports one result-only
 `dev-gate`: validation, plugin identity, offline contracts, secret scanning and the
 Go product checks (lint, the test parts, the release binaries and the isolated-home
-install). Nothing is selected by changed paths, except the temporary light mode below.
+install), plus the `gui` screen check. Only two jobs select by changed paths: `gui`
+(the screens under `web/`, their committed build under `internal/gui/assets/`, and the
+gui definition) and `skill-scripts-node`; each is a dev-gate prerequisite and ends
+successfully without installing Node when nothing it watches changed. Nothing else is
+selected by changed paths, except the temporary light mode below.
 See [CI operation](docs/CI.md).
 
 Every PR base receives the checks and the final gate, including explicit dependent
@@ -86,6 +90,7 @@ The release workflow is manual and owner-controlled.
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
 | Pinned secret scan: all fetched history on a push to `dev`, the commits a pull request adds on a pull request | No finding under the reviewed scanner configuration in the commits scanned |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
+| The `gui` job: the screens build on Node 24.20.0 and match the committed `internal/gui/assets` tree byte for byte | The screens embedded in `crw` are the build of `web/`, so a Node-free checkout serves the current screen |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
 
 The stable gate runs after failures. Every job it needs must succeed; a missing,
@@ -96,9 +101,10 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data. The runtime, installer and CI do not depend on Python: CI installs none, and the only
-skill scripts it runs are the staged skills' Node tests in the path-gated skill-scripts-node
-job (Node 24.20.0); no hook path or crw binary needs Node, and a helper script in a skill's
+data. The runtime, installer and CI do not depend on Python: CI installs none. Node runs in
+exactly two jobs, both path-gated and both ending without it when nothing they watch changed:
+the staged skills' Node tests in `skill-scripts-node`, and the screen build and drift check in
+`gui` (Node 24.20.0); no hook path or crw binary needs Node, and a helper script in a skill's
 `scripts/` or `examples/` is an original asset an agent runs when it needs it. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
@@ -122,7 +128,12 @@ Repository ignore files and inline allow comments must not suppress findings.
 An exception requires an exact synthetic value and exact path with review;
 never baseline away an unexplained finding. Keep private receipts, session
 transcripts, personal paths and credentials out of commits and public reports.
-Do not bundle dependencies or runtime state to make CI green.
+Do not bundle dependencies or runtime state to make CI green. The one committed
+generated output is the GUI deployment build under `internal/gui/assets`: the screens
+are built with Node and embedded in the `crw` binary, so a Node-free checkout serves
+them. `node_modules`, dependency caches and installed runtimes are never committed, the
+lockfile stays pinned and the secret scan is unchanged. Source: the GUI port's approval
+scope (Jun, 2026-10-06, "Node only builds the screens and runs the gui CI job").
 
 ### Temporary CI light mode (CRW-790)
 
@@ -182,6 +193,78 @@ applicable notices for adapted material; the notices for ported CXC material are
 [NOTICE](NOTICE). Licensing does not authorize publication;
 review history, private reporting and contributor readiness before making a
 private repository public or publishing a release.
+
+## Work units, review and integration
+
+### The units
+
+A feature or acceptance unit, a parallel work packet and an integration bundle of prepared
+changes are three different units, and policy does not force them into one. It no longer
+requires issue = child = pull request = that pull request's own full CI = its own merge turn.
+Every issue is traced from its acceptance criteria to a reviewed candidate to the actual merge
+commit on its intended target; an implementation that delivers only part of the criteria never
+closes the issue.
+
+An issue carries one coherent unit of work: the implementation, the tests it requires, the
+documentation directly tied to it and the review fixes it directly raises. Being verifiable on
+its own permits a split; it does not require one. Line counts and file counts are references
+only — never an assignment gate, never a forced split and never a gate a user must waive. Split
+for a contract with value of its own, for a different responsibility, risk or deployment
+boundary, or for a real benefit from parallel ownership. A direct defect found in a pull request
+about that pull request's own change is fixed in that pull request rather than split off.
+
+### Several packets in one feature
+
+Policy allows several parallel packets for one feature with explicit owners: overlapping code,
+shared types and fixtures each get an owner, and existing ids, branches and contracts are kept.
+The capability is switched on per support, not by this policy text.
+
+**Activation is per support.** Today the relay registers one child per issue relationship.
+Separating a feature issue from a packet id, reserving and owning packets, and covering them are
+the multi-packet support issue's; bundle integration and criteria mapping are the merge-train
+issue's. Multi-packet work is switched on only after both are merged and installed and a real
+acceptance has shown two packets of one feature with duplicate prevention, a final candidate and
+a refusal to close the whole on a partial completion. Until then one issue runs as one packet.
+A successful first single-packet bundle run is not multi-packet support. Never work around this
+with wording or invented issue ids.
+
+### Integration bundles
+
+Preparation and review run in parallel. Per target an integrator freezes only prepared changes
+into a small bundle — the base, the member heads, their order, the combined head and the criteria
+mapping — without filling to a count and without waiting for unfinished work; a risky or urgent
+change goes alone. The bundle runs its full CI as the final candidate and lands in one merge. A
+failure removes or fixes the cause and what depends on it and re-verifies the changed candidate;
+when the target or the base moves, only the invalidated evidence is refreshed. The relay
+document and code contract for this is the merge-train issue's; until it is installed the serial
+lane applies.
+
+### Review
+
+The required independent review stays, and the revision it read and the disposition of every
+important finding it raised are recorded. For the optional Devin and Codex reviews the fixed
+time is a waiting budget of 45 minutes from the review's first signal; it is only a waiting
+budget, never evidence that a review stalled or finished. Past that budget a
+review still running is recorded as pending, not complete, and the wait is released only when the
+current candidate's required independent review and its finding dispositions already exist;
+missing independent review is obtained through the existing approved path. A late important
+finding is judged against the current candidate. External bots are never re-requested,
+interrupted or bypassed. The coordinator checks valid evidence and the integration part and does
+not rerun everything without reason or add duplicate approvals. Where the collector or the lane
+still refuses the new flow, that is missing official support to report; nothing merges outside
+the lane.
+
+### Audit
+
+Audit, scores and records are strengthened: repeated recording of one fact and approval round
+trips are reduced, while criteria, history, model roles, review revisions and finding
+dispositions are kept. Quantitative proof of the effect is not a condition for progress.
+
+### Unchanged
+
+No force push and no unverified merge. The final candidate's full CI and the post-merge
+dev-push release verification stay separate. The temporary CI light mode stays as it is.
+
 
 ## Activation
 

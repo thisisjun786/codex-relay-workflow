@@ -12,7 +12,7 @@ Loading it does not make the goal the default again, and an ordinary project exe
 [crw-run](../crw-run/SKILL.md)'s, not this skill's.
 
 One parent coordinates one project; one independent child owns one issue and its
-one delivery PR, under the shared
+delivery, one issue per PR today under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration), under the shared
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 Run and Loop have the same project scope. This skill adds the
 parent's host goal, automatic continuation and goal completion decision.
@@ -106,7 +106,7 @@ blocker, not permission to reset state, bypass a guard or claim the Loop is acti
    recheck candidate/base and verify landing. Update the coordination record and
    issue state within existing authority, then release newly ready successors. Each
    Run pass returns to this Loop; it does not end the parent objective.
-   Keep one implementation issue per PR; a child report or green CI alone is not Done.
+   Keep one implementation issue per PR today, under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration); a child report or green CI alone is not Done.
 
 Keep the record current after meaningful transitions, with the latest evidence and
 next action rather than a growing transcript. Give concise progress updates under

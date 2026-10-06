@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -17,6 +18,19 @@ import (
 // judgment now finds each lineage row by its key, walks the declared chains once, and is made once
 // per claim; its answer must not change. The oracle below is the judgment as it was before, kept as
 // written, and every test compares the current code with it.
+
+// ambiguous is the pre-CRW-416 answer shape this file's oracle builds: the same five keys with the
+// sorted competitors, as the Obj the old judgment returned. The judgment itself is registry's now
+// (CRW-827), so this stays only to keep the oracle written as it was.
+func ambiguous(evidence string, nodes []string, detail string) Obj {
+	competitors := make([]any, len(nodes))
+	sorted := slices.Clone(nodes)
+	slices.Sort(sorted)
+	for i, n := range sorted {
+		competitors[i] = n
+	}
+	return Obj{{Key: "eventId", Value: nil}, {Key: "revisionHash", Value: nil}, {Key: "evidence", Value: evidence}, {Key: "competitors", Value: competitors}, {Key: "detail", Value: detail}}
+}
 
 // legacyHeadRevisionSQL is the statement HeadRevisionFrom ran before CRW-416: the lineage joined on
 // event_id alone.
@@ -31,7 +45,7 @@ func legacyHeadRevisionFrom(ctx context.Context, q store.Querier, rid string, ge
 	if len(rows) == 0 {
 		return Obj{{Key: "eventId", Value: nil}, {Key: "revisionHash", Value: nil}, {Key: "evidence", Value: NoRevision}, {Key: "competitors", Value: []any{}}, {Key: "detail", Value: "no reviewable revision in this generation"}}, nil
 	}
-	anchors, err := requestedPredecessors(ctx, q, rid, generation)
+	anchors, err := registry.RequestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -491,11 +505,11 @@ func TestJudgeHeadMatchesTheOldJudgmentOnRandomGraphs(t *testing.T) {
 				}
 			}
 		}
-		var revisions []revision
+		var revisions []registry.Revision
 		var rows []Row
 		for k := range n {
 			id := fmt.Sprintf("e%02d", k)
-			revisions = append(revisions, revision{id: id, hash: hashes[k], declared: declared[k]})
+			revisions = append(revisions, registry.Revision{ID: id, Hash: hashes[k], Declared: declared[k]})
 			var supersedes any
 			if declared[k] != "" {
 				supersedes = declared[k]
@@ -503,16 +517,16 @@ func TestJudgeHeadMatchesTheOldJudgmentOnRandomGraphs(t *testing.T) {
 			rows = append(rows, Row{"event_id": id, "revision_hash": hashes[k], "supersedes_hash": supersedes})
 			if rng.IntN(25) == 0 {
 				// the same event listed again with other values keeps its place and takes the last
-				again := revision{id: id, hash: hashes[rng.IntN(n)], declared: declared[rng.IntN(n)]}
+				again := registry.Revision{ID: id, Hash: hashes[rng.IntN(n)], Declared: declared[rng.IntN(n)]}
 				revisions = append(revisions, again)
 				var again2 any
-				if again.declared != "" {
-					again2 = again.declared
+				if again.Declared != "" {
+					again2 = again.Declared
 				}
-				rows = append(rows, Row{"event_id": id, "revision_hash": again.hash, "supersedes_hash": again2})
+				rows = append(rows, Row{"event_id": id, "revision_hash": again.Hash, "supersedes_hash": again2})
 			}
 		}
-		got, want := judgeHead(revisions, anchors), legacyJudge(rows, anchors)
+		got, want := registry.JudgeHead(revisions, anchors).Record(), legacyJudge(rows, anchors)
 		if !sameAnswer(got, want) {
 			t.Fatalf("graph %d: revisions %+v anchors %v\nnow %s\nwas %s", i, revisions, anchors, dumps(got), dumps(want))
 		}
@@ -572,7 +586,7 @@ func TestHeadRevisionStatementFindsLineageByItsKey(t *testing.T) {
 	t.Parallel()
 	w := newHeadWorld(t, shapeChain, 200)
 	args := []any{headRelationship, 1, "ready_for_review"}
-	now := planText(w.plan(headRevisionSQL, args...))
+	now := planText(w.plan(registry.HeadRevisionSQL, args...))
 	if !strings.Contains(now, "SEARCH l USING INDEX sqlite_autoindex_revision_lineage_1 (relationship_id=? AND execution_generation=? AND event_id=?)") || strings.Contains(now, "SCAN l") {
 		t.Errorf("the head statement reads lineage as:\n%s", now)
 	}
