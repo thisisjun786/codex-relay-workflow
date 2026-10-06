@@ -13,6 +13,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
+| `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed; a run that skips them is success |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
 | `CGO_ENABLED=0 make dist` per target | `go-product` leg `dist`: static `crw` for linux/amd64, linux/arm64 and darwin/arm64, uploaded with `SHA256SUMS` |
@@ -30,6 +31,10 @@ integrated commit, the evidence a release needs) and a manual dispatch (which is
 evidence). There is no path selection, except [the temporary light mode](#the-temporary-light-mode)
 below. The Go product legs always ran whatever changed, so
 selecting the rest by changed paths saved little and put a job before every other one.
+
+The second exception is `skill-scripts-node`'s own path gate: it runs the staged skills' Node
+tests only when a staged skill path changed, and ends successfully without installing Node
+when none did.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
 `make test` builds one `crw` for the run (`dist/test/crw`, release-shaped with `-trimpath`) and
@@ -78,15 +83,15 @@ chooses its commit.
 ## The body-only edit mirror
 
 No job reads a pull request's title or body, but a title or body edit fires the `edited` trigger
-again and used to rerun all ten jobs on the same commit. Such a run now mirrors what the head has
-already proved.
+again and used to rerun all eleven jobs on the same commit. Such a run now mirrors what the
+head has already proved.
 
 An `edited` event whose base did not change (`github.event.action == 'edited' &&
 !github.event.changes.base`) joins the pull request's own concurrency group, so it waits behind a
 running run instead of cancelling it, and a later push cancels it in turn. Every other event,
 a retarget included, still cancels obsolete runs.
 
-`validate`, `secrets` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
+`validate`, `secrets`, `skill-scripts-node` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
 and only on such an edit. The script reads, with `gh api`, the newest created run of this workflow,
 of this pull request, of this repository, for the same `head_sha`, other than the run it is in, and
 mirrors the job when that run's same-named job's newest attempt concluded `success`. Creation order
@@ -106,7 +111,7 @@ The lookup never fails the job, and an older run is never consulted: the newest 
 answers for the job. No candidate, a failure, a cancellation, a skip, a missing job,
 another head, workflow or repository, an unreadable API and the run itself all answer
 `mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
-unchanged, and the three jobs add only `actions: read` to the workflow's `contents: read`, which is
+unchanged, and the four jobs add only `actions: read` to the workflow's `contents: read`, which is
 what reading the runs and jobs endpoints needs.
 
 Mirroring is safe because it repeats a result this head already has. `dev` is strict, so a merge

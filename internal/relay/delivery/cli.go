@@ -200,6 +200,11 @@ func needsHost(c *cliRun) (any, error) {
 // Python re.match's $ also matches immediately before one final LF.
 var eventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}\n?$`)
 
+// verifiedHeadPattern is the shape of the head a verified ruling fixes: the 40 lowercase hex digits
+// of a git commit id. The option's shape is checked here rather than declared in specs.json because
+// the parser has no sha type, and an unknown type would be read without being checked.
+var verifiedHeadPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 func cmdAckProof(c *cliRun) (any, error) {
 	event, turn := c.s("--event"), c.s("--turn")
 	if !eventIDPattern.MatchString(event) {
@@ -442,7 +447,15 @@ func cmdVerdict(c *cliRun) (any, error) {
 	}
 	ack.Sync = VerdictSync(ack.Store, ack.Clock)
 	event := c.s("--event")
-	record, err := ack.RecordVerdict(c.ctx, event, c.s("--verdict"), c.s("--verdict-turn"), criteria, findings, c.opt("--reason"), c.opt("--expect-criteria-digest"))
+	var verifiedHead []string
+	if c.opt("--verified-head") != nil {
+		head := c.s("--verified-head")
+		if !verifiedHeadPattern.MatchString(head) {
+			return nil, &dispatch.UsageError{Detail: "--verified-head takes the 40 lowercase hex digits of the head this verified ruling handled, not " + strconv.Quote(head) + ". The head is recorded with the ruling and a later dag-accept proves a parent-made refresh against it, so it is the commit id itself", Code: contract.ExitUsage}
+		}
+		verifiedHead = append(verifiedHead, head)
+	}
+	record, err := ack.RecordVerdict(c.ctx, event, c.s("--verdict"), c.s("--verdict-turn"), criteria, findings, c.opt("--reason"), c.opt("--expect-criteria-digest"), verifiedHead...)
 	if err != nil {
 		return nil, err
 	}

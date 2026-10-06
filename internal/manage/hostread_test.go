@@ -36,6 +36,8 @@ func hostReadEnv(t *testing.T, socket string) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("CRW_CONFIG", "")
 	if socket != "" {
 		if err := os.Symlink(socket, filepath.Join(control, "app-server-control.sock")); err != nil {
 			t.Fatal(err)
@@ -158,5 +160,18 @@ func TestHostReadFailuresAndCommandLine(t *testing.T) {
 	}
 	if code, out := hostReadRun(t, "host-read", "-h"); code != 0 || !strings.Contains(out, "usage: crw manage host-read") {
 		t.Fatalf("-h: exit %d, output %q", code, out)
+	}
+}
+
+// C9: a stdout write that fails ends host-read with exit 1 rather than a silent success.
+func TestHostReadReportsAWriteFailure(t *testing.T) {
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"marker": "x"}})
+	hostReadEnv(t, host.SocketPath)
+	var errOut strings.Builder
+	code := Run(context.Background(), []string{"host-read", "--method", "thread/read"},
+		strings.NewReader(""), coreFailWriter{}, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "crw manage host-read: error: write output:") {
+		t.Fatalf("exit %d, stderr %q", code, errOut.String())
 	}
 }

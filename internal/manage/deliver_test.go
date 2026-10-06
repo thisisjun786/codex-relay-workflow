@@ -56,8 +56,18 @@ func TestDeliverClassifyTheContractInputs(t *testing.T) {
 		{"rejected", deliverToolSend, deliverReply{Payload: map[string]any{"delivery": "rejected"}}, deliverClassRefused},
 		{"refused", deliverToolSend, deliverReply{Payload: map[string]any{"status": "refused"}}, deliverClassRefused},
 		{"not attempted", deliverToolSend, deliverReply{Payload: map[string]any{"status": "not_attempted", "retrySafe": true}}, deliverClassRefused},
-		{"a tool error the bridge raised", deliverToolSend, deliverReply{IsError: true, Text: "Error executing tool send_message_to_thread: nope"}, deliverClassRefused},
-		{"an error text without the flag", deliverToolSend, deliverReply{Text: "Error executing tool send_message_to_thread: nope"}, deliverClassRefused},
+		// An isError result can arrive after the host took the message: the bridge writes the
+		// operation with Ledger.Begin before any turn/start and the receipt with Ledger.Save
+		// afterwards, so a receipt that could not be saved is undetermined, not refused.
+		{"a tool error the bridge raised", deliverToolSend, deliverReply{IsError: true, Text: "Error executing tool send_message_to_thread: nope"}, deliverClassUnknown},
+		{"an error text without the flag", deliverToolSend, deliverReply{Text: "Error executing tool send_message_to_thread: nope"}, deliverClassUnknown},
+		{"a receipt save failure after the host accepted", deliverToolSend, deliverReply{IsError: true, Text: "Error executing tool send_message_to_thread: save receipt: database or disk is full"}, deliverClassUnknown},
+		{"a validation refusal the bridge never recorded", deliverToolSend, deliverReply{IsError: true, Text: "Error executing tool send_message_to_thread: model must contain 1-100 characters"}, deliverClassUnknown},
+		// Uncertainty is read before acceptance: an undetermined status stays unknown whatever
+		// the delivery field claims.
+		{"an undetermined status with a positive send delivery", deliverToolSend, deliverReply{Payload: map[string]any{"status": "outcome_unknown", "delivery": "turn_started"}}, deliverClassUnknown},
+		{"an in-progress status with a positive steer delivery", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "in_progress_or_unknown", "delivery": "accepted_not_applied"}}, deliverClassUnknown},
+		{"an undetermined status with a rejection delivery", deliverToolSend, deliverReply{Payload: map[string]any{"status": "outcome_unknown", "delivery": "rejected"}}, deliverClassUnknown},
 		{"a contradictory receipt fails closed", deliverToolSend, deliverReply{Payload: map[string]any{"status": "refused", "delivery": "turn_started"}}, deliverClassRefused},
 		{"an accepted delivery of the wrong tool", deliverToolSend, deliverReply{Payload: map[string]any{"delivery": "accepted_not_applied"}}, deliverClassUnknown},
 		{"a steer refused because the turn went idle", deliverToolSteer, deliverReply{Payload: map[string]any{"status": "failed", "rpcError": map[string]any{"code": "thread_idle"}}}, deliverClassRefused},

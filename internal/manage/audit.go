@@ -376,10 +376,11 @@ var auditCommand = Command{Name: "audit", Summary: "grade an audit bundle and re
 func init() { Register(auditCommand) }
 
 // auditUsage is what the audit command prints: the grade line the command shipped with,
-// then the package and round lines this piece adds.
+// then the package, round and drafts lines the pieces after it add.
 const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--phase X] [--round R]\n" +
 	"       crw manage audit package --round R [--next N] [--head SHA]\n" +
-	"       crw manage audit round {start,status} --name R"
+	"       crw manage audit round {start,status} --name R\n" +
+	"       crw manage audit drafts [--round R | --since T] [--severity P1]"
 
 // auditRun is crw manage audit. It dispatches the grade subcommand, which grades one bundle
 // the caller already assembled, the package subcommand, which audits the packages a round
@@ -401,9 +402,11 @@ func auditRun(ctx context.Context, e *Env, args []string) int {
 		return auditRunPackage(ctx, e, args[1:])
 	case "round":
 		return auditRunRound(ctx, e, args[1:])
+	case "drafts":
+		return auditRunDrafts(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
-	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'round')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'round', 'drafts')\n", args[0])
 	return usageExit
 }
 
