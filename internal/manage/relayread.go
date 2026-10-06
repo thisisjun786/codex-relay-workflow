@@ -372,12 +372,11 @@ func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions,
 		relayReadFail(out, relayReadSectionPlans, "", err)
 		return nil
 	}
-	// A plan the caller named that the store does not carry at all is reported rather than dropped,
-	// so a typo or a stale selection cannot read as a plan with nothing in it: the scheduler refuses
-	// an unknown plan and the item carries that refusal as its own reason. A named plan the store
-	// does carry but the project filter left out is the filter working, not an unknown plan, so the
-	// existence check is deliberately made without the project predicate.
-	known, err := relayReadKnownPlans(ctx, st, opts.Plans)
+	// A plan the caller named is kept even when a selector left it out, so a named target never
+	// vanishes from the projection without a mark. The scheduler refuses one the store does not
+	// carry, and one the project selector excluded is refused here, so both read as an item whose
+	// source could not be read rather than as a shorter, successful list.
+	excluded, err := relayReadExcludedPlans(ctx, st, opts, ids)
 	if err != nil {
 		relayReadFail(out, relayReadSectionPlans, "", err)
 		return nil
@@ -387,18 +386,21 @@ func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions,
 		selected[id] = true
 	}
 	for _, wanted := range opts.Plans {
-		// A plan the store holds was excluded by the project selector, which is the selector
-		// working; only one the store does not hold at all is a source that could not be read.
-		if known[wanted] || selected[wanted] {
-			continue
+		if !selected[wanted] {
+			ids = append(ids, wanted)
+			selected[wanted] = true
 		}
-		ids = append(ids, wanted)
 	}
 	sort.Strings(ids)
 	scheduler := &dagsched.Scheduler{Store: st}
 	items := make([]RelayPlan, 0, len(ids))
 	for _, plan := range ids {
 		item := RelayPlan{PlanID: plan, Read: RelayReadMark{State: relayReadReadOK}}
+		if reason, ok := excluded[plan]; ok {
+			item.Read = RelayReadMark{State: relayReadReadUnknown, Reason: reason}
+			items = append(items, item)
+			continue
+		}
 		progress, err := scheduler.Progress(ctx, st.Q(ctx), plan)
 		if err != nil {
 			item.Read = RelayReadMark{State: relayReadReadUnknown, Reason: err.Error()}
@@ -418,24 +420,38 @@ func relayReadPlans(ctx context.Context, st *store.Store, opts RelayReadOptions,
 	return items
 }
 
-// relayReadKnownPlans is which of the named plans the store carries at all, without the project
-// filter: a named plan the store holds but a project selector excluded is the selector working,
-// while one the store does not hold is a source that could not be read.
-func relayReadKnownPlans(ctx context.Context, st *store.Store, wanted []string) (map[string]bool, error) {
-	known := map[string]bool{}
-	if len(wanted) == 0 {
-		return known, nil
+// relayReadExcludedPlans is the named plans the store carries but the selection left out, with the
+// reason each is unread: the existence check is made without the project predicate, so a plan the
+// store holds and a selector excluded is reported rather than dropped, while one the store does not
+// hold at all is left to the scheduler's own refusal.
+func relayReadExcludedPlans(ctx context.Context, st *store.Store, opts RelayReadOptions, selected []string) (map[string]string, error) {
+	excluded := map[string]string{}
+	if len(opts.Plans) == 0 || len(opts.Projects) == 0 {
+		return excluded, nil
 	}
-	ids, err := relayReadIDs(ctx, st,
+	chosen := map[string]bool{}
+	for _, id := range selected {
+		chosen[id] = true
+	}
+	var wanted []string
+	for _, id := range opts.Plans {
+		if !chosen[id] {
+			wanted = append(wanted, id)
+		}
+	}
+	if len(wanted) == 0 {
+		return excluded, nil
+	}
+	known, err := relayReadIDs(ctx, st,
 		"SELECT plan_id FROM dag_plans WHERE plan_id IN ("+relayReadPlaceholders(len(wanted))+")",
 		relayReadArgs(wanted))
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
-		known[id] = true
+	for _, id := range known {
+		excluded[id] = "the plan belongs to a project outside the selection"
 	}
-	return known, nil
+	return excluded, nil
 }
 
 // relayReadMergeTurns reads the record of each chosen merge turn.
@@ -445,6 +461,13 @@ func relayReadMergeTurns(ctx context.Context, st *store.Store, opts RelayReadOpt
 	var args []any
 	if !opts.IncludeClosed {
 		conditions = append(conditions, relayReadOpenTurnFilter)
+	}
+	if len(opts.Plans) > 0 {
+		// A plan selector narrows the turns to the ones whose relationship executes a node of that
+		// plan, the link the relay itself keeps in dag_node_executions.
+		conditions = append(conditions, "EXISTS (SELECT 1 FROM dag_node_executions e WHERE e.relationship_id = merge_turns.relationship_id"+
+			" AND e.plan_id IN ("+relayReadPlaceholders(len(opts.Plans))+"))")
+		args = append(args, relayReadArgs(opts.Plans)...)
 	}
 	if len(opts.Projects) > 0 {
 		conditions = append(conditions, "project_key IN ("+relayReadPlaceholders(len(opts.Projects))+")")
@@ -494,6 +517,9 @@ func relayReadBindings(ctx context.Context, st *store.Store, opts RelayReadOptio
 	query := "SELECT DISTINCT scope_kind, scope_key FROM scope_bindings"
 	var args []any
 	if len(opts.Projects) > 0 {
+		// A project selector narrows the scope list to project-scope bindings of that project, which
+		// is what naming a project asks for; a caller that wants every scope kind leaves the
+		// selector off. The rows themselves are still read through the registry's Owners.
 		query += " WHERE scope_kind = 'project' AND scope_key IN (" + relayReadPlaceholders(len(opts.Projects)) + ")"
 		args = relayReadArgs(opts.Projects)
 	}

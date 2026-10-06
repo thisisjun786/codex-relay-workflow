@@ -645,6 +645,50 @@ func (f *dagReviewFixture) relayReadTurn(turnID, project, holder, state, rid str
 		turnID, "owner/repo#dev-"+project, project, holder, rid, state, dagReviewAt(0), dagReviewAt(0), dagReviewAt(0))
 }
 
+// relayReadExecution records that a relationship executes a node of a plan, which is the link a
+// plan selector uses to choose the merge turns that belong to it.
+func (f *dagReviewFixture) relayReadExecution(planID, nodeID, rid string) {
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind)"+
+		" VALUES (?,?,?,1,'manifest','initial')", planID, nodeID, rid)
+}
+
+// A plan selector narrows the merge turns to the ones whose relationship executes a node of that
+// plan, so a narrowed projection does not carry another plan's lanes.
+func TestRelayReadPlanSelectorNarrowsMergeTurns(t *testing.T) {
+	f := relayReadTwoProjects(t)
+	f.relayReadExecution("plan-project-1", "A", "rel-project-1")
+	f.relayReadExecution("plan-project-2", "A", "rel-project-2")
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{Plans: []string{"plan-project-1"}})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	if len(projection.MergeTurns) != 1 || projection.MergeTurns[0].TurnID != "turn-project-1" {
+		t.Errorf("--plan did not narrow the merge turns: %+v", projection.MergeTurns)
+	}
+}
+
+// A plan the caller named that the store holds but the project selector excluded is reported as an
+// item whose source could not be read, rather than silently dropped: a named target never vanishes
+// from the projection without a mark.
+func TestRelayReadPlanOutsideTheSelectedProjectIsUnknown(t *testing.T) {
+	f := relayReadTwoProjects(t)
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir,
+		RelayReadOptions{Plans: []string{"plan-project-1"}, Projects: []string{"project-2"}})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	if len(projection.Plans) != 1 || projection.Plans[0].PlanID != "plan-project-1" {
+		t.Fatalf("plans = %+v, want the named plan reported", projection.Plans)
+	}
+	if projection.Plans[0].Read.State != relayReadReadUnknown {
+		t.Errorf("read = %+v, want unknown", projection.Plans[0].Read)
+	}
+}
+
 // The options choose the target list: an empty option is everything the store carries, --project
 // narrows to one project's relationships, bindings and merge turns, --plan narrows to one plan,
 // and --all keeps what a default read leaves out.
