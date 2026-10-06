@@ -175,11 +175,6 @@ func orchestrateDcloseRowMatchesKey(row map[string]any, key string, want *string
 // this close's C -> IDLE row for this session, check epoch and closed work phase. It is the guard
 // that makes a retry append the row once.
 func orchestrateDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch, closedWorkPhaseID *string) (bool, error) {
-	return orchestrateDcloseHasDoneRow(cwd, sessionID, checkEpoch, closedWorkPhaseID)
-}
-
-// orchestrateDcloseHasDoneRow is the shared reader behind both guards.
-func orchestrateDcloseHasDoneRow(cwd, sessionID string, checkEpoch, closedWorkPhaseID *string) (bool, error) {
 	rows, err := orchestrateDcloseReadJSONLObjects(filepath.Join(cwd, crwdir.DirName, state.LedgerFile))
 	if err != nil {
 		return false, err
