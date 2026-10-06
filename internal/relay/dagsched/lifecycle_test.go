@@ -88,6 +88,7 @@ func rejectedRules(err error) []string {
 
 // c1: a paused node, and every node of a paused plan, is not offered and says why; the resume offers it again.
 func TestAPausedNodeOrPlanIsNotOfferedAndResumeOffersItAgain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -138,6 +139,7 @@ func TestAPausedNodeOrPlanIsNotOfferedAndResumeOffersItAgain(t *testing.T) {
 
 // c1: a release of a paused node or of a node of a paused plan is refused, writes nothing and starts no child; the resume releases it.
 func TestReleaseRefusesAPausedNodeAndAPausedPlan(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, reason string
 		pause, back  doc
@@ -170,6 +172,7 @@ func TestReleaseRefusesAPausedNodeAndAPausedPlan(t *testing.T) {
 
 // c2: nothing downstream of a cancelled or archived node is released, and a cancel is never shown as reverted or done.
 func TestDescendantsOfACancelledOrArchivedNodeAreNeverReleased(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, op, life, own, descendant string
 	}{
@@ -220,6 +223,7 @@ func TestDescendantsOfACancelledOrArchivedNodeAreNeverReleased(t *testing.T) {
 // c2: a cancelled node is never resumed, reopened, cancelled again or archived: the plan has no revision that reads as undoing a cancel, and an
 // archived node is as final. Starting the work again is a new node (replace_node).
 func TestACancelIsNeverReverted(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -251,6 +255,7 @@ func TestACancelIsNeverReverted(t *testing.T) {
 // c2: a landed merge is a fact the plan cannot take back: the node stays done, its integrated edge stays satisfied, and only what rested on its
 // unlanded artifact edges is blocked.
 func TestCancellingALandedNodeDoesNotRevertTheLanding(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -273,6 +278,7 @@ func TestCancellingALandedNodeDoesNotRevertTheLanding(t *testing.T) {
 // c3: a child that reports after its node was paused (or the plan was) has its result recorded, nothing accepts it while the pause lasts and no
 // successor is released; the resume lets the parent accept it and only then does the successor become ready.
 func TestAChildThatReportsAfterAPauseReleasesNoSuccessor(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, reason, successor string
 		pause, back             doc
@@ -322,6 +328,7 @@ func TestAChildThatReportsAfterAPauseReleasesNoSuccessor(t *testing.T) {
 // c3: an acceptance recorded before a pause is a value the pause does not touch (contract 7.4): it stays active and the node reads done, with the
 // pause beside it, and it is neither revoked nor restated.
 func TestAPauseDoesNotInvalidateAnAcceptance(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.reportNode("rp", "A", acceptOpts{})
@@ -342,6 +349,7 @@ func TestAPauseDoesNotInvalidateAnAcceptance(t *testing.T) {
 
 // c4 (contract 7.4): a pause, and a cancel, keep the execution slot until an explicit slot-release; the scheduler keeps counting it.
 func TestPauseAndCancelKeepTheExecutionSlot(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.declareLimit("project", "P-TEST", "runs", 1)
@@ -373,6 +381,7 @@ func TestPauseAndCancelKeepTheExecutionSlot(t *testing.T) {
 // A node the plan paused or ended keeps what the relay says of its execution, except where that would hide something the operator must act on:
 // a running child stays running with the pause as its reason; a creation of unknown outcome and a landed merge keep their own reasons.
 func TestTheReadingOfAnOwnedNodeKeepsWhatNeedsAction(t *testing.T) {
+	t.Parallel()
 	t.Run("a running child", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -405,6 +414,7 @@ func TestTheReadingOfAnOwnedNodeKeepsWhatNeedsAction(t *testing.T) {
 // c4: a release whose intent was recorded and whose child is not bound yet is a continuation of an earlier release, and it is refused while the node is
 // paused or ended: nothing is created for a node the plan stopped, and the resume lets the same request continue.
 func TestAFrozenReleaseIsNotContinuedForAPausedNode(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.host.loseFirstCreation = true
@@ -459,6 +469,7 @@ func refusedFor(t *testing.T, err error, reason string) {
 
 // The work on a node (accepting its result, correcting it) is refused for a paused, cancelled or archived node and for a node of a paused plan, before anything is written.
 func TestWorkOnAPausedOrEndedNodeIsRefusedAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	for _, c := range lifecycleCases() {
 		t.Run(c.name+": accepting", func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -490,6 +501,7 @@ func TestWorkOnAPausedOrEndedNodeIsRefusedAndWritesNothing(t *testing.T) {
 // The landing of an accepted pull request (judging it for merge, asking the merge lane for a turn, observing where it landed) is refused for a paused or cancelled node and for a node of a
 // paused plan, as it is for a paused or cancelled relationship.
 func TestLandingOfAPausedOrCancelledNodeIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, c := range lifecycleCases() {
 		if c.archived {
 			continue
@@ -514,6 +526,7 @@ func TestLandingOfAPausedOrCancelledNodeIsRefused(t *testing.T) {
 // An archived node has put its work down, but a pull request it already had accepted still has to land, as it does for an archived relationship: the judgement, the merge turn and the
 // observation go through, and the work (accepting, correcting, releasing) does not.
 func TestAnArchivedNodeStillLands(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	(&lifeLog{t: t, f: k.fixture, plan: "g", rev: int(k.snapshot("g").Revision)}).put(lifeOp("archive_node", "I"))
 	ctx := context.Background()
@@ -540,6 +553,7 @@ func TestAnArchivedNodeStillLands(t *testing.T) {
 // A pause that lands after a command has read the plan and before its transaction commits is caught inside the transaction: the slice and criteria digests that transaction already compares
 // do not move for a pause, so each transaction asks the lifecycle again. Each case pauses from the seam between the unlocked read and the transaction and checks that the seam fired.
 func TestAPauseThatLandsBetweenTheReadAndTheTransactionIsCaught(t *testing.T) {
+	t.Parallel()
 	const reason = "defer:node_paused"
 	t.Run("accepting", func(t *testing.T) {
 		k := newReleaseKit(t)
@@ -624,6 +638,7 @@ func TestAPauseThatLandsBetweenTheReadAndTheTransactionIsCaught(t *testing.T) {
 // c2: the descendants of an ended node are blocked through what they consumed, not only through the edge that leaves it: a node accepted on the result of a node the plan then cancelled or
 // archived is not a value to build on, so what follows it is not released. A landing is the exception: what an integrated input handed over is in the target, whatever happens to the node.
 func TestTheDescendantsOfAnEndedNodeAreBlockedThroughWhatTheyConsumed(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ op, reason string }{{"cancel_node", "blocked:predecessor_cancelled"}, {"archive_node", "blocked:predecessor_archived"}} {
 		t.Run(tc.op, func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -692,6 +707,7 @@ func TestTheDescendantsOfAnEndedNodeAreBlockedThroughWhatTheyConsumed(t *testing
 
 // A pass keeps what the reading said, the lifecycle of the nodes included, so the retained pass and the live reading do not differ.
 func TestAPassKeepsTheLifecycleOfTheNodesItRead(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -709,6 +725,7 @@ func TestAPassKeepsTheLifecycleOfTheNodesItRead(t *testing.T) {
 // A release whose intent was recorded and whose child was not created is a continuation of the earlier release, and what it rests on is asked again: if the plan ended the node the frozen manifest consumed
 // from, the retry never reaches the managed start (the edge-level and consumed-chain gates read the store as it is now; the frozen intent is the one place that did not).
 func TestAFrozenSuccessorReleaseIsNotContinuedWhenItsInputWasEnded(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ op, reason string }{{"cancel_node", "blocked:predecessor_cancelled"}, {"archive_node", "blocked:predecessor_archived"}} {
 		t.Run(tc.op, func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -744,6 +761,7 @@ func TestAFrozenSuccessorReleaseIsNotContinuedWhenItsInputWasEnded(t *testing.T)
 // The last point at which the DAG can stop a child from being created is just before the managed start, for a new release and for a continuation alike: a pause that landed since the intent was
 // written stops it, with the intent and the slot left where they were, and the resume lets the same release go on.
 func TestAPauseThatLandsBeforeTheManagedStartStopsTheChild(t *testing.T) {
+	t.Parallel()
 	t.Run("a new release", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -798,6 +816,7 @@ func TestAPauseThatLandsBeforeTheManagedStartStopsTheChild(t *testing.T) {
 // A correction is prepared from inputs read while the plan may move: the plan's hold is asked again in the transaction that stores the manifest, so a pause that lands while the inputs are
 // verified leaves no manifest, no frozen file and no instruction.
 func TestAPauseThatLandsWhileACorrectionIsPreparedLeavesNothing(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	rid := k.correctionKit()
 	k.openCorrection(rid, nil)
@@ -830,6 +849,7 @@ func retireNodeA() []doc {
 }
 
 func TestANodeThatLeftThePlanIsNotStartedOrCorrected(t *testing.T) {
+	t.Parallel()
 	t.Run("a frozen release", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -876,6 +896,7 @@ func TestANodeThatLeftThePlanIsNotStartedOrCorrected(t *testing.T) {
 // The reading keeps one rule the stale reading set down: a node that is not stale carries no stale object. A paused node keeps its stale reading (a pause overrides only that the node is owned); a node the plan
 // cancelled or archived reads as ended and drops the object with the reason it explained.
 func TestAStaleNodeThePlanHoldsKeepsTheStaleReadingsInvariant(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ op, reason string }{
 		{"pause_node", invSliceChanged},
 		{"cancel_node", "skip:node_cancelled"},

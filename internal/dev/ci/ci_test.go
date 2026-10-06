@@ -10,7 +10,7 @@ import (
 // An unknown check is a usage error that names the argument and the checks there are.
 func TestAnUnknownCheckIsNamed(t *testing.T) {
 	got := runCommand(t, repoRoot(), nil, crwDev, "ci", "nope\t")
-	line := `crw-dev ci: error: invalid choice: "nope\t" (choose from contracts, operations, plugin, refactor-backlog, validate)` + "\n"
+	line := `crw-dev ci: error: invalid choice: "nope\t" (choose from contracts, dispatch-cases, operations, plugin, refactor-backlog, validate)` + "\n"
 	if got.code != 2 || !strings.HasSuffix(got.stderr, line) {
 		t.Errorf("crw-dev ci nope: exit %d\n%s\nwant the line %s", got.code, got.stderr, line)
 	}

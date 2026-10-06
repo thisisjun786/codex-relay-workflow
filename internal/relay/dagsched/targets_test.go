@@ -30,6 +30,7 @@ func (f *fixture) integratedNode(plan string, a accepted) (bool, []Target) {
 var pinnedOpts = acceptOpts{HeadSHA: head1, PR: 7, Forge: "owner/repo", Repository: "owner/repo"}
 
 func TestNodeIntegratedNeedsEveryTarget(t *testing.T) {
+	t.Parallel()
 	dev, release := Target{"owner/repo", "dev"}, Target{"owner/repo", "release"}
 	t.Run("partial, then complete", func(t *testing.T) {
 		f := newFixture(t)

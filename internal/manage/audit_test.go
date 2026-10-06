@@ -273,7 +273,7 @@ func TestAuditPromptAsksForTheResultFormatAndTheModeFiles(t *testing.T) {
 		}
 	}
 	pkg := auditPrompt(&auditBundle{Mode: auditModePackage})
-	if !strings.Contains(pkg, "candidate/tree/") || strings.Contains(pkg, "candidate/diff.patch") {
+	if !strings.Contains(pkg, "src/") || !strings.Contains(pkg, auditPkgCriteriaFile) || strings.Contains(pkg, "candidate/diff.patch") {
 		t.Errorf("the package prompt does not describe a package audit: %q", pkg)
 	}
 	prNoCriteria := auditPrompt(&auditBundle{Mode: auditModePR, CriteriaUnavailable: true})
@@ -281,7 +281,7 @@ func TestAuditPromptAsksForTheResultFormatAndTheModeFiles(t *testing.T) {
 		t.Errorf("a pull request bundle without criteria is not told how to judge: %q", prNoCriteria)
 	}
 	pkgNoCriteria := auditPrompt(&auditBundle{Mode: auditModePackage, CriteriaUnavailable: true})
-	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, "the tree itself") {
+	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, auditPkgTaskFile) {
 		t.Errorf("a package bundle without criteria is not told how to judge: %q", pkgNoCriteria)
 	}
 	if strings.Contains(pkgNoCriteria, "candidate/pr.md") {

@@ -87,10 +87,14 @@ running run instead of cancelling it, and a later push cancels it in turn. Every
 a retarget included, still cancels obsolete runs.
 
 `validate`, `secrets` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
-and only on such an edit. The script reads, with `gh api`, the newest completed run of this workflow,
-of this repository, for the same `head_sha`, other than the run it is in, and mirrors the job when
-that run's same-named job's newest attempt concluded `success`. It answers `mirrored=true` with the
-run id in its step output and its step summary, or `mirrored=false`.
+and only on such an edit. The script reads, with `gh api`, the newest created run of this workflow,
+of this pull request, of this repository, for the same `head_sha`, other than the run it is in, and
+mirrors the job when that run's same-named job's newest attempt concluded `success`. Creation order
+is the run's `run_number`, and the larger `id` when two runs share one: those two values are what a
+rerun leaves alone. `run_started_at` is deliberately not the order, because rerunning only the
+failed jobs moves it forward and would let an older run outrank a newer one whose same-named job
+failed. It answers `mirrored=true` with the run id in its step output and its step summary, or
+`mirrored=false`.
 
 Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
 condition the step already had. The full checkout is one of them, and the sparse checkout of
@@ -98,7 +102,8 @@ condition the step already had. The full checkout is one of them, and the sparse
 succeeds without running its steps, and nothing is skipped at job level: GitHub reports a skipped
 job's check as success, so a skipped `dev-gate` could hide an earlier red run.
 
-The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing job,
+The lookup never fails the job, and an older run is never consulted: the newest created run alone
+answers for the job. No candidate, a failure, a cancellation, a skip, a missing job,
 another head, workflow or repository, an unreadable API and the run itself all answer
 `mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
 unchanged, and the three jobs add only `actions: read` to the workflow's `contents: read`, which is
@@ -163,25 +168,28 @@ that: it refuses a package named by two parts, a part missing from `TEST_PARTS` 
 subtracts, so its packages would run again in `rest`), a named path with no tests, a pattern, and a
 package of the `dev`-tagged set, which only `rest` runs, with the tag.
 
-A runner spends about 50 s before its tests (checkout, toolchain, the one `crw` build). It then
-runs a few packages at a time on four CPUs, in the order a part lists them, so a leg takes about that
-plus its slowest package, or its packages' total over four CPUs if that is longer; list a slow
-package first. The legs as balanced after the slow packages' tests ran in parallel (CRW-424), with the
-hosted job time before and after (median of four runs before and six after):
+A runner spends about 55 s before its tests (checkout, toolchain, the one `crw` build), and the leg
+compiles its own test binaries before it starts. It then runs a few packages at a time on four CPUs,
+in the order a part lists them, so a leg takes about that plus its slowest package, or its packages'
+total over four CPUs if that is longer; list a slow package first. The legs as rebalanced after the
+slow packages' tests ran in parallel, with the hosted job time before (median of six dev push runs on
+2026-10-06) and after (median of three runs of the change that moved packages between the parts):
 
 | Leg | Packages | Before | After |
 | --- | --- | --- | --- |
-| `test-1` | `relay/dagsched`, `relay/delivery`, `relay/cli` | 159 s | 204.5 s |
-| `test-2` | `runtime/install`, `relay/supervisor`, `relay/registry` | 118.5 s | 214 s |
-| `test-3` | `contracttest`, `relay/store`, `relay/mergeturn`, `relay/service`, `relay/sync`, `relay/faults` | 170.5 s | 169 s |
-| `test-4` | `relay/hook`, `relay/linkage`, `relay/evidence`, `relay/managed` | 95 s | 84 s |
-| `test-rest` | the other 58 packages and the `dev`-tagged tests | 285.5 s | 172.5 s |
+| `test-1` | `relay/dagsched`, `relay/cli` | 245 s | 229 s |
+| `test-2` | `runtime/install`, `relay/registry`, `relay/hook` | 261 s | 259 s |
+| `test-3` | `relay/service`, `contracttest`, `relay/mergeturn`, `relay/supervisor`, `skill`, `relay/managed`, `relay/adapter` | 188.5 s | 246 s |
+| `test-4` | `relay/delivery`, `relay/store`, `relay/sync`, `relay/faults`, `relay/dag`, `role`, `pyjson`, `relay/linkage`, `recall`, `relay/routing`, `relay/childcleanup` | 131.5 s | 184 s |
+| `test-rest` | the other 77 packages and the `dev`-tagged tests | 246 s | 145 s |
 
-`runtime/install` is the floor of the longest leg: its tests run one after another for about 140 s, so
-the leg that holds it takes about 215 s however the others are split, and a sixth leg would not
-shorten the longest one. To rebalance again, read the `ok <package> <seconds>` lines and the job
-times of several hosted runs of one commit (they differ by 20 s or more from run to run), move
-packages, and compare medians.
+`runtime/install` is the floor of the longest leg: its tests run one after another for about 175 s, so
+the leg that holds it takes about 260 s however the others are split, and a sixth leg would not
+shorten the longest one. The packages that do not parallelize well are kept apart for the same
+reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`, `relay/managed` and
+`relay/adapter` sit in `test-3` with the middle tier, so no leg holds two of them. To rebalance
+again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit
+(they differ by 20 s or more from run to run), move packages, and compare medians.
 
 ## Leftover isolation trees
 

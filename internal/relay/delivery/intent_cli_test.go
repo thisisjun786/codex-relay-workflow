@@ -18,6 +18,7 @@ import (
 var loserProcess = regexp.MustCompile(`"loserProcess": "\d+"`)
 
 func TestCLI_every_intent_command_answers_byte_for_byte_like_python(t *testing.T) {
+	t.Parallel()
 	side := newSide(t, filepath.Join(parityTree(t), "work"))
 	seeded := sqliteDump(t, side, "SELECT relationship_id FROM relationships")
 	side.expect("sqlite SELECT relationship_id FROM relationships", seeded)

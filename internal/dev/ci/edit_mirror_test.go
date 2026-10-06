@@ -77,6 +77,7 @@ const (
 // from, which a shared head sha makes necessary to tell two pull requests' runs apart.
 type editMirrorRunFixture struct {
 	id         int
+	number     int
 	headSHA    string
 	event      string
 	status     string
@@ -96,6 +97,7 @@ type editMirrorPull struct {
 func editMirrorRun(id int, startedAt string) editMirrorRunFixture {
 	return editMirrorRunFixture{
 		id:         id,
+		number:     id,
 		headSHA:    editMirrorHead,
 		event:      "pull_request",
 		status:     "completed",
@@ -118,8 +120,8 @@ func (r editMirrorRunFixture) json() string {
 	for i, pull := range r.pulls {
 		pulls[i] = fmt.Sprintf(`{"number":%d,"head":{"sha":%q}}`, pull.number, pull.head)
 	}
-	return fmt.Sprintf(`{"id":%d,"head_sha":%q,"event":%q,"status":%q,"path":%q,"head_repository":{"full_name":%q},"run_started_at":%q,"pull_requests":[%s]}`,
-		r.id, r.headSHA, r.event, r.status, r.path, r.repository, r.startedAt, strings.Join(pulls, ","))
+	return fmt.Sprintf(`{"id":%d,"run_number":%d,"head_sha":%q,"event":%q,"status":%q,"path":%q,"head_repository":{"full_name":%q},"run_started_at":%q,"pull_requests":[%s]}`,
+		r.id, r.number, r.headSHA, r.event, r.status, r.path, r.repository, r.startedAt, strings.Join(pulls, ","))
 }
 
 // editMirrorJobFixture is one entry of a run's jobs: one attempt of one job name, with the steps
@@ -555,6 +557,85 @@ func TestEditMirror_an_unfinished_newer_run_is_not_a_candidate(t *testing.T) {
 		jobs:    map[int][]editMirrorJobFixture{older: {editMirrorJob("validate", "success", 1)}},
 		want:    "true",
 		wantRun: older,
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
+// A rerun of only the failed jobs moves an older run's run_started_at past a newer run's, and
+// the old order (run_started_at, then id) then picked the older run. The candidate is the newest
+// CREATED run of this workflow, pull request, repository and head: the largest run_number, then
+// the largest id, neither of which a rerun rewrites. This is the reproduction of the reported
+// defect: run 1111 (number 11) reran its failed dist job later and so starts after run 2222
+// (number 12), whose validate failed. 2222 is the candidate, so validate is not mirrored.
+func TestEditMirror_the_newest_created_run_decides_even_when_a_rerun_moved_an_older_runs_start_time(t *testing.T) {
+	const older, newer = 1111, 2222
+	runs := []editMirrorRunFixture{
+		editMirrorRunAs(older, "2026-10-06T08:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+		editMirrorRunAs(newer, "2026-10-06T07:00:00Z", func(r *editMirrorRunFixture) { r.number = 12 }),
+	}
+	jobs := map[int][]editMirrorJobFixture{
+		// The older run: validate passed on its first attempt, dist failed and was rerun to success.
+		older: {editMirrorJob("validate", "success", 1), editMirrorJob("dist", "failure", 1), editMirrorJob("dist", "success", 2)},
+		newer: {editMirrorJob("validate", "failure", 1)},
+	}
+	for _, c := range []editMirrorCase{
+		{
+			name: "the newest created run failed this job even though an older run passed it",
+			runs: runs, jobs: jobs, jobName: "validate", want: "false",
+		},
+		{
+			// The older run's rerun did pass dist, but it is not the candidate and is never consulted.
+			name: "the older run's successful dist rerun does not vouch for the newest created run",
+			runs: runs, jobs: jobs, jobName: "dist", want: "false",
+		},
+	} {
+		runEditMirror(t, c).check(t, c)
+	}
+
+	// The same two runs with the newest created run's job a success: the job is mirrored, and it
+	// is mirrored from that run, not from the older one the old order would have chosen.
+	jobs[newer] = []editMirrorJobFixture{editMirrorJob("validate", "success", 1)}
+	c := editMirrorCase{
+		name: "the newest created run succeeded at this job",
+		runs: runs, jobs: jobs, jobName: "validate", want: "true", wantRun: newer,
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
+// The parent's order is run_number first, then id. Two runs can share a run_number only in a
+// fixture, and the larger id is then the newer creation.
+func TestEditMirror_a_shared_run_number_is_broken_by_the_larger_id(t *testing.T) {
+	const older, newer = 1111, 2222
+	c := editMirrorCase{
+		name: "the same run number, the larger id is the newer creation",
+		runs: []editMirrorRunFixture{
+			editMirrorRunAs(older, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+			editMirrorRunAs(newer, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+		},
+		jobs: map[int][]editMirrorJobFixture{
+			older: {editMirrorJob("validate", "success", 1)},
+			newer: {editMirrorJob("validate", "failure", 1)},
+		},
+		want: "false",
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
+// run_number is the first key and id only breaks a tie between equal run numbers, so a run whose
+// larger id belongs to the smaller run_number is not the candidate.
+func TestEditMirror_the_run_number_outranks_the_id(t *testing.T) {
+	const older, newer = 9999, 1111
+	c := editMirrorCase{
+		name: "the smaller id carries the larger run number",
+		runs: []editMirrorRunFixture{
+			editMirrorRunAs(older, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+			editMirrorRunAs(newer, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 12 }),
+		},
+		jobs: map[int][]editMirrorJobFixture{
+			older: {editMirrorJob("validate", "success", 1)},
+			newer: {editMirrorJob("validate", "failure", 1)},
+		},
+		want: "false",
 	}
 	runEditMirror(t, c).check(t, c)
 }

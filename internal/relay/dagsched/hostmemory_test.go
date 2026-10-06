@@ -53,6 +53,7 @@ func init() {
 }
 
 func TestProcHostMemoryReadsMeminfoAndPressure(t *testing.T) {
+	t.Parallel()
 	root := fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 6*kibPerGiB), psi("7.25", "3.50"))
 	got := ReadHostMemory(root)
 	if got.AvailableBytes == nil || *got.AvailableBytes != 40<<30 {
@@ -71,6 +72,7 @@ func TestProcHostMemoryReadsMeminfoAndPressure(t *testing.T) {
 
 // An older kernel has no /proc/pressure/memory: that is no reading of the pressure, never a pressure.
 func TestProcHostMemoryMissingPressureIsNoReading(t *testing.T) {
+	t.Parallel()
 	root := fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), "")
 	got := ReadHostMemory(root)
 	if got.PressureSomeAvg60 != nil || got.PressureSomeAvg10 != nil {
@@ -86,6 +88,7 @@ func TestProcHostMemoryMissingPressureIsNoReading(t *testing.T) {
 }
 
 func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, meminfo, pressure string
 		unmeasured              []string
@@ -128,6 +131,7 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 
 // No swap at all is a measured zero use, not an unread dimension.
 func TestProcHostMemoryWithoutSwapIsZeroUse(t *testing.T) {
+	t.Parallel()
 	root := fakeProc(t, memInfo(40*kibPerGiB, 0, 0), psi("0.00", "0.00"))
 	verdict := HostMemoryBound{Sample: ReadHostMemory(root), Limits: DefaultHostMemoryLimits()}.Judge()
 	if used, ok := verdict.SwapUsedPercent(); !ok || used != 0 || len(verdict.Unmeasured) != 0 || verdict.State != HostMemoryWithin {
@@ -142,6 +146,7 @@ func fixedMemory(available int64, swapTotal, swapFree int64, pressure float64) H
 
 // The thresholds are strict: available is below its floor, swap and pressure are above their ceilings. A reading exactly at a threshold is within.
 func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
+	t.Parallel()
 	limits := DefaultHostMemoryLimits()
 	limits.MaxSwapPercent = 85 // explicit legacy occupancy ceiling
 	floor := limits.MinAvailableBytes
@@ -175,6 +180,7 @@ func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
 
 // The documented defaults, and a detail that names every measured value, its threshold and the dimensions nobody read.
 func TestHostMemoryDefaultsAndDetail(t *testing.T) {
+	t.Parallel()
 	limits := DefaultHostMemoryLimits()
 	if limits.MinAvailableBytes != 15<<30 || limits.MaxSwapPercent != 100 || limits.MaxPressureSomeAvg60 != 10 || limits.MaxPressureFullAvg10 != 5 {
 		t.Fatalf("defaults = %+v, want 15 GiB, occupancy disabled, some avg60 of 10 and full avg10 of 5", limits)
@@ -190,6 +196,7 @@ func TestHostMemoryDefaultsAndDetail(t *testing.T) {
 }
 
 func TestHostMemoryFromEnvironment(t *testing.T) {
+	t.Parallel()
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	t.Run("nothing set but the proc root: the defaults", func(t *testing.T) {
 		root := fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("0.00", "0.00"))
@@ -228,6 +235,7 @@ func TestHostMemoryFromEnvironment(t *testing.T) {
 
 // The pressure is judged on the some avg60; the avg10 is recorded beside it and decides nothing, and an avg10 that cannot be read is no reading of its own, not a lost avg60.
 func TestHostMemoryJudgesPressureOnAvg60(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, file, state, avg10 string }{
 		{"a spike of avg10 alone holds nothing", psi("50.00", "1.00"), HostMemoryWithin, "50.00"},
 		{"avg60 exactly at the ceiling is within", psi("0.00", "10.00"), HostMemoryWithin, "0.00"},

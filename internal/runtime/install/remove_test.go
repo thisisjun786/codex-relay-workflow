@@ -44,6 +44,7 @@ func listed(list []any, want any) bool {
 // registration cannot be read. Each refusal names the registration and
 // leaves the directory and its install entries in place; once nothing names it, it is removed.
 func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	earliest, first, second := archive(t, "0.8.0", ""), archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	other, old := runtimeDir(h, "0.8.0", earliest, t), runtimeDir(h, "0.9.0", first, t)
@@ -130,6 +131,7 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 // names CRW - by its name or a path - still does, as does a file that cannot be parsed or whose
 // top-level structure is not what the host reads. Everything here is a temporary Codex home.
 func TestRemoveIgnoresAMalformedRegistrationThatIsNotCRWs(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -213,6 +215,7 @@ func TestRemoveIgnoresAMalformedRegistrationThatIsNotCRWs(t *testing.T) {
 // with the directory and its entries in place, and never reports entries it did not drop; a
 // removal that does not finish after the drop is exit 3, naming what is left and its repair.
 func TestRemoveDropsTheInstallEntriesBeforeTheDirectory(t *testing.T) {
+	// sequential: shortens record.LockTimeout for the whole process.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -280,6 +283,7 @@ func TestRemoveDropsTheInstallEntriesBeforeTheDirectory(t *testing.T) {
 // under the system Python it links to - runs out of the runtime as surely as one named absolutely:
 // its operand is resolved against /proc/<pid>/cwd, and remove refuses.
 func TestRemoveSeesAScriptStartedByARelativePath(t *testing.T) {
+	// sequential: counts the processes the process-wide table holds.
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("no sh")
@@ -289,7 +293,7 @@ func TestRemoveSeesAScriptStartedByARelativePath(t *testing.T) {
 	old := runtimeDir(h, "0.9.0", first, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
-	write(t, filepath.Join(old, "bin", "run.sh"), "sleep 30; true\n")
+	writeExecutable(t, filepath.Join(old, "bin", "run.sh"), []byte("sleep 30; true\n"), 0o644)
 	process := exec.Command(sh, filepath.Join(filepath.Base(old), "bin", "run.sh"))
 	process.Dir = h.dest
 	if err := process.Start(); err != nil {

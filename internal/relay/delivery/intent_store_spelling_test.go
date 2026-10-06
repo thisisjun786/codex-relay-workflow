@@ -6,6 +6,7 @@ import "testing"
 // stay a root of their own (pathlib keeps them), three or more fold to one, "." parts and repeated
 // or trailing slashes go and ".." stays.
 func TestExpandedStoreSpellsThePathAsPathlibDoes(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ in, want string }{
 		{"/var/relay/relay.sqlite3", "/var/relay/relay.sqlite3"},
 		{"//var/relay//relay.sqlite3", "//var/relay/relay.sqlite3"},

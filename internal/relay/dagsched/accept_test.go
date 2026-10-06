@@ -27,6 +27,7 @@ func (k *releaseKit) acceptCount() int { return k.count("SELECT COUNT(*) FROM da
 // Criterion c5: an acceptance is written only when P-AV-1 holds now. Each case breaks one link of the chain that makes a result accepted: the baseline accepts, every other case is refused with the
 // relay's own reason and writes nothing.
 func TestAcceptRequiresPAV1(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		reason string // "" = accepted
@@ -105,6 +106,7 @@ func TestAcceptRequiresPAV1(t *testing.T) {
 
 // The acceptance is the node's value (contract 4.3): it opens the edge, it is idempotent per output, and a new output replaces it only explicitly.
 func TestAcceptIsIdempotentAndSupersedesExplicitly(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.reportNode("rp", "A", acceptOpts{})
@@ -151,6 +153,7 @@ func TestAcceptIsIdempotentAndSupersedesExplicitly(t *testing.T) {
 
 // E-11: the same output ruled again under re-registered criteria revalidates the same acceptance: one acceptance row, a history of revalidations, no new generation and no new child.
 func TestAcceptRevalidatesAfterCriteriaChange(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.reportNode("rp", "A", acceptOpts{})
@@ -206,6 +209,7 @@ func TestAcceptRevalidatesAfterCriteriaChange(t *testing.T) {
 // Criterion c5: for an implementation node the accepted head is the pull request head the relay read from the forge, never a child's statement; the forge row follows the acceptance in
 // the same transaction (its foreign key is immediate) and a failure of either leaves neither.
 func TestAcceptCodeNodePinsTheForgeHead(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) *releaseKit {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -276,6 +280,7 @@ func TestAcceptCodeNodePinsTheForgeHead(t *testing.T) {
 
 // The slot of a node returns where the node's work ends: at the acceptance of a non_pr node. An operator who returned it first leaves the acceptance to commit without a second return.
 func TestAcceptReleasesTheSlotOfANonPRNode(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.mustRelease("rp", "A")
@@ -315,6 +320,7 @@ func TestAcceptReleasesTheSlotOfANonPRNode(t *testing.T) {
 // Contract 8.2: a result verified against a plan that moved is not accepted. The pull request is read before the transaction; a plan revision that changes the node while it is being read (its
 // slice, or the criteria it is ruled against) must refuse the acceptance and write nothing.
 func TestAcceptRefusesAPlanThatChangedWhileTheHeadWasRead(t *testing.T) {
+	t.Parallel()
 	for name, change := range map[string]func(n doc){
 		"the node's slice":    func(n doc) { n["issue_key"] = "CRW-OTHER" },
 		"the node's criteria": func(n doc) { n["criteria_set_digest"] = dig("criteria of the new revision") },
@@ -395,6 +401,7 @@ const (
 // under, and a plan does not check how a target is spelled, so equality with the forge is the rule: a local checkout is refused with the way out, every other target that is not that repository is refused as
 // landing elsewhere, and a refusal writes no acceptance and no forge row. Before the guard the local, relative, bare and malformed rows below were accepted; the other-case, leading-space and other-forge rows were already refused and stay as controls of exact equality.
 func TestAcceptTargetIsTheForgeRepositoryOfThePullRequest(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		edge   func(to, target string) doc
@@ -428,6 +435,7 @@ func TestAcceptTargetIsTheForgeRepositoryOfThePullRequest(t *testing.T) {
 // What the guard leaves as it was: the forge's own repository on one or both kinds of edge, a terminal node (no outgoing edge, so the forge is the default), the refusal of several repositories (checked first,
 // so a checkout beside a forge is that refusal), and a node with no pull request, whose acceptance never looks at a target.
 func TestAcceptTargetKeepsTheRoutesItDoesNotGuard(t *testing.T) {
+	t.Parallel()
 	accepts := func(name string, edges ...doc) {
 		t.Run(name, func(t *testing.T) {
 			k := acceptTargetKit(t, edges...)
@@ -471,6 +479,7 @@ func TestAcceptTargetKeepsTheRoutesItDoesNotGuard(t *testing.T) {
 // refused. A replacement is a new acceptance: it is refused while the plan's edges still name the checkout, the refusal leaves the acceptance in force as it was (the replacement's update of its state is in the
 // refused transaction), and it succeeds once the plan's edge lands on the forge. The rows of a legacy local acceptance are seeded as they were written then (acceptNode), not through Accept.
 func TestAcceptTargetLeavesALegacyLocalAcceptanceAsItWas(t *testing.T) {
+	t.Parallel()
 	legacy := func(t *testing.T) (*releaseKit, accepted) {
 		k := newReleaseKit(t)
 		k.putPlan("rp", 0, "rp-r1", addRelNode("I", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), acceptTargetIntegrated("X", acceptTargetCheckout))
