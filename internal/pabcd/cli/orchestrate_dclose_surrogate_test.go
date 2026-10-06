@@ -354,6 +354,31 @@ func TestOrchestrateDcloseSurrogateWritesItsOwnCloseRow(t *testing.T) {
 	}
 }
 
+// TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement is the issue's other control: an
+// invalid UTF-8 byte inside a stored ledger row is read as U+FFFD, as Node's readFileSync utf8 reads
+// it, so the row does match a close whose id carries the real U+FFFD. The byte is written raw (0xFF),
+// never as an escape, which is the shape a hand edit or a byte-level copy leaves behind.
+func TestOrchestrateDcloseSurrogateInvalidByteMatchesTheReplacement(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id, slug := "surrogate-invalid-byte", "surrogate-invalid-byte-plan"
+	phaseID := "wp-" + orchestrateDcloseSurrogateFFFD
+	orchestrateDcloseSurrogateSeedAtC(t, cwd, id, slug, phaseID)
+	ledger := orchestrateDcloseSurrogateGoalplanLedgerPath(cwd, slug)
+	// "closed wp-" followed by the single byte 0xFF: Node reads the byte as U+FFFD, so the detail
+	// becomes exactly the close's own target.
+	orchestrateDcloseSurrogateWriteRaw(t, ledger,
+		orchestrateDcloseSurrogateGoalplanRow(slug, "closed wp-"+"\xff"),
+	)
+
+	have, err := orchestrateDcloseHasGoalplanRow(cwd, slug, goalplan.EventWorkphaseDone, "closed "+phaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !have {
+		t.Fatal("a row whose invalid byte reads as U+FFFD did not match the U+FFFD close, as it does in Node")
+	}
+}
+
 // TestOrchestrateDcloseSurrogateRetryAddsNoDuplicate is the control the issue asks for: a row stored
 // with a real U+FFFD still matches, so the close writes no duplicate row.
 func TestOrchestrateDcloseSurrogateRetryAddsNoDuplicate(t *testing.T) {
