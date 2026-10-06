@@ -40,18 +40,20 @@ worker program is the target's shim, which imports its dist modules under `ORACL
 target's `Oracle.Root`, `DefaultOracleRoot` by default) the way the `record-oracle.mjs` recorders
 do.
 
-Starting a worker is bounded separately from a request. A freshly started worker has not booted its
+Starting a worker is bounded separately from a request. The start-up deadline
+(`DefaultStartupTimeout`, one minute; `Config.StartupTimeout` overrides it) is taken before the
+worker process is created, so it covers the whole start: process creation (fork/exec) and the
+handshake that proves the worker has booted. A freshly started worker has not booted its
 interpreter or run its shim's top-level imports yet, so the pool first sends it a handshake -- one
-normal request with a null input and an empty root -- and waits for a reply under the start-up
-deadline (`DefaultStartupTimeout`, one minute; `Config.StartupTimeout` overrides it). Only a worker
-that has answered the handshake takes a case, so the five-second per-case deadline covers that
-case's own exchange and never a worker's boot. A worker that does not answer the handshake in time
-is killed, replaced, and the case that needed it is counted as a timeout, exactly like a request
-that times out; the campaign still fails. The handshake's reply is discarded, so it can never
-change a verdict -- a divergence is still only ever a `Differ`, `Miss` or `Extra` from a case's own
-exchange. Because the handshake is an ordinary request, every shim must answer a null input
-inertly (the three committed shims do: `echo` returns it, `shellwrite` answers `[]`, `memorygate`
-answers `""`).
+normal request with a null input and an empty root -- and waits for a reply under what is left of
+the start-up deadline. Only a worker that has answered the handshake takes a case, so the
+five-second per-case deadline covers that case's own exchange and never a worker's boot. A worker
+that does not answer the handshake in time is killed, replaced, and the case that needed it is
+counted as a timeout, exactly like a request that times out; the campaign still fails. The
+handshake's reply is discarded, so it can never change a verdict -- a divergence is still only ever
+a `Differ`, `Miss` or `Extra` from a case's own exchange. Because the handshake is an ordinary
+request, every shim must answer a null input inertly (the three committed shims do: `echo` returns
+it, `shellwrite` answers `[]`, `memorygate` answers `""`).
 
 An input may carry an `fs` array of `{path, kind, target, mode, content}` entries. Each case gets
 two fresh roots, one per side, and builds the same tree in both. A path that leaves its root, and a
