@@ -87,6 +87,33 @@ A project has at most one live `execution` edge, whichever initiative or parent 
 other initiative uses a `reference`, and a reference must agree about who the parent is. That is
 what stops a shared project from acquiring a second execution parent.
 
+## The store seat
+
+A supervisor's own level is an initiative. `linkage-bind --role supervisor --scope-kind store
+--scope store` claims the store instead: one key, one live owner, and the same identity rule, so
+the binding is `bindingID("supervisor","store","store",task)`. The store is the one scope no
+Linear level owns, so a task bound there holds a seat that is not an initiative execution
+binding. `--scope-kind` is accepted for that one combination and no other: another role, or
+another key, is a named refusal rather than a second scope, and the seat writes no `scope_links`
+row, because a supervision edge joins an initiative to a project and the store has no initiative
+above it.
+
+The seat is for a session that manages the store rather than one project. The management session
+holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
+store — so neither is tied to a single initiative's execution. One task holds one supervisor
+seat, so a session registered here cannot also supervise an initiative; that is the rule the role
+model already had, not a limit of the command. The seat is also what such a session needs to
+speak for the store scope: `limit-declare --scope-kind store` reads its declarer from a live
+supervisor binding, and the seat is the binding a session that manages the store holds.
+
+The seat has no handover yet. `linkage-handover` maps its role back to the role's own level, so
+`--role supervisor --scope store` looks for an initiative named `store` and refuses
+`unregistered_scope`; the incumbent re-binding is a no-op, and no other command archives a
+binding. A second task asking for a seat that is already held is therefore told to hand it over
+deliberately, which for this one scope no command yet does. Replacing the store-scope owner needs
+either `linkage-handover` to select the scope kind or a lifecycle operation of its own, and that
+is a decision this command does not make.
+
 ## The transaction protocol
 
 Every write path validates completely before its first mutation:

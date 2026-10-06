@@ -1276,6 +1276,61 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
 - The reader let three things through or stopped them wrongly: it read su's attached `-c` program (`su -c'rm -rf ../repo'`, `su -lc'...'`) as one option word whose first word is `-crm`, so the deletion was allowed; at the reading depth of 8 program strings it dropped the program it had not read and allowed it, so `eval` or `sh -c` nested nine deep around `rm -rf ../repo` passed; and it read every operand that holds a blank after a shell word as a program, so `bash -c 'echo OK' 'rm -rf ../repo'`, which runs only echo, was denied (source `internal/pabcd/hook/worktreedel.go` before this change; a security finding, which the parity rule revision of 2026-10-03 fixes during the port); port: fixed by CRW-639 (a program that su takes with `-c`, attached or in the next word and wherever the options stand, is judged as the program it is; a program still unread at the depth limit is denied with the reason that names a shell program nested past the reading depth, which also denies a harmless nest that deep; only the first operand after `-c` of sh, bash, dash, ash, zsh and su is the program, and the operands after it are still read when the program can name them (a dollar sign, `BASH_ARGV` or `argv`: `bash -c 'eval "$0"' 'rm -rf ../repo'` runs rm), when a redirection word stands among the operands (`bash -c 'source /dev/stdin' <<< 'rm -rf ../repo'` runs rm, and a quoted `'>'` looks like one) or when an option-like word stands after the program (su would run a later `-c`); other shells and any option shape the reader cannot place keep the reading of every blank-holding operand; only su and fish, whose getopt gives the rest of a cluster to `-c`, read an attached `-cPROGRAM` word).
 - A here-string that is written without a blank before its quoted target, `bash -c 'source /dev/stdin' <<<'rm -rf ../repo'`, reaches the reader as the one word `<<<rm -rf ../repo`, which reads as a command named `<<<rm`, so the deletion it feeds to the shell is allowed; the same command with a blank (`<<< 'rm -rf ../repo'`) is denied. The behavior is the reader's before this change (checked against the base commit); port: fixed by CRW-657 (the bash-reading tokenizer ends the word at the third `<` of a plain `<<<` whose next byte begins the target, so the operator is a word of its own and the target is read as the next word, exactly as when a blank stands between them: `worktreeDelHereStringTarget` and the flush in `worktreeDelQuoteTokenize`, `internal/pabcd/hook/worktreedel.go`; the oracle's first walk, the here-document operator and every other redirection are unchanged, so a here-string whose target names the worktree is now denied and the blank-less form answers exactly as the spaced form, and the reading only ever adds denies).
 
+- The reader judged only the program a shell word hands to `-c` and never the body of a command substitution that the outer
+  shell performs before that shell starts, so `bash -c 'echo OK' "$(rm -rf ../repo)"`, the same command with the substitution
+  in backticks, and `sh -c 'true' x "$(rm -rf ../repo)"` were allowed while the unquoted `echo $(rm -rf ../repo)` was denied
+  (the tokenizer drops the double quotes, so the substitution reached the walk as one operand after the program and was never
+  judged; source `internal/pabcd/hook/worktreedel.go` before this change; a security finding, which the parity rule revision
+  of 2026-10-03 fixes during the port); port: fixed by CRW-670 (`worktreeDelSubstitutions` reads every command substitution,
+  `$(...)` and backtick, and every process substitution, `<(...)` and `>(...)`, that stands in plain text or inside double
+  quotes in a segment, and its body is judged as a program of the outer shell at the next depth; a substitution inside single
+  quotes, `$'...'` or a comment stays data, so `bash -c 'echo OK' '$(rm -rf ../repo)'` is still allowed). This fixes the
+  command-substitution part of the follow-up line in the CRW-611 section above, whose here-document-body part is still kept. The
+  body reader follows the whole body, not up to the first parenthesis it meets: a substitution in a `cd` argument is judged
+  before the `cd` moves the directory, a `#` after a backtick substitution does not open a comment, a `${...}` parameter
+  expansion does not close the substitution, and a quote inside the body does not end the outer double quote (all four found
+  by the pull request's reviews).
+- The reader read every operand that holds a blank after a shell word as a program whenever an option-like word stood after
+  the program, a rule CRW-639 kept for `su`, whose last `-c` is its program, so `bash -c 'echo OK' -c 'rm -rf ../repo'`, which
+  runs only echo because the two words are the shell's `$0` and `$1`, was denied (source `internal/pabcd/hook/worktreedel.go`
+  before this change); port: fixed by CRW-670 for sh, bash, dash and ash (`worktreeDelShellDataOperands`: the operands after
+  their `-c` program are data, option-like ones included, so a later `-c` is not read for them; a redirection word among the
+  operands and a program that is not certain still read them all (`worktreeDelCertainProgram`: a program that holds a
+  substitution, a separator, a pipe, a redirection or a parenthesis, or that names its arguments through a dollar sign, a
+  backtick, ARGV, ARGC, argv or the `BASH_AR*` variables, is uncertain, so an obfuscated name such as a grep pattern that
+  spells `BASH_AR.V` still reads them, found by an internal review of this change), and `su`, zsh and every other shell keep the reading
+  of every later option-like word, so no other row or fixture changes). A program that holds a backtick can synthesize a
+  positional reference it then evaluates, so such a program is not certain either and the operands after it are read too
+  (found by the pull request's reviews).
+- At the reading depth of 8 program strings the reader denied only a program that held a blank, so a nest of nine `sh -c`
+  wrappers around `true` was allowed although the innermost program string was still unread, while the same nest around
+  `rm -rf ../repo` was denied (source `internal/pabcd/hook/worktreedel.go` before this change); port: fixed by CRW-670 (a
+  program string still unread at the depth limit is denied whether or not it holds a blank; eight levels are still read and
+  an innermost command that is no program still passes).
+
+- A process substitution that stands inside double quotes is read although bash treats it as literal text, so a harmless
+  `echo "<(rm -rf ../repo)"` is denied. The answer this issue carries names a process substitution inside double quotes among
+  what the outer shell runs, so the reading keeps it and the deny is accepted as a false positive in the over-denying
+  direction (found by the pull request's reviews); port: kept (a false positive; follow-up proposal: read `<(...)` and `>(...)`
+  only in plain text, where bash performs them).
+
+- The body reader does not model two constructs bash allows inside a substitution, so a removal after either of them inside
+  a double-quoted substitution is not read: a nested substitution whose own quotes confuse the outer double quote's state
+  (`echo "$(printf '%s' "$(echo ")")"; rm -rf ../repo)"`) and a `#` that stands after a blank inside a `${...}` parameter
+  expansion, which the segmenter reads as a comment (`echo "$(echo ${x:- #}; echo `rm -rf ../repo`)"`). Both commands were
+  allowed on the base commit as well (checked against 8a8a466a), so neither is a regression of this change; both need the
+  segmenter to parse nested substitutions and parameter expansions, which is a larger change than this issue carries; port:
+  kept (follow-up proposal).
+
+- A substitution the reader judges makes the rest of the segment after it live again from the plain quote state, so data
+  that follows in single quotes is read as a command: `echo "$(true)" '$(rm -rf ../repo)'` and
+  `git log --format="$(echo x)" -- '$(rm -rf ../repo)'` are denied, while the same commands without the earlier
+  substitution are allowed. The base commit allowed both; the generation-2 change judges the rest of the segment at the
+  segment's own depth and memoizes, which keeps the reading but not the exponential cost. This is accepted as a false
+  positive in the over-denying direction, like the process-substitution one above, and is not fixed in this issue; port:
+  kept (a false positive; follow-up proposal: re-read the rest of the segment from the state the reader was in, not from
+  the plain state).
+
 ## CRW-649 — the review-round working-directory boundary and the plan key
 
 Source: `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts` at v0.2.40 (commit 3c1459ac), through
@@ -1392,3 +1447,109 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoa
 ## Found by CRW-479 state publication durability
 
 - The unsynced primary state publications above (`state.ts:389` and `:630-631` at CXC v0.2.40) are fixed by this authorized durability change; port: fixed by CRW-479 (new Go fault-injection tests cover file-sync refusal, unchanged previous bytes, file/publication/directory ordering and returned directory-sync errors; existing recorded cases are unchanged, so there is no intentionally-changed recorded answer and no new corpus note). The existing fallback still lacks directory fsync, and newly created ancestor directories are not fsynced by this change; a host power loss is not exercised. No additional oracle defect was found.
+
+## CRW-640 — the doctor harness report: the cut's lone high surrogate and the empty repair (port-introduced parity defects, fixed)
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` (`buildDeclaredFeaturesCheck` :132-164
+and the `CheckResult` type :25-32) at v0.2.40, through the port in
+`internal/runtime/doctor/harness_report.go`. Both are deviations the port introduced from the
+oracle, not oracle defects, and this change repairs them; the first supersedes the CRW-346 line
+above (`## CRW-346 — the doctor text renderer stderr slice`).
+
+- The 160-unit slice of a features-probe stderr can end inside a surrogate pair
+  (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:137`); the oracle keeps the lone high
+  surrogate in the string, so its `--json` report writes the `\ud83d` escape
+  (`plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`) while the UTF-8 encoder writes U+FFFD
+  in the text report. The port held U+FFFD in both and lost the escape (the CRW-346 line above);
+  this change keeps the surrogate as its WTF-8 bytes and writes the escape in `--json`, so both
+  outputs match the oracle; port: fixed (the recorded case `stderr_slice_cuts_a_surrogate_pair` in
+  `internal/runtime/doctor/testdata/harness/report/oracle.json`, re-recorded without
+  `toWellFormed()` so the recorder holds the oracle's JSON string, plus
+  `harness_report_parity_test.go`).
+- `CheckResult.repair` is optional (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:31`), so an
+  explicit empty repair is a present value: the oracle's `--json` report keeps `"repair":""`
+  while `renderDoctor` drops it (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:653`). The
+  port's `HarnessCheck.Repair` was a plain string with `omitempty`, so an explicit empty repair was
+  indistinguishable from an absent one and the key was always dropped; this change makes it a
+  `*string` (nil absent, a pointer to "" present), so the key survives a round trip; port: fixed.
+
+## Found by the spawn hook leg port (CRW-634)
+
+These were found while classifying the 32 `hook__pre-tool-use-attaching-skills__*` corpus fixtures against the
+leg this issue wires; none is fixed here, because each belongs to the unit that ported it.
+
+- The guard blocks tell the agent not to run `crw orchestrate` and `crw loop`, where the oracle text, renamed
+  through the cli table (`cxc orchestrate` to `crw pabcd orchestrate`, `cxc loop` to `crw pabcd loop`), reads
+  `crw pabcd orchestrate` and `crw pabcd loop`. `crw orchestrate` is not a crw command, so the guidance names a
+  verb that does not exist (source `subagent-config/src/spawn-attach-hook.ts:292` and `:310`, against the `cli`
+  rows of `contract/schema/cxc/name-substitution.json`; the corpus fixtures hold the renamed text); port: pending (follow-up CRW-735).
+- The skills catalog and the mention inlining both take the skills directory from `CRW_SKILLS_DIR` or
+  `<PLUGIN_ROOT>/skills` and both filter by the oracle leaf-safe allowlist, so a replay against this
+  repository plugins/crw/skills (crw-check, crw-define, crw-plan, ...) yields neither the recorded
+  "Available skills" listing nor an inlined body: the recorded expectation holds the recording machine installed
+  plugin skills (crw-dev, crw-kwrite, crw-search, ...). This is the same limitation the `runtimeSkillsDir` line
+  above records, now visible through the corpus (source `:650-667` and `:816-820`); port: kept.
+- The managed dispatch refusal carries the error in Go words where the oracle prints the engine message:
+  `managed dispatch: lstat <path>: no such file or directory` stands for
+  `managed dispatch: ENOENT: no such file or directory, lstat "<path>"` (source `:892-907`, the
+  `catch (error) { return denyEnvelope(...) }` arm; the fixture
+  `hook__pre-tool-use-attaching-skills__managed_dispatch_refusals` holds the oracle text); port: pending (follow-up CRW-735).
+
+## Found by the UserPromptSubmit hook port (CRW-644)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/hook.ts` (`handleUserPromptSubmit` :656-754, the leading section up to the trigger branch) at v0.2.40, through `internal/pabcd/hook/prompt_submit.go`, registered as the harness leg `user-prompt-submit-checking-pabcd-trigger`. No recorded case interleaves two writers, so none is tagged for the three fixes below; the cases are the new Go tests named per line.
+
+- The memory-write marker write reads the session state, sets `memoryWriteRequested` and `memoryWriteTurn` and writes the whole state back with no lock, so an update a participating writer (the memory gate, the idle-edit counter, another hook of the same session) lands between the read and the write is overwritten by the stale copy and lost, and the write-back rebuilds the state from the reader's normalised value, so a stored record the reader cannot keep (an unverified list past its cap, a `receiptClaimed` cut at 256 UTF-16 units, a field of the wrong type, a legacy D-close marker, an interview tracker past `interview.MaxTrackerArray`) is lost with it (source `hook.ts:676-684`); port: fixed (a data-loss defect, fixed by decision as the memory gate, the idle-edit counter and `handlePostCompact` already are: the write re-reads inside `state.WithSessionLock` and writes nothing when the state cannot be read or the reader would not keep a stored record whole, so a corrupt file is left as it is instead of being replaced by a default; `TestPromptSubmitMarkerKeepsAParticipatingWritersUpdate`, `TestPromptSubmitLeavesAnUnreadableStateAlone`).
+- The Stop-budget turn stamp has the same defect (source `hook.ts:687-690`); port: fixed (the same lock and refusal, and the turn is judged again inside the lock, so a participating writer's stamp for the same turn is not overwritten; `TestPromptSubmitStampKeepsAParticipatingWritersUpdate`).
+- The loop-arm write has the same defect (source `hook.ts:739-743`); port: fixed (the same lock and refusal; `TestPromptSubmitLoopArmKeepsAParticipatingWritersUpdate`).
+- The same-turn guard is read before any lock (`hook.ts:691`), so two UserPromptSubmit invocations for one `(session, turn)` that overlap both pass it and both answer the arming mandate, and the oracle's list keeps one entry only because both of its unlocked writes publish a list read before either wrote; the port's lock stores the turn once (the append is skipped when the state the lock found already holds it) and still answers both (source `hook.ts:691` and `:739-743`; found by the Codex review and the Devin review of this port's pull request, `kind: bug`; `TestPromptSubmitLoopArmStoresTheTurnOnce`); port: kept.
+- `writeState` is unlocked and unguarded, so a failed write throws out of the handler and `cli.ts`'s catch answers nothing at all, while a write-back from the reader's normalised value replaces a file holding records the reader cannot keep; the port keeps the silence for a failed write and answers the arming mandate when its own rewrite guard is what skipped the write, since the oracle has no such guard and would have written and answered there (source `hook.ts:687-690` and `:739-743`; found by the Devin review, `kind: bug`; `TestPromptSubmitLoopArmFailsSilentOnAWriteFailure`, `TestPromptSubmitLoopArmAnswersWhenTheStateCannotBeRewritten`); port: kept (a port decision, the same fail-open rule the idle-edit counter records for lock and write errors).
+
+## Found by the steering batch port (CRW-643)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering.go`; the ported ranges are `:155-163,253-333`.
+
+- The failed-append warning interpolates the cause as `err.Error()` (Go's wording) where the oracle
+  interpolates `err.message` (Node's), so the same failure prints different text in the two runtimes
+  (source `steering.ts:315`, the only place in the unit that stringifies an error); port: kept.
+- An `annotate` op's note is never stored anywhere. `applyOps` skips the op with the comment
+  "ledger-only, by design" (`:189-190`), but the entry's summary carries only the op KINDS (`:275`)
+  and the ledger detail carries the key, that summary and the rationale (`:290`), so the note text a
+  batch was annotated with cannot be recovered from the plan or the ledger after the call (source
+  `steering.ts:189-190`, `:275`, `:290`; the recorded case `cli__loop__criteria_questions_and_steer`
+  carries an annotate batch, but it is CLI-level and no port of this transaction can drive it yet);
+  port: kept.
+
+- The port's plan writer syncs the plan directory after its rename (`internal/pabcd/goalplan/write.go`,
+  `writePublishAt`), which the oracle's `renameWithRetry` does not, so a directory-sync failure is
+  returned as a write error although the new plan is already published; `ApplySteeringBatch` then
+  answers a Go error and appends no ledger row, and a retry with the same key answers `duplicate`, so
+  the `steered` row stays missing for a batch whose plan is committed (source: this port's writer,
+  not the oracle; no recorded case drives a failing directory sync); port: kept (port-introduced,
+  not an upstream defect; the fix belongs to the writer, which is outside this issue's edit regions,
+  and is proposed as a follow-up).
+- Fidelity decision, not a defect: the answer for an absent plan is a string compare against the reason
+  the shared lock builds (`goalplan '<slug>' does not exist`), exactly as the oracle compares its own
+  lock's reason (`:327`). The two spellings are kept in step by `TestSteeringApplyUnboundSlugIsRefused`,
+  which pins the resulting `no goalplan found at slug '<slug>'` text and the fact that no state is created.
+
+## Found by the producer-intermediate port (CRW-672)
+
+- The M2b classifier matched a producer temporary by name only — any name ending `.tmp`, any name containing `.tmp-`, any
+  name starting `.probe-` (`internal/runtime/install/migrate/classify.go:548-556` at 5a09b73d) — so a durable record whose
+  own id carries a temp-like substring was skipped instead of reaching its row and record judge (`bg/job.tmp-live.json`, a
+  valid record the bg writer accepts through `RunOptions.ID`, so a running job could be copied incompletely), and the
+  evidence rule's millisecond branch never checked the final-name part, so a user file such as
+  `evidence/x/.123.1760000000000.tmp` was skipped (`classify.go:574-597`); port: fixed — the exact temporary shapes of
+  docs/port-cxc/state-migration.md:105 are now matched only inside the directory of the producer that writes them, and the
+  final-name part before `.<pid>.` must be non-empty, with the red-first cases in `inventory_intermediate_test.go`.
+  Consequence of the fix, disclosed: a `.tmp` or `.probe-` name of a producer row 105 does not name (the `dispatches/`,
+  `objective-kind/` and `divergence/` writers) now reports `not in the inventory` instead of `producer intermediate`; the
+  disposition is unchanged (skip, never copied).
+
+## Found by the goalplan work-phase close, resume-absent-target and advance port (CRW-642)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedWorkPhase` :1989-2133, `resumeAbsentTarget` :2149-2192, `samePlanShape` :2193-2206, `advanceWorkPhase` :2207-2248) at v0.2.40 (commit 3c1459ac), through `internal/pabcd/goalplan/workphase.go`. No fixture in `contract/fixtures/cxc` drives these units alone — the `crw orchestrate` D-close and `crw loop` callers that reach them are later issues — so no recorded case changes.
+
+- No behavioural defect was found in these four units, so there is no `port: fixed` or `port: kept` divergence line. The one fidelity decision is the cursor comparison in `samePlanShape` (source `goalplan.ts:2195`): the oracle tests `left.activeWorkPhaseId !== right.activeWorkPhaseId`, a JavaScript identity test in which `undefined` and `null` are different values, while the Go port's `*string` cannot tell them apart and reads both nils as equal. The distinction is unreachable rather than dropped: `buildGoalplan` (`goalplan.ts:1021`) and the plan reader both materialise the key as `null`, so no plan these transforms can be handed carries `undefined` for it. The port therefore compares nil to nil, and the recorded case `an already settled close answers already_done` covers the state where both sides are `null`.

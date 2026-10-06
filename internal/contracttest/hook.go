@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -129,17 +130,20 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 			return nil, err
 		}
 		workers.Add(1)
-		go func() {
+		// The loop owns the listener it is given. runHook clears the outer variable once its steps
+		// are done, so a loop that read that variable would race the clear and could call Accept on
+		// a nil interface: the intermittent "control peer panic" of CI run 37424646618.
+		go func(peer net.Listener) {
 			defer workers.Done()
 			defer func() {
 				if p := recover(); p != nil {
 					mu.Lock()
-					serverErr = fmt.Errorf("control peer panic: %v", p)
+					serverErr = fmt.Errorf("control peer panic: %v\n%s", p, debug.Stack())
 					mu.Unlock()
 				}
 			}()
 			for {
-				conn, e := listener.Accept()
+				conn, e := peer.Accept()
 				if e != nil {
 					return
 				}
@@ -150,7 +154,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 					defer func() {
 						if p := recover(); p != nil {
 							mu.Lock()
-							serverErr = fmt.Errorf("control peer panic: %v", p)
+							serverErr = fmt.Errorf("control peer panic: %v\n%s", p, debug.Stack())
 							mu.Unlock()
 						}
 					}()
@@ -217,12 +221,14 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 					response := nativeErrorRecord(relay)
 					_, _ = io.WriteString(conn, response+"\n")
 				}()
+				hookPeerStep("accept")
 			}
-		}()
+		}(listener)
 	}
 	defer func() {
 		if listener != nil {
 			_ = listener.Close()
+			hookPeerStep("clear")
 		}
 		workers.Wait()
 	}()
@@ -342,6 +348,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	if listener != nil {
 		_ = listener.Close()
 		listener = nil
+		hookPeerStep("clear")
 	}
 	workers.Wait()
 	if serverErr != nil {
@@ -431,6 +438,13 @@ func number(v any) float64 { n, _ := v.(float64); return n }
 
 // legacyErrorKinds are the relay's error-record exit statuses (contract/schema/relay-exit-codes.json).
 var legacyErrorKinds = map[float64]string{2: "refused", 3: "host", 4: "usage"}
+
+// hookPeerStep is a seam: the control peer's accept loop calls it with "accept" after each
+// accepted connection, and the teardown calls it with "clear" once the listener variable has been
+// cleared. A test installs it to hold the loop between an accepted connection and its next read of
+// the listener, which is how the interleaving that cleared the variable under the loop is replayed
+// deterministically instead of once in a thousand runs. Outside such a test it does nothing.
+var hookPeerStep = func(string) {}
 
 // nativeErrorRecord is what the owner answers for a fixture's relay stub. A stub that printed an
 // error record and exited with one of the relay's error-record statuses stood for the relay CLI,

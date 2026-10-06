@@ -65,36 +65,9 @@ func EndpointWithOptions(socket, state string, options Options) (string, *Ledger
 	if err != nil {
 		return "", nil, fmt.Errorf("absolute socket: %w", err)
 	}
-	canonical, err := filepath.EvalSymlinks(supplied)
-	if errors.Is(err, os.ErrNotExist) {
-		// Resolve dangling aliases too: Path.resolve(strict=False) follows the
-		// symlink before accepting its missing final target.
-		current := supplied
-		for range 40 {
-			parent, parentErr := filepath.EvalSymlinks(filepath.Dir(current))
-			if parentErr != nil {
-				return "", nil, fmt.Errorf("canonical socket parent: %w", parentErr)
-			}
-			current = filepath.Join(parent, filepath.Base(current))
-			target, linkErr := os.Readlink(current)
-			if errors.Is(linkErr, os.ErrNotExist) || errors.Is(linkErr, os.ErrInvalid) {
-				canonical = current
-				break
-			}
-			if linkErr != nil {
-				return "", nil, fmt.Errorf("canonical socket link: %w", linkErr)
-			}
-			if filepath.IsAbs(target) {
-				current = target
-			} else {
-				current = filepath.Join(parent, target)
-			}
-		}
-		if canonical == "" {
-			return "", nil, fmt.Errorf("canonical socket: too many symlinks")
-		}
-	} else if err != nil {
-		return "", nil, fmt.Errorf("canonical socket: %w", err)
+	canonical, err := canonicalEndpoint(supplied)
+	if err != nil {
+		return "", nil, err
 	}
 	state, err = filepath.Abs(state)
 	if err != nil {
@@ -120,6 +93,54 @@ func EndpointWithOptions(socket, state string, options Options) (string, *Ledger
 		}
 	}
 	return canonical, l, nil
+}
+
+// CanonicalEndpoint is the socket EndpointWithOptions resolves before it opens the ledger:
+// absolute, then fully resolved, a dangling final alias followed. A caller that only needs the
+// endpoint, a read that keeps no ledger, resolves it here instead of opening an operations ledger
+// it will not use (CRW-680).
+func CanonicalEndpoint(socket string) (string, error) {
+	supplied, err := filepath.Abs(socket)
+	if err != nil {
+		return "", fmt.Errorf("absolute socket: %w", err)
+	}
+	return canonicalEndpoint(supplied)
+}
+
+// canonicalEndpoint resolves an already absolute socket the way EndpointWithOptions did inline.
+func canonicalEndpoint(supplied string) (string, error) {
+	canonical, err := filepath.EvalSymlinks(supplied)
+	if errors.Is(err, os.ErrNotExist) {
+		// Resolve dangling aliases too: Path.resolve(strict=False) follows the
+		// symlink before accepting its missing final target.
+		current := supplied
+		for range 40 {
+			parent, parentErr := filepath.EvalSymlinks(filepath.Dir(current))
+			if parentErr != nil {
+				return "", fmt.Errorf("canonical socket parent: %w", parentErr)
+			}
+			current = filepath.Join(parent, filepath.Base(current))
+			target, linkErr := os.Readlink(current)
+			if errors.Is(linkErr, os.ErrNotExist) || errors.Is(linkErr, os.ErrInvalid) {
+				canonical = current
+				break
+			}
+			if linkErr != nil {
+				return "", fmt.Errorf("canonical socket link: %w", linkErr)
+			}
+			if filepath.IsAbs(target) {
+				current = target
+			} else {
+				current = filepath.Join(parent, target)
+			}
+		}
+		if canonical == "" {
+			return "", fmt.Errorf("canonical socket: too many symlinks")
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("canonical socket: %w", err)
+	}
+	return canonical, nil
 }
 
 // checkRequestID is ledger.py _fingerprint's bound: 1-128 characters, counted as Python len.

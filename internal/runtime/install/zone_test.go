@@ -532,13 +532,48 @@ func TestTheAcknowledgementWhereTheZoneDoesNotArriveTakesNoBackup(t *testing.T) 
 // withoutZone is a candidate that does not declare the zone: an older runtime.
 func withoutZone(context.Context, string) record.Object {
 	declared := swapgate.DeclaredSchema(context.Background())
+	zoneKeys := zoneDeclaredKeys()
 	var objects record.Object
 	for _, field := range golden.Obj(record.Get(declared, "objects")) {
-		if !strings.Contains(field.Key, " dag_") {
+		// Zone membership is derived from the zone's own statements, not from a name prefix
+		// (swapgate.zoneObjects): the merge-lane tables the zone appends carry no dag_ prefix.
+		if !zoneKeys[field.Key] {
 			objects = append(objects, field)
 		}
 	}
 	return record.Object{{Key: "readable", Value: true}, {Key: "objects", Value: objects}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: nil}}
+}
+
+// zoneDeclaredKeys are the "type name" keys of every schema object the additive DAG zone creates:
+// store.DAGZoneStatements applied alone to an empty in-memory database and asked the catalog, the
+// same derivation swapgate.zoneObjects uses.
+func zoneDeclaredKeys() map[string]bool {
+	db, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	for _, statement := range store.DAGZoneStatements() {
+		if _, err := db.Exec(statement); err != nil {
+			panic(err)
+		}
+	}
+	rows, err := db.Query(swapgate.SchemaObjectsQuery)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	keys := map[string]bool{}
+	for rows.Next() {
+		var key string
+		var text sql.NullString
+		if err := rows.Scan(&key, &text); err != nil {
+			panic(err)
+		}
+		keys[key] = true
+	}
+	return keys
 }
 
 func openedByThisBuild(t *testing.T, h *host) {
