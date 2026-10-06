@@ -235,3 +235,54 @@ func TestWorktreeDelPipeCompoundBodies(t *testing.T) {
 	r.allowed(t, "printf x | (cd sub; cat)", "printf x | { cat; }", "printf x | bash -c 'cat'", "printf x | nohup cat")
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeOperatorForms pins the operator forms a real shell accepts: |& pipes standard error as well as
+// standard output, and a pipeline may break across a newline (or a blank line) after its operator, so the command on
+// the next line still reads the pipe. Both were allowed on this head while bash ran the piped program (checked in
+// bash 5.3.9 with a touch stand-in for rm); a comment after the operator keeps the refusal it already had.
+func TestWorktreeDelPipeOperatorForms(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' |& bash",
+		"printf 'rm -rf ../repo' |& (true; bash)",
+		"printf 'rm -rf ../repo' |& nohup bash",
+		"printf 'rm -rf ../repo' |&\nbash",
+		"printf 'rm -rf ../repo' |\nbash",
+		"printf 'rm -rf ../repo' | \n bash",
+		"printf 'rm -rf ../repo' |\n\nbash",
+		"printf 'rm -rf ../repo' | # c\nbash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A command that is no shell reads the pipe as its own input, however the operator is written.
+	r.allowed(t,
+		"printf x |& cat",
+		"printf x |& nohup cat",
+		"printf x |\ncat",
+		"printf x | # c\ncat",
+	)
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeQuoteAndChain pins the other two directions the operator-form fix had to keep right: a | inside a
+// quote is data, never an operator, so a quoted pipeline stays allowed, and a chain of pipes still judges the shell at
+// its end.
+func TestWorktreeDelPipeQuoteAndChain(t *testing.T) {
+	r := newDelRig(t)
+	// A quoted | is no operator: none of these runs a shell on a pipe.
+	r.allowed(t,
+		"echo \"a | bash\"",
+		"echo 'x | bash'",
+		"echo \"a |& bash\"",
+		"printf x | grep -e 'a|bash'",
+	)
+	// A shell at the end of a chain still reads the pipe.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | cat | bash",
+		"printf 'rm -rf ../repo' | grep x |& bash",
+		"printf 'rm -rf ../repo' | grep x |\nbash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	r.intact(t)
+}

@@ -2412,76 +2412,16 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 }
 
 // worktreeDelUnreadablePipes is the pipe rule of the whole text: a listed shell that stands to the right of a single |
-// and has no -c program, no script operand and no file replacing its own standard input reads its program from that
-// pipe. The right side is read whole to the next separator at its own depth, so a subshell, a brace group or a shell
-// compound keeps the pipe: every simple command inside one of those is read too (CRW-726, c15(b)). The scan is one
-// forward pass: worktreeDelUnreadablePipeEnd reads from the byte after each operator and the caller resumes there, so
-// the cost is linear in the text.
+// or |& and has no -c program, no script operand and no file replacing its own standard input reads its program from
+// that pipe. The right side is read whole to the next separator at its own depth, so a subshell, a brace group or a
+// shell compound keeps the pipe: every simple command inside one of those is read too (CRW-726, c15(b)). The scan is
+// one forward pass that carries the quoting reader and the depth, so a | inside a quote is no operator, a pipeline
+// that continues on the next line (with whitespace or a comment after the operator) still names the command on that
+// line, and the cost stays linear in the text.
 func worktreeDelUnreadablePipes(text string) (string, bool) {
-	for i := 0; i < len(text); i++ {
-		if text[i] != '|' {
-			continue
-		}
-		if i+1 < len(text) && text[i+1] == '|' { // a logical or, not a pipe
-			i++
-			continue
-		}
-		end := worktreeDelUnreadablePipeEnd(text, i+1)
-		if worktreeDelUnreadableOpensCompound(strings.TrimSpace(text[i+1 : end])) {
-			end = len(text) // a compound keeps the pipe to its own end, which a separator or a case pattern can hide
-		}
-		if what, ok := worktreeDelUnreadablePipeRegion(strings.TrimSpace(text[i+1 : end])); ok {
-			return what, true
-		}
-		i = end - 1
-	}
-	return "", false
-}
-
-// worktreeDelUnreadableOpensCompound says whether a text opens a compound whose body continues past a separator: a
-// subshell or a brace group, or the shell keywords if, while, until, for and case. A compound's own separators and its
-// case patterns make its end hard to find, so the region a pipe feeds runs to the end of the text when it opens one:
-// reading past the compound can only deny too much, never too little (CRW-726, c15(b)).
-func worktreeDelUnreadableOpensCompound(text string) bool {
-	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
-	if len(plain) == 0 {
-		return false
-	}
-	switch basename(plain[0]) {
-	case "if", "while", "until", "for", "case":
-		return true
-	}
-	return strings.HasPrefix(strings.TrimSpace(text), "(") || strings.HasPrefix(strings.TrimSpace(text), "{")
-}
-
-// worktreeDelUnreadablePipeEnd is the byte that ends the command a pipe feeds, from the byte after the operator: the next
-// separator that stands at the same depth. It reads from `from` on, so the caller resumes at its answer and the whole
-// scan stays linear. An unbalanced delimiter does not swallow the rest: a depth that never returns to zero still ends
-// the region at the next separator at depth zero or, failing that, at the end of the text.
-func worktreeDelUnreadablePipeEnd(text string, from int) int {
 	r := worktreeDelQuoteReader{prev: ' '}
 	depth := 0
-	for i := 0; i < from; i++ { // replay the reader over the prefix so the quote state at `from` is right
-		if r.escapes(text, i) {
-			r.pair()
-			i++
-			continue
-		}
-		state := r.state
-		r.step(text[i])
-		if state == worktreeDelQuotePlain {
-			switch text[i] {
-			case '(', '{':
-				depth++
-			case ')', '}':
-				if depth > 0 {
-					depth--
-				}
-			}
-		}
-	}
-	start := depth
-	for i := from; i < len(text); i++ {
+	for i := 0; i < len(text); i++ {
 		c := text[i]
 		if r.escapes(text, i) {
 			r.pair()
@@ -2500,15 +2440,108 @@ func worktreeDelUnreadablePipeEnd(text string, from int) int {
 			if depth > 0 {
 				depth--
 			}
-		case ';', '&', '\n':
-			if depth <= start {
-				return i
-			}
 		case '|':
-			if depth <= start {
-				return i
+			if i+1 < len(text) && text[i+1] == '|' { // a logical or, not a pipe
+				i++
+				continue
+			}
+			start := worktreeDelUnreadablePipeStart(text, i+1, &r)
+			end := worktreeDelUnreadablePipeEnd(text, start, &r, &depth)
+			region := strings.TrimSpace(text[start:end])
+			if worktreeDelUnreadableOpensCompound(region) {
+				end = len(text) // a compound keeps the pipe to its own end, which a separator or a case pattern can hide
+				region = strings.TrimSpace(text[start:end])
+			}
+			if what, ok := worktreeDelUnreadablePipeRegion(region); ok {
+				return what, true
+			}
+			i = end - 1
+		}
+	}
+	return "", false
+}
+
+// worktreeDelUnreadablePipeStart is the first byte of the command a pipe feeds. The operator's own suffix is skipped:
+// the & of |& pipes the standard error as well, and a pipeline continues on the next line, so whitespace and a comment
+// after the operator are no command either. The reader is stepped over the skipped bytes, so it stands where the shell
+// reads the command (CRW-726, c15(b)).
+func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteReader) int {
+	i := from
+	if i < len(text) && text[i] == '&' && r.state == worktreeDelQuotePlain { // the & of |&
+		r.step(text[i])
+		i++
+	}
+	for i < len(text) {
+		c := text[i]
+		if r.escapes(text, i) {
+			r.pair()
+			i += 2
+			continue
+		}
+		if r.state == worktreeDelQuoteComment {
+			r.step(c)
+			i++
+			continue
+		}
+		if r.state == worktreeDelQuotePlain && (strings.IndexByte(" \t\r\n", c) >= 0 || c == '#') {
+			r.step(c)
+			i++
+			continue
+		}
+		return i
+	}
+	return i
+}
+
+// worktreeDelUnreadableOpensCompound says whether a text opens a compound whose body continues past a separator: a
+// subshell or a brace group, or the shell keywords if, while, until, for and case. A compound's own separators and its
+// case patterns make its end hard to find, so the region a pipe feeds runs to the end of the text when it opens one:
+// reading past the compound can only deny too much, never too little (CRW-726, c15(b)).
+func worktreeDelUnreadableOpensCompound(text string) bool {
+	plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(text))
+	if len(plain) == 0 {
+		return false
+	}
+	switch basename(plain[0]) {
+	case "if", "while", "until", "for", "case":
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(text), "(") || strings.HasPrefix(strings.TrimSpace(text), "{")
+}
+
+// worktreeDelUnreadablePipeEnd is the byte that ends the command a pipe feeds, from the first byte of that command: the
+// next separator that stands at the same depth as the pipe. The reader and the depth are carried in and out, so the
+// caller resumes at the answer without replaying the prefix and the whole scan stays linear. The byte it returns has
+// not been stepped, so the caller steps it once. An unbalanced delimiter does not swallow the rest: a depth that never
+// returns to zero still ends the region at the next separator at that depth or, failing that, at the end of the text.
+func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteReader, depth *int) int {
+	start := *depth
+	for i := from; i < len(text); i++ {
+		c := text[i]
+		if r.escapes(text, i) {
+			r.pair()
+			i++
+			continue
+		}
+		if r.state == worktreeDelQuotePlain {
+			switch c {
+			case '(', '{':
+				r.step(c)
+				*depth++
+				continue
+			case ')', '}':
+				r.step(c)
+				if *depth > 0 {
+					*depth--
+				}
+				continue
+			case ';', '&', '\n', '|':
+				if *depth <= start {
+					return i
+				}
 			}
 		}
+		r.step(c)
 	}
 	return len(text)
 }
