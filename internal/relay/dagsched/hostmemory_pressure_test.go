@@ -32,6 +32,7 @@ func hostMemoryProcBound(t *testing.T, root string, overrides map[string]string)
 // Log-shaped values are synthetic: the logs measure avg10, not the existing some avg60.
 // The precise 18:46 incident is absent; low-available/high-pressure cases model its described shape.
 func TestHostMemoryPressureEvidenceShapes(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name                   string
 		availableMiB, usedMiB  int64
@@ -70,6 +71,7 @@ func TestHostMemoryPressureEvidenceShapes(t *testing.T) {
 }
 
 func TestHostMemoryPressureUnreadSignals(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, pressure string
 		unmeasured     []string
@@ -104,6 +106,7 @@ func TestHostMemoryPressureUnreadSignals(t *testing.T) {
 }
 
 func TestHostMemoryPressureConfiguration(t *testing.T) {
+	t.Parallel()
 	root := fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 0), hostMemoryPressureFile("8", "0", "7.42", "99"))
 	for _, c := range []struct {
 		name, value, state string
@@ -146,6 +149,7 @@ func TestHostMemoryPressureConfiguration(t *testing.T) {
 }
 
 func TestHostMemoryPressurePersistenceAndDigest(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.threeNodes("host-pressure")
 	root := fakeProc(t, memInfo(40*kibPerGiB, 8*kibPerGiB, 0), hostMemoryPressureFile("8.51", "0", "7.42", "0"))
@@ -165,6 +169,7 @@ func TestHostMemoryPressurePersistenceAndDigest(t *testing.T) {
 	}
 }
 
+// sequential: t.Setenv(EnvHostProcRoot) is process-wide.
 func TestHostMemoryPressureReleaseAndCLI(t *testing.T) {
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "host-pressure")

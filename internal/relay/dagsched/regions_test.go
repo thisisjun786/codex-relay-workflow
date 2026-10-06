@@ -16,6 +16,7 @@ func region(path, kind, key string) Region {
 
 // Criterion c7: the rule the edit-region declarations are judged by. Every row says whether two regions can be touched by one change.
 func TestEditRegionOverlapFixture(t *testing.T) {
+	t.Parallel()
 	exclusive := func(r Region) Region { r.Exclusive = true; return r }
 	other := func(r Region) Region { r.Repository = "owner/other"; return r }
 	cases := []struct {
@@ -95,6 +96,7 @@ func TestEditRegionOverlapFixture(t *testing.T) {
 
 // Contract 7.1: a node with no declaration counts as overlapping every other node. Each row is one way the rule can be wrong.
 func TestUnknownRegionsOverlap(t *testing.T) {
+	t.Parallel()
 	type tc struct {
 		name  string
 		setup func(f *fixture)
@@ -156,6 +158,7 @@ func TestUnknownRegionsOverlap(t *testing.T) {
 }
 
 func TestDeclareRegionsReplay(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation), addNode("note", dag.NodeNonPR))
 	first := f.declare("d", "impl", "b.go", "a.go")
@@ -189,6 +192,7 @@ func TestDeclareRegionsReplay(t *testing.T) {
 }
 
 func TestDeclareRegionsRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation), addNode("note", dag.NodeNonPR))
 	ctx := context.Background()

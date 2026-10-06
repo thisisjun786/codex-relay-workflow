@@ -13,6 +13,7 @@ import (
 // test_delivery.py properties DEL-31..DEL-35.
 
 func TestDEL31_a_restart_keeps_every_durable_record_and_resends_nothing(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del31")
 	f := newFixture(t, tree)
@@ -60,6 +61,7 @@ func TestDEL31_a_restart_keeps_every_durable_record_and_resends_nothing(t *testi
 }
 
 func TestDEL32_a_stray_declaration_on_a_completion_is_not_labelled(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del32")
 	f := newFixture(t, tree)
@@ -78,6 +80,7 @@ func TestDEL32_a_stray_declaration_on_a_completion_is_not_labelled(t *testing.T)
 }
 
 func TestDEL33_a_claim_refused_on_the_shared_gap_is_rescheduled_not_failed(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del33")
 	f := newFixture(t, tree)
@@ -101,6 +104,7 @@ func TestDEL33_a_claim_refused_on_the_shared_gap_is_rescheduled_not_failed(t *te
 }
 
 func TestDEL34_exec_source_recipients_deliver_or_withhold_with_their_relationship(t *testing.T) {
+	t.Parallel()
 	// The exec-aware archive check itself (bridge_adapter.is_archived over thread/list) is the
 	// bridge adapter's, todo 28; here the host answers the archive question it would answer,
 	// and discovery_cursors, which only that adapter writes, is left out of the comparison.
@@ -138,6 +142,7 @@ func TestDEL34_exec_source_recipients_deliver_or_withhold_with_their_relationshi
 }
 
 func TestDEL35_a_withhold_records_its_failure_in_its_own_transition(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"lifecycle", "settings", "busy"} {
 		t.Run(mode, func(t *testing.T) {
 			tree := parityTree(t)

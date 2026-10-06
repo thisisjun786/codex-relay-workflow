@@ -25,6 +25,7 @@ func nxOtherRepository(r Region) Region { r.Repository = "owner/other"; return r
 
 // Criterion c1: a node that deletes a file, a node that adds a .sql file, a node that changes a workflow file and an ordinary node are ready together in one pass.
 func TestStructuralNodesAreReadyTogetherWithAnOrdinaryNode(t *testing.T) {
+	t.Parallel()
 	_, reading := gradedFixture(t, map[string][]Region{
 		"a-delete": {nxFile("internal/old/legacy.go", "delete")},
 		"b-sql":    {nxFile("db/hist_index.sql", "edit")},
@@ -46,6 +47,7 @@ func TestStructuralNodesAreReadyTogetherWithAnOrdinaryNode(t *testing.T) {
 
 // Criterion c1 through the release itself, which judges again under its lock: the four are released, each with a child and a held slot.
 func TestStructuralNodesAreReleasedTogether(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("gp", 0, "gp-r1", addRelNode("A", dag.NodeImplementation), addRelNode("B", dag.NodeImplementation), addRelNode("C", dag.NodeImplementation), addRelNode("D", dag.NodeImplementation))
 	for node, region := range map[string]Region{"A": nxFile("internal/old/legacy.go", "delete"), "B": nxFile("db/hist_index.sql", "edit"), "C": nxFile(".github/workflows/ci.yml", "edit"), "D": nxFile("internal/x/a.go", "edit")} {
@@ -63,6 +65,7 @@ func TestStructuralNodesAreReleasedTogether(t *testing.T) {
 
 // A node that already holds a delete, a rename or a hotspot file leaves an unrelated candidate alone, and still holds back one on its own place.
 func TestARunningStructuralNodeHoldsItsPlaceOnly(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		holder Region
@@ -99,6 +102,7 @@ func TestARunningStructuralNodeHoldsItsPlaceOnly(t *testing.T) {
 
 // Criterion c2: what stays serial and what does not. Each row is two nodes; the second is judged against the first. place is the place the overlap is on.
 func TestSamePlaceStaysSerialAndOtherPlacesDoNot(t *testing.T) {
+	t.Parallel()
 	type row struct {
 		name  string
 		p, q  Region
@@ -163,6 +167,7 @@ func TestSamePlaceStaysSerialAndOtherPlacesDoNot(t *testing.T) {
 
 // The same rule through the release, which judges again under its lock: an overlap on the place refuses the second release with the reason the release already had, and another place does not.
 func TestReleaseHoldsASharedStructuralPlaceOnly(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name         string
 		p, q         Region
@@ -199,6 +204,7 @@ func TestReleaseHoldsASharedStructuralPlaceOnly(t *testing.T) {
 
 // A whole-repository hold is the declarer's word. It stays a hold when it is stated, on any path or change, survives being stored and read back, and is a replay when stated again.
 func TestAStatedWholeRepositoryHoldStaysAHold(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		hold Region
@@ -236,6 +242,7 @@ func TestAStatedWholeRepositoryHoldStaysAHold(t *testing.T) {
 
 // A delete, a rename and a hotspot declared without the word are not a hold, are stored with the column an older runtime reads, and are a replay when declared again.
 func TestAnUnstatedStructuralRegionIsNotAHold(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	list := []Region{nxFile("internal/old/legacy.go", "delete"), nxFile("internal/old/moved.go", "rename"), nxFile("db/hist_index.sql", "edit"), nxFile("internal/x/a.go", "edit")}
@@ -291,6 +298,7 @@ func legacyRow(f *fixture, plan, node string, seq int, r Region, exclusive int, 
 // Existing declarations: every row an earlier build stored with the classifier's exclusive column. A delete and a hotspot protected nothing outside their own place, so they read at it; a rename also protected
 // the destination nobody could name, and a row on a path the classifier does not flag can only be the declarer's word, so those two stay a whole-repository hold.
 func TestExistingDeclarationsAreReadAtTheNarrowedJudgement(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name          string
 		region        Region
@@ -332,6 +340,7 @@ func TestExistingDeclarationsAreReadAtTheNarrowedJudgement(t *testing.T) {
 
 // The live case: three nodes declared by the earlier build (a delete, a .sql file and a workflow file, each stored as a hold) and an ordinary node are ready together.
 func TestLegacyStructuralNodesAreReleasedByTheNarrowedReading(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("g", 0, "g-r1", addNode("a-delete", dag.NodeImplementation), addNode("b-sql", dag.NodeImplementation), addNode("c-ci", dag.NodeImplementation), addNode("d-plain", dag.NodeImplementation))
@@ -347,6 +356,7 @@ func TestLegacyStructuralNodesAreReleasedByTheNarrowedReading(t *testing.T) {
 
 // A legacy rename still holds the repository until it is declared again, and a declaration made by this build narrows it.
 func TestALegacyRenameHoldsUntilItIsDeclaredAgain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("g", 0, "g-r1", addNode("p", dag.NodeImplementation), addNode("q", dag.NodeImplementation))
@@ -368,6 +378,7 @@ func TestALegacyRenameHoldsUntilItIsDeclaredAgain(t *testing.T) {
 // A node that already runs keeps the regions it holds unless a declaration narrows them (CRW-411): what a re-sent declaration is depends on what the stored row says. A legacy rename reads as a hold of the
 // whole repository, so the same rename re-sent without the hold gives that hold up, which is a narrowing and is accepted; a legacy delete re-sent with the hold stated claims more than the node holds, and is refused.
 func TestAHoldingNodeAnswersAResentLegacyDeclarationByWhatTheRowSays(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name        string
 		region      Region
@@ -402,6 +413,7 @@ func TestAHoldingNodeAnswersAResentLegacyDeclarationByWhatTheRowSays(t *testing.
 
 // A zone that predates dag_node_region_holds reads every row by the rule for an existing declaration, since no row can say what was stated.
 func TestAZoneWithoutTheHoldsTableReadsEveryRowAsAnExistingDeclaration(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	if _, err := f.sched.DeclareRegions(context.Background(), "d", "impl", "parent", []Region{nxFile("internal/old/legacy.go", "delete"), nxStated(nxFile("internal/x/a.go", "edit")), nxFile("internal/old/moved.go", "rename")}); err != nil {
@@ -423,6 +435,7 @@ func TestAZoneWithoutTheHoldsTableReadsEveryRowAsAnExistingDeclaration(t *testin
 
 // The command line: a stated hold, a delete and a hotspot as an operator declares them, and what the answer says of each.
 func TestCLIRegionDeclareStatesTheHoldAndNotTheClassifier(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	regions := `[{"repository":"owner/repo","path":"internal/old","kind":"tree","change":"rename","exclusive":true},{"repository":"owner/repo","path":"internal/old2/legacy.go","kind":"file","change":"delete"},{"repository":"owner/repo","path":"db/hist_index.sql","kind":"file"}]`
 	out, code := crw(t, state, "dag-region-declare", "--plan", "p1", "--node", "impl-a", "--actor", "parent", "--regions", regions)

@@ -36,6 +36,7 @@ func plainEntry(summary string) SummaryEntry {
 // The readback Linear returns confirms the entry, whatever the fence that holds the summary: the blank line is the only thing ignored, so the same holds with line-ending noise or more
 // than one blank line there, and the block the document holds is reported as it is (its blank line kept).
 func TestSummaryReconcileIgnoresTheBlankLineBeforeTheBlockEnd(t *testing.T) {
+	t.Parallel()
 	bodies := map[string]string{
 		"a plain summary":                 "Plan p1, project P-TEST, revision 3, active\n\nStages\n  running 1: a\n\nNodes\n  a, CRW-a, stage running",
 		"a body that quotes a fence":      "Plan p1\n\nNodes\n  a, one\n```\nquoted\n```\n  b, two",
@@ -74,6 +75,7 @@ func TestSummaryReconcileIgnoresTheBlankLineBeforeTheBlockEnd(t *testing.T) {
 
 // complete confirms from the readback Linear returned, and keeps the block as the document held it.
 func TestSummaryCompleteConfirmsTheReadbackLinearSaved(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	e, op, _ := claimedEntry(t, f, "doc-1")
 	readback := linearBlankBeforeBlockEnd("# Coordination\n\nSome text.\n\n" + op.Container + "\nAfter.\n")
@@ -92,6 +94,7 @@ func TestSummaryCompleteConfirmsTheReadbackLinearSaved(t *testing.T) {
 // The parent's turn against a Linear whose save adds that blank line: the write lands once, the reconcile of the document that was saved says already_written, and complete confirms it.
 // The next summary replaces the confirmed one the same way. Before CRW-513 the reconcile called the saved block stale and the parent rewrote the same container in a loop.
 func TestSummaryParentFlowAgainstALinearThatAddsItsBlankLine(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	lin := newFakeLinear()
 	ctx := context.Background()
@@ -144,6 +147,7 @@ func TestSummaryParentFlowAgainstALinearThatAddsItsBlankLine(t *testing.T) {
 // Only that blank line is ignored. Each readback below differs from the written block in content or in whitespace elsewhere, most of them with Linear's blank line as well, and is refused
 // readback_mismatch: the entry stays claimed with the problem kept, and the readback that is right still confirms it afterwards.
 func TestSummaryCompleteStillRefusesWhatLinearDidNotChange(t *testing.T) {
+	t.Parallel()
 	f := summaryFixture(t)
 	e, op, _ := claimedEntry(t, f, "doc-1")
 	end := blockEnd(e.SummaryID)
@@ -206,6 +210,7 @@ func TestSummaryCompleteStillRefusesWhatLinearDidNotChange(t *testing.T) {
 
 // Through the binary: the readback Linear saved confirms (and reconcile reports the block with its blank line), and a real difference next to that blank line is refused.
 func TestCLISummaryCompleteWithLinearsBlankLine(t *testing.T) {
+	t.Parallel()
 	saved := func(t *testing.T, mutate func(string) string) (state, id, token, page string) {
 		t.Helper()
 		state = summaryState(t)

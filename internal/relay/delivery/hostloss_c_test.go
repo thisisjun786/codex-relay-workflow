@@ -13,6 +13,7 @@ import (
 // test_host_lost_turn.py HLT-18..HLT-27 (see hostloss_a_test.go for the method).
 
 func Test21_HLT18_an_ack_before_the_send_is_confirmed_is_kept_and_completed(t *testing.T) {
+	t.Parallel()
 	t.Run("an ACK in the delivery turn confirms the send", func(t *testing.T) {
 		mirror(t, hlt, "AnAcknowledgementBeforeTheSendIsConfirmed.test_an_ack_in_the_delivery_turn_confirms_the_send_and_the_verdict_follows", func(h *hl) {
 			event, _, turn := h.uncertainDelivery(true)
@@ -113,6 +114,7 @@ func Test21_HLT18_an_ack_before_the_send_is_confirmed_is_kept_and_completed(t *t
 }
 
 func Test21_HLT19_an_ack_while_the_relay_is_still_sending_is_kept(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "AnAcknowledgementBeforeTheSendIsConfirmed.test_an_ack_while_the_relay_is_still_sending_is_kept_and_completes_after", func(h *hl) {
 		h.parentHistory()
 		event := h.queuedEvent(regOpts{})
@@ -139,6 +141,7 @@ func Test21_HLT19_an_ack_while_the_relay_is_still_sending_is_kept(t *testing.T) 
 }
 
 func Test21_HLT20_host_reads_only_when_needed(t *testing.T) {
+	t.Parallel()
 	t.Run("an ordinary ACK", func(t *testing.T) {
 		mirror(t, hlt, "AnAcknowledgementBeforeTheSendIsConfirmed.test_an_ordinary_ack_makes_no_confirmation_reads", func(h *hl) {
 			event, _, _ := h.dispatched()
@@ -164,6 +167,7 @@ func Test21_HLT20_host_reads_only_when_needed(t *testing.T) {
 }
 
 func Test21_HLT21_the_message_is_found_through_the_ack_turn_and_an_echo_confirms_nothing(t *testing.T) {
+	t.Parallel()
 	t.Run("deep in a long delivery turn", func(t *testing.T) {
 		mirror(t, hlt, "AnAcknowledgementBeforeTheSendIsConfirmed.test_a_message_deep_in_a_long_delivery_turn_is_confirmed_through_the_ack_turn", func(h *hl) {
 			event, request, turn := h.uncertainDelivery(true)
@@ -210,6 +214,7 @@ func Test21_HLT21_the_message_is_found_through_the_ack_turn_and_an_echo_confirms
 }
 
 func Test21_HLT22_an_ack_from_the_turn_the_send_was_folded_into(t *testing.T) {
+	t.Parallel()
 	t.Run("verified", func(t *testing.T) {
 		mirror(t, hlt, "AnAcknowledgementBeforeTheSendIsConfirmed.test_an_ack_from_the_turn_the_send_was_folded_into_is_verified", func(h *hl) {
 			event, _ := h.foldedDelivery(true, 0, 0)
@@ -234,6 +239,7 @@ func Test21_HLT22_an_ack_from_the_turn_the_send_was_folded_into(t *testing.T) {
 }
 
 func Test21_HLT23_an_ack_answers_only_attempts_sent_before_it_was_authored(t *testing.T) {
+	t.Parallel()
 	t.Run("a kept ACK does not hide the next attempt's loss", func(t *testing.T) {
 		mirror(t, hlt, "AnAcknowledgementBeforeTheSendIsConfirmed.test_an_ack_kept_for_an_attempt_that_never_sent_does_not_hide_the_next_attempts_loss", func(h *hl) {
 			h.parentHistory()
@@ -311,6 +317,7 @@ func (h *hl) confirmsDuringTheScan(event, turn string) *hooked {
 }
 
 func Test21_HLT24_every_settlement_is_a_compare_and_set(t *testing.T) {
+	t.Parallel()
 	t.Run("a replacement ACK during the read", func(t *testing.T) {
 		mirror(t, hlt, "EverySettlementIsACompareAndSet.test_a_replacement_ack_written_during_the_read_is_not_promoted_with_the_old_evidence", func(h *hl) {
 			event, request, turn := h.uncertainDelivery(false)
@@ -413,6 +420,7 @@ func outcomes(results []any) []any {
 }
 
 func Test21_HLT25_the_sender_and_a_concurrent_reconcile_never_undo_each_other(t *testing.T) {
+	t.Parallel()
 	t.Run("a reconcile during the send that found nothing", func(t *testing.T) {
 		mirror(t, hlt, "EverySettlementIsACompareAndSet.test_a_reconcile_during_the_send_that_found_nothing_leaves_the_accepted_send_to_the_next_tick", func(h *hl) {
 			h.parentHistory()
@@ -510,6 +518,7 @@ func anyErrors(err error) []any {
 }
 
 func Test21_HLT26_a_typed_item_changes_the_fingerprint_and_readback(t *testing.T) {
+	t.Parallel()
 	mirror(t, hlt, "EverySettlementIsACompareAndSet.test_a_typed_item_leaves_the_fingerprint_and_readback_working", func(h *hl) {
 		h.item(parent, "t-x", "plain", "")
 		_, err := h.host.RecipientFingerprint(context.Background(), parent)
@@ -528,6 +537,7 @@ func Test21_HLT26_a_typed_item_changes_the_fingerprint_and_readback(t *testing.T
 }
 
 func Test21_HLT27_an_ack_is_judged_against_the_delivery_it_read(t *testing.T) {
+	t.Parallel()
 	loseFirstTurnAndRequeue := func(h *hl) (string, string) {
 		event, _, lost := h.dispatched()
 		h.hostReloadsLosing(lost)
