@@ -389,3 +389,44 @@ func TestResetLinkWalkDotEndingTargetOpensNoDirectory(t *testing.T) {
 		})
 	}
 }
+
+// TestResetLinkWalkChainThroughRunReset: the chained dot-ending link is judged the same way
+// through the real entry point, so the public behaviour of a reset is pinned and not only the
+// helper's. interviews -> alias, alias -> keep/. is a state candidate whose target exists, so
+// RunReset removes the link itself and leaves the directory it names.
+func TestResetLinkWalkChainThroughRunReset(t *testing.T) {
+	root := t.TempDir()
+	crw := filepath.Join(root, ".crw")
+	if err := os.MkdirAll(filepath.Join(crw, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(crw, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("keep/.", filepath.Join(crw, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("alias", filepath.Join(crw, "interviews")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RunReset(root, State)
+	if err != nil {
+		t.Fatalf("RunReset: %v", err)
+	}
+	want := filepath.Join(crw, "interviews")
+	found := false
+	for _, removed := range got.Removed {
+		if removed == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("removed = %v, want %s among them", got.Removed, want)
+	}
+	if _, err := os.Lstat(filepath.Join(crw, "interviews")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the link must be removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(crw, "keep", "inner.txt")); err != nil {
+		t.Errorf("the target directory must survive: %v", err)
+	}
+}
