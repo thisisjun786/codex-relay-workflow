@@ -44,7 +44,9 @@ var supervisorConfig = func(e *Env) *Config { return coreDefaults(e) }
 
 // supervisorReport is crw manage supervisor show: the recorded settings and the recorded store
 // binding as one JSON object. Both are the relay's own bytes, spliced in unchanged, and a binding
-// that is not recorded is null.
+// that is not recorded is null. settings is the settings-show answer whole (which carries the
+// recorded settings under its own settings key), and binding is the store level's owner out of the
+// linkage-up answer.
 type supervisorReport struct {
 	OK       bool            `json:"ok"`
 	TaskID   string          `json:"taskId"`
@@ -53,6 +55,7 @@ type supervisorReport struct {
 }
 
 // supervisorRecord is crw manage supervisor register: the two relay answers, spliced in unchanged.
+// binding is the linkage-bind answer and settings is the settings-record answer whole.
 type supervisorRecord struct {
 	OK       bool            `json:"ok"`
 	TaskID   string          `json:"taskId"`
@@ -213,26 +216,44 @@ func supervisorShow(ctx context.Context, e *Env, args []string) int {
 		supervisorPassThrough(e, linkage)
 		return code
 	}
+	levels, ok := supervisorLevels(linkage)
+	if !ok {
+		// A store that could not be read is not a store with no binding: the reader answers
+		// readable:false and exits 0, so reporting null here would claim the store said there is
+		// nothing. Pass the answer through as a host failure instead.
+		supervisorPassThrough(e, linkage)
+		return supervisorExitHost
+	}
 	supervisorWrite(e.Stdout, supervisorReport{OK: true, TaskID: section.TaskID,
-		Settings: supervisorJSONOrNull(settings), Binding: supervisorStoreBinding(linkage)})
+		Settings: supervisorJSONOrNull(settings), Binding: supervisorStoreBinding(levels)})
 	return 0
 }
 
-// supervisorStoreBinding is the store-scope supervisor binding out of a linkage-up answer: the
-// owner of the level whose scope is the store seat. A task with no such level, or an answer that is
-// not JSON, is null rather than a failure, because the store answering with nothing is an answer.
-func supervisorStoreBinding(linkage []byte) json.RawMessage {
+// supervisorLevel is one level of a linkage-up answer.
+type supervisorLevel struct {
+	ScopeKind string          `json:"scopeKind"`
+	ScopeKey  string          `json:"scopeKey"`
+	Owner     json.RawMessage `json:"owner"`
+}
+
+// supervisorLevels reads the levels of a linkage-up answer. ok is false when the answer is not JSON
+// or says the store could not be read (readable:false), which is a failure rather than an absence.
+func supervisorLevels(linkage []byte) ([]supervisorLevel, bool) {
 	var answer struct {
-		Levels []struct {
-			ScopeKind string          `json:"scopeKind"`
-			ScopeKey  string          `json:"scopeKey"`
-			Owner     json.RawMessage `json:"owner"`
-		} `json:"levels"`
+		Readable bool              `json:"readable"`
+		Levels   []supervisorLevel `json:"levels"`
 	}
 	if err := json.Unmarshal(linkage, &answer); err != nil {
-		return json.RawMessage("null")
+		return nil, false
 	}
-	for _, level := range answer.Levels {
+	return answer.Levels, answer.Readable
+}
+
+// supervisorStoreBinding is the store-scope supervisor binding out of a linkage-up answer's levels:
+// the owner of the level whose scope is the store seat. A task with no such level is null, because
+// a store that answered and holds no binding for the task has answered.
+func supervisorStoreBinding(levels []supervisorLevel) json.RawMessage {
+	for _, level := range levels {
 		if level.ScopeKind == "store" && level.ScopeKey == "store" && len(level.Owner) > 0 && string(level.Owner) != "null" {
 			return level.Owner
 		}

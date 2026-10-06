@@ -301,6 +301,24 @@ func TestSupervisorShowReportsNoBindingAsNull(t *testing.T) {
 	}
 }
 
+// A store the reader could not read is a host failure, not a null binding: the answer says
+// readable:false and exits 0, so reporting ok:true would claim the store said there is nothing.
+func TestSupervisorShowReportsAnUnreadableStoreAsAFailure(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    `{"state":"unreadable","readable":false,"levels":[],"gaps":[],"contention":[],"detail":"no such table: scope_bindings"}`,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, _ := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != supervisorExitHost {
+		t.Fatalf("exit %d, want %d", code, supervisorExitHost)
+	}
+	if !strings.Contains(out.String(), "readable") && !strings.Contains(out.String(), "no such table") {
+		t.Errorf("the unreadable answer was not passed through: %q", out.String())
+	}
+}
+
 // A relay read that is refused is passed through with the relay's own exit status, so a refusal
 // (exit 2) stays distinguishable from a host failure (exit 3).
 func TestSupervisorShowPassesThroughARelayRefusal(t *testing.T) {
