@@ -24,6 +24,7 @@ func emitted(t *testing.T, r Reading) string {
 // The store has one connection: a reading that opened a second to read a relationship's state would wait for itself. Read and Ready inside a Compose are
 // the two ways a caller reaches the reader, and both must return on a read-only handle (the handle dag-ready opens) and on a writable one.
 func TestReadReturnsOnTheReadOnlyHandle(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -55,6 +56,7 @@ func TestReadReturnsOnTheReadOnlyHandle(t *testing.T) {
 
 // Two readings of one store state are byte-identical, and a write that changes what the reading depends on changes them (criterion c1).
 func TestReadyDeterministic(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -87,6 +89,7 @@ func TestReadyDeterministic(t *testing.T) {
 // Criterion c2: a long unrelated sibling never holds back a short dependent chain. Y waits for X's integration and for nothing else; L, a node
 // that is running the whole time, is never in Y's reason.
 func TestFrontierNotBarrier(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("fb", 0, "fb-r1", addNode("L", dag.NodeImplementation), addNode("X", dag.NodeImplementation), addNode("Y", dag.NodeImplementation),
@@ -128,6 +131,7 @@ func TestFrontierNotBarrier(t *testing.T) {
 
 // Criterion c2 (ordering): critical path first, then descendants, then age, then node id; and when the candidates outnumber the free slots the pass says so.
 func TestOrderCriticalPathDescendantsAge(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) *fixture {
 		f := newFixture(t)
 		f.projectParent()

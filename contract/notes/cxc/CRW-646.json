@@ -1,0 +1,24 @@
+{
+  "issue": "CRW-646",
+  "identical": [
+    "cli-help__loop__dash_h",
+    "cli-help__loop__dashdash_help",
+    "cli-help__loop__word_help",
+    "cli-help__loop__add-criterion_dashdash_help",
+    "cli-help__loop__add-task_dashdash_help",
+    "cli-help__loop__add-work-phase_dashdash_help",
+    "cli-help__loop__ask_dashdash_help",
+    "cli-help__loop__complete-task_dashdash_help",
+    "cli-help__loop__decide_dashdash_help",
+    "cli-help__loop__init_dashdash_help",
+    "cli-help__loop__meet-criterion_dashdash_help",
+    "cli-help__loop__ready_dashdash_help",
+    "cli-help__loop__show_dashdash_help",
+    "cli-help__loop__steer_dashdash_help",
+    "cli-help__loop__validate_dashdash_help",
+    "cli__loop__init_show_validate_ready",
+    "cli__loop__init_objective_slug_and_session_binding",
+    "cli__loop__nongit_bound_cycle_refused",
+    "cli__loop__symlinked_goalplans_root_refused"
+  ]
+}

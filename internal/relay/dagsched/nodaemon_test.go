@@ -16,6 +16,7 @@ const modulePrefix = "github.com/thisisjun786/codex-relay-workflow/"
 // its turn. This follows every package the scheduler imports inside the module and refuses the daemon and the service, and the store a whole fork and join leaves is the relay's one database
 // and its bridge files.
 func TestNoNewStoreOrDaemon(t *testing.T) {
+	t.Parallel()
 	seen := map[string]bool{}
 	var walk func(path, dir string)
 	walk = func(path, dir string) {
@@ -54,6 +55,7 @@ func TestNoNewStoreOrDaemon(t *testing.T) {
 }
 
 // The state directory a fork and join leaves holds the relay's database and the bridge's own files, and no database or socket of the scheduler's.
+// sequential: t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR") is process-wide.
 func TestForkJoinLeavesNoStoreOfItsOwn(t *testing.T) {
 	f := newForkJoin(t)
 	f.putPlan("fj", 0, "fj-r1", addRelNode("A", dag.NodeNonPR))

@@ -8,6 +8,7 @@ import (
 // CRW-410: the page, the skill and the command specs say the same things about the sweep and the merge-order constraint, so a command, trigger, status, reason, lane, head source, table or key that is added or
 // renamed in the code cannot go undescribed.
 func TestSweepPageSkillAndSpecsNameTheSameThings(t *testing.T) {
+	t.Parallel()
 	page := readText(t, "../../../docs/relay/dag-scheduler.md")
 	plans := readText(t, "../../../docs/relay/dag-plans.md")
 	skill := readText(t, "../../../plugins/crw/skills/crw-run/references/region-grades.md")
