@@ -288,9 +288,12 @@ func TestGoalGateHandlePreToolUseFailClosed(t *testing.T) {
 	}
 }
 
-// The goal-complete row of this issue: the guard is registered and the dispatcher's place for it is wired, and
-// CRW-752 ports the body, so it answers nothing for any input today.
+// The goal-complete row of this issue: the guard is registered and the dispatcher's place for it is wired. The
+// body is goalgate_complete.go (CRW-752); its own cases live in goalgate_complete_test.go. Here the row answers
+// nothing for a session with no state and for another tool, which is the oracle's answer for every update_goal
+// the gate does not deny (goal-gate.test.ts:290-301).
 func TestGoalGateCompleteGuardAnswersNothingYet(t *testing.T) {
+	goalGateTestEnv(t)
 	cwd := t.TempDir()
 	for _, input := range []any{map[string]any{"status": "complete"}, map[string]any{"status": "blocked"}, nil} {
 		p := goalGatePreToolUse{SessionID: "s1", Cwd: cwd, ToolName: goalGateUpdateGoalToolName, ToolInput: input}
