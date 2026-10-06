@@ -579,6 +579,131 @@ func TestSupervisorShowReportsEmptyRefusalsWhenNone(t *testing.T) {
 	}
 }
 
+// C1 (generation 2): the live test is the relay's own reading of the "contention" value, not a
+// string-only test. The relay's truthy() (internal/relay/delivery/transport.go) treats a non-empty
+// non-string value as live, so an entry whose "contention" is true is a live conflict and must
+// refuse, not ride along in refusals.
+func TestSupervisorShowTreatsANonStringContentionValueAsLive(t *testing.T) {
+	for _, value := range []string{"true", "5", `{"nested":1}`, `["x"]`} {
+		t.Run(value, func(t *testing.T) {
+			linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+				`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],` +
+				`"contention":[{"contention":` + value + `}]}`
+			exe, _ := supervisorScript(t, map[string]string{
+				"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+				"linkage-up":    linkage,
+			})
+			section := supervisorTestSection()
+			supervisorUseConfig(t, supervisorTestConfig(&section))
+			e, out, _ := supervisorEnv(exe)
+			if code := supervisorShow(context.Background(), e, nil); code != supervisorExitRefused {
+				t.Fatalf("exit %d, want %d", code, supervisorExitRefused)
+			}
+			var refusal supervisorRefusalOut
+			if err := json.Unmarshal([]byte(out.String()), &refusal); err != nil {
+				t.Fatal(err)
+			}
+			if refusal.OK || refusal.Reason != "binding_ambiguous" {
+				t.Errorf("refusal %+v", refusal)
+			}
+		})
+	}
+}
+
+// C1 (generation 2): a falsy non-string "contention" value is not live, matching the relay: the
+// walk succeeds and the entry rides in refusals.
+func TestSupervisorShowTreatsAFalsyContentionValueAsARefusal(t *testing.T) {
+	for _, value := range []string{"false", "0", `""`, "null", `{}`, `[]`} {
+		t.Run(value, func(t *testing.T) {
+			linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+				`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],` +
+				`"contention":[{"contention":` + value + `,"at":"2026-10-07T00:00:00Z"}]}`
+			exe, _ := supervisorScript(t, map[string]string{
+				"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+				"linkage-up":    linkage,
+			})
+			section := supervisorTestSection()
+			supervisorUseConfig(t, supervisorTestConfig(&section))
+			e, out, errOut := supervisorEnv(exe)
+			if code := supervisorShow(context.Background(), e, nil); code != 0 {
+				t.Fatalf("show: exit %d, stderr %q", code, errOut.String())
+			}
+			var report supervisorReportOut
+			if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+				t.Fatal(err)
+			}
+			var refusals []json.RawMessage
+			if err := json.Unmarshal(report.Refusals, &refusals); err != nil {
+				t.Fatalf("refusals is not an array: %v (%s)", err, report.Refusals)
+			}
+			if len(refusals) != 1 {
+				t.Errorf("refusals has %d entries, want 1", len(refusals))
+			}
+		})
+	}
+}
+
+// C1 (generation 2): a live entry and a past refusal record in one answer: the live entry decides
+// the refusal, and the relay's whole answer (both entries) rides in detail.
+func TestSupervisorShowReportsAMixedContentionAndRefusal(t *testing.T) {
+	linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+		`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],"contention":[` +
+		`{"contention":"owner_drift","linkId":"lnk-1","recorded":"a","live":"b"},` +
+		`{"at":"2026-10-07T00:00:00Z","reason":"duplicate_scope_owner","challenger":"task-other"}]}`
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    linkage,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, _ := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != supervisorExitRefused {
+		t.Fatalf("exit %d, want %d", code, supervisorExitRefused)
+	}
+	var refusal supervisorRefusalOut
+	if err := json.Unmarshal([]byte(out.String()), &refusal); err != nil {
+		t.Fatal(err)
+	}
+	if refusal.OK || refusal.Reason != "binding_ambiguous" {
+		t.Errorf("refusal %+v", refusal)
+	}
+	if !strings.Contains(string(refusal.Detail), "owner_drift") ||
+		!strings.Contains(string(refusal.Detail), "duplicate_scope_owner") {
+		t.Errorf("detail = %s, want the relay's whole answer", refusal.Detail)
+	}
+}
+
+// C1 (generation 2): every past refusal record is kept, in the relay's own order.
+func TestSupervisorShowKeepsEveryRefusalInOrder(t *testing.T) {
+	linkage := `{"state":"resolved","readable":true,"levels":[{"scopeKind":"store","scopeKey":"store",` +
+		`"owner":{"bindingId":"bnd-1"},"depth":0}],"gaps":[],"contention":[` +
+		`{"at":"2026-10-07T00:00:00Z","reason":"first_refusal"},` +
+		`{"at":"2026-10-07T00:01:00Z","reason":"second_refusal"}]}`
+	exe, _ := supervisorScript(t, map[string]string{
+		"settings-show": `{"task":"task-supervisor","settings":{"cwd":"/work/management"},"usable":true}`,
+		"linkage-up":    linkage,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, errOut := supervisorEnv(exe)
+	if code := supervisorShow(context.Background(), e, nil); code != 0 {
+		t.Fatalf("show: exit %d, stderr %q", code, errOut.String())
+	}
+	var report supervisorReportOut
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err)
+	}
+	var refusals []json.RawMessage
+	if err := json.Unmarshal(report.Refusals, &refusals); err != nil {
+		t.Fatalf("refusals is not an array: %v (%s)", err, report.Refusals)
+	}
+	if len(refusals) != 2 ||
+		!strings.Contains(string(refusals[0]), "first_refusal") ||
+		!strings.Contains(string(refusals[1]), "second_refusal") {
+		t.Errorf("refusals = %s, want both records in order", report.Refusals)
+	}
+}
+
 // C1: a state this command does not know is closed as a failure rather than read as an absence.
 func TestSupervisorShowReportsAnUnknownStateAsUnknown(t *testing.T) {
 	exe, _ := supervisorScript(t, map[string]string{

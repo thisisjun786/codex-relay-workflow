@@ -346,8 +346,9 @@ type supervisorLevel struct {
 // supervisorLinkage is the linkage-up answer as this command reads it: the state the walk settled
 // on, whether the store could be read at all, the levels it holds and the contention it found.
 // Reading the state and the contention is the point: an answer whose state is ambiguous, or which
-// carries any contention at all, is a contested binding rather than an absent one, and the levels
-// of such an answer are empty.
+// carries a live contention entry, is a contested binding rather than an absent one, and the levels
+// of such an answer are empty. The contention array also carries past refusal records, which are
+// not conflicts; supervisorContentionIsLive tells the two apart.
 type supervisorLinkage struct {
 	State      string            `json:"state"`
 	Readable   bool              `json:"readable"`
@@ -355,25 +356,60 @@ type supervisorLinkage struct {
 	Contention []json.RawMessage `json:"contention"`
 }
 
-// supervisorLiveContention is the entries of a linkage-up answer's contention array that are a
-// conflict the relay found now: each carries a non-empty "contention" key (competing_owners,
-// competing_parents, instruction_conflict, owner_drift, scope_cycle). The other kind of entry is a
-// past refusal record from the linkage_conflicts table, which carries no such key and is kept
-// forever; treating one of those as a live conflict would make show fail for good after a single
-// refused competitor, so the two kinds are read apart.
+// supervisorContentionIsLive reports whether one contention entry is a conflict the relay found
+// now rather than a past refusal record. The relay's own reading is truthiness of the entry's
+// "contention" key (internal/relay/delivery/service.go ResolveRecipient with its truthy helper):
+// an entry with a non-empty "contention" value is live, and one without the key, with an empty
+// string, or with any other falsy value is not. A live entry names one of competing_owners,
+// competing_parents, instruction_conflict, owner_drift or scope_cycle; a past refusal record from
+// the linkage_conflicts table carries no such key and is kept forever, so treating one of those as
+// live would make show fail for good after a single refused competitor. An entry this command
+// cannot read at all is not a live conflict it can name, so it is read as a refusal and rides
+// along rather than being dropped.
+func supervisorContentionIsLive(entry json.RawMessage) bool {
+	var item map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &item); err != nil {
+		return false
+	}
+	value, ok := item["contention"]
+	if !ok {
+		return false
+	}
+	var decoded any
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return false
+	}
+	return supervisorTruthy(decoded)
+}
+
+// supervisorTruthy is the relay's truthy() over a decoded JSON value
+// (internal/relay/delivery/transport.go): nil, false, "", an empty object, an empty array and zero
+// are false, and everything else is true. It is the same test the relay applies to a contention
+// entry's "contention" key, so this command reads live contention exactly as the relay does.
+func supervisorTruthy(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return typed
+	case string:
+		return typed != ""
+	case map[string]any:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	case float64:
+		return typed != 0
+	}
+	return true
+}
+
+// supervisorLiveContention is the entries of a linkage-up answer's contention array that are a live
+// conflict, in the relay's own order.
 func supervisorLiveContention(contention []json.RawMessage) []json.RawMessage {
 	var live []json.RawMessage
 	for _, entry := range contention {
-		var item struct {
-			Contention string `json:"contention"`
-		}
-		if err := json.Unmarshal(entry, &item); err != nil {
-			// An entry this command cannot read is not a live conflict it can name, but it is
-			// also not a past refusal: keep it out of the live set and let it ride in refusals as
-			// the relay's own bytes, so nothing is dropped.
-			continue
-		}
-		if item.Contention != "" {
+		if supervisorContentionIsLive(entry) {
 			live = append(live, entry)
 		}
 	}
@@ -381,16 +417,13 @@ func supervisorLiveContention(contention []json.RawMessage) []json.RawMessage {
 }
 
 // supervisorRefusalRecords is the entries of a linkage-up answer's contention array that are past
-// refusal records rather than live conflicts: those with no "contention" key (or an empty one), and
-// any entry this command could not read. They are not a failure, so they are reported rather than
-// refused, and the array is always present (empty when there are none).
+// refusal records rather than live conflicts, in the relay's own order. They are not a failure, so
+// they are reported rather than refused, and the array is always present (empty when there are
+// none).
 func supervisorRefusalRecords(contention []json.RawMessage) json.RawMessage {
 	records := []json.RawMessage{}
 	for _, entry := range contention {
-		var item struct {
-			Contention string `json:"contention"`
-		}
-		if err := json.Unmarshal(entry, &item); err != nil || item.Contention == "" {
+		if !supervisorContentionIsLive(entry) {
 			records = append(records, entry)
 		}
 	}
