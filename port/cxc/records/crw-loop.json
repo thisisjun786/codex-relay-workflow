@@ -262,6 +262,18 @@
       "reason": "Move the oracle plugin/scripts/check-lane-packet.mjs into the lane-owning loop skill; preserve validation behavior, rename diagnostic brand.",
       "add": true,
       "sha256": "7299551a840c7f375cbd9b1edd351103e8bac5b8080cf81c625dc9002911a227"
+    },
+    {
+      "file": "tests/lane-manifest.test.mjs",
+      "reason": "Move the S-class skill-script test lane-manifest.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "2bb6b537181d75d484afb4ac27cd8f9b4340e126d3cd87218126db6d93cfa617"
+    },
+    {
+      "file": "tests/lane-packet.test.mjs",
+      "reason": "Move the S-class skill-script test lane-packet.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "3d02558ab0771ddbab615ae4916b1a6853b5c8452c2de3e9030230028f6c3705"
     }
   ]
 }

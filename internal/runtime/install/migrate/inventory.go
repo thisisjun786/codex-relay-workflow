@@ -50,8 +50,9 @@ const (
 
 // inventoryRow is one line of the design's tables as data. pattern is root-relative: literal segments, "*" wildcarding any run
 // inside one segment, and a trailing "**" meaning the subtree below that path. disp is what the path is; reason is the report
-// text; judge names the record whose state decides the disposition ("dispatch", "bg" or ""); lock marks the fifth table (its
-// presence refuses the scope). Table order is precedence: the first matching row claims a path.
+// text; judge names the record whose state decides the disposition ("dispatch", "bg", "session" or "object", or "" for a row
+// whose bytes are copied as they are); lock marks the fifth table (its presence refuses the scope). Table order is precedence:
+// the first matching row claims a path.
 type inventoryRow struct {
 	pattern string
 	disp    Disposition
@@ -66,23 +67,23 @@ var inventoryProjectRows = []inventoryRow{
 	{pattern: "goalplans/*/.goalplan.lock", lock: true, reason: "a goalplan write lock is present, with or without owner.json"},
 	{pattern: "dispatches/*/*.json.lock", lock: true, reason: "a dispatch lock is present, never broken"},
 	{pattern: ".gitignore", disp: DispSkip, reason: "CXC text; CRW publishes its own canonical text no-replace"},
-	{pattern: "sessions/*.json", disp: DispCopy},
+	{pattern: "sessions/*.json", disp: DispCopy, judge: "session"},
 	{pattern: "ledger.jsonl", disp: DispCopy},
 	{pattern: "interviews/*.jsonl", disp: DispCopy},
-	{pattern: "interview/freeze.json", disp: DispCopy},
+	{pattern: "interview/freeze.json", disp: DispCopy, judge: "object"},
 	{pattern: "plan/*/**", disp: DispCopy, reason: "user plan tree; a .tmp name inside it is ordinary data"},
-	{pattern: "goalplans/*/goalplan.json", disp: DispCopy},
+	{pattern: "goalplans/*/goalplan.json", disp: DispCopy, judge: "object"},
 	{pattern: "goalplans/*/ledger.jsonl", disp: DispCopy},
 	{pattern: "goalplans/*/schema-v2.marker", disp: DispCopy},
 	{pattern: "evidence/**", disp: DispCopy, reason: "artifact group; a .tmp name inside it is ordinary data"},
-	{pattern: "evidence-attempts/*.json", disp: DispCopy},
-	{pattern: "evidence-unrecordable/*.json", disp: DispCopy},
-	{pattern: "sources/*.json", disp: DispCopy},
+	{pattern: "evidence-attempts/*.json", disp: DispCopy, judge: "object"},
+	{pattern: "evidence-unrecordable/*.json", disp: DispCopy, judge: "object"},
+	{pattern: "sources/*.json", disp: DispCopy, judge: "object"},
 	{pattern: "metrics.jsonl", disp: DispCopy},
-	{pattern: "objective-kind/*.json", disp: DispCopy},
-	{pattern: "divergence/*.mode.json", disp: DispCopy},
+	{pattern: "objective-kind/*.json", disp: DispCopy, judge: "object"},
+	{pattern: "divergence/*.mode.json", disp: DispCopy, judge: "object"},
 	{pattern: "divergence/candidates.jsonl", disp: DispCopy},
-	{pattern: "render-observations.jsonl", disp: DispCopy},
+	{pattern: "render-observations.jsonl", disp: DispCopy, judge: "render-observations"},
 	{pattern: "dispatches/*/*.json", disp: DispCopy, judge: "dispatch"},
 	{pattern: "bg/*.json", disp: DispCopy, judge: "bg"},
 	{pattern: "bg/*.out", disp: DispCopy},
@@ -91,7 +92,7 @@ var inventoryProjectRows = []inventoryRow{
 	{pattern: "bg/disabled", disp: DispCopy},
 	{pattern: "bg/enabled-at", disp: DispCopy},
 	{pattern: "bg/ledger.jsonl", disp: DispCopy},
-	{pattern: "attest.json", disp: DispCopy},
+	{pattern: "attest.json", disp: DispCopy, judge: "object"},
 	{pattern: "subagents.json", disp: DispSkip, reason: "the project role layer is removed; the global layer replaces it"},
 	{pattern: "worktree-guard/*.json", disp: DispSkip, reason: "rebuildable injection marker"},
 	{pattern: "affordance-recovery/*.pending", disp: DispSkip, reason: "once-only queued advisory is regenerated, not resumed as evidence"},
@@ -110,8 +111,8 @@ var inventoryProjectRows = []inventoryRow{
 // inventoryUserRows is the user table (U -> V). The serve.* rows are the literal fallback home: the messenger service ignores the
 // override, so classifyUser also enumerates the literal home when U differs (the same reason text, a never-copied item).
 var inventoryUserRows = []inventoryRow{
-	{pattern: "subagents.json", disp: DispCopy},
-	{pattern: "config.json", disp: DispCopy},
+	{pattern: "subagents.json", disp: DispCopy, judge: "object"},
+	{pattern: "config.json", disp: DispCopy, judge: "object"},
 	{pattern: "model-catalog.json", disp: DispSkip, reason: "environment-keyed catalog cache is rebuilt"},
 	{pattern: "recall/**", disp: DispSkip, reason: "derived search index; a cold rebuild is deliberate"},
 	{pattern: "skill-cache/**", disp: DispSkip, reason: "TTL cache can be fetched again"},

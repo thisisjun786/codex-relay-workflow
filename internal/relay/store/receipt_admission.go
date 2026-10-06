@@ -82,5 +82,5 @@ func (in ReceiptIntake) DaemonObservation(ctx context.Context, relationshipID st
 		{Key: "eventId", Value: event},
 	}
 	claim := ReceiptClaim{EventID: event, RelationshipID: relationshipID, Generation: generation.Number, RevisionHash: NoDeliverable, Outcome: ObservationOutcome(turn.Status), Producer: ProducerDaemon, Turn: turn, manifest: nil, document: document}
-	return in.storeEvent(ctx, claim, sql.NullString{}, nil)
+	return in.storeEvent(ctx, claim, sql.NullString{}, AcceptOptions{})
 }

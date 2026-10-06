@@ -59,6 +59,7 @@ func passCount(t testing.TB, state string) int {
 }
 
 func TestCLIReady(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	first, code := crw(t, state, "dag-ready", "--plan", "p1")
 	second, _ := crw(t, state, "dag-ready", "--plan", "p1")
@@ -119,6 +120,7 @@ func TestCLIReady(t *testing.T) {
 }
 
 func TestCLIRegionDeclare(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	regions := `[{"repository":"owner/repo","path":"internal/x","kind":"tree"},{"repository":"owner/repo","path":"go.mod","kind":"file"}]`
 	out, code := crw(t, state, "dag-region-declare", "--plan", "p1", "--node", "impl-a", "--actor", "parent", "--regions", regions)
@@ -165,6 +167,7 @@ func TestCLIRegionDeclare(t *testing.T) {
 
 // A read of a store that predates the DAG zone answers unregistered_scope and leaves the schema alone.
 func TestReadOnlyReadNeverCreatesTheZone(t *testing.T) {
+	t.Parallel()
 	state := filepath.Join(t.TempDir(), "state")
 	path := filepath.Join(state, "relay.sqlite3")
 	testsupport.Create(t, path, "", "go")
@@ -188,6 +191,7 @@ func TestReadOnlyReadNeverCreatesTheZone(t *testing.T) {
 
 // dag-release starts a managed task, so like managed-start it needs the explicit --state and --socket, and it refuses a request it cannot read before it touches the store.
 func TestCLIReleaseRefusalsBeforeAnyEffect(t *testing.T) {
+	t.Parallel()
 	state := filepath.Join(t.TempDir(), "state")
 	socket := filepath.Join(t.TempDir(), "app.sock")
 	f := newFixtureOn(t, filepath.Join(state, "relay.sqlite3"), socket)

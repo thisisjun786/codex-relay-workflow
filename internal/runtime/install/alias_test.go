@@ -85,9 +85,7 @@ func TestRemoveKnowsARuntimeByIdentityNotSpelling(t *testing.T) {
 		t.Fatal(err)
 	}
 	sleeper := filepath.Join(old, "bin", "sleep")
-	if err := os.WriteFile(sleeper, []byte(readFile(t, source)), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, sleeper, []byte(readFile(t, source)), 0o755)
 	process := exec.Command(alias(sleeper), "30")
 	if err := process.Start(); err != nil {
 		t.Fatal(err)

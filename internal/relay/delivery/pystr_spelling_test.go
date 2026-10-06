@@ -8,6 +8,7 @@ import (
 // Delivery's text spells a float that is not finite as JSON does, as it did before the shared
 // pyvalue existed; every other value reads as pyvalue.Str.
 func TestDeliveryTextKeepsTheJSONSpellingOfNonFiniteFloats(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		value any
 		want  string
@@ -27,6 +28,7 @@ func TestDeliveryTextKeepsTheJSONSpellingOfNonFiniteFloats(t *testing.T) {
 // A float that is not finite keeps the JSON spelling inside a list or object too, and every
 // finite value reads as pyvalue.Repr does.
 func TestDeliveryReprKeepsTheJSONSpellingOfNonFiniteFloatsAtAnyDepth(t *testing.T) {
+	t.Parallel()
 	value := Obj{{Key: "a", Value: []any{math.NaN(), 1.5, "x", nil}}, {Key: "b", Value: math.Inf(-1)}}
 	if got, want := pyReprValue(value), "{'a': [NaN, 1.5, 'x', None], 'b': -Infinity}"; got != want {
 		t.Fatalf("pyReprValue = %q, want %q", got, want)

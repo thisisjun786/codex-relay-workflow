@@ -38,13 +38,23 @@ type StoredReceipt struct {
 	PathBinding sql.NullString
 }
 
+// ForkGuard is a judgment the intake runs inside the transaction that stores a NEW reviewable
+// event, immediately before the event is inserted (CRW-826). It is handed the transaction's
+// Querier, so it reads the generation as this receipt would leave it and sees no other writer's
+// half-done work: BEGIN IMMEDIATE serializes two intakes of one store. A returned error refuses
+// the receipt and rolls the whole transaction back, so no event row, no journal row and no
+// lineage row are written. Nil is no judgment, which is what every caller but emit passes.
+type ForkGuard func(ctx context.Context, q Querier, claim ReceiptClaim) error
+
 // AcceptOptions carries what accept_child_receipt takes beside the payload: a continuation
-// admission (JSON, nil for none) and the revision a re-emission declares it supersedes. The
-// revision named is recorded as stated; whether it is one the head can find (a suppressed
-// receipt is not a revision) is for the head to read, not for intake to refuse.
+// admission (JSON, nil for none), the revision a re-emission declares it supersedes, and the
+// judgment emit runs inside the intake transaction. The revision named is recorded as stated;
+// whether it is one the head can find (a suppressed receipt is not a revision) is for the head to
+// read, not for intake to refuse.
 type AcceptOptions struct {
 	Continuation       []byte
 	SupersedesRevision *string
+	ForkGuard          ForkGuard
 }
 
 // AcceptChildReceiptWith is accept_child_receipt with its continuation and supersedes_revision.
@@ -133,7 +143,7 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 	if claim.EventID != expected {
 		return StoredReceipt{}, refuse(ReasonEventIDMismatch, "event id should be %s for these fields", expected)
 	}
-	return in.storeEvent(ctx, claim, binding, options.SupersedesRevision)
+	return in.storeEvent(ctx, claim, binding, options)
 }
 
 // checkDeliverable branches on OUTCOME before producer: a reviewable receipt must verify its
@@ -224,7 +234,8 @@ func (in ReceiptIntake) requireMinimum(mode PathBinding) (PathBinding, error) {
 }
 
 // storeEvent is _store_event: re-observing one revision is one fact seen twice.
-func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, binding sql.NullString, supersedes *string) (StoredReceipt, error) {
+func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, binding sql.NullString, options AcceptOptions) (StoredReceipt, error) {
+	supersedes := options.SupersedesRevision
 	now := in.Now()
 	encoded, err := pyjson.Encode(claim.document, receiptRecord)
 	if err != nil {
@@ -251,6 +262,14 @@ func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, bind
 		}
 		if claim.bigAttempt != nil {
 			return &IntegerOverflow{}
+		}
+		// The judgment emit runs, before anything is written: a refusal here leaves the store
+		// exactly as it was. It runs only for a receipt that is not a duplicate (the branch above
+		// returned) and only when the caller installed it.
+		if options.ForkGuard != nil {
+			if err := options.ForkGuard(ctx, in.Store.Q(ctx), claim); err != nil {
+				return err
+			}
 		}
 		staged := sql.NullString{String: now, Valid: stage == StageStaged}
 		if _, err := conn.ExecContext(ctx, `INSERT INTO events (event_id,relationship_id,execution_generation,revision_hash,outcome,producer,attempt,turn_thread_id,turn_id,turn_status,receipt,manifest_ref,path_binding_mode,stage,staged_at,first_seen_at,last_seen_at,observation_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
