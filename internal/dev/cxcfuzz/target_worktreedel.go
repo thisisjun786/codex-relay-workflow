@@ -34,9 +34,11 @@ func worktreeDelTarget() Target {
 // The managed worktree every scenario builds: <root>/home/.codex/worktrees/zk3q. The slot id is one
 // the port's own tests use, so no temporary path holds it by accident.
 const (
-	worktreeDelSlot    = "zk3q"
-	worktreeDelRepo    = "repo"
-	worktreeDelSibling = "sibling"
+	worktreeDelSlot      = "zk3q"
+	worktreeDelRepo      = "repo"
+	worktreeDelSibling   = "sibling"
+	worktreeDelOtherRoot = "home/other-roots"
+	worktreeDelOtherSlot = "q7mv"
 )
 
 // worktreeDelEntry is one "fs" entry of the harness's scenario array.
@@ -71,6 +73,12 @@ func worktreeDelLayout() []any {
 		worktreeDelEntry("home/elsewhere/build", "dir", "", "", 0o755),
 		worktreeDelEntry("home/elsewhere/build/keep", "file", "x", "", 0o644),
 		worktreeDelEntry("home/link-into-slot", "symlink", "", slot+"/"+worktreeDelRepo, 0),
+		// A second managed root, so a case that declares it can be denied there rather than under the
+		// default CODEX_HOME.
+		worktreeDelEntry(worktreeDelOtherRoot+"/"+worktreeDelOtherSlot+"/"+worktreeDelRepo, "dir", "", "", 0o755),
+		worktreeDelEntry(worktreeDelOtherRoot+"/"+worktreeDelOtherSlot+"/"+worktreeDelRepo+"/.git", "file", "gitdir: /fake/main/.git/worktrees/"+worktreeDelOtherSlot+"\n", "", 0o644),
+		worktreeDelEntry("home/elsewhere/codex/worktrees/"+worktreeDelOtherSlot+"/"+worktreeDelRepo, "dir", "", "", 0o755),
+		worktreeDelEntry("home/elsewhere/codex/worktrees/"+worktreeDelOtherSlot+"/"+worktreeDelRepo+"/.git", "file", "gitdir: /fake/main/.git/worktrees/"+worktreeDelOtherSlot+"\n", "", 0o644),
 	}
 }
 
@@ -84,6 +92,7 @@ func worktreeDelCwds() []string {
 		slot + "/" + worktreeDelRepo + "/deep/child",
 		slot,
 		"home/.codex/worktrees",
+		worktreeDelOtherRoot + "/" + worktreeDelOtherSlot + "/" + worktreeDelRepo,
 		"home/elsewhere/build",
 		"",
 	}
@@ -178,13 +187,13 @@ func worktreeDelGenerate(rng *rand.Rand, size int) any {
 	var env pyjson.Object
 	switch rng.Intn(6) {
 	case 0:
-		env = env.Set("CODEX_HOME", "home/.codex")
+		env = env.Set("CODEX_HOME", "home/elsewhere/codex")
 	case 1:
 		env = env.Set("CODEX_HOME", nil)
 	}
 	var roots []string
 	if rng.Intn(6) == 0 {
-		roots = append(roots, "home/other-roots")
+		roots = append(roots, worktreeDelOtherRoot)
 	}
 	value := pyjson.Object{
 		{Key: "fs", Value: worktreeDelEntries(roots)},
@@ -229,7 +238,7 @@ func worktreeDelGo(input any, env Env) (any, error) {
 	}
 	payload := pyjson.Object{
 		{Key: "hook_event_name", Value: worktreeDelText(object, "event")},
-		{Key: "cwd", Value: filepath.Join(env.Root, worktreeDelText(object, "cwd"))},
+		{Key: "cwd", Value: worktreeDelCwd(object, env)},
 		{Key: "tool_name", Value: worktreeDelText(object, "tool")},
 		{Key: "tool_input", Value: pyjson.Object{{Key: "command", Value: worktreeDelText(object, "command")}}},
 	}
@@ -243,6 +252,17 @@ func worktreeDelGo(input any, env Env) (any, error) {
 	// path while the harness rewrites the root it made. Both sides write the case root the way the
 	// harness spelled it, so the two answers compare.
 	return worktreeDelAsGivenRoot(answer, env.Root), nil
+}
+
+// worktreeDelCwd is the payload's cwd: the case's root-relative cwd joined against this side's own
+// root, or the empty string the case asked for. An empty cwd stays empty, because the oracle answers
+// an empty cwd before it reads anything else, and joining would hand it the root instead.
+func worktreeDelCwd(object pyjson.Object, env Env) string {
+	cwd := worktreeDelText(object, "cwd")
+	if cwd == "" {
+		return ""
+	}
+	return filepath.Join(env.Root, cwd)
 }
 
 // worktreeDelText reads one text field of the case.

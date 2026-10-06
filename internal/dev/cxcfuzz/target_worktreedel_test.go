@@ -107,7 +107,7 @@ func TestWorktreeDelGoFollowsTheCaseEnvironment(t *testing.T) {
 	if err := PrepareRoot(root); err != nil {
 		t.Fatal(err)
 	}
-	input := worktreeDelCaseInput("rm -rf .").Set("env", pyjson.Object{{Key: "CODEX_HOME", Value: "home/elsewhere"}})
+	input := worktreeDelCaseInput("rm -rf .").Set("env", pyjson.Object{{Key: "CODEX_HOME", Value: "home/elsewhere/codex"}})
 	if _, err := Scenarios(root, input); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +117,48 @@ func TestWorktreeDelGoFollowsTheCaseEnvironment(t *testing.T) {
 	}
 	if decision, reason := worktreeDelDecision(value); decision != "allow" || reason != "" {
 		t.Fatalf("a case outside the managed root answered %q %q, want an allow", decision, reason)
+	}
+}
+
+// A case with no cwd is allowed: the oracle answers an empty cwd before it reads anything else, and
+// the Go side must hand it an empty cwd rather than its own root.
+func TestWorktreeDelGoKeepsAnAbsentCwd(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	input := worktreeDelCaseInput("rm -rf .").Set("cwd", "")
+	if _, err := Scenarios(root, input); err != nil {
+		t.Fatal(err)
+	}
+	value, err := worktreeDelGo(input, RootEnv(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision, reason := worktreeDelDecision(value); decision != "allow" || reason != "" {
+		t.Fatalf("an absent cwd answered %q %q, want an allow", decision, reason)
+	}
+}
+
+// A case that declares an extra worktree root is managed there too: the second root's checkout is a
+// protected target, so a removal inside it is denied.
+func TestWorktreeDelGoFollowsAnExtraWorktreeRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	input := worktreeDelCaseInput("rm -rf .").
+		Set("cwd", worktreeDelOtherRoot+"/"+worktreeDelOtherSlot+"/"+worktreeDelRepo).
+		Set("worktree_roots", []any{worktreeDelOtherRoot})
+	if _, err := Scenarios(root, input); err != nil {
+		t.Fatal(err)
+	}
+	value, err := worktreeDelGo(input, RootEnv(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision, reason := worktreeDelDecision(value); decision != "deny" || !strings.Contains(reason, worktreeDelOtherSlot) {
+		t.Fatalf("an extra root's checkout answered %q %q, want a deny naming its slot", decision, reason)
 	}
 }
 

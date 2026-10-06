@@ -45,25 +45,29 @@ const (
 // refusal itself; the helpers below are total, so no generated case can raise on either side.
 const spawnRefusal = "the input is outside the target's grammar"
 
-// The escape spellings the generator emits as text: the harness's reader turns each into the
-// character it names, and a lone surrogate becomes the three WTF-8 bytes a Go string holds it in.
+// The characters the generator emits: real code points, so a message holds the character itself
+// rather than the six-character text of an escape. The harness writes the message as JSON and its
+// reader turns each back into the character, which is what the classifiers' whitespace and line
+// rules act on.
 const (
-	escapeLineSeparator  = "\\u2028"
-	escapeParagraphBreak = "\\u2029"
-	escapeCarriageReturn = "\\r"
-	escapeNewline        = "\\n"
-	escapeNul            = "\\u0000"
-	escapeNoBreakSpace   = "\\u00a0"
-	escapeIdeographic    = "\\u3000"
-	escapeByteOrderMark  = "\\ufeff"
-	escapeCombiningMark  = "\\u0301"
-	escapeAstralPair     = "\\ud83d\\ude00"
+	charLineSeparator  = "\u2028"
+	charParagraphBreak = "\u2029"
+	charCarriageReturn = "\r"
+	charNewline        = "\n"
+	charNul            = "\x00"
+	charNoBreakSpace   = "\u00a0"
+	charIdeographic    = "\u3000"
+	charByteOrderMark  = "\ufeff"
+	charCombiningMark  = "\u0301"
+	charAstralPair     = "\U0001F600"
+	charTab            = "\t"
 )
 
-// spawnLoneSurrogates are two lone surrogates as the escape text that names them: the harness reads
-// each as the three WTF-8 bytes a Go string holds it in, and the port's own CRW-543 test pins that
-// two folder names differing only in which surrogate they hold stay apart.
-var spawnLoneSurrogates = []string{"\\ud800", "\\ud801"}
+// spawnLoneSurrogates are two lone surrogates as the three WTF-8 bytes a Go string holds them in:
+// the harness writes each back as its \udXXX escape and the oracle's reader makes it a JavaScript
+// lone surrogate code unit, while the port's own CRW-543 test pins that two folder names differing
+// only in which surrogate they hold stay apart.
+var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81"}
 
 // spawnWords are the message pieces the generator assembles: the role-like spellings, the mention
 // shapes, the header lines, and the characters that make the classifiers' folding and scanning
@@ -85,6 +89,8 @@ func spawnWords() []string {
 		"CRW-ROLE: reviewer",
 		"CRW-ROLE: explorer",
 		"CRW-ROLE:executor",
+		"CRW-ROLE: reviewer" + charTab,
+		"CRW-ROLE: reviewer" + charCarriageReturn,
 		"$crw-dev",
 		"$crw:crw-dev",
 		"$CRW-Dev",
@@ -97,16 +103,17 @@ func spawnWords() []string {
 		"@/path/to/thing",
 		"CRW-SUBSPAWN-ALLOWED",
 		"[CRW-SUBSPAWN-GRANT:0000000000000000000000000000000000000000000000000000000000000000]",
-		escapeLineSeparator,
-		escapeParagraphBreak,
-		escapeCarriageReturn,
-		escapeNewline,
-		escapeNul,
-		escapeNoBreakSpace,
-		escapeIdeographic,
-		escapeByteOrderMark,
-		escapeCombiningMark,
-		escapeAstralPair,
+		charLineSeparator,
+		charParagraphBreak,
+		charCarriageReturn,
+		charNewline,
+		charNul,
+		charNoBreakSpace,
+		charIdeographic,
+		charByteOrderMark,
+		charCombiningMark,
+		charAstralPair,
+		charTab,
 	}
 	for _, surrogate := range spawnLoneSurrogates {
 		words = append(words, "skill:///x/crw-"+surrogate+"/SKILL.md")
