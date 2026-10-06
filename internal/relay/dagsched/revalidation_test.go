@@ -206,6 +206,7 @@ func rvSettledSharedRoot(t *testing.T) (*releaseKit, map[string]AcceptResult) {
 // Criterion c1 (contract 3.2, E-11, E-21): when only the criteria of a node changed, the consumed inputs and the output are what they were, so the same output is ruled again under the new criteria and the
 // acceptance is re-verified: no new generation and no new child, the node below it stops being held back, and the nodes beside it keep their results and the records of the work behind them.
 func TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun(t *testing.T) {
+	t.Parallel()
 	k, accepted := rvSettledSharedRoot(t)
 	rid := accepted["A"].RelationshipID
 	other := dig("the second edition of A's criteria")
@@ -259,6 +260,7 @@ func TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun(t *testing.T) {
 // A re-verification resolves a change of the criteria and nothing else (contract 3.2: the same output is judged again only when the output is what it was). A node that is stale for another reason is
 // not made current by ruling its old output again, so the call is refused before it writes a re-validation that would only look like progress.
 func TestRevalidationIsRefusedWhenTheOutputMustBeReworked(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		setup  func(k *releaseKit, accepted map[string]AcceptResult) string // returns the digest of the new criteria
@@ -337,6 +339,7 @@ func (k *releaseKit) invSettleAgain(plan, node string, first AcceptResult) Accep
 // manifest is rebuilt for the node as the plan holds it now, the relay's own verdict writer opens the generation and sends the instruction, and recording it binds that manifest. No child is made again,
 // the unrelated nodes keep their results and records, and when the reworked output is accepted what rested on the old one is held back until it is accepted again itself.
 func TestOutputReworkGoesToTheSameChildAsANewGeneration(t *testing.T) {
+	t.Parallel()
 	k, accepted := rvSettledSharedRoot(t)
 	rid := accepted["A"].RelationshipID
 	var childBefore string
@@ -483,6 +486,7 @@ func rvMerged(t *testing.T) (*integrationKit, accepted) {
 // scheduler gives it no new child, no correction is prepared for it and none is recorded as its own, and nothing that rests on its landing moves. The change is carried by new nodes of a new plan
 // revision: a successor of the merged node is released like any other node, one that rests on the changed node waits until that node is current, and the merged node's records stay as they were.
 func TestMergedNodeIsNeverRerunWhenItsUpstreamChanges(t *testing.T) {
+	t.Parallel()
 	k, a := rvMerged(t)
 	repo := k.repo
 	merged, consumer := rvRecords(k.releaseKit, "g", "I"), rvRecords(k.releaseKit, "g", "K")
@@ -573,6 +577,7 @@ func TestMergedNodeIsNeverRerunWhenItsUpstreamChanges(t *testing.T) {
 // one that rests on a stale predecessor waits for it; and a node whose relationship has ended has no child to correct, so a rework is a redefinition (a new relationship that supersedes) and is
 // the parent's decision.
 func TestStaleRouteFollowsTheCause(t *testing.T) {
+	t.Parallel()
 	type route struct{ node, action string }
 	cases := []struct {
 		name  string
@@ -659,6 +664,7 @@ func TestStaleRouteFollowsTheCause(t *testing.T) {
 
 // The page that describes the reading names every route and the words the code prints for it.
 func TestSchedulerPageNamesEveryStaleRoute(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)
@@ -675,6 +681,7 @@ func TestSchedulerPageNamesEveryStaleRoute(t *testing.T) {
 // hands over waits, and the way on is the one a node that is not stale has: the same output is ruled again under the new criteria and accepted again, which records a revalidation, makes no
 // generation and no child, and is not refused as the revalidation of a stale node is.
 func TestAMergedNodeIsRevalidatedNotRerunAfterACriteriaChange(t *testing.T) {
+	t.Parallel()
 	k, a := rvMerged(t)
 	rid := a.Acceptance.RelationshipID
 	fleet := k.rvFleet()
@@ -709,6 +716,7 @@ func TestAMergedNodeIsRevalidatedNotRerunAfterACriteriaChange(t *testing.T) {
 // What landed is judged from the acceptance, not from what the plan now says the node is (contract 8.4, E-20): a revision that changes the kind of a node whose pull request merged does not make it
 // correctable, so no correction is prepared for it and it is not run again.
 func TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes(t *testing.T) {
+	t.Parallel()
 	k := newIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature-d")
@@ -772,6 +780,7 @@ func rvOpenByHand(t *testing.T, k *releaseKit, relationship, request string, bin
 // (the relay's generation-open and generation-bind). The relay's own writer refuses a ruling on that accepted head with disposition_conflict and opens no generation, which the test shows first; then dag-correct binds the hand-opened
 // generation to the manifest it was prepared for, records how the instruction reached the child, and the reworked output is accepted with --supersedes. No relationship and no child is made.
 func TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand(t *testing.T) {
+	t.Parallel()
 	k, accepted, ridC, prepared := rvHandKit(t)
 	var childBefore string
 	if err := k.s.DB.QueryRow("SELECT child_task_id FROM relationships WHERE relationship_id = ?", ridC).Scan(&childBefore); err != nil {
@@ -858,6 +867,7 @@ func TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand(t *testin
 // What dag-correct will not bind for a generation opened by hand: one opened for another manifest, one nobody bound to a turn, one without a named manifest, a manifest that is not the node's, and a
 // node whose result is not stale (those are corrected by a ruling). Each leaves no execution row.
 func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testing.T) {
+	t.Parallel()
 	bound := func(k *releaseKit) int {
 		return k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'C' AND execution_generation = 2")
 	}

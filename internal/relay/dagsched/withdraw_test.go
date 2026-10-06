@@ -15,6 +15,7 @@ import (
 
 // What the relay can show was used keeps a generation from being withdrawn, and a refusal writes nothing: no record, the pointer where it was, no journal row.
 func TestWithdrawalRefusesAGenerationThatWasUsed(t *testing.T) {
+	t.Parallel()
 	now := "2026-10-02T00:00:00Z"
 	cases := []struct {
 		name, reason, detail string
@@ -103,6 +104,7 @@ func TestWithdrawalRefusesAGenerationThatWasUsed(t *testing.T) {
 // A poll the daemon stored under the generation the relationship stands on for an older turn says nothing about that generation: the generation is withdrawn all the same, and nothing is sent or
 // changed for the deliveries that were already there.
 func TestWithdrawalIgnoresAPollOfAnOlderTurnLabelledWithTheGeneration(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	k.openUnsent()
 	k.exec("INSERT INTO poll_observations (relationship_id, execution_generation, turn_id, last_status, last_polled_at, last_attempt_at, last_error) VALUES (?, 2, 'turn-of-generation-1', 'completed', ?, ?, NULL)",
@@ -122,6 +124,7 @@ func TestWithdrawalIgnoresAPollOfAnOlderTurnLabelledWithTheGeneration(t *testing
 // A withdrawn generation is final: opening again under its request id does not hand it back, nothing binds it to a turn (whichever writer is asked), and a new generation takes the next number.
 // Withdrawing the newest one again goes back to the nearest generation that was not withdrawn.
 func TestAWithdrawnGenerationStaysClosedAndItsNumberIsNeverReused(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	ctx := context.Background()
 	reg := &registry.Registry{Store: k.s}
@@ -182,6 +185,7 @@ func TestAWithdrawnGenerationStaysClosedAndItsNumberIsNeverReused(t *testing.T) 
 // prints names that number, dag-correct records it although the chain skips a number, and the child's first report there may declare the generation-1 revision as the one it replaces, which the
 // currency of both the delivery and the registry packages resolve.
 func TestACorrectionAfterAWithdrawalFollowsTheLiveGeneration(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	ctx := context.Background()
 	k.openUnsent()
@@ -228,6 +232,7 @@ func TestACorrectionAfterAWithdrawalFollowsTheLiveGeneration(t *testing.T) {
 
 // A store that predates the DAG zone has no withdrawal: the numbering is the plain one every reader assumed.
 func TestTheNumberingOfAStoreWithoutTheZoneIsThePlainOne(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	ctx := context.Background()
 	k.exec("DROP TABLE dag_generation_withdrawals")
@@ -246,6 +251,7 @@ func TestTheNumberingOfAStoreWithoutTheZoneIsThePlainOne(t *testing.T) {
 // A repeated withdrawal is the same withdrawal: the relationship is named, so a call repeated after the node was adopted by a successor relationship replays the record and never touches the generation of
 // the relationship that stands there now, and that one is withdrawn only by a call that names it.
 func TestARepeatedWithdrawalNeverReachesAnotherRelationshipsGeneration(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	ctx := context.Background()
 	k.openUnsent()
@@ -282,6 +288,7 @@ func TestARepeatedWithdrawalNeverReachesAnotherRelationshipsGeneration(t *testin
 // A node whose result was accepted before a generation was opened by hand and never sent keeps its acceptance when that generation is withdrawn: the acceptance and the head it names are not touched, the
 // node reads accepted again, and the same output accepted again is a replay.
 func TestAnAcceptedNodeKeepsItsAcceptanceWhenItsUnsentGenerationIsWithdrawn(t *testing.T) {
+	t.Parallel()
 	k := newWithdrawKit(t)
 	first, err := k.accept()
 	if err != nil || first.AcceptanceID == "" || first.HeadSHA != k.h1 {
@@ -304,6 +311,7 @@ func TestAnAcceptedNodeKeepsItsAcceptanceWhenItsUnsentGenerationIsWithdrawn(t *t
 
 // The command as an operator runs it: parse, dispatch, store, JSON readback, and the exit codes of a refusal and of a usage error.
 func TestTheWithdrawCommandAnswersAsAnOperatorReadsIt(t *testing.T) {
+	t.Parallel()
 	state := filepath.Join(t.TempDir(), "state")
 	f := newFixtureAt(t, filepath.Join(state, "relay.sqlite3"))
 	forkJoinPlan(f, "p1")

@@ -81,6 +81,7 @@ func (h *profileHost) SendMessage(ctx context.Context, requestID, thread, messag
 // generation, is queued to the child, and the message says the relay observed the end and keeps the
 // continuation claim.
 func TestDR13_an_answer_reaches_a_child_the_relay_saw_end(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"interrupted", "failed"} {
 		t.Run(outcome, func(t *testing.T) {
 			d := newObsWorld(t, outcome)
@@ -137,6 +138,7 @@ func TestDR13_an_answer_reaches_a_child_the_relay_saw_end(t *testing.T) {
 // saw end, with a reason that says a turn the relay saw end is continued with answer, and the
 // refusal writes nothing.
 func TestDR14_the_other_kinds_are_refused_on_a_receipt_the_relay_saw_end(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"interrupted", "failed"} {
 		for _, kind := range []string{DecisionStop, DecisionSplitApproval, DecisionScopeChange} {
 			t.Run(outcome+"/"+kind, func(t *testing.T) {
@@ -154,6 +156,7 @@ func TestDR14_the_other_kinds_are_refused_on_a_receipt_the_relay_saw_end(t *test
 
 // c1: every check a blocked receipt's answer keeps applies to an observed end too.
 func TestDR15_the_kept_refusals_hold_for_an_observed_end(t *testing.T) {
+	t.Parallel()
 	t.Run("a child's own interrupted receipt", func(t *testing.T) {
 		d := newDecWorld(t)
 		d.blocked = d.emit("interrupted", "completed", store.AcceptOptions{})
@@ -182,6 +185,7 @@ func TestDR15_the_kept_refusals_hold_for_an_observed_end(t *testing.T) {
 
 // c1: the answer to a blocked_needs_input receipt keeps its wording and gains answersOutcome.
 func TestDR16_the_blocked_receipts_answer_keeps_its_wording(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	out := d.mustReply(DecisionAnswer, "use the shorter table", "")
 	if field(out, "answersOutcome") != "blocked_needs_input" {
@@ -208,6 +212,7 @@ func TestDR16_the_blocked_receipts_answer_keeps_its_wording(t *testing.T) {
 // the settings the record holds, carrying its MCP profile, and the delivery holds
 // settings_not_preserved when the host reports other MCP settings than the record.
 func TestDR17_a_decision_to_a_not_loaded_child_resumes_under_its_recorded_profile(t *testing.T) {
+	t.Parallel()
 	t.Run("the resume carries the recorded profile", func(t *testing.T) {
 		d := newObsWorld(t, "interrupted")
 		d.recordChildProfile("ui-qa")

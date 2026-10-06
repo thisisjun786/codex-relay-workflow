@@ -197,6 +197,7 @@ func rrMirror(t *testing.T, name string, body func(h *hl)) {
 func replayed(record Obj) bool { return truthy(field(record, "_replay")) }
 
 func Test21_RRD01_a_criteria_edit_after_a_verified_verdict_needs_a_re_review(t *testing.T) {
+	t.Parallel()
 	t.Run("managed verified then edit", func(t *testing.T) {
 		rrMirror(t, "ReReviewIsReachable.test_the_starting_point_is_the_state_the_view_already_reports", func(h *hl) {
 			h.managedVerified()
@@ -234,6 +235,7 @@ func (h *hl) boundDigest(event string) any {
 }
 
 func Test21_RRD02_a_re_claim_rebinds_once_and_only_once(t *testing.T) {
+	t.Parallel()
 	t.Run("first re-claim", func(t *testing.T) {
 		rrMirror(t, "ReReviewIsReachable.test_the_review_can_be_claimed_again_onto_the_current_set", func(h *hl) {
 			event := h.managedVerified()
@@ -282,6 +284,7 @@ func Test21_RRD02_a_re_claim_rebinds_once_and_only_once(t *testing.T) {
 }
 
 func Test21_RRD03_a_re_review_is_decided_not_replayed(t *testing.T) {
+	t.Parallel()
 	rrMirror(t, "ReReviewIsReachable.test_a_re_review_is_decided_rather_than_replayed", func(h *hl) {
 		event := h.managedVerified()
 		h.editCriteria()
@@ -320,6 +323,7 @@ func Test21_RRD03_a_re_review_is_decided_not_replayed(t *testing.T) {
 }
 
 func Test21_RRD04_the_superseded_verdict_stays_on_the_record(t *testing.T) {
+	t.Parallel()
 	rrMirror(t, "ReReviewIsReachable.test_the_superseded_verdict_stays_on_the_record", func(h *hl) {
 		event := h.managedVerified()
 		h.editCriteria()
@@ -333,6 +337,7 @@ func Test21_RRD04_the_superseded_verdict_stays_on_the_record(t *testing.T) {
 }
 
 func Test21_RRD05_an_earlier_merge_mark_is_state_again_once_the_re_review_lands(t *testing.T) {
+	t.Parallel()
 	rrMirror(t, "ReReviewIsReachable.test_an_earlier_merge_mark_is_state_again_once_the_re_review_lands", func(h *hl) {
 		event := h.managedVerified()
 		h.rrMark(event, "merged as abc1234", parent)
@@ -347,6 +352,7 @@ func Test21_RRD05_an_earlier_merge_mark_is_state_again_once_the_re_review_lands(
 }
 
 func Test21_RRD06_a_review_claimed_before_the_edit_finishes_once_claimed_again(t *testing.T) {
+	t.Parallel()
 	rrMirror(t, "ReviewClaimedBeforeTheEdit.test_the_ruling_is_still_refused_until_the_review_is_claimed_again", func(h *hl) {
 		event := h.claimed(true)
 		h.editCriteria()
@@ -371,6 +377,7 @@ func Test21_RRD06_a_review_claimed_before_the_edit_finishes_once_claimed_again(t
 }
 
 func Test21_RRD07_a_recorded_verdict_or_old_findings_cannot_certify_the_new_set(t *testing.T) {
+	t.Parallel()
 	rrMirror(t, "AReClaimIsNotAFreePass.test_a_recorded_verdict_cannot_be_re_submitted_as_its_own_re_review", func(h *hl) {
 		event := h.managedVerified()
 		old := h.setDigest()
@@ -388,6 +395,7 @@ func Test21_RRD07_a_recorded_verdict_or_old_findings_cannot_certify_the_new_set(
 }
 
 func Test21_RRD08_a_re_review_cannot_replace_a_certification_with_no_state(t *testing.T) {
+	t.Parallel()
 	t.Run("unverified", func(t *testing.T) {
 		rrMirror(t, "AReClaimIsNotAFreePass.test_a_re_review_cannot_strand_the_assignment_as_unverified", func(h *hl) {
 			event := h.managedVerified()
@@ -417,6 +425,7 @@ func Test21_RRD08_a_re_review_cannot_replace_a_certification_with_no_state(t *te
 }
 
 func Test21_RRD09_the_protections_that_must_survive(t *testing.T) {
+	t.Parallel()
 	t.Run("unchanged set, a different ruling", func(t *testing.T) {
 		// an unchanged criteria set opens no re-review, and the verdict writer no longer answers a different
 		// verdict with the recorded one: needs_changes after verified, with nothing accepted, replaces the

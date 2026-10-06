@@ -6,6 +6,7 @@ import "testing"
 // str.isprintable() refuses is escaped even where Go's newer Unicode tables print it (U+0C5C is
 // assigned in Unicode 17). Each expectation is CPython 3.14.4's ValueError text.
 func TestAnIntegerLiteralIsRefusedNamingItAsPythonsRepr(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ literal, want string }{
 		{"\U00000c5c1", `ValueError: invalid literal for int() with base 10: '\u0c5c1'`},
 		{"x\U000000a0", `ValueError: invalid literal for int() with base 10: 'x\xa0'`},
