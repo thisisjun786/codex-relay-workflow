@@ -81,6 +81,16 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	for _, c := range coreCommands() {
 		if c.Name == args[0] {
+			// A configuration file this product cannot use is refused before the subcommand
+			// runs, so no subcommand silently continues with the defaults. config is the one
+			// command that names the file itself (--config), so it reports its own refusal
+			// once it has read its flag.
+			if c.Name != coreConfigCommand.Name {
+				if err := coreConfigError(e); err != nil {
+					fmt.Fprintf(stderr, "crw manage: error: %v\n", err)
+					return usageExit
+				}
+			}
 			return c.Run(ctx, e, args[1:])
 		}
 	}

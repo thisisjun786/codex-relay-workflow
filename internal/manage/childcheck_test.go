@@ -78,6 +78,8 @@ func TestChildCheckReportsEachMismatch(t *testing.T) {
 			[]string{"--model", "m", "--effort", "none", "--disabled", "alpha"}, true, true, nil, nil},
 		{"no status", "m", "none", "", map[string]string{"alpha": "disabled"},
 			[]string{"--model", "m", "--effort", "none", "--disabled", "alpha"}, true, true, nil, nil},
+		{"systemError", "m", "none", "systemError", map[string]string{"alpha": "disabled"},
+			[]string{"--model", "m", "--effort", "none", "--disabled", "alpha"}, true, true, nil, nil},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -109,7 +111,7 @@ func TestChildCheckReadsTheDisabledServersFromTheConfigSection(t *testing.T) {
 // A read failure is host_unreachable exit 3, a paged list host_error exit 3, a bad line exit 2, -h exit 0.
 func TestChildCheckFailuresAndCommandLine(t *testing.T) {
 	hostReadEnv(t, "")
-	code, out := hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none")
+	code, out := hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", "alpha")
 	if got := hostReadDecode(t, out); code != 3 || got.OK || got.Reason != "host_unreachable" {
 		t.Fatalf("no socket: exit %d, output %s", code, out)
 	}
@@ -135,5 +137,60 @@ func TestChildCheckFailuresAndCommandLine(t *testing.T) {
 	}
 	if code, out := hostReadRun(t, "child-check", "-h"); code != 0 || !strings.Contains(out, "usage: crw manage child-check") {
 		t.Fatalf("-h: exit %d, output %q", code, out)
+	}
+}
+
+// C6: with no --disabled and no configured list there is nothing to compare, so the
+// command refuses by name with exit 2 before it reads the socket at all.
+func TestChildCheckRefusesAnEmptyServerList(t *testing.T) {
+	host := childCheckHost(t, "m", "none", "idle", map[string]string{"alpha": "connected"})
+	for _, args := range [][]string{
+		{"child-check", "--thread", "t1", "--model", "m", "--effort", "none"},
+		{"child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", ""},
+		{"child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", " , "},
+	} {
+		code, out := hostReadRun(t, args...)
+		got := hostReadDecode(t, out)
+		if code != usageExit || got.OK || got.Reason != "disabled_servers_unset" {
+			t.Fatalf("%q: exit %d, output %s", args, code, out)
+		}
+	}
+	// An empty array in the configuration is the same refusal, read the same way.
+	cfg := hostReadConfig(host.SocketPath)
+	cfg.raw["child_check"] = json.RawMessage("{\"disabled_servers\":[]}")
+	if _, err := childCheck(context.Background(), cfg, childCheckOptions{thread: "t1", model: "m", effort: "none"}); err == nil {
+		t.Fatal("childCheck accepted an empty server list")
+	} else if !strings.Contains(err.Error(), "disabled_servers_unset") {
+		t.Fatalf("the refusal is %v, want disabled_servers_unset", err)
+	}
+	if requests := host.Requests(); len(requests) != 0 {
+		t.Fatalf("the command read the socket before refusing: %+v", requests)
+	}
+}
+
+// C8: the child_check section of the crw configuration file is the comparison list the
+// command uses, end to end through a fake App Server.
+func TestChildCheckUsesTheConfiguredDisabledServersEndToEnd(t *testing.T) {
+	childCheckHost(t, "m", "none", "idle", map[string]string{"alpha": "connected", "beta": "disabled"})
+	coreConfigAt(t, coreConfigDocument(t, map[string]any{
+		"child_check": map[string]any{"disabled_servers": []string{"alpha", "beta"}},
+	}))
+	code, report := childCheckRun(t, "--thread", "t1", "--model", "m", "--effort", "none")
+	if code != 1 || report.OK || !slices.Equal(report.NotDisabled, []string{"alpha"}) {
+		t.Fatalf("exit %d, report %+v", code, report)
+	}
+	if report.Servers["alpha"] != "connected" || report.Servers["beta"] != "disabled" {
+		t.Fatalf("servers: %+v", report.Servers)
+	}
+}
+
+// C9: a stdout write that fails ends child-check with exit 1 rather than a silent success.
+func TestChildCheckReportsAWriteFailure(t *testing.T) {
+	childCheckHost(t, "m", "none", "idle", map[string]string{"alpha": "disabled"})
+	var errOut strings.Builder
+	code := Run(context.Background(), []string{"child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", "alpha"},
+		strings.NewReader(""), coreFailWriter{}, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "crw manage child-check: error: write output:") {
+		t.Fatalf("exit %d, stderr %q", code, errOut.String())
 	}
 }
