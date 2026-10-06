@@ -1380,3 +1380,17 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
 ## Found by the M2b state-copy classifier port (CRW-655)
 
 - The classifier keeps the 255-byte single-path-component name limit and never reads the destination filesystem's real NAME_MAX, so a destination with a smaller limit (not the ext4 or APFS the design assumes) is refused by the publish step rather than the preflight (docs/port-cxc/state-migration.md:106-108 and :176-187); a limitation of this port, not an oracle defect, port: kept.
+
+## Found by the steering batch port (CRW-643)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering.go`; the ported ranges are `:155-163,253-333`.
+
+- No behavioural defect was found in these two units. One runtime diagnostic difference is recorded:
+  the failed-append warning interpolates the cause as `err.Error()` (Go's wording) where the oracle
+  interpolates `err.message` (Node's), so the same failure prints different text in the two runtimes
+  (source `steering.ts:315`, the only place in the unit that stringifies an error); port: kept.
+- Fidelity decision, not a defect: the answer for an absent plan is a string compare against the reason
+  the shared lock builds (`goalplan '<slug>' does not exist`), exactly as the oracle compares its own
+  lock's reason (`:327`). The two spellings are kept in step by `TestSteeringApplyUnboundSlugIsRefused`,
+  which pins the resulting `no goalplan found at slug '<slug>'` text and the fact that no state is created.
