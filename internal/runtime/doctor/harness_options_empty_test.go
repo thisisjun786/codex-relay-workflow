@@ -106,7 +106,9 @@ func TestHarnessOptionsExplicitEmptyCodexHomeIsNotAbsent(t *testing.T) {
 // reads the relative path and finds no install key, where nil reads CODEX_HOME and finds one.
 func TestHarnessOptionsExplicitEmptyCodexHomeReachesTheHookTrustCheck(t *testing.T) {
 	plugin, home := harnessOptionsPlugin(t)
-	defer t.Chdir(t.TempDir())
+	// t.Chdir restores the directory as its own cleanup, so the change must be immediate: the
+	// explicitly empty option makes the check read the relative config.toml from here.
+	t.Chdir(t.TempDir())
 	env := map[string]string{"CODEX_HOME": home}
 
 	nilCheck := HarnessHookTrustCheck(plugin, HarnessOptions{}, harnessOptionsEnv(env))
