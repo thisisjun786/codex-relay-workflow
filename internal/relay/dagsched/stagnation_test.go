@@ -167,6 +167,41 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 			t.Fatalf("two rows failing the same required check read %+v, want count 2 and repeated_check_failure", st)
 		}
 	})
+
+	t.Run("the reading prints the object and counts the rung", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		rid := f.startNode("sp", "I")
+		before := f.read("sp")
+		f.addCorrection("sp", "I", rid, 2, rulingFinding("the same thing", 2), false)
+		f.addCorrection("sp", "I", rid, 3, rulingFinding("the same thing", 3), false)
+		reading := f.read("sp")
+		printed := asJSON(t, reading.Object())
+		node := printed["nodes"].([]any)[0].(map[string]any)
+		if node["node_id"] != "I" {
+			t.Fatalf("the first node is %v", node["node_id"])
+		}
+		st, ok := node["stagnation"].(map[string]any)
+		if !ok {
+			t.Fatalf("the printed node carries no stagnation object: %v", node)
+		}
+		if st["count"] != float64(2) || st["cause"] != CauseRepeatedFinding || st["rung"] != RungEditPacket || st["next"] != RungSplitNode || st["finding_digest"] == nil || st["last_event_id"] == nil {
+			t.Fatalf("printed stagnation = %v", st)
+		}
+		counts := printed["pass"].(map[string]any)["stagnation"].(map[string]any)
+		if counts[RungEditPacket] != float64(1) || counts[RungFullReplan] != float64(0) {
+			t.Fatalf("pass.stagnation = %v", counts)
+		}
+		if reading.InputDigest == before.InputDigest {
+			t.Fatal("the input digest does not cover the stagnation object")
+		}
+		// a reading of a plan nobody has corrected twice prints the counts all zero and carries no object
+		bare := f.read("sp").node("J")
+		if bare.Stagnation != nil {
+			t.Fatalf("a node that never stagnated reads %+v", bare.Stagnation)
+		}
+	})
 }
 
 // TestTheStagnationLadderStopsAtFullReplan is the second red test the issue body names: the rung stops at the last one, a reading past
