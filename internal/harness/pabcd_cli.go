@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/projectcfg"
 )
 
@@ -269,6 +271,30 @@ func metricWrites(args []string) bool {
 	return false
 }
 
+// loopVerb is the loop row (cli.ts:169-180): the parser and the runner this repository ports, driven exactly
+// as the oracle's branch does. The oracle labels a parse refusal with the kind ("loop: "), which is why an
+// unknown flag reads "loop: init: unknown flag '--help'"; a library error is the oracle's uncaught throw and
+// answers the generic "crw cli failed: " prefix; every result goes to stdout with its own code.
+func loopVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	parsed, err := cli.ParseLoopCliArgs(args, cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "loop: "+err.Error())
+		return 1
+	}
+	result, err := cli.RunLoopCli(parsed)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
+}
+
 // divergenceVerb is the divergence row (cli.ts:183-189). The library's error is the oracle's one
 // uncaught path (the mode write), reported as "crw cli failed: "; every result goes to stdout with
 // its code. It takes the invocation's context like the metric row does (CRW-632): a writing run
@@ -305,4 +331,41 @@ func divergenceWrites(args []string) bool {
 		verb = args[1]
 	}
 	return topic == "mode" && (verb == "on" || verb == "off") || topic == "candidate" && verb == "add"
+}
+
+// orchestrateVerb is the orchestrate row (cli.ts:143-152). The terminal entry is the only caller
+// that supplies the native environment: the oracle hands runOrchestrateCli its process.env, which is
+// what drives the implicit CODEX_THREAD_ID status selection and the homedir scan, while every other
+// row keeps the library's empty env. The parse refusal is the one answer the oracle writes to
+// STDERR (cli.ts:146-149) and it never reaches runOrchestrateCli, so it is rendered here instead of
+// letting RunOrchestrateRead answer it on stdout. Everything else is the library's own stream, code
+// and trailing newline, and a delegated mutation is RunOrchestrateTransition's answer the same way.
+func orchestrateVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	cwd, err := syscall.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	parsed := cli.ParseOrchestrateCliArgs(args, cwd)
+	if parsed.Error != nil {
+		fmt.Fprintln(stderr, cli.RenderOrchestrateParseError(*parsed.Error))
+		return 1
+	}
+	env := host.LookupEnv(os.LookupEnv)
+	read, err := cli.RunOrchestrateRead(parsed, cli.ReadEnv{Native: env, Process: env})
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	if read.Result != nil {
+		fmt.Fprintln(stdout, read.Result.Output)
+		return read.Result.Code
+	}
+	result, err := cli.RunOrchestrateTransition(*parsed.Args, read.SessionID)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Output)
+	return result.Code
 }

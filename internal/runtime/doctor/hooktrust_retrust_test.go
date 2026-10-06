@@ -166,11 +166,24 @@ func TestHookTrustRetrust_refuses_without_bootstrap_then_writes(t *testing.T) {
 	original := f.read(f.config())
 
 	stdout, stderr, code := f.run()
-	if code != 1 || stdout != "" || stderr != "crw doctor retrust: no existing hook trust entries match this plugin key; pass --bootstrap-ok to initialize trust"+"\n" {
+	if code != 1 || stderr != "crw doctor retrust: no existing hook trust entries match this plugin key; pass --bootstrap-ok to initialize trust"+"\n" {
 		t.Fatalf("refusal: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	// CRW-844: the refusal reports the items it would have changed, so the operator sees what
+	// --bootstrap-ok would do without running it. It writes nothing.
+	for _, entry := range f.entries {
+		if !strings.Contains(stdout, entry.Key) {
+			t.Fatalf("the refusal does not name the planned item %q: %q", entry.Key, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "config.toml unchanged") {
+		t.Fatalf("the refusal does not say nothing was published: %q", stdout)
 	}
 	if f.read(f.config()) != original {
 		t.Fatal("the refused run changed config.toml")
+	}
+	if _, err := os.Stat(f.backupName()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused run left a backup: %v", err)
 	}
 
 	stdout, stderr, code = f.run("--bootstrap-ok")
@@ -182,8 +195,8 @@ func TestHookTrustRetrust_refuses_without_bootstrap_then_writes(t *testing.T) {
 		want += "[trusted] " + entry.Key + " expected=" + entry.Hash + " actual=" + entry.Hash + "\n"
 	}
 	want += "updated=0 appended=2" + "\n" + "backup: " + f.backupName() + "\n"
-	if stdout != want {
-		t.Fatalf("bootstrap stdout: got %q want %q", stdout, want)
+	if !strings.HasPrefix(stdout, want) {
+		t.Fatalf("bootstrap stdout: got %q want prefix %q", stdout, want)
 	}
 	content := f.read(f.config())
 	if !strings.HasPrefix(content, f.installed()) {
@@ -281,47 +294,65 @@ func TestHookTrustRetrust_refuses_a_missing_trusted_hash(t *testing.T) {
 	}
 }
 
-func TestHookTrustRetrust_verification_failure_rolls_back(t *testing.T) {
+// CRW-844: the oracle wrote, verified and rolled back. The port verifies next in a temporary Codex
+// home first, so a verification failure leaves config.toml exactly as it was, writes no backup, and
+// still prints the plan.
+func TestHookTrustRetrust_verification_failure_leaves_the_config(t *testing.T) {
 	f := newRetrustFixture(t, "")
 	f.write(f.config(), f.installed())
 	original := f.read(f.config())
 	f.writeExec(filepath.Join(f.bin, "codex"), "#!/bin/sh"+"\n"+"exit 1"+"\n")
 
-	_, stderr, code := f.run("--bootstrap-ok")
+	stdout, stderr, code := f.run("--bootstrap-ok")
 	if code != 1 {
 		t.Fatalf("verification failure: code=%d stderr=%q", code, stderr)
 	}
-	want := "crw doctor retrust: codex features list verification failed:  (restored from backup " + f.backupName() + ")" + "\n"
-	if stderr != want {
-		t.Fatalf("verification failure stderr: got %q want %q", stderr, want)
+	if !strings.Contains(stderr, "pre-write verification failed: codex features list verification failed: ; config.toml unchanged") {
+		t.Fatalf("verification failure stderr: %q", stderr)
+	}
+	for _, entry := range f.entries {
+		if !strings.Contains(stdout, entry.Key) {
+			t.Fatalf("the refusal does not name the planned item %q: %q", entry.Key, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "config.toml unchanged") {
+		t.Fatalf("the refusal does not say nothing was published: %q", stdout)
 	}
 	if got := f.read(f.config()); got != original {
-		t.Fatalf("the rollback did not restore the exact original bytes: %q", got)
+		t.Fatalf("the refused run changed config.toml: %q", got)
 	}
-	if f.read(f.backupName()) != original {
-		t.Fatal("the backup does not hold the original bytes")
+	if _, err := os.Stat(f.backupName()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused run left a backup: %v", err)
 	}
 }
 
-func TestHookTrustRetrust_failing_rollback_keeps_the_backup(t *testing.T) {
+// A config.toml the process cannot open for writing is refused before anything is written (the
+// CRW-427 rule the port keeps), and the report names what would have been published.
+func TestHookTrustRetrust_refuses_an_unwritable_config(t *testing.T) {
 	f := newRetrustFixture(t, "")
 	f.write(f.config(), f.installed())
-	// The target is made unwritable before the run, so neither the write nor the rollback can
-	// publish through it: the answer must name the backup it kept.
+	original := f.read(f.config())
 	if err := os.Chmod(f.config(), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(f.config(), 0o644) })
+	if probe, err := os.OpenFile(f.config(), os.O_WRONLY, 0); err == nil {
+		_ = probe.Close()
+		t.Skip("this process can write a mode 0444 file (running as root?), so an unwritable config cannot be provoked")
+	}
 
 	_, stderr, code := f.run("--bootstrap-ok")
 	if code != 1 {
-		t.Fatalf("failing rollback: code=%d stderr=%q", code, stderr)
+		t.Fatalf("unwritable config: code=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stderr, "(rollback failed: ") || !strings.HasSuffix(stderr, "; backup kept at "+f.backupName()+")"+"\n") {
-		t.Fatalf("the failing rollback did not name the kept backup: %q", stderr)
+	if !strings.Contains(stderr, "permission denied") {
+		t.Fatalf("the refusal does not name the cause: %q", stderr)
 	}
-	if f.read(f.backupName()) == "" {
-		t.Fatal("the backup was removed")
+	if got := f.read(f.config()); got != original {
+		t.Fatalf("the refused run changed config.toml: %q", got)
+	}
+	if _, err := os.Stat(f.backupName()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused run left a backup: %v", err)
 	}
 }
 
@@ -344,10 +375,10 @@ func TestHookTrustRetrust_writes_a_symlinked_config_target(t *testing.T) {
 	}
 }
 
-// TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback is the concurrency guard the port adds
-// over the oracle: a settings writer that publishes while the verification probe runs is never
-// replaced by the rollback, which reports the conflict and keeps the backup instead.
-func TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback(t *testing.T) {
+// A settings writer that publishes while the verification probe runs is caught by the last check
+// before the exchange (CRW-844): the publication is refused, nothing is written, and no backup is
+// made for bytes that are already stale.
+func TestHookTrustRetrust_keeps_a_concurrent_edit_during_the_probe(t *testing.T) {
 	f := newRetrustFixture(t, "")
 	f.write(f.config(), f.installed())
 	concurrent := "model = \"written-by-another-process\"\n"
@@ -356,18 +387,18 @@ func TestHookTrustRetrust_keeps_a_concurrent_edit_on_rollback(t *testing.T) {
 		if err := os.WriteFile(f.config(), []byte(concurrent), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		failed := 1
-		return doctor.HookTrustRetrustRun{Status: &failed}
+		zero := 0
+		return doctor.HookTrustRetrustRun{Status: &zero}
 	}
 	_, _, err := doctor.HookTrustRetrust(f.home, f.plugin, f.key, true, runner, f.env(), f.now())
-	if err == nil || !strings.Contains(err.Error(), "backup kept at "+f.backupName()) {
-		t.Fatalf("the rollback did not report the kept backup: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "changed after it was read") {
+		t.Fatalf("the concurrent edit was not reported: %v", err)
 	}
 	if got := f.read(f.config()); got != concurrent {
 		t.Fatalf("the concurrent edit was replaced: %q", got)
 	}
-	if f.read(f.backupName()) != f.installed() {
-		t.Fatal("the backup does not hold the pre-write bytes")
+	if _, statErr := os.Stat(f.backupName()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a backup was made for bytes that were already stale: %v", statErr)
 	}
 }
 
