@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -106,24 +107,43 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 		return err
 	}
 	notRuled := fmt.Sprintf("no needs_changes ruling on generation %d of %s opened generation %d", before, rel.ID, rel.Generation)
+	// CRW-826: a node whose result is not accepted yet has no stale reading to route, so the ruling
+	// is the only route a correction of it has — except when the generation before this one already
+	// reads no single head (a child emitted two roots). No ruling repairs that: the relay's verdict
+	// writer refuses a ruling on an ambiguous head (revision_ambiguous) and opens no generation, so
+	// the generation opened by hand is the only way back to the child. It is bound as a correction,
+	// under every check below unchanged. A node whose previous generation reads one head keeps the
+	// answer it had.
+	acc, hasAcceptance, err := loadActiveAcceptance(ctx, q, plan, n.NodeID)
+	if err != nil {
+		return err
+	}
+	ambiguousPrevious := false
+	if !hasAcceptance {
+		head, err := registry.HeadRevision(ctx, s.Store, rel.ID, before)
+		if err != nil {
+			return err
+		}
+		ambiguousPrevious = head.Ambiguous()
+	}
 	st, err := s.staleOf(ctx, q, plan, snap, n)
 	if err != nil {
 		return err
 	}
-	if st == nil {
+	if st == nil && !ambiguousPrevious {
 		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling, and an accepted result that is current has no recorded correction route in this build. A generation that only merged the base into the branch is not a correction: when the generation was ruled verified, dag-base-refresh records it, after proving from git that its head is the accepted head plus merges of the base", notRuled, n.NodeID)
 	}
 	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
 	// there waits; only a result that must be reworked is corrected
-	if action, detail, err := s.routeOf(ctx, q, plan, snap, n, st, true); err != nil {
-		return err
-	} else if action != ActionCorrect {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the route of %s is %s, not a correction by hand: %s", notRuled, n.NodeID, action, detail)
+	if st != nil {
+		if action, detail, err := s.routeOf(ctx, q, plan, snap, n, st, true); err != nil {
+			return err
+		} else if action != ActionCorrect {
+			return refuse(contract.RefusalDispositionConflict, "%s, and the route of %s is %s, not a correction by hand: %s", notRuled, n.NodeID, action, detail)
+		}
 	}
 	// the generation recorded now is the one right after the generation the acceptance stands on: a correction that is already open and recorded is not skipped by opening another beside it
-	if acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID); err != nil {
-		return err
-	} else if has {
+	if hasAcceptance {
 		stand, err := s.standOf(ctx, q, acc)
 		if err != nil {
 			return err

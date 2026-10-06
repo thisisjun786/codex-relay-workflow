@@ -16,6 +16,7 @@ import (
 
 // c1: a failure of the intent transaction itself (here the store fails after the reserve) removes the copy the call froze.
 func TestFailedIntentTransactionRemovesTheFrozenCopy(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	k.sched.testAfterReserve = func() error { return errors.New("the store failed") }
@@ -36,6 +37,7 @@ func TestFailedIntentTransactionRemovesTheFrozenCopy(t *testing.T) {
 
 // c2: a close names its request and answers for that request: the retry of a first close does not close the newer abandoned intent of the same manifest, and closing the newer one needs its own request id.
 func TestCloseNamingTheRequestAnswersForThatRequest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, first := k.abandon("rp", "A")
@@ -59,6 +61,7 @@ func TestCloseNamingTheRequestAnswersForThatRequest(t *testing.T) {
 
 // c2: a successor whose start did not finish is continued from its own frozen request (its own id and bytes), and a frozen request that changed is refused.
 func TestSuccessorStartContinuesFromItsOwnFrozenRequest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, abandoned := k.abandon("rp", "A")
@@ -86,6 +89,7 @@ func TestSuccessorStartContinuesFromItsOwnFrozenRequest(t *testing.T) {
 }
 
 func TestSuccessorReplayRefusesAChangedFrozenRequest(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct{ change, want string }{
 		"the frozen bytes":     {"UPDATE dag_release_recoveries SET request_json = request_json || ' ' WHERE action = 'rereleased'", "revision_mismatch"},
 		"the frozen selectors": {"UPDATE dag_release_recoveries SET socket = 'elsewhere' WHERE action = 'rereleased'", "disposition_conflict"},
@@ -115,6 +119,7 @@ func TestSuccessorReplayRefusesAChangedFrozenRequest(t *testing.T) {
 // c2: a foreign child that takes the issue after the successor intent was recorded makes the engine refuse the start; the intent waits with its slot (D-15) and the same release continues once the issue is free. No child is
 // ever created while the foreign one lives.
 func TestReopenedReleasePreemptedByAForeignChildWaits(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	digest, _ := k.abandon("rp", "A")
@@ -147,6 +152,7 @@ func TestReopenedReleasePreemptedByAForeignChildWaits(t *testing.T) {
 
 // c2: a store the new table has not reached (a read-only open installs nothing) still reads: the node is abandoned, as before.
 func TestReadingAStoreThatPredatesTheRecoveryTable(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.abandon("rp", "A")
@@ -159,6 +165,7 @@ func TestReadingAStoreThatPredatesTheRecoveryTable(t *testing.T) {
 
 // c1: while a live child owns the issue, a stored manifest that holds the copy's bytes may be what a prepared correction rests on, so close keeps the copy.
 func TestCloseKeepsTheCopyWhileALiveChildOwnsTheIssue(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	digest, _ := k.abandon("rp", "B")
@@ -175,6 +182,7 @@ func TestCloseKeepsTheCopyWhileALiveChildOwnsTheIssue(t *testing.T) {
 
 // c1: the removal is made by descriptor. A directory swapped for a link to somewhere else between the verification and the unlink cannot lead it out: the file outside is untouched, and the unlink lands on the
 // directory that was read, so the copy that was verified is the one that goes.
+// sequential: assigns the package variable testBeforeUnlink.
 func TestCloseRemovalNeverLeavesTheArtifactRoot(t *testing.T) {
 	k := newReleaseKit(t)
 	k.largeB()
@@ -211,6 +219,7 @@ func TestCloseRemovalNeverLeavesTheArtifactRoot(t *testing.T) {
 }
 
 // c1: a failure after the unlink and before the commit loses the journal row of an unreferenced file, nothing else: the closure was committed first, so it stands and a repeat answers it.
+// sequential: assigns the package variable testAfterUnlink.
 func TestCloseSurvivesAFailureAfterTheUnlink(t *testing.T) {
 	k := newReleaseKit(t)
 	k.largeB()
@@ -234,6 +243,7 @@ func TestCloseSurvivesAFailureAfterTheUnlink(t *testing.T) {
 }
 
 // c1: a removal that did not happen leaves the file and says so; a repeat of the close takes it.
+// sequential: assigns the package variable testBeforeUnlink.
 func TestCloseRepeatFinishesARemovalThatDidNotHappen(t *testing.T) {
 	k := newReleaseKit(t)
 	k.largeB()
@@ -261,6 +271,7 @@ func TestCloseRepeatFinishesARemovalThatDidNotHappen(t *testing.T) {
 
 // c1: an artifact root that has become a link (here to a directory that holds a file of the same name) is refused: the removal acquires the root as the freeze does, with no link in its path, and touches nothing.
 func TestCloseRemovalRefusesALinkedArtifactRoot(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	digest, _ := k.abandon("rp", "B")
@@ -297,6 +308,7 @@ func TestCloseRemovalRefusesALinkedArtifactRoot(t *testing.T) {
 
 // c1: a copy replaced by a FIFO is not a copy and must not hold the write transaction: the call returns and keeps it.
 func TestCloseRemovalDoesNotBlockOnAFifo(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	digest, _ := k.abandon("rp", "B")
@@ -334,6 +346,7 @@ func TestCloseRemovalDoesNotBlockOnAFifo(t *testing.T) {
 
 // c1: the path of a copy is read from the line the relay wrote at the head of the prompt, never from the operator's instructions: a manifest that travelled inline names no copy, whatever the instructions say.
 func TestCloseNeverDeletesAFileOnlyTheInstructionsName(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	canonical := []byte("an unrelated file that looks like a copy of a manifest")
@@ -355,6 +368,7 @@ func TestCloseNeverDeletesAFileOnlyTheInstructionsName(t *testing.T) {
 
 // c1: at close the file must be the closed intent's own manifest: a copy-shaped file of another manifest that a (tampered) frozen request names is kept.
 func TestCloseKeepsAFileThatIsNotTheClosedManifest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.largeB()
 	digest, _ := k.abandon("rp", "B")
@@ -382,6 +396,7 @@ func TestCloseKeepsAFileThatIsNotTheClosedManifest(t *testing.T) {
 }
 
 // c1: a copy this call only reused, taken back by its creator and frozen again inside the intent transaction, is this call's: when the transaction then fails, no intent names it and it goes.
+// sequential: assigns the package variable testBeforeUnlink.
 func TestFailedIntentAfterARefreezeRemovesTheCopyItRecreated(t *testing.T) {
 	k := newReleaseKit(t)
 	k.largeB()

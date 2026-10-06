@@ -802,4 +802,37 @@ BEGIN SELECT RAISE(ABORT, 'merge_train_members rows are append-only: never delet
 BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS merge_train_events_no_delete BEFORE DELETE ON merge_train_events
 BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never deleted'); END`,
+	// CRW-736: the user-decision record (crw-user-decision/1, internal/relay/decisions) as a zone
+	// table. One column per field of the record's field list, with the object and array fields held
+	// as JSON text, decision_id as the primary key and fingerprint indexed. The table is not
+	// append-only: the seen observations of a repeated question are appended to the row that already
+	// holds it, and a later issue records an answer, an application or a withdrawal by updating the
+	// row rather than by adding a column.
+	`CREATE TABLE IF NOT EXISTS dag_user_decisions (
+    decision_id         TEXT PRIMARY KEY CHECK (decision_id <> ''),
+    fingerprint         TEXT NOT NULL CHECK (fingerprint <> ''),
+    kind                TEXT NOT NULL CHECK (kind IN ('design_choice','dependency','merge_approval','cleanup_approval','blocked_escalation','policy')),
+    context             TEXT NOT NULL CHECK (context <> ''),
+    options_json        TEXT NOT NULL,
+    recommendation_json TEXT NOT NULL,
+    blocking_json       TEXT NOT NULL,
+    needed_by           TEXT NOT NULL,
+    origin_json         TEXT NOT NULL,
+    source_json         TEXT NOT NULL,
+    authority_json      TEXT NOT NULL,
+    state               TEXT NOT NULL CHECK (state IN ('open','raised','answered','applied','withdrawn','expired')),
+    raised_at           TEXT NOT NULL,
+    raised_via          TEXT NOT NULL,
+    seen_json           TEXT NOT NULL,
+    answered_at         TEXT NOT NULL,
+    answered_by         TEXT NOT NULL,
+    answered_via        TEXT NOT NULL,
+    answer_text         TEXT NOT NULL,
+    applied_at          TEXT NOT NULL,
+    applied_event       TEXT NOT NULL,
+    applied_generation  INTEGER NOT NULL DEFAULT 0 CHECK (applied_generation >= 0),
+    withdrawn_reason    TEXT NOT NULL,
+    expired_reason      TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
 }
