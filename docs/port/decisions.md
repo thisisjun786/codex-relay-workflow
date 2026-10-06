@@ -5710,6 +5710,13 @@ Percentiles here are nearest-rank: the p-th percentile is the value at rank `cei
 sample, and a median of an even-sized sample is the lower of the two middle values. Recomputing with
 a different convention moves the p90 values by one rank.
 
+The measurement's window is fixed by `created`; the jobs are read per run from the jobs endpoint, and
+the two derived figures are computed as follows: the run wall time is `updated_at` minus
+`run_started_at` (the queue wait before the run started is deliberately outside it, and the runner
+wait is measured separately as a job's `started_at` minus its run's `created_at`); the cancellation
+cost is the sum over a cancelled run's jobs of `completed_at` minus `started_at`, counting only the
+jobs whose `started_at` is set, which is why 25 of the 27 cancelled pull request runs carry it.
+
 The management session's own observation the same afternoon — 30 jobs running and 14 runs waiting
 (12 `pull_request`, 1 `push`) — is the same picture from the other side and is recorded in the issue
 body, not re-measured here.
