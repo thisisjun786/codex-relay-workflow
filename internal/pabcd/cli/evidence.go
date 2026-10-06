@@ -17,6 +17,10 @@ import (
 type EvidenceResolveArgs struct {
 	Verb, SessionID, AgentID, Receipt, Cwd string
 	TurnID                                 *string
+	// writeState is the state publication the resolve performs; nil means state.WriteState. It is a
+	// field rather than a package-level variable, so a test can stage a publication that fails after
+	// the rename without affecting any other caller.
+	writeState func(string, state.State) error
 }
 
 // ParseEvidenceCLIArgs preserves the oracle's first exact flag lookup: unknown
