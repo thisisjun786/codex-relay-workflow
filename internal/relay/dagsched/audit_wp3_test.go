@@ -16,6 +16,7 @@ import (
 // once a release or an execution holds them, whether the node had declared before (a narrowing) or had not (an undeclared holder that becomes a
 // declared one), and a harmless repeat is still a replay.
 func TestDeclareRegionsCannotFreeAHeldNode(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T, declareHolder bool) *fixture {
 		f := newFixture(t)
 		f.projectParent()
@@ -84,6 +85,7 @@ func TestDeclareRegionsCannotFreeAHeldNode(t *testing.T) {
 // An attached managed start belongs to its relationship: once that relationship is finished the issue is free again (a managed row is never
 // released after it attached, so counting it would own the issue forever). A start still pending, and a relationship still open, own it.
 func TestFinishedRelationshipFreesTheIssue(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -105,6 +107,7 @@ func TestFinishedRelationshipFreesTheIssue(t *testing.T) {
 // An accepted node still has a relationship: a pause keeps its regions held, a cancellation before landing frees them, and a landing that is
 // proven stays proven.
 func TestAcceptedNodeFollowsItsRelationship(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) (*fixture, accepted) {
 		f := newFixture(t)
 		f.projectParent()
@@ -148,6 +151,7 @@ func TestAcceptedNodeFollowsItsRelationship(t *testing.T) {
 // B-17: the frozen copy of a manifest is read and compared, not only found. A directory in its place, a document that is not JSON and a copy that
 // disagrees with the receipt all block; a good copy does not; and the store half of the checks (SkipArtifactBytes) touches no file at all.
 func TestReadyFrozenManifestMustBeReadable(t *testing.T) {
+	t.Parallel()
 	prepare := func(t *testing.T) (*fixture, accepted, string) {
 		f := newFixture(t)
 		forkJoinPlan(f, "p1")
@@ -220,6 +224,7 @@ func TestReadyFrozenManifestMustBeReadable(t *testing.T) {
 
 // The child's newest word decides, even while an earlier report is under verification.
 func TestReadyBlockedReportWhileVerifying(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -243,6 +248,7 @@ func TestReadyBlockedReportWhileVerifying(t *testing.T) {
 // capacity.Reserve refuses when held >= ceiling, so the reader's slots are the ceiling rounded up: a fractional limit must not read as no capacity
 // while Reserve would still accept.
 func TestCapacityFractionalCeiling(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.declareLimit("project", "P-TEST", "runs", 0.5)
 	if c := f.capacityNow(); c.Free != 1 || c.Ceiling != 1 {
@@ -256,6 +262,7 @@ func TestCapacityFractionalCeiling(t *testing.T) {
 
 // The stored pass is read back as the table holds it and compared with what the reading said, not with the function that wrote it.
 func TestPassDispositionsAreStoredAsRead(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("pd", 0, "pd-r1", addNode("n1", dag.NodeNonPR), addNode("n2", dag.NodeNonPR), addEdge("e", "n1", "n2", dag.EdgeArtifactVerified, nil))
@@ -282,6 +289,7 @@ func TestPassDispositionsAreStoredAsRead(t *testing.T) {
 
 // Two spellings of one place must not be two locks: a repository path is canonical, and a path keeps the spaces that are part of a name.
 func TestRegionSpellingsShareOneLock(t *testing.T) {
+	t.Parallel()
 	holderThenCandidate := func(t *testing.T, holder, candidate Region) NodeReading {
 		f := newFixture(t)
 		f.projectParent()

@@ -8,6 +8,7 @@ package crwconfig
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // The named roots. Each is a directory the product uses, and a configuration file
@@ -31,6 +32,21 @@ var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEv
 // has one fixed order to follow. The slice is a copy, so a caller cannot change the
 // order the package resolves in.
 func RootNames() []string { return append([]string(nil), rootOrder...) }
+
+// rootJoin joins rel below base as raw text: the base's trailing separators are
+// dropped and one "/" is written between the base and rel. Nothing is cleaned, so a
+// base whose spelling mixes a symbolic link and ".." keeps the meaning the
+// filesystem gives that spelling instead of the different directory filepath.Clean
+// would name. rel is package text ("crw", "tools", ".local/share"), never caller
+// input. An empty base yields the relative rel, so an empty HOME still resolves to a
+// relative path the absolute-path check refuses rather than to the filesystem root.
+func rootJoin(base string, rel ...string) string {
+	suffix := strings.Join(rel, "/")
+	if base == "" {
+		return suffix
+	}
+	return strings.TrimRight(base, "/") + "/" + suffix
+}
 
 // Source names where a value came from: the built-in default, an environment
 // variable, or the override input.
@@ -64,7 +80,7 @@ func baseDir(getenv func(string) string, variable, name string) (string, bool) {
 	if value := getenv(variable); value != "" {
 		return value, true
 	}
-	return filepath.Join(getenv("HOME"), name), false
+	return rootJoin(getenv("HOME"), name), false
 }
 
 // Resolve computes every root from the environment, then applies the overrides. A root
@@ -73,10 +89,15 @@ func baseDir(getenv func(string) string, variable, name string) (string, bool) {
 // default. Every resolved path must be absolute, because a relative one would be read
 // wherever the command happens to run. A name this build does not know is left out
 // rather than refused, so a configuration written for a later crw still resolves.
+//
+// A path is joined, never cleaned: a base directory keeps its raw text, so a value
+// that spells a symbolic link or ".." means the directory the filesystem resolves it
+// to, and a root derived from another (scratch_root from cache_root) sits under the
+// text its base was given.
 func Resolve(getenv func(string) string, overrides map[string]string) (map[string]Root, error) {
-	data, dataEnv := baseDir(getenv, "XDG_DATA_HOME", filepath.Join(".local", "share"))
+	data, dataEnv := baseDir(getenv, "XDG_DATA_HOME", ".local/share")
 	cache, cacheEnv := baseDir(getenv, "XDG_CACHE_HOME", ".cache")
-	state, stateEnv := baseDir(getenv, "XDG_STATE_HOME", filepath.Join(".local", "state"))
+	state, stateEnv := baseDir(getenv, "XDG_STATE_HOME", ".local/state")
 	temp, tempEnv := "/tmp", false
 	if value := getenv("TMPDIR"); value != "" {
 		temp, tempEnv = value, true
@@ -87,13 +108,13 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 		path    string
 		fromEnv bool
 	}{
-		{RootTools, filepath.Join(data, "crw", "tools"), dataEnv},
-		{RootCache, filepath.Join(cache, "crw"), cacheEnv},
-		{RootWorktree, filepath.Join(data, "crw", "worktrees"), dataEnv},
-		{RootEvidence, filepath.Join(state, "crw", "evidence"), stateEnv},
-		{RootTemp, filepath.Join(temp, "crw"), tempEnv},
-		{RootData, filepath.Join(data, "crw", "data"), dataEnv},
-		{RootManage, filepath.Join(state, "crw", "manage"), stateEnv},
+		{RootTools, rootJoin(data, "crw", "tools"), dataEnv},
+		{RootCache, rootJoin(cache, "crw"), cacheEnv},
+		{RootWorktree, rootJoin(data, "crw", "worktrees"), dataEnv},
+		{RootEvidence, rootJoin(state, "crw", "evidence"), stateEnv},
+		{RootTemp, rootJoin(temp, "crw"), tempEnv},
+		{RootData, rootJoin(data, "crw", "data"), dataEnv},
+		{RootManage, rootJoin(state, "crw", "manage"), stateEnv},
 	} {
 		roots[row.name] = Root{Path: row.path, Source: sourceOf(row.fromEnv)}
 	}
@@ -102,7 +123,7 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 	// the scratch root under the new cache root, and an override that names
 	// scratch_root itself keeps the value it named.
 	cacheRoot := roots[RootCache]
-	roots[RootScratch] = Root{Path: filepath.Join(cacheRoot.Path, "scratch"), Source: cacheRoot.Source}
+	roots[RootScratch] = Root{Path: rootJoin(cacheRoot.Path, "scratch"), Source: cacheRoot.Source}
 	for name, value := range overrides {
 		if _, known := roots[name]; !known {
 			continue
@@ -111,7 +132,7 @@ func Resolve(getenv func(string) string, overrides map[string]string) (map[strin
 	}
 	if _, named := overrides[RootScratch]; !named {
 		cacheRoot = roots[RootCache]
-		roots[RootScratch] = Root{Path: filepath.Join(cacheRoot.Path, "scratch"), Source: cacheRoot.Source}
+		roots[RootScratch] = Root{Path: rootJoin(cacheRoot.Path, "scratch"), Source: cacheRoot.Source}
 	}
 	for _, name := range rootOrder {
 		if path := roots[name].Path; !filepath.IsAbs(path) {

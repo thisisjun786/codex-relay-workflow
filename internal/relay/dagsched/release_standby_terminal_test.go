@@ -58,6 +58,7 @@ func (h *interruptedReleaseHost) SendMessage(ctx context.Context, in managed.Sen
 }
 
 func TestReleaseInterruptedStandbyContinuesFrozenRequest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	h := &interruptedReleaseHost{Adapter: k.host, host: k.host, status: "inProgress"}

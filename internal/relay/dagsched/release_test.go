@@ -15,6 +15,7 @@ import (
 // Criterion c3, c11: a ready node is released to a child through the real managed engine, and the release leaves exactly the rows the protocol says: the intent, the
 // frozen request, the manifest, a held slot, the bound execution. The node then reads as owned and its dependent keeps waiting.
 func TestReleaseHappyPath(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	res := k.mustRelease("rp", "A")
@@ -64,6 +65,7 @@ func TestReleaseHappyPath(t *testing.T) {
 
 // Criterion c3: a duplicate wake creates no second child and releases nothing wrongly, whether the calls come one after another or at once from two connections.
 func TestReleaseDuplicateWake(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	first := k.mustRelease("rp", "A")
@@ -88,6 +90,7 @@ func TestReleaseDuplicateWake(t *testing.T) {
 
 // Criterion c3, c11 (the creation race): two connections call Release for one node at the same moment. Exactly one child exists and both calls end on it.
 func TestReleaseCreationRace(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	second, err := store.Open(context.Background(), k.path, "")
@@ -135,6 +138,7 @@ func TestReleaseCreationRace(t *testing.T) {
 // Criterion c3 (lost creation response): the host created the child and the answer was lost. The node reads as creation_unknown with its slot held, and the next call binds the
 // SAME child.
 func TestReleaseLostCreationResponse(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.host.loseFirstCreation = true
@@ -162,6 +166,7 @@ func TestReleaseLostCreationResponse(t *testing.T) {
 
 // E-22: the creation was accepted and the bind never ran. The next call replays the intent and binds the same child.
 func TestReleaseBindFailureRecovers(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	failed := false
@@ -193,6 +198,7 @@ func TestReleaseBindFailureRecovers(t *testing.T) {
 // A model, effort, sandbox or approval mismatch is refused (criterion c3): the engine compares what the host created with what was asked, and the release keeps its intent and
 // its slot, binds nothing, and never creates a second child however often it is repeated.
 func TestReleaseRefusesSettingsMismatch(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"model", "reasoningEffort", "sandbox", "approvalPolicy"} {
 		t.Run(key, func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -219,6 +225,7 @@ func TestReleaseRefusesSettingsMismatch(t *testing.T) {
 
 // H1 (audit): a release whose manifest is no longer stored is not replayed.
 func TestReleaseReplayWithoutStoredManifest(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.host.loseFirstCreation = true
@@ -236,6 +243,7 @@ func TestReleaseReplayWithoutStoredManifest(t *testing.T) {
 
 // H2 (audit): a failure of the store while the slot is being reserved rolls the whole intent back. A slot that was written before the journal failed must not stay.
 func TestReleaseStoreFailureDuringReservationRollsBack(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.exec("CREATE TRIGGER fail_journal BEFORE INSERT ON journal WHEN NEW.kind = 'slot_reserved' BEGIN SELECT RAISE(ABORT, 'the journal is full'); END")
@@ -252,6 +260,7 @@ func TestReleaseStoreFailureDuringReservationRollsBack(t *testing.T) {
 
 // H5 (audit): the slot of an intent whose child was never created was returned; replaying it must not create a child above the ceilings, and may re-reserve under them.
 func TestReleaseReplayAfterTheSlotWasReturned(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) *releaseKit {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -290,6 +299,7 @@ func TestReleaseReplayAfterTheSlotWasReturned(t *testing.T) {
 
 // R2-H1 (audit): ids may contain a colon, so a slot key built with one would give two different nodes one slot, and the second release would read as the replay of the first.
 func TestSlotKeysOfDifferentNodesNeverCollide(t *testing.T) {
+	t.Parallel()
 	if SlotSubjectKey("a:b", "c") == SlotSubjectKey("a", "b:c") {
 		t.Fatal("two nodes share a slot key")
 	}
@@ -312,6 +322,7 @@ func TestSlotKeysOfDifferentNodesNeverCollide(t *testing.T) {
 
 // R3-H1 (audit): a managed start released before it created a child is a tombstone; replaying its release reserves no slot and starts nothing.
 func TestReleaseReplayOfAReleasedRequestReclaimsNoSlot(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	started := 0
@@ -346,6 +357,7 @@ func TestReleaseReplayOfAReleasedRequestReclaimsNoSlot(t *testing.T) {
 // R3-H2 (audit): a paused parent still owns its project and still sits under the initiative's ceiling. The reader and the replay must apply the standing cap to the initiative exactly where
 // capacity.Reserve counts it, or a replay is the way around the cap.
 func TestInitiativeClampAppliesWhileTheParentIsPaused(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.initiativeAbove("INIT-1")
@@ -380,6 +392,7 @@ func TestInitiativeClampAppliesWhileTheParentIsPaused(t *testing.T) {
 
 // R4-H1 (audit): a slot held under the node's subject by another parent for another project is not this release's, and the replay does not continue under it.
 func TestReleaseReplayRefusesAForeignHeldSlot(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.host.loseFirstCreation = true
@@ -411,6 +424,7 @@ func TestReleaseReplayRefusesAForeignHeldSlot(t *testing.T) {
 // R4-H2 (audit): the tombstone is read in the transaction that reserves, so a managed start released between an earlier read and the reservation cannot leave a slot held for a request
 // that can never start.
 func TestReleaseReplayTombstoneRaceReclaimsNoSlot(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.host.loseFirstCreation = true
@@ -437,6 +451,7 @@ func TestReleaseReplayTombstoneRaceReclaimsNoSlot(t *testing.T) {
 // Request ids are global to the store and node ids are plan-local: a second plan that releases a node of the same name over the same inputs is a second release with its own child, not a
 // conflict with the first plan's managed request.
 func TestTwoPlansReleaseNodesOfTheSameName(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	releasePlan(k.fixture, "rq")

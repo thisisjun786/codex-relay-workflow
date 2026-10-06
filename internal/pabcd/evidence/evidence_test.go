@@ -12,7 +12,30 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// Two agents that stop at the same moment each commit their tombstone under the session lock: neither verdict is lost.
+// tombstoneLockRetryLimit is how often a writer records its tombstone again after the session lock gave
+// up. The lock's wait budget is the oracle's (state.WithSessionLock's LOCK_RETRY_DELAYS_MS,
+// 5+10+15+20+25+30+35+40+35+35 ms = 250 ms in all) and giving up after it is deliberate, so the two
+// writers below would otherwise be decided by how long one fsync takes on the machine running the
+// test. RecordTombstone takes no lock argument, so the rule the issue states for that case applies:
+// call it again, at most this many times.
+const tombstoneLockRetryLimit = 50
+
+// recordTombstoneRetryingLock returns whether the verdict was recorded, calling RecordTombstone again
+// while it reports that it was not. RecordTombstone reports only a bool — a give-up raises the
+// corruption sentinel in its second tier and is not told apart from a refusal — so the test's
+// assertions on the stored verdicts are what decide the outcome; a genuinely stuck lock or a refused
+// rewrite still fails after the limit.
+func recordTombstoneRetryingLock(cwd, sessionID string, p Payload) bool {
+	ok := RecordTombstone(cwd, sessionID, p, MaxAttempts, nil)
+	for attempt := 0; attempt < tombstoneLockRetryLimit && !ok; attempt++ {
+		ok = RecordTombstone(cwd, sessionID, p, MaxAttempts, nil)
+	}
+	return ok
+}
+
+// Two agents that stop at the same moment each commit their tombstone under the session lock: neither
+// verdict is lost. Each writer holds the lock across a read-modify-write of the session file with
+// fsync, so a writer that meets the lock giving up calls RecordTombstone again.
 func TestRecordTombstoneKeepsConcurrentVerdicts(t *testing.T) {
 	cwd := t.TempDir()
 	var wg sync.WaitGroup
@@ -21,7 +44,7 @@ func TestRecordTombstoneKeepsConcurrentVerdicts(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = RecordTombstone(cwd, "s1", Payload{AgentType: "executor", AgentID: agent}, MaxAttempts, nil)
+			results[i] = recordTombstoneRetryingLock(cwd, "s1", Payload{AgentType: "executor", AgentID: agent})
 		}()
 	}
 	wg.Wait()
