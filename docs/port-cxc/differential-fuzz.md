@@ -10,14 +10,14 @@ harness and one self-test target, `echo`.
 
 ```sh
 go run -tags dev ./cmd/crw-dev fuzz echo --seconds 30
-go run -tags dev ./cmd/crw-dev fuzz echo --cases 500 --seed 7 --workers 4 --out /scratch/crw/fuzz/echo/manual
+go run -tags dev ./cmd/crw-dev fuzz echo --cases 500 --seed 7 --workers 4 --out ./fuzz-out
 ```
 
 `--seconds` and `--cases` bound a campaign; one of them is required. `--workers` defaults to 4 and
 `--seed` to the clock, and the seed a campaign used is written to `summary.json` so the run can be
-repeated. `--out` defaults to `/scratch/crw/fuzz/<target>/<UTC time>`. Without `node` on `PATH` the
-command stops with exit 2 and one line, before any fuzzing. It exits 1 when the campaign found a
-divergence and 0 when every case agreed.
+repeated. `--out` defaults under the harness's own output root (`DefaultOutRoot`) at
+`<target>/<UTC time>`. Without `node` on `PATH` the command stops with exit 2 and one line, before
+any fuzzing. It exits 1 when the campaign found a divergence and 0 when every case agreed.
 
 ## What it does
 
@@ -36,9 +36,9 @@ reply per line on stdout, `{"id":n,"input":...,"root":"<case root>"}` answered b
 `{"id":n,"output":...}` or `{"id":n,"error":{...}}`. A request that outlives five seconds is a
 timeout case: the worker is killed, another is started for the next request, and the input is
 counted as a timeout rather than a divergence. A worker that dies is replaced the same way. The
-worker program is the target's shim, which imports its dist modules under `ORACLE_ROOT`
-(`/var/tmp/cxc-v0.2.40/plugins/codexclaw/components` by default) the way the `record-oracle.mjs`
-recorders do.
+worker program is the target's shim, which imports its dist modules under `ORACLE_ROOT` (the
+target's `Oracle.Root`, `DefaultOracleRoot` by default) the way the `record-oracle.mjs` recorders
+do.
 
 An input may carry an `fs` array of `{path, kind, target, mode, content}` entries. Each case gets
 two fresh roots, one per side, and builds the same tree in both. A path that leaves its root, and a
@@ -51,7 +51,7 @@ A difference is shrunk while the same verdict survives: container members go one
 each member is reduced in place, up to 500 candidate evaluations. The result is written as
 `<out>/divergences/<kind>-<sha12>.json` (input, both answers, verdict, seed, dev sha) once per
 input hash, and `<out>/summary.json` carries the target, seed, dev sha, elapsed time, case count,
-per-kind counts, cases per second and timeout count.
+per-kind counts, cases per second, timeout count and the count of refused scenarios.
 
 ## Pinning a difference
 
