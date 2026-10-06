@@ -375,12 +375,17 @@ var auditCommand = Command{Name: "audit", Summary: "grade an audit bundle and re
 
 func init() { Register(auditCommand) }
 
-// auditUsage is the line the audit command prints: the grade subcommand and its flags.
-const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--phase X] [--round R]"
+// auditUsage is what the audit command prints: the grade line the command shipped with,
+// then the package and round lines this piece adds.
+const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--phase X] [--round R]\n" +
+	"       crw manage audit package --round R [--next N] [--head SHA]\n" +
+	"       crw manage audit round {start,status} --name R"
 
-// auditRun is crw manage audit. This issue ships the grade subcommand; the bundle-building
-// modes are later issues, so any other subcommand is a usage error. The help flags keep
-// their own path so the usage stays reachable without a subcommand.
+// auditRun is crw manage audit. It dispatches the grade subcommand, which grades one bundle
+// the caller already assembled, the package subcommand, which audits the packages a round
+// still holds pending or failed, and the round subcommand, which starts a round and reports
+// its progress. The help flags keep their own path so the usage stays reachable without a
+// subcommand.
 func auditRun(_ context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditUsage)
@@ -392,37 +397,49 @@ func auditRun(_ context.Context, e *Env, args []string) int {
 		return 0
 	case "grade":
 		return auditRunGrade(e, args[1:])
+	case "package":
+		return auditRunPackage(e, args[1:])
+	case "round":
+		return auditRunRound(e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
-	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'round')\n", args[0])
 	return usageExit
 }
 
-// auditRunGrade is crw manage audit grade. It validates the flags, then refuses a grader
-// the configuration does not name. The engine that consumes the parsed job, runs the
-// configured grader over the bundle and records the result arrives with the next piece, so
-// at this baseline the configured-grader path is unreachable and the command stops at the
-// refusal.
+// auditRunGrade is crw manage audit grade. It validates the flags, refuses a grader the
+// configuration does not name, grades the one bundle through the engine and prints the
+// graded result as JSON. The engine writes the ledger and alert rows itself, so this
+// command records nothing of its own.
 func auditRunGrade(e *Env, args []string) int {
-	// The flags are validated here so a bad argument is a usage error even before the
-	// engine that would consume the parsed job exists.
-	if _, err := auditParseGradeArgs(args); err != nil {
+	job, err := auditParseGradeArgs(args)
+	if err != nil {
 		fmt.Fprintln(e.Stderr, auditUsage)
 		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
 		return usageExit
 	}
-	configured, err := auditGraderConfigured(coreDefaults(e))
+	cfg := coreDefaults(e)
+	section, err := auditConfigOf(cfg)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
 		return 1
 	}
-	if configured {
-		// The engine that grades the bundle and records the result is the next piece.
-		fmt.Fprintln(e.Stderr, "crw manage audit: error: the grading engine is not part of this build")
+	if len(section.Grader) == 0 {
+		fmt.Fprintln(e.Stderr, "crw manage audit: error: grader_unconfigured: the audit section of the configuration names no grader command")
+		return usageExit
+	}
+	results, err := AuditGrade(context.Background(), e, cfg, []AuditJob{job})
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
 		return 1
 	}
-	fmt.Fprintln(e.Stderr, "crw manage audit: error: grader_unconfigured: the audit section of the configuration names no grader command")
-	return usageExit
+	data, err := json.Marshal(results)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit grade: error: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(e.Stdout, "%s\n", data)
+	return 0
 }
 
 // auditParseGradeArgs reads the grade subcommand's flags, each written --name value or
@@ -464,19 +481,4 @@ func auditParseGradeArgs(args []string) (AuditJob, error) {
 		return AuditJob{}, errors.New("--bundle is required")
 	}
 	return job, nil
-}
-
-// auditGraderConfigured reports whether the configuration names a grader command. The
-// audit section is read from the configuration document, so a section that is absent — the
-// state at this baseline, which reads no configuration file — leaves the grader unset.
-func auditGraderConfigured(cfg *Config) (bool, error) {
-	var section struct {
-		Grader []string `json:"grader"`
-	}
-	if cfg != nil {
-		if err := cfg.Section("audit", &section); err != nil {
-			return false, err
-		}
-	}
-	return len(section.Grader) > 0, nil
 }
