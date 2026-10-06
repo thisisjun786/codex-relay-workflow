@@ -96,6 +96,19 @@ func TestOpenRefusesCodexHomeBehindAnAlias(t *testing.T) {
 	wantRefusal(t, err, ReasonOverlap)
 }
 
+// A directory can report an identity already recorded for its own tree (a mount of one of that tree's own
+// directories). The walk visits it again instead of skipping it, and it must not refuse a pair whose trees are
+// disjoint: that identity belongs to this tree, not to the other one.
+func TestOpenAcceptsATreeWhereADirectoryRepeatsAnIdentity(t *testing.T) {
+	base := isolate(t)
+	src, dst := base+"/src", base+"/dst"
+	mkdirs(t, src+"/sub/leaf", dst)
+	aliasIdentity(t, src+"/sub", src)
+	r, err := Open(Options{Scope: ScopeUser, FromHome: src, ToHome: dst})
+	must(t, err)
+	r.Close()
+}
+
 // A destination whose identities are all outside the source tree stays accepted.
 func TestOpenAcceptsATreeOutsideTheSource(t *testing.T) {
 	base := isolate(t)
