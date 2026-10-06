@@ -345,28 +345,34 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 	return names
 }
 
-// testedElsewhere reports whether another run on this head answered the same required check
-// successfully and holds no test leg that skipped its tests: the lane's own repair for a light run
-// is to label the pull request crw-lane, which starts a full run on the same head, and that run's
-// evidence is what the head should be judged on. Without this the earlier light run's entry would
-// refuse the head forever, and the documented repair could never produce merge evidence (CRW-824).
-// The reading is fail-closed on its own terms: the run that answers must have succeeded and must
-// hold no skipped leg, and a leg whose step list the collector could not read leaves its own
-// unreadable problem, which refuses the whole reading before this predicate is consulted.
-func testedElsewhere(checks []any, head, name, run string, highest map[string]*big.Int) bool {
+// testedElsewhere reports whether another workflow run on this head answered the same required
+// check, for the same integration the branch rule names, successfully and with its tests actually
+// run: the lane's own repair for a light run is to label the pull request crw-lane, which starts a
+// full run on the same head, and that run's evidence is what the head should be judged on. Without
+// this the earlier light run's entry would refuse the head forever, and the documented repair could
+// never produce merge evidence (CRW-824).
+//
+// The substitute must be a workflow run of the same integration: a namesake from another provider
+// does not answer this branch's gate, and a published check run or a commit status holds no jobs at
+// all, so reading either as the evidence that repaired a light run would let an untested head
+// through. A candidate that holds a skipped leg of its own is not the evidence either, and a leg
+// whose step list the collector could not read leaves its own unreadable problem, which refuses the
+// whole reading before this predicate is consulted.
+func testedElsewhere(checks []any, head, name, provider, run string, highest map[string]*big.Int) bool {
 	for _, entry := range checks {
 		runId := textField(entry, "runId")
-		if workflowRun(runId) == run || textField(entry, "name") != name {
+		candidate := workflowRun(runId)
+		if candidate == "" || candidate == run || textField(entry, "name") != name {
 			continue
 		}
 		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
 			continue
 		}
 		o, _ := Object(entry)
-		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
+		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" || textField(entry, "provider") != provider {
 			continue
 		}
-		if len(testSkippedJobs(checks, workflowRun(runId), highest)) == 0 {
+		if len(testSkippedJobs(checks, candidate, highest)) == 0 {
 			return true
 		}
 	}
@@ -514,7 +520,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		if skipped := testSkippedJobs(checks, workflowRun(run), highest); len(skipped) > 0 {
 			// Another run of the same required check on this head that ran its tests is the
 			// evidence: the lane's repair for a light run is a labeled full run on the same head.
-			if !testedElsewhere(checks, head, name, workflowRun(run), highest) {
+			if !testedElsewhere(checks, head, name, textField(entry, "provider"), workflowRun(run), highest) {
 				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
 					lightKey, lightRun, lightName = key, run, skipped[0]
 				}

@@ -138,6 +138,72 @@ func TestCRW824ALabeledFullRunMustAnswerTheSameCheck(t *testing.T) {
 	}
 }
 
+// A namesake from another provider does not supersede a light run: the branch rule names the
+// integration that must answer the check, so a passing dev-gate from elsewhere is not this check.
+func TestCRW824ASubstituteFromAnotherProviderDoesNotSupersede(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+	}
+	checks[0].(map[string]any)["provider"] = "42"
+	checks[2].(map[string]any)["provider"] = "99"
+	problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, map[string][]string{"dev-gate": {"42"}})
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light detail is the answer, got %q", problems[0].Detail)
+	}
+}
+
+// A commit status is not a workflow run and holds no jobs, so it cannot be the evidence that
+// repairs a light run: reading it as one would let an untested head through.
+func TestCRW824ACommitStatusDoesNotSupersedeALightRun(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("status:dev-gate", "dev-gate", "success", 1, false),
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light detail is the answer, got %q", problems[0].Detail)
+	}
+}
+
+// A published check run is not a workflow run either: it holds no jobs, so it cannot vouch for a
+// light run's tests.
+func TestCRW824APublishedCheckRunDoesNotSupersedeALightRun(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("check-run:13", "dev-gate", "success", 1, false),
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+}
+
+// The substitute must be at the same head: a run of another head says nothing about this one.
+func TestCRW824ASubstituteAtAnotherHeadDoesNotSupersede(t *testing.T) {
+	other := crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false)
+	other["headSha"] = "1111111111111111111111111111111111111111"
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		other,
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+}
+
 // A full run whose own legs skipped their tests is not the evidence that repairs a light run.
 func TestCRW824ALightRunDoesNotSupersedeAnother(t *testing.T) {
 	checks := []any{
@@ -217,6 +283,14 @@ func TestCRW824ANonBooleanTestSkippedReadsFalse(t *testing.T) {
 
 // The shape check refuses a mark the collector cannot produce: a value that is not a boolean, a true
 // one on a job that is not a go-product test leg, and a true one on a conclusion other than success.
+// crw824NonBoolean is a successful test leg whose testSkipped is the given non-boolean value, so each
+// case is its own map rather than a shared one.
+func crw824NonBoolean(value any) map[string]any {
+	entry := crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, false)
+	entry["testSkipped"] = value
+	return entry
+}
+
 func TestCRW824ShapeRefusesAMarkTheCollectorCannotProduce(t *testing.T) {
 	good := crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true)
 	if problems := ShapeProblems(cleanReview(), []any{good}, nil, nil); len(problems) != 0 {
@@ -226,9 +300,15 @@ func TestCRW824ShapeRefusesAMarkTheCollectorCannotProduce(t *testing.T) {
 	if problems := ShapeProblems(cleanReview(), []any{plain}, nil, nil); len(problems) != 0 {
 		t.Fatalf("an absent or false testSkipped must pass the shape check, got %v", problems)
 	}
+	explicitFalse := crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, false)
+	explicitFalse["testSkipped"] = false
+	if problems := ShapeProblems(cleanReview(), []any{explicitFalse}, nil, nil); len(problems) != 0 {
+		t.Fatalf("an explicit false testSkipped must pass the shape check, got %v", problems)
+	}
 	for _, entry := range []map[string]any{
-		func() map[string]any { e := good; e["testSkipped"] = "true"; return e }(),
-		func() map[string]any { e := good; e["testSkipped"] = 1; return e }(),
+		crw824NonBoolean("true"),
+		crw824NonBoolean(1),
+		crw824NonBoolean(nil),
 		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, true),
 		crw824Entry("workflow-run:600:test-1#0", "test-1", "success", 1, true),
 		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "failure", 1, true),
