@@ -180,13 +180,11 @@ func applyRolePairs(document pyjson.Object, change Change) (pyjson.Object, []str
 	}
 	existing, _ := roles.Get(change.Role).(pyjson.Object)
 	entry := pyjson.Object{}
-	if existing != nil {
-		for _, field := range existing {
-			if field.Key == "model" || field.Key == "pairs" || field.Key == "reasoningEffort" {
-				continue
-			}
-			entry = append(entry, field)
+	for _, field := range existing {
+		if field.Key == "model" || field.Key == "pairs" || field.Key == "reasoningEffort" {
+			continue
 		}
+		entry = append(entry, field)
 	}
 	if len(change.Pairs) == 1 {
 		entry = append(entry, pyjson.Field{Key: "model", Value: change.Pairs[0].Model}, pyjson.Field{Key: "reasoningEffort", Value: change.Pairs[0].Effort})
