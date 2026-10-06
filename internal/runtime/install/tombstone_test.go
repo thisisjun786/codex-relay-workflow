@@ -20,6 +20,7 @@ import (
 // left alone by remove (of the name, of the tombstone, and when clearing the way for a newer
 // runtime's removal), by the reclaim of an abandoned staging, and status says it is not ours.
 func TestATombstoneNeedsItsClaim(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -86,6 +87,7 @@ func TestATombstoneNeedsItsClaim(t *testing.T) {
 // the directory under a runtime's own name, never a tombstone for its own sake: crw install
 // remove is what finishes one.
 func TestDoctorResidueAndStatusNameOneRecoveryForATombstone(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	old := runtimeDir(h, "0.9.0", first, t)
