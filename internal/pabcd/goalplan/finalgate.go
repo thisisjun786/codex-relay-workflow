@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
@@ -246,8 +245,10 @@ func finalGateJSText(s string) string {
 	return s
 }
 
-// finalGateJSNumber is a JavaScript number as it prints in a template literal, for the schema versions this reaches.
-func finalGateJSNumber(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+// finalGateJSNumber is a JavaScript number as it prints in a template literal: JavaScript's Number::toString, which
+// switches to exponential notation at 1e21 and below 1e-6, where fixed notation would spell the schema version
+// differently from the oracle. It reuses the same-package formatter rather than a second one.
+func finalGateJSNumber(v float64) string { return steeringOpsJSNumberText(v) }
 
 // finalGateDeclaredSchemaVersion is plan.schemaVersion ?? 1.
 func finalGateDeclaredSchemaVersion(plan *Goalplan) float64 {
