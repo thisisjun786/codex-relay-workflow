@@ -35,5 +35,6 @@ current status is its latest superseding record.
 
 ## Reading and edit regions
 
-Nothing reads these files by program; Go comments that name `known-defects.md` stay as they are. A pull
-request declares only its own record file as its edit region, an `independent` region with no mechanical union.
+Nothing reads these files by program; Go comments that name `known-defects.md` stay as they are. Each pull
+request declares its own record file as an `independent` edit region, beside the other regions the change
+declares; no mechanical union is needed for the record file.
