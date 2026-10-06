@@ -283,12 +283,29 @@ func (s *checkpointStore) checkpointSplitDecisions(ctx context.Context) ([]check
 
 // checkpointIntegrations reads the effective integration observations, joined to the plan that
 // carries the project. The caller asks only when the store carries the zone.
+//
+// An ancestry observation alone is not an integration: the scheduler's own rule (dagsched
+// integratedAt, P-INT) also requires the parent's merged mark on the acceptance's event,
+// generation and revision, and no LATER observation of the same target that says the head is
+// not contained. This reads those same three conditions, so an unmarked or superseded
+// observation is not counted. It counts each acceptance once, at its earliest satisfying
+// observation, because one integration is one acceptance however many times it was observed;
+// the scheduler additionally requires every target of a multi-target node, which this count
+// does not attempt.
 func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpointProjectInstant, error) {
 	return checkpointRows(ctx, s.db,
-		"SELECT p.project_key, o.observed_at FROM dag_integration_observations o"+
+		"SELECT p.project_key, MIN(o.observed_at) FROM dag_integration_observations o"+
 			" JOIN dag_acceptances a ON a.acceptance_id = o.acceptance_id"+
 			" JOIN dag_plans p ON p.plan_id = a.plan_id"+
-			" WHERE o.is_ancestor = 1 AND COALESCE(o.reverted_by, '') = '' ORDER BY o.observation_id",
+			" JOIN assignment_marks k ON k.relationship_id = a.relationship_id AND k.mark = 'merged'"+
+			"  AND k.event_id = a.event_id AND k.execution_generation = a.execution_generation"+
+			"  AND k.revision_hash = a.revision_hash"+
+			" WHERE o.is_ancestor = 1 AND o.reverted_by IS NULL"+
+			"  AND a.head_sha IS NOT NULL AND a.head_sha <> ''"+
+			"  AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2"+
+			"   WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository"+
+			"    AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
+			" GROUP BY a.acceptance_id, p.project_key ORDER BY p.project_key",
 		nil, func(rows *sql.Rows) (checkpointProjectInstant, error) {
 			var row checkpointProjectInstant
 			return row, rows.Scan(&row.project, &row.at)
@@ -428,7 +445,8 @@ func checkpointCountsAfter(instants []checkpointProjectInstant, project string, 
 	return count
 }
 
-// checkpointCountsInWindow counts the instants inside a rolling window ending at now.
+// checkpointCountsInWindow counts the instants inside a rolling window ending at now. The window
+// is half-open at its start and closed at now, so an instant exactly at the edge counts.
 func checkpointCountsInWindow(instants []checkpointProjectInstant, project string, from, now time.Time) int {
 	count := 0
 	for _, row := range instants {
@@ -445,6 +463,18 @@ func checkpointCountsInWindow(instants []checkpointProjectInstant, project strin
 		count++
 	}
 	return count
+}
+
+// checkpointWindowStart is where a rolling window begins: its own edge, or the baseline when the
+// baseline is later. The issue makes the checkpoint record the next calculation's baseline, so a
+// window reaching behind it would keep reporting events the checkpoint already looked at and the
+// signal could never clear.
+func checkpointWindowStart(now time.Time, window time.Duration, since time.Time, hasSince bool) time.Time {
+	start := now.Add(-window)
+	if hasSince && since.After(start) {
+		return since
+	}
+	return start
 }
 
 // checkpointThresholdsOf is the thresholds a reading runs with: the defaults, overridden by the
@@ -576,18 +606,19 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 	report := CheckpointReport{Project: in.project, Reasons: []string{}, Unmeasured: []string{}}
 	since, hasSince := time.Time{}, false
 	if len(in.records) > 0 {
-		earliest, latest := in.records[0], in.records[0]
+		latest := in.records[0]
 		for _, instant := range in.records {
-			if instant.Before(earliest) {
-				earliest = instant
-			}
 			if instant.After(latest) {
 				latest = instant
 			}
 		}
 		since, hasSince = latest, true
 		report.Since = latest.UTC().Format(checkpointInstantLayout)
-		report.Counts.RunningHours = in.now.Sub(earliest).Hours()
+		// running_hours is measured from the baseline too, so recording a checkpoint clears it.
+		// A signal anchored at the project's first record would stay true forever once eight hours
+		// passed, because no later record could move it: it would report due on every reading and
+		// the tool could never say the project was up to date.
+		report.Counts.RunningHours = in.now.Sub(latest).Hours()
 	} else {
 		report.Unmeasured = append(report.Unmeasured, checkpointSignalRunningHours)
 	}
@@ -602,7 +633,7 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 		report.Unmeasured = append(report.Unmeasured, checkpointSignalIntegrations)
 	}
 
-	windowStart := in.now.Add(-checkpointNeedsChangesWindow)
+	windowStart := checkpointWindowStart(in.now, checkpointNeedsChangesWindow, since, hasSince)
 	report.Counts.NeedsChangesOrSplit2h = checkpointCountsInWindow(in.verdicts, in.project, windowStart, in.now) +
 		checkpointCountsInWindow(in.decisions, in.project, windowStart, in.now)
 
@@ -610,7 +641,7 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 		milestone, unmeasured := checkpointMilestone(in, since, hasSince)
 		report.Counts.MilestoneIntegrated = milestone
 		report.Unmeasured = append(report.Unmeasured, unmeasured...)
-		report.Counts.BacklogNet4h = checkpointBacklogNet(in)
+		report.Counts.BacklogNet4h = checkpointBacklogNet(in, since, hasSince)
 	} else {
 		report.Unmeasured = append(report.Unmeasured, checkpointSignalMilestone, checkpointSignalBacklog)
 	}
@@ -651,12 +682,15 @@ func checkpointReasons(thresholds checkpointThresholds, report *CheckpointReport
 }
 
 // checkpointMilestone counts the project's integrated milestones and reports whether the
-// reading is unmeasured: an export that carries no milestone information cannot measure it.
+// reading is unmeasured: an export that carries no milestone information cannot measure it, and
+// neither can one whose completed issues carry no completion instant, because whether the
+// milestone integrated after the baseline is then unknowable rather than zero.
 func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*int, []string) {
 	type milestone struct {
-		total     int
-		completed int
-		latest    time.Time
+		total      int
+		completed  int
+		timingMiss bool
+		latest     time.Time
 	}
 	seen := map[string]*milestone{}
 	for _, issue := range in.export.Issues {
@@ -673,7 +707,12 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 			continue
 		}
 		entry.completed++
-		if completed, ok := checkpointInstant(issue.CompletedAt); ok && completed.After(entry.latest) {
+		completed, ok := checkpointInstant(issue.CompletedAt)
+		if !ok {
+			entry.timingMiss = true
+			continue
+		}
+		if completed.After(entry.latest) {
 			entry.latest = completed
 		}
 	}
@@ -686,6 +725,9 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 		if entry.total == 0 || entry.completed != entry.total {
 			continue
 		}
+		if entry.timingMiss {
+			return nil, []string{checkpointSignalMilestone}
+		}
 		if hasSince && !entry.latest.After(since) {
 			continue
 		}
@@ -694,19 +736,19 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 	return &count, nil
 }
 
-// checkpointBacklogNet is the backlog's net change over the rolling window: the issues created
-// in it that have not left the backlog, minus the issues that left it in the window.
-func checkpointBacklogNet(in checkpointInput) *int {
-	from := in.now.Add(-checkpointBacklogWindow)
+// checkpointBacklogNet is the backlog's net change over the rolling window: the issues that
+// entered it in the window (created then) minus the issues that left it in the window (completed
+// then). An issue created and completed inside one window therefore counts zero, not minus one,
+// which is the change the backlog actually saw.
+func checkpointBacklogNet(in checkpointInput, since time.Time, hasSince bool) *int {
+	from := checkpointWindowStart(in.now, checkpointBacklogWindow, since, hasSince)
 	net := 0
 	for _, issue := range in.export.Issues {
 		if issue.Project != in.project {
 			continue
 		}
 		if created, ok := checkpointInstant(issue.CreatedAt); ok && !created.Before(from) && !created.After(in.now) {
-			if !checkpointCompletedState(issue.State) {
-				net++
-			}
+			net++
 		}
 		if completed, ok := checkpointInstant(issue.CompletedAt); ok && !completed.Before(from) && !completed.After(in.now) {
 			net--

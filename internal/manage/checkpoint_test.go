@@ -119,14 +119,33 @@ func (f *checkpointFixture) decision(eventID, relationshipID, decision, at strin
 		eventID, relationshipID, string(receipt), at, at)
 }
 
-// integration records one effective integration of a node of a project.
-func (f *checkpointFixture) integration(planID, project, acceptanceID, at string) {
-	f.exec("INSERT INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES (?,?,'parent',?)",
+// acceptance records one active acceptance of a plan's node, which an integration observation is
+// made about. A landed merge carries the parent's merged mark on the acceptance's event,
+// generation and revision, which the scheduler's integration rule requires beside the
+// observation.
+func (f *checkpointFixture) acceptance(planID, project, acceptanceID, head, at string) {
+	f.exec("INSERT OR IGNORE INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES (?,?,'parent',?)",
 		planID, project, checkpointAt(0))
-	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,'node','manifest',?,1,'event','revision','criteria','verified','verified','turn','{}','parent',0,?,'active')",
-		acceptanceID, planID, "relationship-"+acceptanceID, at)
-	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES (?,?,'owner/repo','dev','subject','tip',1,'ancestry',1,?)",
-		"observation-"+acceptanceID, acceptanceID, at)
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,'node','manifest',?,1,'event','revision','criteria','verified',?,'verified','turn','{}','parent',0,?,'active')",
+		acceptanceID, planID, "relationship-"+acceptanceID, head, at)
+}
+
+// mark records the parent's merged mark on an acceptance, which is what makes an observation an
+// integration rather than a mere ancestry reading.
+func (f *checkpointFixture) mark(acceptanceID, at string) {
+	f.exec("INSERT INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?,'merged','event',1,'revision','{}','parent',?)",
+		"relationship-"+acceptanceID, at)
+}
+
+// observation records one ancestry observation of an acceptance in the target branch. seq orders
+// the observations of one acceptance and target, which is how a later one supersedes an earlier.
+func (f *checkpointFixture) observation(acceptanceID, at string, seq int, isAncestor bool) {
+	flag := 0
+	if isAncestor {
+		flag = 1
+	}
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES (?,?,'owner/repo','dev','subject','tip',?,'ancestry',?,?)",
+		fmt.Sprintf("observation-%s-%d", acceptanceID, seq), acceptanceID, flag, seq, at)
 }
 
 // checkpointManageStateDir is where the manage configuration's state directory falls with
@@ -566,6 +585,124 @@ func TestCheckpointStoreWithoutTheDAGZoneIsStillRead(t *testing.T) {
 	}
 	if report.Counts.MergesSinceCheckpoint != 1 {
 		t.Errorf("the frozen tables were not read: %+v", report.Counts)
+	}
+}
+
+// An ancestry observation is not an integration until the parent's merged mark stands on the
+// acceptance's event, generation and revision; one marked acceptance is counted once however many
+// times it was observed in one target.
+func TestCheckpointIntegrationCountRequiresTheMergedMark(t *testing.T) {
+	unmarked := checkpointNewFixture(t)
+	unmarked.scope("relationship-1", "project-1")
+	unmarked.acceptance("plan-1", "project-1", "acceptance-1", "head-1", checkpointAt(1))
+	unmarked.observation("acceptance-1", checkpointAt(2), 1, true)
+	unmarked.observation("acceptance-1", checkpointAt(3), 2, true)
+	unmarked.close()
+
+	report := checkpointReport(t, checkpointRead(t, unmarked, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 0 {
+		t.Fatalf("an unmarked observation counted as an integration: %+v", report.Counts)
+	}
+
+	marked := checkpointNewFixture(t)
+	marked.scope("relationship-1", "project-1")
+	marked.acceptance("plan-1", "project-1", "acceptance-1", "head-1", checkpointAt(1))
+	marked.mark("acceptance-1", checkpointAt(2))
+	marked.observation("acceptance-1", checkpointAt(3), 1, true)
+	marked.observation("acceptance-1", checkpointAt(4), 2, true)
+	marked.close()
+
+	report = checkpointReport(t, checkpointRead(t, marked, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 1 {
+		t.Fatalf("a marked acceptance was not counted once: %+v", report.Counts)
+	}
+}
+
+// A later observation saying the head is not contained supersedes the earlier positive one, so
+// the acceptance is not integrated.
+func TestCheckpointIntegrationCountIsClearedByALaterNegativeObservation(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.acceptance("plan-1", "project-1", "acceptance-1", "head-1", checkpointAt(1))
+	f.mark("acceptance-1", checkpointAt(2))
+	f.observation("acceptance-1", checkpointAt(3), 1, true)
+	f.observation("acceptance-1", checkpointAt(4), 2, false)
+	f.close()
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 0 {
+		t.Fatalf("a superseded observation counted as an integration: %+v", report.Counts)
+	}
+}
+
+// An issue created and completed inside the backlog window changes the backlog by nothing, so it
+// neither adds nor subtracts.
+func TestCheckpointBacklogNetCountsCreationAndCompletionOnce(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Backlog\"},"+
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Completed\",\"completedAt\":\""+checkpointAt(22)+"\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 1 {
+		t.Fatalf("the backlog net is %v, want 1 (one entered, one entered and left)", report.Counts.BacklogNet4h)
+	}
+}
+
+// A completed milestone whose completion instant is unknown cannot be compared with the baseline,
+// so the reading is unmeasured rather than a measured zero.
+func TestCheckpointMilestoneWithoutCompletionTimeIsUnmeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "record")
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Completed\",\"milestone\":\"M1\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.MilestoneIntegrated != nil {
+		t.Fatalf("a milestone without completion timing was measured: %+v", report.Counts)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
+		t.Errorf("the milestone reading is not unmeasured: %+v", report.Unmeasured)
+	}
+}
+
+// A later checkpoint record clears running_hours and the rolling 2h window: both are anchored at
+// the baseline, so a project that was just checked is not due again for the same events.
+func TestCheckpointRecordClearsTheRunningHoursAndWindowSignals(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	for i := 0; i < 3; i++ {
+		f.verdict(fmt.Sprintf("event-%d", i), "relationship-1", "needs_changes", checkpointAt(23))
+	}
+	f.close()
+
+	// An old record: running_hours is past its threshold and the verdicts are inside the window.
+	f.record("project-1", checkpointAt(10), "an old checkpoint")
+	before := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if !checkpointHasReason(before, checkpointSignalRunningHours) {
+		t.Fatalf("running_hours did not fire on an old record: %+v", before)
+	}
+	if !checkpointHasReason(before, checkpointSignalNeedsChanges) {
+		t.Fatalf("the 2h window did not fire: %+v", before)
+	}
+
+	// A record at the reading instant clears both: the elapsed time is zero and the window starts
+	// at the baseline, which is after the verdicts.
+	f.record("project-1", checkpointAt(24), "a fresh checkpoint")
+	after := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if checkpointHasReason(after, checkpointSignalRunningHours) {
+		t.Errorf("running_hours stayed due after a fresh record: %+v", after)
+	}
+	if checkpointHasReason(after, checkpointSignalNeedsChanges) {
+		t.Errorf("the 2h window kept events the checkpoint already saw: %+v", after)
+	}
+	if after.Counts.NeedsChangesOrSplit2h != 0 {
+		t.Errorf("needs_changes_or_split_2h = %d, want 0", after.Counts.NeedsChangesOrSplit2h)
 	}
 }
 
