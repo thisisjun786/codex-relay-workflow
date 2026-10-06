@@ -23,6 +23,7 @@ import (
 // then refuses with nothing written; a rollback naming a directory the record lists still
 // returns to it (decision 38).
 func TestOutgoingIsWrittenOnlyByAPromotion(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second, third := archive(t, "0.9.0", ""), archive(t, "0.9.1", ""), archive(t, "0.9.2", "")
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -74,6 +75,7 @@ func TestOutgoingIsWrittenOnlyByAPromotion(t *testing.T) {
 // and replaces them (one entry per location), and a run that then fails drops them with the
 // directory it releases.
 func TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, next := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -128,6 +130,7 @@ func TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn(t *testing.T) {
 // a moving rollback does: the selection, unless an interrupted move left the pointer on another
 // recorded runtime, which is then the one a bare rollback returns the host to.
 func TestAPromotionRecordsTheRuntimeThePointerLeaves(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second, third := archive(t, "0.9.0", ""), archive(t, "0.9.1", ""), archive(t, "0.9.2", "")
 	old, next := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)

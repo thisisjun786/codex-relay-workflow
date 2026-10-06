@@ -231,7 +231,7 @@ func master(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY type, name, tbl_name")
+	rows, err := db.Query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name, tbl_name")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +242,12 @@ func master(t *testing.T, path string) []string {
 		var text sql.NullString
 		if err := rows.Scan(&kind, &name, &table, &text); err != nil {
 			t.Fatal(err)
+		}
+		// The additive DAG zone is not part of the frozen v1 schema this catalog describes, and
+		// membership is the frozen script's, not a name prefix: the merge-lane tables the zone
+		// appends carry no dag_ prefix (testsupport.IsV1Table).
+		if !testsupport.IsV1Table(t, table) {
+			continue
 		}
 		result = append(result, kind+"\x00"+name+"\x00"+table+"\x00"+text.String)
 	}
