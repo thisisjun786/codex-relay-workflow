@@ -62,6 +62,11 @@ type Target struct {
 func registry() []Target {
 	return []Target{
 		echoTarget(),
+		shellwriteTarget(),
+		memorygateTarget(),
+		doctorTarget(),
+		worktreeDelTarget(),
+		spawnTarget(),
 	}
 }
 

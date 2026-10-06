@@ -215,14 +215,14 @@ func auditPrompt(b *auditBundle) string {
 	out.WriteString(strings.TrimRight(auditPromptTemplate, "\n"))
 	out.WriteString("\n\n## Mode\n\n")
 	if b.Mode == auditModePR {
-		out.WriteString("This is a pull request audit. `candidate/diff.patch` is the change that was merged, `candidate/pr.md` is the description its author wrote, and `candidate/tree/` is the whole source tree as it stands after the merge, for reading the code around the change.")
+		out.WriteString("This is a pull request audit. `" + auditPRDiffFile + "` is the change that was merged, `" + auditPRTaskFile + "` carries the description its author wrote and the criteria it is judged against, and `" + auditPRFilesDir + "/` holds the content of each changed file at the merge commit, for reading the code around the change.")
 	} else {
 		out.WriteString("This is a package audit. There is no single change to review: `src/` is the whole package at the head, tests and testdata included, `criteria.json` is the criteria it is judged against, `task.md` names the package and those criteria, `reference/` holds the port source it came from, and `known-defects/` holds the defects this repository already records. A file too large to copy is listed in `src/large-files.txt` with its size and sha256 instead. Read the package as it stands and judge it.")
 	}
 	if b.CriteriaUnavailable {
 		out.WriteString("\n\nThis bundle declares `criteria_unavailable`. ")
 		if b.Mode == auditModePR {
-			out.WriteString("Judge against the issue text under `inputs/` and the description in `candidate/pr.md`, and say in each note which of the two you used.")
+			out.WriteString("Judge against the description in `" + auditPRTaskFile + "` and the change in `" + auditPRDiffFile + "` and `" + auditPRFilesDir + "/`, and say in each note which of the two you used.")
 		} else {
 			out.WriteString("There are no criteria to read and no description to fall back on: judge the package against `task.md`, the source under `src/` and what the package itself shows, and say in each note which file or symbol you used.")
 		}
@@ -376,16 +376,21 @@ var auditCommand = Command{Name: "audit", Summary: "grade an audit bundle and re
 func init() { Register(auditCommand) }
 
 // auditUsage is what the audit command prints: the grade line the command shipped with,
-// then the package and round lines this piece adds.
+// then the package, round, pr, report and drafts lines the pieces after it add.
 const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--phase X] [--round R]\n" +
 	"       crw manage audit package --round R [--next N] [--head SHA]\n" +
-	"       crw manage audit round {start,status} --name R"
+	"       crw manage audit round {start,status} --name R\n" +
+	"       crw manage audit pr [--max N] [--dry-run]\n" +
+	"       crw manage audit report\n" +
+	"       crw manage audit drafts [--round R | --since T] [--severity P1]"
 
 // auditRun is crw manage audit. It dispatches the grade subcommand, which grades one bundle
 // the caller already assembled, the package subcommand, which audits the packages a round
-// still holds pending or failed, and the round subcommand, which starts a round and reports
-// its progress. The help flags keep their own path so the usage stays reachable without a
-// subcommand.
+// still holds pending or failed, the round subcommand, which starts a round and reports its
+// progress, the pr subcommand, which selects, bundles and grades newly merged pull requests,
+// the report subcommand, which rebuilds the report from the ledger, and the drafts
+// subcommand, which turns the recorded defects into follow-up issue drafts. The help flags
+// keep their own path so the usage stays reachable without a subcommand.
 func auditRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditUsage)
@@ -401,9 +406,15 @@ func auditRun(ctx context.Context, e *Env, args []string) int {
 		return auditRunPackage(ctx, e, args[1:])
 	case "round":
 		return auditRunRound(ctx, e, args[1:])
+	case "pr":
+		return auditPRRun(ctx, e, args[1:])
+	case "report":
+		return auditReportRun(ctx, e, args[1:])
+	case "drafts":
+		return auditRunDrafts(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
-	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'round')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'pr', 'report', 'round', 'drafts')\n", args[0])
 	return usageExit
 }
 
