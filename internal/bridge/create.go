@@ -8,7 +8,16 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"path/filepath"
+	"time"
 )
+
+// createAckBound is the acknowledgement bound every App Server call of the create path uses. Under
+// load the host's answers to thread/start, thread/name/set and turn/start, and to the profile
+// reads this path makes (config/read, plugin/installed, mcpServerStatus/list), have taken longer
+// than the default 20 s: three of about eighty creations on 2026-10-06 hit it, and one answered
+// after 25 s. A creation whose answer is lost leaves an outcome_unknown receipt although the host
+// did the work, so the create path waits longer than every other caller of the client.
+const createAckBound = 60 * time.Second
 
 func nullable(value string) any {
 	if value == "" {
@@ -27,6 +36,8 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (ledger.Rece
 	var watch *appserver.TurnWatch
 	var result ledger.Receipt
 	defer func() { finishSubscription(watch, result, true) }()
+	// One bound on this path's context covers every call it makes, before and inside the mutation.
+	ctx = appserver.WithAckBound(ctx, createAckBound)
 	if err := nonempty(in.CWD, "cwd", 100000); err != nil {
 		return nil, err
 	}

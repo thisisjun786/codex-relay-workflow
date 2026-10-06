@@ -147,6 +147,7 @@ func Argv(words ...string) []byte {
 // to the runtime is closed to every uid it holds by its mode, owner and group (todo 40 review:
 // such a working directory may itself be inside, whatever the relative path names).
 func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
+	// sequential: replaces the package's readExe and readCwd and the process-owner seam.
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file, so an unreadable one cannot be made")
 	}

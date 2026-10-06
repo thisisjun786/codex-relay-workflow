@@ -18,6 +18,7 @@ import (
 // commands that restore it in place, and once they have run (here through sh, as an operator
 // runs them) the same install answers alreadyInstalled.
 func TestADamagedRuntimeIsNotInstalled(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("tar"); err != nil {
 		t.Skip("no tar to extract crw with")
 	}

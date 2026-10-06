@@ -165,7 +165,8 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 		c.retire(ws)
 		return nil, err
 	}
-	ack, cancel := context.WithTimeout(ctx, c.bounds.Ack)
+	ackBound := c.ackBound(ctx)
+	ack, cancel := context.WithTimeout(ctx, ackBound)
 	defer cancel()
 	var result outcome
 	select {
@@ -180,7 +181,7 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	// the bridge records ordinary failures as receipts, but must propagate cancellation.
 	if err := ack.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &PhaseTimeout{method, "ack", c.bounds.Ack}
+			return nil, &PhaseTimeout{method, "ack", ackBound}
 		}
 		return nil, fmt.Errorf("%s: response unavailable: %w", method, err)
 	}
