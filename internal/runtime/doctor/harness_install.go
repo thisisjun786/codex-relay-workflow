@@ -33,7 +33,7 @@ const harnessInstallSessionsDir = ".crw/sessions"
 
 // harnessInstallCheck is one install-root check, the only check shape the oracle builds there.
 func harnessInstallCheck(severity HarnessSeverity, evidence, repair string) HarnessCheck {
-	return HarnessCheck{Name: "install-root", Severity: severity, Evidence: evidence, Repair: repair}
+	return HarnessCheck{Name: "install-root", Severity: severity, Evidence: evidence, Repair: harnessReportRepair(repair)}
 }
 
 // HarnessPabcdCheck is checkPabcdHealth (doctor.ts:166-181): the sessions directory of the
@@ -72,7 +72,7 @@ func HarnessPabcdCheck(projectRoot string) HarnessCheck {
 			Name:     "pabcd-state",
 			Severity: HarnessWarn,
 			Evidence: fmt.Sprintf("%d corrupt session file(s): %s", len(corrupt), strings.Join(corrupt, ", ")),
-			Repair:   "crw pabcd reset --state",
+			Repair:   harnessReportRepair("crw pabcd reset --state"),
 		}
 	}
 	return HarnessCheck{Name: "pabcd-state", Severity: HarnessPass, Evidence: fmt.Sprintf("%d session file(s), all parseable", total)}

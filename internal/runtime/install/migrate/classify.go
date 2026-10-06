@@ -207,7 +207,7 @@ func (c *classifier) classifyChild(scope Scope, dir *Dir, dirPath, name string, 
 		return refuse(ReasonLocked, path, row.reason)
 	}
 	if typ == unix.S_IFREG && !classifyUserTree(childPath) {
-		if reason := classifyIntermediate(name); reason != "" {
+		if reason := classifyIntermediate(scope, dirPath, name); reason != "" {
 			return c.skipItem(scope, dir, childPath, name, reason)
 		}
 	}
@@ -544,12 +544,15 @@ func classifyDirMode(d *Dir) (fs.FileMode, error) {
 }
 
 // classifyIntermediate names the producer-intermediate shape of a file in a producer-owned directory, or "" when the name is
-// ordinary. The older run's .migrate-<26>-<n>.tmp is recognized first, before the generic .tmp rule, and is only ever reported.
-func classifyIntermediate(name string) string {
+// ordinary. The older run's .migrate-<26>-<n>.tmp is recognized first, before the producer shapes, and is only ever reported.
+// The producer shapes are the exact temporaries row 105 of docs/port-cxc/state-migration.md names, each matched only inside
+// the directory of the producer that writes it (inventoryIntermediateRows), so a durable record whose own name holds a
+// temp-like substring (for example bg/job.tmp-live.json) is judged by its own row instead of being skipped here.
+func classifyIntermediate(scope Scope, dirPath, name string) string {
 	if _, ok := tempRun(name); ok {
 		return inventoryReasonOldTemp
 	}
-	if strings.HasSuffix(name, tempSuffix) || strings.Contains(name, ".tmp-") || strings.HasPrefix(name, ".probe-") {
+	if inventoryIntermediateShape(scope, dirPath, name) {
 		return inventoryReasonIntermediate
 	}
 	return ""
@@ -570,7 +573,8 @@ func classifyEvidenceTree(path string) bool {
 // classifyProducerTemp reports whether name is exactly the temporary shape a producer writes beside its final file: the CRW
 // shape "." + final + "." + 26 base32 characters + ".tmp" (crwdir/atomic.go:92) and the CXC shapes final + "." + pid + "." +
 // ms + ".tmp" and final + "." + pid + "." + uuid + ".tmp" (subagent-evidence.ts:221, state.ts:387,625). Every other ".tmp"
-// name is ordinary data.
+// name is ordinary data. The final-name part must be non-empty, so a user file such as .123.1760000000000.tmp (an empty final
+// name) stays ordinary data; a dotfile final name such as .receipt.json is not empty and keeps its previous disposition.
 func classifyProducerTemp(name string) bool {
 	core, ok := strings.CutSuffix(name, tempSuffix)
 	if !ok || core == "" {
@@ -589,7 +593,7 @@ func classifyProducerTemp(name string) bool {
 		return true
 	}
 	if classifyMillis(last) {
-		if _, pid, cut := classifyCutLast(head, "."); cut && classifyPid(pid) {
+		if base, pid, cut := classifyCutLast(head, "."); cut && base != "" && classifyPid(pid) {
 			return true
 		}
 	}
