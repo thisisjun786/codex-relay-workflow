@@ -78,7 +78,7 @@ func (r *c6FailReader) Read(p []byte) (int, error) {
 	return 0, io.ErrUnexpectedEOF
 }
 
-const c6VerbList = "freeze,plan,receipt,evidence,memory,reset,config,scan,review-round,metric,divergence,loop"
+const c6VerbList = "freeze,plan,receipt,evidence,memory,reset,config,scan,review-round,metric,divergence,loop,orchestrate"
 
 // TestPabcdC6Verbs drives the three verb rows this issue adds through the dispatcher: the
 // argv/stdin/stream/exit mapping of cli.ts's metric, divergence and review-round branches

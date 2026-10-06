@@ -3,9 +3,14 @@
 // (:367-381), resolvedConfigPath (:383-385), verifyCodexConfig (:387-410) and retrustHooks
 // (:412-477), with the option parser and the answer of the cxc-ops/src/cli.ts hooks case
 // (:40-71 parseHookOptions and resolvePluginKey, :96-115). It writes the trusted_hash of every hook
-// a plugin declares into Codex's config.toml, after an exclusive timestamped backup, and rolls back
-// from that backup when the write or its verification fails. Nothing here is a hook, an installer
-// step or a SessionStart path: only the user runs "crw doctor retrust" (decision 8, J4).
+// a plugin declares into Codex's config.toml. Nothing here is a hook, an installer step or a
+// SessionStart path: only the user runs "crw doctor retrust" (decision 8, J4).
+//
+// CRW-844 replaced the oracle's write-then-verify-then-roll-back with a swap-then-verify
+// publication (crwdir.PublishSwap): the lock is taken first, next is read from the locked file and
+// verified in a temporary Codex home before anything is published, and the file the publication
+// displaced is kept as the backup instead of being copied beforehand. There is no rollback path
+// any more, because nothing unverified is ever visible at the real path.
 //
 // Two name rules apply (decision 1, contract/schema/cxc/name-substitution.json): the CLI table maps
 // cxc hooks retrust to crw doctor retrust, and R29 renames the component word, so the usage line and
@@ -15,12 +20,15 @@
 // Three behaviours are deliberately not the oracle's, each one line in
 // docs/port-cxc/known-defects/CRW-362.md:
 //
-//   - The write publishes through crwdir.Publish (CRW-427) instead of the oracle's writeAtomic, so a
-//     config.toml the process cannot open for writing is refused rather than replaced.
-//   - The write and the rollback both apply a compare-and-swap against the bytes they read, so a
-//     settings writer that published in between is reported rather than silently replaced (a
-//     settings data-loss fix; the oracle writes unconditionally).
-//   - A failure after the backup names the backup it left behind (J4, 2026-10-06).
+//   - The write publishes through crwdir.PublishSwap (CRW-427's rule, kept) instead of the oracle's
+//     writeAtomic, so a config.toml the process cannot open for writing is refused rather than
+//     replaced.
+//   - The write is serialized against every other CRW writer of config.toml and refuses to publish
+//     over bytes that changed since it read them, so a settings writer that published in between is
+//     reported rather than silently replaced (a settings data-loss fix; the oracle writes
+//     unconditionally).
+//   - The backup is the very file the publication displaced, and it is never deleted, so a failure
+//     always names the file that holds the displaced content (J4, 2026-10-06).
 //
 // Windows and WSL are out of the port scope (inventory.md: win-exec.ts and wsl.ts are OUT), so the
 // codex invocation is the POSIX one: CODEX_BIN when it holds a non-blank value, else the codex on
@@ -52,13 +60,38 @@ import (
 // manifest (cli.ts:64), kept verbatim as hookTrustEntriesNullDocument keeps its sibling.
 const hookTrustRetrustNullName = "Cannot read properties of null (reading 'name')"
 
+// hookTrustRetrustLockWait is how long retrust waits for another CRW writer's sidecar lock before it
+// refuses. It is brief on purpose: a user-run command should not hang behind another writer, and the
+// refusal names the reason.
+const hookTrustRetrustLockWait = 2 * time.Second
+
 // HookTrustRetrustResult is RetrustResult (hook-trust.ts:64-68): what one retrust changed, and the
 // backup it left behind. Updated counts the entries whose trusted_hash was rewritten, Appended the
 // sections that were inserted for hooks the config did not mention.
+//
+// CRW-844 adds the publication state the report needs: Planned is set once the plan exists, so a
+// refusal that comes after it still reports the planned counts; Published records that the exchange
+// ran; Conflict records that the displaced content was not what retrust read; LateWrite records that
+// config.toml held something else again when it was read back; Warning carries a post-publication
+// failure that is counted as written.
 type HookTrustRetrustResult struct {
 	Updated    int
 	Appended   int
 	BackupPath string
+	ConfigPath string
+	Planned    bool
+	Published  bool
+	Conflict   bool
+	LateWrite  bool
+	Warning    string
+	// DisplacedAt names the file that holds the content the publication displaced when the backup
+	// path could not be filled (a failure after the exchange). It is empty when the backup path
+	// holds it, which is every other case.
+	DisplacedAt string
+	// UpdatedKeys and AppendedKeys name the items the plan rewrote and inserted, in listing order,
+	// so the report can print them for a success, a refusal that had a plan, and a conflict alike.
+	UpdatedKeys  []string
+	AppendedKeys []string
 }
 
 // HookTrustRetrustRun is one runner answer (hook-trust.ts:96-100): the exit status, the two streams,
@@ -144,39 +177,6 @@ func hookTrustRetrustBackupPath(target string, now time.Time) string {
 	return target + ".bak-" + strings.ReplaceAll(stamp, ":", "-")
 }
 
-// hookTrustRetrustCopyExclusive is copyFileSync(target, backup, COPYFILE_EXCL) (hook-trust.ts:464):
-// the backup is created exclusively, so an existing file is never overwritten, and it keeps the
-// target's permission bits. A backup that could not be written whole is removed rather than left as
-// a partial file an operator could mistake for a usable recovery copy.
-func hookTrustRetrustCopyExclusive(target, backup string) error {
-	info, err := os.Stat(target)
-	if err != nil {
-		return err
-	}
-	raw, err := os.ReadFile(target)
-	if err != nil {
-		return err
-	}
-	file, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	fail := func(err error) error {
-		_ = file.Close()
-		if rmErr := os.Remove(backup); rmErr != nil {
-			return errors.Join(err, rmErr)
-		}
-		return err
-	}
-	if _, err := file.Write(raw); err != nil {
-		return fail(err)
-	}
-	if err := file.Sync(); err != nil {
-		return fail(err)
-	}
-	return file.Close()
-}
-
 // hookTrustRetrustCodexBinary is resolveCodexInvocation on POSIX (codex-bin.ts:112), through the
 // package's own resolver so the case-insensitive lookup and the JavaScript-style trimming stay the
 // same as everywhere else: CODEX_BIN when it holds a non-blank value, else the bare codex on PATH.
@@ -216,60 +216,85 @@ func hookTrustRetrustVerify(codexHome string, runner HookTrustRetrustRunner) err
 	return errors.New("codex features list verification failed: " + detail)
 }
 
-// hookTrustRetrustUnchanged is the compare-and-swap the repository's other settings writer applies
-// (internal/role/registration.go registrationUnchanged): it answers an error unless target still
-// holds the exact bytes expected, so a settings writer that published in between is reported rather
-// than silently replaced with stale content (a settings data-loss fix over the oracle, which writes
-// unconditionally; docs/port-cxc/known-defects/CRW-362.md).
-func hookTrustRetrustUnchanged(target, expected string) error {
-	current, err := os.ReadFile(target)
-	if err != nil {
-		return err
+// hookTrustRetrustVerifyNext proves that next is a config Codex still accepts, before it is
+// published. It is the oracle's verifyCodexConfig (hook-trust.ts:387-410) and its post-write
+// diagnoseHookTrust check, moved ahead of the publication (CRW-844): a temporary CODEX_HOME holding
+// only config.toml is built under TMPDIR, codex features list runs against it, and the hook trust is
+// diagnosed there with the real plugin root. A failure refuses without writing, so no unverified
+// config is ever visible at the real path and no rollback path is needed. The refusal text is the
+// issue's: "pre-write verification failed ...; config.toml unchanged".
+func hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next string, runner HookTrustRetrustRunner) error {
+	refuse := func(detail string) error {
+		return errors.New("pre-write verification failed: " + detail + "; config.toml unchanged")
 	}
-	if string(current) != expected {
-		return errors.New("config.toml changed while retrust was running")
+	temp, err := os.MkdirTemp("", "crw-retrust-verify-")
+	if err != nil {
+		return refuse(err.Error())
+	}
+	defer func() { _ = os.RemoveAll(temp) }()
+	if err := os.WriteFile(filepath.Join(temp, "config.toml"), []byte(next), 0o600); err != nil {
+		return refuse(err.Error())
+	}
+	if err := hookTrustRetrustVerify(temp, runner); err != nil {
+		return refuse(err.Error())
+	}
+	results, err := DiagnoseHookTrust(temp, pluginRoot, pluginKey)
+	if err != nil {
+		return refuse(err.Error())
+	}
+	var failed []string
+	for _, item := range results {
+		if item.Status != "trusted" {
+			failed = append(failed, item.Key)
+		}
+	}
+	if len(failed) > 0 {
+		return refuse("post-write verification failed for " + strings.Join(failed, ", "))
 	}
 	return nil
 }
 
-// hookTrustRetrustReplace publishes next only while target is unchanged.
-func hookTrustRetrustReplace(target, original, next string) error {
-	if err := hookTrustRetrustUnchanged(target, original); err != nil {
-		return err
-	}
-	return crwdir.Publish(target, []byte(next))
-}
-
-// hookTrustRetrustRollback restores target from backup after a failed write or verification, and
-// answers the failure the caller reports. It restores only while target still holds the bytes the
-// write published: a settings writer that published in between is never silently replaced, and the
-// backup is kept instead (a settings data-loss fix over the oracle, which restores unconditionally;
-// docs/port-cxc/known-defects/CRW-362.md). A rollback that does not happen names the backup it kept
-// (J4, 2026-10-06): the message ends with " (restored from backup <path>)", or with
-// " (rollback failed: <error>; backup kept at <path>)".
-func hookTrustRetrustRollback(target, backup, published string, cause error) error {
-	raw, err := os.ReadFile(backup)
-	if err == nil {
-		if err = hookTrustRetrustUnchanged(target, published); err == nil {
-			err = crwdir.Publish(target, raw)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("%w (rollback failed: %v; backup kept at %s)", cause, err, backup)
-	}
-	return fmt.Errorf("%w (restored from backup %s)", cause, backup)
-}
-
-// HookTrustRetrust is retrustHooks (hook-trust.ts:412-477): rewrite the trusted_hash of every hook
-// the plugin at pluginRoot declares, in the config.toml of codexHome. It answers the result, the
-// diagnosis it verified with (so the caller does not read the config a second time), and an error.
+// HookTrustRetrust is retrustHooks (hook-trust.ts:412-477) with CRW-844's swap-then-verify
+// publication: rewrite the trusted_hash of every hook the plugin at pluginRoot declares, in the
+// config.toml of codexHome. It answers the result, the diagnosis the report prints, and an error.
+//
+// The order is the issue's answer, and it is what makes the data-loss fix real:
+//
+//   - the sidecar lock is taken first, so every CRW writer of config.toml is serialized and a
+//     concurrent one is refused rather than raced;
+//   - config.toml (B) is read inside the lock and next is computed from B only;
+//   - next is verified in a temporary Codex home before anything is published, so an unverified
+//     config is never visible at the real path and there is no rollback path;
+//   - crwdir.PublishSwap exchanges the temp file with the target atomically and keeps the displaced
+//     file as the backup. A displaced file whose bytes differ from B is a non-cooperative writer
+//     that saved in between: its content stays in the backup, the target holds retrust's content,
+//     nothing is exchanged back, and the conflict is reported with both paths;
+//   - a sync-only failure is a *crwdir.PublishedError: the publication counts as done and the
+//     failure is reported as a warning;
+//   - config.toml is read back, and a value that is not next is reported and left in place.
 //
 // The refusals, in the oracle's order and words: a missing config.toml; a plugin that declares no
 // synchronous command hooks; a duplicate exact section header; more than one, or no, trusted_hash in
 // one such section; no existing entry at all unless bootstrapOK; and an existing entry none of whose
-// recorded hashes matches its recomputed hash (the safety pin). The backup is made, exclusively,
-// before the write, and both the write and the rollback go through crwdir.Publish.
+// recorded hashes matches its recomputed hash (the safety pin). Planned is set once the plan exists,
+// so a refusal after that point still reports the planned counts.
 func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool, runner HookTrustRetrustRunner, env host.LookupEnv, now time.Time) (HookTrustRetrustResult, []HookTrustResult, error) {
+	return hookTrustRetrustWith(codexHome, pluginRoot, pluginKey, bootstrapOK, runner, env, now, nil)
+}
+
+// hookTrustRetrustSeams is the publication a test stages, a field rather than a package-level
+// variable (the idiom orchestrateCommitSeams uses): nil means the real crwdir.PublishSwap. It exists
+// because the last check and the exchange are two steps inside one call, so a test cannot otherwise
+// put a save between them; crwdir's own tests prove the real behaviour at every step.
+type hookTrustRetrustSeams struct {
+	publish func(target string, expected, next []byte, backupPath string) ([]byte, error)
+}
+
+func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK bool, runner HookTrustRetrustRunner, env host.LookupEnv, now time.Time, seams *hookTrustRetrustSeams) (HookTrustRetrustResult, []HookTrustResult, error) {
+	publish := crwdir.PublishSwap
+	if seams != nil && seams.publish != nil {
+		publish = seams.publish
+	}
 	configPath := filepath.Join(codexHome, "config.toml")
 	if _, err := os.Stat(configPath); err != nil {
 		return HookTrustRetrustResult{}, nil, errors.New("missing " + configPath)
@@ -278,6 +303,12 @@ func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool,
 	if err != nil {
 		return HookTrustRetrustResult{}, nil, err
 	}
+	lock, err := crwdir.LockConfig(targetPath, hookTrustRetrustLockWait)
+	if err != nil {
+		return HookTrustRetrustResult{}, nil, err
+	}
+	defer lock.Release()
+	targetPath = lock.Target
 	raw, err := os.ReadFile(targetPath)
 	if err != nil {
 		return HookTrustRetrustResult{}, nil, err
@@ -293,6 +324,7 @@ func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool,
 
 	var replacements []hookTrustRetrustReplacement
 	var missing []HookTrustEntry
+	var updatedKeys, appendedKeys []string
 	existingCount, matchingCount := 0, 0
 	for _, entry := range expected {
 		sections := hookTrustTomlExactHookSections(original, entry.Key)
@@ -301,6 +333,7 @@ func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool,
 		}
 		if len(sections) == 0 {
 			missing = append(missing, entry)
+			appendedKeys = append(appendedKeys, entry.Key)
 			continue
 		}
 		existingCount++
@@ -318,13 +351,25 @@ func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool,
 		lineStart := section.BodyStart + hashes[0].Start
 		valueStart := lineStart + strings.Index(hashes[0].Text, "\"") + 1
 		replacements = append(replacements, hookTrustRetrustReplacement{valueStart, valueStart + len(hashes[0].Value), entry.Hash})
+		updatedKeys = append(updatedKeys, entry.Key)
 	}
 
+	// The plan exists from here on, so a refusal below reports the items it would have changed.
+	backupPath := hookTrustRetrustBackupPath(targetPath, now)
+	result := HookTrustRetrustResult{
+		Updated:      len(replacements),
+		Appended:     len(missing),
+		BackupPath:   backupPath,
+		ConfigPath:   targetPath,
+		Planned:      true,
+		UpdatedKeys:  updatedKeys,
+		AppendedKeys: appendedKeys,
+	}
 	if existingCount == 0 && !bootstrapOK {
-		return HookTrustRetrustResult{}, nil, errors.New("no existing hook trust entries match this plugin key; pass --bootstrap-ok to initialize trust")
+		return result, nil, errors.New("no existing hook trust entries match this plugin key; pass --bootstrap-ok to initialize trust")
 	}
 	if existingCount > 0 && matchingCount == 0 {
-		return HookTrustRetrustResult{}, nil, errors.New("safety pin failed: no existing hook trust entry matches its recomputed hash")
+		return result, nil, errors.New("safety pin failed: no existing hook trust entry matches its recomputed hash")
 	}
 
 	next := original
@@ -335,40 +380,59 @@ func HookTrustRetrust(codexHome, pluginRoot, pluginKey string, bootstrapOK bool,
 	}
 	next = hookTrustRetrustInsertMissingSections(next, missing)
 
-	// The oracle backs the file up before it writes, and so does this. The compare-and-swap runs
-	// first, so a settings writer that published since the read is reported before a backup is made
-	// for bytes that are already stale.
-	if err := hookTrustRetrustUnchanged(targetPath, original); err != nil {
-		return HookTrustRetrustResult{}, nil, err
+	// Nothing is published before next is proven good in a temporary Codex home. A refusal here
+	// leaves config.toml exactly as it was, so there is no rollback and no unverified publication.
+	if err := hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next, runner); err != nil {
+		return result, nil, err
 	}
-	backupPath := hookTrustRetrustBackupPath(targetPath, now)
-	if err := hookTrustRetrustCopyExclusive(targetPath, backupPath); err != nil {
-		return HookTrustRetrustResult{}, nil, err
+	displaced, err := publish(targetPath, raw, []byte(next), backupPath)
+	if err != nil && !crwdir.Published(err) {
+		// The exchange never ran, so config.toml is as it was; the report still names the plan.
+		return result, nil, err
 	}
-	result := HookTrustRetrustResult{BackupPath: backupPath}
-	if err := hookTrustRetrustReplace(targetPath, original, next); err != nil {
-		// A failed write left the target as it was, so the rollback compares against the original.
-		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, original, err)
+	result.Published = true
+	if err != nil {
+		result.Warning = err.Error()
+		// The backup could not be filled, so the displaced content is wherever PublishSwap says it
+		// is; the report must not claim the backup path holds it, and the displaced bytes must be
+		// read from there so the conflict comparison is against the real content.
+		var published *crwdir.PublishedError
+		if errors.As(err, &published) && published.DisplacedAt != "" {
+			result.DisplacedAt = published.DisplacedAt
+			if displaced, err = os.ReadFile(published.DisplacedAt); err != nil {
+				return result, nil, fmt.Errorf("%w (the content the publication displaced is at %s and could not be read back)", err, published.DisplacedAt)
+			}
+		}
 	}
-	if err := hookTrustRetrustVerify(codexHome, runner); err != nil {
-		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, next, err)
+	if !bytes.Equal(displaced, raw) {
+		result.Conflict = true
+		return result, nil, fmt.Errorf("config.toml changed between the last check and the publication: the content that was there is preserved at %s and %s holds retrust's content", result.displacedPath(), targetPath)
+	}
+	after, err := os.ReadFile(targetPath)
+	if err != nil {
+		return result, nil, err
+	}
+	if !bytes.Equal(after, []byte(next)) {
+		result.LateWrite = true
+		return result, nil, fmt.Errorf("%s changed again after retrust published it; the newer content was left in place", targetPath)
 	}
 	verification, err := DiagnoseHookTrust(codexHome, pluginRoot, pluginKey)
 	if err != nil {
-		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, next, err)
+		return result, nil, err
 	}
-	var failed []string
+	// The hooks can drift between the pre-write verification and this read: a declaration or a hook
+	// file that changed in that window makes the published hashes drifted or untrusted, and the
+	// oracle's own post-write check failed on exactly that. Reporting it as success would tell the
+	// operator a config is trusted when it is not.
+	var drifted []string
 	for _, item := range verification {
 		if item.Status != "trusted" {
-			failed = append(failed, item.Key)
+			drifted = append(drifted, item.Key)
 		}
 	}
-	if len(failed) > 0 {
-		cause := errors.New("post-write verification failed for " + strings.Join(failed, ", "))
-		return result, nil, hookTrustRetrustRollback(targetPath, backupPath, next, cause)
+	if len(drifted) > 0 {
+		return result, verification, errors.New("post-publication verification failed for " + strings.Join(drifted, ", ") + "; the hooks changed after the pre-write verification")
 	}
-	result.Updated = len(replacements)
-	result.Appended = len(missing)
 	return result, verification, nil
 }
 
@@ -582,25 +646,27 @@ func hookTrustRetrustResolveKey(pluginRoot, pluginKey, codexHome string) (string
 // itself, so a word after the verb stays the parser's "unknown hooks option: <word>" and the form
 // is advertised by the doctor dispatcher's unknown-argument list instead.
 func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.LookupEnv, runner HookTrustRetrustRunner, pluginRoot string, now time.Time) int {
-	fail := func(err error) int {
+	fail := func(err error, result HookTrustRetrustResult) int {
+		hookTrustRetrustReport(stdout, result)
 		fmt.Fprintln(stderr, "crw doctor retrust: "+err.Error())
+		hookTrustRetrustWarn(stderr, result)
 		return 1
 	}
 	options, err := hookTrustRetrustOptions(args, env)
 	if err != nil {
-		return fail(err)
+		return fail(err, HookTrustRetrustResult{})
 	}
 	root, err := hookTrustRetrustPluginRoot(pluginRoot, options.pluginRoot, options.codexHome)
 	if err != nil {
-		return fail(err)
+		return fail(err, HookTrustRetrustResult{})
 	}
 	key, err := hookTrustRetrustResolveKey(root, options.pluginKey, options.codexHome)
 	if err != nil {
-		return fail(err)
+		return fail(err, HookTrustRetrustResult{})
 	}
 	result, results, err := HookTrustRetrust(options.codexHome, root, key, options.bootstrapOK, runner, env, now)
 	if err != nil {
-		return fail(err)
+		return fail(err, result)
 	}
 	for _, item := range results {
 		actual := "(none)"
@@ -610,5 +676,59 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 		fmt.Fprintf(stdout, "[%s] %s expected=%s actual=%s\n", item.Status, item.Key, item.Hash, actual)
 	}
 	fmt.Fprintf(stdout, "updated=%d appended=%d\nbackup: %s\n", result.Updated, result.Appended, result.BackupPath)
+	hookTrustRetrustReport(stdout, result)
+	hookTrustRetrustWarn(stderr, result)
 	return 0
+}
+
+// hookTrustRetrustWarn prints the post-publication failure the command counted as a warning. It is
+// printed on a success and on a failure alike: when a conflict or a late write follows a
+// post-exchange failure, the failure detail is the only place the operator learns where the
+// displaced content really is, so dropping it would leave stderr pointing at the wrong file.
+func hookTrustRetrustWarn(stderr io.Writer, result HookTrustRetrustResult) {
+	if result.Warning != "" {
+		fmt.Fprintln(stderr, "crw doctor retrust: warning: "+result.Warning)
+	}
+}
+
+// hookTrustRetrustReport prints, for a success, a refusal that had a plan and a conflict alike, the
+// items the plan changed (or would have changed), the backup path and which file holds what (CRW-844
+// requirement 8). The oracle's own success lines are printed by the caller before this, so this only
+// appends. A run with no plan (a refusal before the plan exists) prints nothing here.
+func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
+	if !result.Planned {
+		return
+	}
+	fmt.Fprintf(stdout, "updated keys: %s\n", hookTrustRetrustList(result.UpdatedKeys))
+	fmt.Fprintf(stdout, "appended keys: %s\n", hookTrustRetrustList(result.AppendedKeys))
+	displaced := result.displacedPath()
+	switch {
+	case result.Conflict:
+		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
+	case result.Published && result.LateWrite:
+		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s holds the content retrust displaced\n", result.ConfigPath, displaced)
+	case result.Published:
+		fmt.Fprintf(stdout, "%s holds the rewritten config; %s holds the content it displaced\n", result.ConfigPath, displaced)
+	default:
+		fmt.Fprintf(stdout, "%s unchanged; nothing was published\n", result.ConfigPath)
+	}
+}
+
+// displacedPath names the file that actually holds the content the publication displaced: the backup
+// path, or, when a failure after the exchange stopped the backup being filled, the file PublishSwap
+// reports. The report and the conflict error both use it, so neither claims a file holds content it
+// does not.
+func (r HookTrustRetrustResult) displacedPath() string {
+	if r.DisplacedAt != "" {
+		return r.DisplacedAt
+	}
+	return r.BackupPath
+}
+
+// hookTrustRetrustList spells the keys of one plan item list, or "(none)".
+func hookTrustRetrustList(keys []string) string {
+	if len(keys) == 0 {
+		return "(none)"
+	}
+	return strings.Join(keys, ", ")
 }

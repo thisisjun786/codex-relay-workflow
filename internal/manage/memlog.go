@@ -53,7 +53,12 @@ type memlogProc struct {
 	PID   int
 	PPID  int
 	RSSKB int64
-	Cmd   string
+	Argv0 string
+	// Args is the command line as the kernel kept it, one string per argument. The
+	// recorded line is joined from it, so a value the kernel holds as one argument - a
+	// passphrase with a space in it, for instance - stays one token and is masked whole.
+	Args []string
+	Cmd  string
 }
 
 // memlogSnapshot is one consistent pass over a procfs tree, before grouping.
@@ -173,16 +178,64 @@ func memlogReadProc(dir string, pid int) (memlogProc, error) {
 			break
 		}
 	}
-	return memlogProc{PID: pid, PPID: ppid, RSSKB: rss,
-		Cmd: strings.TrimSpace(strings.ReplaceAll(string(cmdline), "\x00", " "))}, nil
+	// The name the process was started with is the first NUL-separated field of the
+	// command line, kept beside the joined line because a substring search over the whole
+	// line cannot tell the program from an argument that happens to spell the same word.
+	args := memlogSplitCmdline(cmdline)
+	argv0 := ""
+	if len(args) > 0 {
+		argv0 = filepath.Base(args[0])
+	}
+	return memlogProc{PID: pid, PPID: ppid, RSSKB: rss, Argv0: argv0, Args: args,
+		Cmd: strings.Join(args, " ")}, nil
 }
 
-// memlogGroupRule is one rule of the built-in list: the first rule that claims a process
-// names its group; Match lists command-line substrings, DescendantsOf names another group.
+// memlogSplitCmdline splits a NUL-separated /proc/<pid>/cmdline into its arguments. The
+// kernel ends the file with a NUL, and a kernel thread has none at all.
+func memlogSplitCmdline(cmdline []byte) []string {
+	trimmed := strings.TrimSuffix(string(cmdline), "\x00")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\x00")
+}
+
+// memlogGroupRule is one rule of the list: the first rule that claims a process names its
+// group. Match lists command-line substrings, Argv0 lists the names a process may have
+// been started with, DescendantsOf names another group. A rule with Match or Argv0 claims
+// a process itself; a rule with only DescendantsOf claims one below a member of that group.
 type memlogGroupRule struct {
-	Name          string
-	Match         []string
-	DescendantsOf string
+	Name          string   `json:"name"`
+	Match         []string `json:"match"`
+	Argv0         []string `json:"argv0"`
+	DescendantsOf string   `json:"descendants_of"`
+}
+
+// memlogRules is the group list the command runs with: the configuration's memlog section
+// when it carries one, the built-in list otherwise. An absent section or an absent groups
+// key means the defaults; a section that is present but malformed, an explicitly null list
+// included, is an error rather than a silent fallback to the defaults, because a configured
+// list is meant to decide the assignment and a run that quietly ignores it reports groups
+// the operator did not ask for. An empty list is a real configuration: it replaces the
+// built-in list whole, so every process is other.
+func memlogRules(cfg *Config) ([]memlogGroupRule, error) {
+	var section struct {
+		Groups json.RawMessage `json:"groups"`
+	}
+	if err := cfg.Section("memlog", &section); err != nil {
+		return nil, err
+	}
+	if len(section.Groups) == 0 {
+		return memlogDefaultGroups(), nil
+	}
+	if string(section.Groups) == "null" {
+		return nil, errors.New("groups is null; give a list of rules or leave the key out")
+	}
+	var rules []memlogGroupRule
+	if err := json.Unmarshal(section.Groups, &rules); err != nil {
+		return nil, fmt.Errorf("groups: %w", err)
+	}
+	return rules, nil
 }
 
 // memlogDefaultGroups is the built-in list, with no private path or host name in it.
@@ -190,7 +243,7 @@ func memlogDefaultGroups() []memlogGroupRule {
 	return []memlogGroupRule{
 		{Name: "app_server", Match: []string{"app-server"}},
 		{Name: "mcp_helpers", DescendantsOf: "app_server"},
-		{Name: "go", Match: []string{"/go/", "go-build", ".test"}},
+		{Name: "go", Argv0: []string{"go"}, Match: []string{"/go/", "go-build", ".test"}},
 		{Name: "claude", Match: []string{"claude"}},
 		{Name: "ocx", Match: []string{"ocx", "opencodex"}},
 		{Name: "docker", Match: []string{"docker", "containerd"}},
@@ -224,11 +277,9 @@ func memlogGroupOf(p memlogProc, rules []memlogGroupRule, out map[int]string, by
 		if rule.Name == "" {
 			continue
 		}
-		if len(rule.Match) > 0 {
-			for _, substring := range rule.Match {
-				if substring != "" && strings.Contains(p.Cmd, substring) {
-					return rule.Name
-				}
+		if len(rule.Match) > 0 || len(rule.Argv0) > 0 {
+			if memlogRuleClaims(p, rule) {
+				return rule.Name
 			}
 			continue
 		}
@@ -243,6 +294,72 @@ func memlogGroupOf(p memlogProc, rules []memlogGroupRule, out map[int]string, by
 		}
 	}
 	return memlogOtherGroup
+}
+
+// memlogRuleClaims reports whether the rule claims the process: by the name it was started
+// with, exactly, or by one of the command-line substrings.
+func memlogRuleClaims(p memlogProc, rule memlogGroupRule) bool {
+	if p.Argv0 != "" {
+		for _, name := range rule.Argv0 {
+			if name != "" && p.Argv0 == name {
+				return true
+			}
+		}
+	}
+	for _, substring := range rule.Match {
+		if substring != "" && strings.Contains(p.Cmd, substring) {
+			return true
+		}
+	}
+	return false
+}
+
+// memlogRedactNames are the argument-name fragments that mark a value as a credential.
+var memlogRedactNames = []string{"token", "secret", "password", "passwd",
+	"api_key", "api-key", "apikey", "auth", "credential", "private_key"}
+
+// memlogRedacted is what a masked value reads as.
+const memlogRedacted = "***"
+
+// memlogRedactCommand masks the value of every credential-shaped argument of a process and
+// then cuts the joined line to memlogCommandLimit runes. It works on the arguments the
+// kernel kept apart, not on the joined line, so a value that carries a space is masked
+// whole. The group assignment keeps the unmasked arguments, so a mask never changes which
+// group a process is counted in.
+func memlogRedactCommand(args []string) string {
+	tokens := append([]string(nil), args...)
+	for i := 0; i < len(tokens); i++ {
+		name, _, hasValue := strings.Cut(tokens[i], "=")
+		switch {
+		case hasValue:
+			if memlogNamesACredential(name) {
+				tokens[i] = name + "=" + memlogRedacted
+			}
+		case strings.HasPrefix(name, "-") && memlogNamesACredential(name) && i+1 < len(tokens):
+			tokens[i+1] = memlogRedacted
+			i++
+		}
+	}
+	return memlogShorten(strings.Join(tokens, " "))
+}
+
+// memlogShorten keeps the first memlogCommandLimit runes of a line.
+func memlogShorten(line string) string {
+	if runes := []rune(line); len(runes) > memlogCommandLimit {
+		return string(runes[:memlogCommandLimit])
+	}
+	return line
+}
+
+// memlogNamesACredential reports whether an argument name holds one of the fragments.
+func memlogNamesACredential(name string) bool {
+	lower := strings.ToLower(name)
+	for _, fragment := range memlogRedactNames {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // memlogBuildRecord turns one snapshot into the record: group sums and the ten largest.
@@ -264,11 +381,8 @@ func memlogBuildRecord(now time.Time, snapshot memlogSnapshot, rules []memlogGro
 	}
 	top := make([]memlogTopEntry, 0, len(ranked))
 	for _, p := range ranked {
-		cmd := p.Cmd
-		if runes := []rune(cmd); len(runes) > memlogCommandLimit {
-			cmd = string(runes[:memlogCommandLimit])
-		}
-		top = append(top, memlogTopEntry{PID: p.PID, RSSKB: p.RSSKB, Group: groups[p.PID], Cmd: cmd})
+		top = append(top, memlogTopEntry{PID: p.PID, RSSKB: p.RSSKB, Group: groups[p.PID],
+			Cmd: memlogRedactCommand(p.Args)})
 	}
 	return memlogRecord{At: now.UTC().Format(time.RFC3339Nano), MemAvailableKB: snapshot.MemAvailableKB,
 		SwapUsedKB: snapshot.SwapTotalKB - snapshot.SwapFreeKB, PSI: snapshot.PSI, Groups: sums, Top: top}
@@ -346,7 +460,12 @@ func memlogRunWith(ctx context.Context, e *Env, cfg *Config, args []string, samp
 		fmt.Fprintf(e.Stderr, "crw manage memlog: error: unexpected argument %q\n", flags.Arg(0))
 		return usageExit
 	}
-	dir, rules := filepath.Join(cfg.StateDir, "memlog"), memlogDefaultGroups()
+	rules, err := memlogRules(cfg)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage memlog: error: the memlog section: %v\n", err)
+		return 1
+	}
+	dir := filepath.Join(cfg.StateDir, "memlog")
 	for {
 		snapshot, err := sampler.Snapshot()
 		if err != nil {

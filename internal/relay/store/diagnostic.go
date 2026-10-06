@@ -55,6 +55,11 @@ type heldIdentity struct{ device, inode, links uint64 }
 // holdDatabase is _hold_database: the database held open, so an answer can name the file it
 // came from, and refused unless the descriptor still names this store. Returns the file, the
 // resolved path it must keep naming, or a refusal detail. Never an error: every failure is a field.
+//
+// The returned file is the process's held handle (storefile.go, CRW-846): callers borrow it and
+// never close it. The descriptor is re-checked against the resolved path here, so the handle a
+// read uses is always one that named this store at the moment it was handed over; a handle that
+// fails the check is refused with no file rather than answered from.
 func holdDatabase(ctx context.Context, path string) (*os.File, string, string) {
 	seams := seamsOf(ctx)
 	if seams.hold != nil {
@@ -67,7 +72,7 @@ func holdDatabase(ctx context.Context, path string) (*os.File, string, string) {
 	if info, err := os.Stat(procFD); err != nil || !info.IsDir() {
 		return nil, "", procFD + " is unavailable, so a read cannot be bound to the database it came from"
 	}
-	file, err := os.Open(path)
+	file, err := holdStoreFile(path)
 	if err != nil {
 		return nil, "", err.Error()
 	}
@@ -75,7 +80,10 @@ func holdDatabase(ctx context.Context, path string) (*os.File, string, string) {
 		seams.afterOpen(path)
 	}
 	if moved := relocation(file, expected); moved != "" {
-		_ = file.Close()
+		// The handle is the process's and is never closed (CRW-846): closing it here is exactly
+		// the defect this rule prevents. It is also not re-opened: the store at the pathname is no
+		// longer the file this descriptor names, and a read from whatever now sits there would be
+		// attributed to a store that is not the one asked about. It refuses, answering nothing.
 		return nil, "", moved
 	}
 	return file, expected, ""
