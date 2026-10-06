@@ -252,6 +252,17 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"wrapper option value", "env -u OLD gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"wrapper option value with a secret", "env -u OLD gh pr comment 1 -b \"shows `env`\"", githubPostRuleExpand, githubPostWhereCommand},
 		{"sudo user option value", "sudo -u root gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		// The shapes the Devin review found: a word at a text boundary, a title that looks like a body
+		// flag, an expanded body-file name, a nested key by its prefix, and an indirect runner.
+		{"word at the start", "gh pr checks $(git rev-parse HEAD)", githubPostRuleUnread, githubPostWhereCommand},
+		{"word at the end", "rg 'x gh pr", githubPostRuleUnread, githubPostWhereCommand},
+		{"title that looks like a flag", "gh pr create --title '-b' --body-file clean.md", "", ""},
+		{"expanded body file name", "gh pr comment 1 --body-file \"$(cat)\"", githubPostRuleUnread, "$(cat)"},
+		{"nested body prefix key", "gh api graphql -f body[text]=plain", githubPostRuleInline, githubPostWhereCommand},
+		{"nested body prefix with a variable", "gh api graphql -f body[text]=\"$TOKEN\"", githubPostRuleExpand, githubPostWhereCommand},
+		{"xargs runner", "xargs gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"xargs runner with a variable", "xargs -n 1 gh pr comment 1 -b \"$TOKEN\"", githubPostRuleExpand, githubPostWhereCommand},
+		{"find exec runner", "find . -exec gh pr comment 1 -b plain \\;", githubPostRuleInline, githubPostWhereCommand},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
