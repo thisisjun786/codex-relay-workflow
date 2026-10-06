@@ -507,18 +507,15 @@ func githubPostQuiet(words []string) bool {
 		return true
 	case "git":
 		// No option before its subcommand, and the subcommand only reads or records.
-		for i := 1; i < len(words); i++ {
-			w := words[i]
-			if strings.HasPrefix(w, "-") {
-				return false
-			}
-			for _, sub := range [...]string{"log", "show", "diff", "grep", "status", "commit"} {
-				if w == sub {
-					return true
-				}
-			}
+		if len(words) < 2 || strings.HasPrefix(words[1], "-") {
 			return false
 		}
+		for _, sub := range [...]string{"log", "show", "diff", "grep", "status", "commit"} {
+			if words[1] == sub {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }
