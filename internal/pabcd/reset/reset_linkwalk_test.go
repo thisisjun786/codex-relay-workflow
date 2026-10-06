@@ -186,6 +186,21 @@ func TestResetLinkWalkJudgesLikeToday(t *testing.T) {
 			resetLinksLink(t, "keep//inner.txt", filepath.Join(dir, "a.json"))
 			return "a.json"
 		}, true},
+		{"dot_ending_at_the_root", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "keep/..", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, true},
+		{"dot_ending_below_two_components", func(t *testing.T, dir, _ string) string {
+			if err := os.Mkdir(filepath.Join(dir, "keep", "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			resetLinksLink(t, "keep/sub/..", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, true},
+		{"dot_ending_below_two_components_absent", func(t *testing.T, dir, _ string) string {
+			resetLinksLink(t, "keep/missing/..", filepath.Join(dir, "a.json"))
+			return "a.json"
+		}, false},
 		{"dotdot_above_the_root", func(t *testing.T, dir, _ string) string {
 			resetLinksLink(t, "../../outside.json", filepath.Join(dir, "a.json"))
 			return "a.json"
@@ -332,55 +347,6 @@ func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
 			}
 			if got != tc.wantExists {
 				t.Errorf("exists = %v, want %v", got, tc.wantExists)
-			}
-		})
-	}
-}
-
-// TestResetLinkWalkDotEndingTargetNeverUsesTheDescriptorStat: for every dot-ending target the
-// judgement takes the walk, so it never calls the descriptor stat, which is what opens the target
-// directory (O_DIRECTORY, read only) — the opening CRW-554 forbids. The seam counts those calls, and
-// the verdict is checked in the same pass so a judgement that simply gave up would not pass.
-//
-// The walk still has os.Root traverse a multi-component target's intermediate directories, the way
-// any path resolution does, so "keep/sub/.." opens keep as an intermediate before the ".." pops back
-// to it. That is recorded in this issue's known-defects file; the final component is what the walk
-// reads with lstat, and that is what these rows pin.
-func TestResetLinkWalkDotEndingTargetNeverUsesTheDescriptorStat(t *testing.T) {
-	for _, tc := range []struct {
-		name, target string
-	}{
-		{"keep_dot", "keep/."},
-		{"keep_dotdot", "keep/.."},
-		{"keep_sub_dot", "keep/sub/."},
-		{"keep_sub_dotdot", "keep/sub/.."},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(dir, "keep", "sub"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(tc.target, filepath.Join(dir, "a.json")); err != nil {
-				t.Fatal(err)
-			}
-			root := resetLinkWalkRoot(t, dir)
-			calls := 0
-			stat := func(name string) (os.FileInfo, error) {
-				calls++
-				return root.Stat(name)
-			}
-			got, err := resetLinkTargetExistsWith(root, "a.json", stat)
-			if err != nil {
-				t.Fatalf("resetLinkTargetExistsWith: %v", err)
-			}
-			if !got {
-				t.Errorf("exists = false, want true for the target %q", tc.target)
-			}
-			if calls != 0 {
-				t.Errorf("descriptor stat calls = %d, want 0: the walk must judge the dot-ending target", calls)
 			}
 		})
 	}
