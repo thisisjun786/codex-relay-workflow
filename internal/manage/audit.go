@@ -259,17 +259,22 @@ func auditStateDir(e *Env, cfg *Config) string {
 // auditRecord appends one ledger line per result, and one alert line for every result that
 // carries a P0 or a P1. Both files are opened for append, so a concurrent writer's lines are
 // never rewritten. The alert file is opened only once a result is known to need one, so a
-// run in which nothing reached P0 or P1 leaves no alert file at all.
-func auditRecord(e *Env, cfg *Config, results []AuditResult) error {
+// run in which nothing reached P0 or P1 leaves no alert file at all. The directory and
+// the files are private to the owner, as the relay store's own state is, because a ledger
+// row names the subject, the issue and the bundle an audit covered.
+func auditRecord(e *Env, cfg *Config, results []AuditResult) (err error) {
 	dir := filepath.Join(auditStateDir(e, cfg), "audit")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	ledger, err := os.OpenFile(filepath.Join(dir, auditLedgerFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	ledgerPath := filepath.Join(dir, auditLedgerFile)
+	ledger, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	defer ledger.Close()
+	// A deferred close cannot be skipped on an early return, and its error is kept: a write
+	// that reached the page cache can still fail on close, and that is not a recorded row.
+	defer func() { err = errors.Join(err, ledger.Close()) }()
 	alerting := false
 	for _, result := range results {
 		if p0, p1, _, _ := auditCounts(result.Defects); p0+p1 > 0 {
@@ -277,11 +282,13 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) error {
 		}
 	}
 	var alerts *os.File
+	alertsPath := ""
 	if alerting {
-		if alerts, err = os.OpenFile(filepath.Join(dir, auditAlertFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err != nil {
+		alertsPath = filepath.Join(dir, auditAlertFile)
+		if alerts, err = os.OpenFile(alertsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err != nil {
 			return err
 		}
-		defer alerts.Close()
+		defer func() { err = errors.Join(err, alerts.Close()) }()
 	}
 	for _, result := range results {
 		p0, p1, p2, p3 := auditCounts(result.Defects)
@@ -291,7 +298,7 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) error {
 			Score: auditScoreOf(result), P0: p0, P1: p1, P2: p2, P3: p3,
 			GradedAt: result.GradedAt, Bundle: result.Bundle,
 		}
-		if err := auditAppendLine(ledger, row); err != nil {
+		if err := auditAppendLine(ledger, ledgerPath, row); err != nil {
 			return err
 		}
 		if p0+p1 == 0 {
@@ -307,7 +314,7 @@ func auditRecord(e *Env, cfg *Config, results []AuditResult) error {
 			}
 			alert.Defects = append(alert.Defects, auditAlertDefect{Severity: defect.Severity, What: defect.What, Where: defect.Where})
 		}
-		if err := auditAppendLine(alerts, alert); err != nil {
+		if err := auditAppendLine(alerts, alertsPath, alert); err != nil {
 			return err
 		}
 	}
@@ -325,14 +332,42 @@ func auditScoreOf(result AuditResult) *int {
 }
 
 // auditAppendLine writes one JSON document as one line. One write per line keeps a
-// concurrent writer's lines intact under O_APPEND.
-func auditAppendLine(f *os.File, doc any) error {
+// concurrent writer's lines intact under O_APPEND, and a file an earlier torn write left
+// without a final line feed gets one first, so the new line is never joined to the
+// fragment. This is the CRW-474 guard the state ledger carries (internal/pabcd/state
+// appendRow), kept alike here because that helper is not importable.
+func auditAppendLine(f *os.File, path string, doc any) error {
 	line, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(append(line, '\n'))
+	line = append(line, '\n')
+	if auditEndsMidLine(f, path) {
+		line = append([]byte{'\n'}, line...)
+	}
+	_, err = f.Write(line)
 	return err
+}
+
+// auditEndsMidLine reports whether an open file already ends in a line with no final
+// line feed. A blank line costs nothing and a joined line loses a record, so an
+// unreadable tail answers yes. A new, empty or non-regular file has no tail to protect.
+func auditEndsMidLine(f *os.File, path string) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return true
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return false
+	}
+	r, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = r.Close() }()
+	var last [1]byte
+	n, _ := r.ReadAt(last[:], info.Size()-1)
+	return n != 1 || last[0] != '\n'
 }
 
 // auditCommand is crw manage audit.
@@ -405,7 +440,9 @@ func auditParseGradeArgs(args []string) (AuditJob, error) {
 			key, value = key[:eq], key[eq+1:]
 		} else {
 			i++
-			if i >= len(args) {
+			// A following token that starts another option is a missing value, not the
+			// value itself, so a --name=value form stays the way to pass such a string.
+			if i >= len(args) || strings.HasPrefix(args[i], "--") {
 				return AuditJob{}, fmt.Errorf("the option %s needs a value", name)
 			}
 			value = args[i]

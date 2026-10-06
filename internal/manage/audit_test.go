@@ -211,6 +211,40 @@ func TestAuditWritesNoAlertFileWhenNothingReachedP0OrP1(t *testing.T) {
 	}
 }
 
+// A file an earlier torn write left without a final line feed gets one before the new row,
+// so the fragment and the new row are never joined into one unreadable line (CRW-474's guard).
+func TestAuditRecordSeparatesATornTail(t *testing.T) {
+	e, _, _ := auditEnv(t)
+	state := t.TempDir()
+	dir := filepath.Join(state, "audit")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fragment := `{"mode":"pr","subject":"old"`
+	if err := os.WriteFile(filepath.Join(dir, auditLedgerFile), []byte(fragment), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := auditSectionConfig(t, state, nil)
+	results := []AuditResult{{Mode: auditModePR, Subject: "new", Status: auditStatusOK, Score: 7, GradedAt: "t"}}
+	if err := auditRecord(e, cfg, results); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, auditLedgerFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	last := lines[len(lines)-1]
+	var row map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(last), &row); err != nil {
+		t.Fatalf("the new row is not on its own line: %q: %v", last, err)
+	}
+	var subject string
+	if err := json.Unmarshal(row["subject"], &subject); err != nil || subject != "new" {
+		t.Errorf("the last line carries %q/%v, want the new row", subject, err)
+	}
+}
+
 // C1: the built-in prompt names no private root and no model, in either mode and with the
 // criteria flagged missing: the grader is blind, and the repository is public.
 func TestAuditPromptNamesNoPrivateRootAndNoModel(t *testing.T) {
@@ -431,6 +465,27 @@ func TestAuditCommandGradeUsageAndArgumentErrors(t *testing.T) {
 		if !strings.Contains(errOut.String(), auditGradeUsageText) {
 			t.Errorf("%v: the grade usage is missing: %q", args, errOut.String())
 		}
+	}
+	// An option token where a value is expected is a missing value, not the value, so a
+	// separated form cannot smuggle the next option in as a bundle path.
+	for _, args := range [][]string{{"grade", "--bundle", "--pair=p"}, {"grade", "--bundle", "--pair", "p"}} {
+		out.Reset()
+		errOut.Reset()
+		if code := auditRun(context.Background(), e, args); code != usageExit {
+			t.Errorf("%v: exit %d, want %d", args, code, usageExit)
+		}
+		if !strings.Contains(errOut.String(), "needs a value") {
+			t.Errorf("%v: the error does not name the missing value: %q", args, errOut.String())
+		}
+	}
+	// The --name=value form still takes a value that starts with --, so the missing-value
+	// rule does not remove the only way to pass such a string.
+	job, err := auditParseGradeArgs([]string{"--bundle=--weird", "--pair=p", "--phase=live", "--round=1"})
+	if err != nil {
+		t.Fatalf("the = form was refused: %v", err)
+	}
+	if job.Bundle != "--weird" || job.Pair != "p" || job.Phase != "live" || job.Round != "1" {
+		t.Errorf("the = form parsed to %+v", job)
 	}
 }
 
