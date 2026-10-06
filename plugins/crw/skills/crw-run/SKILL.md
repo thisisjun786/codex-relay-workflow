@@ -159,11 +159,16 @@ still authorized, and it is separate from a user's status question, which reads 
 
 **When one is due.** Any one of these signals is enough:
 
-- every node of one milestone is integrated;
+- every node of one milestone is integrated, counted once per milestone;
 - twenty merges, or eight continuous hours of execution, since the last check;
 - three or more needs-changes rulings or split decisions in the last two hours;
 - two or more P0 or P1 findings from post-merge evaluation of this project's merges since the last check;
 - the backlog's net increase exceeds fifteen issues in the last four hours.
+
+Each signal is a crossing, not a standing state: count every window and every milestone from the last recorded check, and
+record which crossing the check consumed, so a milestone that is already fully integrated, or a window that has already
+crossed its threshold, does not make every later idle turn due again. Where `crw manage checkpoint record` exists it holds
+that baseline; where it does not, the coordination record does.
 
 Where `crw manage checkpoint` exists, read its verdict for these signals. Where the command is not installed, or a signal it
 reports is `unmeasured`, the parent judges the same signals from its own records rather than treating the missing tool as a
@@ -184,9 +189,11 @@ stop one.
    approval covers.
 
 **What it records.** Write the outcome into the coordination record, and where `crw manage checkpoint record` exists, record the
-baseline time there so the next check measures from it. Work worth fixing becomes an issue under the concept bundle rules above;
-anything not worth doing now goes to the sweep label Backlog. The release schedule and the lanes do not stop: a midpoint check
-records and proposes, it never pauses a lane or holds a release.
+baseline time and the crossings consumed there so the next check measures from it. The midpoint check is a diagnosis: it
+records and proposes. Work worth fixing becomes an issue under the concept bundle rules above, and anything not worth doing
+now goes to the sweep label Backlog, but both are Linear writes and need scope covering them: where the current authorization
+does not cover creating or relabeling issues, return the candidates as proposals with the check's evidence instead of writing
+them. The release schedule and the lanes do not stop: a midpoint check never pauses a lane or holds a release.
 
 ## Independent implementation tasks
 
@@ -593,12 +600,18 @@ for which unreleased nodes share a concept; where no such command or output exis
   records the merged node, its combined criteria and its single delivery, and only then is the merged node released. Never
   release two nodes that should have been one and reconcile them afterwards.
 - An issue that the merge absorbs is closed as Duplicate, and its body and criteria are moved onto the representative issue
-  before it is closed, so nothing the merge promised is dropped. Record the duplicate link and the representative issue.
+  before it is closed, so nothing the merge promised is dropped. Move every relation too, not only the body: the absorbed
+  issue's prerequisites, dependents, milestone links and other external relations are transferred to the representative
+  issue and read back, and an edge whose two endpoints both fall inside the merge is dropped because the boundary it
+  described no longer exists. Record the duplicate link and the representative issue. A successor must never be left blocked
+  on a retired node.
 - A node that is already released is not touched: its boundary, its owner and its delivery stand as they were, and a later
   bundle check never reaches back into it. Where a released node turns out to have been over-bundled, that is new work with its
   own issue, not a re-split of the released one.
 
-This check changes the plan, not the execution: it is a plan amendment the parent already owns, and it dispatches nothing on its own.
+This check changes the plan, not the execution, and it dispatches nothing on its own. A plan amendment that rewrites
+completion criteria or closes an absorbed issue is a Linear write, so it needs scope covering that write: where the run is
+authorized only to execute the existing issues, prepare the bundle change and return it as a proposal instead of writing it.
 
 ### Record the pair choice at release
 

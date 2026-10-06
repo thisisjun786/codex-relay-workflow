@@ -56,7 +56,8 @@ that belong to one concept:
 Do not bundle:
 
 - an open decision, or a decision document mixed with its implementation;
-- work unrelated to a security fix attached to that fix (a security fix stays small and fast);
+- work unrelated to a security fix attached to that fix (a security fix stays small and fast; a
+  caller update, migration, configuration or test it needs to pass verification stays with it);
 - a part that reaches another project's exclusive area;
 - a part whose blocking would block the merge of the rest.
 
@@ -66,6 +67,12 @@ parallel. A line count is only a rough reference, never a boundary. Real paralle
 from the independence described above. If the only thing separating two candidate parts is
 that they touch different files, they are one PR. A large single-landing change is one
 issue, and three one-line changes in three repositories are three.
+
+Where the two rules seem to point opposite ways, the concept decides. The independent-verifiability
+rule above forces a second issue only across a concept boundary: two parts of one concept stay in one
+issue even where each could be verified apart, and the fact that each could pass its own checks is not
+on its own a reason to split them. The forced-split list and the bundle list are read together, with
+the bundle list deciding whether the parts are one concept at all.
 
 A direct defect found in a pull request that is about that pull request's own change, a test
 gap in it or a document or pointer that contradicts it, is fixed in that pull request rather
