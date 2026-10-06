@@ -198,6 +198,21 @@ func TestTheBackupStillRefusesWhatChangedOtherwise(t *testing.T) {
 			},
 			want: "holds commits that were not copied",
 		},
+		"a copied log whose source goes and whose copy is damaged": {
+			setup: func(t *testing.T, h *host) { putSidecar(t, h, sidecarWalName, 32) },
+			step: func(t *testing.T, h *host, step string) error {
+				if step != "copied" {
+					return nil
+				}
+				// the log is checkpointed away, so its source cannot be compared any more, and the copy in the
+				// backup is damaged at the same time: the copy must still be read, or a bad backup passes
+				if err := os.Remove(filepath.Join(h.relayState, sidecarWalName)); err != nil {
+					return err
+				}
+				return os.WriteFile(filepath.Join(backupOf(h, "changed"), sidecarWalName), []byte("damaged"), 0o600)
+			},
+			want: "is not the file it copies",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _, second, old, _ := zoneInstalled(t)

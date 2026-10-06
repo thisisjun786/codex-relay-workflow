@@ -308,15 +308,14 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			continue
 		}
 		now, err := digestOf(e.source)
-		if err != nil {
-			// A log that was checkpointed away by the time of the verification is not a refusal, for the same reason
-			// as above; one still there must digest to what was copied.
-			if e.Path == walSidecar && errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
+		switch {
+		case err != nil && e.Path == walSidecar && errors.Is(err, fs.ErrNotExist):
+			// The log was checkpointed away by the time of the verification, so the source cannot be compared; that is
+			// not a refusal. The copy is still read below: skipping the whole entry would let a copy that was damaged
+			// while its source went pass as a good backup.
+		case err != nil:
 			return failure(true, "%s could not be read again: %v", e.Path, err)
-		}
-		if now != e.SHA256 {
+		case now != e.SHA256:
 			return failure(true, "%s changed under the copy (it digested to %s and now to %s)", e.Path, e.SHA256, now)
 		}
 		held, err := digestOf(filepath.Join(dest, filepath.FromSlash(e.Path)))
