@@ -1492,3 +1492,9 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
   Consequence of the fix, disclosed: a `.tmp` or `.probe-` name of a producer row 105 does not name (the `dispatches/`,
   `objective-kind/` and `divergence/` writers) now reports `not in the inventory` instead of `producer intermediate`; the
   disposition is unchanged (skip, never copied).
+
+## Found by the goalplan work-phase close, resume-absent-target and advance port (CRW-642)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedWorkPhase` :1989-2133, `resumeAbsentTarget` :2149-2192, `samePlanShape` :2193-2206, `advanceWorkPhase` :2207-2248) at v0.2.40 (commit 3c1459ac), through `internal/pabcd/goalplan/workphase.go`. No fixture in `contract/fixtures/cxc` drives these units alone — the `crw orchestrate` D-close and `crw loop` callers that reach them are later issues — so no recorded case changes.
+
+- No behavioural defect was found in these four units, so there is no `port: fixed` or `port: kept` divergence line. The one fidelity decision is the cursor comparison in `samePlanShape` (source `goalplan.ts:2195`): the oracle tests `left.activeWorkPhaseId !== right.activeWorkPhaseId`, a JavaScript identity test in which `undefined` and `null` are different values, while the Go port's `*string` cannot tell them apart and reads both nils as equal. The distinction is unreachable rather than dropped: `buildGoalplan` (`goalplan.ts:1021`) and the plan reader both materialise the key as `null`, so no plan these transforms can be handed carries `undefined` for it. The port therefore compares nil to nil, and the recorded case `an already settled close answers already_done` covers the state where both sides are `null`.
