@@ -25,9 +25,13 @@ const (
 )
 
 // rootOrder is every root, in the order the decided layout lists them: the order
-// Resolve checks them in, so a bad path is reported against the first root the
-// layout puts first rather than against whichever one a map walk happened to reach.
+// Resolve checks them in and the order a caller that prints them walks.
 var rootOrder = []string{RootTools, RootCache, RootScratch, RootWorktree, RootEvidence, RootTemp, RootData, RootManage}
+
+// RootNames is the root names in the decided order, so a caller that prints the roots
+// has one fixed order to follow. The slice is a copy, so a caller cannot change the
+// order the package resolves in.
+func RootNames() []string { return append([]string(nil), rootOrder...) }
 
 // rootJoin joins rel below base as raw text: the base's trailing separators are
 // dropped and one "/" is written between the base and rel. Nothing is cleaned, so a
