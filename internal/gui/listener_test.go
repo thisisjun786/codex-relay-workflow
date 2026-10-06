@@ -14,11 +14,12 @@ import (
 
 // This file pins the boundary the decided answer documents: net/http answers some requests
 // itself, before it consults the Handler, and those responses carry none of the security
-// headers. The package adds no HTTP parser, no connection wrapper that rewrites response bytes
-// and no second listener to reach them, so the boundary is fixed here as a test instead. Each
-// case drives the real server over a real loopback connection and asserts the fixed status, that
-// no route handler ran, that the bytes carry neither the token nor an asset, and that the
-// connection was closed.
+// headers. The class is closed by construction rather than enumerated: the package adds no HTTP
+// parser, no connection wrapper that rewrites response bytes and no second listener to reach
+// them, so nothing here can attach a header to a response net/http already wrote. The cases
+// below pin the common members of the class. Each drives the real server over a real loopback
+// connection and asserts the fixed status, that no route handler ran, that the bytes carry
+// neither the token nor an asset, and that the connection was closed.
 
 // listenerToken is the token these tests pin and listenerAsset is the marker the served tree
 // carries; neither may appear in a pre-handler response body.
@@ -61,8 +62,10 @@ func preHandlerServer(t *testing.T) (string, <-chan struct{}) {
 	return listener.Addr().String(), reached
 }
 
-// listenerRawExchange writes one raw request and reads the whole response, to EOF, under a deadline.
-// Reaching EOF is itself the proof that the connection was closed rather than left open.
+// listenerRawExchange writes one raw request and reads the whole response, to EOF, under a
+// deadline. Reaching EOF is itself the proof that the connection was closed rather than left
+// open. A write error is not fatal: net/http may close the connection while a request that it
+// is about to refuse is still being written, and the read below is what decides the outcome.
 func listenerRawExchange(t *testing.T, address, request string) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -71,9 +74,7 @@ func listenerRawExchange(t *testing.T, address, request string) string {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := fmt.Fprint(conn, request); err != nil {
-		t.Fatal(err)
-	}
+	_, _ = fmt.Fprint(conn, request)
 	data, err := io.ReadAll(bufio.NewReader(conn))
 	if err != nil {
 		t.Fatalf("the response did not reach EOF, so the connection was not closed: %v", err)
@@ -101,6 +102,8 @@ func TestPreHandlerResponsesArePinned(t *testing.T) {
 		{"a malformed Host", "GET /api/thing HTTP/1.1\r\nHost: bad host\r\n\r\n", "400"},
 		{"an Expect that is not 100-continue", "POST /api/thing HTTP/1.1\r\nHost: " + address + "\r\nExpect: unsupported-thing\r\nContent-Length: 2\r\n\r\n{}", "417"},
 		{"an unsupported protocol version", "GET /api/thing HTTP/2.0\r\nHost: " + address + "\r\n\r\n", "505"},
+		{"an unsupported transfer encoding", "POST /api/thing HTTP/1.1\r\nHost: " + address + "\r\nTransfer-Encoding: bogus\r\n\r\n", "501"},
+		{"an oversized header", "GET /api/thing HTTP/1.1\r\nHost: " + address + "\r\nX-Big: " + strings.Repeat("a", 2<<20) + "\r\n\r\n", "431"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := listenerRawExchange(t, address, test.request)

@@ -19,14 +19,15 @@ import (
 // because the screen is served from this same origin and a cross-origin caller is refused
 // instead.
 //
-// The one exception is the responses net/http writes by itself before it calls the Handler: a
-// missing, repeated or malformed Host, an Expect other than 100-continue, an unsupported
-// protocol version, or a request line it cannot parse. net/http offers no hook to add a header
-// to those, and this package deliberately adds no HTTP parser, no connection wrapper that
-// rewrites response bytes and no second listener to reach them. The boundary is acceptable
-// because a browser cannot make such a request (Host and Expect are forbidden header names in
-// fetch), the body is only net/http's fixed status text, no path, static file or token is
-// touched, and the connection is closed. internal/gui/listener_test.go pins it.
+// The one exception is every response net/http writes by itself before it calls the Handler,
+// whatever the reason it refuses the request: for example a missing, repeated or malformed
+// Host, an Expect other than 100-continue, an unsupported protocol version or transfer
+// encoding, an oversized header, or a request line it cannot parse. net/http offers no hook
+// to add a header to those, and this package deliberately adds no HTTP parser, no connection
+// wrapper that rewrites response bytes and no second listener to reach them. The boundary is
+// acceptable because a browser cannot make such a request (Host and Expect are forbidden
+// header names in fetch), the body is only net/http's fixed status text, no path, static file
+// or token is touched, and the connection is closed. internal/gui/listener_test.go pins it.
 const (
 	cspHeader     = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'"
 	referrerValue = "no-referrer"
