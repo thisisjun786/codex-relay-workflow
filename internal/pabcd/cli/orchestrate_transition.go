@@ -118,40 +118,39 @@ func orchestrateTransitionCheckEpoch(from, to state.Phase, current *string) (*st
 	return &epoch, nil
 }
 
-// orchestrateTransitionSupersedeStaleRounds is the P>A housekeeping of :1085-1118: a fresh plan epoch orphans
-// every open plan_audit round this session owns, so they are closed under the goalplan write lock before the
-// new binding lands. The stranded epoch is read from the rounds, because this edge is entered from P, where
-// the A-only binding has already been normalised to null. Fail-open, as the oracle's catch is.
-func orchestrateTransitionSupersedeStaleRounds(cwd, slug, sessionID, epoch string) {
-	_, _ = goalplan.WithGoalplanWriteLock(cwd, slug, func(plan *goalplan.Goalplan) (struct{}, error) {
-		stranded := ""
-		for i := range plan.ReviewRounds {
-			r := plan.ReviewRounds[i]
-			if r.Purpose == goalplan.PurposePlanAudit && r.OwnerSessionID == sessionID && r.PlanEpoch != "" && r.PlanEpoch != epoch &&
-				r.Status != goalplan.ReviewApproved && r.Status != goalplan.ReviewChangesRequested && r.Status != goalplan.ReviewInconclusive {
-				stranded = r.PlanEpoch
-				break
-			}
+// orchestrateCommitSupersedeStaleRounds is the P>A housekeeping of :1085-1118, run on the plan the goalplan
+// write lock already read: a fresh plan epoch orphans every open plan_audit round this session owns, so they
+// are closed before the new binding lands. The stranded epoch is read from the rounds, because this edge is
+// entered from P, where the A-only binding has already been normalised to null. It returns the first failure
+// and its caller ignores it, the oracle's catch being fail-open. It runs inside the caller's goalplan lock,
+// after the binding check and before the state publication, so a refused edge closes no round (CRW-811).
+func orchestrateCommitSupersedeStaleRounds(cwd, slug, sessionID, epoch string, plan *goalplan.Goalplan) error {
+	stranded := ""
+	for i := range plan.ReviewRounds {
+		r := plan.ReviewRounds[i]
+		if r.Purpose == goalplan.PurposePlanAudit && r.OwnerSessionID == sessionID && r.PlanEpoch != "" && r.PlanEpoch != epoch &&
+			r.Status != goalplan.ReviewApproved && r.Status != goalplan.ReviewChangesRequested && r.Status != goalplan.ReviewInconclusive {
+			stranded = r.PlanEpoch
+			break
 		}
-		swept, closed := review.SupersedeStaleRounds(plan, goalplan.PurposePlanAudit, sessionID, stranded)
-		if len(closed) == 0 {
-			return struct{}{}, nil
+	}
+	swept, closed := review.SupersedeStaleRounds(plan, goalplan.PurposePlanAudit, sessionID, stranded)
+	if len(closed) == 0 {
+		return nil
+	}
+	if err := goalplan.WriteGoalplan(cwd, swept); err != nil {
+		return err
+	}
+	for _, roundID := range closed {
+		row := roundID
+		if err := goalplan.AppendGoalplanLedger(cwd, slug, goalplan.GoalplanLedgerEntry{
+			Ts: orchestrateTransitionTimestamp(), Slug: slug, Event: goalplan.EventReviewRoundSuperseded,
+			Detail: "the plan was re-planned, so this round can no longer be spent", RoundID: &row,
+		}); err != nil {
+			return err
 		}
-		if err := goalplan.WriteGoalplan(cwd, swept); err != nil {
-			return struct{}{}, err
-		}
-		for _, roundID := range closed {
-			row := roundID
-			err := goalplan.AppendGoalplanLedger(cwd, slug, goalplan.GoalplanLedgerEntry{
-				Ts: orchestrateTransitionTimestamp(), Slug: slug, Event: goalplan.EventReviewRoundSuperseded,
-				Detail: "the plan was re-planned, so this round can no longer be spent", RoundID: &row,
-			})
-			if err != nil {
-				return struct{}{}, err
-			}
-		}
-		return struct{}{}, nil
-	}, nil)
+	}
+	return nil
 }
 
 // orchestrateTransitionReviewBinding is the A>B review binding check (validateReviewBinding, :49-92, :688-691),
@@ -197,6 +196,133 @@ func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb, reason string) 
 	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + reason + ". Nothing was written."}
 }
 
+// The commit order of this file's three write paths (CRW-811): the session state is published first and
+// the transition-ledger row second, which is the oracle's own order (orchestrate-cli.ts :562-563, :653-655
+// and :1119 then :1123). A failure before the publication is returned as an error and writes no row, so no
+// row ever describes a transition that did not happen; once the state is at the final path - a success, or a
+// *state.PublishedError when only the directory sync failed - the transition counts as done, the row is
+// appended, and a row that cannot be written is a warning on a success answer, never a rollback or a
+// back-fill on retry (CRW-744/793). The work-phase gate of a bound session runs inside the goalplan write
+// lock, so a plan another writer republishes between the gate's read and the state write is revalidated.
+
+// orchestrateCommitSeams carries the two dependencies the commit order needs a test to stage: the state
+// publication and the goalplan write lock. They are fields, never package-level variables, as
+// EvidenceResolveArgs.writeState is; nil means the real implementation.
+type orchestrateCommitSeams struct {
+	writeState   func(cwd string, next state.State) error
+	lockGoalplan orchestrateCommitLockFunc
+}
+
+// orchestrateCommitLockFunc is goalplan.WithGoalplanWriteLock at one concrete result type, so a test can
+// order a concurrent rebind between the unlocked gate read and the lock without a sleep.
+type orchestrateCommitLockFunc func(cwd, slug string, fn func(*goalplan.Goalplan) (orchestrateCommitOutcome, error)) (goalplan.GoalplanWriteLockResult[orchestrateCommitOutcome], error)
+
+// orchestrateCommitOutcome is one publication: whether the state reached the final path, the
+// post-publication failure to warn about, the pre-publication failure to return, or the refusal the
+// gate answered with instead of publishing.
+type orchestrateCommitOutcome struct {
+	published bool
+	warning   error
+	err       error
+	refusal   *CliResult
+}
+
+// orchestrateCommitWrite publishes next and reports whether it reached the final path. A failure before
+// the rename (state.Published(err) false) is returned as an error: nothing was published, so the caller
+// writes no row and the same verb can be retried. A post-rename failure is a warning: the state is visible
+// to every reader, so the transition counts as done and the row is still appended (CRW-744).
+func orchestrateCommitWrite(seams *orchestrateCommitSeams, cwd string, next state.State) orchestrateCommitOutcome {
+	write := state.WriteState
+	if seams != nil && seams.writeState != nil {
+		write = seams.writeState
+	}
+	err := write(cwd, next)
+	switch {
+	case err == nil:
+		return orchestrateCommitOutcome{published: true}
+	case state.Published(err):
+		return orchestrateCommitOutcome{published: true, warning: err}
+	}
+	return orchestrateCommitOutcome{err: err}
+}
+
+// orchestrateCommitLock resolves the goalplan write lock, the real one unless a test supplied a seam.
+func orchestrateCommitLock(seams *orchestrateCommitSeams) orchestrateCommitLockFunc {
+	if seams != nil && seams.lockGoalplan != nil {
+		return seams.lockGoalplan
+	}
+	return func(cwd, slug string, fn func(*goalplan.Goalplan) (orchestrateCommitOutcome, error)) (goalplan.GoalplanWriteLockResult[orchestrateCommitOutcome], error) {
+		return goalplan.WithGoalplanWriteLock(cwd, slug, fn, nil)
+	}
+}
+
+// orchestrateCommitPublish publishes the session state. On a gated edge of a bound session, and not a
+// recovering D close, it runs inside the goalplan write lock: the plan is re-read and the work-phase
+// binding revalidated there, and the state is published in the same lock, so a plan another writer
+// republishes in between cannot approve a stale workPhaseId. Lock order is the session lock the caller
+// holds, then this goalplan lock; no path in this tree takes them the other way. A busy lock refuses with
+// its reason and publishes nothing; an absent or unreadable goalplan stays fail-open, as the unlocked read
+// did; any other lock failure is a Go error, as it is for the other writers of this package.
+func orchestrateCommitPublish(seams *orchestrateCommitSeams, a OrchestrateCliArgs, cwd, sessionID string, cur, next state.State, to state.Phase, recoveringDclose bool, binding *orchestrateTransitionPlanBinding) orchestrateCommitOutcome {
+	if !attest.IsGated(cur.Phase, to) || cur.Slug == "" || recoveringDclose {
+		return orchestrateCommitWrite(seams, cwd, next)
+	}
+	locked, err := orchestrateCommitLock(seams)(cwd, cur.Slug, func(plan *goalplan.Goalplan) (orchestrateCommitOutcome, error) {
+		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
+			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}}, nil
+		}
+		// 032: a fresh epoch orphans every round the old one owned. The cleanup runs here, after the binding is
+		// revalidated and before the state is published, so a refusal above leaves the round open for a
+		// transition that did not happen; it stays fail-open, as the oracle's catch is.
+		if binding != nil {
+			_ = orchestrateCommitSupersedeStaleRounds(cwd, cur.Slug, sessionID, binding.epoch, plan)
+		}
+		outcome := orchestrateCommitWrite(seams, cwd, next)
+		if outcome.err != nil {
+			return orchestrateCommitOutcome{}, outcome.err
+		}
+		return outcome, nil
+	})
+	if err != nil {
+		return orchestrateCommitOutcome{err: err}
+	}
+	switch locked.Kind {
+	case "ok":
+		if locked.Value == nil {
+			return orchestrateCommitOutcome{err: errors.New("goalplan write lock reported ok without a value")}
+		}
+		return *locked.Value
+	case "locked":
+		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason}}
+	}
+	// unreadable: fail-open, as the unlocked read did. The publication runs outside the lock.
+	return orchestrateCommitWrite(seams, cwd, next)
+}
+
+// orchestrateCommitWarn is the two post-publication warnings of one write path, in the order its steps ran:
+// the directory sync first, then the ledger row. Each is empty when its step succeeded. This command has no
+// earlier warning place, so the answer carries them as its last lines.
+func orchestrateCommitWarn(label string, out orchestrateCommitOutcome, rowErr error, from, to state.Phase) []string {
+	warnings := []string{}
+	if out.warning != nil {
+		warnings = append(warnings, label+": warning: session state was published but its directory could not be synced: "+out.warning.Error())
+	}
+	if rowErr != nil {
+		warnings = append(warnings, label+": warning: ledger row for "+string(from)+" -> "+string(to)+" could not be written: "+rowErr.Error())
+	}
+	return warnings
+}
+
+// orchestrateCommitAnswer appends warnings to a success answer, one per line.
+func orchestrateCommitAnswer(output string, warnings ...string) string {
+	for _, warning := range warnings {
+		if warning != "" {
+			output += "\n" + warning
+		}
+	}
+	return output
+}
+
 // RunOrchestrateTransition ports the transition half of orchestrate-cli.ts (:549-1131) on the mutation
 // RunOrchestrateRead delegated. It does its own state, goalplan and ledger IO and returns the oracle's
 // CliResult; an error is a Go-level IO failure the oracle would have thrown, which no refusal path uses.
@@ -206,10 +332,16 @@ func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb, reason string) 
 // the port fixes that (the data-loss class the parity rule revision of 2026-10-03 fixes during the port). A
 // lock that cannot be taken is an error, never a silent success.
 func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult, error) {
+	return orchestrateCommitRun(a, sessionID, nil)
+}
+
+// orchestrateCommitRun is RunOrchestrateTransition with the commit order's two seams, which only a test
+// supplies; the exported entry point passes nil.
+func orchestrateCommitRun(a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
 	var out CliResult
 	err := state.WithSessionLock(a.Cwd, sessionID, func() error {
 		var inner error
-		out, inner = orchestrateTransitionApply(a, sessionID)
+		out, inner = orchestrateTransitionApply(a, sessionID, seams)
 		return inner
 	})
 	if err != nil {
@@ -219,7 +351,7 @@ func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult
 }
 
 // orchestrateTransitionApply is the ported body, run while the caller holds the session lock.
-func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResult, error) {
+func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
 	cwd, verb := a.Cwd, a.Verb
 	cur := state.ReadState(cwd, sessionID)
 	// 050 wp5 §5: the fixed close target, and whether this D request is finishing a close that already started.
@@ -243,14 +375,20 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 			next := *res.State
 			next.OrchestrationActive, next.LastInjectedPhase = false, nil
 			next.StopBlockPhase, next.StopBlockCount = nil, 0
-			if err := state.WriteState(cwd, next); err != nil {
-				return CliResult{}, err
+			// Publish the state first, then the row: a failure before the publication writes no row, so no
+			// row describes a reset that did not happen, and a row that cannot be written warns on a success
+			// (CRW-811, the CRW-744/793 rule).
+			published := orchestrateCommitWrite(seams, cwd, next)
+			if !published.published {
+				return CliResult{}, published.err
 			}
+			var rowErr error
 			if res.Ledger != nil {
-				if err := state.AppendLedger(cwd, *res.Ledger); err != nil {
-					return CliResult{}, err
-				}
+				rowErr = state.AppendLedger(cwd, *res.Ledger)
 			}
+			answer := "orchestrate reset: current=" + string(cur.Phase) + " -> IDLE (session " + sessionID + ")"
+			return CliResult{Code: 0, Output: orchestrateCommitAnswer(answer,
+				orchestrateCommitWarn("orchestrate reset", published, rowErr, cur.Phase, state.PhaseIdle)...)}, nil
 		}
 		return CliResult{Code: 0, Output: "orchestrate reset: current=" + string(cur.Phase) + " -> IDLE (session " + sessionID + ")"}, nil
 	}
@@ -283,7 +421,10 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 		binding = &orchestrateTransitionPlanBinding{unit: planCheck.Unit, epoch: epoch}
 	}
 	// Work-phase binding gate (LOOP-UNIT-CHAIN-01): on a gated edge of a bound session the attestation must
-	// name the one effective active work-phase. Fail-open when no goalplan resolves.
+	// name the one effective active work-phase. Fail-open when no goalplan resolves. This first read keeps the
+	// oracle's refusal precedence (it runs before the review binding and the source gate) and the C>D arm the
+	// unported D close owns; the binding that the state write actually lands under is revalidated at the
+	// publication, inside the goalplan write lock, by orchestrateCommitPublish (CRW-811).
 	if attest.IsGated(cur.Phase, to) && cur.Slug != "" && !recoveringDclose {
 		var effective *string
 		if plan := goalplan.ReadGoalplan(cwd, cur.Slug); plan != nil {
@@ -324,8 +465,10 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 			if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
 				return orchestrateTransitionStateRefusal(verb, reason), nil
 			}
-			if err := state.WriteState(cwd, next); err != nil {
-				return CliResult{}, err
+			// The override publishes first and appends its row second, as the reset above does.
+			published := orchestrateCommitWrite(seams, cwd, next)
+			if !published.published {
+				return CliResult{}, published.err
 			}
 			hook.ResetRenderLedger(cwd)
 			scan := state.ScanEvidence{HighContradictionCount: float64(gate.HighContradictionCount)}
@@ -335,14 +478,14 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 			yes := true
 			did := a.Attest.Did
 			from := cur.Phase
-			if err := state.AppendLedger(cwd, state.LedgerEntry{
+			rowErr := state.AppendLedger(cwd, state.LedgerEntry{
 				TS: orchestrateTransitionTimestamp(), SessionID: cur.SessionID, From: &from, To: to, Reason: "cli",
 				Actor: "agent", Override: &yes, ScanEvidence: &scan, Evidence: &did,
-			}); err != nil {
-				return CliResult{}, err
-			}
-			return CliResult{Code: 0, Output: orchestrateTransitionWithArchitectHint(state.PhaseP,
-				"orchestrate P: I \u2192 P (agent override, session "+sessionID+")")}, nil
+			})
+			answer := orchestrateTransitionWithArchitectHint(state.PhaseP,
+				"orchestrate P: I \u2192 P (agent override, session "+sessionID+")")
+			return CliResult{Code: 0, Output: orchestrateCommitAnswer(answer,
+				orchestrateCommitWarn("orchestrate P", published, rowErr, from, to)...)}, nil
 		default:
 			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) +
 				"; interview soft-gate: " + strings.Join(gate.Warnings, "; ") + ". Pass override:true in --attest to proceed."}, nil
@@ -401,10 +544,6 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 	if err != nil {
 		return CliResult{}, err
 	}
-	// 032: a fresh epoch orphans every round the old one owned. Close them before the new binding lands.
-	if binding != nil && cur.Slug != "" {
-		orchestrateTransitionSupersedeStaleRounds(cwd, cur.Slug, sessionID, binding.epoch)
-	}
 	next := *result.State
 	next.OrchestrationActive, next.LastInjectedPhase = result.State.Phase != state.PhaseIdle, &result.State.Phase
 	next.StopBlockPhase, next.StopBlockCount = nil, 0
@@ -419,18 +558,28 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string) (CliResu
 		did := a.Attest.Did
 		row.Evidence = &did
 	}
-	// The row goes first, so a failed append leaves the session untouched and the caller can retry this verb.
-	if err := state.AppendLedger(cwd, row); err != nil {
-		return CliResult{}, err
+	// The state is published first and the row appended second, the oracle's own order: a failure before the
+	// publication writes no row, so no row describes a transition that did not happen and the caller can
+	// retry this verb without a duplicate; once published the transition counts as done and a row that
+	// cannot be written warns on a success answer (CRW-811, the CRW-744/793 rule). On a gated edge of a
+	// bound session the publication runs inside the goalplan write lock, where the binding is revalidated.
+	// The 032 stale-round housekeeping runs inside this publication's goalplan lock, so a refused edge closes
+	// no round.
+	published := orchestrateCommitPublish(seams, a, cwd, sessionID, cur, next, result.State.Phase, recoveringDclose, binding)
+	if published.refusal != nil {
+		return *published.refusal, nil
 	}
-	if err := state.WriteState(cwd, next); err != nil {
-		return CliResult{}, err
+	if !published.published {
+		return CliResult{}, published.err
 	}
 	// C-RENDER-GROUNDING-01: a new cycle starts at P, so the render ledger is cleared (stale rows misfire).
 	if result.State.Phase == state.PhaseP {
 		hook.ResetRenderLedger(cwd)
 	}
+	rowErr := state.AppendLedger(cwd, row)
 	arrow := string(cur.Phase) + " \u2192 " + string(result.State.Phase)
-	return CliResult{Code: 0, Output: orchestrateTransitionWithArchitectHint(result.State.Phase,
-		"orchestrate "+VerbText(verb)+": current="+string(cur.Phase)+" -> "+string(result.State.Phase)+" ("+arrow+", session "+sessionID+")")}, nil
+	answer := orchestrateTransitionWithArchitectHint(result.State.Phase,
+		"orchestrate "+VerbText(verb)+": current="+string(cur.Phase)+" -> "+string(result.State.Phase)+" ("+arrow+", session "+sessionID+")")
+	return CliResult{Code: 0, Output: orchestrateCommitAnswer(answer,
+		orchestrateCommitWarn("orchestrate "+VerbText(verb), published, rowErr, cur.Phase, result.State.Phase)...)}, nil
 }
