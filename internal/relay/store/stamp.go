@@ -84,22 +84,28 @@ func unstampedRefusal(ctx context.Context, q ownership.Queryer, resolved string,
 // never repaired), and a socket the open names is the store's. A store not yet bound to
 // an App Server socket is bound to the one given (bindSocket). It returns the write gate held
 // SH, which the store keeps until it closes.
-func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string) (*os.File, error) {
+//
+// handed is the gate this open placed when it created the store (createAbsent), still held EX on
+// the description that placed it, or nil when this open did not create the store. With a handed
+// gate the returned gate is that same description, downgraded in place; without one it is a
+// description this call opens. From here the returned gate is this call's to close on every
+// failure path, and the store's to release on success.
+func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string, handed *os.File) (*os.File, error) {
 	stamp, err := stampOn(ctx, db)
 	if err != nil {
-		return nil, unstampedRefusal(ctx, db, resolved, err)
+		return nil, refuseWithHanded(unstampedRefusal(ctx, db, resolved, err), handed)
 	}
 	// A missing table or column is the command's host error, as the fence raised it.
 	if err = ValidateOwnershipSchema(ctx, db); err != nil {
-		return nil, err
+		return nil, refuseWithHanded(err, handed)
 	}
 	canonical := ""
 	if socket != "" {
 		if canonical, err = canonicalSocket(socket); err != nil {
-			return nil, err
+			return nil, refuseWithHanded(err, handed)
 		}
 	}
-	gate, err := holdGate(ctx, db, resolved, stamp, canonical)
+	gate, err := holdGate(ctx, db, resolved, stamp, canonical, handed)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +125,16 @@ func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string) (*
 	return gate, nil
 }
 
+// refuseWithHanded answers a writable check's failure and closes the handed creation gate when
+// this open owns one. With no handed gate it returns err itself, never a join around it, so a
+// refusal's cause stays reachable through errors.Unwrap exactly as before.
+func refuseWithHanded(err error, handed *os.File) error {
+	if handed == nil {
+		return err
+	}
+	return errors.Join(err, handed.Close())
+}
+
 // holdGate takes the write gate beside resolved SH, without waiting, for the store's lifetime:
 // it keeps a writer out of the way of an opener that holds it EX to create the store or to bind
 // it. A writable open that names an App Server socket binds the store first (bindSocket) when the
@@ -126,9 +142,35 @@ func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string) (*
 // crash between the binding's commit and its publication leaves), and keeps the gate it held EX,
 // downgraded to SH. A gate that is missing, held EX or not trusted refuses the open, as the
 // fence's admission refused it.
-func holdGate(ctx context.Context, db *sql.DB, resolved string, stamp ownership.Stamp, socket string) (*os.File, error) {
+//
+// handed is the gate this open placed when it created the store (createAbsent), still held EX on
+// the description that placed it, or nil when this open did not create the store. With a handed
+// gate no lock is taken: the socket binding, when this open binds one, runs under that same EX
+// description, and the returned gate is that description downgraded to SH in place
+// (unix.Flock(fd, LOCK_SH|LOCK_NB)), exactly as the socket-binding downgrade below does. The
+// description is never let go between the creation and the store's shared hold, so a child forked
+// during the creation that still holds it EX cannot refuse the creator's own store (CRW-853).
+// Every failure path that owns a handed gate closes it. Without a handed gate the body is as it
+// always was.
+func holdGate(ctx context.Context, db *sql.DB, resolved string, stamp ownership.Stamp, socket string, handed *os.File) (*os.File, error) {
 	path := filepath.Join(filepath.Dir(resolved), "write-gate.lock")
-	if socket != "" && !ReadOnlyCommand(ctx) && unbound(resolved, stamp, socket) {
+	binding := socket != "" && !ReadOnlyCommand(ctx) && unbound(resolved, stamp, socket)
+	if handed != nil {
+		// The creating open's own description, already held EX, so no lock is taken: the socket
+		// binding, when this open binds the store, runs under it, and it is then downgraded to SH
+		// in place. A fresh description here would be refused by the EX a child forked during the
+		// creation still holds (CRW-853).
+		if binding {
+			if err := bindSocket(ctx, db, resolved, socket); err != nil {
+				return nil, errors.Join(err, handed.Close())
+			}
+		}
+		if err := unix.Flock(int(handed.Fd()), unix.LOCK_SH|unix.LOCK_NB); err != nil {
+			return nil, errors.Join(ownershipRefusal(&ownership.Refused{Detail: fmt.Sprintf("write gate: %v", err)}), handed.Close())
+		}
+		return handed, nil
+	}
+	if binding {
 		gate, err := ownership.LockWithin(ctx, path, true, "write-gate EX for the socket binding")
 		if err != nil {
 			var expired *ownership.LockWaitExpired
