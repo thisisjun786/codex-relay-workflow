@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
@@ -181,6 +182,13 @@ func modes() []mode {
 		}},
 		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"manage", true, func(c invocation) int { return manage.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
+		{"gui", true, func(c invocation) int {
+			// The server ends on a signal: SIGINT comes from the base registration, and SIGTERM is
+			// added here so an operator or a supervisor can stop it either way.
+			ctx, stop := cancelOn(c.ctx, syscall.SIGTERM)
+			defer stop()
+			return gui.Run(ctx, c.args, c.stdout, c.stderr)
+		}},
 		{"config", true, func(c invocation) int { return crwconfig.Run(c.args, c.stdout, c.stderr, os.Getenv) }},
 		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
 		{"pabcd", false, func(c invocation) int {
