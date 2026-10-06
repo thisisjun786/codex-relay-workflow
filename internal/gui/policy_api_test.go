@@ -313,8 +313,19 @@ func TestPolicyCheckNeedsTheGuard(t *testing.T) {
 	}
 }
 
+// catalogHost isolates the catalog tests: the reader resolves the model catalog below the home and
+// runs the OCX probe, so HOME and CRW_HOME are pointed at a temporary directory before either runs.
+func catalogHost(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CRW_HOME", filepath.Join(root, "crw"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+}
+
 // TestCatalogIsRegistered is C5: the catalog route answers and keeps the reader's status apart.
 func TestCatalogIsRegistered(t *testing.T) {
+	catalogHost(t)
 	found := false
 	for _, route := range Routes() {
 		if route.Method == http.MethodGet && route.Path == "/api/catalog" {
@@ -346,6 +357,7 @@ func TestCatalogIsRegistered(t *testing.T) {
 
 // TestCatalogRefreshIsAccepted is C5: ?refresh=1 is a legal request.
 func TestCatalogRefreshIsAccepted(t *testing.T) {
+	catalogHost(t)
 	recorder := request(policyServer(t), http.MethodGet, "/api/catalog?refresh=1", guardHost, "", nil)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("GET /api/catalog?refresh=1: %d %s", recorder.Code, recorder.Body.String())

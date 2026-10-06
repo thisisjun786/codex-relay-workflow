@@ -9,6 +9,7 @@ package policystore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -55,8 +56,36 @@ type Located struct {
 
 // Pair is one model and reasoning effort a role may run on. Both halves are compared as exact
 // strings: an effort name belongs to the model beside it, so max and xhigh are never substituted
-// for one another.
+// for one another. On the wire the effort is spelled reasoningEffort, as the policy document
+// spells it, and effort is accepted as an alias.
 type Pair struct{ Model, Effort string }
+
+// pairWire is a pair as JSON carries it.
+type pairWire struct {
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	Effort          string `json:"effort"`
+}
+
+// UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
+// with an empty effort, which the parser then refuses, rather than silently matching another pair.
+func (p *Pair) UnmarshalJSON(raw []byte) error {
+	var wire pairWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	p.Model = wire.Model
+	p.Effort = wire.ReasoningEffort
+	if p.Effort == "" {
+		p.Effort = wire.Effort
+	}
+	return nil
+}
+
+// MarshalJSON writes a pair as the policy document spells it.
+func (p Pair) MarshalJSON() ([]byte, error) {
+	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort})
+}
 
 // RoleView is one declared role: its pairs, or the record expectation of a supervisor.
 type RoleView struct {

@@ -22,16 +22,17 @@ const (
 )
 
 // Change is one proposed edit: exactly one of the five kinds, with only its own fields set. A
-// request carrying a field of another kind is refused rather than partly applied.
+// request carrying a field of another kind is refused rather than partly applied. The JSON keys are
+// the lower-case spellings the API documents, not Go field names.
 type Change struct {
-	Kind    string
-	Role    string
-	Pairs   []Pair
-	Model   string
-	Efforts []string
-	ID      string
-	Effort  string
-	CWD     []string
+	Kind    string   `json:"kind"`
+	Role    string   `json:"role,omitempty"`
+	Pairs   []Pair   `json:"pairs,omitempty"`
+	Model   string   `json:"model,omitempty"`
+	Efforts []string `json:"efforts,omitempty"`
+	ID      string   `json:"id,omitempty"`
+	Effort  string   `json:"effort,omitempty"`
+	CWD     []string `json:"cwd,omitempty"`
 }
 
 // CheckResult is what a check answers. It carries the file's current digest and whether the
@@ -282,8 +283,14 @@ func applySetException(document pyjson.Object, change Change) (pyjson.Object, []
 			entry = append(entry, pyjson.Field{Key: "reason", Value: reason})
 		}
 	}
-	if change.Role != "" {
-		entry = append(entry, pyjson.Field{Key: "role", Value: change.Role})
+	// The role scope is carried across, not dropped: an exception whose scope vanished would be
+	// checked against any cited role, which widens the authorization the operator recorded.
+	role := change.Role
+	if role == "" && existing != nil {
+		role, _ = existing.Get("role").(string)
+	}
+	if role != "" {
+		entry = append(entry, pyjson.Field{Key: "role", Value: role})
 	}
 	entry = append(entry, pyjson.Field{Key: "model", Value: change.Model}, pyjson.Field{Key: "reasoningEffort", Value: change.Effort})
 	roots := make([]any, 0, len(change.CWD))
