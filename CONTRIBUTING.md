@@ -14,7 +14,7 @@ and linked references before editing. Shared workflow rules belong in
 `plugins/crw/skills/crw-plan/references/integrations.md`; operation-specific guidance
 belongs with that skill.
 
-Keep each PR focused on one outcome. Explain the triggering problem, expected
+Keep each PR focused on one coherent unit under [the work-unit rules](POLICY.md#work-units-review-and-integration). Explain the triggering problem, expected
 behavior and acceptance example in the PR even when there is a Linear link.
 Access to the maintainer's private project is not a contribution prerequisite.
 Korean and English contributions are welcome. Use only material you have the

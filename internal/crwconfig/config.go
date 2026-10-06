@@ -120,7 +120,10 @@ func locate(getenv func(string) string, flagPath string) (string, Source, error)
 		return value, SourceEnv, absolute(value, "CRW_CONFIG")
 	}
 	home, fromEnv := baseDir(getenv, "XDG_CONFIG_HOME", ".config")
-	path := filepath.Join(home, "crw", "config.json")
+	// The default location is joined the way every root is, raw text and one separator: a
+	// base that mixes a symbolic link and ".." keeps the meaning the filesystem gives that
+	// spelling rather than the different directory filepath.Clean would name.
+	path := rootJoin(home, "crw", "config.json")
 	what := "the configuration home"
 	if fromEnv {
 		what = "XDG_CONFIG_HOME"

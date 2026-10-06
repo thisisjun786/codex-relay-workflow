@@ -103,6 +103,11 @@ type Check struct {
 	// a strict boolean and written back into the restated rows only when it is true, so a row
 	// without it gains no field (CRW-676, CRW-681).
 	NotRun bool
+	// TestSkipped is the collector's mark that a go-product test leg concluded success without
+	// running its test step: CI light mode skips the leg's work while the job still reads success,
+	// so the leg says nothing about the commit. It is read as a strict boolean and written back
+	// into the restated rows only when it is true, so a row without it gains no field (CRW-824).
+	TestSkipped bool
 }
 
 // Problem is one problem code of a merge-evidence snapshot.

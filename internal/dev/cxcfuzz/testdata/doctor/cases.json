@@ -1,0 +1,90 @@
+[
+  {
+    "name": "features-cut-splits-an-astral-pair",
+    "input": "{\"run\": {\"status\": 3, \"stderr\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ud83d\\ude00y\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\\ud83d\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ufffd\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\\ud83d\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ufffd\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-empty-repair-kept-in-json",
+    "input": "{\"report\": {\"checks\": [{\"evidence\": \"e\", \"name\": \"x\", \"repair\": \"\", \"severity\": \"WARN\"}]}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"x\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"e\\\",\\n      \\\"repair\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] x: e\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"x\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"e\\\",\\n      \\\"repair\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] x: e\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-killed-status-is-the-oracle-null",
+    "input": "{\"run\": {\"status\": -1, \"stderr\": \"\", \"stdout\": \"\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list'\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list'\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list'\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list'\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "json-spells-a-lone-surrogate-as-its-escape",
+    "input": "{\"report\": {\"checks\": [{\"evidence\": \"\\udfff\", \"name\": \"\\ud800\", \"severity\": \"WARN\"}]}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\\ud800\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"\\\\udfff\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] \\ufffd: \\ufffd\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\\ud800\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"\\\\udfff\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] \\ufffd: \\ufffd\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-hard-flag-off",
+    "input": "{\"run\": {\"status\": 0, \"stdout\": \"multi_agent  stable  true\\ngoals  stable  false\\nhooks  stable  true\\ndefault_mode_request_user_input  stable  true\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"FAIL\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"FAIL\\\",\\n      \\\"evidence\\\": \\\"3/4 enabled; crw requires [goals]\\\",\\n      \\\"repair\\\": \\\"crw install features enable\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[FAIL] features: 3/4 enabled; crw requires [goals]\\n    repair: crw install features enable\\noverall: FAIL\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"FAIL\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"FAIL\\\",\\n      \\\"evidence\\\": \\\"3/4 enabled; crw requires [goals]\\\",\\n      \\\"repair\\\": \\\"crw install features enable\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[FAIL] features: 3/4 enabled; crw requires [goals]\\n    repair: crw install features enable\\noverall: FAIL\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-soft-flag-off",
+    "input": "{\"run\": {\"status\": 0, \"stdout\": \"multi_agent  stable  true\\ngoals  stable  true\\nhooks  stable  true\\ndefault_mode_request_user_input  stable  false\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"3/4 enabled; optional [default_mode_request_user_input] off \\u2014 request_user_input is not exposed in Default mode (Plan mode is unaffected)\\\",\\n      \\\"repair\\\": \\\"codex features enable default_mode_request_user_input\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: 3/4 enabled; optional [default_mode_request_user_input] off \\u2014 request_user_input is not exposed in Default mode (Plan mode is unaffected)\\n    repair: codex features enable default_mode_request_user_input\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"3/4 enabled; optional [default_mode_request_user_input] off \\u2014 request_user_input is not exposed in Default mode (Plan mode is unaffected)\\\",\\n      \\\"repair\\\": \\\"codex features enable default_mode_request_user_input\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: 3/4 enabled; optional [default_mode_request_user_input] off \\u2014 request_user_input is not exposed in Default mode (Plan mode is unaffected)\\n    repair: codex features enable default_mode_request_user_input\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "optional-fields-present-empty-and-absent",
+    "input": "{\"report\": {\"checks\": [], \"codexVersion\": \"1.2.3\", \"pluginVersion\": \"\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [],\\n  \\\"pluginVersion\\\": \\\"\\\",\\n  \\\"codexVersion\\\": \\\"1.2.3\\\"\\n}\\n\", \"text\": \"codex v1.2.3\\noverall: PASS\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [],\\n  \\\"pluginVersion\\\": \\\"\\\",\\n  \\\"codexVersion\\\": \\\"1.2.3\\\"\\n}\\n\", \"text\": \"codex v1.2.3\\noverall: PASS\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-cut-inside-a-wtf8-lone-surrogate",
+    "input": "{\"run\": {\"stderr\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\udced\\udca0\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list': xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\\udced\\\\udca0\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list': xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ufffd\\ufffd\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list': xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\\udced\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list': xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ufffd\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "tag": "open",
+    "record": "follow-up proposal: harnessReportCut counts a WTF-8 lone surrogate as three UTF-16 units"
+  },
+  {
+    "name": "check-missing-required-fields-reads-empty-on-both-sides",
+    "input": "{\"report\": {\"checks\": [{\"evidence\": \"e\"}, {\"name\": \"n\"}]}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"e\\\"\\n    },\\n    {\\n      \\\"name\\\": \\\"n\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[] : e\\n[] n: \\noverall: PASS\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"e\\\"\\n    },\\n    {\\n      \\\"name\\\": \\\"n\\\",\\n      \\\"severity\\\": \\\"\\\",\\n      \\\"evidence\\\": \\\"\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[] : e\\n[] n: \\noverall: PASS\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "report-missing-checks-reads-empty-on-both-sides",
+    "input": "{\"report\": {\"schemaVersion\": 1}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": []\\n}\\n\", \"text\": \"overall: PASS\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"PASS\\\",\\n  \\\"checks\\\": []\\n}\\n\", \"text\": \"overall: PASS\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "features-arbitrary-exit-status-keeps-its-number",
+    "input": "{\"run\": {\"status\": 42, \"stderr\": \"boom\", \"stdout\": \"\"}}",
+    "oracle": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list' (exit 42): boom\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list' (exit 42): boom\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "go": "{\"json\": \"{\\n  \\\"schemaVersion\\\": 1,\\n  \\\"overall\\\": \\\"WARN\\\",\\n  \\\"checks\\\": [\\n    {\\n      \\\"name\\\": \\\"features\\\",\\n      \\\"severity\\\": \\\"WARN\\\",\\n      \\\"evidence\\\": \\\"could not read 'codex features list' (exit 42): boom\\\",\\n      \\\"repair\\\": \\\"ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\\"\\n    }\\n  ]\\n}\\n\", \"text\": \"[WARN] features: could not read 'codex features list' (exit 42): boom\\n    repair: ensure the `codex` binary is on PATH, then re-run `crw doctor harness`\\noverall: WARN\"}",
+    "tag": "identical",
+    "record": ""
+  }
+]

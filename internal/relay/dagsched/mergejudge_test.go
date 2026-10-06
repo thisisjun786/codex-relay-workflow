@@ -77,6 +77,7 @@ func (k *judgeKit) history() []string {
 // Criterion c8 and decision D-12: a required check that fails is retried once on the same head and a second, different failure evicts the node for good. A failure is counted only when every
 // required check has finished, a non-required check never counts, the same snapshot read again is not a second failure, and a head that is evicted stays evicted.
 func TestMergeEligibilityRetryOnceThenEvict(t *testing.T) {
+	t.Parallel()
 	t.Run("a flaky check passes after one retry", func(t *testing.T) {
 		k := newJudgeKit(t)
 		// A is red while B is still running: nothing is counted yet
@@ -182,6 +183,7 @@ func TestMergeEligibilityRetryOnceThenEvict(t *testing.T) {
 
 // The history appends only what changed: the same judgement again writes nothing, a change of criteria is a row of its own and so is the return.
 func TestMergeJudgeHistoryAppends(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	first := k.judge()
 	if !first.Eligible() || first.CheckSeq != 1 {
@@ -208,6 +210,7 @@ func TestMergeJudgeHistoryAppends(t *testing.T) {
 // Rule 4 asks whether the base tip is IN the head, which the repository can answer; the pull request's own base field is only what the forge shows and says nothing about what the checks
 // ran against, so it is neither trusted nor needed.
 func TestMergeStaleBaseIsHeadContainsTip(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	repo := k.repo
 	// the base moves on after the branch was cut; the forge still shows the new tip as the pull request's base, as it does for any open pull request
@@ -247,6 +250,7 @@ func TestMergeStaleBaseIsHeadContainsTip(t *testing.T) {
 
 // Each rule is decided in its order and the cases that cannot be judged write nothing.
 func TestMergeEligibilityStaleAndOrder(t *testing.T) {
+	t.Parallel()
 	t.Run("the pull request moved after the acceptance", func(t *testing.T) {
 		k := newJudgeKit(t)
 		k.pr.HeadSHA = strings.Repeat("2", 40)
@@ -362,6 +366,7 @@ func mustActive(t *testing.T, f *fixture, plan, node string) Acceptance {
 // B-13: a judgement is evidence the relay reads again, and a row that no longer digests to what was recorded is neither history nor a head: the edges built on it are blocked, and the next
 // judgement refuses instead of counting retries on a falsified record.
 func TestEvidenceRowTamperIsBlocked(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("id", "I", "D", "artifact_verified", doc{"pins_code_head": true, "target_repository": forgeKitRepository, "target_base_ref": "dev"}))
 	k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, forgeKitRepository, "dev", true, true)
@@ -385,6 +390,7 @@ func TestEvidenceRowTamperIsBlocked(t *testing.T) {
 // D-12 is a limit of a head of a pull request, not of an acceptance: when the node is accepted again at the same head (a new report, an explicit supersede) the head does not get its
 // retry back, and the acceptance in force carries the eviction, so the reading blocks it from its own history.
 func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.setChecks("A:1:1:failure", "B:2:1:success")
 	k.judge()
@@ -418,6 +424,7 @@ func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
 
 // Two nodes that were accepted at one commit are two pull requests of two relationships: a turn that is open for the first is not an answer for the second.
 func TestMergeRequestIsNotAnsweredByAnotherNodesTurnAtTheSameHead(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.declare("g", "D", "d.txt")
 	k.acceptOnForge("g", "D", acceptOpts{HeadSHA: k.feature, PR: 6})
@@ -436,6 +443,7 @@ func TestMergeRequestIsNotAnsweredByAnotherNodesTurnAtTheSameHead(t *testing.T) 
 
 // A relationship the registry replaced (archived and superseded) is not a holder of a merge turn, and a pause that lands while the pull request is read is seen under the lock.
 func TestMergeRequestRefusesASupersededRelationship(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.exec("PRAGMA foreign_keys = OFF")
 	k.exec("UPDATE relationships SET status = 'archived', superseded_by = 'rel-successor' WHERE relationship_id = 'rel-g-I'")
@@ -458,6 +466,7 @@ func (t *tipStub) Tip(_ context.Context, repository, base string) (mergeturn.Tip
 
 // The base tip a judgement was made against is part of what it says: the same outcome against a tip that moved is a new row, so the history never claims the old tip.
 func TestMergeJudgementRecordsTheTipItWasMadeAgainst(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	older := k.feature // a tip the head contains: the head itself
 	tip := &tipStub{sha: k.repo.git("rev-parse", "dev")}
@@ -476,6 +485,7 @@ func TestMergeJudgementRecordsTheTipItWasMadeAgainst(t *testing.T) {
 
 // The forge does not tell owner/name apart by case and a pull request can be replaced by another from the same commit: neither gives a head the retry it used up.
 func TestEvictionIsOfTheCommitNotOfTheSpellingOrThePullRequest(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.setChecks("A:1:1:failure", "B:2:1:success")
 	k.judge()
@@ -496,6 +506,7 @@ func TestEvictionIsOfTheCommitNotOfTheSpellingOrThePullRequest(t *testing.T) {
 
 // Everything the judgement rested on is read again in the transaction that creates the turn: a pause that lands between the two creates neither a turn nor a grant.
 func TestMergeRequestReadsAgainWhereItWrites(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.sched.testBetweenJudgeAndAsk = func() { k.exec("UPDATE relationships SET status = 'paused'") }
 	if _, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"}); refusalReason(err) != "relationship_not_active" || turn != nil {
@@ -517,6 +528,7 @@ func TestMergeRequestReadsAgainWhereItWrites(t *testing.T) {
 // The judgement the turn rests on is checked again in the transaction that creates the turn, all of it: a predecessor edge that appears, a falsified record of the judgement and an
 // integrity failure of the lane in the middle of writing a turn each leave no turn, no grant and no half-written ledger.
 func TestMergeRequestCheckedAgainInTheTransactionThatCreatesTheTurn(t *testing.T) {
+	t.Parallel()
 	ask := func(k *judgeKit) error {
 		_, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"})
 		if err != nil && turn != nil {
@@ -575,6 +587,7 @@ func TestMergeRequestCheckedAgainInTheTransactionThatCreatesTheTurn(t *testing.T
 // A reading that was in flight while a newer one was judged is older than the history and counts for nothing: an old failure that arrives after the retry passed neither evicts the head
 // nor takes back the eligibility. Nothing is written and the caller reads again.
 func TestAnOlderReadingCannotOverwriteANewerJudgement(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	k.setChecks("A:1:1:failure", "B:2:1:success")
 	k.judge()
@@ -598,6 +611,7 @@ func TestAnOlderReadingCannotOverwriteANewerJudgement(t *testing.T) {
 
 // A refusal the lane records as a conflict is an answer and its row is kept, and a repeat of the same contest updates the row (a later time) instead of adding one: that update is kept too.
 func TestMergeRequestKeepsTheLanesRecordOfARepeatedContest(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	// the project's binding changed hands after the relationship was made: the lane refuses the holder and records the contest
 	k.exec("UPDATE scope_bindings SET task_id = 'someone-else' WHERE scope_kind = 'project' AND scope_key = 'P-TEST'")
@@ -634,6 +648,7 @@ func TestMergeRequestKeepsTheLanesRecordOfARepeatedContest(t *testing.T) {
 // again; a failure that a judgement could not count (a check was still running beside it) is not the first failure of a retry round; a reading of a run that is older than the one already
 // judged, in the same attempt, is discarded as well.
 func TestJudgementsAreComputedFromTheNewestReadingOfEachRun(t *testing.T) {
+	t.Parallel()
 	t.Run("a listing with two attempts of a run", func(t *testing.T) {
 		k := newJudgeKit(t)
 		k.setChecks("A:1:1:failure", "A:1:2:success", "B:2:1:success")
@@ -687,6 +702,7 @@ func TestJudgementsAreComputedFromTheNewestReadingOfEachRun(t *testing.T) {
 
 // Names and run identities are opaque texts: two runs whose joined texts would be equal are two runs.
 func TestRunKeysAreNotJoinedTexts(t *testing.T) {
+	t.Parallel()
 	head := strings.Repeat("a", 40)
 	a := Check{Name: "A|check-run:11|status:A", RunID: "check-run:11", HeadSHA: head, Attempt: 1, Conclusion: "failure"}
 	b := Check{Name: "A|check-run:11", RunID: "status:A|check-run:11", HeadSHA: head, Attempt: 1, Conclusion: "failure"}
@@ -706,6 +722,7 @@ func TestRunKeysAreNotJoinedTexts(t *testing.T) {
 // A reading of the pull request that was in flight while another judgement of the node was recorded is older than the history, whatever it contains: it is discarded, nothing is written, and
 // nothing reaches the lane. An older success cannot hide a newer run's failure, and a delayed "still running" cannot be taken for a retry that never happened.
 func TestAReadingInFlightWhileAnotherJudgementLandsIsDiscarded(t *testing.T) {
+	t.Parallel()
 	t.Run("an older success that lacks the newer run", func(t *testing.T) {
 		k := newJudgeKit(t)
 		k.setChecks("A:11:1:success", "B:2:1:success")
@@ -749,6 +766,7 @@ func TestAReadingInFlightWhileAnotherJudgementLandsIsDiscarded(t *testing.T) {
 
 // The same instant in two spellings is one time: ordering and failure identity use the instant, and text that is not a time cannot be ordered.
 func TestStampsAreInstantsNotSpellings(t *testing.T) {
+	t.Parallel()
 	if !laterStamp("2026-10-02T09:00:05+09:00", "2026-10-02T00:00:01Z") || laterStamp("2026-10-02T09:00:01+09:00", "2026-10-02T00:00:01Z") || laterStamp("soon", "2026-10-02T00:00:01Z") || laterStamp("", "") {
 		t.Fatal("stamps are compared as text")
 	}

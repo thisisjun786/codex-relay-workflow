@@ -1215,7 +1215,7 @@ with no per-finding trail, is not that evidence.
 An optional review that is unavailable or stalled is recorded as unavailable, with sufficient
 independent review obtained instead under the repository's policy, and the work continues. Waiting
 indefinitely for an optional reviewer is not diligence; the one run each of Devin and Codex makes on a
-pull request is the exception, awaited to its end before the receipt
+pull request is the exception, awaited within the [waiting budget](merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) before the receipt
 ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). Apart from that run, a reviewer
 is not requested again or awaited under the [reviewer policy](merge-readiness.md#reviewer-policy);
 its existing findings, and any thread that arrives after the receipt, still require evidence-backed disposition

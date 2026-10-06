@@ -240,6 +240,7 @@ func deliverableOf(ctx context.Context, payload any, reference string, roots any
 // against the golden, which began as guard.deliverable_state's (an unverifiable one without its
 // detail: the omission keeps none).
 func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permissions these cases depend on")
 	}
@@ -272,6 +273,7 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 // statement, so this is the path a context that ends between the snapshot and the artifact reads
 // takes.
 func TestOmissionDeliverableLeavesACutOffComparisonUnreadable(t *testing.T) {
+	t.Parallel()
 	entries, revision, reference, roots := stageDeliverable(t, deliverableCases()[0])
 	payload, rootsValue := storedReceiptValues(t, entries, revision, roots)
 

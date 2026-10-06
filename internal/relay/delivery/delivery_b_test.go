@@ -10,6 +10,7 @@ import (
 // test_delivery.py properties DEL-11..DEL-20.
 
 func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_request(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del11")
 	f := newFixture(t, tree)
@@ -36,6 +37,7 @@ func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_reques
 }
 
 func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *testing.T) {
+	t.Parallel()
 	t.Run("dispatched", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del12", "dispatched")
@@ -72,6 +74,7 @@ func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *test
 }
 
 func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
+	t.Parallel()
 	t.Run("direct pre-send failures -> attempt_cap", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del13", "direct")
@@ -155,6 +158,7 @@ func lifecycleRow(f *fixture) Row {
 }
 
 func TestDEL14_host_lifecycle_withholds_are_deferrals_not_holds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mode, reason string
 		apply        func(*fakeThread, *fakeHost)
@@ -188,6 +192,7 @@ func TestDEL14_host_lifecycle_withholds_are_deferrals_not_holds(t *testing.T) {
 }
 
 func TestDEL15_an_unreadable_lifecycle_withholds_rather_than_guessing(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "del14", "unreadable")
 	f := newFixture(t, tree)
@@ -204,6 +209,7 @@ func TestDEL15_an_unreadable_lifecycle_withholds_rather_than_guessing(t *testing
 }
 
 func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"paused", "archived"} {
 		t.Run(mode, func(t *testing.T) {
 			tree := parityTree(t)
@@ -233,6 +239,7 @@ func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testin
 }
 
 func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"paused", "archived", "supersede", "before"} {
 		t.Run(mode, func(t *testing.T) {
 			tree := parityTree(t)
@@ -269,6 +276,7 @@ func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *test
 }
 
 func TestDEL18_a_deactivated_assignment_is_withheld_with_a_returned_record(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"cancelled", "paused", "archived"} {
 		t.Run(status, func(t *testing.T) {
 			tree := parityTree(t)
@@ -316,6 +324,7 @@ func TestDEL19_a_stopped_assignment_reads_nothing_from_the_host(t *testing.T) {
 }
 
 func TestDEL20_resuming_delivers_the_same_event_once_and_an_active_one_is_untouched(t *testing.T) {
+	t.Parallel()
 	t.Run("resume", func(t *testing.T) {
 		tree := parityTree(t)
 		expected := expectScenario(t, tree, "del20", "resume")
