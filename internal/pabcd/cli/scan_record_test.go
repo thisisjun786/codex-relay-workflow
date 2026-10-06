@@ -276,17 +276,21 @@ const scanRecordLockRetryLimit = 50
 // session lock giving up. Any other failure is returned at once.
 func scanRecordRunRetryingLock(a ScanCliArgs) CliResult {
 	r := RunScanCli(a)
-	for attempt := 0; attempt < scanRecordLockRetryLimit && scanRecordLockGaveUp(r); attempt++ {
+	for attempt := 0; attempt < scanRecordLockRetryLimit && scanRecordLockGaveUp(a, r); attempt++ {
 		r = RunScanCli(a)
 	}
 	return r
 }
 
-// scanRecordLockGaveUp reports whether the result is the lock giving up rather than a real failure:
-// RunScanCli answers Code 1 with the error of the last exclusive create, which cliErrorMessage renders
-// as "EEXIST: file already exists, open '<state file>.lock'".
-func scanRecordLockGaveUp(r CliResult) bool {
-	return r.Code == 1 && strings.Contains(r.Output, "EEXIST")
+// scanRecordLockGaveUp reports whether the result is the session lock giving up rather than a real
+// failure: RunScanCli answers Code 1 with the error of the last exclusive create of the session's
+// lock file, which cliErrorMessage renders as
+// "EEXIST: file already exists, open '<state file>.lock'". The path is checked as well as the errno,
+// so an EEXIST from another open — a temp file of the state write, say — fails the test at once
+// instead of being retried into a passing run.
+func scanRecordLockGaveUp(a ScanCliArgs, r CliResult) bool {
+	return r.Code == 1 && strings.Contains(r.Output, "EEXIST") &&
+		strings.Contains(r.Output, state.StatePath(a.Cwd, a.SessionID)+".lock")
 }
 
 func scanRecordWorkspace(t *testing.T) string {

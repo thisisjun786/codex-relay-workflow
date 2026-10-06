@@ -3,7 +3,6 @@ package evidence
 import (
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,42 +12,39 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
-// tombstoneLockRetryLimit is how often the widened lock below calls the session lock again after its
-// wait budget is exhausted.
+// tombstoneLockRetryLimit is how often a writer records its tombstone again after the session lock gave
+// up. The lock's wait budget is the oracle's (state.WithSessionLock's LOCK_RETRY_DELAYS_MS,
+// 5+10+15+20+25+30+35+40+35+35 ms = 250 ms in all) and giving up after it is deliberate, so the two
+// writers below would otherwise be decided by how long one fsync takes on the machine running the
+// test. RecordTombstone takes no lock argument, so the rule the issue states for that case applies:
+// call it again, at most this many times.
 const tombstoneLockRetryLimit = 50
 
-// tombstoneWideBudgetLock is the session lock with a wider budget than the oracle's, built from the
-// test side. The oracle's lock (state.WithSessionLock, LOCK_RETRY_DELAYS_MS, 5+10+15+20+25+30+35+40+35+35
-// ms = 250 ms in all) returns the last create error when it cannot be had, and giving up there is
-// deliberate; a slow CI disk can spend that budget on one fsync, which is what this test must not
-// depend on. RecordTombstone takes no lock argument, so the test drives the package's own seam
-// (recordTombstone) the way the tests beside it do, and hands it this lock. The product's budget is
-// untouched, and a lock that is genuinely stuck still refuses after the limit.
-func tombstoneWideBudgetLock() lockFunc {
-	return func(cwd, sessionID string, fn func() error) error {
-		for attempt := 0; ; attempt++ {
-			entered := false
-			err := state.WithSessionLock(cwd, sessionID, func() error { entered = true; return fn() })
-			if entered || !errors.Is(err, fs.ErrExist) || attempt >= tombstoneLockRetryLimit {
-				return err
-			}
-		}
+// recordTombstoneRetryingLock returns whether the verdict was recorded, calling RecordTombstone again
+// while it reports that it was not. RecordTombstone reports only a bool — a give-up raises the
+// corruption sentinel in its second tier and is not told apart from a refusal — so the test's
+// assertions on the stored verdicts are what decide the outcome; a genuinely stuck lock or a refused
+// rewrite still fails after the limit.
+func recordTombstoneRetryingLock(cwd, sessionID string, p Payload) bool {
+	ok := RecordTombstone(cwd, sessionID, p, MaxAttempts, nil)
+	for attempt := 0; attempt < tombstoneLockRetryLimit && !ok; attempt++ {
+		ok = RecordTombstone(cwd, sessionID, p, MaxAttempts, nil)
 	}
+	return ok
 }
 
 // Two agents that stop at the same moment each commit their tombstone under the session lock: neither
 // verdict is lost. Each writer holds the lock across a read-modify-write of the session file with
-// fsync, so they run under tombstoneWideBudgetLock rather than the oracle's 250 ms budget.
+// fsync, so a writer that meets the lock giving up calls RecordTombstone again.
 func TestRecordTombstoneKeepsConcurrentVerdicts(t *testing.T) {
 	cwd := t.TempDir()
-	lock := tombstoneWideBudgetLock()
 	var wg sync.WaitGroup
 	results := make([]bool, 2)
 	for i, agent := range []string{"racer-a", "racer-b"} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = recordTombstone(cwd, "s1", Payload{AgentType: "executor", AgentID: agent}, MaxAttempts, time.Now(), lock, nil)
+			results[i] = recordTombstoneRetryingLock(cwd, "s1", Payload{AgentType: "executor", AgentID: agent})
 		}()
 	}
 	wg.Wait()
