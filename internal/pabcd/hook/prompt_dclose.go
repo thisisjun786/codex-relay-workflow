@@ -89,11 +89,9 @@ type promptDclosePlanOutcome struct {
 
 // promptDcloseCloseResult is the oracle's AdvanceResult as the shared tail reads it.
 type promptDcloseCloseResult struct {
-	kind        string
-	closedID    string
-	plan        *goalplan.Goalplan
-	workPhaseID *string
-	pending     []goalplan.GoalplanTask
+	kind     string
+	closedID string
+	plan     *goalplan.Goalplan
 }
 
 // promptOrchestrateBoundDclose is the bound D-close seam (hook.ts:939-1429). current is the state

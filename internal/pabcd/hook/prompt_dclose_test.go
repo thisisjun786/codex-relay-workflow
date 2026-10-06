@@ -265,12 +265,12 @@ func promptDcloseFileText(path string) string {
 	return string(raw)
 }
 
-// promptDcloseErrPanic is the panic a seam reports when it wants the close to stop there, the Go
-// form of the throw the oracle's own hook.test.ts seam callbacks raise.
-var promptDcloseErrPanic = errors.New("promptDclose: the seam stopped the close")
+// errPromptDcloseSeam is the panic a seam reports when it wants the close to stop there, the Go form
+// of the throw the oracle's own hook.test.ts seam callbacks raise.
+var errPromptDcloseSeam = errors.New("promptDclose: the seam stopped the close")
 
 // promptDcloseStop is a seam that stops the close and reports that it did.
-func promptDcloseStop() func() { return func() { panic(promptDcloseErrPanic) } }
+func promptDcloseStop() func() { return func() { panic(errPromptDcloseSeam) } }
 
 // TestPromptDcloseMissingReceiptIsRefused is hook.test.ts "chat D-close is refused while the
 // work-phase has open tasks" in its receipt half and the CHECK-BINDING-01 rule: a bound C>D
@@ -752,7 +752,7 @@ func TestPromptDcloseSeamsStopAfterEachWrite(t *testing.T) {
 			promptDcloseSeedState(t, cwd, "s1", slug, "c-seam")
 			receipt := promptDcloseReceipt(t, cwd, "s1", "c-seam")
 			_, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), c.seams)
-			if panicked != promptDcloseErrPanic {
+			if panicked != errPromptDcloseSeam {
 				t.Fatalf("the seam did not stop the close: %v", panicked)
 			}
 			s := state.ReadState(cwd, "s1")
@@ -795,7 +795,7 @@ func TestPromptDcloseStoppedCloseIsFinishedByTheSameRequest(t *testing.T) {
 	promptDcloseSeedState(t, cwd, "s1", slug, "c-retry")
 	receipt := promptDcloseReceipt(t, cwd, "s1", "c-retry")
 	attest := promptDcloseAttest("wp-1", receipt)
-	if _, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", attest, &promptDcloseSeams{afterRecoveryMarkerWrite: promptDcloseStop()}); panicked != promptDcloseErrPanic {
+	if _, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", attest, &promptDcloseSeams{afterRecoveryMarkerWrite: promptDcloseStop()}); panicked != errPromptDcloseSeam {
 		t.Fatalf("the marker seam did not fire: %v", panicked)
 	}
 	s := state.ReadState(cwd, "s1")
@@ -834,7 +834,7 @@ func TestPromptDcloseRetryAfterThePabcdAppendKeepsOneRow(t *testing.T) {
 	promptDcloseSeedState(t, cwd, "s1", slug, "c-retry-append")
 	receipt := promptDcloseReceipt(t, cwd, "s1", "c-retry-append")
 	attest := promptDcloseAttest("wp-1", receipt)
-	if _, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", attest, &promptDcloseSeams{afterPabcdLedgerAppend: promptDcloseStop()}); panicked != promptDcloseErrPanic {
+	if _, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", attest, &promptDcloseSeams{afterPabcdLedgerAppend: promptDcloseStop()}); panicked != errPromptDcloseSeam {
 		t.Fatalf("the append seam did not fire: %v", panicked)
 	}
 	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 1 {

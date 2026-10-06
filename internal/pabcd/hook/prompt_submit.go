@@ -121,7 +121,7 @@ func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.Loo
 	// edges advance without --attest. The loose detectTrigger heuristic below runs ONLY when this
 	// returns null.
 	if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil {
-		if out, handled := promptSubmitOrchestrateCommandWith(p, current, turn, env, lock, command, seams); handled {
+		if out, handled := promptSubmitOrchestrateCommand(p, current, turn, env, lock, command, seams); handled {
 			return out
 		}
 		// not handled => fall through to the loose path (e.g. suppressed interview).
@@ -281,12 +281,6 @@ func promptSubmitAppendTurn(turns []string, turn string) []string {
 // forward, status, reset and unbound-D-close commands. It reports whether the command was handled
 // and, when it was, the context to inject. Unhandled means control falls through to the loose path,
 // exactly as the oracle's null return does.
-func promptSubmitOrchestrateCommand(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand) (string, bool) {
-	return promptSubmitOrchestrateCommandWith(p, current, turn, env, lock, command, nil)
-}
-
-// promptSubmitOrchestrateCommandWith is promptSubmitOrchestrateCommand with the bound D-close's
-// commit seams.
-func promptSubmitOrchestrateCommandWith(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand, seams *promptDcloseSeams) (string, bool) {
+func promptSubmitOrchestrateCommand(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand, seams *promptDcloseSeams) (string, bool) {
 	return promptOrchestrateHandle(p, current, turn, env, lock, command, seams)
 }
