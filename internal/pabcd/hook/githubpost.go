@@ -426,20 +426,29 @@ func githubPostLines(command string) ([]githubPostLine, bool) {
 	rs := []rune(githubPostUncontinued(command))
 	out := []githubPostLine{}
 	for i := 0; i < len(rs); {
-		start := i
+		start, delims := i, []string{}
 		for i < len(rs) && rs[i] != '\n' {
-			if rs[i] != '\'' && rs[i] != '"' {
+			switch c := rs[i]; {
+			case c == '\\':
+				i += 2
+			case c == '\'' || c == '"':
+				end, closed := githubPostQuotedEnd(rs, i)
+				if !closed {
+					return nil, false
+				}
+				i = end
+			case c == '<' && i+1 < len(rs) && rs[i+1] == '<' && (i+2 >= len(rs) || rs[i+2] != '<'):
+				// A heredoc operator: its quoted delimiter names a body the shell does not expand.
+				if delim, ok := githubPostHeredocDelimiter(rs, i); ok {
+					delims = append(delims, delim)
+				}
+				i += 2
+			default:
 				i++
-				continue
 			}
-			end, closed := githubPostQuotedEnd(rs, i)
-			if !closed {
-				return nil, false
-			}
-			i = end
 		}
 		line, from := githubPostLine{text: string(rs[start:i])}, i+1
-		for _, delim := range githubPostHeredocDelimiters(rs[start:i]) {
+		for _, delim := range delims {
 			body, after := githubPostHeredocBody(rs, from, delim)
 			line.bodies, from = append(line.bodies, body), after
 		}
@@ -449,40 +458,24 @@ func githubPostLines(command string) ([]githubPostLine, bool) {
 	return out, true
 }
 
-// githubPostHeredocDelimiters is the quoted heredoc delimiters the line introduces, in the order the shell
-// consumes their bodies; githubPostHeredocBody is the body of the heredoc whose quoted delimiter is delim,
-// with the index just past the delimiter line. An unquoted delimiter is not read, because the shell expands
-// that body.
-func githubPostHeredocDelimiters(line []rune) []string {
-	out := []string{}
-	for i := 0; i+1 < len(line); i++ {
-		switch line[i] {
-		case '\\':
-			i++
-		case '\'', '"':
-			i, _ = githubPostQuotedEnd(line, i)
-			i--
-		case '<':
-			if line[i+1] != '<' || i+2 < len(line) && line[i+2] == '<' {
-				continue
-			}
-			j := i + 2
-			if j < len(line) && line[j] == '-' {
-				j++
-			}
-			for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
-				j++
-			}
-			if j+1 >= len(line) || line[j] != '\'' && line[j] != '"' {
-				continue
-			}
-			end, _ := githubPostQuotedEnd(line, j)
-			if end > j+1 {
-				out = append(out, string(line[j+1:end-1]))
-			}
-		}
+// githubPostHeredocDelimiter is the quoted delimiter of the heredoc introduced by the << at index i, and
+// whether there is one. An unquoted delimiter is not read, because the shell expands that body.
+func githubPostHeredocDelimiter(rs []rune, i int) (string, bool) {
+	j := i + 2
+	if j < len(rs) && rs[j] == '-' {
+		j++
 	}
-	return out
+	for j < len(rs) && (rs[j] == ' ' || rs[j] == '\t') {
+		j++
+	}
+	if j+1 >= len(rs) || rs[j] != '\'' && rs[j] != '"' {
+		return "", false
+	}
+	end, _ := githubPostQuotedEnd(rs, j)
+	if end <= j+1 {
+		return "", false
+	}
+	return string(rs[j+1 : end-1]), true
 }
 
 func githubPostHeredocBody(rs []rune, from int, delim string) (string, int) {
