@@ -177,3 +177,50 @@ func runPrimaryPublication(cwd, id string, ensure bool, syncFile func(*os.File) 
 	err := writeState(cwd, defaultState(id, "next", at()), at(), publish, syncFile)
 	return err == nil, err
 }
+
+// TestWriteStateDirectorySyncFailureIsPublished pins the CRW-744 distinction: a failure after the rename published the state,
+// so WriteState reports it as a PublishedError while errors.Is still reaches the cause through Unwrap.
+func TestWriteStateDirectorySyncFailureIsPublished(t *testing.T) {
+	cwd, id, calls := t.TempDir(), "published-directory", []string{}
+	failDirectory := func(f *os.File) error {
+		info, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return syscall.EIO
+		}
+		return f.Sync()
+	}
+	created, err := runPrimaryPublication(cwd, id, false, failDirectory, &calls)
+	if created || err == nil {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if !Published(err) {
+		t.Fatalf("directory sync failure is not reported as published: %v", err)
+	}
+	if !errors.Is(err, syscall.EIO) {
+		t.Fatalf("errors.Is(err, syscall.EIO) is false through Unwrap: %v", err)
+	}
+	assertPublishedSyncState(t, StatePath(cwd, id), id, false)
+}
+
+// TestWriteStateFileSyncFailureIsNotPublished is the other side: a file sync failure happens before the rename, nothing is
+// published, and the error is not a PublishedError.
+func TestWriteStateFileSyncFailureIsNotPublished(t *testing.T) {
+	cwd, id, calls := t.TempDir(), "not-published-file", []string{}
+	failFile := func(f *os.File) error { return syscall.EIO }
+	created, err := runPrimaryPublication(cwd, id, false, failFile, &calls)
+	if created || err == nil {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if Published(err) {
+		t.Fatalf("file sync failure before the rename is reported as published: %v", err)
+	}
+	if !errors.Is(err, syscall.EIO) {
+		t.Fatalf("errors.Is(err, syscall.EIO) is false: %v", err)
+	}
+	if _, statErr := os.Lstat(StatePath(cwd, id)); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("final path after a pre-publication failure: %v", statErr)
+	}
+}
