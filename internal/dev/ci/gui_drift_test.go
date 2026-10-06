@@ -205,6 +205,39 @@ func TestGUIDriftRequiresTheBuiltFlag(t *testing.T) {
 	}
 }
 
+// A path whose name carries a space, a tab or a newline is compared like any other: the committed
+// side is read with `git ls-tree -z`, whose NUL records and single metadata tab make such a name
+// unambiguous, and the built side is walked as bytes. Without that, a hostile name could make the
+// two sides disagree on which file is which and hide a real difference.
+func TestGUIDriftHandlesHostileAssetNames(t *testing.T) {
+	for _, name := range []string{"index-with space.js", "index-with\ttab.js", "index-with\nnewline.js", "index-leading-dash.js"} {
+		t.Run(name, func(t *testing.T) {
+			r := guiDriftRepo(t)
+			r.write("internal/gui/assets/assets/"+name, "console.log('odd')\n")
+			r.commit()
+			built := guiDriftBuild(t, r)
+			guiDriftBuildWrite(t, built, "assets/"+name, "console.log('odd')\n")
+			problems, err := guiDriftRun(t, r, built)
+			if err != nil {
+				t.Fatalf("a matching tree with a hostile name was refused: %v", err)
+			}
+			if len(problems) != 0 {
+				t.Fatalf("a matching tree with a hostile name reported drift:\n%s", strings.Join(problems, "\n"))
+			}
+			// And a byte difference in that same file is still caught.
+			guiDriftBuildWrite(t, built, "assets/"+name, "console.log('odd?')\n")
+			problems, err = guiDriftRun(t, r, built)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(problems) == 0 {
+				t.Fatalf("a byte difference in %q passed", name)
+			}
+			guiDriftWants(t, problems, name)
+		})
+	}
+}
+
 // The command line reports drift on stderr and exits non-zero, and a clean tree on stdout.
 func TestGUIDriftCommandReportsDriftAndPass(t *testing.T) {
 	r := guiDriftRepo(t)
