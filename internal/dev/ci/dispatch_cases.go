@@ -92,7 +92,8 @@ func dispatchCasesSeparator(line string) bool {
 // example, is an ordinary document and is link-checked.
 func dispatchCasesDataFile(name string) bool {
 	for _, section := range dispatchCasesSections {
-		if strings.HasPrefix(name, dispatchCasesDir+"/"+section.dir+"/") {
+		rest, ok := strings.CutPrefix(name, dispatchCasesDir+"/"+section.dir+"/")
+		if ok && rest != "" && !strings.Contains(rest, "/") {
 			return true
 		}
 	}
@@ -156,11 +157,15 @@ func dispatchCasesRegion(doc []string, section dispatchCasesSection) (int, int, 
 	return first, end, nil
 }
 
-// dispatchCasesRowLine is a recorded file's single table line.
-func dispatchCasesRowLine(where, text string) (string, error) {
+// dispatchCasesRowLine is a recorded file's single table line, whose first cell names the file's ID.
+func dispatchCasesRowLine(where, id, text string) (string, error) {
 	body, ok := strings.CutSuffix(text, "\n")
 	if !ok || strings.Contains(body, "\n") || !strings.HasPrefix(body, "|") {
 		return "", fmt.Errorf("%s: not exactly one table line", where)
+	}
+	cell, _, found := strings.Cut(strings.TrimPrefix(body, "|"), "|")
+	if !found || strings.TrimSpace(cell) != id {
+		return "", fmt.Errorf("%s: the row's first cell names the file name's ID %q", where, id)
 	}
 	return body, nil
 }
@@ -196,11 +201,17 @@ func dispatchCasesRegionText(root string, section dispatchCasesSection) ([]strin
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			names = append(names, entry.Name())
+		if entry.IsDir() {
+			return nil, fmt.Errorf("%s/%s: a data directory holds entry files, not directories", dispatchCasesDir, section.dir)
 		}
+		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
+	if section.kind == dispatchCasesBlocks && len(names) == 0 {
+		// A case-block section is located by its first bold-lead case, so an empty one could not be
+		// regenerated after --write removed every case from the document.
+		return nil, fmt.Errorf("%s/%s: a case-block section holds at least one case file", dispatchCasesDir, section.dir)
+	}
 	var region []string
 	for _, name := range names {
 		where := filepath.Join(dispatchCasesDir, section.dir, name)
@@ -213,7 +224,7 @@ func dispatchCasesRegionText(root string, section dispatchCasesSection) ([]strin
 			return nil, err
 		}
 		if section.kind == dispatchCasesTable {
-			line, err := dispatchCasesRowLine(where, text)
+			line, err := dispatchCasesRowLine(where, match[2], text)
 			if err != nil {
 				return nil, err
 			}
@@ -238,6 +249,11 @@ func dispatchCasesGenerate(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if strings.Contains(text, "\r") {
+		// The generator splices lines and rejoins them with LF, so a CRLF reference would come back
+		// with its prose rewritten. Refuse it instead of silently changing bytes outside the regions.
+		return "", fmt.Errorf("%s: the reference must use LF line endings", dispatchCasesDoc)
+	}
 	trailing := strings.HasSuffix(text, "\n")
 	doc := lines(strings.TrimSuffix(text, "\n"))
 	type edit struct {
@@ -256,11 +272,11 @@ func dispatchCasesGenerate(root string) (string, error) {
 		}
 		edits = append(edits, edit{start, end, region})
 	}
-	// The regions were found in the document as committed; splice them back to front so the
-	// earlier offsets stay valid.
+	// The regions were found in the document as committed. Splice from the last one backwards so the
+	// earlier offsets stay valid whatever order the headings sit in.
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	out := append([]string(nil), doc...)
-	for i := len(edits) - 1; i >= 0; i-- {
-		e := edits[i]
+	for _, e := range edits {
 		next := make([]string, 0, len(out)-(e.end-e.start)+len(e.region))
 		next = append(next, out[:e.start]...)
 		next = append(next, e.region...)

@@ -261,3 +261,82 @@ func TestDispatchCasesRepositoryDocumentIsGenerated(t *testing.T) {
 	}
 	expectEqual(t, dispatchCasesDoc, generateDispatchCases(t, root), want)
 }
+
+// A recorded file whose first cell names another case is refused: the file name and the row must agree.
+func TestDispatchCasesRefusesARecordedFileWhoseIDDiffers(t *testing.T) {
+	data := dispatchCasesFixtureData()
+	data["recorded/0010-R1.md"] = "| R2 | another row |\n"
+	root := writeDispatchCasesTree(t, dispatchCasesFixtureDoc, data)
+	refuseDispatchCases(t, root, "0010-R1.md")
+}
+
+// A directory inside a data directory is refused rather than silently dropped.
+func TestDispatchCasesRefusesADirectoryInADataDirectory(t *testing.T) {
+	root := dispatchCasesFixture(t)
+	if err := os.MkdirAll(filepath.Join(root, dispatchCasesDir, "recorded", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refuseDispatchCases(t, root, "recorded")
+}
+
+// An empty case-block directory is refused: after --write removed every case, the section could not be
+// located again, so the next check could never pass.
+func TestDispatchCasesRefusesAnEmptyCaseBlockDirectory(t *testing.T) {
+	data := dispatchCasesFixtureData()
+	delete(data, "negative/0010-N1.md")
+	delete(data, "negative/0020-N2.md")
+	root := writeDispatchCasesTree(t, dispatchCasesFixtureDoc, data)
+	refuseDispatchCases(t, root, "negative")
+}
+
+// A CRLF reference is refused instead of having its prose rewritten to LF.
+func TestDispatchCasesRefusesACRLFDocument(t *testing.T) {
+	doc := strings.ReplaceAll(dispatchCasesFixtureDoc, "\n", "\r\n")
+	root := writeDispatchCasesTree(t, doc, dispatchCasesFixtureData())
+	refuseDispatchCases(t, root, "LF line endings")
+}
+
+// The sections may sit in any order: each region is spliced by its own position, not by the order the
+// section table happens to name.
+func TestDispatchCasesGenerateHandlesReorderedSections(t *testing.T) {
+	doc := `# Fixture reference
+
+## Contrast cases
+
+**C1 — only contrast.** Body of C1.
+
+## Recorded cases
+
+| Case | What it decides |
+|---|---|
+| R1 | first row |
+
+## Negative cases
+
+Negative intro prose before the first case.
+
+**N1 — first negative.** First line
+continues here.
+
+**N2 — second negative.** A second
+paragraph follows.
+
+still N2's text.
+
+## Limits
+
+Tail prose.
+`
+	data := map[string]string{
+		"contrast/0010-C1.md":  "**C1 — only contrast.** Body of C1.\n",
+		"recorded/0010-R1.md":  "| R1 | first row |\n",
+		"negative/0010-N1.md":  "**N1 — first negative.** First line\ncontinues here.\n",
+		"negative/0015-N15.md": "**N15 — inserted.** Inserted body.\n",
+		"negative/0020-N2.md":  "**N2 — second negative.** A second\nparagraph follows.\n\nstill N2's text.\n",
+	}
+	want := strings.Replace(doc,
+		"continues here.\n\n**N2 — second negative.**",
+		"continues here.\n\n**N15 — inserted.** Inserted body.\n\n**N2 — second negative.**", 1)
+	root := writeDispatchCasesTree(t, doc, data)
+	expectEqual(t, "generated document", generateDispatchCases(t, root), want)
+}
