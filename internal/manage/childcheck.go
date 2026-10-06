@@ -14,14 +14,12 @@ type childCheckOptions struct {
 	disabled              []string
 }
 
-// childCheckMatch is one expected/actual comparison.
 type childCheckMatch struct {
 	Expected string `json:"expected"`
 	Actual   string `json:"actual"`
 	Match    bool   `json:"match"`
 }
 
-// childCheckReport is what crw manage child-check writes.
 type childCheckReport struct {
 	OK           bool              `json:"ok"`
 	Thread       string            `json:"thread"`
@@ -33,8 +31,7 @@ type childCheckReport struct {
 	Missing      []string          `json:"missing"`
 }
 
-// childCheckDisabled is the servers to compare: the ones named on the command line, else the
-// disabled_servers of the configuration's child_check section.
+// childCheckDisabled is the servers to compare: the named ones, else the config section's.
 func childCheckDisabled(cfg *Config, named []string) ([]string, error) {
 	if len(named) > 0 {
 		return named, nil
@@ -48,8 +45,7 @@ func childCheckDisabled(cfg *Config, named []string) ([]string, error) {
 	return section.DisabledServers, nil
 }
 
-// childCheck reads the thread's model, effort and status and the per-server MCP status, and
-// compares them with what was asked. A notLoaded thread never matches: the child is not loaded.
+// childCheck compares the thread's model, effort, status and servers with what was asked.
 func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*childCheckReport, error) {
 	disabled, err := childCheckDisabled(cfg, opts.disabled)
 	if err != nil {
@@ -59,7 +55,6 @@ func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*chil
 	if err != nil {
 		return nil, err
 	}
-	// Field names match the JSON keys case-insensitively, so no tags are needed here.
 	var read struct {
 		Thread struct {
 			Model, ReasoningEffort string
@@ -89,22 +84,27 @@ func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*chil
 			report.NotDisabled = append(report.NotDisabled, name)
 		}
 	}
-	report.OK = report.Model.Match && report.Effort.Match && report.ThreadStatus != "notLoaded" &&
-		len(report.NotDisabled) == 0 && len(report.Missing) == 0
+	report.OK = report.Model.Match && report.Effort.Match && report.ThreadStatus != "" &&
+		report.ThreadStatus != "notLoaded" && len(report.NotDisabled) == 0 && len(report.Missing) == 0
 	return report, nil
 }
 
-// childCheckServerStatus reads the host's per-server MCP status for the thread, keyed by name.
+// childCheckServerStatus reads the host's per-server MCP status, keyed by name; a paged answer is
+// refused, as internal/bridge reads it, since a later page's server would be reported missing.
 func childCheckServerStatus(ctx context.Context, cfg *Config, thread string) (map[string]string, error) {
 	raw, err := HostRead(ctx, cfg, "mcpServerStatus/list", map[string]any{"threadId": thread, "detail": "toolsAndAuthOnly", "limit": 500})
 	if err != nil {
 		return nil, err
 	}
 	var answer struct {
-		Data []struct{ Name, RuntimeStatus string }
+		Data       []struct{ Name, RuntimeStatus string }
+		NextCursor string
 	}
 	if err := json.Unmarshal(raw, &answer); err != nil {
 		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list result: " + err.Error()}
+	}
+	if answer.NextCursor != "" {
+		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list answer is paged; the server list is incomplete"}
 	}
 	status := map[string]string{}
 	for _, row := range answer.Data {
@@ -117,8 +117,7 @@ var childCheckCommand = Command{Name: "child-check", Summary: "compare a child t
 
 func init() { Register(childCheckCommand) }
 
-// childCheckRunCommand is crw manage child-check: exit 0 when everything matches, 1 when anything
-// differs, and 3 when a read fails.
+// childCheckRunCommand is crw manage child-check: exit 0 all match, 1 any difference, 3 a read failure.
 func childCheckRunCommand(ctx context.Context, e *Env, args []string) int {
 	const usage = "usage: crw manage child-check --thread T --model M --effort E [--disabled a,b,c]"
 	values, help, err := hostReadParse(args, map[string]bool{"thread": true, "model": true, "effort": true, "disabled": true})
@@ -143,7 +142,7 @@ func childCheckRunCommand(ctx context.Context, e *Env, args []string) int {
 	report, err := childCheck(ctx, coreDefaults(e), opts)
 	if err != nil {
 		reason, detail := hostReadReason(err)
-		hostReadWrite(e.Stdout, hostReadEnvelope{Reason: reason, Detail: detail})
+		hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Detail: detail})
 		return 3
 	}
 	hostReadWrite(e.Stdout, report)

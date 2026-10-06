@@ -10,8 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
-// childCheckHost starts a fake App Server answering thread/read with the given thread fields and
-// mcpServerStatus/list with one row per server, and points the command's default socket at it.
+// childCheckHost starts a fake App Server answering thread/read and mcpServerStatus/list.
 func childCheckHost(t *testing.T, model, effort, statusType string, servers map[string]string) *fakehost.Server {
 	t.Helper()
 	host := fakehost.Start(t)
@@ -38,19 +37,16 @@ func childCheckRun(t *testing.T, args ...string) (int, childCheckReport) {
 	return code, report
 }
 
-// C3: model, effort and every disabled server agree, so the report is ok and exits 0, and the
-// report names each side of the comparison and the servers it read.
+// C3: model, effort and every disabled server agree, so the report is ok and exits 0.
 func TestChildCheckAcceptsAMatchingChild(t *testing.T) {
 	childCheckHost(t, "deepseek-v4.1-flash", "none", "idle", map[string]string{"alpha": "disabled", "beta": "disabled"})
 	code, report := childCheckRun(t, "--thread", "t1", "--model", "deepseek-v4.1-flash", "--effort", "none", "--disabled", "alpha,beta")
 	if code != 0 || !report.OK || report.Thread != "t1" || report.ThreadStatus != "idle" {
 		t.Fatalf("exit %d, report %+v", code, report)
 	}
-	if report.Model != (childCheckMatch{"deepseek-v4.1-flash", "deepseek-v4.1-flash", true}) {
-		t.Fatalf("model block: %+v", report.Model)
-	}
-	if report.Effort != (childCheckMatch{"none", "none", true}) {
-		t.Fatalf("effort block: %+v", report.Effort)
+	if report.Model != (childCheckMatch{"deepseek-v4.1-flash", "deepseek-v4.1-flash", true}) ||
+		report.Effort != (childCheckMatch{"none", "none", true}) {
+		t.Fatalf("model/effort blocks: %+v %+v", report.Model, report.Effort)
 	}
 	if report.Servers["alpha"] != "disabled" || report.Servers["beta"] != "disabled" {
 		t.Fatalf("servers: %+v", report.Servers)
@@ -60,7 +56,7 @@ func TestChildCheckAcceptsAMatchingChild(t *testing.T) {
 	}
 }
 
-// C3: each way a child can differ is a mismatch and exits 1, and the report names the difference.
+// C3: each way a child can differ is a mismatch exit 1; an absent or notLoaded status never matches.
 func TestChildCheckReportsEachMismatch(t *testing.T) {
 	cases := []struct {
 		name                    string
@@ -79,6 +75,8 @@ func TestChildCheckReportsEachMismatch(t *testing.T) {
 		{"server missing", "m", "none", "idle", map[string]string{"alpha": "disabled"},
 			[]string{"--model", "m", "--effort", "none", "--disabled", "alpha,gamma"}, true, true, nil, []string{"gamma"}},
 		{"notLoaded", "m", "none", "notLoaded", map[string]string{"alpha": "disabled"},
+			[]string{"--model", "m", "--effort", "none", "--disabled", "alpha"}, true, true, nil, nil},
+		{"no status", "m", "none", "", map[string]string{"alpha": "disabled"},
 			[]string{"--model", "m", "--effort", "none", "--disabled", "alpha"}, true, true, nil, nil},
 	}
 	for _, test := range cases {
@@ -108,15 +106,23 @@ func TestChildCheckReadsTheDisabledServersFromTheConfigSection(t *testing.T) {
 	}
 }
 
-// A read failure is exit 3 and reports host_unreachable; an unusable command line is a usage error
-// with exit 2, and -h writes the usage to stdout and exits 0.
+// A read failure is host_unreachable exit 3, a paged server list is host_error exit 3, an unusable
+// command line is exit 2, -h is exit 0.
 func TestChildCheckFailuresAndCommandLine(t *testing.T) {
 	hostReadEnv(t, "")
 	code, out := hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none")
-	failure := hostReadDecode(t, out)
-	if code != 3 || failure.OK || failure.Reason != "host_unreachable" {
+	if got := hostReadDecode(t, out); code != 3 || got.OK || got.Reason != "host_unreachable" {
 		t.Fatalf("no socket: exit %d, output %s", code, out)
 	}
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"model": "m", "reasoningEffort": "none", "status": map[string]any{"type": "idle"}}}})
+	host.Respond("mcpServerStatus/list", fakehost.Reply{Result: map[string]any{"data": []any{}, "nextCursor": "page-2"}})
+	hostReadEnv(t, host.SocketPath)
+	code, out = hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", "alpha")
+	if got := hostReadDecode(t, out); code != 3 || got.Reason != "host_error" {
+		t.Fatalf("a paged server list: exit %d, output %s", code, out)
+	}
+	hostReadEnv(t, "")
 	for _, args := range [][]string{
 		{"child-check"},
 		{"child-check", "--thread", "t1", "--model", "m"},

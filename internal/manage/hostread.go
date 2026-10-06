@@ -11,8 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 )
 
-// hostReadMethods is the allow-list crw manage host-read may call: reads only, so a write method is
-// refused before a socket is opened.
+// hostReadMethods is the allow-list host-read may call: reads only, so a write method is refused first.
 var hostReadMethods = map[string]bool{
 	"thread/read": true, "thread/list": true, "thread/loaded/list": true,
 	"thread/turns/list": true, "mcpServerStatus/list": true,
@@ -35,8 +34,7 @@ type hostReadError struct {
 
 func (e *hostReadError) Error() string { return string(e.reason) + ": " + e.detail }
 
-// hostReadReason reads the refusal an error carries; one this file did not raise is a host error,
-// since the only host calls it makes are reads.
+// hostReadReason reads the refusal an error carries; one this file did not raise is a host error.
 func hostReadReason(err error) (hostReadRefusal, string) {
 	var refusal *hostReadError
 	if errors.As(err, &refusal) {
@@ -45,8 +43,8 @@ func hostReadReason(err error) (hostReadRefusal, string) {
 	return hostReadHostError, err.Error()
 }
 
-// HostRead performs one allow-listed read against the App Server socket in cfg; a method outside the
-// allow-list is refused before any connection, so a write method never reaches the host.
+// HostRead performs one allow-listed read against the App Server socket in cfg; a method outside it is
+// refused before any connection.
 func HostRead(ctx context.Context, cfg *Config, method string, params map[string]any) (json.RawMessage, error) {
 	if !hostReadMethods[method] {
 		return nil, &hostReadError{reason: hostReadMethodNotReadOnly}
@@ -63,20 +61,24 @@ func HostRead(ctx context.Context, cfg *Config, method string, params map[string
 	return result, nil
 }
 
-// hostReadEnvelope is the one JSON object host-read and child-check write; Result is the host's own
-// bytes, embedded without re-encoding.
-type hostReadEnvelope struct {
+// hostReadFailure is a refused read, as host-read and child-check report one.
+type hostReadFailure struct {
 	OK     bool            `json:"ok"`
+	Reason hostReadRefusal `json:"reason"`
 	Method string          `json:"method,omitempty"`
-	Reason hostReadRefusal `json:"reason,omitempty"`
 	Detail string          `json:"detail,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
 }
 
 // hostReadWrite writes one JSON value and a newline to w.
 func hostReadWrite(w io.Writer, value any) {
 	data, _ := json.Marshal(value)
 	fmt.Fprintf(w, "%s\n", data)
+}
+
+// hostReadWriteResult writes a read the host answered, splicing the result bytes in unchanged.
+func hostReadWriteResult(w io.Writer, method string, result json.RawMessage) {
+	quoted, _ := json.Marshal(method)
+	fmt.Fprintf(w, "{\"ok\":true,\"method\":%s,\"result\":%s}\n", quoted, result)
 }
 
 // hostReadParse reads "--flag value" pairs, refusing anything else; help reports -h/--help.
@@ -86,12 +88,9 @@ func hostReadParse(args []string, allowed map[string]bool) (values map[string]st
 		if args[i] == "-h" || args[i] == "--help" {
 			return values, true, nil
 		}
-		if !strings.HasPrefix(args[i], "--") {
-			return nil, false, fmt.Errorf("unexpected argument %q", args[i])
-		}
 		name := strings.TrimPrefix(args[i], "--")
-		if !allowed[name] {
-			return nil, false, fmt.Errorf("unknown option %q", args[i])
+		if name == args[i] || !allowed[name] {
+			return nil, false, fmt.Errorf("unexpected argument %q", args[i])
 		}
 		if i+1 >= len(args) {
 			return nil, false, fmt.Errorf("option %q needs a value", args[i])
@@ -106,8 +105,7 @@ var hostReadCommand = Command{Name: "host-read", Summary: "read one allow-listed
 
 func init() { Register(hostReadCommand) }
 
-// hostReadRunCommand is crw manage host-read: method_not_read_only with exit 2, the host failures
-// with exit 3.
+// hostReadRunCommand is crw manage host-read: method_not_read_only exit 2, host failures exit 3.
 func hostReadRunCommand(ctx context.Context, e *Env, args []string) int {
 	const usage = "usage: crw manage host-read --method M [--params JSON]"
 	values, help, err := hostReadParse(args, map[string]bool{"method": true, "params": true})
@@ -119,7 +117,7 @@ func hostReadRunCommand(ctx context.Context, e *Env, args []string) int {
 	if err == nil && !ok {
 		err = errors.New("--method is required")
 	}
-	var params map[string]any
+	params := map[string]any{}
 	if err == nil {
 		if raw, present := values["params"]; present {
 			err = json.Unmarshal([]byte(raw), &params)
@@ -134,12 +132,12 @@ func hostReadRunCommand(ctx context.Context, e *Env, args []string) int {
 	if err != nil {
 		reason, detail := hostReadReason(err)
 		if reason == hostReadMethodNotReadOnly {
-			hostReadWrite(e.Stdout, hostReadEnvelope{Reason: reason, Method: method})
+			hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Method: method})
 			return usageExit
 		}
-		hostReadWrite(e.Stdout, hostReadEnvelope{Reason: reason, Detail: detail})
+		hostReadWrite(e.Stdout, hostReadFailure{Reason: reason, Detail: detail})
 		return 3
 	}
-	hostReadWrite(e.Stdout, hostReadEnvelope{OK: true, Method: method, Result: result})
+	hostReadWriteResult(e.Stdout, method, result)
 	return 0
 }

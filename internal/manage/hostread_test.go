@@ -14,16 +14,14 @@ import (
 // hostReadAllowedMethods is every method crw manage host-read may read.
 var hostReadAllowedMethods = []string{"thread/read", "thread/list", "thread/loaded/list", "thread/turns/list", "mcpServerStatus/list"}
 
-// hostReadConfig is a Config whose relay socket is socket; this baseline has no configuration file
-// loader, so a test builds the Config a loader would.
+// hostReadConfig is a Config whose relay socket is socket; no configuration file loader exists yet.
 func hostReadConfig(socket string) *Config {
 	return &Config{Relay: coreRelay{Socket: socket}, raw: map[string]json.RawMessage{}}
 }
 
-// hostReadEnv points HOME, CODEX_HOME and XDG_STATE_HOME at a fresh short tree, so the command's
-// default relay socket is <CODEX_HOME>/app-server-control/app-server-control.sock: a non-empty
-// socket links that path to the fake and an empty one leaves it absent. Not t.TempDir(), whose path
-// carries the test name and would push the socket past the 108-byte unix socket bound.
+// hostReadEnv points HOME, CODEX_HOME and XDG_STATE_HOME at a fresh short tree and links the command's
+// default socket path to socket (absent when socket is empty). Not t.TempDir(): its path carries the
+// test name, which would push the socket past the 108-byte unix socket bound.
 func hostReadEnv(t *testing.T, socket string) {
 	t.Helper()
 	home, err := os.MkdirTemp("", "crw686-")
@@ -45,7 +43,6 @@ func hostReadEnv(t *testing.T, socket string) {
 	}
 }
 
-// hostReadRun runs crw manage with args and returns the status and stdout.
 func hostReadRun(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	var out, errOut strings.Builder
@@ -61,7 +58,6 @@ type hostReadOut struct {
 	Result json.RawMessage `json:"result"`
 }
 
-// hostReadDecode decodes that object.
 func hostReadDecode(t *testing.T, out string) hostReadOut {
 	t.Helper()
 	var got hostReadOut
@@ -71,10 +67,8 @@ func hostReadDecode(t *testing.T, out string) hostReadOut {
 	return got
 }
 
-// C1: every write method is refused as method_not_read_only with exit 2, and a live fake App Server
-// records no request, so the refusal precedes any connection; with no socket at all the same
-// refusal, not host_unreachable, proves the allow-list is checked before connecting. The exported
-// HostRead refuses the same way.
+// C1: every write method is refused as method_not_read_only exit 2 before any connection (a live fake
+// records no request; with no socket the same refusal replaces host_unreachable). HostRead too.
 func TestHostReadRefusesWriteMethods(t *testing.T) {
 	host := fakehost.Start(t)
 	host.Respond("thread/read", fakehost.Reply{})
@@ -96,8 +90,9 @@ func TestHostReadRefusesWriteMethods(t *testing.T) {
 	}
 }
 
-// C2: every allow-listed method returns the fake's result bytes unchanged, --params reaches the
-// host unchanged, and the exported HostRead returns the host's bytes too.
+// C2: every allow-listed method returns the fake's result bytes unchanged, --params reaches the host
+// unchanged, an omitted --params sends the empty object, HostRead returns the host's bytes, and the
+// envelope splices a result in rather than compacting it.
 func TestHostReadReturnsAllowedResultsVerbatim(t *testing.T) {
 	host := fakehost.Start(t)
 	for _, method := range hostReadAllowedMethods {
@@ -112,26 +107,35 @@ func TestHostReadReturnsAllowedResultsVerbatim(t *testing.T) {
 			t.Fatalf("%s: exit %d, result %s, want %s", method, code, got.Result, want)
 		}
 	}
-	params := map[string]any{}
+	if code, out := hostReadRun(t, "host-read", "--method", "thread/list"); code != 0 {
+		t.Fatalf("thread/list without --params: exit %d, output %s", code, out)
+	}
+	params, empty := map[string]any{}, false
 	for _, request := range host.Requests() {
 		if request.Method == "thread/read" {
 			if err := json.Unmarshal(request.Params, &params); err != nil {
 				t.Fatal(err)
 			}
 		}
+		empty = empty || (request.Method == "thread/list" && string(request.Params) == "{}")
 	}
-	if params["threadId"] != "t1" || params["includeTurns"] != false {
-		t.Fatalf("the host read params %v", params)
+	if params["threadId"] != "t1" || params["includeTurns"] != false || !empty {
+		t.Fatalf("params thread/read %v, thread/list sent {}: %v", params, empty)
 	}
 	raw, err := HostRead(context.Background(), hostReadConfig(host.SocketPath), "thread/read", nil)
 	if err != nil || string(raw) != `{"marker":"thread/read","n":1}` {
 		t.Fatalf("HostRead returned %s, %v", raw, err)
 	}
+	var envelope strings.Builder
+	hostReadWriteResult(&envelope, "thread/read", json.RawMessage(`{ "a" : "<b>" }`))
+	if want := `{"ok":true,"method":"thread/read","result":{ "a" : "<b>" }}` + "\n"; envelope.String() != want {
+		t.Fatalf("the envelope changed the host's bytes: %q", envelope.String())
+	}
 }
 
 // C4: with no socket the command exits 3 and reports host_unreachable; a host that answers with an
-// error is host_error carrying the host's message, also exit 3.
-func TestHostReadHostFailures(t *testing.T) {
+// error is host_error carrying the host's message, also exit 3; an unusable command line is exit 2.
+func TestHostReadFailuresAndCommandLine(t *testing.T) {
 	hostReadEnv(t, "")
 	if code, out := hostReadRun(t, "host-read", "--method", "thread/read"); code != 3 || hostReadDecode(t, out).Reason != "host_unreachable" {
 		t.Fatalf("no socket: exit %d, output %s", code, out)
@@ -140,14 +144,9 @@ func TestHostReadHostFailures(t *testing.T) {
 	host.Respond("thread/read", fakehost.Reply{Error: &fakehost.RPCError{Code: -32600, Message: "no such thread"}})
 	hostReadEnv(t, host.SocketPath)
 	code, out := hostReadRun(t, "host-read", "--method", "thread/read")
-	got := hostReadDecode(t, out)
-	if code != 3 || got.OK || got.Reason != "host_error" || !strings.Contains(got.Detail, "no such thread") {
+	if got := hostReadDecode(t, out); code != 3 || got.OK || got.Reason != "host_error" || !strings.Contains(got.Detail, "no such thread") {
 		t.Fatalf("host error: exit %d, output %s", code, out)
 	}
-}
-
-// An unusable command line is a usage error with exit 2; -h writes the usage to stdout and exits 0.
-func TestHostReadCommandLine(t *testing.T) {
 	hostReadEnv(t, "")
 	for _, args := range [][]string{
 		{"host-read"},
