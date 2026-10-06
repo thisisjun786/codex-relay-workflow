@@ -239,3 +239,31 @@ func TestWorktreeDelReviewFindings(t *testing.T) {
 	r.allowed(t, "Y=1 \"$GO\" test ./...")
 	r.intact(t)
 }
+
+// TestWorktreeDelReviewFindingsSecondRound pins the ten findings of the PR's Codex review. Four were bypasses the new
+// reading still let through (an eval operand confused with a redirection target, a subshell that kept the pipe, a
+// descriptor before a here-document operator, and a program that runs $0), two were over-denials it introduced (a
+// here-document that belongs to another command, and a shell whose standard input a redirection replaces), and the rest
+// are the two the first round had already fixed.
+func TestWorktreeDelReviewFindingsSecondRound(t *testing.T) {
+	r := newDelRig(t)
+	// A subshell keeps the pipe that fed it, and a here-document with a descriptor is still its shell's program.
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | (bash)", "a shell program read from a pipe")
+	worktreeDelUnreadableDenied(t, r, "bash 0<<EOF\n$(printf 'rm -rf ../repo')\nEOF", "a shell program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "bash 0<<<\"$(printf 'rm -rf ../repo')\"", "a shell program read from a here-string")
+	// eval's operands are mapped structurally, so a redirection target that reads like a later operand does not hide it.
+	worktreeDelUnreadableDenied(t, r, "eval > '$X' \"$X\"", "an eval operand")
+	// A program that runs $0 as well as $@ is read as the command line it builds.
+	r.denied(t, "bash -c '\"$0\" \"$@\"' rm -rf ../repo", "rm -r ../repo")
+	// A here-document belongs to the command that holds its operator, and a redirection replaces a pipe on stdin.
+	r.allowed(t, "cat <<EOF; bash </dev/null\n$X\nEOF", "printf 'rm -rf ../repo' | bash </dev/null")
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash", "a shell program read from a pipe")
+	// A script operand and an option argument stay no program position.
+	r.allowed(t, "bash script.sh \"$ARG\"", "bash \"$SCRIPT\"", "bash --rcfile \"$X\" script.sh")
+	// The first round's five findings stay fixed.
+	r.denied(t, "echo \"${x:-$(rm -rf ../repo)}\"", "rm -r ../repo")
+	r.denied(t, "echo \"cd /tmp $(rm -rf ../repo)\"", "rm -r ../repo")
+	worktreeDelNamedDenied(t, r, "Y=1 $X -rf ../repo", "a command named by an expansion")
+	r.allowed(t, "cat <<EOF\nbash -c \"$X\"\nEOF")
+	r.intact(t)
+}
