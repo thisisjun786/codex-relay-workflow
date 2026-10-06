@@ -121,6 +121,10 @@ func TestPromptDcloseUnreadableLedgerKeepsTheMarker(t *testing.T) {
 		if !strings.Contains(answer, "finalization is pending") {
 			t.Errorf("the unreadable PABCD ledger answered %q, want the finalization-pending text", answer)
 		}
+		// The unreadable close row must not be appended a second time.
+		if rows := promptOrchestrateLedger(t, cwd); len(rows) != 1 {
+			t.Errorf("the retry duplicated the PABCD close row: %+v", rows)
+		}
 		if s := state.ReadState(cwd, "s1"); s.DcloseRecovery == nil {
 			t.Errorf("the retry cleared the recovery marker: %+v", s)
 		}
@@ -356,8 +360,8 @@ func TestPromptDclosePrePublicationMarkerFailureStillRefuses(t *testing.T) {
 	promptDcloseUnchanged(t, before, promptDcloseSnapshot(t, cwd, "s1", slug), "a pre-publication marker failure")
 }
 
-// TestPromptDcloseUnbusyCloseIsUnchanged is the third control: with no seam and a free lock the
-// close completes exactly as before, resting at IDLE with the marker cleared.
+// TestPromptDclosePrePublicationPlanFailureStillRefuses is the plan-write counterpart of the
+// pre-publication marker control: a plan write that never reached its final path still refuses.
 func TestPromptDclosePrePublicationPlanFailureStillRefuses(t *testing.T) {
 	cwd := promptDcloseRepo(t)
 	slug := "chat-prepublication-plan"
