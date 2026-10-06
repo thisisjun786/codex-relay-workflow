@@ -64,6 +64,29 @@ func goalplanLifecycleRejected(reason string) GoalplanLifecycleResult {
 	return GoalplanLifecycleResult{Kind: GoalplanLifecycleRejected, Reason: reason}
 }
 
+// goalplanAmbiguousWorkPhaseMatches counts the work phases carrying id, and
+// goalplanAmbiguousTaskMatches the tasks of one phase carrying id. A count above one is what the
+// refusal messages name, the duplicate id DecideGoalplanDecision already refuses for decisions.
+func goalplanAmbiguousWorkPhaseMatches(plan *Goalplan, id string) int {
+	matches := 0
+	for i := range plan.WorkPhases {
+		if plan.WorkPhases[i].ID == id {
+			matches++
+		}
+	}
+	return matches
+}
+
+func goalplanAmbiguousTaskMatches(phase *GoalplanWorkPhase, id string) int {
+	matches := 0
+	for i := range phase.Tasks {
+		if phase.Tasks[i].ID == id {
+			matches++
+		}
+	}
+	return matches
+}
+
 // AskGoalplanDecision ports askGoalplanDecision (:1239-1286): validate the question,
 // its options and the phases that should await it, then append the open decision and
 // the awaitsDecision reference and let the definition integrity decide the rest.
@@ -264,18 +287,29 @@ func AddGoalplanTask(plan *Goalplan, workPhaseID string, input AddGoalplanTaskIn
 
 // CompleteGoalplanTask ports completeGoalplanTask (:1351-1382). Readiness is the
 // already-ported readyTasks: a task waits for its own dependencies, its phase's
-// dependencies and every open decision that phase awaits.
+// dependencies and every open decision that phase awaits. A work phase id or task id that matches
+// more than one entry is refused (this port's rule, not the oracle's, which rewrote every match and
+// lost the other entry's outcome), in the shape DecideGoalplanDecision already uses.
 func CompleteGoalplanTask(plan *Goalplan, workPhaseID string, taskID string, outcomeText string) GoalplanLifecycleResult {
 	outcome := jstext.Trim(outcomeText)
 	if outcome == "" {
 		return goalplanLifecycleRejected("task outcome must not be empty")
 	}
+	phase := queryFindWorkPhase(plan, workPhaseID)
 	var target *GoalplanTask
-	if phase := queryFindWorkPhase(plan, workPhaseID); phase != nil {
+	if phase != nil {
 		target = queryFindTask(phase, taskID)
 	}
 	if target == nil {
 		return goalplanLifecycleRejected(fmt.Sprintf("task '%s/%s' is not in this plan", workPhaseID, taskID))
+	}
+	// The write below reaches every entry of the id; a duplicate would rewrite one the caller never
+	// named, so the plan is refused unchanged instead (the not-in-this-plan refusal stays ahead).
+	if n := goalplanAmbiguousWorkPhaseMatches(plan, workPhaseID); n > 1 {
+		return goalplanLifecycleRejected(fmt.Sprintf("work phase id '%s' is ambiguous (%d entries); repair the plan first", workPhaseID, n))
+	}
+	if n := goalplanAmbiguousTaskMatches(phase, taskID); n > 1 {
+		return goalplanLifecycleRejected(fmt.Sprintf("task id '%s/%s' is ambiguous (%d entries); repair the plan first", workPhaseID, taskID, n))
 	}
 	if target.Status == TaskDone {
 		return goalplanLifecycleUnchanged(plan, fmt.Sprintf("task '%s/%s' is already done", workPhaseID, taskID))
@@ -308,21 +342,31 @@ func CompleteGoalplanTask(plan *Goalplan, workPhaseID string, taskID string, out
 }
 
 // MeetGoalplanCriterion ports meetGoalplanCriterion (:1384-1406): the trimmed evidence
-// becomes the captured evidence of every criterion of that id, and a met one stands.
+// becomes the captured evidence of every criterion of that id, and a met one stands. A criterion id
+// that matches more than one criterion is refused (this port's rule, not the oracle's, which rewrote
+// every match and lost the other entry's captured evidence).
 func MeetGoalplanCriterion(plan *Goalplan, criterionID string, evidenceText string) GoalplanLifecycleResult {
 	evidence := jstext.Trim(evidenceText)
 	if evidence == "" {
 		return goalplanLifecycleRejected("criterion evidence must not be empty")
 	}
 	var target *GoalplanCriterion
+	matches := 0
 	for i := range plan.Criteria {
 		if plan.Criteria[i].ID == criterionID {
-			target = &plan.Criteria[i]
-			break
+			if matches == 0 {
+				target = &plan.Criteria[i]
+			}
+			matches++
 		}
 	}
 	if target == nil {
 		return goalplanLifecycleRejected(fmt.Sprintf("criterion '%s' is not in this plan", criterionID))
+	}
+	// The write below reaches every criterion of the id; a duplicate would rewrite one the caller
+	// never named, so the plan is refused unchanged instead.
+	if matches > 1 {
+		return goalplanLifecycleRejected(fmt.Sprintf("criterion id '%s' is ambiguous (%d entries); repair the plan first", criterionID, matches))
 	}
 	if target.Status == CriterionMet {
 		return goalplanLifecycleUnchanged(plan, fmt.Sprintf("criterion '%s' is already met", criterionID))
