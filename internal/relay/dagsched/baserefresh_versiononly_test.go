@@ -172,6 +172,40 @@ func TestBaseRefreshVersionOnlyCommitRefusals(t *testing.T) {
 }
 
 // A version-only commit whose parent is not a merge proved in the chain is refused.
+// The audit of this generation verified by live probe that a deleted manifest and a symlinked manifest
+// are refused, but neither was in the committed suite. They are pinned here.
+func TestBaseRefreshVersionOnlyCommitRefusesADeletedOrLinkedManifest(t *testing.T) {
+	t.Run("the manifest deleted", func(t *testing.T) {
+		s := newPluginVersionRefreshScenario(t, false)
+		s.pluginVersion808Shape(t, func(t *testing.T, r *gitRepo, recorded string) {
+			if err := os.Remove(filepath.Join(r.path, filepath.FromSlash(pluginversion.ManifestRepoPath))); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if _, err := s.record(); refusalReason(err) != "disposition_conflict" || s.refreshRows() != 0 {
+			t.Fatalf("a deleted manifest = %v rows=%d", err, s.refreshRows())
+		}
+	})
+	t.Run("the manifest replaced by a symlink", func(t *testing.T) {
+		s := newPluginVersionRefreshScenario(t, false)
+		s.pluginVersion808Shape(t, func(t *testing.T, r *gitRepo, recorded string) {
+			path := filepath.Join(r.path, filepath.FromSlash(pluginversion.ManifestRepoPath))
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("plugin.json.target", path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(r.path, "plugin.json.target"), []byte(pluginVersionManifestText(recorded, "d")), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if _, err := s.record(); refusalReason(err) != "disposition_conflict" || s.refreshRows() != 0 {
+			t.Fatalf("a symlinked manifest = %v rows=%d", err, s.refreshRows())
+		}
+	})
+}
+
 // A chain that alternates a base merge with the version-only re-record of that merge is accepted: each
 // version-only step sits on a merge this chain proved, which is the condition the rule states. The
 // audit of this generation raised this composition, so it is pinned here.
