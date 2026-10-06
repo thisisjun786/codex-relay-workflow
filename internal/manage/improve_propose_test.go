@@ -93,15 +93,19 @@ func improveProposeTestSplit(project, reason, relationship string) improveRecord
 }
 
 // improveProposeTestEightCases is the fixed 2026-10-06 input: the eight cases of the 721
-// fixture's case list, all of them the same repeated friction (a body size estimate that the
+// fixture's case list, all of them the same repeated friction (the body size estimate the
 // merged size ran past), so the eight records across three projects are one candidate.
 func improveProposeTestEightCases() []improveRecord {
 	records := make([]improveRecord, 0, len(improveTestEightCases))
 	for _, c := range improveTestEightCases {
-		records = append(records, improveProposeTestSplit(c.project, "size estimate understated", "rel-"+c.issue))
+		records = append(records, improveProposeTestSplit(c.project, improveProposeTestFriction, "rel-"+c.issue))
 	}
 	return records
 }
+
+// improveProposeTestFriction is the one repeated friction the fixed eight cases share: the
+// body size estimate the merged size ran past.
+const improveProposeTestFriction = "size estimate understated"
 
 // improveProposeTestBundle writes a crw-improve-bundle/1 document and returns its path.
 func improveProposeTestBundle(t *testing.T, w *improveProposeTestWorld, records []improveRecord) string {
@@ -164,6 +168,126 @@ func improveProposeTestReport(t *testing.T, stdout string) improveProposeReport 
 		t.Fatalf("the report is not %s JSON: %v\n%s", improveProposeReportSchema, err, stdout)
 	}
 	return report
+}
+
+// improveProposeTestRecord is one bundle record of any kind.
+func improveProposeTestRecord(kind, key, where, what string, count int, evidence ...string) improveRecord {
+	return improveRecord{Kind: kind, Key: key, Where: where, What: what, Count: count,
+		FirstAt: "2026-10-06T01:00:00Z", LastAt: "2026-10-06T01:00:00Z", Evidence: evidence}
+}
+
+// TestImproveProposeSkipsNonFrictionRecords covers the review finding that a criteria set's
+// size, an audit grading outcome, a DAG metric and an existing draft are not repeated
+// friction: they never become candidates.
+func TestImproveProposeSkipsNonFrictionRecords(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	records := []improveRecord{
+		improveProposeTestRecord(improveKindCriteria, "rel-a", "digest", "registered", 3, "journal:1"),
+		improveProposeTestRecord(improveKindAudit, "CRW-1", "subj", "ok", 1, "ledger:1"),
+		improveProposeTestRecord(improveKindDag, "p1:parallelism", "p1", "{}", 2, "relay:dag"),
+		improveProposeTestRecord(improveKindDraft, "CRW-2", "proj", "a draft title", 1, "draft.json"),
+	}
+	bundle := improveProposeTestBundle(t, w, records)
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Candidates) != 0 {
+		t.Errorf("candidates = %+v, want none from non-friction records", report.Candidates)
+	}
+	if drafts := improveProposeTestDrafts(t, w); len(drafts) != 0 {
+		t.Errorf("the drafts directory holds %v, want nothing", drafts)
+	}
+}
+
+// TestImproveProposeSeverityIsP1OnlyForBlockages covers the review finding that a medium-
+// impact fault is not a P1: only a blockage or a needs_changes is P1.
+func TestImproveProposeSeverityIsP1OnlyForBlockages(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:f1"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one", report.Created)
+	}
+	if got := report.Created[0].Severity; got != "P2" {
+		t.Errorf("a medium-impact fault was drafted %q, want P2", got)
+	}
+}
+
+// TestImproveProposeOwnerSkipsTheUnknownProject covers the review finding that an unknown
+// project must not take the owner away from a known one.
+func TestImproveProposeOwnerSkipsTheUnknownProject(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("", "size overrun", "rel-a"),
+		improveProposeTestSplit("project-z", "size overrun", "rel-b"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one", report.Created)
+	}
+	doc := improveProposeTestDraft(t, w, report.Created[0].Fingerprint)
+	if doc.Project != "project-z" {
+		t.Errorf("the draft project = %q, want project-z", doc.Project)
+	}
+}
+
+// TestImproveProposeUpdateKeepsTheNewProjectsAndEvidence covers the review finding that an
+// updated draft must carry the projects and evidence a later run added, not only the ones it
+// was first written with.
+func TestImproveProposeUpdateKeepsTheNewProjectsAndEvidence(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+	})
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+	second := filepath.Join(w.root, "bundle2.json")
+	doc := improveBundle{Schema: improveBundleSchema, Sources: []improveSourceRow{}, Records: []improveRecord{
+		improveProposeTestSplit("project-a", "size overrun", "rel-a"),
+		improveProposeTestSplit("project-b", "size overrun", "rel-b"),
+	}}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+	if code != 0 {
+		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want one", report.Updated)
+	}
+	updated := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if !strings.Contains(updated.Body, "project-b") {
+		t.Errorf("the updated draft omits the new project:\n%s", updated.Body)
+	}
+	if !strings.Contains(updated.Body, "events:rel-b") {
+		t.Errorf("the updated draft omits the new evidence:\n%s", updated.Body)
+	}
+	if !strings.Contains(updated.Body, "project-a") {
+		t.Errorf("the updated draft lost the original project:\n%s", updated.Body)
+	}
 }
 
 // TestImproveProposeWritesTheDraftFormat is the red-first test: before this issue there is
@@ -247,7 +371,7 @@ func TestImproveProposeMergesTheRepeatedFrictionAcrossProjects(t *testing.T) {
 func TestImproveProposeSuppressesCandidatesAlreadyInTheIssueList(t *testing.T) {
 	w := improveProposeTestSetup(t)
 	improveProposeTestConfigure(t, w, map[string]any{})
-	records := append(improveProposeTestEightCases(), improveProposeTestIssue("CRW-739", "size estimate understated"))
+	records := append(improveProposeTestEightCases(), improveProposeTestIssue("CRW-739", improveProposeTestFriction))
 	bundle := improveProposeTestBundle(t, w, records)
 	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
 	if code != 0 {

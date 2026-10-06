@@ -58,6 +58,29 @@ func improveRoadmapTestRun(t *testing.T, e *Env, args ...string) (int, string, s
 	return code, stdout.String(), stderr.String()
 }
 
+// TestImproveRoadmapRefusesARefThatEscapesTheStateDirectory covers the security finding that
+// a --ref carrying a path separator could move the bundle outside the managed state.
+func TestImproveRoadmapRefusesARefThatEscapesTheStateDirectory(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveRoadmapTestConfigure(t, s, manageState, map[string]any{})
+	var stdout, stderr strings.Builder
+	e := improveRoadmapTestEnv(s, &stdout, &stderr)
+	for _, ref := range []string{"../escape", "a/b", "..", ".", ""} {
+		code, _, errOut := improveRoadmapTestRun(t, e, "--boundary", "milestone", "--ref", ref)
+		if code != usageExit {
+			t.Errorf("the ref %q: exit %d, want %d (stderr %q)", ref, code, usageExit, errOut)
+		}
+	}
+	if entries, err := os.ReadDir(s.root); err == nil {
+		for _, entry := range entries {
+			if entry.Name() == "escape" {
+				t.Errorf("a ref escaped the state directory: %s", filepath.Join(s.root, entry.Name()))
+			}
+		}
+	}
+}
+
 // improveRoadmapTestSeedRepeatedFriction inserts the fixed eight 2026-10-06 cases, all of
 // them the same repeated friction (a body size estimate the merged size ran past), so collect
 // yields eight kind split records that name one kind of blockage across three projects.
@@ -103,6 +126,18 @@ func improveRoadmapTestRoadmaps(t *testing.T, manageState string) []string {
 	return out
 }
 
+// improveRoadmapTestBundles lists the per-run bundle documents one ref directory holds.
+func improveRoadmapTestBundles(t *testing.T, manageState, ref string) []string {
+	t.Helper()
+	var out []string
+	for _, name := range improveRoadmapTestFiles(t, filepath.Join(manageState, "improve", ref)) {
+		if strings.HasPrefix(name, "bundle-") && strings.HasSuffix(name, ".json") {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // improveRoadmapTestRoadmapBody reads the one roadmap document a run wrote.
 func improveRoadmapTestRoadmapBody(t *testing.T, manageState string) string {
 	t.Helper()
@@ -139,8 +174,8 @@ func TestImproveRoadmapRunLeavesBundleDraftsAndRoadmap(t *testing.T) {
 	if path := strings.TrimSpace(out); !strings.HasPrefix(filepath.Base(path), "roadmap-") {
 		t.Errorf("the run printed %q, want a roadmap path", out)
 	}
-	if got := improveRoadmapTestFiles(t, filepath.Join(manageState, "improve", "M2")); len(got) != 1 || got[0] != "bundle.json" {
-		t.Errorf("the ref directory holds %v, want one bundle.json", got)
+	if got := improveRoadmapTestBundles(t, manageState, "M2"); len(got) != 1 {
+		t.Errorf("the ref directory holds %v, want one bundle", got)
 	}
 	if drafts := improveRoadmapTestDrafts(t, manageState); len(drafts) != 1 {
 		t.Errorf("the drafts directory holds %v, want one draft", drafts)

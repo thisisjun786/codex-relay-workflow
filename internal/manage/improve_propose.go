@@ -34,10 +34,6 @@ const (
 	improveProposeImpactLow    = 2
 )
 
-// improveProposeCriteriaTitle is the title a criteria record's candidate carries: the
-// record's own what is the string "registered" or "current_set", which names nothing.
-const improveProposeCriteriaTitle = "criteria set"
-
 // improveProposeProject is one project a friction happened in, with how many times it was
 // seen there, so a candidate that reaches several projects names each one and its count.
 type improveProposeProject struct {
@@ -126,19 +122,24 @@ func improveProposeReadBundle(path string) (improveBundle, error) {
 	return bundle, nil
 }
 
-// improveProposeTitleOf is the title a record's candidate carries. A criteria record's own
-// what is the string "registered" or "current_set", which names nothing, so it reads as the
-// criteria set; an audit record's what is a verdict, so it reads as the audit finding it is.
+// improveProposeFrictionKinds is the record kinds that are a repeated friction. A split
+// (a blocked receipt or a split decision), a refusal, a fault, a needs_changes generation and
+// a management intervention are things that happened and can happen again. The other kinds a
+// bundle carries are references rather than occurrences: a criteria record's count is the size
+// of a criteria set, an audit record's what is a grading outcome, a dag record's count is a
+// sample count, and a draft record is a draft this product already wrote. None of them is a
+// friction to propose a fix for, so none of them becomes a candidate.
+var improveProposeFrictionKinds = map[string]bool{
+	improveKindSplit:        true,
+	improveKindRefusal:      true,
+	improveKindFault:        true,
+	improveKindGeneration:   true,
+	improveKindIntervention: true,
+}
+
+// improveProposeTitleOf is the title a record's candidate carries: the reason or signature the
+// record holds, or its key when it carries no what.
 func improveProposeTitleOf(record improveRecord) string {
-	switch record.Kind {
-	case improveKindCriteria:
-		return improveProposeCriteriaTitle
-	case improveKindAudit:
-		if status := strings.TrimSpace(record.What); status != "" {
-			return "audit finding " + status
-		}
-		return "audit finding"
-	}
 	if what := strings.TrimSpace(record.What); what != "" {
 		return what
 	}
@@ -149,9 +150,9 @@ func improveProposeTitleOf(record improveRecord) string {
 // owners. A record whose kind carries no project reads as the empty one.
 func improveProposeProjectOf(record improveRecord) string {
 	switch record.Kind {
-	case improveKindSplit, improveKindCriteria, improveKindAudit:
+	case improveKindSplit, improveKindRefusal:
 		return strings.TrimSpace(record.Key)
-	case improveKindFault, improveKindGeneration, improveKindDag, improveKindDraft:
+	case improveKindFault, improveKindGeneration:
 		return strings.TrimSpace(record.Where)
 	}
 	return ""
@@ -170,12 +171,6 @@ func improveProposeImpactOf(record improveRecord) int {
 		}
 		return improveProposeImpactMedium
 	case improveKindFault, improveKindIntervention:
-		return improveProposeImpactMedium
-	case improveKindAudit:
-		switch strings.ToUpper(strings.TrimSpace(record.What)) {
-		case "P0", "P1":
-			return improveProposeImpactHigh
-		}
 		return improveProposeImpactMedium
 	}
 	return improveProposeImpactLow
@@ -204,9 +199,10 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 	byKey := map[string]int{}
 	candidates := []improveProposeCandidate{}
 	for _, record := range bundle.Records {
-		// An issue record is the exported issue list, which suppresses candidates rather than
-		// becoming one.
-		if record.Kind == improveKindIssue {
+		// Only a friction kind is a candidate: the issue records are the exported issue list,
+		// which suppresses candidates rather than becoming one, and the reference kinds carry
+		// no occurrence to count.
+		if !improveProposeFrictionKinds[record.Kind] {
 			continue
 		}
 		title := improveProposeTitleOf(record)
@@ -320,6 +316,75 @@ func improveProposeIssueIndex(bundle improveBundle) (keys, titles map[string]boo
 	return keys, titles
 }
 
+// improveProposeParseProjects reads the projects a stored improve body names, so a later run
+// can carry them into the rewritten body. Only this feature's own body is parsed.
+func improveProposeParseProjects(body string) []improveProposeProject {
+	const marker = "## Where\n\n"
+	start := strings.Index(body, marker)
+	if start < 0 {
+		return nil
+	}
+	rest := body[start+len(marker):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+	var out []improveProposeProject
+	for _, line := range strings.Split(rest, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "- ")
+		open := strings.LastIndex(line, " (")
+		if open < 0 || !strings.HasSuffix(line, ")") {
+			continue
+		}
+		count := 0
+		if _, err := fmt.Sscanf(line[open+2:len(line)-1], "%d", &count); err != nil {
+			continue
+		}
+		out = append(out, improveProposeProject{Project: strings.TrimSpace(line[:open]), Count: count})
+	}
+	return out
+}
+
+// improveProposeParseEvidence reads the evidence locations a stored improve body names.
+func improveProposeParseEvidence(body string) []string {
+	const marker = "## Evidence\n\n"
+	start := strings.Index(body, marker)
+	if start < 0 {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(body[start+len(marker):], "\n") {
+		if strings.HasPrefix(line, "- ") {
+			out = append(out, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+		}
+	}
+	return out
+}
+
+// improveProposeMergeProjects merges the projects a stored body names with the ones the new
+// candidate reached: a project the new run saw takes the new count, and a project it no longer
+// carries keeps the count the draft already held, so a rewrite never drops a project.
+func improveProposeMergeProjects(stored, current []improveProposeProject) []improveProposeProject {
+	out := append([]improveProposeProject(nil), stored...)
+	for _, project := range current {
+		found := false
+		for i := range out {
+			if out[i].Project == project.Project {
+				out[i].Count = project.Count
+				found = true
+			}
+		}
+		if !found {
+			out = append(out, project)
+		}
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Project < out[b].Project })
+	return out
+}
+
 // improveProposeSuppressed reports whether an exported issue already covers a candidate: the
 // same fingerprint (an issue whose key is the candidate key) or the same title key.
 func improveProposeSuppressed(candidate improveProposeCandidate, keys, titles map[string]bool) bool {
@@ -371,39 +436,23 @@ func improveProposeEvidenceLines(evidence []string) string {
 	return b.String()
 }
 
-// improveProposeSeenSection replaces the seen section of a stored improve body with the
-// rendered sighting list, so a draft a later run saw again names that run in the body the
-// management session reads. The defect description, the projects and the evidence stay as
-// first written; only this feature's own body is rewritten, never another feature's.
-func improveProposeSeenSection(body string, seen []auditDraftSeen) string {
-	const startMarker = "## Seen\n\n"
-	const endMarker = "\n## Evidence\n\n"
-	start := strings.Index(body, startMarker)
-	if start < 0 {
-		return body
-	}
-	rest := body[start+len(startMarker):]
-	end := strings.Index(rest, endMarker)
-	if end < 0 {
-		return body
-	}
-	return body[:start+len(startMarker)] + improveProposeSeenLines(seen) + endMarker + rest[end+len(endMarker):]
-}
-
 // improveProposeOwner is the project a draft names when it is drafted from several: the first
-// one, in sorted order, so the same bundle always names the same owner.
+// known one, in sorted order, so the same bundle always names the same owner and an unknown
+// project never takes the owner away from a known one.
 func improveProposeOwner(projects []improveProposeProject) string {
-	if len(projects) == 0 || projects[0].Project == auditDraftOwnerUnknown {
-		return ""
+	for _, project := range projects {
+		if project.Project != "" && project.Project != auditDraftOwnerUnknown {
+			return project.Project
+		}
 	}
-	return projects[0].Project
+	return ""
 }
 
 // improveProposeSeverity is the draft severity an impact rank maps to: a blockage or a
 // needs_changes is P1 and everything else is P2, which keeps the draft comparable with the
 // audit drafts without claiming a grade the bundle did not carry.
 func improveProposeSeverity(impact int) string {
-	if impact <= improveProposeImpactMedium {
+	if impact <= improveProposeImpactHigh {
 		return "P1"
 	}
 	return "P2"
@@ -515,7 +564,18 @@ func improveProposeRun(e *Env, bundlePath string, dryRun bool) (improveProposeRe
 			continue
 		}
 		if doc.Source == improveProposeSource {
-			doc.Body = improveProposeSeenSection(doc.Body, doc.Seen)
+			// The whole record is rewritten, so the projects and the evidence the new run
+			// reached are folded in rather than dropped: a project the draft already held
+			// keeps its count, a project the new run saw takes the new one, and the evidence
+			// is the union.
+			merged := improveProposeCandidate{
+				Title:    doc.Title,
+				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects),
+				Evidence: improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...)),
+				seen:     doc.Seen,
+			}
+			doc.Project = improveProposeOwner(merged.Projects)
+			doc.Body = improveProposeDraftBody(merged)
 		}
 		if err := auditDraftSave(path, doc); err != nil {
 			return report, err

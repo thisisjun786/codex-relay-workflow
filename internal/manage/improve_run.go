@@ -61,7 +61,22 @@ func improveRoadmapParseArgs(args []string) (boundary, ref string, help bool, er
 	if strings.TrimSpace(ref) == "" {
 		return "", "", false, errors.New("the option --ref needs a value")
 	}
+	// The ref names one directory below the manage state directory, so it must be a single
+	// plain path segment: a ref carrying a separator or a relative component could move the
+	// bundle outside the managed state.
+	if !improveRoadmapPlainRef(ref) {
+		return "", "", false, fmt.Errorf("the ref %q must be a plain name without a path separator", ref)
+	}
 	return boundary, ref, false, nil
+}
+
+// improveRoadmapPlainRef reports whether a boundary ref is one plain path segment: a non-empty
+// name that is neither "." nor ".." and carries no path separator.
+func improveRoadmapPlainRef(ref string) bool {
+	if ref == "" || ref == "." || ref == ".." {
+		return false
+	}
+	return !strings.ContainsRune(ref, '/') && !strings.ContainsRune(ref, '\\')
 }
 
 // improveRoadmapDir is where the improvement pass keeps its bundles and roadmap documents:
@@ -70,10 +85,11 @@ func improveRoadmapDir(e *Env, cfg *Config) string {
 	return filepath.Join(auditStateDir(e, cfg), "improve")
 }
 
-// improveRoadmapBundlePath is the bundle one boundary ref keeps, so a second run of the same
-// ref reads the evidence it wrote before.
-func improveRoadmapBundlePath(dir, ref string) string {
-	return filepath.Join(dir, ref, "bundle.json")
+// improveRoadmapBundlePath is the bundle one run keeps: a per-run file beside its roadmap, so
+// a later run of the same ref never replaces the evidence an earlier roadmap cites. The stamp
+// is the run's own, so the bundle and the roadmap of one run pair by name.
+func improveRoadmapBundlePath(dir, ref, stamp string) string {
+	return filepath.Join(dir, ref, "bundle-"+stamp+".json")
 }
 
 // improveRoadmapStamp is the UTC stamp a roadmap file name carries.
@@ -83,11 +99,12 @@ func improveRoadmapStamp(now time.Time) string {
 
 // improveRoadmapDocument is the roadmap markdown: what the pass covered, how many drafts it
 // left, and one ranked row per candidate with its frequency, impact, cost and evidence.
-func improveRoadmapDocument(boundary, ref string, report improveProposeReport) string {
+func improveRoadmapDocument(boundary, ref, bundle string, report improveProposeReport) string {
 	var b strings.Builder
 	b.WriteString("# Improvement roadmap\n\n")
 	b.WriteString("- boundary: " + boundary + "\n")
 	b.WriteString("- ref: " + ref + "\n")
+	b.WriteString("- evidence bundle: " + bundle + "\n")
 	b.WriteString(fmt.Sprintf("- created drafts: %d\n", len(report.Created)))
 	b.WriteString(fmt.Sprintf("- updated drafts: %d\n", len(report.Updated)))
 	b.WriteString(fmt.Sprintf("- suppressed by the issue list: %d\n", len(report.Suppressed)))
@@ -175,12 +192,12 @@ func improveRoadmapWriteFile(path string, data []byte) error {
 func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (string, error) {
 	cfg := coreDefaults(e)
 	dir := improveRoadmapDir(e, cfg)
-	bundlePath := improveRoadmapBundlePath(dir, ref)
+	stamp := improveRoadmapStamp(e.Now())
+	bundlePath := improveRoadmapBundlePath(dir, ref, stamp)
 	if err := os.MkdirAll(filepath.Dir(bundlePath), 0o700); err != nil {
 		return "", err
 	}
-	// collect is called first, so the bundle it writes is the evidence the roadmap cites and a
-	// later run of the same ref reads the same records.
+	// collect is called first, so the bundle it writes is the evidence the roadmap cites.
 	if code := improveRunCollect(ctx, e, []string{"--out", bundlePath}); code != 0 {
 		return "", fmt.Errorf("collect exited with status %d", code)
 	}
@@ -188,8 +205,8 @@ func improveRoadmapRun(ctx context.Context, e *Env, boundary, ref string) (strin
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "roadmap-"+improveRoadmapStamp(e.Now())+".md")
-	if err := improveRoadmapWriteFile(path, []byte(improveRoadmapDocument(boundary, ref, report))); err != nil {
+	path := filepath.Join(dir, "roadmap-"+stamp+".md")
+	if err := improveRoadmapWriteFile(path, []byte(improveRoadmapDocument(boundary, ref, bundlePath, report))); err != nil {
 		return "", err
 	}
 	return path, nil
