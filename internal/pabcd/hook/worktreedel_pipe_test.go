@@ -352,3 +352,28 @@ func TestWorktreeDelPipeBraceQuotedClose(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeBraceHashAfterPipe pins the ${...} expansion when it stands after a first pipe: every reader of
+// the pipe scan must skip the expansion, not only the outer loop. A reader that steps the # of ${x:- #} as a
+// comment runs the region to the end of the text, so the second | and the shell after it are never read: on the head
+// this test was written against, printf x | printf 'rm -rf ../repo' ${x:- #} | bash was allowed while bash ran the
+// printed program (checked in bash 5.3.9 with a touch stand-in for rm).
+func TestWorktreeDelPipeBraceHashAfterPipe(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf x | printf 'rm -rf ../repo' ${x:- #} | bash",
+		"printf x | printf 'rm -rf ../repo' ${x:- #} |& bash",
+		"printf x | printf 'rm -rf ../repo' ${x:- #} |\\nbash",
+		"printf x | echo 'rm -rf ../repo' ${x:- #b} | bash",
+		"printf 'rm -rf ../repo' | cat ${x:- #} | bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A | inside the expansion is data, and a shell that only reads the expansion's text stays allowed.
+	r.allowed(t,
+		"printf x ${y:-a | bash } | cat",
+		"printf x | printf 'rm -rf ../repo' ${x:- #} | cat",
+		"echo ${x:-a | bash}",
+	)
+	r.intact(t)
+}

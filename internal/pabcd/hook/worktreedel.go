@@ -2427,22 +2427,12 @@ func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDe
 func worktreeDelUnreadablePipes(text string) (string, bool) {
 	r := worktreeDelQuoteReader{prev: ' '}
 	depth := 0
-	for i := 0; i < len(text); i++ {
+	for i := 0; i < len(text); {
 		c := text[i]
-		if r.escapes(text, i) {
-			r.pair()
-			i++
-			continue
-		}
 		state := r.state
-		if state == worktreeDelQuotePlain {
-			if next, ok := worktreeDelUnreadablePipeSkip(text, i, &r); ok { // a ${...}: a # inside it is data (c13)
-				i = next - 1
-				continue
-			}
-		}
-		r.step(c)
+		next := worktreeDelUnreadablePipeAdvance(text, i, &r)
 		if state != worktreeDelQuotePlain {
+			i = next
 			continue
 		}
 		switch c {
@@ -2454,7 +2444,7 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 			}
 		case '|':
 			if i+1 < len(text) && text[i+1] == '|' { // a logical or, not a pipe
-				i++
+				i = worktreeDelUnreadablePipeAdvance(text, next, &r) // the second | of the operator is read too
 				continue
 			}
 			start := worktreeDelUnreadablePipeStart(text, i+1, &r)
@@ -2467,28 +2457,37 @@ func worktreeDelUnreadablePipes(text string) (string, bool) {
 			if what, ok := worktreeDelUnreadablePipeRegion(region); ok {
 				return what, true
 			}
-			i = end - 1
+			i = end
+			continue
 		}
+		i = next
 	}
 	return "", false
 }
 
-// worktreeDelUnreadablePipeSkip is the index after the ${...} parameter expansion that opens at i, when one does.
-// The whole expansion is read at once by worktreeDelBraceEnd, which ends it at the } that really closes it: a } inside
-// the expansion's own quotes or escaped by a backslash is data, so it does not close the expansion early and the #
-// after it opens no comment (CRW-726, c13). The reader's prev is set to a word byte, because the expansion is part of
-// the word it stands in and a # right after it is data too. A | inside the expansion is either data or inside a
-// substitution, whose body the substitution reader judges at its own depth, so nothing is missed by skipping it.
-func worktreeDelUnreadablePipeSkip(text string, i int, r *worktreeDelQuoteReader) (int, bool) {
-	if i+1 >= len(text) || text[i] != '$' || text[i+1] != '{' {
-		return i, false
+// worktreeDelUnreadablePipeAdvance reads the byte at i into the reader and returns the index after it: a backslash and
+// the byte it escapes are read together, and a ${...} parameter expansion is read whole by worktreeDelBraceEnd, which
+// ends it at the } that really closes it, so a } inside the expansion's own quotes or escaped by a backslash does not
+// close it early and a # inside it opens no comment (CRW-726, c13). Every reader of the pipe scan advances through
+// this one function, so the expansion is read the same way wherever it stands, not only at the top of the scan. The
+// reader's prev is set to a word byte after an expansion, because it is part of the word it stands in and a # right
+// after it is data too. A | inside the expansion is either data or inside a substitution, whose body the substitution
+// reader judges at its own depth, so nothing is missed by reading the expansion whole.
+func worktreeDelUnreadablePipeAdvance(text string, i int, r *worktreeDelQuoteReader) int {
+	if r.escapes(text, i) {
+		r.pair()
+		return i + 2
 	}
-	n := worktreeDelBraceEnd(text[i+2:]) + 2
-	if i+n > len(text) {
-		n = len(text) - i
+	if r.state == worktreeDelQuotePlain && i+1 < len(text) && text[i] == '$' && text[i+1] == '{' {
+		n := worktreeDelBraceEnd(text[i+2:]) + 2
+		if i+n > len(text) {
+			n = len(text) - i
+		}
+		r.prev = 'x'
+		return i + n
 	}
-	r.prev = 'x'
-	return i + n, true
+	r.step(text[i])
+	return i + 1
 }
 
 // worktreeDelUnreadablePipeStart is the first byte of the command a pipe feeds. The operator's own suffix is skipped:
@@ -2498,24 +2497,13 @@ func worktreeDelUnreadablePipeSkip(text string, i int, r *worktreeDelQuoteReader
 func worktreeDelUnreadablePipeStart(text string, from int, r *worktreeDelQuoteReader) int {
 	i := from
 	if i < len(text) && text[i] == '&' && r.state == worktreeDelQuotePlain { // the & of |&
-		r.step(text[i])
-		i++
+		i = worktreeDelUnreadablePipeAdvance(text, i, r)
 	}
 	for i < len(text) {
 		c := text[i]
-		if r.escapes(text, i) {
-			r.pair()
-			i += 2
-			continue
-		}
-		if r.state == worktreeDelQuoteComment {
-			r.step(c)
-			i++
-			continue
-		}
-		if r.state == worktreeDelQuotePlain && (strings.IndexByte(" \t\r\n", c) >= 0 || c == '#') {
-			r.step(c)
-			i++
+		if r.state == worktreeDelQuoteComment ||
+			r.state == worktreeDelQuotePlain && (strings.IndexByte(" \t\r\n", c) >= 0 || c == '#' || r.escapes(text, i)) {
+			i = worktreeDelUnreadablePipeAdvance(text, i, r)
 			continue
 		}
 		return i
@@ -2545,24 +2533,21 @@ func worktreeDelUnreadableOpensCompound(text string) bool {
 // returns to zero still ends the region at the next separator at that depth or, failing that, at the end of the text.
 func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteReader, depth *int) int {
 	start := *depth
-	for i := from; i < len(text); i++ {
+	for i := from; i < len(text); {
 		c := text[i]
-		if r.escapes(text, i) {
-			r.pair()
-			i++
-			continue
-		}
 		if r.state == worktreeDelQuotePlain {
 			switch c {
 			case '(', '{':
 				r.step(c)
 				*depth++
+				i++
 				continue
 			case ')', '}':
 				r.step(c)
 				if *depth > 0 {
 					*depth--
 				}
+				i++
 				continue
 			case ';', '&', '\n', '|':
 				if *depth <= start {
@@ -2570,7 +2555,7 @@ func worktreeDelUnreadablePipeEnd(text string, from int, r *worktreeDelQuoteRead
 				}
 			}
 		}
-		r.step(c)
+		i = worktreeDelUnreadablePipeAdvance(text, i, r)
 	}
 	return len(text)
 }
@@ -2602,14 +2587,10 @@ func worktreeDelUnreadablePipePieces(region string) []string {
 	}
 	for i := 0; i < len(region); i++ {
 		c := region[i]
-		if r.escapes(region, i) {
-			r.pair()
-			i++
-			continue
-		}
 		state := r.state
-		r.step(c)
+		next := worktreeDelUnreadablePipeAdvance(region, i, &r)
 		if state != worktreeDelQuotePlain || r.state != worktreeDelQuotePlain {
+			i = next - 1
 			continue
 		}
 		switch {
@@ -2618,6 +2599,7 @@ func worktreeDelUnreadablePipePieces(region string) []string {
 		case (c == '(' || c == '{' || c == ')' || c == '}') && worktreeDelUnreadableDelimiterEdge(region, i):
 			cut(i)
 		}
+		i = next - 1
 	}
 	if piece := text.Trim(region[start:]); piece != "" {
 		pieces = append(pieces, piece)
