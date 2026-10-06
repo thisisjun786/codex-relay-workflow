@@ -130,6 +130,9 @@ func githubPostHomeListing() string {
 // githubPostFake builds a key-shaped value from pieces, so no key-shaped literal sits in this file.
 func githubPostFake(prefix string, n int) string { return prefix + strings.Repeat("a", n) }
 
+// githubPostAbs is a path under the test's own temporary directory, for a case that names an absolute one.
+func githubPostAbs(dir, name string) string { return filepath.Join(dir, name) }
+
 // githubPostNested wraps a program in n shell -c levels, each double-quoted, so the guard has to read n
 // programs one level down before it reaches the text.
 func githubPostNested(n int, program string) string {
@@ -364,6 +367,35 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"post after a loop closes", "for i in 1; do :; done; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"nested control structures with nothing to do with gh", "if true; then for i in 1 2; do echo hi; done; fi", "", ""},
 		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", "", ""},
+		// The generation-4 rule: a command whose verb the guard does not read, and whose text names a
+		// post, is refused unless the verb never runs its arguments; a wrapper's duration word is read;
+		// a process substitution counts like a command substitution; and a body file any part of the
+		// command writes is refused conservatively.
+		{"timeout with a duration suffix", "timeout 30s gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"timeout with a duration and a variable", "timeout 30s gh pr comment 1 -b \"$BODY\"", githubPostRuleExpand, githubPostWhereCommand},
+		{"exec", "exec gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"exec a shell", "exec bash -c 'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"ssh with a post", "ssh host gh pr comment 1 -b plain", githubPostRuleUnread, githubPostWhereCommand},
+		{"ssh with a quoted post", "ssh host 'gh pr comment 1 -b plain'", githubPostRuleUnread, githubPostWhereCommand},
+		{"watch", "watch gh pr comment 1 -b plain", githubPostRuleUnread, githubPostWhereCommand},
+		{"process substitution", "cat <(gh pr comment 1 -b plain)", githubPostRuleUnread, githubPostWhereCommand},
+		{"source a process substitution", "source <(echo 'gh pr comment 1 -b plain')", githubPostRuleUnread, githubPostWhereCommand},
+		{"a shell fed a process substitution", "bash < <(gh pr comment 1 -b plain)", githubPostRuleUnread, githubPostWhereCommand},
+		{"body file written by an expanded destination", "env | sort > \"$PWD/body.md\"\ngh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		{"body file written by an absolute destination", "printf x > " + githubPostAbs(cwd, "body.md") + "\ngh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		{"body file written to the same last element", "env > sub/body.md\ngh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		{"body file after a directory change", "mkdir -p sub && cd sub && gh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		// The controls the rule keeps allowed.
+		{"timeout reading", "timeout 30s gh pr view 1", "", ""},
+		{"timeout with a clean file post", "timeout 30s gh pr comment 1 --body-file body.md", "", ""},
+		{"exec with nothing to do with gh", "exec ls", "", ""},
+		{"ssh with nothing to do with gh", "ssh host ls", "", ""},
+		{"process substitution with nothing to do with gh", "cat <(ls)", "", ""},
+		{"a message naming a post", "git commit -m \"deny gh pr comment inline bodies\"", "", ""},
+		{"a search naming a post", "rg 'gh pr comment' internal", "", ""},
+		{"a print naming a post", "echo 'gh pr comment'", "", ""},
+		{"another file written", "env > other.txt\ngh pr comment 1 --body-file body.md", "", ""},
+		{"a directory change with nothing to do with gh", "cd sub && ls", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)

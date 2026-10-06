@@ -102,7 +102,10 @@ type githubPostScan struct {
 	whole  string
 	bodies []string
 	writes []string
-	depth  int
+	// dirChanged is whether any part of the command text changes the working directory (cd, pushd,
+	// popd), which makes a relative body-file name name a file the guard cannot place.
+	dirChanged bool
+	depth      int
 }
 
 // githubPostInput is tool_input's command or cmd: an argv array is already split, a string is shell text.
@@ -299,6 +302,9 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 		return githubPostUnread(s.whole)
 	}
 	verb := shellVerbName(rest[0].text)
+	if verb == "cd" || verb == "pushd" || verb == "popd" {
+		s.dirChanged = true
+	}
 	if verb == "gh" {
 		return s.gh(rest[1:])
 	}
@@ -308,7 +314,6 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 				return s.command(rest[i+1:], segment)
 			}
 		}
-		return githubPostSite{}, false
 	}
 	spelled := make([]string, len(rest))
 	for i, w := range rest {
@@ -319,6 +324,11 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 		// A program in a language the guard cannot read, naming a post, is refused: the guard never
 		// runs it through its own reader, so passing it would be a fail-open.
 		if githubPostForeignProgram(verb, spelled[1:]) {
+			return githubPostUnread(segment)
+		}
+		// A command the guard does not read, whose text names a post, is refused: the verb runs its
+		// arguments (a leftover duration word, ssh, watch, an unknown program), so the post may run.
+		if !githubPostVerbRunsNothing(verb, spelled[1:]) && githubPostMentions(segment) {
 			return githubPostUnread(segment)
 		}
 		return githubPostSite{}, false
@@ -681,10 +691,8 @@ func (s *githubPostScan) file(w githubPostWord) (githubPostSite, bool) {
 	if name == "" || githubPostExpands(w.raw, false) {
 		return githubPostSite{githubPostRuleUnread, name}, true
 	}
-	for _, write := range s.writes {
-		if write == name || filepath.Clean(write) == filepath.Clean(name) {
-			return githubPostSite{githubPostRuleUnread, name}, true
-		}
+	if s.fileWritten(name) {
+		return githubPostSite{githubPostRuleUnread, name}, true
 	}
 	content, ok := githubPostReadFile(name, s.cwd)
 	if !ok {
@@ -697,6 +705,29 @@ func (s *githubPostScan) file(w githubPostWord) (githubPostSite, bool) {
 }
 
 // githubPostReadFile reads the text a post names: a regular file of at most 1 MiB, ~ expanded.
+// fileWritten is the conservative body-file test: a relative name is refused when any part of the command
+// writes a destination with the same last path element, or a destination holding an expansion, or when a
+// part changes directory; an absolute name is refused for a destination that holds an expansion or cleans
+// to the same path. Reading the exact identity is a separate issue (CRW-875), recorded in the record file.
+func (s *githubPostScan) fileWritten(name string) bool {
+	if !filepath.IsAbs(name) && !strings.HasPrefix(name, "~") {
+		if s.dirChanged {
+			return true
+		}
+		for _, write := range s.writes {
+			if write == name || filepath.Base(write) == name || githubPostExpands(write, false) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, write := range s.writes {
+		if githubPostExpands(write, false) || filepath.Clean(write) == filepath.Clean(name) {
+			return true
+		}
+	}
+	return false
+}
 func githubPostReadFile(name, cwd string) (string, bool) {
 	path := name
 	if strings.HasPrefix(path, "~/") {
@@ -919,7 +950,8 @@ func githubPostEscapable(c rune) bool {
 // githubPostExpands is whether the text as written holds an outer-shell expansion the shell acts on before
 // gh sees it: a backtick, a command substitution, a brace, name, digit or special parameter, an arithmetic
 // or process substitution, and a newline. A single-quoted region is literal to the shell. With unreadable
-// true only the two whose result the guard cannot see at all count, a backtick and a command substitution.
+// true only the ones whose result the guard cannot see at all count: a backtick, and a command or process
+// substitution.
 func githubPostExpands(raw string, unreadable bool) bool {
 	rs, mode := []rune(raw), rune(0)
 	for i := 0; i < len(rs); i++ {
@@ -949,7 +981,9 @@ func githubPostExpands(raw string, unreadable bool) bool {
 				next >= 'a' && next <= 'z' || next >= 'A' && next <= 'Z') {
 				return true
 			}
-		case c == '<' && !unreadable && i+1 < len(rs) && rs[i+1] == '(':
+		case c == '<' && i+1 < len(rs) && rs[i+1] == '(':
+			return true
+		case c == '>' && unreadable && i+1 < len(rs) && rs[i+1] == '(':
 			return true
 		case c == '\n' && !unreadable:
 			return true
@@ -1048,7 +1082,8 @@ func githubPostWrapperWord(word string) bool {
 		return true
 	}
 	for _, c := range word {
-		if c != '+' && c != '-' && c != '.' && c != ',' && c != 'x' && (c < '0' || c > '9') {
+		if c != '+' && c != '-' && c != '.' && c != ',' && c != 'x' &&
+			c != 's' && c != 'm' && c != 'h' && c != 'd' && (c < '0' || c > '9') {
 			return false
 		}
 	}
@@ -1058,7 +1093,7 @@ func githubPostWrapperWord(word string) bool {
 // githubPostWrapper is a command that runs the rest of the line, so the post behind it is read.
 func githubPostWrapper(name string) bool {
 	for _, w := range [...]string{"env", "sudo", "doas", "command", "builtin", "nohup", "setsid", "time",
-		"nice", "ionice", "stdbuf", "timeout", "chrt", "taskset", "xargs"} {
+		"nice", "ionice", "stdbuf", "timeout", "chrt", "taskset", "xargs", "exec"} {
 		if name == w {
 			return true
 		}
@@ -1080,6 +1115,7 @@ func githubPostWrapperValue(name, option string) bool {
 		"chrt":    "-p --pid -T --sched-runtime -P --sched-period -D --sched-deadline",
 		"taskset": "-p --pid",
 		"xargs":   "-I --replace -n --max-args -L --max-lines -P --max-procs -s --max-chars -E --eof -d --delimiter -a --arg-file",
+		"exec":    "-a",
 	}[name]
 	for _, v := range strings.Fields(values) {
 		if option == v || strings.HasPrefix(option, v+"=") {
@@ -1090,6 +1126,36 @@ func githubPostWrapperValue(name, option string) bool {
 }
 
 // githubPostMentions is whether the text names gh with pr, issue or api, the fail-closed rule's words: the
+// githubPostVerbRunsNothing is the allow list of commands that never run their arguments: their words are
+// data, so a text they only print is not a post. Anything else is on the refusing side.
+func githubPostVerbRunsNothing(verb string, args []string) bool {
+	for _, name := range [...]string{"echo", "printf", "true", "false", ":", "test", "[", "ls", "cat",
+		"head", "tail", "wc", "grep", "egrep", "fgrep", "rg"} {
+		if verb == name {
+			return true
+		}
+	}
+	if verb != "git" {
+		return false
+	}
+	// git is on the list for its reading subcommands alone: -c, --config and an alias run something else.
+	for _, a := range args {
+		if a == "-c" || a == "--config" || strings.HasPrefix(a, "--config=") || a == "-C" || strings.HasPrefix(a, "-C") {
+			return false
+		}
+		if a == "" || strings.HasPrefix(a, "-") {
+			continue
+		}
+		for _, sub := range [...]string{"commit", "log", "show", "diff", "grep", "status", "tag"} {
+			if a == sub {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 // text is read as written, and a word character beside a name makes it a different word.
 func githubPostMentions(text string) bool {
 	present := func(word string) bool {
