@@ -146,6 +146,24 @@ func TestStoreSeatRefusesTheStoreKindForAnotherRoleOrKey(t *testing.T) {
 	}
 }
 
+// TestStoreSeatRefusesASeatWhoseKeyCollidesWithAnotherLevel: an initiative whose key happens to
+// be "store" is a different scope from the store seat, and the one-supervisor-seat rule counts
+// it: the second claim is refused whichever order the two are made in.
+func TestStoreSeatRefusesASeatWhoseKeyCollidesWithAnotherLevel(t *testing.T) {
+	initiativeStore := []string{"linkage-bind", "--role", storeSeatRole, "--scope", storeSeatKey, "--task", "01management", "--host", "host"}
+	storeSeat := []string{"linkage-bind", "--role", storeSeatRole, "--scope-kind", storeSeatKind, "--scope", storeSeatKey, "--task", "01management", "--host", "host"}
+
+	byInitiative := newStoreSeat(t)
+	if code, out := byInitiative.run(initiativeStore...); code != 0 {
+		t.Fatalf("initiative named %q: exit %d stdout %q", storeSeatKey, code, out)
+	}
+	byInitiative.mustRefuse("role_already_bound", storeSeat...)
+
+	bySeat := newStoreSeat(t)
+	bySeat.mustBind("01management", storeSeatKind)
+	bySeat.mustRefuse("role_already_bound", initiativeStore...)
+}
+
 // TestStoreSeatLeavesTheRoleOwnLevelAlone: without --scope-kind every role binds the level it
 // always did.
 func TestStoreSeatLeavesTheRoleOwnLevelAlone(t *testing.T) {
