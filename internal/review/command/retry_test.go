@@ -390,6 +390,7 @@ func TestFailureRecordOfARunThatDidNotEndComplete(t *testing.T) {
 		{"crash", art(u, "review/unavailable/crash"), "crash", "unknown"},
 		{"not started", art(u, "review/unavailable/not_started"), "not_started", "false"},
 		{"two distinct reasons", art(p, "review/normal/", "review/unavailable/quota", "review/invalid/time_limit_exceeded"), "quota,time_limit_exceeded", "true"},
+		{"a lock wait beside an auxiliary failure", art(p, "review/unavailable/lock_wait_expired", "group/unavailable/crash"), "", "false"},
 	} {
 		if got := ledgerFailureReason(c.a); got != c.reason {
 			t.Errorf("%s: ledgerFailureReason = %q, want %q", c.name, got, c.reason)

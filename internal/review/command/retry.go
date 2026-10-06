@@ -103,13 +103,20 @@ func agyCalledOf(a *review.Artifact) *bool {
 }
 
 // ledgerFailureReason is what the ledger line of a run that did not end complete records as its reason: the distinct reasons of the review calls that did not end normal, a lock wait left out (agy was
-// never started, so it names no failure), sorted and joined by commas. When no review call failed -- the run is partial because an auxiliary stage failed -- it lists the auxiliary calls that did not
-// end normal the same way. It is empty when no failed call names a reason.
+// never started, so it names no failure), sorted and joined by commas. When every review call ended normal -- the run is partial because an auxiliary stage failed -- it lists the auxiliary calls that
+// did not end normal the same way. It is empty when no failed call names a reason.
 func ledgerFailureReason(a *review.Artifact) string {
-	if reviewReasons := nonNormalCallReasons(a.Calls, true); len(reviewReasons) > 0 {
-		return strings.Join(reviewReasons, ",")
+	if reviewCallFailed(a.Calls) {
+		return strings.Join(nonNormalCallReasons(a.Calls, true), ",")
 	}
 	return strings.Join(nonNormalCallReasons(a.Calls, false), ",")
+}
+
+// reviewCallFailed reports whether a review call did not end normal. A lock wait counts: agy was never started for it, so it names no reason, but it is not a normal call either.
+func reviewCallFailed(calls []review.CallRecord) bool {
+	return slices.ContainsFunc(calls, func(c review.CallRecord) bool {
+		return c.Stage == "review" && c.Class != string(agy.ClassNormal)
+	})
 }
 
 // nonNormalCallReasons returns the distinct reasons of the calls of the named kind (the review calls, or the auxiliary ones) that did not end normal, a lock wait left out, sorted.
