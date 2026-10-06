@@ -165,6 +165,7 @@ func put(t *testing.T, path, text string, mode os.FileMode) {
 // A fresh registration writes the one unit, asks the manager and enables it by path, never starts anything; its status
 // read runs through the pointer's relay without the policy and scope variables though the caller sets both.
 func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	result := u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
 	relay, state, socket := filepath.Join(u.dest, "current", "bin", "codex-session-relay"), u.o.State, u.o.Socket
@@ -191,6 +192,7 @@ func TestRegisterWritesTheUnitAndEnablesIt(t *testing.T) {
 
 // Registering again converges (enable runs again); a dry run writes nothing and only reads.
 func TestRegisterIsIdempotentAndDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	u.run(install.ServiceOptions{DryRun: true}, install.OK, install.UnitWouldCreate)
 	if _, err := os.Stat(u.path()); !errors.Is(err, os.ErrNotExist) || u.manager.verbs() != "show" {
@@ -206,6 +208,7 @@ func TestRegisterIsIdempotentAndDryRunWritesNothing(t *testing.T) {
 
 // Nothing the installer did not write is adopted or overwritten, and a manager that cannot be asked is not one that said no.
 func TestRegisterRefusesWhatItDoesNotOwnOrCannotResolve(t *testing.T) {
+	t.Parallel()
 	other := func(u *unitHost) string { return loadedFrom("/usr/lib/systemd/user/"+doctor.ServiceUnit, "inactive") }
 	for _, c := range []struct {
 		name, outcome string
@@ -254,6 +257,7 @@ func TestRegisterRefusesWhatItDoesNotOwnOrCannotResolve(t *testing.T) {
 
 // Inputs the unit cannot carry, or must not live where a runtime's removal would delete them.
 func TestRegisterRefusesInputsTheUnitCannotCarry(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ socket, name string }{{"a b.sock", ""}, {"none", ""}, {"", "../x.txt"}, {"", "-x.service"}} {
 		u := newUnitHost(t)
 		if c.socket == "none" {
@@ -290,6 +294,7 @@ func TestRegisterRefusesInputsTheUnitCannotCarry(t *testing.T) {
 // The boot start's inputs come from the relay's own status: an unreadable declaration refuses, a ready service warns
 // of nothing, an unreadable status warns, and a relative socket is resolved so the unit names absolute paths only.
 func TestRegisterReadsTheBootStartInputs(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	u.status("{\"enabled\":true,\"launchPolicy\":{\"source\":\"unreadable_record\",\"detail\":\"not JSON\"}}")
 	u.run(install.ServiceOptions{}, install.Refused, install.UnitUnreadable)
@@ -310,6 +315,7 @@ func TestRegisterReadsTheBootStartInputs(t *testing.T) {
 
 // An isolated target carries its scope into the unit and allows it; a production one unsets the scope variable.
 func TestRegisterCarriesAnIsolatedScope(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	scopes := filepath.Join(u.home, "scopes")
 	u.status("{\"enabled\":true,\"launchPolicy\":{\"source\":\"record\"},\"scopeAuthority\":\"isolated\"}")
@@ -325,6 +331,7 @@ func TestRegisterCarriesAnIsolatedScope(t *testing.T) {
 
 // Remove disables then deletes only what it wrote and only when it is not running; every other case changes nothing.
 func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
 	u.manager.calls, u.manager.show = nil, loadedFrom(u.path(), "inactive")
@@ -359,6 +366,7 @@ func TestRemoveDisablesAndDeletesOnlyWhatItWrote(t *testing.T) {
 // Removal trusts a file only if it is exactly what the command writes with values it could have written: a NUL is a
 // line break to systemd, so a generated-looking file whose scope value carries one is not trusted.
 func TestRemoveRefusesAGeneratedLookingFileWhoseValueCarriesNul(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	scopes := filepath.Join(u.home, "scopes")
 	u.run(install.ServiceOptions{ScopeDir: scopes}, install.OK, install.UnitCreated)
@@ -373,6 +381,7 @@ func TestRemoveRefusesAGeneratedLookingFileWhoseValueCarriesNul(t *testing.T) {
 // A step that fails says what stands: exit 3 when a change may have landed (written and not enabled, a failed enable or
 // disable, deleted and not reloaded).
 func TestStepsThatFailSayWhatStands(t *testing.T) {
+	t.Parallel()
 	u := newUnitHost(t)
 	u.manager.fail = map[string]error{"enable": errors.New("boom")}
 	if result := u.run(install.ServiceOptions{}, install.Incomplete, install.UnitNotEnabled); at(result, "applied") != true || u.text() == "" {
@@ -397,6 +406,7 @@ func TestStepsThatFailSayWhatStands(t *testing.T) {
 
 // Only a loaded name shows its drop-ins, so the unit is read again after enable and any drop-in is reported.
 func TestRegisterReportsDropInsThatOnlyShowOnceTheNameIsLoaded(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, after, outcome string }{
 		{"drop-ins", "DropInPaths=/x/crw-.service.d/o.conf", install.UnitModified},
 		{"a name the manager still does not load", "LoadState=not-found", install.UnitUnreadable},
@@ -415,6 +425,7 @@ func TestRegisterReportsDropInsThatOnlyShowOnceTheNameIsLoaded(t *testing.T) {
 
 // A second owner that appears between the decision and the lock is found again under it.
 func TestRegisterLooksForASecondOwnerAgainUnderTheLock(t *testing.T) {
+	// sequential: replaces the before-write-lock seam.
 	u := newUnitHost(t)
 	restore := install.ReplaceBeforeWriteLock(func(string) {
 		put(t, filepath.Join(u.dir, "other.service"), "[Service]\nExecStart=/opt/bin/codex-session-relay --socket /s service start\n", 0o644)
@@ -426,6 +437,7 @@ func TestRegisterLooksForASecondOwnerAgainUnderTheLock(t *testing.T) {
 
 // A unit file replaced between the decision and the lock is never acted on: not enabled again, not deleted.
 func TestNeitherRegisterNorRemoveActsOnAFileThatChangedUnderneath(t *testing.T) {
+	// sequential: replaces the before-write-lock seam.
 	for _, remove := range []bool{false, true} {
 		u := newUnitHost(t)
 		u.run(install.ServiceOptions{}, install.OK, install.UnitCreated)
@@ -459,6 +471,7 @@ func parseUnit(unit string) (start, stop []string, set scope.Env, unset []string
 // fake App Server in an isolated scope: an update is refused while the relay runs, lands after the stop, leaves the
 // unit file and the manager untouched, and the unit's ExecStart then starts the new runtime.
 func TestUpdateAndStopStartDoNotFightTheUnit(t *testing.T) {
+	// sequential: starts a real relay daemon whose ready-wait deadline is load-sensitive.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	updated := runtimeDir(h, "0.9.1", second, t)

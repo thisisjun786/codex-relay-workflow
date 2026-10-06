@@ -4,7 +4,9 @@
 # validate, secrets and go-product on such an edit only, and guards every later step of those
 # jobs with its answer. It reads the newest completed run of this workflow, of this pull
 # request, of this repository, for this head, other than the run it is in, and mirrors the job
-# when that run's same-named job concluded success.
+# when that run's same-named job concluded success. A go-product (test-*) job is mirrored only when
+# that job's test step concluded success too: CRW-790's temporary light mode lets a leg succeed
+# with its tests skipped, and such a leg must not be carried into a later run.
 #
 # The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing
 # job, another head, pull request, workflow or repository, an unreadable API and this run
@@ -20,6 +22,9 @@ self_run=${RUN_ID:-}
 repository=${REPOSITORY:-}
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 output=${GITHUB_OUTPUT:-}
+# The ci.yml step a go-product test leg runs, up to the leg's part; internal/dev/ci/light_mode_test.go
+# holds this name and ci.yml's step name to each other, so a rename on either side is a red test.
+test_step_prefix='Test and replay the contract corpus ('
 
 mirrored=false
 mirror_run=
@@ -54,12 +59,31 @@ if [[ -n $job_name && -n $head_sha && -n $pull_number && -n $self_run && -n $rep
     reason="run $mirror_run has no successful $job_name job"
     # A re-run leaves every attempt in the list; the newest attempt is the job's answer.
     jobs=$(gh api --paginate "repos/$repository/actions/runs/$mirror_run/jobs?filter=all&per_page=100" \
-      --jq '.jobs[] | {name, attempt: .run_attempt, conclusion}' 2>/dev/null) || jobs=
+      --jq '.jobs[] | {name, attempt: .run_attempt, conclusion, steps: [.steps[]? | {name, conclusion}]}' 2>/dev/null) || jobs=
     conclusion=$(printf '%s' "$jobs" | jq -s -r --arg name "$job_name" '
       [ .[] | select(.name == $name) ] | sort_by(.attempt) | last | .conclusion // empty') || conclusion=
     if [[ $conclusion == success ]]; then
       mirrored=true
       reason="run $mirror_run concluded success for $job_name"
+      # A light test leg concludes success while its test step is skipped, so the leg is mirrored
+      # only when that step also succeeded. The step is read from the same newest attempt the
+      # conclusion came from, so an earlier attempt's green test step cannot vouch for a leg that
+      # was retried and skipped its tests. A skipped, missing or absent step answers mirrored=false.
+      if [[ $job_name == "go-product (test-"* ]]; then
+        part=${job_name#"go-product ("}
+        part=${part%)}
+        step_name="${test_step_prefix}${part})"
+        step_conclusion=$(printf '%s' "$jobs" | jq -s -r --arg name "$job_name" --arg step "$step_name" '
+          [ .[] | select(.name == $name) ] | sort_by(.attempt) | last | (.steps // [])
+          | map(select(.name == $step)) | last | .conclusion // empty') || step_conclusion=
+        if [[ $step_conclusion == success ]]; then
+          reason="run $mirror_run concluded success for $job_name and its test step $step_name"
+        else
+          mirrored=false
+          reason="run $mirror_run did not conclude $job_name's test step $step_name as success (${step_conclusion:-missing})"
+          mirror_run=
+        fi
+      fi
     else
       mirror_run=
     fi
