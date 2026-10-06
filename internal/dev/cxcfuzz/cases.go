@@ -62,7 +62,9 @@ func SaveCases(dir string, cases []Case) error {
 }
 
 // CheckCase replays one case through the Go side only, with no Node and no worker, and returns a
-// problem description, or "" when the case holds.
+// problem description, or "" when the case holds. The case root is prepared exactly as a campaign
+// prepares it, so a target that opens a file under one of the homes, or under TMPDIR, sees the
+// same directories during replay as it saw when the answer was recorded.
 func CheckCase(target Target, c Case) string {
 	input, err := decode(c.Input)
 	if err != nil {
@@ -73,14 +75,19 @@ func CheckCase(target Target, c Case) string {
 		return err.Error()
 	}
 	defer func() { _ = os.RemoveAll(root) }()
+	if err := PrepareRoot(root); err != nil {
+		return fmt.Sprintf("the case root was not prepared: %v", err)
+	}
 	if _, err := Scenarios(root, input); err != nil {
 		return fmt.Sprintf("the scenario is refused: %v", err)
 	}
 	value, err := target.Go(input, RootEnv(root))
 	if err != nil {
-		return fmt.Sprintf("the Go side failed: %v", err)
+		// The campaign answers a Go failure with the error's value, so replay compares the same
+		// shape rather than treating a recorded error as a replay failure.
+		value = errorValue(err)
 	}
-	got := ReplaceRoot(canonical(value), root)
+	got := canonical(stripRoot(value, root))
 	switch c.Tag {
 	case TagIdentical:
 		if got != canonicalText(c.Oracle) {

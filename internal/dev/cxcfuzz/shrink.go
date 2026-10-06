@@ -4,6 +4,7 @@ package cxcfuzz
 
 import (
 	"encoding/json"
+	"sort"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -35,9 +36,22 @@ func Shrink(input any, attempts int, keep func(any) bool) (any, int) {
 
 // reduce is one step's candidates for a value, in a fixed order: a container first loses its
 // members one at a time, then each member is reduced in place; a string loses its halves and then
-// all of it; a number becomes zero; a boolean becomes false.
+// all of it; a number becomes zero; a boolean becomes false. A generator may build its input as a
+// pyjson.Object (what decode answers) or as a plain map; a plain map is reduced as an object in
+// sorted key order, so the candidates stay deterministic.
 func reduce(value any) []any {
 	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		fields := make(pyjson.Object, 0, len(keys))
+		for _, key := range keys {
+			fields = append(fields, pyjson.Field{Key: key, Value: v[key]})
+		}
+		return reduce(fields)
 	case pyjson.Object:
 		var out []any
 		for i := range v {
@@ -76,7 +90,9 @@ func reduce(value any) []any {
 		if v == "" {
 			return nil
 		}
-		return []any{v[:len(v)/2], v[1:], ""}
+		// The halves first, then one character off each end, then nothing: the issue's trimming
+		// at both ends and one character at a time.
+		return []any{v[:len(v)/2], v[1:], v[:len(v)-1], ""}
 	case bool:
 		if v {
 			return []any{false}

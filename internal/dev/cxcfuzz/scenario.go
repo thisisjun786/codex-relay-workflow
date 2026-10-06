@@ -63,17 +63,70 @@ func fsEntries(input any) ([]Entry, error) {
 	}
 	entries := make([]Entry, 0, len(items))
 	for i, item := range items {
-		raw, err := json.Marshal(plain(item))
+		entry, err := readEntry(item)
 		if err != nil {
-			return nil, fmt.Errorf("fs[%d]: %w", i, err)
-		}
-		var entry Entry
-		if err := json.Unmarshal(raw, &entry); err != nil {
 			return nil, fmt.Errorf("fs[%d]: %w", i, err)
 		}
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// readEntry reads one entry's fields from the decoded value. A text field is taken as the string it
+// already is rather than round-tripped through encoding/json, which replaces the three WTF-8 bytes
+// a lone surrogate is held in with U+FFFD: the file would not hold what the input describes.
+func readEntry(item any) (Entry, error) {
+	var entry Entry
+	for _, f := range []struct {
+		key  string
+		into *string
+	}{
+		{"path", &entry.Path},
+		{"kind", &entry.Kind},
+		{"target", &entry.Target},
+		{"content", &entry.Content},
+	} {
+		value, found := field(item, f.key)
+		if !found || value == nil {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return entry, fmt.Errorf("%s must be a string, not %T", f.key, value)
+		}
+		*f.into = text
+	}
+	value, found := field(item, "mode")
+	if !found || value == nil {
+		return entry, nil
+	}
+	mode, err := integer(value)
+	if err != nil {
+		return entry, fmt.Errorf("mode: %w", err)
+	}
+	entry.Mode = mode
+	return entry, nil
+}
+
+// integer reads a decoded JSON number as an int: pyjson answers a Python integer as a json.Number,
+// and a generator may hand one in as a Go int.
+func integer(value any) (int, error) {
+	switch v := value.(type) {
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("%s is not an integer", v)
+		}
+		return int(n), nil
+	case int:
+		return v, nil
+	case int64:
+		return int(v), nil
+	case float64:
+		return int(v), nil
+	default:
+		return 0, fmt.Errorf("%T is not a number", value)
+	}
 }
 
 // field reads one key of an object value.
@@ -86,26 +139,6 @@ func field(input any, key string) (any, bool) {
 		return value, found
 	}
 	return nil, false
-}
-
-// plain converts a decoded value into what encoding/json writes back.
-func plain(value any) any {
-	switch v := value.(type) {
-	case pyjson.Object:
-		out := make(map[string]any, len(v))
-		for _, item := range v {
-			out[item.Key] = plain(item.Value)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(v))
-		for _, item := range v {
-			out = append(out, plain(item))
-		}
-		return out
-	default:
-		return value
-	}
 }
 
 // confine resolves a relative path under root, refusing an absolute one or one that leaves root.
@@ -121,7 +154,38 @@ func confine(root, path string) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("the fs path %q leaves the case root", path)
 	}
+	if err := withinRoot(root, joined); err != nil {
+		return "", fmt.Errorf("the fs path %q %w", path, err)
+	}
 	return joined, nil
+}
+
+// withinRoot refuses a joined path whose existing part resolves outside root, so a symlink standing
+// under the root cannot carry a later write out of it. Only the part that exists is resolved: a
+// component that does not exist yet cannot be a symlink, so its nearest existing ancestor decides,
+// and a dangling symlink is already confined by linkTarget's check of its own target.
+func withinRoot(root, joined string) error {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	for existing := joined; ; {
+		resolved, err := filepath.EvalSymlinks(existing)
+		if err == nil {
+			if resolved != resolvedRoot && !strings.HasPrefix(resolved, resolvedRoot+string(filepath.Separator)) {
+				return errors.New("resolves outside the case root")
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing || len(parent) < len(resolvedRoot) {
+			return nil
+		}
+		existing = parent
+	}
 }
 
 // linkTarget is a symlink entry's target resolved under root, refused when it leaves root.

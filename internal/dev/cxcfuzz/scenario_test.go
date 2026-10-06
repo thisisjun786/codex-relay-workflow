@@ -116,6 +116,21 @@ func TestScenariosRefuseASymlinkTargetOutsideTheRoot(t *testing.T) {
 	}
 }
 
+// A path that resolves through a symlink standing under the root is refused too: the lexical check
+// alone would let the write land outside it.
+func TestScenariosRefuseAPathThatResolvesThroughAnOutsideSymlink(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Scenarios(root, fsInput(fsEntry("escape/planted", "file", "x", "", 0o644))); err == nil {
+		t.Fatal("a write through an outside symlink was materialised")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "planted")); err == nil {
+		t.Fatal("the write reached outside the case root")
+	}
+}
+
 // Generated content is written, never executed: a file holding a shell command leaves the
 // command's effect undone.
 func TestScenarioContentIsNeverExecuted(t *testing.T) {

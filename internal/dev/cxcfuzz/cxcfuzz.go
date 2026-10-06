@@ -159,8 +159,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d\n",
 		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused)
-	// A case that timed out compared nothing, so it is not an agreement either.
-	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts > 0 {
+	// A case that timed out, or whose fs scenario was refused, compared nothing, so it is not an
+	// agreement either: a campaign that compared nothing does not report success.
+	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.Refused > 0 {
 		return 1
 	}
 	return 0
@@ -227,14 +228,14 @@ func Campaign(cfg Config) (Summary, error) {
 		default:
 			return summary, fmt.Errorf("the target's Compare answered an unknown verdict kind %q", verdict.Kind)
 		}
-		shrinker := &shrinkRun{campaign: run, kind: verdict.Kind, goOut: goOut, oracleOut: oracleOut}
+		shrinker := &shrinkRun{campaign: run, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
 		shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
 		if err := writeDivergence(cfg.Out, Divergence{
 			Kind:    verdict.Kind,
 			Input:   canonical(shrunk),
 			Go:      shrinker.goOut,
 			Oracle:  shrinker.oracleOut,
-			Verdict: verdict,
+			Verdict: shrinker.verdict,
 			Seed:    seed,
 			DevSHA:  cfg.DevSHA,
 		}, written); err != nil {
@@ -315,22 +316,22 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 }
 
 // shrinkRun is the shrinker's keep test. A candidate is kept only while it still produces the
-// same verdict kind, and the answers of the last candidate kept are the answers of the input the
-// divergence file ends up holding: the shrunk input and the two answers must describe one run,
-// or a case adopted from the file could never replay.
+// same verdict kind, and the verdict and the two answers of the last candidate kept are what the
+// divergence file ends up holding: the shrunk input, the answers and the verdict must describe
+// one run, or a case adopted from the file could never replay and its detail could contradict it.
 type shrinkRun struct {
 	campaign  *campaign
-	kind      Kind
+	verdict   Verdict
 	goOut     string
 	oracleOut string
 }
 
 func (s *shrinkRun) keep(candidate any) bool {
 	verdict, goOut, oracleOut, err := s.campaign.evaluate(candidate)
-	if err != nil || verdict.Kind != s.kind {
+	if err != nil || verdict.Kind != s.verdict.Kind {
 		return false
 	}
-	s.goOut, s.oracleOut = goOut, oracleOut
+	s.verdict, s.goOut, s.oracleOut = verdict, goOut, oracleOut
 	return true
 }
 
