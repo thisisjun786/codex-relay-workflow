@@ -133,23 +133,135 @@ func (s *githubPostScan) text(command string) (githubPostSite, bool) {
 	if !balanced {
 		return githubPostUnread(command)
 	}
-	s.whole = command
+	// The outermost text is the one the fail-closed tests read: a program one level down is judged
+	// against the command that ran it, so the word gh a nested program never spells is still seen.
+	if s.whole == "" {
+		s.whole = command
+	}
 	for _, line := range lines {
-		s.bodies, s.writes = line.bodies, ShellWriteDestinations(line.text)
+		s.bodies = line.bodies
+		// A body file an earlier line of this text writes is refused, not only one the same line writes:
+		// the shell runs the lines in order, so the bytes gh would read are not the bytes the guard saw.
+		s.writes = append(s.writes, ShellWriteDestinations(line.text)...)
 		for _, segment := range githubPostSegments(line.text) {
-			if site, denied := s.command(githubPostWords(segment), segment); denied {
-				return site, true
-			}
-			// A gh post inside a command substitution is a text the guard cannot read.
-			if githubPostExpands(segment, true) {
-				return githubPostUnread(segment)
+			// A lone & runs the command before it in the background: each part is judged on its own.
+			for _, part := range githubPostParts(segment) {
+				if site, denied := s.command(githubPostWords(part), part); denied {
+					return site, true
+				}
+				// A gh post inside a command substitution is a text the guard cannot read.
+				if githubPostExpands(part, true) {
+					return githubPostUnread(part)
+				}
 			}
 		}
 	}
 	return githubPostSite{}, false
 }
 
+// githubPostParts is one simple command cut at a lone & outside quotes, as the shell cuts it: the
+// command before the & runs in the background and is judged on its own.
+func githubPostParts(segment string) []string {
+	out := []string{}
+	for _, part := range shellVerbSubsegments(segment) {
+		if text.Trim(part) != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return []string{segment}
+	}
+	return out
+}
+
 // githubPostUnread is the fail-closed judgement: an unreadable text naming a post is denied, else passed.
+// githubPostControlPrefix drops the shell's control words in front of a command, so the command they
+// introduce is judged: the keywords the sibling reader models, a for, select, while or until header up
+// to its do, a case header and its pattern labels, a function definition (name() { and function name {),
+// and the grouping characters. A part the guard cannot decompose is reported unreadable, so the caller
+// refuses the text rather than passing a command it did not judge.
+func githubPostControlPrefix(words []githubPostWord) ([]githubPostWord, bool) {
+	for len(words) > 0 {
+		word := strings.TrimLeft(words[0].text, "({!")
+		name := shellVerbName(word)
+		switch {
+		case name == "":
+			words = words[1:] // a grouping character on its own
+		case name == "time" || githubPostControlWord(name):
+			words = words[1:]
+		case name == "for" || name == "select" || name == "while" || name == "until":
+			rest, ok := githubPostSkipTo(words[1:], "do")
+			if !ok {
+				return nil, false
+			}
+			words = rest
+		case name == "case":
+			rest, ok := githubPostSkipTo(words[1:], "in")
+			if !ok {
+				return nil, false
+			}
+			words = githubPostSkipCasePatterns(rest)
+		case name == "function":
+			if len(words) < 2 {
+				return nil, false
+			}
+			words = githubPostSkipBrace(words[2:])
+		case githubPostFunctionHead(words):
+			head := 1
+			if !strings.HasSuffix(words[0].text, "()") {
+				head = 2
+			}
+			words = githubPostSkipBrace(words[head:])
+		default:
+			return words, true
+		}
+	}
+	return nil, true
+}
+
+// githubPostControlWord is a shell control word that introduces or closes a command: the keywords the
+// sibling reader models (then else elif do if while until) and the closers fi done esac }.
+func githubPostControlWord(name string) bool {
+	return shellVerbKeyword(name) || name == "fi" || name == "done" || name == "esac" || name == "}"
+}
+
+// githubPostSkipTo drops words up to and including the given one, and whether it was found.
+func githubPostSkipTo(words []githubPostWord, stop string) ([]githubPostWord, bool) {
+	for i, w := range words {
+		if w.text == stop {
+			return words[i+1:], true
+		}
+	}
+	return nil, false
+}
+
+// githubPostSkipCasePatterns drops a case clause's pattern labels, the words ending in ) that stand
+// before each clause's command.
+func githubPostSkipCasePatterns(words []githubPostWord) []githubPostWord {
+	for len(words) > 0 && strings.HasSuffix(strings.TrimRight(words[0].text, "("), ")") {
+		words = words[1:]
+	}
+	return words
+}
+
+// githubPostFunctionHead is the name() form of a function definition, one word or two.
+func githubPostFunctionHead(words []githubPostWord) bool {
+	if strings.HasSuffix(words[0].text, "()") {
+		return true
+	}
+	return len(words) >= 2 && words[1].text == "()"
+}
+
+// githubPostSkipBrace drops the opening brace of a function body, so the commands inside are judged.
+func githubPostSkipBrace(words []githubPostWord) []githubPostWord {
+	if len(words) > 0 && strings.HasPrefix(words[0].text, "{") {
+		if t := strings.TrimLeft(words[0].text, "{"); t != "" {
+			return append([]githubPostWord{{text: t, raw: words[0].raw}}, words[1:]...)
+		}
+		return words[1:]
+	}
+	return words
+}
 func githubPostUnread(command string) (githubPostSite, bool) {
 	if githubPostMentions(command) {
 		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
@@ -163,7 +275,12 @@ func githubPostUnread(command string) (githubPostSite, bool) {
 // nothing. The depth is spent by the recursive read alone, so sibling programs each get their own
 // allowance.
 func (s *githubPostScan) command(words []githubPostWord, segment string) (githubPostSite, bool) {
-	rest, split := githubPostStripPrefixes(words)
+	rest, split, read := githubPostStripPrefixes(words)
+	if !read {
+		// A part the guard cannot decompose (a control structure it cannot follow): the text is
+		// refused rather than passed, because a post may sit in the part it did not read.
+		return githubPostUnread(s.whole)
+	}
 	if split != "" {
 		return s.program(split, segment)
 	}
@@ -538,9 +655,10 @@ func (s *githubPostScan) inline(w githubPostWord, body bool) (githubPostSite, bo
 }
 
 // file judges the text a post takes from a file: readable (a regular file of at most 1 MiB, under the
-// payload's working directory), not written by the same line, and holding no secret pattern. A name of -
-// is standard input, read from the quoted heredocs of its own line and denied otherwise; a name the shell
-// would expand names a file the guard cannot know, so it is denied too.
+// payload's working directory, an absolute path or a ~/ path), not written by any part of the command
+// text, and holding no secret pattern. A name of - is standard input, read from the quoted heredocs of
+// its own line and denied otherwise; a name the shell would expand names a file the guard cannot know,
+// so it is denied too.
 func (s *githubPostScan) file(w githubPostWord) (githubPostSite, bool) {
 	name := w.text
 	if name == "-" {
@@ -838,7 +956,14 @@ func githubPostExpands(raw string, unreadable bool) bool {
 // assignments. A post in (gh ...), { gh ...; } or ! gh ... is still read, and each wrapper's own options,
 // option values and numbers go with it, so a post behind a runner prefix (timeout, xargs) is read too.
 // env's --split-string value is a whole command line rather than a command, and is returned as one.
-func githubPostStripPrefixes(words []githubPostWord) ([]githubPostWord, string) {
+// The third value is false when a part the guard cannot decompose stands in front of the command (a
+// control structure whose body it could not follow), and the caller refuses the text.
+func githubPostStripPrefixes(words []githubPostWord) ([]githubPostWord, string, bool) {
+	control, ok := githubPostControlPrefix(words)
+	if !ok {
+		return nil, "", false
+	}
+	words = control
 	out := []githubPostWord{}
 	for _, w := range words {
 		if t := strings.TrimLeft(w.text, "({!"); t != "" && t != "}" {
@@ -849,13 +974,13 @@ func githubPostStripPrefixes(words []githubPostWord) ([]githubPostWord, string) 
 	for head < len(words) {
 		name := shellVerbName(words[head].text)
 		if !githubPostWrapper(name) && !shellVerbAssignment(words[head].text) {
-			return words[head:], ""
+			return words[head:], "", true
 		}
 		head++
 		for head < len(words) {
 			word := words[head].text
 			if split, ok := githubPostSplitString(name, word, words, head); ok {
-				return nil, split
+				return nil, split, true
 			}
 			if githubPostWrapperValue(name, word) && !strings.Contains(word, "=") && head+1 < len(words) {
 				head += 2
@@ -870,7 +995,7 @@ func githubPostStripPrefixes(words []githubPostWord) ([]githubPostWord, string) 
 			head++
 		}
 	}
-	return words[head:], ""
+	return words[head:], "", true
 }
 
 // githubPostSplitString is env's --split-string value, a whole command line env splits and runs.

@@ -150,6 +150,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 	githubPostWrite(t, cwd, "input.json", "{\"body\": \""+githubPostFake("glpat-", 20)+"\"}\n")
 	githubPostWrite(t, cwd, "later.md", "clean\nclean\n"+githubPostFake("AK"+"IA", 0)+strings.Repeat("A", 16)+"\n")
 	githubPostWrite(t, cwd, "secret.md", "GH_TOKEN="+strings.Repeat("a", 20)+"\n")
+	githubPostWrite(t, cwd, "body.md", "a clean body\n")
 	if err := os.Mkdir(filepath.Join(cwd, "adir"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -318,6 +319,45 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"expanded quoted command word without a post", "\"$PAGER\" README.md", "", ""},
 		{"single quoted command word", "'$G' pr comment 1 --body x", "", ""},
 		{"expanded command word alone", "$G", "", ""},
+		// The general rule the operator fixed for generation 3: a command the guard cannot read whole to
+		// the end is refused, and a body file any part of the text writes is not trusted. The controls
+		// below are the harmless shapes that must still pass.
+		{"for loop", "for i in 1 2; do gh pr comment 1 -b \"$BODY\"; done", githubPostRuleUnread, githubPostWhereCommand},
+		{"while loop", "while true; do gh pr comment 1 -b plain; done", githubPostRuleInline, githubPostWhereCommand},
+		{"until loop", "until false; do gh pr comment 1 -b plain; done", githubPostRuleInline, githubPostWhereCommand},
+		{"select loop", "select x in a; do gh pr comment 1 -b plain; done", githubPostRuleUnread, githubPostWhereCommand},
+		{"if conditional", "if gh pr comment 1 -b plain; then :; fi", githubPostRuleInline, githubPostWhereCommand},
+		{"then branch", "if true; then gh pr comment 1 -b plain; fi", githubPostRuleInline, githubPostWhereCommand},
+		{"case clause", "case x in a) gh pr comment 1 -b plain;; esac", githubPostRuleInline, githubPostWhereCommand},
+		{"case label then a post", "case x in a) ;; esac; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"function name() { }", "post() { gh pr comment 1 -b plain; }", githubPostRuleInline, githubPostWhereCommand},
+		{"function keyword", "function post { gh pr comment 1 -b plain; }", githubPostRuleInline, githubPostWhereCommand},
+		{"background job", "sleep 5 & gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"post before a background job", "gh pr comment 1 -b plain & echo ok", githubPostRuleInline, githubPostWhereCommand},
+		{"subshell group", "( gh pr comment 1 -b plain )", githubPostRuleInline, githubPostWhereCommand},
+		{"brace group", "{ gh pr comment 1 -b plain; }", githubPostRuleInline, githubPostWhereCommand},
+		{"and list", "true && gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"or list", "gh pr comment 1 -b plain || true", githubPostRuleInline, githubPostWhereCommand},
+		{"source then a post", "source setup.sh; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"dot then a post", ". ./setup.sh; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"expanded word through a shell", "G=gh bash -c '$G pr comment 1 --body x'", githubPostRuleUnread, githubPostWhereCommand},
+		{"exported expanded word through a shell", "export G=gh; bash -c '$G pr comment 1 --body x'", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded word through eval", "G=gh; eval \"$G pr comment 1 --body x\"", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded word through su", "G=gh; su -c \"$G pr comment 1 --body x\" root", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded word through split string", "G=gh; env -S \"$G pr comment 1 --body x\"", githubPostRuleUnread, githubPostWhereCommand},
+		{"expanded word through a heredoc program", "bash <<'EOF'\nG=gh; $G pr comment 1 --body x\nEOF\n", githubPostRuleUnread, githubPostWhereCommand},
+		{"body file rewritten on an earlier line", "env | sort > body.md\ngh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		{"body file written by a redirect on an earlier line", "printf x > body.md\ngh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		{"body file written by a heredoc on an earlier line", "cat <<'EOF' > body.md\nplain\nEOF\ngh pr comment 1 --body-file body.md", githubPostRuleUnread, "body.md"},
+		// The controls: harmless shapes that must still pass.
+		{"clean body file post", "gh pr comment 1 --body-file body.md", "", ""},
+		{"loop with nothing to do with gh", "for i in 1 2; do echo hi; done", "", ""},
+		{"background job with nothing to do with gh", "sleep 5 & echo ok", "", ""},
+		{"expanded word with nothing to do with gh", "G=ls bash -c '$G -l'", "", ""},
+		{"another file written before a clean post", "echo hi > other.md\ngh pr comment 1 --body-file body.md", "", ""},
+		{"another file written by tee before a clean post", "tee other.md <<'EOF'\nnotes\nEOF\ngh pr comment 1 --body-file body.md", "", ""},
+		{"if with nothing to do with gh", "if true; then echo hi; fi", "", ""},
+		{"function with nothing to do with gh", "post() { echo hi; }", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
