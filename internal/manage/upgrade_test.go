@@ -147,11 +147,15 @@ func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		h.t.Fatal(err)
 	}
+	// The branches match the whole argument list: the relay is called as
+	// "codex-session-relay --state S --socket K service status", so its flags come first.
 	crw := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + coreShellQuote(h.calls) + "\n" +
-		"if [ \"$2\" = \"doctor\" ]; then printf '%s\\n' " + coreShellQuote("{\"stateSelection\":{\"path\":\""+h.state+"\"}}") + "; exit 0; fi\n" +
-		"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + coreShellQuote("v0.4.0-4633-geb2567df7") + "; exit 0; fi\n" +
-		"if [ \"$1\" = \"service\" ] && [ \"$3\" = \"status\" ]; then printf '%s\\n' " + coreShellQuote("{\"running\":true,\"launchPolicy\":{\"matchesRunning\":\"same\"}}") + "; exit 0; fi\n" +
+		"case \"$*\" in\n" +
+		"*doctor*) printf '%s\\n' " + coreShellQuote("{\"stateSelection\":{\"path\":\""+h.state+"\"}}") + "; exit 0;;\n" +
+		"*\"--version\"*) printf '%s\\n' " + coreShellQuote("v0.4.0-4633-geb2567df7") + "; exit 0;;\n" +
+		"*\"service status\"*) printf '%s\\n' " + coreShellQuote("{\"running\":true,\"launchPolicy\":{\"matchesRunning\":\"same\"}}") + "; exit 0;;\n" +
+		"esac\n" +
 		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(bin, "crw"), []byte(crw), 0o700); err != nil {
 		h.t.Fatal(err)

@@ -24,6 +24,11 @@ const (
 	upgradeExitPostCheck    = 4
 )
 
+// upgradeExitUpdateFailed is what a failed install reports. The installer's own codes
+// (Refused 1, Usage 2, Incomplete 3) overlap this command's 2 (a step-1..3 stop) and 3 (open
+// attempts), so they are not passed through: exit 1 keeps the two contracts apart.
+const upgradeExitUpdateFailed = upgradeExitUnexpected
+
 const (
 	upgradeReasonRepository    = "repository_unconfigured"
 	upgradeReasonSumsFailed    = "sums_failed"
@@ -210,7 +215,7 @@ func (r *upgradeRunState) execute() (int, string) {
 
 	postCode, postReason := r.postCheck()
 	if updateCode != 0 {
-		return updateCode, upgradeReasonUpdateFailed
+		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
 	}
 	if postCode != 0 {
 		return postCode, postReason

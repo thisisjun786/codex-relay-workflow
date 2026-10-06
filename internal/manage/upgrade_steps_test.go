@@ -98,7 +98,10 @@ func TestUpgradeStartsAfterAFailedUpdate(t *testing.T) {
 	}
 }
 
-// C3: when config.toml changes during the run the command exits 4 and names the post-check.
+// C3: when config.toml changes during the run the command exits 4 and names the post-check. The
+// differential is TestUpgradeSucceedsOnAHealthyHost: the same run with the same fakes and the
+// same pointer exits 0 when the configuration is left alone, so the exit 4 here is the
+// configuration comparison and not the service status check.
 func TestUpgradeExitsFourWhenTheConfigChanged(t *testing.T) {
 	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit), pointer: true, mutateConfig: true})
 	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
@@ -204,5 +207,29 @@ func TestUpgradeExtractRefusesASymlinkEscape(t *testing.T) {
 	}
 	if data, err := os.ReadFile(outside); err != nil || string(data) != "original" {
 		t.Errorf("the file outside the extract directory changed: %q %v", data, err)
+	}
+}
+
+// The full success flow: with the pointer in place, an update that succeeds and a service that
+// runs and matches, every step runs and the command exits 0. This is what proves the post-check
+// passes on a healthy host rather than only failing.
+func TestUpgradeSucceedsOnAHealthyHost(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit), pointer: true})
+	if code := h.run("--release-dir", h.release); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	record := h.recordOf(t)
+	if record.Outcome != "ok" || record.Reason != "" {
+		t.Errorf("the record is %+v", record)
+	}
+	var steps []string
+	for _, s := range record.Steps {
+		steps = append(steps, s.Step)
+	}
+	for _, want := range []string{upgradeStepSums, upgradeStepExtract, upgradeStepCommit, upgradeStepDevGate,
+		upgradeStepAttempts, upgradeStepSnapshot, upgradeStepStop, upgradeStepUpdate, upgradeStepStart, upgradeStepPostCheck} {
+		if !strings.Contains(strings.Join(steps, ","), want) {
+			t.Errorf("the record does not name the step %q: %v", want, steps)
+		}
 	}
 }
