@@ -14,8 +14,12 @@ import (
 )
 
 // errNotAnObject is the target's own failure for an input that is not the JSON object the grammar
-// describes, so a failure on either side compares as the same kind of answer.
-var errNotAnObject = errors.New("the input is not a JSON object")
+// describes, so a failure on either side compares as the same kind of answer. It is built at the
+// call, not held in a package-level variable: the issue's runtime criterion forbids an initializer
+// that does work when the program starts.
+func errNotAnObject() error {
+	return errors.New("the input is not a JSON object")
+}
 
 // worktreeDelTarget fuzzes the managed-worktree deletion guard: the Go side is
 // hook.HandleWorktreeGuardPreTool (internal/pabcd/hook/worktreedel.go) and the oracle side is
@@ -234,7 +238,7 @@ func worktreeDelStrings(values []string) []any {
 func worktreeDelGo(input any, env Env) (any, error) {
 	object, ok := input.(pyjson.Object)
 	if !ok {
-		return nil, errNotAnObject
+		return nil, errNotAnObject()
 	}
 	payload := pyjson.Object{
 		{Key: "hook_event_name", Value: worktreeDelText(object, "event")},
@@ -333,7 +337,7 @@ func worktreeDelAnswer(out string) (any, error) {
 	}
 	object, ok := parsed.(pyjson.Object)
 	if !ok {
-		return nil, errNotAnObject
+		return nil, errNotAnObject()
 	}
 	specific, found := object.Lookup("hookSpecificOutput")
 	if !found {
@@ -341,7 +345,7 @@ func worktreeDelAnswer(out string) (any, error) {
 	}
 	inner, ok := specific.(pyjson.Object)
 	if !ok {
-		return nil, errNotAnObject
+		return nil, errNotAnObject()
 	}
 	decision, _ := inner.Lookup("permissionDecision")
 	text, _ := decision.(string)

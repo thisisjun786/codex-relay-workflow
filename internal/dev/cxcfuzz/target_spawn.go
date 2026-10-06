@@ -207,7 +207,7 @@ func spawnToolInput(rng *rand.Rand) pyjson.Object {
 func spawnGo(input any, env Env) (any, error) {
 	object, ok := input.(pyjson.Object)
 	if !ok {
-		return nil, errNotAnObject
+		return nil, errNotAnObject()
 	}
 	name, _ := object.Lookup("fn")
 	fn, _ := name.(string)
