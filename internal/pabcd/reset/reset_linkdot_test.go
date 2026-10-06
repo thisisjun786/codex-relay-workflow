@@ -3,6 +3,7 @@ package reset
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -108,4 +109,52 @@ func TestResetLinkDotTargetRemovesTheLinkNotTheTarget(t *testing.T) {
 			t.Errorf("dangling link was removed: %v", err)
 		}
 	})
+}
+
+// TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved: the dot-ending branch judges on the root's
+// own path, so it needs that path to still name the pinned directory. When another process renames the
+// pinned directory first, the judgement refuses instead of falling back to the descriptor (which is
+// what CRW-554 forbids opening for such a target) and the link is left in place. The descriptor path
+// dev used would have removed it; the difference is recorded in this issue's known-defects file.
+func TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved(t *testing.T) {
+	base := t.TempDir()
+	sessions := filepath.Join(base, "sessions")
+	if err := os.MkdirAll(filepath.Join(sessions, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("keep/.", filepath.Join(sessions, "a.json")); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	observed, err := parent.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := resetPin(parent, "sessions", observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(sessions, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := ResetResult{Removed: []string{}, Absent: []string{}}
+	err = resetRmIfExists(pinned, "a.json", "a.json", &result)
+	if err == nil || !strings.Contains(err.Error(), "reset directory changed") {
+		t.Fatalf("err = %v, want a 'reset directory changed' refusal", err)
+	}
+	if len(result.Removed) != 0 {
+		t.Errorf("removed = %v, want none", result.Removed)
+	}
+	if _, statErr := os.Lstat(filepath.Join(moved, "a.json")); statErr != nil {
+		t.Errorf("the link must stay: %v", statErr)
+	}
 }
