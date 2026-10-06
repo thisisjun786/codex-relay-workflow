@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -211,4 +212,61 @@ func Test853CreationRefusalWordsAreUnchanged(t *testing.T) {
 	if !strings.Contains(refused.Detail, "write gate: resource temporarily unavailable") {
 		t.Fatalf("refusal detail changed: %q", refused.Detail)
 	}
+}
+
+// Test853CreateAbsentNeverHandsOnAGateWithAnError pins the hand-over contract at its boundary: a
+// creation that fails anywhere, including in the deferred removal of its temporary database that
+// runs after the store was published, returns no gate and leaves no description holding the write
+// gate EX. A gate handed back together with an error is dropped by the caller before it can be
+// downgraded, so the description would keep the store's own gate locked until the process exits
+// and a retry in the same process would refuse the store it had just created.
+func Test853CreateAbsentNeverHandsOnAGateWithAnError(t *testing.T) {
+	// Serial: assigns the package-level createFault seam.
+	dir := stateDir(t)
+	path := filepath.Join(dir, "relay.sqlite3")
+	previous := createFault
+	createFault = func(point string) error {
+		if err := previous(point); err != nil {
+			return err
+		}
+		if point != "linked" {
+			return nil
+		}
+		// The store is published next and the temporary database is removed after that. Leaving a
+		// non-empty directory where the removal will look makes that deferred removal fail, so the
+		// creation ends with an error after it has already published the store.
+		names, err := filepath.Glob(filepath.Join(dir, ".relay-create-*.sqlite3"))
+		if err != nil {
+			return err
+		}
+		if len(names) != 1 {
+			return fmt.Errorf("temporary databases: %v", names)
+		}
+		if err = os.Remove(names[0]); err != nil {
+			return err
+		}
+		if err = os.Mkdir(names[0], 0700); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(names[0], "keep"), []byte("x"), 0600)
+	}
+	t.Cleanup(func() { createFault = previous })
+
+	gate, err := createAbsent(t.Context(), path, "", OpenOptions{BusyTimeout: time.Second})
+	if err == nil {
+		if gate != nil {
+			must(t, gate.Close())
+		}
+		t.Fatal("a failed temporary cleanup was reported as a success")
+	}
+	if gate != nil {
+		must(t, gate.Close())
+		t.Fatalf("createAbsent handed a gate on together with an error: %v", err)
+	}
+	// Nothing holds the gate EX behind the failed creation.
+	lock, err := ownership.Lock(filepath.Join(dir, "write-gate.lock"), true, false)
+	if err != nil {
+		t.Fatalf("the failed creation left the write gate held: %v", err)
+	}
+	must(t, lock.Close())
 }

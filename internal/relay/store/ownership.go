@@ -500,10 +500,16 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 		// Another first opener placed the gate first, already held EX.
 		return nil, awaitCreation(ctx, path, options)
 	}
-	// The description is this open's until it is handed back: every failure closes it, and the
-	// hand-over is the one path that returns it instead.
+	// The description is this open's until it is handed back, and the hand-over happens only when
+	// the creation fully succeeded. This defer runs after the temporary-database cleanup defer
+	// below, so a failure anywhere - that cleanup included, which can fail after the store was
+	// published - is visible here: the description is then closed and no gate is handed back, so
+	// the caller never receives a gate together with an error and nothing holds the gate EX.
 	defer func() {
-		if gate != placed {
+		if err != nil {
+			gate = nil
+		}
+		if gate == nil {
 			err = errors.Join(err, placed.Close())
 		}
 	}()
