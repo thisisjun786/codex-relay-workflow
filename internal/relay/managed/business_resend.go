@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -80,6 +82,12 @@ func businessResendSafe(receipt map[string]any, task string) bool {
 // A one-row complete listing is affirmative evidence. Empty, malformed or
 // paginated history is not proof that the child has only its standby turn, but
 // a visible foreign turn is conclusive even on an incomplete page.
+//
+// This is also the unload's precondition, and the reason it is safe to archive the child:
+// businessResendUnload lowers only a child whose history is exactly its standby turn, so no
+// sub-thread can exist to be carried into the archive with it. Widening that precondition beyond
+// the standby-only history must first run the sub-thread check internal/relay/childcleanup owns;
+// nothing on the unload path inspects sub-threads today.
 func (r *startRun) businessResendOnlyStandby(ctx context.Context) (string, error) {
 	answer, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": r.task, "limit": 2, "itemsView": "summary"})
 	if err != nil {
@@ -106,22 +114,199 @@ func (r *startRun) businessResendOnlyStandby(ctx context.Context) (string, error
 	return "", nil
 }
 
+// businessResendSettingsMismatch is the retained pre-turn failure that licenses the narrow
+// unload: the same refusal businessResendSafe accepts, carrying the structured settings code.
+func businessResendSettingsMismatch(receipt map[string]any, task string) bool {
+	return businessResendSafe(receipt, task) && pyjson.Map(receipt["rpcError"])["code"] == "settings_not_preserved"
+}
+
+// businessResendThreadStatus is the child's load status as one thread/read reports it, with the
+// lifecycle_unknown code a read naming another thread earns.
+func (r *startRun) businessResendThreadStatus(ctx context.Context) (string, string, error) {
+	answer, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": r.task, "includeTurns": false})
+	if err != nil {
+		return "", "", err
+	}
+	thread := pyjson.Map(answer["thread"])
+	if thread["id"] != r.task {
+		return "", "lifecycle_unknown", nil
+	}
+	return pyjson.Text(pyjson.Map(thread["status"])["type"]), "", nil
+}
+
+// businessResendReady is the gate before a bounded successor send. A notLoaded child goes on as
+// it always did; an idle child the host holds loaded under other MCP settings, whose
+// immediately preceding business failure is the structured settings refusal and whose history is
+// exactly its standby turn, is lowered once and judged again. Every other state holds.
 func (r *startRun) businessResendReady(ctx context.Context) (string, error) {
 	if code, err := r.businessResendOnlyStandby(ctx); code != "" || err != nil {
 		return code, err
 	}
 	// Read load status last: if observing history itself loads the thread, this
 	// gate notices and withholds before a bridge operation is consumed.
-	answer, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": r.task, "includeTurns": false})
+	status, code, err := r.businessResendThreadStatus(ctx)
+	if err != nil || code != "" {
+		return code, err
+	}
+	if status == "notLoaded" {
+		return "", nil
+	}
+	if status != "idle" || !businessResendSettingsMismatch(r.resendFailure, r.task) {
+		return "recipient_not_idle", nil
+	}
+	return r.businessResendUnload(ctx)
+}
+
+// businessResendUnload lowers an idle child the host holds loaded under other MCP settings, once
+// per business attempt, and reports why it could not. It never sends: the ordinary resend path
+// does, and only after the child is notLoaded again with the standby-only history.
+//
+// thread/archive accepts an active sub-thread and unloads it, so the idle precondition is read
+// again here, immediately before the archive. An archive error the host answered is a refusal, so
+// this call did not apply the archive and the child holds as a loaded one does. An error with no
+// host answer may still have applied, so the archived listing is asked once and a confirmed archive
+// continues as a successful one; one the listing does not confirm leaves the child as it was and
+// answers recipient_not_idle. An unarchive that fails twice answers lifecycle_unknown and names the
+// archived thread for an operator. A child still loaded afterwards answers recipient_not_idle.
+func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
+	status, code, err := r.businessResendThreadStatus(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "lifecycle_unknown", nil
+	}
+	if code != "" {
+		return code, nil
+	}
+	if status != "idle" {
+		return "recipient_not_idle", nil
+	}
+	// One lowering per business attempt is a durable bound, not a per-invocation one: a replay of
+	// an attempt whose unload did not unload the child reconstructs the same attempt from the
+	// retained failure, so the row an earlier lowering wrote is what stops the second one. An
+	// archive error writes no row unless the archived listing shows the child was archived after
+	// all, in which case the lowering is recorded like any other.
+	lowered, err := r.resendUnloadLowered(ctx)
 	if err != nil {
 		return "", err
 	}
-	thread := pyjson.Map(answer["thread"])
-	if thread["id"] != r.task {
-		return "lifecycle_unknown", nil
-	}
-	if pyjson.Map(thread["status"])["type"] != "notLoaded" {
+	if lowered {
 		return "recipient_not_idle", nil
 	}
-	return "", nil
+	// The engine's contract is that readiness is asked again before each host effect, and the
+	// archive below is one. The ledger is asked with it, as the business send asks it.
+	readiness, err := r.m.ready(ctx, r.req)
+	if err != nil {
+		return "", err
+	}
+	if readiness != "" {
+		return readiness, nil
+	}
+	if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
+		return "", err
+	}
+	detail := map[string]any{"threadId": r.task, "attempt": r.businessAttempt}
+	if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": r.task}); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		// The host's own error response is a refusal of this call, so this invocation did not apply
+		// the archive: another client may have archived the child first. An archived listing cannot
+		// tell which request archived it, and unarchiving here would undo that client's action, so
+		// the child holds exactly as a loaded one does.
+		var rpcErr *appserver.RPCError
+		if errors.As(err, &rpcErr) {
+			return "recipient_not_idle", nil
+		}
+		// With no host answer read - a transport error, a closed connection, a deadline - the
+		// archive may have applied and only its reply been lost, which would leave the child
+		// archived until an operator unarchived it. Ask the host once, with the same complete
+		// archived scan the resend guard uses, and continue exactly as after a successful archive
+		// when it confirms the child is archived. Every other answer, and a failed check, keeps
+		// the answer a loaded child earns: nothing was lowered as far as this attempt can tell,
+		// so nothing is recorded and no unarchive follows a failed archive.
+		code, checkErr := businessResendCheckHost(ctx, r.m.Adapter, r.task, true)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if checkErr != nil || code != "recipient_archived" {
+			return "recipient_not_idle", nil
+		}
+		detail["archive"] = "reply_lost"
+	} else {
+		detail["archive"] = "ok"
+	}
+	// From here the child is archived, and every way out records the lowering with a context that
+	// survives the caller's cancellation, as the creation attempt marker is: an archived child with
+	// no row would leave an operator nothing to read, and an unarchive whose outcome a cancellation
+	// made unknown is exactly that case.
+	record := func() error { return r.recordResendUnload(context.WithoutCancel(ctx), detail) }
+	var failure error
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, failure = r.m.Adapter.HostCall(ctx, "thread/unarchive", map[string]any{"threadId": r.task}); failure == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if failure != nil {
+		detail["unarchive"] = "failed"
+		detail["operator"] = "thread/unarchive " + r.task
+		if err := record(); err != nil {
+			return "", err
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "lifecycle_unknown", nil
+	}
+	detail["unarchive"] = "ok"
+	status, code, err = r.businessResendThreadStatus(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			detail["after"] = "unknown"
+			if rerr := record(); rerr != nil {
+				return "", rerr
+			}
+			return "", ctx.Err()
+		}
+		status, code = "unknown", "lifecycle_unknown"
+	}
+	detail["after"] = status
+	if err := record(); err != nil {
+		return "", err
+	}
+	if code != "" {
+		return code, nil
+	}
+	if status != "notLoaded" {
+		return "recipient_not_idle", nil
+	}
+	return r.businessResendOnlyStandby(ctx)
+}
+
+// recordResendUnload writes the one managed_resend_unloaded row an unload leaves. The row is
+// written before any send, and an insert that fails withholds the send: an unrecorded unload is
+// never reported as done.
+func (r *startRun) recordResendUnload(ctx context.Context, detail map[string]any) error {
+	encoded, err := compactPythonJSON(detail)
+	if err != nil {
+		return err
+	}
+	_, err = r.m.Store.Querier(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", r.m.now(), "managed_resend_unloaded", r.identity.RequestID, string(encoded))
+	return err
+}
+
+// resendUnloadLowered reports whether this business attempt already lowered the child, read from
+// the row the lowering wrote. The detail is the compact, key-sorted object recordResendUnload
+// writes, so the attempt is the field "attempt":<n> followed by its separator.
+func (r *startRun) resendUnloadLowered(ctx context.Context) (bool, error) {
+	var rows int
+	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM journal WHERE kind='managed_resend_unloaded' AND subject=? AND detail LIKE ?", r.identity.RequestID, `%"attempt":`+strconv.Itoa(r.businessAttempt)+`,%`).Scan(&rows)
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
