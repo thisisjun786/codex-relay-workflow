@@ -498,6 +498,73 @@ func TestOrchestrateDcloseRecoveryLostSuccessor(t *testing.T) {
 			t.Fatalf("the refusal started a phase: %v", rows)
 		}
 	})
+	t.Run("successor-can-no-longer-be-started", func(t *testing.T) {
+		// §50: the recorded successor is binding. It is still in the plan but is blocked now, so
+		// closeFixedWorkPhase answers successor_lost/not_runnable and the close fails closed.
+		cwd := orchestrateDcloseTestCwd(t)
+		id, slug := "recovery-successor-not-runnable", "recovery-successor-not-runnable-plan"
+		orchestrateDcloseRecoverySeed(t, cwd, id, slug)
+		plan := orchestrateDcloseGoalplan(t, cwd, slug)
+		for i := range plan.WorkPhases {
+			if plan.WorkPhases[i].ID == "wp-2" {
+				plan.WorkPhases[i].Status = goalplan.WorkPhaseBlocked
+			}
+		}
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+		planPath := filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")
+		before := orchestrateDcloseSnapshot(t, planPath)
+
+		got, err := orchestrateDcloseRecoveryRun(t, cwd, id, orchestrateDcloseSeam{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Code != 1 || !strings.Contains(got.Output, "was closed with successor wp-2, which can no longer be started") ||
+			!strings.Contains(got.Output, "The recovery marker was kept") {
+			t.Fatalf("refusal: %+v", got)
+		}
+		orchestrateDcloseAssertUnchanged(t, before)
+		if after := state.ReadState(cwd, id); after.Phase != state.PhaseC || after.DcloseRecovery == nil {
+			t.Fatalf("state: %+v", after)
+		}
+		if rows := orchestrateDcloseRecoveryStartedRows(t, cwd, slug); len(rows) != 0 {
+			t.Fatalf("the refusal started a phase: %v", rows)
+		}
+	})
+	t.Run("successor-waits-for-another-work-phase", func(t *testing.T) {
+		// §50/§55: the recorded successor is pending but its own dependency is unmet, so the close
+		// refuses with successor_lost/dependencies_unmet rather than activating it.
+		cwd := orchestrateDcloseTestCwd(t)
+		id, slug := "recovery-successor-unmet", "recovery-successor-unmet-plan"
+		orchestrateDcloseRecoverySeed(t, cwd, id, slug)
+		plan := orchestrateDcloseGoalplan(t, cwd, slug)
+		for i := range plan.WorkPhases {
+			if plan.WorkPhases[i].ID == "wp-2" {
+				plan.WorkPhases[i].DependsOn = []string{"wp-3"}
+			}
+		}
+		plan.WorkPhases = append(plan.WorkPhases,
+			goalplan.GoalplanWorkPhase{ID: "wp-3", Title: "blocker", Status: goalplan.WorkPhasePending, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}})
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+		planPath := filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")
+		before := orchestrateDcloseSnapshot(t, planPath)
+
+		got, err := orchestrateDcloseRecoveryRun(t, cwd, id, orchestrateDcloseSeam{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Code != 1 || !strings.Contains(got.Output, "was closed with successor wp-2, which now waits for another work-phase") ||
+			!strings.Contains(got.Output, "The recovery marker was kept") {
+			t.Fatalf("refusal: %+v", got)
+		}
+		orchestrateDcloseAssertUnchanged(t, before)
+		if after := state.ReadState(cwd, id); after.Phase != state.PhaseC || after.DcloseRecovery == nil {
+			t.Fatalf("state: %+v", after)
+		}
+	})
 }
 
 // TestOrchestrateDcloseRecoveryAbsentTarget covers "an absent target restores the cursor onto a stranded
