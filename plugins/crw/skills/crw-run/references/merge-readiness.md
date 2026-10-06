@@ -1170,6 +1170,15 @@ among its commands, the parent does not settle a conflict either.
      --record-version`, after the merge of the skills has settled, because the suffix digests the whole
      payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
+
+The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
+`plugins/crw/.codex-plugin/plugin.json` and no declared region covers it, the check settles it by the built-in rule
+`regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
+and that version must be the one the head's payload derives (`crw-dev ci plugin` computes it from the payload). Any other
+difference in that file, a version that is not the derived one, and every other path keep the refusal they have
+today, and the proof prints
+`applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
+
 3. Add the settled files and commit; the merge commit has the parents P and D in that order. Before pushing
    anything run, with N the new commit:
 
