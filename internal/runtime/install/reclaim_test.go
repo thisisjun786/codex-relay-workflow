@@ -25,6 +25,7 @@ func unsettle(t *testing.T, dir string) {
 // the claim of the in-service runtime it replaces, as a rollback settles the one it leaves, so
 // the reinstall reads a finished runtime and keeps it, and a rollback returns to it.
 func TestAReinstallNeverReclaimsARuntimeThatWasInService(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -52,6 +53,7 @@ func TestAReinstallNeverReclaimsARuntimeThatWasInService(t *testing.T) {
 // registration names or cannot be read, is kept as it is. Each is a refusal with nothing removed
 // or built; once nothing uses it, the same reinstall reclaims and rebuilds it.
 func TestReclaimKeepsAStagingThatMayStillBeInUse(t *testing.T) {
+	// sequential: counts the processes the process-wide table holds.
 	h := newHost(t)
 	first, second, third := archive(t, "0.9.0", ""), archive(t, "0.9.1", ""), archive(t, "0.9.2", "")
 	old := runtimeDir(h, "0.9.0", first, t)
