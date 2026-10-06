@@ -1,6 +1,12 @@
 package store
 
-import "database/sql"
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+)
 
 // Row types for the domain tables todo 19 ports. Fields follow contract/schema/relay-sqlite.sql
 // column order exactly, NOT NULL columns as plain values and nullable ones as sql.Null*, so a
@@ -591,4 +597,185 @@ func scanTurnDeclarations(row scanner) (TurnDeclarationsRow, error) {
 	var r TurnDeclarationsRow
 	err := row.Scan(&r.AssignmentID, &r.SessionID, &r.TurnID, &r.Outcome, &r.DeclaredAt, &r.RecordedAt)
 	return r, err
+}
+
+// AcceptanceRefreshRow is one dag_acceptance_refreshes row, every column in DDL order (CRW-728): the
+// proof that an acceptance's head is the head the parent's ruling named plus merges of the base and
+// nothing else. Its RefreshID is the digest of the rest of the row (RefreshDigest), so a reader can
+// tell a row the relay wrote from one written by hand.
+type AcceptanceRefreshRow struct {
+	RefreshID           string
+	AcceptanceID        string
+	RefreshSeq          int64
+	RelationshipID      string
+	ExecutionGeneration int64
+	EventID             string
+	RevisionHash        string
+	HeadSHA             string
+	VerifiedHeadSHA     string
+	BaseRepository      string
+	BaseRef             string
+	BaseTipSHA          string
+	ProofJSON           string
+	ResolvedPathsJSON   string
+	RecordedByTaskID    string
+	CoordinatorEpoch    int64
+	RecordedAt          string
+}
+
+const acceptanceRefreshColumns = "refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, verified_head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at"
+
+func scanAcceptanceRefresh(row scanner) (AcceptanceRefreshRow, error) {
+	var r AcceptanceRefreshRow
+	err := row.Scan(&r.RefreshID, &r.AcceptanceID, &r.RefreshSeq, &r.RelationshipID, &r.ExecutionGeneration, &r.EventID,
+		&r.RevisionHash, &r.HeadSHA, &r.VerifiedHeadSHA, &r.BaseRepository, &r.BaseRef, &r.BaseTipSHA, &r.ProofJSON,
+		&r.ResolvedPathsJSON, &r.RecordedByTaskID, &r.CoordinatorEpoch, &r.RecordedAt)
+	return r, err
+}
+
+// VerifiedHeadRow is one dag_verified_heads row, every column in DDL order (CRW-728): the head the
+// verdict turn of an event verified, fixed at ruling time so a later acceptance can prove against it.
+type VerifiedHeadRow struct {
+	EventID             string
+	RelationshipID      string
+	ExecutionGeneration int64
+	VerdictTurnID       string
+	HeadSHA             string
+	RecordedByTaskID    string
+	RecordedAt          string
+}
+
+const verifiedHeadColumns = "event_id, relationship_id, execution_generation, verdict_turn_id, head_sha, recorded_by_task_id, recorded_at"
+
+func scanVerifiedHead(row scanner) (VerifiedHeadRow, error) {
+	var r VerifiedHeadRow
+	err := row.Scan(&r.EventID, &r.RelationshipID, &r.ExecutionGeneration, &r.VerdictTurnID, &r.HeadSHA, &r.RecordedByTaskID, &r.RecordedAt)
+	return r, err
+}
+
+// AcceptanceRefreshSchema names the record RefreshDigest digests: the identity of one dag_acceptance_refreshes row.
+const AcceptanceRefreshSchema = "dag-acceptance-refresh/1"
+
+// ErrRefreshNotRecorded is the answer of a reader that found no row, or found one whose id is not the
+// digest of its own content. It is not a refusal of the relay: a store that predates the table answers
+// it too, so a caller reads it as "there is no proof here".
+var ErrRefreshNotRecorded = errors.New("store: no acceptance refresh recorded")
+
+// RefreshDigest is the identity of a refresh: its refresh_id is the digest of everything the row
+// records but the time, the author and the coordinator epoch, so a row written by hand under another
+// content is not read as one. It is built the way dagsched.refreshDigest builds the base refresh's id
+// (dagsched/baserefresh.go), over the same canonical JSON every digest of the relay hashes, and lives
+// here because the table's writer is this package and internal/relay/dag imports it (not the reverse).
+func RefreshDigest(r AcceptanceRefreshRow) string {
+	return "dar-" + digest(pyjson.Dumps(map[string]any{
+		"schema":               AcceptanceRefreshSchema,
+		"acceptance_id":        r.AcceptanceID,
+		"relationship_id":      r.RelationshipID,
+		"execution_generation": r.ExecutionGeneration,
+		"event_id":             r.EventID,
+		"revision_hash":        r.RevisionHash,
+		"head_sha":             r.HeadSHA,
+		"verified_head_sha":    r.VerifiedHeadSHA,
+		"base_repository":      r.BaseRepository,
+		"base_ref":             r.BaseRef,
+		"base_tip_sha":         r.BaseTipSHA,
+		"proof":                r.ProofJSON,
+		"resolved_paths":       r.ResolvedPathsJSON,
+	}, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}), 32)
+}
+
+// refreshRowValid is whether a stored row's id is the digest of its own content.
+func refreshRowValid(r AcceptanceRefreshRow) bool { return r.RefreshID == RefreshDigest(r) }
+
+// dagZoneTable reports whether the store holds the named zone table. The zone arrives with the first
+// write open (D-01), so a read-only reader of a store that predates it finds no table; that is absence
+// and not an error, the way dagsched.validStands reads dag_base_refreshes.
+func dagZoneTable(ctx context.Context, s *Store, table string) (bool, error) {
+	var name string
+	err := s.q(ctx).QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return name == table, nil
+}
+
+// RecordAcceptanceRefresh appends one dag_acceptance_refreshes row through the caller's transaction
+// (s.exec runs where ctx points, so the acceptance that writes its proof and this row commit together)
+// and never opens one of its own. It does not compute the id: the caller sets RefreshID with
+// RefreshDigest, so the row a reader accepts is the row the caller proved.
+func RecordAcceptanceRefresh(ctx context.Context, s *Store, r AcceptanceRefreshRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_acceptance_refreshes ("+acceptanceRefreshColumns+") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		r.RefreshID, r.AcceptanceID, r.RefreshSeq, r.RelationshipID, r.ExecutionGeneration, r.EventID, r.RevisionHash,
+		r.HeadSHA, r.VerifiedHeadSHA, r.BaseRepository, r.BaseRef, r.BaseTipSHA, r.ProofJSON, r.ResolvedPathsJSON,
+		r.RecordedByTaskID, r.CoordinatorEpoch, r.RecordedAt)
+	return err
+}
+
+// AcceptanceRefresh reads one refresh of an acceptance by its sequence number. A row whose id is not
+// the digest of its own content is not read, and a store without the table answers ErrRefreshNotRecorded.
+func AcceptanceRefresh(ctx context.Context, s *Store, acceptanceID string, refreshSeq int64) (AcceptanceRefreshRow, error) {
+	present, err := dagZoneTable(ctx, s, "dag_acceptance_refreshes")
+	if err != nil {
+		return AcceptanceRefreshRow{}, err
+	}
+	if !present {
+		return AcceptanceRefreshRow{}, ErrRefreshNotRecorded
+	}
+	row, err := queryRow(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? AND refresh_seq = ?", acceptanceID, refreshSeq)
+	if err != nil {
+		return AcceptanceRefreshRow{}, err
+	}
+	if !refreshRowValid(row) {
+		return AcceptanceRefreshRow{}, ErrRefreshNotRecorded
+	}
+	return row, nil
+}
+
+// AcceptanceRefreshes reads every valid refresh of an acceptance, oldest sequence first. The rows the
+// relay wrote are the ones whose id digests their content; a store without the table holds none.
+func AcceptanceRefreshes(ctx context.Context, s *Store, acceptanceID string) ([]AcceptanceRefreshRow, error) {
+	present, err := dagZoneTable(ctx, s, "dag_acceptance_refreshes")
+	if err != nil || !present {
+		return nil, err
+	}
+	rows, err := queryRows(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? ORDER BY refresh_seq", acceptanceID)
+	if err != nil {
+		return nil, err
+	}
+	valid := make([]AcceptanceRefreshRow, 0, len(rows))
+	for _, row := range rows {
+		if refreshRowValid(row) {
+			valid = append(valid, row)
+		}
+	}
+	return valid, nil
+}
+
+// RecordVerifiedHead appends one dag_verified_heads row through the caller's transaction. One event
+// holds one row: a second insert is the table's UNIQUE refusal, as a duplicate of any other identity
+// in the zone is, and the caller reads it as such.
+func RecordVerifiedHead(ctx context.Context, s *Store, r VerifiedHeadRow) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_verified_heads ("+verifiedHeadColumns+") VALUES (?,?,?,?,?,?,?)",
+		r.EventID, r.RelationshipID, r.ExecutionGeneration, r.VerdictTurnID, r.HeadSHA, r.RecordedByTaskID, r.RecordedAt)
+	return err
+}
+
+// VerifiedHead reads the head a verdict turn verified for an event. found is false when the event has
+// none, or when the store predates the table: neither is an error.
+func VerifiedHead(ctx context.Context, s *Store, eventID string) (VerifiedHeadRow, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_verified_heads")
+	if err != nil || !present {
+		return VerifiedHeadRow{}, false, err
+	}
+	row, err := queryRow(ctx, s, scanVerifiedHead, "SELECT "+verifiedHeadColumns+" FROM dag_verified_heads WHERE event_id = ?", eventID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return VerifiedHeadRow{}, false, nil
+	}
+	if err != nil {
+		return VerifiedHeadRow{}, false, err
+	}
+	return row, true, nil
 }
