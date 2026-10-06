@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -18,8 +19,63 @@ import (
 // host-unavailable path. The offline receipt path remains unchanged.
 var ObserveTurn func(context.Context, string, string, string, string) (string, error)
 
+// EmitConfirmTurn is installed by the production adapter beside ObserveTurn. It reads a turn
+// through the App Server socket the store recorded, read-only, and answers whether an exhausted
+// listing holds it: found reports the turn in the listing, confirmed reports the read reached a
+// definite answer (the listing was exhausted, or the turn was found). A build that leaves it nil,
+// a store that records no socket, and a read that could not be made leave the receipt staged as
+// before, because a check that could not be made is not evidence of absence (CRW-675,
+// docs/relay/invariants.md I-218).
+var EmitConfirmTurn func(ctx context.Context, state, socket, thread, turn string) (found, confirmed bool, err error)
+
+// emitCodexID is the Codex id form: 36 characters of lowercase hex in 8-4-4-4-12 groups.
+var emitCodexID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// emitRefuseTurnIDForm refuses a turn id that does not have the thread's Codex id form, before
+// anything is written. A thread that is not a Codex id (a fixture's "thread-1") is not checked, so
+// nothing but a Codex-form thread gains the rule. The refusal is the existing unassigned_turn: no
+// new reason, no output field and no event (CRW-675).
+func emitRefuseTurnIDForm(thread, turn string) error {
+	if !emitCodexID.MatchString(thread) || emitCodexID.MatchString(turn) {
+		return nil
+	}
+	return &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + strconv.Quote(turn) + " is not the Codex id form of the thread " + strconv.Quote(thread) + ": a Codex id is 36 lowercase hex digits in 8-4-4-4-12 groups, so take the id from the command output instead of retyping it"}
+}
+
+// emitConfirmTurn reads the turn read-only through the host the store recorded, and refuses
+// unassigned_turn only when that host answered with an exhausted listing that does not hold it.
+// A store that records no socket, a hook a build leaves nil, and a host that could not be reached
+// or read leave the receipt to stage as before (CRW-675).
+func emitConfirmTurn(c *cliRun, thread, turn string) error {
+	if EmitConfirmTurn == nil || !emitCodexID.MatchString(thread) {
+		return nil
+	}
+	socket := store.StoreSocket(c.state + "/relay.sqlite3")
+	if socket == "" {
+		return nil
+	}
+	found, confirmed, err := EmitConfirmTurn(c.ctx, c.state, socket, thread, turn)
+	if err != nil || !confirmed {
+		return nil
+	}
+	if found {
+		return nil
+	}
+	return &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + strconv.Quote(turn) + " does not exist on " + strconv.Quote(thread) + ": the host's listing was exhausted and does not hold it, so take the current turn id from the command output and emit again"}
+}
+
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
 func cmdEmit(c *cliRun) (any, error) {
+	// CRW-675: a turn id that is not the thread's Codex id form is refused before anything is
+	// written. The check reads only the arguments, so it runs before the store is opened: a refused
+	// malformed turn id leaves no socket_path recorded (CRW-680). Without --socket, a turn the
+	// store's recorded host answers is absent from an exhausted listing is refused the same way;
+	// that check needs the socket the store recorded, so it stays after the store is opened. Both
+	// refusals are the existing unassigned_turn.
+	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
+	if err := emitRefuseTurnIDForm(thread, turn); err != nil {
+		return nil, err
+	}
 	d, _, err := c.services()
 	if err != nil {
 		return nil, err
@@ -28,6 +84,11 @@ func cmdEmit(c *cliRun) (any, error) {
 	relationship, err := RequireActive(c.ctx, d.Store, rid)
 	if err != nil {
 		return nil, err
+	}
+	if c.socket == "" {
+		if err := emitConfirmTurn(c, thread, turn); err != nil {
+			return nil, err
+		}
 	}
 	generation, _ := c.opt("--generation").(int64)
 	attempt, _ := c.opt("--attempt").(int64)
@@ -90,7 +151,6 @@ func cmdEmit(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, dispatch.Host("event identity: " + err.Error())
 	}
-	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
 	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(strconv.FormatInt(generation, 10))}, {Key: "attempt", Value: json.Number(strconv.FormatInt(attempt, 10))},
 		{Key: "revisionHash", Value: digest}, {Key: "outcome", Value: outcome}, {Key: "producer", Value: "child"},
 		{Key: "turnRef", Value: Obj{{Key: "threadId", Value: thread}, {Key: "turnId", Value: turn}, {Key: "turnStatus", Value: status}}},

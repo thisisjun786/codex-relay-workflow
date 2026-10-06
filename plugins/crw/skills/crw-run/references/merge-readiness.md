@@ -57,6 +57,27 @@ or inaccessible required evidence is unresolved. Accept skipped/neutral results
 only when the repository's gate semantics make them legitimate for this change;
 a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
+A required check that is not a success has two readings, and they call for different
+actions. `checks_not_run` is the reading for a check that did not succeed because its
+workflow run holds a job that concluded cancelled without beginning a step: no runner ever
+picked it up, so the commit was never tested. `merge-evidence` names the run and the jobs
+that did not run in the problem's detail, so a rerun can be aimed at them. `checks_stale` is
+the reading for every other non-success, a real failure, and the lane returns its turn as
+before.
+
+What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
+judge owns it, the lane reruns the failed jobs of that run once on the same head
+(`gh run rerun <run id> --failed`) and waits; when that head already has a queued run it does
+not rerun and waits for that one, and a `checks_not_run` that survives the one rerun is an
+infrastructure failure rather than a code failure, so the lane stops and reports it instead of
+rerunning again. In a DAG-managed project the scheduler owns the one rerun of a head, so the
+lane takes no rerun of its own: it waits for `dag-merge-judge` to record the failure and answer
+`retry_same_sha` first, as [the one rerun of N](#refresh-the-base-yourself-when-only-the-base-moved)
+requires, because a rerun taken before that is invisible to the store and would earn the same
+head a second one.
+
+Neither reading is ready and neither permits a merge.
+
 No configured CI is not a CI pass. Use the repository's permitted local validation
 route if one exists and report that distinction. Do not invent a new hosted CI
 requirement, waive an existing one, or claim readiness when necessary validation
@@ -1135,7 +1156,9 @@ among its commands, the parent does not settle a conflict either.
    with a merge commit: `git merge --no-ff -m "Merge branch 'dev' into <branch>" <D>`. `git diff --name-only
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
-   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below).
+   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below). The one
+   exception is the plugin manifest's version line, which no declaration has to cover: settle it as the
+   paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
      :1:<path>` is the base, `:2:<path>` the candidate and `:3:<path>` the dev tip. When both sides only
@@ -1147,8 +1170,23 @@ among its commands, the parent does not settle a conflict either.
      <path>`) and run the declared command on the merged tree, from the repository root. For
      `plugins/crw/.codex-plugin/plugin.json` that is `go run -tags dev ./cmd/crw-dev ci plugin
      --record-version`, after the merge of the skills has settled, because the suffix digests the whole
-     payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
+     payload. For `docs/port/refactor-backlog.md` that is `go run -tags dev ./cmd/crw-dev ci
+     refactor-backlog --write`, after the merge of the fragment tree `docs/port/refactor-backlog.d/` has
+     settled (entry files both sides add merge as the union), because the file is assembled from those
+     fragments. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
+
+The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
+`plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
+file in the same mode in both parents and in the head, the check settles it by the built-in rule
+`regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
+that version must keep the release component both parents record (the release is the owner's choice, not the
+payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
+(`crw-dev ci plugin` computes it from the payload). A declaration that touches the file keeps its say, even when it
+does not establish one mechanical rule for it. Any other difference in that file, a version that is not the derived
+one, and every other path keep the refusal they have today, and the proof prints
+`applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
+
 3. Add the settled files and commit; the merge commit has the parents P and D in that order. Before pushing
    anything run, with N the new commit:
 
@@ -1197,13 +1235,13 @@ among its commands, the parent does not settle a conflict either.
 **The evidence.** The merged mark and the merge record name the rule applied in plain words, say that the check
 passed, and carry the check's output as printed:
 
-    base refresh by mechanical resolution, check passed: append-only union of docs/port/refactor-backlog.md; plugin.json version regenerated
+    base refresh by mechanical resolution, check passed: docs/port/refactor-backlog.md regenerated by go run -tags dev ./cmd/crw-dev ci refactor-backlog --write; plugin.json version regenerated
     evidence: previous=<P> dev_tip=<D> head=<N> tree=<N's tree> rule=mechanical_resolution
-    applied: union path=docs/port/refactor-backlog.md base_lines=<n> previous_added=<n> dev_added=<n> result_lines=<n>
+    applied: regenerate path=docs/port/refactor-backlog.md command="go run -tags dev ./cmd/crw-dev ci refactor-backlog --write" runs=2 identical=yes matches_head=yes
     applied: regenerate path=plugins/crw/.codex-plugin/plugin.json command="<command>" runs=2 identical=yes matches_head=yes
 
-The words for the two usual rules are "append-only union of <path>" and "plugin.json version regenerated"; any other
-regeneration reads "<path> regenerated by <command>". Copy the `evidence:` and `applied:` lines, do not retype them, and
+The words are "append-only union of <path>" for a list both sides add lines to, "<path> regenerated by <command>" for a
+regeneration, and "plugin.json version regenerated" for the manifest. Copy the `evidence:` and `applied:` lines, do not retype them, and
 add the `merge-evidence` verdict on N, as for any refresh. A pass is a fact about the resolution: it does not say that a
 job, a review or a merge happened on N.
 

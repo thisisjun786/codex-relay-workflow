@@ -1,0 +1,20 @@
+{
+  "issue": "CRW-382",
+  "pending": [
+    "cli-help__loop__add-criterion_dashdash_help",
+    "cli-help__loop__add-task_dashdash_help",
+    "cli-help__loop__add-work-phase_dashdash_help",
+    "cli-help__loop__ask_dashdash_help",
+    "cli-help__loop__complete-task_dashdash_help",
+    "cli-help__loop__dash_h",
+    "cli-help__loop__dashdash_help",
+    "cli-help__loop__decide_dashdash_help",
+    "cli-help__loop__init_dashdash_help",
+    "cli-help__loop__meet-criterion_dashdash_help",
+    "cli-help__loop__ready_dashdash_help",
+    "cli-help__loop__show_dashdash_help",
+    "cli-help__loop__steer_dashdash_help",
+    "cli-help__loop__validate_dashdash_help",
+    "cli-help__loop__word_help"
+  ]
+}

@@ -50,7 +50,7 @@ func ValidatePlanArtifacts(att *Attestation, cwd string) PlanResult {
 	if err != nil {
 		return unresolved("planUnit " + att.PlanUnit)
 	}
-	base, err := resolve("", cwd)
+	base, err := plangateRelCwdBase(cwd)
 	if err != nil {
 		return unreadable(err)
 	}
@@ -153,4 +153,25 @@ func resolve(cwd, p string) (string, error) {
 	}
 	wd, err := syscall.Getwd()
 	return filepath.Join(wd, p), err
+}
+
+// plangateRelCwdBase is the working directory as the OS reaches it, not resolve's cleaned spelling: a departure from the oracle
+// by decision (a security fix, CRW-662). An absolute cwd is used exactly as written, and a relative one is joined to the kernel
+// working directory (syscall.Getwd, which is what process.cwd() answers; os.Getwd would trust $PWD) WITHOUT cleaning, so
+// "alias/.." stays physical and the boundary is the directory the kernel resolves it to. resolve's filepath.Join cleans the
+// relative spelling: an alias to <wd>/ws/deep followed by ".." names <wd>/ws, not <wd>, so a unit beside the workspace passed
+// the gate. The same spelling rule as the review-round boundary (CRW-649, cli/review_round_args.go's reviewRoundCwdBase). The
+// error is where process.cwd() throws: the working directory cannot be read.
+func plangateRelCwdBase(cwd string) (string, error) {
+	if filepath.IsAbs(cwd) {
+		return cwd, nil
+	}
+	wd, err := syscall.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if cwd == "" {
+		return wd, nil
+	}
+	return wd + string(filepath.Separator) + cwd, nil
 }

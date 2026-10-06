@@ -2,7 +2,7 @@
   "oracle": "CXC v0.2.40 (3c1459acadeb1906d97c00a598e1457327ae372d)",
   "dist": "plugins/codexclaw/components/cxc-ops/dist/doctor.js",
   "node": "v24.20.0",
-  "note": "Each group holds the oracle answer for the inputs beside it, with every recorded string passed through toWellFormed(): that is what the UTF-8 encoder does to a lone surrogate on the way to stdout, and the corpus fixtures hold the printed bytes. codexVersion cases are runDoctor(pluginRoot, stubRunner, {codexHome, wslDeps}) calls whose codexVersion field is detectCodexVersion, which doctor.ts does not export; the stub runner answers `codex features list` with all four declared flags true and the case `codex --version` behaviour.",
+  "note": "Each group holds the oracle answer for the inputs beside it. The render group records toWellFormed() text: that is what the UTF-8 encoder does to a lone surrogate on the way to stdout. The featuresCheck group records the oracle's JSON strings instead, so the lone high surrogate a stderr cut keeps is held as the \\ud83d escape JSON.stringify writes (doctor.ts:137). codexVersion cases are runDoctor(pluginRoot, stubRunner, {codexHome, wslDeps}) calls whose codexVersion field is detectCodexVersion, which doctor.ts does not export; the stub runner answers `codex features list` with all four declared flags true and the case `codex --version` behaviour.",
   "rollup": [
     {
       "name": "empty_is_pass",
@@ -413,7 +413,7 @@
         "stderr": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀y"
       },
       "severity": "WARN",
-      "evidence": "could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx�",
+      "evidence": "could not read 'codex features list' (exit 3): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d",
       "repair": "ensure the `codex` binary is on PATH, then re-run `cxc doctor`"
     },
     {

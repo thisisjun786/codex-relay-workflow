@@ -11,9 +11,15 @@
 // The oracle has no lock and no signal handler: its process dies at the first interrupt and keeps the lines it had appended.
 // RecordMetricsFromTextContext gives the record window that end: it checks its context before each METRIC line and asks for the
 // ledger lock without blocking, again every metricLockRetry, so a wait for another writer ends with the context and nothing more is
-// written; the rows already appended stay. A lock that wait took only after a refused attempt is checked once more before the row is
-// written, because the holder can release it into the hands of a waiter that has already been cancelled. A caller without a context,
-// or with one that can never end, waits as it always did.
+// written; the rows already appended stay. Every lock is checked once more before the row is written, whether or not the wait had to
+// wait for it, because the holder can release it into the hands of a waiter that has already been cancelled and the first
+// non-blocking attempt takes a free lock without the context being read again. A caller without a context, or with one that can
+// never end, waits as it always did.
+//
+// CRW-632 gives the other two writers of this file the same end. RecordObjectiveMetricContext and WriteObjectiveKindContext take the
+// invocation's context: the wait for the kind-directory lock ends with it (metricLockWait) and the context is read once more after the
+// lock is taken, before anything is written, so a cancelled run leaves the kind file as its holder had it and returns the context's
+// own error. The plain forms keep the blocking wait every existing caller has.
 //
 // Not literal: a string with a lone surrogate (an escape such as \ud800 in a ledger row) can not exist in Go and reads as U+FFFD, and
 // the oracle's RangeError for a plateau window of more than about 1.2e5 rows is not reproduced. Rows are spelled as JSON.stringify
@@ -217,7 +223,14 @@ func ReadObjectiveMetrics(cwd, sessionID string) []Record {
 // session and metric, else the value; Best is the larger of the last accepted row's best and the value. The value is not checked: NaN
 // and the infinities are written as null, the reader then drops the row, and the caller is told it was recorded.
 func RecordObjectiveMetric(cwd string, in RecordInput) (Record, error) {
-	return recordObjectiveMetric(context.Background(), cwd, in)
+	return RecordObjectiveMetricContext(context.Background(), cwd, in)
+}
+
+// RecordObjectiveMetricContext is RecordObjectiveMetric for a caller that can be interrupted: the wait for the ledger lock ends with
+// ctx and the row is not written when the context has ended (appendRow). The caller gets the context's own error, so
+// errors.Is(err, context.Canceled) recognises a cancelled run. A context that can never end waits as RecordObjectiveMetric does.
+func RecordObjectiveMetricContext(ctx context.Context, cwd string, in RecordInput) (Record, error) {
+	return recordObjectiveMetric(ctx, cwd, in)
 }
 
 // recordObjectiveMetric is RecordObjectiveMetric whose wait for the ledger lock ends with ctx (appendRow).
@@ -246,24 +259,22 @@ func recordObjectiveMetric(ctx context.Context, cwd string, in RecordInput) (Rec
 // (a blank line is skipped by the reader). The check and the write run under a lock on the ledger, so a writer that fails after part
 // of a row is followed by one that sees the fragment.
 // The wait for the lock ends with ctx (metricLockWait): the file is closed without a write and the error is ctx's own. A lock the
-// wait took only after a refused attempt is checked once more, so a cancellation that landed while the holder had it leaves no row.
+// wait took only after a refused attempt and a lock the first non-blocking attempt took at once are both checked once more before
+// the write, so a cancellation that landed while the context was ending leaves no row.
 func appendRow(ctx context.Context, path, row string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
-	waited, err := metricLockWait(ctx, f)
-	if err != nil { // dropped by the close
+	if err := metricLockWait(ctx, f); err != nil { // dropped by the close
 		if closeErr := f.Close(); err != ctx.Err() { // a wait that ctx ended returns its error as it is
 			err = errors.Join(err, closeErr)
 		}
 		return err
 	}
-	if waited {
-		if cerr := ctx.Err(); cerr != nil { // a lock taken after a wait that ctx ended writes nothing
-			_ = f.Close() // drops the lock; its error is dropped as the give-up above drops it
-			return cerr
-		}
+	if cerr := ctx.Err(); cerr != nil { // a lock taken while ctx was ending writes nothing, waited or not
+		_ = f.Close() // drops the lock; its error is dropped as the give-up above drops it
+		return cerr
 	}
 	line := row + "\n"
 	if raw, err := os.ReadFile(path); err != nil || len(raw) > 0 && raw[len(raw)-1] != '\n' {
@@ -273,31 +284,30 @@ func appendRow(ctx context.Context, path, row string) error {
 	return errors.Join(err, f.Close())
 }
 
-// metricLockWait takes the exclusive lock on the ledger and reports whether it had to wait for it. A context that can end is asked
-// for it without blocking, and again every metricLockRetry while another holder keeps it, so the wait ends with ctx and returns its
-// error. The context is read again after a sleep: the select takes any ready case, so a timer that won the race against a done
-// context still ends the wait before the next attempt. One context that can never end (context.Background) blocks in the kernel, as
-// every append did before there was a context. A free lock is taken even when ctx has ended since the caller looked: the caller's
-// check before each line is where cancellation takes effect.
-func metricLockWait(ctx context.Context, f *os.File) (waited bool, err error) {
+// metricLockWait takes the exclusive lock on the ledger. A context that can end is asked for it without blocking, and again every
+// metricLockRetry while another holder keeps it, so the wait ends with ctx and returns its error. The context is read again after a
+// sleep: the select takes any ready case, so a timer that won the race against a done context still ends the wait before the next
+// attempt. One context that can never end (context.Background) blocks in the kernel, as every append did before there was a context.
+// A free lock is taken even when ctx has ended since the caller looked: appendRow reads the context once more after the lock, before
+// it writes, and that is where a cancellation landing on a lock taken at once takes effect.
+func metricLockWait(ctx context.Context, f *os.File) error {
 	if ctx.Done() == nil {
-		return false, unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		return unix.Flock(int(f.Fd()), unix.LOCK_EX)
 	}
 	tick := time.NewTicker(metricLockRetry)
 	defer tick.Stop()
 	for {
 		err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if !errors.Is(err, unix.EWOULDBLOCK) {
-			return waited, err
+			return err
 		}
-		waited = true
 		select {
 		case <-ctx.Done():
-			return true, ctx.Err()
+			return ctx.Err()
 		case <-tick.C:
 		}
 		if cerr := ctx.Err(); cerr != nil { // a timer that beat a done context gives up here, before the next attempt
-			return true, cerr
+			return cerr
 		}
 	}
 }
@@ -358,12 +368,18 @@ func rowNumber(f float64) string {
 // session id, so two ids can share one. The write is refused, and the file kept, when the file holds another session's id, holds an id
 // with U+FFFD (not told from a lone surrogate), can not be read for any reason but its absence, or is not a regular file (the data-loss
 // fix); a file read without a string sessionId is replaced. A lock on the kind directory, held from the read to the rename, excludes
-// other writers.
+// other writers; WriteObjectiveKindContext ends that lock's wait with its context (CRW-632).
 func WriteObjectiveKind(cwd, sessionID string, kind ObjectiveKind) error {
-	return writeObjectiveKind(cwd, sessionID, kind, time.Now(), crwdir.Rename)
+	return WriteObjectiveKindContext(context.Background(), cwd, sessionID, kind)
 }
 
-func writeObjectiveKind(cwd, sessionID string, kind ObjectiveKind, now time.Time, rename func(tmp, finalPath string) error) error {
+// WriteObjectiveKindContext is WriteObjectiveKind for a caller that can be interrupted: the wait for the kind-directory lock ends with
+// ctx, and the file is neither read for its owner nor replaced once the context has ended. The caller gets the context's own error.
+func WriteObjectiveKindContext(ctx context.Context, cwd, sessionID string, kind ObjectiveKind) error {
+	return writeObjectiveKind(ctx, cwd, sessionID, kind, time.Now(), crwdir.Rename)
+}
+
+func writeObjectiveKind(ctx context.Context, cwd, sessionID string, kind ObjectiveKind, now time.Time, rename func(tmp, finalPath string) error) error {
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return err
 	}
@@ -374,9 +390,12 @@ func writeObjectiveKind(cwd, sessionID string, kind ObjectiveKind, now time.Time
 	if err != nil {
 		return err
 	}
-	defer dir.Close() // drops the lock
-	if err = unix.Flock(int(dir.Fd()), unix.LOCK_EX); err != nil {
+	defer dir.Close()                               // drops the lock
+	if err = metricLockWait(ctx, dir); err != nil { // dropped by the close
 		return err
+	}
+	if cerr := ctx.Err(); cerr != nil { // a lock taken while ctx was ending replaces nothing, waited or not (CRW-632)
+		return cerr
 	}
 	finalPath := objectiveKindPath(cwd, sessionID)
 	if info, err := os.Stat(finalPath); err == nil && !info.Mode().IsRegular() { // a FIFO would block the read below
@@ -453,8 +472,9 @@ func RecordMetricsFromText(cwd string, in TextInput) ([]Record, error) {
 }
 
 // RecordMetricsFromTextContext is RecordMetricsFromText for a caller that can be interrupted. ctx is checked before each METRIC line
-// is recorded and ends the lock wait of every record. On cancellation it returns the rows recorded so far with ctx's error; those
-// rows stay in the ledger, as the lines an interrupted oracle process had appended do.
+// is recorded, ends the lock wait of every record and is read again after each record's ledger lock is taken, before the row is
+// written. On cancellation it returns the rows recorded so far with ctx's error; those rows stay in the ledger, as the lines an
+// interrupted oracle process had appended do.
 func RecordMetricsFromTextContext(ctx context.Context, cwd string, in TextInput) ([]Record, error) {
 	records := []Record{}
 	for _, line := range strings.Split(in.Text, "\n") {

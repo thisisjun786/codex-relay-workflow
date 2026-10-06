@@ -17,9 +17,10 @@ import (
 
 // This file ports the second half of CXC v0.2.40's runSpawnAttachHook (subagent-config/src/spawn-attach-hook.ts:849-852 and :991-1115:
 // the 4 MiB input bound, role routing, the ciphertext restore, the item re-assembly, the notices and the output envelope) over the
-// assembly of hook.go, with the CRW names of contract/schema/cxc/name-substitution.json. It leaves out what a later issue owns, so
-// "managed" is always absent: the managed dispatch loop and its candidate model and effort (:889-907, :1075-1114) and the final-gate
-// check (:1066-1073). Nothing here registers, or is, a hook. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
+// assembly of hook.go, with the CRW names of contract/schema/cxc/name-substitution.json. The managed dispatch loop itself lives in
+// hook_managed.go; here are the final-gate call (:1072-1079), the managed guards on the notice and the no-op, and the issuance with
+// the candidate model and effort (:1094-1102). Nothing here registers, or is, a hook. Differences from the oracle, each recorded in
+// docs/port-cxc/known-defects.md:
 //   - the project layer is dropped (decision 7), so the trust warning is empty: trustPrefix is applied, but nothing sets it;
 //   - the oracle's :1030-1046 branches for an empty guard are ported in spawnHookRoutePrompt, but the guard is never empty;
 //   - a tool_input nested past 4,400 levels prints nothing, where the oracle's JSON.stringify fails near 4,458 at Node 24's default
@@ -36,7 +37,7 @@ const (
 // raw is the stdin text already decoded as Node decodes it, so len(raw) is Buffer.byteLength(raw).
 func RunSpawnAttachHook(raw string, env host.LookupEnv) (out string) {
 	if len(raw) > spawnHookRouteMaxInput {
-		return DenyEnvelope("crw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary")
+		return DenyEnvelope(spawnHookOversizedInputReason)
 	}
 	defer func() {
 		if recover() != nil {
@@ -273,19 +274,38 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 		items = spawnHookRouteItems(a, message)
 		changed = spawnHookRouteStringify(items) != spawnHookRouteStringify(a.itemInput)
 	}
+	// Final-gate prerequisites (:1072-1079): the packet's text items joined, or the message, and the session. A refusal is the
+	// deny envelope; every other path fails open. It runs before the allow and no-op below so a denial reaches the caller.
+	gateText := message
+	if a.validItems {
+		var texts []string
+		for _, item := range items {
+			if o, ok := item.(pyjson.Object); ok && o.Get("type") == "text" {
+				texts = append(texts, o.Get("text").(string))
+			}
+		}
+		gateText = strings.Join(texts, "\n\n")
+	}
+	if gate := CheckFinalGatePrereqs(gateText, a.sessionID, a.cwd, nil); !gate.OK {
+		reason := gate.Reason
+		if reason == "" {
+			reason = "final gate prerequisites are missing"
+		}
+		return DenyEnvelope(reason)
+	}
 	config, err := role.ReadConfig(env)
 	if err != nil {
 		return "" // the oracle's throw, caught by its outer catch
 	}
 	var notices []string
-	if config.Roles[a.role].Fallback != nil {
+	if a.managed == nil && config.Roles[a.role].Fallback != nil {
 		notices = append(notices, "[crw] This direct spawn is not managed by first-fallback tracking. For subsequent tasks: "+role.DispatchGuidance)
 	}
 	if a.encryptedV2Message {
 		notices = append(notices, "[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply.")
 	}
 	context := strings.Join(notices, "\n")
-	if context == "" && !changed && model == "" && effort == "" {
+	if a.managed == nil && context == "" && !changed && model == "" && effort == "" {
 		return ""
 	}
 	updated := slices.Clone(a.toolInput) // Set changes a present key in place, and a.toolInput is the caller's
@@ -299,6 +319,23 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	if effort != "" {
 		updated = updated.Set("reasoning_effort", effort)
+	}
+	if a.managed != nil {
+		// Issue the managed spawn (:1094-1097): a failure is the deny envelope. The candidate's model and effort then replace
+		// whatever the caller sent, a null candidate field deleting the key.
+		if _, err := role.IssueManagedSpawn(a.cwd, a.sessionID, a.dispatchSource, a.toolUseID); err != nil {
+			return DenyEnvelope("managed dispatch: " + err.Error())
+		}
+		if a.managed.Candidate.Model == nil {
+			updated = spawnHookWithout(updated, "model")
+		} else {
+			updated = updated.Set("model", *a.managed.Candidate.Model)
+		}
+		if a.managed.Candidate.Effort == nil {
+			updated = spawnHookWithout(updated, "reasoning_effort")
+		} else {
+			updated = updated.Set("reasoning_effort", string(*a.managed.Candidate.Effort))
+		}
 	}
 	output := pyjson.Object{{Key: "hookEventName", Value: "PreToolUse"}, {Key: "permissionDecision", Value: "allow"}, {Key: "updatedInput", Value: updated}}
 	if context != "" {
@@ -315,6 +352,9 @@ func spawnHookRouteSettings(a spawnHookAssembly) (prompt, model, effort string) 
 	}
 	if IsFullHistoryFork(spawnHookView(a.toolInput)) {
 		return prompt, "", ""
+	}
+	if a.managed != nil {
+		return prompt, "", "" // a managed spawn takes the candidate's model and effort (:1006, :1098-1101)
 	}
 	picked := func(key string) bool { s, ok := a.toolInput.Get(key).(string); return ok && text.Trim(s) != "" }
 	if m := a.resolution.Model; m != nil && !a.resolution.UsesMainModel && !picked("model") {

@@ -196,25 +196,32 @@ func TestReceiptLockWaitEndsWithTheContext(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			ended := make(chan struct{})
-			end := func() { cancel(); close(ended) }
+			// close(ended) before cancel(): the run returns as soon as it sees the cancellation, so a mark
+			// set after it can land after that return.
+			end := func() { close(ended); cancel() }
 			var holder *os.File
 			defer func() {
 				if holder != nil {
 					holder.Close()
 				}
 			}()
+			parked := make(chan struct{})
 			receiptBeforePublishHook = func() { // the directory exists here; another holder takes its lock
 				var err error
 				holder, err = os.Open(filepath.Dir(expectedReceiptPath(root)))
 				receiptMust(t, err)
 				receiptMust(t, unix.Flock(int(holder.Fd()), unix.LOCK_EX))
-				if tc.endDuringWait {
-					time.AfterFunc(30*time.Millisecond, end)
-				} else {
+				if !tc.endDuringWait {
 					end()
 				}
 			}
 			defer func() { receiptBeforePublishHook = nil }()
+			if tc.endDuringWait {
+				// The wait signals once the run is parked on the held lock, after its first refused attempt:
+				// ending the context there is the wait's own event, not a timer that can fire before it.
+				receiptLockWaitParkedHook = func() { close(parked) }
+				defer func() { receiptLockWaitParkedHook = nil }()
+			}
 			a := ReceiptCLIArgs{Verb: "test", Cwd: root, Session: "s1", Command: receiptCommand(t, "exit", "0")}
 			done := make(chan ReceiptCLIResult, 1)
 			failed := make(chan error, 1)
@@ -223,6 +230,14 @@ func TestReceiptLockWaitEndsWithTheContext(t *testing.T) {
 				done <- got
 				failed <- err
 			}()
+			if tc.endDuringWait {
+				select {
+				case <-parked:
+				case <-time.After(10 * time.Second):
+					t.Fatal("the lock wait never parked on the held lock")
+				}
+				end()
+			}
 			var got ReceiptCLIResult
 			select {
 			case got = <-done:
