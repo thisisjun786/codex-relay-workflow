@@ -51,9 +51,10 @@ import (
 
 // promptOrchestrateHandle is handleOrchestrateCommand (hook.ts:860-937, 1287-1399). current is the
 // session state the leading section read, turn is the payload's turn id, and command is the parsed
-// chat command. handled is false only for the two paths the oracle answers with null: the goal-mode
-// Interview suppression, and a bound D-close whose seam has not been ported yet.
-func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand) (string, bool) {
+// chat command. seams carries the four commit points of a bound D-close the oracle's own handler
+// takes as HookDcloseCommitHooks; nil is a production run. handled is false only for the one path
+// the oracle answers with null, the goal-mode Interview suppression.
+func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand, seams *promptDcloseSeams) (string, bool) {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -73,10 +74,9 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		}
 	}
 
-	// The bound D-close owns its own transition, plan commit and goalplan rows. This unit leaves the
-	// seam answering unhandled, so a bound D falls through to the loose path exactly as it does today.
+	// The bound D-close owns its own transition, plan commit and goalplan rows.
 	if verb == fsm.VerbD && current.Slug != "" {
-		return promptOrchestrateBoundDclose(p, current, turn, env, lock, command)
+		return promptOrchestrateBoundDclose(p, current, turn, env, lock, command, seams)
 	}
 
 	result := fsm.ApplyHumanTransition(current, verb, command.Attest)
@@ -132,13 +132,6 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 		return WithFooter(InterviewDirective(env), next.Phase), true
 	}
 	return WithFooter(PhaseDirective(next.Phase, ActiveWorkPhaseOpts(p.Cwd, current.Slug)), next.Phase), true
-}
-
-// promptOrchestrateBoundDclose is the seam for the bound D-close (hook.ts:939-1429), which the
-// successor issue ports. It answers unhandled, as the seam does today, so a bound D keeps falling
-// through to the loose path and nothing is half-closed.
-func promptOrchestrateBoundDclose(_ PromptSubmitPayload, _ state.State, _ string, _ host.LookupEnv, _ func(cwd, sessionID string, fn func() error) error, _ *fsm.OrchestrateCommand) (string, bool) {
-	return "", false
 }
 
 // promptOrchestrateSourceGate is the B>C source gate of hook.ts:920-936: the B entry snapshot must

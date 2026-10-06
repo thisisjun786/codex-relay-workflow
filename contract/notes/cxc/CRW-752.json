@@ -1,0 +1,11 @@
+{
+  "issue": "CRW-752",
+  "identical": [
+    "hook__pre-tool-use-guarding-goal-complete__baseline_empty_workspace",
+    "hook__pre-tool-use-guarding-goal-complete__mid_cycle_complete_denied"
+  ],
+  "pending": [
+    "hook__pre-tool-use-guarding-goal-complete__bound_plan_with_open_work_denied"
+  ],
+  "intentionally-changed": []
+}

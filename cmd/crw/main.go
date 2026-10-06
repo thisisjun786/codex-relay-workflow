@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
@@ -28,6 +29,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tools"
 
 	// The relay commands register in the relay command table when their packages load; cli
 	// brings its own and the registry, delivery and fault families.
@@ -181,7 +183,15 @@ func modes() []mode {
 		}},
 		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
 		{"manage", true, func(c invocation) int { return manage.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
+		{"gui", true, func(c invocation) int {
+			// The server ends on a signal: SIGINT comes from the base registration, and SIGTERM is
+			// added here so an operator or a supervisor can stop it either way.
+			ctx, stop := cancelOn(c.ctx, syscall.SIGTERM)
+			defer stop()
+			return gui.Run(ctx, c.args, c.stdout, c.stderr)
+		}},
 		{"config", true, func(c invocation) int { return crwconfig.Run(c.args, c.stdout, c.stderr, os.Getenv) }},
+		{"tools", true, func(c invocation) int { return tools.Run(c.ctx, c.args, c.stdout, c.stderr, nil) }},
 		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
 		{"pabcd", false, func(c invocation) int {
 			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
