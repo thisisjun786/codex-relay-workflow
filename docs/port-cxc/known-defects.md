@@ -1372,3 +1372,25 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
 - An op that is an array passes the op object test (`:90` is a `typeof` test, and an array is an object) and
   fails the kind read instead, so the refusal names the missing kind of a value that is not an object at all
   (source `steering.ts:90-92`; the batch is still rejected whole); port: kept.
+
+## Found by the spawn hook leg port (CRW-634)
+
+These were found while classifying the 32 `hook__pre-tool-use-attaching-skills__*` corpus fixtures against the
+leg this issue wires; none is fixed here, because each belongs to the unit that ported it.
+
+- The guard blocks tell the agent not to run `crw orchestrate` and `crw loop`, where the oracle text, renamed
+  through the cli table (`cxc orchestrate` to `crw pabcd orchestrate`, `cxc loop` to `crw pabcd loop`), reads
+  `crw pabcd orchestrate` and `crw pabcd loop`. `crw orchestrate` is not a crw command, so the guidance names a
+  verb that does not exist (source `subagent-config/src/spawn-attach-hook.ts:292` and `:310`, against the `cli`
+  rows of `contract/schema/cxc/name-substitution.json`; the corpus fixtures hold the renamed text); port: kept.
+- The skills catalog and the mention inlining both take the skills directory from `CRW_SKILLS_DIR` or
+  `<PLUGIN_ROOT>/skills` and both filter by the oracle leaf-safe allowlist, so a replay against this
+  repository plugins/crw/skills (crw-check, crw-define, crw-plan, ...) yields neither the recorded
+  "Available skills" listing nor an inlined body: the recorded expectation holds the recording machine installed
+  plugin skills (crw-dev, crw-kwrite, crw-search, ...). This is the same limitation the `runtimeSkillsDir` line
+  above records, now visible through the corpus (source `:650-667` and `:816-820`); port: kept.
+- The managed dispatch refusal carries the error in Go words where the oracle prints the engine message:
+  `managed dispatch: lstat <path>: no such file or directory` stands for
+  `managed dispatch: ENOENT: no such file or directory, lstat "<path>"` (source `:892-907`, the
+  `catch (error) { return denyEnvelope(...) }` arm; the fixture
+  `hook__pre-tool-use-attaching-skills__managed_dispatch_refusals` holds the oracle text); port: kept.
