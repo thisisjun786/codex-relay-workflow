@@ -150,5 +150,13 @@
     "go": "\"\"",
     "tag": "identical",
     "record": "known-defects CRW-857 (port: pending, security): a write into the memories root performed by shutil.copy inside python3 -c is allowed by the oracle AND by the port, because neither reader names that destination; a follow-up issue owns the reader change in internal/pabcd/hook"
+  },
+  {
+    "name": "crw857-memorygate-codex-home-expansion",
+    "input": "{\"payload\": {\"cwd\": \"${ROOT}/work\", \"hook_event_name\": \"PreToolUse\", \"session_id\": \"s1\", \"tool_input\": {\"command\": \">$CODEX_HOME/memories\"}, \"tool_name\": \"Bash\", \"turn_id\": \"t1\"}}",
+    "oracle": "\"\"",
+    "go": "\"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"[crw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${ROOT}/codex-home/memories): this session has no explicit user request to remember anything. Memory notes outlive crw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \\\\\\\"\\uae30\\uc5b5\\ud574\\ub46c\\\\\\\" or \\\\\\\"remember this\\\\\\\" authorizes the next write), or record an explicit grant with `crw pabcd memory allow-write --session s1` from ${ROOT}/work. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry \\u2014 the request must appear in their own message, not in yours.\\\",\\\"additionalContext\\\":\\\"[crw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${ROOT}/codex-home/memories): this session has no explicit user request to remember anything. Memory notes outlive crw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \\\\\\\"\\uae30\\uc5b5\\ud574\\ub46c\\\\\\\" or \\\\\\\"remember this\\\\\\\" authorizes the next write), or record an explicit grant with `crw pabcd memory allow-write --session s1` from ${ROOT}/work. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry \\u2014 the request must appear in their own message, not in yours.\\\"}}\\n\"",
+    "tag": "open",
+    "record": "known-defects CRW-517/CRW-857 (port: fixed, security): a memories destination written with $CODEX_HOME is expanded and denied by the port; the oracle compares the literal text and allows the write"
   }
 ]
