@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -351,5 +352,144 @@ func TestInstallStopsOnACancelledContext(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(tree.toolsRoot); err == nil && len(entries) != 0 {
 		t.Errorf("tools_root holds %v after a cancelled install", entries)
+	}
+}
+
+// racingTransport completes a valid install at the destination before it hands the archive back,
+// so the caller is the losing half of a concurrent install.
+type racingTransport struct {
+	tree       testTree
+	pin        Pin
+	archive    []byte
+	executable []byte
+	record     []byte
+}
+
+func (rt *racingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	dir := rt.pin.InstallDir(rt.tree.toolsRoot)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, rt.pin.Executable), rt.executable, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, recordFile), rt.record, 0o644); err != nil {
+		return nil, err
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(rt.archive)), Header: http.Header{}}, nil
+}
+
+// A losing installer must not leave its staging directory behind.
+func TestInstallLeavesNoStagingDirectoryWhenAnotherInstallWins(t *testing.T) {
+	tree := newTestTree(t)
+	executable := []byte("gitleaks\n")
+	archive := syntheticArchive(t, executable)
+	sum := sha256.Sum256(archive)
+	pin := testPin(hex.EncodeToString(sum[:]))
+	withPin(t, pin)
+	record := []byte("{\"name\":\"gitleaks\",\"version\":\"8.30.1\",\"sha256\":\"" + pin.SHA256 + "\"}")
+	client := &http.Client{Transport: &racingTransport{tree: tree, pin: pin, archive: archive, executable: executable, record: record}}
+
+	code, out, errOut := runTools(t, context.Background(), tree, &Seams{Client: client}, "install", "gitleaks")
+	if code != 0 || errOut != "" {
+		t.Fatalf("the losing install: exit %d stderr %q", code, errOut)
+	}
+	if out != pin.ExecutablePath(tree.toolsRoot)+"\n" {
+		t.Errorf("the losing install printed %q", out)
+	}
+	entries, err := os.ReadDir(tree.toolsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if strings.Join(names, ",") != pin.DirName() {
+		t.Errorf("the tools root holds %v, want only %q", names, pin.DirName())
+	}
+}
+
+// cancellingTransport cancels the run's context while the archive is being handed over, so the
+// bytes arrive and the verification that follows must still refuse to write.
+type cancellingTransport struct {
+	cancel context.CancelFunc
+	body   []byte
+}
+
+func (ct *cancellingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	ct.cancel()
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(ct.body)), Header: http.Header{}}, nil
+}
+
+// A context cancelled after the download but before the write leaves nothing behind.
+func TestInstallStopsWhenTheContextIsCancelledBeforeWriting(t *testing.T) {
+	tree := newTestTree(t)
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	withPin(t, testPin(hex.EncodeToString(sum[:])))
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &http.Client{Transport: &cancellingTransport{cancel: cancel, body: archive}}
+
+	code, out, errOut := runTools(t, ctx, tree, &Seams{Client: client}, "install", "gitleaks")
+	if code != 1 {
+		t.Fatalf("a cancelled install: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if out != "" {
+		t.Errorf("a cancelled install printed %q", out)
+	}
+	if entries, err := os.ReadDir(tree.toolsRoot); err == nil && len(entries) != 0 {
+		t.Errorf("tools_root holds %v after a cancelled install", entries)
+	}
+}
+
+// An installed executable that lost its execute bits is not an install: path refuses it and
+// install repairs it.
+func TestInstallRepairsANonExecutableInstall(t *testing.T) {
+	tree := newTestTree(t)
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	withPin(t, testPin(hex.EncodeToString(sum[:])))
+	release := newFakeRelease(t, archive)
+	seams := &Seams{URLBase: release.server.URL}
+	executable := filepath.Join(tree.toolsRoot, "gitleaks-8.30.1", "gitleaks")
+
+	if code, _, errOut := runTools(t, context.Background(), tree, seams, "install", "gitleaks"); code != 0 {
+		t.Fatalf("install: exit %d stderr %q", code, errOut)
+	}
+	if err := os.Chmod(executable, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runTools(t, context.Background(), tree, seams, "path", "gitleaks")
+	if code != 1 || out != "" || !strings.Contains(errOut, "not_installed") {
+		t.Fatalf("path with a non-executable install: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if code, _, errOut := runTools(t, context.Background(), tree, seams, "install", "gitleaks"); code != 0 {
+		t.Fatalf("the repair: exit %d stderr %q", code, errOut)
+	}
+	info, err := os.Stat(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("the repaired executable is still not executable: %v", info.Mode())
+	}
+}
+
+// The platform rule holds even when a matching install is already present: a tools root shared
+// from another host must not hand back a binary this host cannot run.
+func TestInstallRefusesAnUnpinnedPlatformEvenWhenInstalled(t *testing.T) {
+	tree := newTestTree(t)
+	archive := syntheticArchive(t, []byte("gitleaks\n"))
+	sum := sha256.Sum256(archive)
+	withPin(t, testPin(hex.EncodeToString(sum[:])))
+	release := newFakeRelease(t, archive)
+
+	if code, _, errOut := runTools(t, context.Background(), tree, &Seams{URLBase: release.server.URL}, "install", "gitleaks"); code != 0 {
+		t.Fatalf("install: exit %d stderr %q", code, errOut)
+	}
+	code, out, errOut := runTools(t, context.Background(), tree, &Seams{URLBase: release.server.URL, GOOS: "darwin", GOARCH: "arm64"}, "install", "gitleaks")
+	if code != 2 || out != "" || !strings.Contains(errOut, "unsupported_platform") {
+		t.Fatalf("an unpinned platform with an install present: exit %d stdout %q stderr %q", code, out, errOut)
 	}
 }

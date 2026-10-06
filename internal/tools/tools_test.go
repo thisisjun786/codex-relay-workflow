@@ -156,3 +156,23 @@ func TestRootsComeFromTheConfiguration(t *testing.T) {
 		t.Fatalf("the executable is not under the configured root: %v", err)
 	}
 }
+
+// A record the process cannot read is a host failure, not a claim that the tool is absent: list
+// reports the failure instead of a false "not installed".
+func TestListReportsAnUnreadableRecord(t *testing.T) {
+	tree := newTestTree(t)
+	installDir := filepath.Join(tree.toolsRoot, "gitleaks-8.30.1")
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(installDir, recordFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runTools(t, context.Background(), tree, nil, "list")
+	if code == 0 {
+		t.Fatalf("list with an unreadable record exited 0 with %q", out)
+	}
+	if !strings.Contains(errOut, "crw tools list: error:") {
+		t.Errorf("list did not report the failure: %q", errOut)
+	}
+}

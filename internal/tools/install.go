@@ -49,6 +49,11 @@ func installedPath(pin Pin, toolsRoot string) (string, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return "", refuse("not_installed", notInstalledExit, "%s %s is not installed under %s: the executable is missing", pin.Name, pin.Version, toolsRoot)
 	}
+	// An executable that lost its execute bits is not usable as the pinned tool, so it is not an
+	// install: install repairs it rather than handing back a path that cannot be run.
+	if info.Mode().Perm()&0o111 == 0 {
+		return "", refuse("not_installed", notInstalledExit, "%s %s is not installed under %s: the executable is not executable", pin.Name, pin.Version, toolsRoot)
+	}
 	return path, nil
 }
 
@@ -56,16 +61,23 @@ func installedPath(pin Pin, toolsRoot string) (string, error) {
 // that is not the pin's is refused with nothing left under toolsRoot: the archive is verified in
 // memory before the tools root is written at all.
 func install(ctx context.Context, pin Pin, seams *Seams, toolsRoot, tempRoot string) (string, error) {
-	if path, err := installedPath(pin, toolsRoot); err == nil {
-		return path, nil
-	}
+	// The platform rule is checked before the installed-path fast path, so a tools root shared or
+	// restored from another host never hands back a binary this host cannot run.
 	goos, goarch := seams.platform()
 	if !pin.Supports(goos, goarch) {
 		return "", refuse("unsupported_platform", usageExit, "%s has no archive for %s", pin.describe(), platformName(goos, goarch))
 	}
+	if path, err := installedPath(pin, toolsRoot); err == nil {
+		return path, nil
+	}
 	archive, err := fetch(ctx, pin, seams, tempRoot)
 	if err != nil {
 		return "", err
+	}
+	// The first interrupt must be honoured before anything durable happens: the bytes are in
+	// memory and nothing has been written under the tools root yet.
+	if err := ctx.Err(); err != nil {
+		return "", hostFail("the install was cancelled: %v", err)
 	}
 	sum := sha256.Sum256(archive)
 	digest := hex.EncodeToString(sum[:])
@@ -172,6 +184,11 @@ func stage(pin Pin, seams *Seams, toolsRoot string, body []byte) (string, error)
 	if err := os.WriteFile(filepath.Join(dir, pin.Executable), body, executableMode); err != nil {
 		return "", hostFail("the executable could not be written: %v", err)
 	}
+	// A restrictive umask can mask the execute bits os.WriteFile asked for, so the mode is set
+	// explicitly: a tool the host cannot run is not installed.
+	if err := os.Chmod(filepath.Join(dir, pin.Executable), executableMode); err != nil {
+		return "", hostFail("the executable's mode could not be set: %v", err)
+	}
 	// The record is written after the executable, so a directory that holds a record holds a
 	// complete install.
 	record := record{
@@ -186,10 +203,13 @@ func stage(pin Pin, seams *Seams, toolsRoot string, body []byte) (string, error)
 		return "", hostFail("the record could not be written: %v", err)
 	}
 	target := pin.InstallDir(toolsRoot)
-	if err := replace(pin, toolsRoot, dir, target); err != nil {
+	moved, err := replace(pin, toolsRoot, dir, target)
+	if err != nil {
 		return "", err
 	}
-	keep = true
+	// keep is set only when this call's own directory was renamed into place. When another
+	// install won the race, the deferred cleanup removes the staged copy rather than leaking it.
+	keep = moved
 	return pin.ExecutablePath(toolsRoot), nil
 }
 
@@ -198,24 +218,24 @@ func stage(pin Pin, seams *Seams, toolsRoot string, body []byte) (string, error)
 // destination that is not (a stale record, a partial install) is removed and the rename retried
 // once, so an install repairs what it finds without ever leaving a partial directory under the
 // final name.
-func replace(pin Pin, toolsRoot, dir, target string) error {
+func replace(pin Pin, toolsRoot, dir, target string) (bool, error) {
 	if err := os.Rename(dir, target); err == nil {
-		return nil
+		return true, nil
 	} else if !errors.Is(err, fs.ErrExist) && !isNotEmpty(err) {
-		return hostFail("the install directory %s could not be made: %v", target, err)
+		return false, hostFail("the install directory %s could not be made: %v", target, err)
 	}
 	if _, err := installedPath(pin, toolsRoot); err == nil {
 		// Another install reached the destination first with a complete, matching install; keep
 		// it and let the caller's defer remove the staged copy.
-		return nil
+		return false, nil
 	}
 	if err := os.RemoveAll(target); err != nil {
-		return hostFail("the incomplete install at %s could not be removed: %v", target, err)
+		return false, hostFail("the incomplete install at %s could not be removed: %v", target, err)
 	}
 	if err := os.Rename(dir, target); err != nil {
-		return hostFail("the install directory %s could not be made: %v", target, err)
+		return false, hostFail("the install directory %s could not be made: %v", target, err)
 	}
-	return nil
+	return true, nil
 }
 
 // isNotEmpty reports whether an error is a rename onto a non-empty directory.

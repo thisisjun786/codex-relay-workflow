@@ -137,6 +137,13 @@ func statusOf(err error) int {
 	return notInstalledExit
 }
 
+// isNotInstalled reports whether an error is the explicit not_installed refusal, as opposed to a
+// host failure that could not establish the install state at all.
+func isNotInstalled(err error) bool {
+	var f *failure
+	return errors.As(err, &f) && f.reason == "not_installed"
+}
+
 // roots resolves the configured roots the command installs under. A configuration this command
 // cannot use is a usage-class error, as it is for crw config.
 func roots(seams *Seams) (map[string]crwconfig.Root, error) {
@@ -260,8 +267,17 @@ func runList(seams *Seams, stdout, stderr io.Writer) int {
 			Name: pin.Name, Version: pin.Version, Archive: pin.Archive, SHA256: pin.SHA256,
 			Executable: pin.Executable,
 		}
-		if path, err := installedPath(pin, toolsRoot); err == nil {
+		path, err := installedPath(pin, toolsRoot)
+		switch {
+		case err == nil:
 			row.Installed, row.Path = true, path
+		case !isNotInstalled(err):
+			// The install state could not be established (an unreadable record, an unreadable
+			// directory): reporting "not installed" here would be a false answer, so the failure
+			// is reported and the command exits non-zero rather than claiming a state it did not
+			// read.
+			fmt.Fprintf(stderr, "crw tools list: error: %v\n", err)
+			return statusOf(err)
 		}
 		report.Pins = append(report.Pins, row)
 	}
