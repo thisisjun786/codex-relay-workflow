@@ -243,6 +243,7 @@ func creationWorker(t *testing.T, k *realKit) (*service.Service, adapter.WorkerO
 	return srv, adapter.WorkerObservation{State: k.state, Socket: k.host.SocketPath, Scope: srv.Scope.Root, Authority: srv.Scope.Authority, Installation: filepath.Dir(executable)}
 }
 
+// sequential: t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR") is process-wide.
 func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 	for _, tc := range []struct {
 		named          bool

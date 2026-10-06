@@ -122,6 +122,7 @@ func decEvent(out Obj) string { return pyjson.Text(out.Get("eventId")) }
 // c1: an answer keeps the generation, is recorded and queued to the child, and the message it sends carries the
 // answer and the claim that admits the child's next turn.
 func TestDR01_an_answer_keeps_the_generation_and_reaches_the_child(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	out := d.mustReply(DecisionAnswer, "use the shorter table", "")
 	if field(out, "decision") != "answer" || field(out, "generationEffect") != "stays" || field(out, "answersEvent") != d.blocked || field(out, "decisionTurnId") != "decision-turn-1" {
@@ -175,6 +176,7 @@ func TestDR01_an_answer_keeps_the_generation_and_reaches_the_child(t *testing.T)
 
 // c1: a stop keeps the generation and the relationship status, and tells the child to report interrupted.
 func TestDR02_a_stop_keeps_the_generation_and_the_relationship_status(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	out := d.mustReply(DecisionStop, "the node is cancelled", "")
 	if field(out, "generationEffect") != "stays" || d.generation() != 1 {
@@ -195,6 +197,7 @@ func TestDR02_a_stop_keeps_the_generation_and_the_relationship_status(t *testing
 // c1: a criteria-changing decision opens the next generation, the older undelivered receipt is superseded, and the
 // turn the reply opens is the anchor of the new generation.
 func TestDR03_split_approval_and_scope_change_advance_the_generation(t *testing.T) {
+	t.Parallel()
 	for _, decision := range []string{DecisionSplitApproval, DecisionScopeChange} {
 		t.Run(decision, func(t *testing.T) {
 			d := newDecWorld(t)
@@ -257,6 +260,7 @@ func TestDR03_split_approval_and_scope_change_advance_the_generation(t *testing.
 
 // c1: a reply is held while the child is busy and sent when it is idle.
 func TestDR04_a_busy_child_holds_the_reply_until_it_is_idle(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	d.host.script = []string{"busy"}
@@ -273,6 +277,7 @@ func TestDR04_a_busy_child_holds_the_reply_until_it_is_idle(t *testing.T) {
 // c3: a decision is never a verdict. A verdict on the blocked receipt keeps its refusal, a decision on a receipt that
 // carries an artifact is refused, a different second decision is refused and the same one replays.
 func TestDR05_a_decision_is_never_mixed_with_a_verdict(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	d.attemptOn(d.blocked, d.host, nil)
 	d.clock.Advance(5)
@@ -320,6 +325,7 @@ func TestDR05_a_decision_is_never_mixed_with_a_verdict(t *testing.T) {
 
 // c1 and c3: every refusal names an existing reason and leaves every row as it was.
 func TestDR06_a_refusal_writes_nothing(t *testing.T) {
+	t.Parallel()
 	t.Run("an unknown receipt", func(t *testing.T) {
 		d := newDecWorld(t)
 		d.blocked = strings.Repeat("0", 32)
@@ -375,6 +381,7 @@ func TestDR06_a_refusal_writes_nothing(t *testing.T) {
 // c1: a decision that keeps the generation is not offered to the anchor binding: the generation is bound to its own anchor and the
 // reply's turn is a later turn of it.
 func TestDR08_a_decision_that_keeps_the_generation_does_not_rebind_its_anchor(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	if rep := d.deliver(); len(rep.Notes) != 0 || d.row(event).S("state") != Dispatched {
@@ -398,6 +405,7 @@ func TestDR08_a_decision_that_keeps_the_generation_does_not_rebind_its_anchor(t 
 
 // c1: a reply the child has moved past is not sent: it answers a question the child no longer asks.
 func TestDR09_a_reply_is_superseded_when_the_child_has_reported_again(t *testing.T) {
+	t.Parallel()
 	for _, staged := range []bool{false, true} {
 		name := "a receipt after the decision"
 		if staged {
@@ -438,6 +446,7 @@ func TestDR09_a_reply_is_superseded_when_the_child_has_reported_again(t *testing
 // c1: a decision that opened its generation goes through the anchor binding like a correction does: where the generation was bound to
 // another turn by hand, the conflict is reported and not skipped.
 func TestDR10_an_advancing_decision_reports_an_anchor_bound_to_another_turn(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	event := decEvent(d.mustReply(DecisionScopeChange, "keep the endpoint half", pyjson.Text(d.setDigest())))
 	_, err := BindAnchor(d.ctx, d.store, d.clock, d.rid, 2, "turn-bound-by-hand")
@@ -458,6 +467,7 @@ func TestDR10_an_advancing_decision_reports_an_anchor_bound_to_another_turn(t *t
 // c1: the message carries the criteria the decision was made under, so the child works from what the parent approved even when the set
 // is registered again before the message is sent.
 func TestDR11_the_message_carries_the_criteria_the_decision_was_made_under(t *testing.T) {
+	t.Parallel()
 	d := newDecWorld(t)
 	d.registerCriteria([]any{Obj{{Key: "id", Value: "c1"}, {Key: "title", Value: "the endpoint returns the agreed shape"}}, Obj{{Key: "id", Value: "c2"}, {Key: "title", Value: "a malformed request is refused"}, {Key: "required", Value: false}}})
 	digest := pyjson.Text(d.setDigest())
@@ -479,6 +489,7 @@ func TestDR11_the_message_carries_the_criteria_the_decision_was_made_under(t *te
 
 // c1: receipts first seen at one instant are ordered by the order they were stored in, not by their ids, which are hashes of the receipts.
 func TestDR12_receipts_first_seen_at_one_instant_are_ordered_by_storage(t *testing.T) {
+	t.Parallel()
 	rid, err := store.RelationshipID(parent, child, issue)
 	mustDo(t, err)
 	idOf := func(outcome string, attempt int) string {
@@ -522,6 +533,7 @@ func TestDR12_receipts_first_seen_at_one_instant_are_ordered_by_storage(t *testi
 }
 
 // c1: the replies read back with their delivery, and the two commands run over the same writer and reader.
+// sequential: assigns the package variable CommandClock.
 func TestDR07_the_replies_read_back_and_the_commands_run(t *testing.T) {
 	d := newDecWorld(t)
 	file := filepath.Join(t.TempDir(), "note.txt")

@@ -50,6 +50,7 @@ const blockedFor, settleWithin = 300 * time.Millisecond, 10 * time.Second
 // Two tests of one capture module, in this process or another, hold their trees at the same
 // time: what they wait for is the same test, never the module.
 func TestCaptureTrees_ofOneModuleAreHeldTogether(t *testing.T) {
+	t.Parallel()
 	module := lockTestModule(t)
 	rootA, treeA, releaseA, err := lockCaptureTree(module, "a")
 	mustDo(t, err)
@@ -74,6 +75,7 @@ func TestCaptureTrees_ofOneModuleAreHeldTogether(t *testing.T) {
 // holder here is) is waited for, and is empty when it is got, though its last holder left a file
 // in it: that is the exclusion the goldens' fixed paths need.
 func TestCaptureTree_waitsForAnotherHolderOfTheSameTree(t *testing.T) {
+	t.Parallel()
 	module := lockTestModule(t)
 	treeKey := "capture/" + module + "/a"
 	root := filepath.Join(parityRoot, parityDigest("capture/"+module))
@@ -103,6 +105,7 @@ func TestCaptureTree_waitsForAnotherHolderOfTheSameTree(t *testing.T) {
 // and emptied the root at both ends. A capture tree waits for such a holder and, once it has one,
 // keeps that holder from taking the root.
 func TestCaptureTree_andAnEarlierRevisionsExclusiveRootExcludeEachOther(t *testing.T) {
+	t.Parallel()
 	module := lockTestModule(t)
 	rootLock := parityLockPath("capture/" + module)
 	earlier, err := lockFile(rootLock, syscall.LOCK_EX)
@@ -129,6 +132,7 @@ func TestCaptureTree_andAnEarlierRevisionsExclusiveRootExcludeEachOther(t *testi
 
 // A test that asks for a tree this process already holds would wait for itself: it is told.
 func TestCaptureTree_refusesATreeThisProcessAlreadyHolds(t *testing.T) {
+	t.Parallel()
 	module := lockTestModule(t)
 	_, _, release, err := lockCaptureTree(module, "a")
 	mustDo(t, err)

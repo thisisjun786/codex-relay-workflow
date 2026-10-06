@@ -33,6 +33,7 @@ func invJudgeKitBelow(t *testing.T) *judgeKit {
 // Contract 8.2: a stale result never merges. Whether the node's own slice changed (a seed) or only what it consumed did (a descendant), the judgement refuses with disposition_conflict, names
 // the stale reason and writes nothing: no history row, no merge turn. The result is judged again, and eligible, when it is current.
 func TestAStaleResultIsNotJudgedForMerge(t *testing.T) {
+	t.Parallel()
 	askForATurn := func(k *judgeKit) error {
 		_, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"})
 		if err != nil && turn != nil {
@@ -91,6 +92,7 @@ func TestAStaleResultIsNotJudgedForMerge(t *testing.T) {
 // A result that landed in only some of its targets is not integrated, so it can be stale (E-20 exempts only what landed everywhere), and then it opens no integrated edge either, whichever
 // target its landing is in: what the edge hands over is a result the plan no longer stands behind. Once it landed in every target it is exempt and the edges open.
 func TestAStaleResultThatLandedInSomeTargetsOpensNoIntegratedEdge(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	// the shape of twoTargetPlan with the criteria the release kit registers: impl-a has an integrated edge to each of two branches of one repository
 	k.putPlan("p1", 0, "p1-r1", addRelNode("impl-a", dag.NodeImplementation), addRelNode("join1", dag.NodeNonPR), addRelNode("join2", dag.NodeNonPR),
@@ -129,6 +131,7 @@ func TestAStaleResultThatLandedInSomeTargetsOpensNoIntegratedEdge(t *testing.T) 
 // the plan went back to the criteria the acceptance was made with after the output had been re-verified against others, so the slice is the consumed one again and the effective criteria are not.
 // The node reads stale until the same output is re-verified against the plan's criteria, as it does after the change itself.
 func TestCriteriaRolledBackAfterAReverificationIsStillStale(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	accepted := invSharedRoot(k)
 	other := dig("other criteria")
@@ -174,6 +177,7 @@ func TestCriteriaRolledBackAfterAReverificationIsStillStale(t *testing.T) {
 // U is then revised: U is stale, so the edge ui no longer opens, and I, whose consumed value is the landing of a result the plan no longer stands behind, is stale with it: nothing is released onto
 // it (its code-pinned successor T) and its pull request is not judged for the merge lane. Once U has landed everywhere it is exempt (E-20) and I is current again.
 func TestAConsumerOfAStaleIntegratedResultIsStaleToo(t *testing.T) {
+	t.Parallel()
 	k := &judgeKit{integrationKit: newIntegrationKit(t)}
 	repo := k.repo
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR),

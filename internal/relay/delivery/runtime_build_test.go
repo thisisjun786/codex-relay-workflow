@@ -6,6 +6,7 @@ import (
 )
 
 func TestAttemptRuntimeBuildRecordedBeforeTransport(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t, "")
 	event := f.queuedEvent(regOpts{})
 	executable, err := os.Executable()
@@ -31,6 +32,7 @@ func TestAttemptRuntimeBuildRecordedBeforeTransport(t *testing.T) {
 }
 
 func TestReconciliationKeepsSenderRuntimeAndLegacyAbsence(t *testing.T) {
+	t.Parallel()
 	for _, age := range []string{"in_flight", "settled", "legacy_null", "legacy_record"} {
 		for _, path := range []string{"accepted", "presend", "token", "none"} {
 			t.Run(age+"/"+path, func(t *testing.T) {

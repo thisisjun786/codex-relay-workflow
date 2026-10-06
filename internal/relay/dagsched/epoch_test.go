@@ -86,6 +86,7 @@ func (k *releaseKit) revision(plan, request string, parent int, author string, e
 }
 
 func TestClaimEpoch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
@@ -140,6 +141,7 @@ func TestClaimEpoch(t *testing.T) {
 
 // A plan that has no revision has no header and so no project: the claim names it, and the fence holds the first revision to it.
 func TestClaimOfAPlanWithoutARevision(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	if _, err := k.sched.ClaimEpoch(ctx, "fresh", ClaimInput{Actor: "parent", SessionNonce: "s1"}); refusalReason(err) != "malformed_receipt" {
@@ -169,6 +171,7 @@ func TestClaimOfAPlanWithoutARevision(t *testing.T) {
 
 // Two sessions claim at the same moment: the store's write lock and the (plan, epoch) key give them two different epochs.
 func TestClaimsAreSerialised(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	var wg sync.WaitGroup
@@ -324,6 +327,7 @@ func fencedPaths() []fencedPath {
 // Criterion c1: every write that decides checks the epoch in its own transaction, and in the two-parent scenarios 100% of the writes of the stale epoch are refused with
 // stale_coordinator_epoch, leave every table of the store exactly as it was and create no child. Each path is set up so that the write would succeed for the holder of the epoch.
 func TestEveryFencedWriteRefusesAStaleEpoch(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"a newer session of the same parent task", "a replacement parent task"} {
 		for _, path := range fencedPaths() {
 			t.Run(scenario+": "+path.name, func(t *testing.T) {
@@ -364,6 +368,7 @@ func TestEveryFencedWriteRefusesAStaleEpoch(t *testing.T) {
 
 // A write that names an epoch nobody claimed is refused, and a plan nobody claimed is unfenced (the first claim fences it from then on).
 func TestAnUnclaimedPlanIsUnfencedAndAnUnclaimedEpochIsRefused(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.sched.ExpectedEpoch = 3
@@ -394,6 +399,7 @@ func TestAnUnclaimedPlanIsUnfencedAndAnUnclaimedEpochIsRefused(t *testing.T) {
 
 // The rows a decision leaves carry the epoch of the session that decided: the manifest, the release, the acceptance, the decision and the plan revision.
 func TestTheRowsCarryTheEpochOfTheDecidingSession(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
@@ -432,6 +438,7 @@ func TestTheRowsCarryTheEpochOfTheDecidingSession(t *testing.T) {
 // A cap basis belongs to a limit and not to a plan. For a project limit the recorder names the plan it coordinates, which is held to the project; once any plan of the project is under an epoch a basis
 // without a plan is refused; a limit of a wider scope is declared by a supervisor, who coordinates no plan, and takes no plan.
 func TestCapBasisAndTheEpoch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")

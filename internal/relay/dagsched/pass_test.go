@@ -44,6 +44,7 @@ func (f *fixture) passRows(plan string) []passRow {
 
 // Criterion c2: every pass records which limit decided it. Each row is one limit, read back from the table and not from the returned reading.
 func TestPassRecordsDecidingLimit(t *testing.T) {
+	t.Parallel()
 	t.Run("everything fits, then a ceiling cuts the third", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()
