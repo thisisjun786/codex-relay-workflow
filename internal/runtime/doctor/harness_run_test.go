@@ -292,8 +292,8 @@ func TestHarnessRunDoctorRecorded(t *testing.T) {
 					t.Errorf("check %s evidence:\n got %q\nwant %q", got.Name, got.Evidence, wantEvidence)
 				}
 				wantRepair := harnessRunRenamed(strings.ReplaceAll(want.Repair, harnessRunTempToken, tmp))
-				if got.Repair != wantRepair {
-					t.Errorf("check %s repair:\n got %q\nwant %q", got.Name, got.Repair, wantRepair)
+				if harnessReportRepairString(got.Repair) != wantRepair {
+					t.Errorf("check %s repair:\n got %q\nwant %q", got.Name, harnessReportRepairString(got.Repair), wantRepair)
 				}
 			}
 			harnessRunCompareOptional(t, "pluginVersion", report.PluginVersion, recorded.PluginVersion)
