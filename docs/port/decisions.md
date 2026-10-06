@@ -5871,7 +5871,8 @@ Tests: `TestKilledDuringTheFirstRevisionLeavesNoPlan` (`crash_test.go:60`),
 (`invalidation.go:256`) collects the seeds and then walks only downwards from them; a node outside
 that closure is judged as before. `TestSharedRootInvalidationMarksOnlyDescendants`
 (`invalidation_test.go:133`) is the shared-root shape the row names (the Airflow #73710 pattern), and
-it asserts the sibling and the root keep their acceptances.
+it asserts the sibling and the root keep their acceptances. Documents: [the scheduler](../relay/dag-scheduler.md)
+"Invalidation"; [DAG plans](../relay/dag-plans.md) "Digests".
 
 **R-2. Staleness is judged by comparing consumed values only, and a predicate that includes
 `integrated` is invariant under an unrelated move of `dev` (unnecessary reruns 0) — met.**
@@ -5883,6 +5884,8 @@ the integrated predicate takes the earliest positive observation of the current 
 Tests: `TestUnrelatedDevMoveChangesNothing` (`invalidation_test.go:470`),
 `TestALandedTipOfTheSameRunIsNotAChangedInput` (`:580`),
 `TestALandingOfAnEarlierRunIsAChangedInput` (`:646`), `TestStaleReadingIsDeterministic` (`:337`).
+Documents: [the scheduler](../relay/dag-scheduler.md) "Invalidation" (Judgement by value, Containment
+does not follow dev) and "Edge satisfaction".
 
 **R-3. A red is re-verified against the existing output before a rerun, and a criteria-only change is
 re-verified (the existing criterion) — met.** The `revalidate` route rules the same output again under
@@ -5892,7 +5895,8 @@ the same for a criteria change on an accepted head (`internal/relay/delivery/ack
 Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidation_test.go:208`),
 `TestCriteriaRolledBackAfterAReverificationIsStillStale` (`invalidation_gates_test.go:131`),
 `TestAMergedNodeIsRevalidatedNotRerunAfterACriteriaChange` (`revalidation_test.go:677`).
-The row's indicator (the share of reds resolved by re-verification) is not printed by
+Documents: [the scheduler](../relay/dag-scheduler.md) "Handling a stale node" and "Three ways to open
+the generation". The row's indicator (the share of reds resolved by re-verification) is not printed by
 `dag-measurements`: it is a record-only input of the comparison issue and is listed under "What this
 section does not claim" below.
 
@@ -5907,6 +5911,9 @@ correction binds the manifest the child was told as the next generation of the s
 `TestOutputReworkGoesToTheSameChildAsANewGeneration` (`revalidation_test.go:339`),
 `TestCorrectionReachesTheChildThroughTheRealVerdictWriter` (`audit_wp5_test.go:239`).
 
+Documents: [the scheduler](../relay/dag-scheduler.md) "Releasing a node" and "Input manifest";
+[DAG plans](../relay/dag-plans.md) "The revision document".
+
 **R-5. A merged node is not rerun; a successor node in a new revision carries the change (merged nodes
 rerun 0) — met.** `landedNode` (`invalidation.go:312`) makes a node that landed in every target never
 stale (contract E-20), `dag-release` of it replays or is refused, and `dag-correct` refuses it in both
@@ -5914,6 +5921,9 @@ steps whatever kind a later revision gives it. Tests: `TestIntegratedNodeIsNever
 (`invalidation_test.go:543`), `TestMergedNodeIsNeverRerunWhenItsUpstreamChanges`
 (`revalidation_test.go:485`), `TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes` (`:711`),
 `TestStaleResultNeverOpensAnIntegratedEdge` (`stale_test.go:69`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Invalidation" (a node that landed is never
+stale) and "Handling a stale node".
 
 **R-6. A restart reconstructs from the store, adopts a live child, never reassigns on a lease that ran
 out, and raises the epoch (adopt against recreate) — met.** `Scheduler.Restart` (`epoch.go:367`) is a
@@ -5923,6 +5933,9 @@ refuses the replaced session's writes. Tests:
 `TestRestartOfTheSameTaskAtEveryBoundaryOfARelease` (`epoch_restart_test.go:36`),
 `TestTimeReassignsNothing` (`:259`), `TestAReplacementParentAdoptsTheLiveChild` (`:380`),
 `TestAdoptRefusals` (`:519`), `TestAForeignSlotIsNotReturnedAsItsHolder` (`:468`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Restart and adoption" and "The coordinator
+epoch".
 
 **R-7. A verifier flake is separated (reassignments caused by a flake 0) — met.** A required check that
 failed once on the exact head is retried on the same SHA (`retry_same_sha`), and a second, different
@@ -5950,6 +5963,11 @@ coordinator's procedure says so deliberately for review rounds
 value, and that is deliberate"). The CXC loop port has a per-phase stagnation cap
 (`port/cxc/skills/crw-loop/references/runtime-lifecycle.md:83`) but it is a different, not yet
 activated surface and covers no DAG node.
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Merge eligibility" (the one retry before an
+eviction) and the coordinator's reevaluation page,
+`plugins/crw/skills/crw-run/references/reevaluation.md:78`, which records the deliberate absence of
+a review-round escalation value.
 
 ### What remains: one slice
 
