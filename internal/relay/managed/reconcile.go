@@ -298,9 +298,9 @@ func (e *orphanReadInconclusive) Error() string {
 }
 
 // archiveOrphan tries thread/archive once on the orphan and records the attempt in one
-// managed_orphan_archive row. A row already written for this request and attempt stops a second
-// archive, as the resend unload's row does. An error naming a thread the host does not hold is not
-// attempted at all.
+// managed_orphan_archive row, the result in a second: a row already written for this request and
+// attempt stops a second archive, as the resend unload's row does. An error naming a thread the
+// host does not hold is not attempted at all.
 //
 // thread/archive unloads an active thread and the sub-threads under it, so the orphan is read again
 // immediately before the call, as the resend unload reads the child it lowers, and the readiness
