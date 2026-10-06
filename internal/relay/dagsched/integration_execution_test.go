@@ -8,6 +8,7 @@ import (
 // CRW-429: the cleanup of a finished child asks whether the plan node it executed has landed, tied to the merged mark that counts now: another event, generation or revision all answer "not
 // integrated", and a relationship that executed no node is not a plan node at all.
 func TestExecutionIntegratedIsTiedToTheCurrentMark(t *testing.T) {
+	t.Parallel()
 	k := newLegacyLocalIntegrationKit(t)
 	repo := k.repo
 	repo.git("checkout", "-q", "-b", "feature")

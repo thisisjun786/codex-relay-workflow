@@ -37,6 +37,7 @@ func collectorScript(head string, required []any, checks ...any) *ghScript {
 // A required check answers only for the integration its branch rule names: a check of the same name from another integration is not it, whatever it concluded, and a required name whose
 // integration has not reported is pending.
 func TestMergeJudgeHonoursTheProviderOfARequiredCheck(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}}
 	g := collectorScript(k.feature, required, checkRun(11, "dev-gate", k.feature, "success", 42), checkRun(12, "dev-gate", k.feature, "failure", 43))
@@ -65,6 +66,7 @@ func TestMergeJudgeHonoursTheProviderOfARequiredCheck(t *testing.T) {
 // Run identities are opaque: "workflow-run:99:..." is not older than "workflow-run:100:..." because it sorts later as text. Every run of a required name counts at its own newest attempt, the way
 // merge-evidence and the lane's check read them, and a run that has not finished is pending whatever order its id sorts in.
 func TestRequiredChecksCountEveryRunAtItsNewestAttempt(t *testing.T) {
+	t.Parallel()
 	head := strings.Repeat("a", 40)
 	pr := func(checks ...Check) PullRequest {
 		return PullRequest{HeadSHA: head, RequiredDeclared: []string{"dev-gate"}, Checks: checks}
@@ -99,6 +101,7 @@ func TestRequiredChecksCountEveryRunAtItsNewestAttempt(t *testing.T) {
 
 // A skipped or neutral required check is judged the way the merge lane reads it, so a head the judgement lets into the lane is not refused there for the same check.
 func TestMergeJudgeAgreesWithTheLanesReadingOfNeutralChecks(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}}
 	g := collectorScript(k.feature, required, checkRun(11, "dev-gate", k.feature, "neutral", 42))
@@ -118,6 +121,7 @@ func statusOf(id int, context, state, at string) map[string]any {
 
 // A name that two integrations are required to answer needs both of them: one integration's failure, seen before the other has reported, is not a finished set of checks and uses no retry.
 func TestEveryRequiredIntegrationMustReport(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}, map[string]any{"context": "dev-gate", "integration_id": 43}}
 	k.useCollector(collectorScript(k.feature, required, checkRun(11, "dev-gate", k.feature, "failure", 42)))
@@ -133,6 +137,7 @@ func TestEveryRequiredIntegrationMustReport(t *testing.T) {
 // A commit status has no attempt and no run: the forge changes it in place. The time it last changed is what tells a status that failed again from the same status read twice, so the second
 // failure of a status evicts and a duplicate wake does not.
 func TestAStatusThatFailsAgainIsASecondFailure(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	gate := func(state, at string) {
 		g := collectorScript(k.feature, []any{map[string]any{"context": "dev-gate"}})
@@ -160,6 +165,7 @@ func TestAStatusThatFailsAgainIsASecondFailure(t *testing.T) {
 // Failures that the forge reports with the same identity are told apart by when they happened: a check run that the app reset and ran again keeps its id but completes at another time, and
 // the same completed run read twice is one failure.
 func TestACheckRunResetInPlaceIsASecondFailure(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}}
 	run := func(at string) {
@@ -182,6 +188,7 @@ func TestACheckRunResetInPlaceIsASecondFailure(t *testing.T) {
 
 // The time the forge gives a run is projected as an instant in UTC, whatever zone it was written in.
 func TestProjectedStampsAreInstants(t *testing.T) {
+	t.Parallel()
 	k := newJudgeKit(t)
 	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}}
 	g := collectorScript(k.feature, required, checkRunAt(11, "dev-gate", k.feature, "failure", 42, "2026-10-02T09:00:01+09:00"))

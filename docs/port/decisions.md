@@ -5664,6 +5664,416 @@ workflow, contract file, golden, skill document or `plugin.json` changes, and no
 repository setting or branch is touched. The implementation, the merge-lane scripts, the CI
 workflow, the rulesets, `POLICY.md` and the test leg rebalance ship as the follow-ups above.
 
+## 80. CRW-185's completion criteria and its 2026-10-01 research rows, judged against the built DAG scheduler (CRW-762)
+
+Decision (design only, 2026-10-06): the DAG plan store and the DAG scheduler satisfy CRW-185's six
+completion criteria and seven of the eight rows its 2026-10-01 research table added. The eighth row
+is partly met: the cap on repeated retries of one packet exists at the transport and merge-lane
+layers, and the node-level stagnation counter and the local repair ladder it was meant to open are
+not built. The six criteria and the seven met rows are recorded here with the code and the tests
+that carry them; the partly met row becomes one implementation slice. This section judges only
+invariants a record and a test can show — duplicate children 0, wrong releases 0, live children
+recreated 0, merged nodes rerun 0, over-invalidation 0, a missing value never an empty success — and
+it claims no exactly-once for the whole path, as CRW-185's own verification section says. It changes
+no product code, test or contract file.
+
+### How each item was judged
+
+The source is the tree at baseline `50915cfdeb633062704c313e944ccaaad738046a`. Every anchor below is
+a file, a function and a line in that tree, and every test name is a Go test that runs in `make test`
+on the hosted CI of this pull request. The contract is read by section, not by the line numbers it
+cites at `71d1dcf5`: CRW-183 and CRW-184 recorded only offset moves in the sections they consumed,
+the resolutions of CRW-284, CRW-410, CRW-411, CRW-446, CRW-447 and CRW-468 are recorded in
+[the scheduler's D-19 section](../relay/dag-scheduler.md#where-the-code-reads-the-contract-d-19), and
+the `dag` and `dagsched` code is new since the contract was written. Where an item is met, no slice
+is made and only the evidence is written; where part of it is not, what is missing is named and the
+smallest red test that would show it is described.
+
+Most of what CRW-185 asks for was built by the DAG scheduler and by the plan store that precedes it,
+and this section deliberately makes no slice out of the parts that already hold: the plan store
+([decision 74](#74-the-dag-zone-is-created-after-the-frozen-schema-is-validated-crw-183-contract-decision-d-01)),
+the release and ready path, invalidation and the stale routes, the coordinator epoch, withdrawal and
+the forge-target acceptance ([decision 77](#77-implementation-dag-acceptances-use-forge-targets-a-missing-pr-reader-refuses-comparison-crw-603),
+[decision 78](#78-dag-accept-proves-a-parent-made-refresh-of-the-verified-head-before-it-is-accepted-crw-666)).
+
+### The six completion criteria
+
+**C-1. Duplicate, out-of-order and late events, and a lost acknowledgement, are reconciled by event,
+relation, generation and revision; a transport retry keeps the same execution and creates no second
+child or implementation generation — met.**
+
+A release request id is derived from the plan, the node and the manifest digest alone, with no
+attempt counter, so a repeated `dag-release` is the same request (`ReleaseRequestID`,
+`internal/relay/dagsched/digest.go:155`); `dag_releases` is keyed on
+`(plan_id, node_id, manifest_digest)` (`internal/relay/store/dag_zone.go:159-167`), so a duplicate
+wake cannot open a second release; and a replay continues the frozen intent without re-running the
+reading (`Scheduler.replay`, `internal/relay/dagsched/release.go:558`; `Scheduler.startAndBind`,
+`:650`). The relay's own delivery layer already reconciles duplicates, order and a lost
+acknowledgement by event, relation, generation and revision: a generation is unique per
+`(relationship_id, dispatch_request_id)` (`contract/schema/relay-sqlite.sql:34-41`), a superseded
+generation's deliveries are annotated rather than rewritten, and an out-of-order report is refused
+`stale_generation` or `superseded_revision` (`internal/relay/delivery/currency.go`;
+`internal/relay/delivery/ack.go`). This is the part CRW-185 does not rebuild, and the DAG reuses it.
+
+Tests: `TestReleaseDuplicateWake` (`release_test.go:66`), `TestReleaseCreationRace` (`:90`),
+`TestReleaseLostCreationResponse` (`:137`), `TestReleaseBindFailureRecovers` (`:164`),
+`TestReleaseReplayAfterTheSlotWasReturned` (`:254`),
+`TestReleaseReplayOfAReleasedRequestReclaimsNoSlot` (`:314`),
+`TestReleaseAfterCloseCreatesOneChildUnderRace` (`release_recovery_test.go:574`),
+`TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_request`
+(`internal/relay/delivery/delivery_b_test.go:12`),
+`TestSUP07_an_older_generation_is_never_sent` (`internal/relay/delivery/supersession_test.go:248`),
+`TestReceiptIntake_python_duplicates_generations_and_scope`
+(`internal/relay/store/receipt_intake_test.go:196`). Documents: [the scheduler](../relay/dag-scheduler.md)
+"What a replay does not repeat" and "Recovering an abandoned release"; [DAG plans](../relay/dag-plans.md)
+"The log".
+
+**C-2. A stop before or after the intent, before or after the creation response, before or after the
+result is stored and before or after the ruling is reproduced; a live child is adopted and a lease
+that ran out never reassigns it; an unknown external effect is not run again before the receipt has
+been reconciled — met.**
+
+`Scheduler.Restart` (`internal/relay/dagsched/epoch.go:367`) reads the picture from the store and
+names, per node, one of `adopt`, `adopt_needed`, `reconcile`, `needs_operator` or `none`;
+`Scheduler.Adopt` (`:208`) binds the successor to the node as a `parent_handover` execution
+without creating anything; `Scheduler.ClaimEpoch` (`:51`) raises the plan's epoch, and the fence
+(`:27`) refuses a stale session's writes. A creation whose outcome is unknown is `blocked:creation_unknown`
+and is resolved by repeating the same request, never by a new one, and a merge turn whose effect is
+unknown is `blocked:effect_unknown` and is resolved by observation. Time is not an observation.
+
+Tests: `TestRestartOfTheSameTaskAtEveryBoundaryOfARelease` (`epoch_restart_test.go:36`),
+`TestRestartOfTheSameTaskAfterTheResultAndTheRuling` (`:166`), `TestTimeReassignsNothing` (`:259`),
+`TestUnknownEffectsAreNotRerun` (`:297`), `TestAReplacementParentAdoptsTheLiveChild` (`:380`),
+`TestAReplacementParentNamesWhatItCannotRecover` (`:569`),
+`TestRestartReadsTheFrozenRequestOfARecoveredIntent` (`epoch_recovered_test.go:12`),
+`TestReleaseCreationUnknownLegacyProfiles` (`release_creation_unknown_test.go:246`),
+`TestUnknownEffectsAreNotRerun` again for the merge turn. Documents: [the scheduler](../relay/dag-scheduler.md)
+"A creation whose outcome is unknown", "A standby interrupted by a restart", "Restart and adoption".
+
+**C-3. A plan revision marks the affected nodes and their descendants stale; an earlier generation
+that is still running is not used as a later result and passes a safe reconciliation boundary; the
+reason a node is reused is recorded for input, artifact, code, skill and model/policy revision — met.**
+
+The reading derives staleness from the plan, the acceptances and the manifests every time it is
+computed and stores nothing: seeds are found by `seedOf` (`internal/relay/dagsched/invalidation.go:155`)
+and `staleInput` (`:220`), the closure is the seeds and what lies below them (`prepare`, `:256`),
+and a node that already landed is never stale (`landedNode`, `:312`). A descendant is judged by
+value: it is rebuilt as it consumed (`rebuildAsConsumed`, `:374`) and its manifest digest is compared
+with the one its acceptance consumed (`judgeBelow`, `:428`), so a change above it that does not move
+what it consumed does not make it stale. An acceptance is taken only on the head of the relationship's
+current generation (`verifiedHead`, `internal/relay/dagsched/accept.go:103`; `Scheduler.accept`,
+`:204`), so an earlier generation's result is never used as a later one. The reason a result is reused
+is the manifest itself: the slice digest, the criteria digest, the consumed acceptance and head values,
+the base, the volatile snapshots and the rule version (skills digest, model, effort, prompt template,
+relay build) are recorded and compared; the rule version is recorded but, by contract 4.1, is
+deliberately not an invalidation seed unless a plan revision says so.
+
+Tests: `TestSharedRootInvalidationMarksOnlyDescendants` (`invalidation_test.go:133`),
+`TestEdgeChangesSeedTheNodeTheyPointTo` (`:184`), `TestCriteriaChangeIsStaleUntilTheOutputIsReverified`
+(`:232`), `TestSliceAndCriteriaChangedTogetherStillHoldsBackTheNodesBelow` (`:263`),
+`TestStaleSurvivesTheRepairOfItsSeed` (`:287`), `TestStalePredecessorOpensNoEdge` (`:314`),
+`TestIntegratedNodeIsNeverStale` (`:543`), `TestDecisionEdgeBelowASeed` (`:719`),
+`TestAStaleResultIsNotJudgedForMerge` (`invalidation_gates_test.go:35`),
+`TestAConsumerOfAStaleIntegratedResultIsStaleToo` (`:176`). Documents: [the scheduler](../relay/dag-scheduler.md)
+"Invalidation", "Edge satisfaction".
+
+**C-4. When only the criteria changed the same output is re-verified; when the output has to change a
+correction generation is made; an unrelated sibling's valid result and cost records are preserved — met.**
+
+The route is derived from the stale reading and is never stored (`Scheduler.routeStale`,
+`internal/relay/dagsched/revalidation.go:294`; `routeOf`, `:300`; `StaleActions`, `:41`): a
+criteria-only change is `revalidate`, and `dag-accept` records a revalidation of the same acceptance
+in `dag_acceptance_revalidations` with no second acceptance, generation or child; a node whose own
+output must be reworked on an active relationship is `correct`, and `dag-correct` binds the manifest the child was told
+(`CorrectionInstruction`, `internal/relay/dagsched/correction.go:28`; `PrepareCorrection`, `:47`;
+`RecordCorrection`, `:183`) as the next generation of the same relationship. What a node's siblings
+keep is whatever neither route touches: a revalidation writes one revalidation row and a correction one
+execution row, both for the node asked about. The same reading derives two further routes and this
+decision leaves them as they are: `hold` when the node rests on a stale predecessor, an input is not
+there, the node or the plan is paused or a correction of it is already open, and `redefine` when the
+relationship has ended, so there is no child to correct. They change nothing here and no node is
+released by them.
+
+Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidation_test.go:208`),
+`TestRevalidationIsRefusedWhenTheOutputMustBeReworked` (`:261`),
+`TestOutputReworkGoesToTheSameChildAsANewGeneration` (`:339`),
+`TestStaleRouteFollowsTheCause` (`:575`),
+`TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand` (`:774`),
+`TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor` (`:860`),
+`TestCorrectionBindsTheManifestNamedInTheRestorationBlock` (`correction_test.go:55`),
+`TestCorrectionDoesNotBindWhatTheChildWasNotTold` (`:99`). Documents: [the scheduler](../relay/dag-scheduler.md)
+"Handling a stale node", "Three ways to open the generation".
+
+**C-5. Pause, cancel and archive stop new assignment and automatic wake and reconcile the in-flight
+state; a cancel is never shown as a completed rollback — met.** The two holds are separate and each
+stops what it owns: a node's or the plan's hold stops the scheduler's work on the node, and the
+*relationship's* pause is what withholds automatic wake in the delivery layer. A plan-level hold is
+not a delivery fact and withholds no wake; it stops the release, the acceptance, the correction and
+the merge-lane call for every node of the plan.
+
+A node's or the plan's hold is a plan revision and is read by the scheduler before the edges, so a held
+node is never a candidate (`internal/relay/dag/lifecycle.go:41`, `:75`, `:107`;
+`internal/relay/dagsched/lifecycle.go:26`, `:36`, `:106`), and the reasons are the closed
+`defer:plan_paused`, `defer:node_paused`, `skip:node_cancelled` and `skip:node_archived`.
+Cancelled and archived are final states that nothing in the plan moves a node out of, so a cancel is
+never reverted and a landing already observed stays observed. The commands that advance a node are
+refused while the plan holds it, and the refusal is made again inside each command's transaction and
+again just before the managed start (`lifecycleOpen`, `:120`; `releaseGate`, `:209`). Automatic
+wake is the relationship's own fact and is withheld by the delivery layer for a paused relationship
+(`WithheldPreSend` and `RelationshipNotActive`, `internal/relay/delivery/service.go:1149`), which
+the plan change does not touch.
+
+Tests: `TestAPausedNodeOrPlanIsNotOfferedAndResumeOffersItAgain` (`lifecycle_test.go:90`),
+`TestReleaseRefusesAPausedNodeAndAPausedPlan` (`:140`),
+`TestDescendantsOfACancelledOrArchivedNodeAreNeverReleased` (`:172`),
+`TestACancelIsNeverReverted` (`:222`), `TestCancellingALandedNodeDoesNotRevertTheLanding` (`:253`),
+`TestAChildThatReportsAfterAPauseReleasesNoSuccessor` (`:275`),
+`TestAPauseDoesNotInvalidateAnAcceptance` (`:324`), `TestPauseAndCancelKeepTheExecutionSlot` (`:344`),
+`TestAPauseThatLandsBetweenTheReadAndTheTransactionIsCaught` (`:542`),
+`TestTheDescendantsOfAnEndedNodeAreBlockedThroughWhatTheyConsumed` (`:626`),
+`TestAPauseThatLandsBeforeTheManagedStartStopsTheChild` (`:746`),
+`TestANodeThatLeftThePlanIsNotStartedOrCorrected` (`:832`),
+`TestAnAbandonedReleaseOfAHeldNodeIsClosedButNotReleasedAgainUntilResumed` (`lifecycle_recovery_test.go:21`),
+`TestNodeLifecycleTransitions` (`internal/relay/dag/lifecycle_test.go:61`),
+`TestATamperedLifecycleChangeIsTheHostsFailure` (`:250`). Documents: [DAG plans](../relay/dag-plans.md)
+"Pause, resume, cancel and archive"; [the scheduler](../relay/dag-scheduler.md) of the same name.
+
+**C-6. The atomic boundaries of graph state, relation and verdict agree with the replay result, and an
+error is never turned into an automatic success or an empty output — met.**
+
+A revision is one store transaction (`Repo.Put`, `internal/relay/dag/repo.go:230`, `BEGIN IMMEDIATE`),
+so it is visible whole or not at all; the zone's triggers abort an UPDATE or DELETE of a plan, a
+revision, a node or an edge, and `UNIQUE(plan_id, parent_revision_no)` keeps the chain from branching
+(`internal/relay/store/dag_zone.go`). A reader recomputes every slice digest and the state digest from
+the rows it read in one snapshot (`verifiedState`, `repo.go:443`; `verifySlices`, `:466`) and a
+plan that does not agree with itself is the host's failure, never a partial plan; `--verify` replays
+the whole log (`VerifyLog`, `:532`; `Replay`, `internal/relay/dag/fold.go:544`) and requires the
+rows to be what it produces. A writer makes the same checks inside its transaction (`Preflight`,
+`repo.go:620`), and the scheduler's manifest path is explicit that a missing, mismatched or altered
+input is never an empty success ([the scheduler](../relay/dag-scheduler.md) "Input manifest").
+
+Tests: `TestKilledDuringTheFirstRevisionLeavesNoPlan` (`crash_test.go:60`),
+`TestKilledDuringALaterRevisionKeepsTheLastCommittedOne` (`:83`),
+`TestReplayFromEmptyAndFromAnySnapshotReachesTheHead` (`replay_test.go:24`),
+`TestReplayRefusesWhatALogCannotContain` (`:97`),
+`TestReaderRecomputesDigestsAndNeverReturnsAPartialPlan` (`:126`),
+`TestAnAbsentPlanOrRevisionIsRefusedNotEmpty` (`:196`), `TestReadIsOneSnapshot` (`:229`),
+`TestPutRefusesATypedRevisionThatADocumentWouldBeRefusedFor` (`integrity_test.go:19`),
+`TestAWriteNeverTrustsRowsThatDisagreeWithTheLog` (`:76`),
+`TestACommandNeverTrustsRowsThatDisagreeWithTheLog` (`:107`),
+`TestRaceWritersOnOneParent` (`repo_test.go:292`), `TestRaceTheSameRequest` (`:351`),
+`TestForkJoinEndToEnd` (`dagsched/endtoend_test.go:181`). Documents: [DAG plans](../relay/dag-plans.md)
+"The log", "Events, cursors and snapshots".
+
+### The eight rows of the 2026-10-01 research table
+
+**R-1. Invalidation is `descendants(seeds)` only (over-invalidation 0) — met.** `prepare`
+(`invalidation.go:256`) collects the seeds and then walks only downwards from them; a node outside
+that closure is judged as before. `TestSharedRootInvalidationMarksOnlyDescendants`
+(`invalidation_test.go:133`) is the shared-root shape the row names (the Airflow #73710 pattern), and
+it asserts the sibling and the root keep their acceptances. Documents: [the scheduler](../relay/dag-scheduler.md)
+"Invalidation"; [DAG plans](../relay/dag-plans.md) "Digests".
+
+**R-2. Staleness is judged by comparing consumed values only, and a predicate that includes
+`integrated` is invariant under an unrelated move of `dev` (unnecessary reruns 0) — met.**
+`judgeBelow` compares the rebuilt manifest's digest with the consumed one, and
+`rebuildAsConsumed` takes the base, the volatile snapshots, the rule version and the times from the
+consumed manifest, so a `dev` that moved and a clock that advanced never change the digest
+(`invalidation.go:374`, `:428`). Containment is monotone, so an unrelated merge changes no answer;
+the integrated predicate takes the earliest positive observation of the current containment run.
+Tests: `TestUnrelatedDevMoveChangesNothing` (`invalidation_test.go:470`),
+`TestALandedTipOfTheSameRunIsNotAChangedInput` (`:580`),
+`TestALandingOfAnEarlierRunIsAChangedInput` (`:646`), `TestStaleReadingIsDeterministic` (`:337`).
+Documents: [the scheduler](../relay/dag-scheduler.md) "Invalidation" (Judgement by value, Containment
+does not follow dev) and "Edge satisfaction".
+
+**R-3. A red is re-verified against the existing output before a rerun, and a criteria-only change is
+re-verified (the existing criterion) — met.** The `revalidate` route rules the same output again under
+the plan's criteria and records a revalidation instead of a new generation
+(`revalidation.go:294`, `:41`; `dag_acceptance_revalidations`), and the relay's re-review path does
+the same for a criteria change on an accepted head (`internal/relay/delivery/ack.go`, re-review).
+Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidation_test.go:208`),
+`TestCriteriaRolledBackAfterAReverificationIsStillStale` (`invalidation_gates_test.go:131`),
+`TestAMergedNodeIsRevalidatedNotRerunAfterACriteriaChange` (`revalidation_test.go:677`).
+Documents: [the scheduler](../relay/dag-scheduler.md) "Handling a stale node" and "Three ways to open
+the generation". The row's indicator (the share of reds resolved by re-verification) is not printed by
+`dag-measurements`: it is a record-only input of the comparison issue and is listed under "What this
+section does not claim" below.
+
+**R-4. A running child is pinned to the dispatch manifest, the manifest is compared when the report
+arrives, and a correction goes to the same child (live children recreated 0) — met.** A release freezes
+its exact request bytes and its manifest (`Scheduler.assemble`, `release.go:480`; the frozen copy under
+the child's artifact root), the acceptance is judged against the manifest the node consumed, and a
+correction binds the manifest the child was told as the next generation of the same relationship
+(`correction.go:28`, `:47`). Tests:
+`TestCorrectionBindsTheManifestNamedInTheRestorationBlock` (`correction_test.go:55`),
+`TestCorrectionDoesNotBindWhatTheChildWasNotTold` (`:99`),
+`TestOutputReworkGoesToTheSameChildAsANewGeneration` (`revalidation_test.go:339`),
+`TestCorrectionReachesTheChildThroughTheRealVerdictWriter` (`audit_wp5_test.go:239`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Releasing a node" and "Input manifest";
+[DAG plans](../relay/dag-plans.md) "The revision document".
+
+**R-5. A merged node is not rerun; a successor node in a new revision carries the change (merged nodes
+rerun 0) — met.** `landedNode` (`invalidation.go:312`) makes a node that landed in every target never
+stale (contract E-20), `dag-release` of it replays or is refused, and `dag-correct` refuses it in both
+steps whatever kind a later revision gives it. Tests: `TestIntegratedNodeIsNeverStale`
+(`invalidation_test.go:543`), `TestMergedNodeIsNeverRerunWhenItsUpstreamChanges`
+(`revalidation_test.go:485`), `TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes` (`:711`),
+`TestStaleResultNeverOpensAnIntegratedEdge` (`stale_test.go:69`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Invalidation" (a node that landed is never
+stale) and "Handling a stale node".
+
+**R-6. A restart reconstructs from the store, adopts a live child, never reassigns on a lease that ran
+out, and raises the epoch (adopt against recreate) — met.** `Scheduler.Restart` (`epoch.go:367`) is a
+function of the store alone and reads no clock; `Scheduler.Adopt` (`:208`) binds the successor
+without creating anything; `Scheduler.ClaimEpoch` (`:51`) raises the epoch and the fence (`:27`)
+refuses the replaced session's writes. Tests:
+`TestRestartOfTheSameTaskAtEveryBoundaryOfARelease` (`epoch_restart_test.go:36`),
+`TestTimeReassignsNothing` (`:259`), `TestAReplacementParentAdoptsTheLiveChild` (`:380`),
+`TestAdoptRefusals` (`:519`), `TestAForeignSlotIsNotReturnedAsItsHolder` (`:468`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Restart and adoption" and "The coordinator
+epoch".
+
+**R-7. A verifier flake is separated (reassignments caused by a flake 0) — met.** A required check that
+failed once on the exact head is retried on the same SHA (`retry_same_sha`), and a second, different
+failure evicts the head for good; no generation and no reassignment is made either way
+(`internal/relay/dagsched/mergejudge.go:71`, the rule list; `internal/relay/dagsched/mergechecks.go:250`,
+`:306`). The judgement history in `dag_merge_checks` is the flake ledger the row asks for: each
+judgement keeps the round, the sequence and the failed required checks, and an eviction survives a
+fresh acceptance of the same head. Tests:
+`TestMergeEligibilityRetryOnceThenEvict` (`mergejudge_test.go:79`),
+`TestEvictionSurvivesAFreshAcceptanceOfTheSameHead` (`:387`),
+`TestEvictionIsOfTheCommitNotOfTheSpellingOrThePullRequest` (`:478`),
+`TestAReadingInFlightWhileAnotherJudgementLandsIsDiscarded` (`:708`). Document:
+[the scheduler](../relay/dag-scheduler.md) "Merge eligibility".
+
+**R-8. A stagnation counter opens a local repair ladder (a cap on repeated retries of the same
+packet) — partly met.** The cap half holds: a delivery's attempts are bounded
+(`RetryPolicy.MaxAttempts` 6, `BusyMaxAttempts` 40, `MaxSendsPerRelationshipPerHour` 12;
+`internal/relay/delivery/policy.go:47`), the hold reasons are the closed `attempt_cap`, `busy_cap`
+and `hourly_cap` (`policy.go:7`, `:16`; `TestDEL13_flood_bounds_cap_attempts_and_pace_sends`,
+`internal/relay/delivery/delivery_b_test.go:74`), and the merge lane spends exactly one retry before
+it evicts (R-7 above). The ladder half does not: nothing counts a node's repeated findings, repeated
+CI failure signatures or a progress window that has gone quiet, and no reading names a rung. The
+coordinator's procedure says so deliberately for review rounds
+(`plugins/crw/skills/crw-run/references/reevaluation.md:78`, "There is no review-round escalation
+value, and that is deliberate"). The CXC loop port has a per-phase stagnation cap
+(`port/cxc/skills/crw-loop/references/runtime-lifecycle.md:83`) but it is a different, not yet
+activated surface and covers no DAG node.
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Merge eligibility" (the one retry before an
+eviction) and the coordinator's reevaluation page,
+`plugins/crw/skills/crw-run/references/reevaluation.md:78`, which records the deliberate absence of
+a review-round escalation value.
+
+### What remains: one slice
+
+Only R-8 leaves work. The slice below is written the way the follow-ups of
+[decision 79](#79-a-merge-train-reuses-a-proven-tree-it-never-weakens-the-strict-gate-crw-725) are: it
+names the functions and signatures, the appended zone statement, the reasons it reuses, the red test
+it writes first and its region, and it is not implemented here.
+
+**S-1. A node's stagnation counter and the closed repair ladder (one region,
+`internal/relay/dagsched`, about 150-260 product lines plus about 200-320 test lines).**
+
+*Signatures.*
+`func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stagnation, error)`,
+with `type Stagnation struct { NodeID string; Count int; Cause string; Rung string; Next string; FindingDigest string; LastEventID string }`
+and a closed `Cause` set `repeated_finding | repeated_check_failure` and a closed `Rung` set
+`retry_same_packet | edit_packet | split_node | neighbour_repair | full_replan`, mirroring the ladder
+the research report names. The counter is read from rows the store already keeps and adds no writer
+for them: a node's correction generations (`dag_node_executions`, kind `correction`) with the finding
+each ruling carried, its merge-check history (`dag_merge_checks`, `round` and the failed required
+check names) and its revalidations (`dag_acceptance_revalidations`). The reading carries an optional
+`stagnation` object beside `release` and `merge_order` on a node whose count has reached the
+threshold, and `pass.stagnation` counts the nodes at each rung. The threshold is 2: one correction
+is not repetition, and the object appears once the same finding has been carried by two consecutive
+corrections of the node, so it is absent from a reading of a plan nobody has corrected twice, exactly
+as `lifecycle` and `plan_state` are absent when they do not apply.
+
+*Where the finding identity comes from.* A correction generation's finding is the ruling that opened
+it: `RecordCorrection` reads `verdict_context.findings` of the `needs_changes` verdict whose
+`next_generation` is this generation (`internal/relay/dagsched/correction.go:264-275`), the same join
+`restorationDigest` parses (`:381`). The slice digests the finding entries that are not the
+restoration block — the entries carry an `id` and a `note` — with the relay's canonical-JSON sha256,
+and takes that as the generation's finding identity, so two corrections of one node share an identity
+exactly when the ruling carried the same findings. The restoration entry is excluded because its note
+carries this generation's manifest digest, which differs every round; that is why the identity is
+taken over the remaining entries rather than over the whole text. A generation the coordinator opened
+by hand has no ruling and no findings at all (`recordHandOpened`,
+`internal/relay/dagsched/revalidation.go:103`; [the scheduler](../relay/dag-scheduler.md) "Three ways
+to open the generation"), so it raises no `repeated_finding` count and is counted only as a correction
+generation; a correction whose ruling carried no findings reads the same way.
+
+*Zone.* No statement is appended: the counter is a reading of rows the zone already holds
+(`dag_node_executions`, `dag_merge_checks`, `dag_acceptance_revalidations`, `verdict_context`), so it
+is derived like every other node state and clears by itself when the cause is repaired, exactly as
+invalidation does. If a later issue needs a rung to survive the rows it was read from, its table would
+be appended as a new `CREATE ... IF NOT EXISTS` and would reach the swap gate as `EXTENDS_ZONE` with
+`--backup-state-to`, like the region grades and the other side tables
+([decision 74](#74-the-dag-zone-is-created-after-the-frozen-schema-is-validated-crw-183-contract-decision-d-01));
+no shipped statement is edited either way.
+
+*No clock.* The reading reads no clock — it is a function of the store, and `Ready`'s own comment says
+so (`internal/relay/dagsched/ready.go:42-43`) — so a cause that needs an elapsed-time boundary is not
+in this slice. `dag-ready` and `dag-release` read the host once per command for the memory bound and
+record that they did; a quiet-window cause would need the same explicit measured instant rather than a
+clock inside the reading. The two causes above are derived from stored rows alone.
+
+*Reasons.* No new refusal or reading reason, and no writer. The ladder's rungs are actions the parent
+already has — `dag-correct` for `edit_packet`, a plan revision with `replace_node` for `split_node`
+and `neighbour_repair`, and a plan revision for `full_replan` — so the reading names a rung and stops
+naming one past `full_replan`; nothing is refused and nothing is written, because a reading that
+mutated the ladder would make two `dag-ready` calls differ, and the object is advisory like the
+merge-order constraint. If a later issue needs a rung to be refused rather than merely named, that
+refusal would reuse the existing `disposition_conflict` with the rung and the count in the detail, as
+the stale routes and the merge lane already refuse.
+
+*Red first.* `TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung` in a new
+`internal/relay/dagsched/stagnation_test.go`: correct one node twice for the same finding digest and
+assert the reading raises `count` to 2 and names `edit_packet`, then a third time and assert it names
+`split_node`; green controls where the second correction carries a different finding and the count
+resets, where a generation the coordinator opened by hand raises no repeated-finding count, where a
+node that landed reads no stagnation object, and where a fourth correction past `full_replan` leaves
+the rung at `full_replan` and writes nothing. A second red test covers the cap:
+`TestTheStagnationLadderStopsAtFullReplan`, which asserts the same: the rung stops at the last one
+and the reading stays a function of the store. Neither test asserts a refusal, because this reading
+refuses nothing; a later issue that wants the last rung to be refused would add it where the
+triggering command runs, with the existing `disposition_conflict`.
+
+*Not in this slice.* The transport caps of R-8 (`internal/relay/delivery/policy.go`) are unchanged,
+the progress view that CRW-186 owns is not extended here (the scheduler's own reading carries the
+object; projecting it into `dag-progress` is the progress issue's call), and the CXC loop's phase cap
+is a different surface.
+
+### What this section does not claim
+
+No exactly-once for the whole path: the invariants above are the ones records and tests can show, and
+CRW-185's own verification section says the same. Not claimed as met, and not sliced here:
+
+* R-3's indicator, the share of reds resolved by re-verification, is not among the measures
+  `dag-measurements` prints (`internal/relay/dagsched/measure.go`). The behaviour it measures is met;
+  the number is a record-only input of the comparison issue, and adding it is that issue's call rather
+  than a change to the scheduler.
+* A skill or model change is recorded in the manifest's rule version and is deliberately not an
+  invalidation seed (contract 4.1). A policy that made it one would be a plan revision, not a scheduler
+  change.
+* A plan-level pause stops new releases and new acceptances, not the parent's wake: the wake is the
+  delivery layer's and is withheld for a paused relationship (C-5). The contract's plan-pause row asks
+  for exactly this.
+* Nothing here verifies installation, service activation or live relay behaviour. The installed runtime
+  is older than this tree, and M4 owns that acceptance.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test, workflow,
+contract file, golden, skill document or `plugin.json` changes, and no refusal reason, zone statement,
+CLI option or output field is added. The slice above ships as its own implementation issue with its own
+red test and its own PR.
+
 ## 81. The lane gets runners first by needing fewer of them; GitHub sells no priority (CRW-780)
 
 Decision (design only, 2026-10-06): a workflow run cannot be given priority over another on

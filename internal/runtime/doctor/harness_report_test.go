@@ -18,8 +18,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 )
+
+// harnessReportText is a recorded string leaf that may carry a lone high surrogate. The oracle's
+// JSON string holds it as the \udXXX escape (the stderr cut case), and pyjson.Loads reads that
+// escape back as the three WTF-8 bytes the port produces; encoding/json alone would read it as
+// U+FFFD, so the recorded escape would not match the port's output.
+type harnessReportRecordedText string
+
+func (t *harnessReportRecordedText) UnmarshalJSON(raw []byte) error {
+	value, err := pyjson.Loads(string(raw), pyjson.LoadOptions{Surrogates: true, Deep: true})
+	if err != nil {
+		return err
+	}
+	s, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("recorded string is %T, not a string", value)
+	}
+	*t = harnessReportRecordedText(s)
+	return nil
+}
 
 // harnessReportCheckRecorded is one CheckResult in a recorded case (doctor.ts:25-32).
 type harnessReportCheckRecorded struct {
@@ -69,7 +89,7 @@ type harnessReportFeaturesRecorded struct {
 	Name     string                     `json:"name"`
 	Run      harnessReportProbeRecorded `json:"run"`
 	Severity string                     `json:"severity"`
-	Evidence string                     `json:"evidence"`
+	Evidence harnessReportRecordedText  `json:"evidence"`
 	Repair   string                     `json:"repair"`
 }
 
@@ -139,6 +159,15 @@ func harnessReportPresent(value string) *string {
 	return &value
 }
 
+// harnessReportRepairString is the string a check's repair pointer holds, and "" when it is nil:
+// the recorded repair is the oracle's optional string, whose absent and empty cases both read "".
+func harnessReportRepairString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // harnessReportChecks converts recorded checks into the port type, renaming the text the names
 // decision covers; the recorded case is the oracle spelling, the port emits the renamed one.
 func harnessReportChecks(recorded []harnessReportCheckRecorded) []HarnessCheck {
@@ -148,7 +177,7 @@ func harnessReportChecks(recorded []harnessReportCheckRecorded) []HarnessCheck {
 			Name:     harnessReportRenamed(c.Name),
 			Severity: HarnessSeverity(c.Severity),
 			Evidence: harnessReportRenamed(c.Evidence),
-			Repair:   harnessReportRenamed(c.Repair),
+			Repair:   harnessReportRepair(harnessReportRenamed(c.Repair)),
 		})
 	}
 	return checks
@@ -214,10 +243,11 @@ func TestHarnessReportFeaturesCheckRecorded(t *testing.T) {
 			want := HarnessCheck{
 				Name:     "features",
 				Severity: HarnessSeverity(recorded.Severity),
-				Evidence: harnessReportRenamed(recorded.Evidence),
-				Repair:   harnessReportRenamed(recorded.Repair),
+				Evidence: harnessReportRenamed(string(recorded.Evidence)),
+				Repair:   harnessReportRepair(harnessReportRenamed(recorded.Repair)),
 			}
-			if got := HarnessFeaturesCheck(run); got != want {
+			got := HarnessFeaturesCheck(run)
+			if got.Name != want.Name || got.Severity != want.Severity || got.Evidence != want.Evidence || harnessReportRepairString(got.Repair) != harnessReportRepairString(want.Repair) {
 				t.Fatalf("HarnessFeaturesCheck = %+v, want %+v", got, want)
 			}
 		})
@@ -357,8 +387,8 @@ func TestHarnessReportFeaturesPort(t *testing.T) {
 	if !strings.Contains(check.Evidence, "request_user_input") || !strings.Contains(check.Evidence, "Default mode") {
 		t.Fatalf("soft off evidence = %q, want what is lost", check.Evidence)
 	}
-	if check.Repair != "codex features enable default_mode_request_user_input" {
-		t.Fatalf("soft off repair = %q", check.Repair)
+	if harnessReportRepairString(check.Repair) != "codex features enable default_mode_request_user_input" {
+		t.Fatalf("soft off repair = %q", harnessReportRepairString(check.Repair))
 	}
 
 	// A missing HARD flag FAILs and points at the install verb that turns flags on.
@@ -366,8 +396,8 @@ func TestHarnessReportFeaturesPort(t *testing.T) {
 	if check.Severity != HarnessFail || !strings.Contains(check.Evidence, "goals") {
 		t.Fatalf("hard off = %+v, want a FAIL naming goals", check)
 	}
-	if check.Repair != "crw install features enable" {
-		t.Fatalf("hard off repair = %q, want the crw install verb", check.Repair)
+	if harnessReportRepairString(check.Repair) != "crw install features enable" {
+		t.Fatalf("hard off repair = %q, want the crw install verb", harnessReportRepairString(check.Repair))
 	}
 
 	// A hard flag off outranks a soft flag off.
@@ -475,14 +505,14 @@ func TestHarnessReportCorpusTextPort(t *testing.T) {
 	if want := "1/4 enabled; crw requires [multi_agent, goals]"; check.Evidence != want {
 		t.Fatalf("hard flag evidence = %q, want %q", check.Evidence, want)
 	}
-	if want := "crw install features enable"; check.Repair != want {
-		t.Fatalf("hard flag repair = %q, want %q", check.Repair, want)
+	if want := "crw install features enable"; harnessReportRepairString(check.Repair) != want {
+		t.Fatalf("hard flag repair = %q, want %q", harnessReportRepairString(check.Repair), want)
 	}
 	check = HarnessFeaturesCheck(HarnessRun{Status: harnessReportStatus(127), Stderr: "stub codex: not scripted"})
 	if want := "could not read 'codex features list' (exit 127): stub codex: not scripted"; check.Evidence != want {
 		t.Fatalf("unreachable evidence = %q, want %q", check.Evidence, want)
 	}
-	if want := "ensure the `codex` binary is on PATH, then re-run `crw doctor harness`"; check.Repair != want {
-		t.Fatalf("unreachable repair = %q, want %q", check.Repair, want)
+	if want := "ensure the `codex` binary is on PATH, then re-run `crw doctor harness`"; harnessReportRepairString(check.Repair) != want {
+		t.Fatalf("unreachable repair = %q, want %q", harnessReportRepairString(check.Repair), want)
 	}
 }

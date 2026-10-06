@@ -14,6 +14,7 @@ import (
 // that dangles and one whose bin/crw is not a regular executable file; a runtime reached whole is
 // landed.
 func TestLandedAtIsWhatAHostReaches(t *testing.T) {
+	t.Parallel()
 	dest := t.TempDir()
 	current := filepath.Join(dest, "current")
 	looping := filepath.Join(current, "bin-0.9.1-000000000000")
@@ -31,10 +32,7 @@ func TestLandedAtIsWhatAHostReaches(t *testing.T) {
 
 	runtime := filepath.Join(dest, "bin-0.9.0-000000000000")
 	crw := filepath.Join(runtime, "bin", Binary)
-	if err := os.MkdirAll(filepath.Dir(crw), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(crw, []byte("\x7fELF"), 0o644); err != nil {
+	if err := writeExecutable(crw, []byte("\x7fELF"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(current); err != nil {

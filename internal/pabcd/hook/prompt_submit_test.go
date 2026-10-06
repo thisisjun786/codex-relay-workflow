@@ -288,36 +288,57 @@ func TestPromptSubmitAppendTurnKeepsTheLastFifty(t *testing.T) {
 	}
 }
 
-// TestPromptSubmitOrchestrateCommandSeamIsNotHandled is the L3b seam (hook.ts:693-702): the chat
-// command is parsed here, its handler belongs to the successor unit, and an unhandled command falls
-// through to the loose path, which this unit leaves silent. The corpus command fixtures stay pending
-// until that unit lands.
-func TestPromptSubmitOrchestrateCommandSeamIsNotHandled(t *testing.T) {
+// TestPromptSubmitOrchestrateCommandSeamIsHandled is the L3b seam (hook.ts:693-702): the chat
+// command is parsed here and handed to its handler (prompt_orchestrate.go, CRW-385), which owns the
+// transition. A command the FSM refuses answers the refusal and moves no phase and writes no ledger;
+// an unhandled command (the goal-mode Interview suppression, and a bound D-close the successor unit
+// ports) still falls through to the loose path (hook.ts:755-771).
+func TestPromptSubmitOrchestrateCommandSeamIsHandled(t *testing.T) {
 	if command := fsm.ParseOrchestrateCommand("orchestrate A"); command == nil {
 		t.Fatal("the recorded command does not parse")
 	}
 	cwd := t.TempDir()
-	if answer := promptSubmitAnswer(t, cwd, "s1", "t1", "orchestrate A", true); answer != "" {
-		t.Errorf("an unhandled command answered %q", answer)
+	answer := promptSubmitAnswer(t, cwd, "s1", "t1", "orchestrate A", true)
+	if want := "[crw \u2014 refused: illegal transition IDLE->A]"; answer != want {
+		t.Errorf("the handler's refusal\n got %q\nwant %q", answer, want)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName)); err == nil {
-		t.Error("an unhandled command wrote state")
+	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle || s.OrchestrationActive {
+		t.Errorf("a refused command moved the phase: %+v", s)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName, "ledger.jsonl")); err == nil {
+		t.Error("a refused command appended a ledger entry")
 	}
 }
 
-// TestPromptSubmitTriggerAndGoalFirewallAreSilentHere pins what this unit does with the branches it
-// hands to the successor: a phase trigger injects nothing yet, and an interview trigger under an
-// active goal is suppressed (hook.ts:720-725) rather than injected. The discriminating assertion
-// belongs to the successor unit, which owns the trigger branch.
-func TestPromptSubmitTriggerAndGoalFirewallAreSilentHere(t *testing.T) {
-	for _, prompt := range []string{"Use crw-pabcd to start Plan phase", "Start crw-pabcd interview for the onboarding flow"} {
-		cwd := t.TempDir()
-		if answer := promptSubmitAnswer(t, cwd, "s1", "t1", prompt, true); answer != "" {
-			t.Errorf("%q answered %q", prompt, answer)
-		}
-		if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName)); err == nil {
-			t.Errorf("%q wrote state", prompt)
-		}
+// TestPromptSubmitTriggerBranchAndGoalFirewall is the boundary between this unit and the one that
+// owns the trigger branch (hook.ts:755-771). D2b wrote it as a placeholder that pinned "injects
+// nothing yet"; the successor unit replaced that half with the ported behaviour, so the assertions
+// now name what the boundary actually is: a phase trigger injects the advisory directive and still
+// moves no phase, and an interview trigger under an active goal is suppressed (hook.ts:720-725)
+// rather than injected.
+func TestPromptSubmitTriggerBranchAndGoalFirewall(t *testing.T) {
+	cwd := t.TempDir()
+	answer := promptSubmitAnswer(t, cwd, "s1", "t1", "Use crw-pabcd to start Plan phase", true)
+	if !strings.Contains(answer, "TRIGGER-AUTHORITY-01") {
+		t.Errorf("the trigger branch did not advise the phase: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle || s.OrchestrationActive {
+		t.Errorf("the trigger branch moved the phase: %+v", s)
+	}
+	// The goal-active firewall is the interview-trigger suppression at hook.ts:720-725; the branch
+	// that reaches the passive firewall under an active goal is the successor's own case.
+	dir := t.TempDir()
+	goalCwd := filepath.Join(dir, "ws")
+	if err := os.MkdirAll(goalCwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := sessionHookGoalsDB(t, filepath.Join(dir, "codex"),
+		"CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, goal_id TEXT NOT NULL, objective TEXT NOT NULL, status TEXT NOT NULL)",
+		"INSERT INTO thread_goals (thread_id, goal_id, objective, status) VALUES ('s2', 'g', 'obj', 'active')")
+	suppressed := PromptSubmitHandle(PromptSubmitPayload{Cwd: goalCwd, SessionID: "s2",
+		Prompt: "Start crw-pabcd interview for the onboarding flow", TurnID: "t1", PabcdEnabled: true}, "", promptTriggerGoalEnv(home))
+	if suppressed != "" {
+		t.Errorf("an active goal did not suppress the interview trigger: %q", suppressed)
 	}
 }
 

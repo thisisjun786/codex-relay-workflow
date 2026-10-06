@@ -14,6 +14,7 @@ func (k *releaseKit) decide(in DecisionInput) (DecisionResult, error) {
 
 // A decision edge opens only on a recorded decision with the digest the plan fixed, by an authority the edge names (authority text opaque, D-09). Recording is not authority.
 func TestDecisionEdges(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("dp", 0, "dp-r1", addRelNode("D", dag.NodeNonPR), addRelNode("L", dag.NodeNonPR), addEdge("dl", "D", "L", dag.EdgeDecision, nil))
 	subject, digest := "merge holds", dig("subject dl")
@@ -59,6 +60,7 @@ func TestDecisionEdges(t *testing.T) {
 }
 
 func TestRecordDecisionRefusals(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("dp", 0, "dp-r1", addRelNode("D", dag.NodeNonPR), addRelNode("L", dag.NodeNonPR), addEdge("dl", "D", "L", dag.EdgeDecision, nil))
 	ok := DecisionInput{Subject: "merge holds", Digest: dig("x"), Disposition: "approved", AuthorityKind: "owner", AuthorityRef: "r"}

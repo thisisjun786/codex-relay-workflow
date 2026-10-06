@@ -11,6 +11,7 @@ import (
 // JSON value: the answers (a finite number of seconds, or none) are checked against the golden,
 // which began as the Python package's answers, never a table written here.
 func TestHostTimeReadsEveryValueAsTheFence(t *testing.T) {
+	t.Parallel()
 	values := []string{
 		`1789420929`, `1789420929.5`, `-0`, `0`, `1e400`, `-1e400`, `1e-400`, `9007199254740993`, `1` + strings.Repeat("0", 400),
 		`true`, `false`, `null`, `[1]`, `{"at": 1}`,

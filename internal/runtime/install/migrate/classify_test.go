@@ -18,6 +18,15 @@ func invLink(t *testing.T, path, target string) {
 	}
 }
 
+// invRootStamp renders a directory's own type, mode and mtime. The shared fingerprint helper skips the directory it is
+// given (publish_test.go), so a test that must prove the directory itself is untouched compares this stamp beside it.
+func invRootStamp(t *testing.T, path string) string {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	must(t, err)
+	return fi.Mode().String() + " " + fi.ModTime().String()
+}
+
 func TestClassifyLockRefusals(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -32,7 +41,7 @@ func TestClassifyLockRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			ws, src, dst := invRowProject(t)
 			entries := map[string]string{
-				"sessions/rec-1.json":           "{}",
+				"sessions/rec-1.json":           "{\"phase\":\"P\"}",
 				"goalplans/rec-1/goalplan.json": "{}",
 				"dispatches/rec-1/d-1.json":     invDispatch("d-1", "complete", "complete"),
 			}
@@ -71,18 +80,18 @@ func TestClassifySubtreeRootRefusals(t *testing.T) {
 		want  Reason
 	}{
 		{"copy root is a link", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 			invLink(t, filepath.Join(src, "plan"), filepath.Join(ws, "elsewhere"))
 		}, ReasonLink},
 		{"skipped root is a link", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 			invLink(t, filepath.Join(src, "release"), filepath.Join(ws, "elsewhere"))
 		}, ReasonLink},
 		{"copy root is a file", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}", "plan/rec-1": "not a directory"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}", "plan/rec-1": "not a directory"})
 		}, ReasonNotDirectory},
 		{"skipped root is a file", func(t *testing.T, src, ws string) {
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}", "release": "not a directory"})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}", "release": "not a directory"})
 		}, ReasonNotDirectory},
 	}
 	for _, c := range cases {
@@ -98,7 +107,7 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	ws, src, dst := invRowProject(t)
 	invTree(t, src, map[string]string{
 		"plan/rec-1/draft.tmp": "ordinary plan data",
-		"sessions/rec-1.json":  "{}",
+		"sessions/rec-1.json":  "{\"phase\":\"P\"}",
 		"sessions/rec-1.json.1234.aabbccdd-eeff-0011-2233-445566778899.tmp": "half a write",
 		"sessions/" + invOldTemp: "an older run's temporary",
 	})
@@ -115,7 +124,12 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	}
 	// A temporary of an older run that sits where this run's destination is is reported too, and stays untouched.
 	invTree(t, dst, map[string]string{"sessions/" + invOldTemp: "left over"})
-	invTree(t, src, map[string]string{"sessions/rec-2.json": "{}"})
+	// dst/sessions holds nothing but that temporary, so a fingerprint of the directory is the temporary file's own
+	// content, mode and mtime. Captured before the classification and compared after it, it proves the run neither
+	// rewrote nor retimed the temporary (the Lstat below only proves it was not removed).
+	beforeTemp := fingerprint(t, filepath.Join(dst, "sessions"))
+	beforeDestRoot := invRootStamp(t, filepath.Join(dst, "sessions"))
+	invTree(t, src, map[string]string{"sessions/rec-2.json": "{\"phase\":\"P\"}"})
 	p2, err := invClassify(t, Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
 	it := invWant(t, p2, ScopeProject, "", DispSkip)
@@ -125,12 +139,18 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dst, "sessions", invOldTemp)); err != nil {
 		t.Errorf("the older-run temporary was touched: %v", err)
 	}
+	if after := fingerprint(t, filepath.Join(dst, "sessions")); after != beforeTemp {
+		t.Errorf("classification changed the destination temporary:\nbefore: %q\nafter:  %q", beforeTemp, after)
+	}
+	if after := invRootStamp(t, filepath.Join(dst, "sessions")); after != beforeDestRoot {
+		t.Errorf("classification changed the destination directory: before %q, after %q", beforeDestRoot, after)
+	}
 }
 
 func TestClassifyUnknownChildren(t *testing.T) {
 	ws, src, _ := invRowProject(t)
 	invTree(t, src, map[string]string{
-		"sessions/rec-1.json":         "{}",
+		"sessions/rec-1.json":         "{\"phase\":\"P\"}",
 		"sessions/extra.txt":          "unknown",
 		"evidence-attempts/x.txt":     "unknown",
 		"evidence-unrecordable/x.txt": "unknown",
@@ -171,7 +191,7 @@ func TestClassifyRecords(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ws, src, dst := invRowProject(t)
-			entries := map[string]string{"sessions/rec-1.json": "{}"}
+			entries := map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"}
 			for k, v := range c.entries {
 				entries[k] = v
 			}
@@ -219,6 +239,8 @@ func TestClassifyDestinationConflicts(t *testing.T) {
 			".crw-install.json":       "another install record",
 			"config.toml":             "cfg",
 		})
+		before := fingerprint(t, c)
+		beforeRoot := invRootStamp(t, c)
 		r, err := Open(Options{Scope: ScopeCodex, CodexHome: c})
 		must(t, err)
 		defer r.Close()
@@ -227,12 +249,18 @@ func TestClassifyDestinationConflicts(t *testing.T) {
 		if !errors.As(err, &ref) || ref.Reason != ReasonDiffers {
 			t.Fatalf("classify = %v (%v), want a differing refusal", p, err)
 		}
+		if fingerprint(t, c) != before {
+			t.Error("the destination conflict refusal wrote into the codex home")
+		}
+		if after := invRootStamp(t, c); after != beforeRoot {
+			t.Errorf("the destination conflict refusal changed the codex home root: before %q, after %q", beforeRoot, after)
+		}
 	})
 }
 
 func TestClassifyUnsupportedName(t *testing.T) {
 	ws, src, dst := invRowProject(t)
-	invTree(t, src, map[string]string{"sessions/bad\nname.json": "{}"})
+	invTree(t, src, map[string]string{"sessions/bad\nname.json": "{\"phase\":\"P\"}"})
 	invRowRefusal(t, ws, src, dst, ReasonUnsupported)
 }
 
@@ -260,7 +288,7 @@ func TestClassifyAllScope(t *testing.T) {
 	base := isolate(t)
 	ws := filepath.Join(base, "ws")
 	mkdirs(t, ws)
-	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{}"})
+	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
 	invTree(t, filepath.Join(base, "eu"), map[string]string{"subagents.json": "{}"})
 	mkdirs(t, filepath.Join(base, "ev"))
 	invTree(t, filepath.Join(base, "ec"), map[string]string{"config.toml": "cfg"})
@@ -270,4 +298,31 @@ func TestClassifyAllScope(t *testing.T) {
 	invWant(t, p, ScopeProject, "sessions/rec-1.json", DispCopy)
 	invWant(t, p, ScopeUser, "subagents.json", DispCopy)
 	invWant(t, p, ScopeCodex, "config.toml", DispSkip)
+}
+
+// TestClassifyAllScopeOrder proves the selected scope is classified in the fixed order project -> user -> codex, with
+// each root's container item first, by asserting the whole ordered item sequence of a ScopeAll walk. TestClassifyAllScope
+// only checks inclusion, and TestClassifyDeterminism only checks that no scope appears out of group order, so neither
+// pins the order of the roots' own items.
+func TestClassifyAllScopeOrder(t *testing.T) {
+	base := isolate(t)
+	ws := filepath.Join(base, "ws")
+	mkdirs(t, ws)
+	invTree(t, filepath.Join(ws, ProjectSourceName), map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}"})
+	invTree(t, filepath.Join(base, "eu"), map[string]string{"subagents.json": "{}"})
+	mkdirs(t, filepath.Join(base, "ev"))
+	invTree(t, filepath.Join(base, "ec"), map[string]string{"config.toml": "cfg"})
+	p, err := invClassify(t, Options{Scope: ScopeAll, Cwd: ws, FromHome: filepath.Join(base, "eu"),
+		ToHome: filepath.Join(base, "ev"), CodexHome: filepath.Join(base, "ec")})
+	must(t, err)
+	// The project root and the user root each emit their container item first; the project "sessions" directory is a
+	// traversed container, so it is reported before its child; the Codex root maps only a leaf, so it has no container.
+	want := []string{
+		"project:.", "project:sessions", "project:sessions/rec-1.json",
+		"user:.", "user:subagents.json",
+		"codex:config.toml",
+	}
+	if got := invSources(p); !reflect.DeepEqual(got, want) {
+		t.Errorf("all-scope item order = %v, want %v", got, want)
+	}
 }

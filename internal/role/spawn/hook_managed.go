@@ -136,7 +136,7 @@ func spawnHookManaged(a *spawnHookAssembly, sources []spawnDispatchSource) (stri
 	}
 	message := "dispatch header does not match its configured role"
 	if dispatchError != nil {
-		message = dispatchError.Error()
+		message = spawnParityNodeError(dispatchError)
 	}
 	return DenyEnvelope("managed dispatch: " + message), true
 }
