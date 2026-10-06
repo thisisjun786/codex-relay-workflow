@@ -13,8 +13,12 @@ import (
 // the record still points at it (this is how the two lone-surrogate cases were wrong: their input held
 // a literal backslash rather than a surrogate escape, so both sides read the same text). The check
 // runs the Go side only, against each case's own stored oracle answer, so it needs no Node.
+//
+// It covers the three targets this issue owns. A sibling issue's target carries its own check, so a
+// bogus case there fails that issue's work rather than this one's (this package is shared, but the
+// targets and their cases are not).
 func TestPinnedDivergencesAreRealDivergences(t *testing.T) {
-	for _, name := range []string{"pyjson", "state", "goalplan"} {
+	for _, name := range shimTargets() {
 		target, ok := Lookup(name)
 		if !ok {
 			t.Fatalf("%s is not registered", name)
