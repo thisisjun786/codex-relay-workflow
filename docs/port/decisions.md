@@ -5380,6 +5380,12 @@ Sources for the two rules, read 2026-10-06: "About required status checks"
 and the reusable the merge queue availability sentence comes from,
 `data/reusables/gated-features/merge-queue.md`
 (<https://github.com/github/docs/blob/main/data/reusables/gated-features/merge-queue.md>).
+The dispatch `ref` rule and the merge ref a pull request run tests come from "Create a
+workflow dispatch event"
+(<https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event>, the
+`ref` is "a branch or tag name") and "Events that trigger workflows"
+(<https://docs.github.com/en/actions/reference/events-that-trigger-workflows>, a
+`pull_request` run's merge commit on the pull request's merge branch).
 
 ### Question 1 — how each member head earns its `dev-gate`
 
@@ -5400,7 +5406,7 @@ the estimates that use them say so.
 
 | Option | Every landing tree had all jobs succeed on that same tree | Trust path | One issue one PR | Today's lane for one candidate / after a red batch | Lane CI per merge, and the cap | What it changes |
 | --- | --- | --- | --- | --- | --- | --- |
-| (a) tree-keyed result reuse in CI | Yes. The reuse accepts a tree only where this repository's own `ci.yml` ran every job to success, and the member head is proved tree-identical to it. | One, bounded by the criterion: this repository's workflow runs only; fork runs excluded; no relay or client record is evidence. | Kept. | Unchanged / falls back to the lane. | About 1.0 long run plus a short range-only run per merge, and 1.0 dev push; the cap rises from about 10 to about 16 an hour at k=2. | CI-control change and a POLICY reading; Jun. |
+| (a) tree-keyed result reuse in CI | Yes. The reuse accepts a tree only where this repository's own `ci.yml` ran every job to success on a commit whose tree the relay reads itself, and the member head is proved tree-identical to it. | One, bounded by the criterion: this repository's workflow runs only, and only runs whose tested commit is exactly the commit the run reports (a `workflow_dispatch` or `push` run, not a `pull_request` run); fork runs excluded; no relay or client record is evidence. | Kept. | Unchanged / falls back to the lane. | About 1.0 long run plus a short range-only run per merge, and 1.0 dev push; the cap rises from about 10 to about 16 an hour at k=2. | CI-control change and a POLICY reading; Jun. |
 | (b) strict off, procedural landing proof | No. The guarantee moves from the server to a procedure, and an out-of-lane landing silently breaks it (3 of 21 merges on 2026-10-02). | None new, but the gate itself is weaker. | Kept. | Changed: the check no longer enforces currency. | About 1.0 + 1.0 = 2.0; the cap stops being CI-bound. | Ruleset and POLICY; Jun. |
 | (c) organization transfer, native merge queue | Yes, server-enforced on the merge group. | None. | Kept. | Unchanged / the queue owns the batch. | 1.0 merge_group + 1.0 dev push = 2.0; capacity about 2 x 10 = 20 an hour (runner-bound). | Repository transfer, Go module path, `release.yml` owner check, ruleset, Devin and Linear reconnection; Jun. |
 | (d) no train, shorter CI | Yes, unchanged. | None. | Kept. | Unchanged. | 2.6 unchanged; the leg rebalance lowers S0, so the cap rises from about 10 to about 12 an hour. | The CI test leg rebalance node owns it; no decision here. |
@@ -5418,16 +5424,24 @@ then has to be resolved before the merge (`required_review_thread_resolution: tr
 
 What the reuse trusts, exactly, and the sub-questions the issue names:
 
-- Only runs of this repository's own `.github/workflows/ci.yml` on a commit whose tree is
-  identical to the candidate's. A `pull_request` run from a fork is excluded, because the
-  workflow it ran is the fork's. A run that GitHub reports as `workflow_dispatch` is
-  admitted, a `pull_request` run is admitted, and a `push` run to `dev` is admitted as
-  evidence about a tree and never as a release artifact: a reused `dev-gate` is labeled
-  reused and is not the dev push run a release needs (`POLICY.md`, release section).
+- Only runs of this repository's own `.github/workflows/ci.yml` whose **tested commit is
+  known exactly**. A `pull_request` run is **not** a source: it tests
+  `refs/pull/<number>/merge`, the merge of the head into its base, and the runs API reports
+  `head_sha`, the pull request head, so when the head did not contain the base tip at that
+  moment the reported commit's tree is not the tree the run tested. Measured on run 37414778712:
+  `head_sha` is `0dc060c9` (the pull request head) while the run tested merge commit
+  `67e27cdb`, whose tree differs. The admitted sources are therefore a `workflow_dispatch`
+  run and a `push` run, whose reported `head_sha` is the commit the run checked out. A run
+  from a fork is excluded, because the workflow it ran is the fork's. A `push` run to `dev`
+  is admitted as evidence about a tree and never as a release artifact: a reused `dev-gate`
+  is labeled reused and is not the dev push run a release needs (`POLICY.md`, release
+  section).
 - The workflow file is inside the tree, so a tree-identical commit runs the same workflow;
   the reuse cannot certify a tree whose workflow differs from the one that ran.
-- The comparison is the tree object id of the commit, read from the forge API; a head the
-  relay cannot read, or a run whose commit it cannot read, is a refusal, not a reuse.
+- The comparison is the tree object id of the commit, read by the relay itself from the forge
+  API and never taken from a caller's statement; a head the relay cannot read, a run whose
+  commit it cannot read, or a run whose tested commit is not exactly its reported `head_sha`,
+  is a refusal, not a reuse.
 - The reuse covers the jobs whose outcome is a function of the tree, which is the whole
   `go-product` matrix. `validate` and `secrets` judge a commit range, not a tree, so they
   re-run on the member's own head and are cheap. Splitting `validate`'s range-determined
@@ -5478,11 +5492,18 @@ live turn per target, and a second request naming another pull request is refuse
   while a train is forming waits for the next train, because inserting it would change the
   prefix trees already being verified.
 - The parent holding the head-of-line turn is the train's leader. It does the mechanical work
-  the lane already gives it for its own candidate — build the prefix commits and dispatch
-  `ci.yml` on each — because it already holds the target's turn and lands first. Each prefix
-  goes to its own staging ref (`refs/crw-train/<train_id>/<seq>`), not one shared ref: the
-  workflow's concurrency group is keyed on `github.ref` for a push, so two prefixes on one
-  ref would cancel each other's run (`.github/workflows/ci.yml:13-17`).
+  the lane already gives it for its own candidate — build the prefix commits and start a run
+  on each — because it already holds the target's turn and lands first. Each prefix goes to
+  its own **branch** `refs/heads/crw-train/<train_id>/<seq>`, not one shared ref: the
+  workflow's concurrency group is keyed on `github.ref` for a dispatch run, so two prefixes
+  on one ref would cancel each other's run (`.github/workflows/ci.yml:13-17`). It must be a
+  branch and not a bare ref: GitHub's "Create a workflow dispatch event" takes a `ref` that
+  is "a branch or tag name", so `refs/crw-train/<train_id>/<seq>` could start no run at all.
+  The leader creates the branch when it opens the train, starts the run on it with a
+  `workflow_dispatch` call naming that branch as `ref` (a push to it triggers nothing, since
+  the workflow's `push` trigger names only `dev`), and deletes the branch when the train
+  closes, landed or abandoned. No ruleset covers `crw-train/*`, so the branch is unprotected
+  and is never a target for a pull request.
 - Every member's own parent still runs its own `merge-turn-check` and `merge-turn-land` on
   its own head. The train is a shared verification record, not an owner; it neither merges
   nor speaks for another parent's pull request.
@@ -5548,11 +5569,23 @@ frozen table or updates an immutable row:
   `internal/relay/argparse/specs.json` beside `merge-turn-request` (`specs.json:594`):
   `merge-train-open --turn <the leader's turn> --actor --base-sha <D> --member <pr>...`;
   `merge-train-verify --train --actor --seq --check <check_id> --prefix-head --prefix-tree
-  --run`, which requires `--actor` to equal the train's `leader_task_id` and is refused
-  `disposition_conflict` otherwise, so only the head-of-line parent advances the shared
-  record; `merge-train-close --train --actor --state <done|abandoned> --reason`, whose
+  --run`; `merge-train-close --train --actor --state <done|abandoned> --reason`, whose
   `--state` is the event kind it appends and not a column; and `merge-train-show --train`,
   which derives the state from the newest event.
+  `merge-train-verify` requires `--actor` to equal the train's `leader_task_id` and is
+  refused `disposition_conflict` otherwise, so only the head-of-line parent advances the
+  shared record. It does not trust what that caller states: it **reads the run and the prefix
+  commit itself** and uses `--prefix-head`, `--prefix-tree` and `--run` only as cross-checks.
+  It reads the run from the forge and requires that it is this repository's `ci.yml`, not a
+  fork's workflow, that its event is one the reuse admits (`workflow_dispatch` or `push` per
+  Question 1), that its reported `head_sha` equals the `--prefix-head` the caller named, and
+  that every job of its newest attempt is a success; it reads the prefix commit's tree from
+  the forge as well. A run it cannot read, or a prefix commit it cannot read, is
+  `merge_target_unreadable`; a run of another workflow, a run from a fork, a run whose
+  `head_sha` is not the stated prefix head, a run with a job that is not a success on its
+  newest attempt, or a tree that differs from the stated `--prefix-tree`, is
+  `disposition_conflict` and appends no event. The `verified` event it appends therefore
+  records the tree the relay read, not the tree a caller claimed.
 
 The DAG lane is unchanged: `dag-accept` still records the head the forge shows, the merge
 judge still reads the member's jobs on that head (green by reuse, so `eligible` rather than
@@ -5563,9 +5596,11 @@ proves.
 ### Decisions left to Jun
 
 1. **The CI-control change (recommended).** Approve the tree-keyed reuse in
-   `.github/workflows/ci.yml`: the reuse lookup, its exclusion of fork runs, its labeling of
-   a reused `dev-gate`, and the POLICY sentence that names a reused result as evidence about
-   a landing tree but never as the dev push run a release needs.
+   `.github/workflows/ci.yml`: the reuse lookup, its admission of only `workflow_dispatch`
+   and `push` runs (never a `pull_request` run, whose reported `head_sha` is not the commit
+   it tested), its exclusion of fork runs, its labeling of a reused `dev-gate`, and the
+   POLICY sentence that names a reused result as evidence about a landing tree but never as
+   the dev push run a release needs.
 2. **Or the organization transfer instead.** If Jun prefers a server-native mechanism, take
    (c): transfer the repository to an organization, then add the `merge_queue` rule. That
    raises the Go module path question (at this baseline 629 non-test Go files import
@@ -5599,13 +5634,22 @@ it is built.
    `prefix_tree` is `merge_candidate_moved` and writes no check row; a landing whose tree
    differs is refused and writes nothing; a train whose base moved is `disposition_conflict`;
    a second request naming another pull request is still `disposition_conflict`; a batch of
-   one is today's lane. Green controls: an unchanged single-candidate turn, a turn that is
-   not a member, and a train whose members land in order.
+   one is today's lane; `merge-train-verify` with a stated tree that differs from the tree
+   the relay reads from the forge is `disposition_conflict` and appends no event; a run of
+   another workflow, a run from a fork, a run whose `head_sha` is not the stated prefix head,
+   and a run with a job that is not a success on its newest attempt are each refused and
+   append no event; a run or prefix commit the relay cannot read is
+   `merge_target_unreadable`. Green controls: an unchanged single-candidate turn, a turn
+   that is not a member, a train whose members land in order, and a `workflow_dispatch` run
+   whose stated values agree with what the relay reads.
 3. **The tree-keyed CI reuse** (`.github/workflows/ci.yml` and whatever the lookup needs).
    Red first: a tree this repository never verified is not reused and the test legs run; a
-   fork pull request run is not a source; a reused `dev-gate` is labeled reused and the
-   release check that reads a dev push run refuses it. Green controls: the existing
-   `pull_request` and `push` runs, and a manual dispatch. This slice waits on Jun's decision.
+   fork run is not a source; a `pull_request` run on a head that did not contain the base tip
+   is not a source for that head's tree, because the run tested `refs/pull/<number>/merge`
+   and reported the head as `head_sha`; a reused `dev-gate` is labeled reused and the release
+   check that reads a dev push run refuses it. Green controls: a `push` run to `dev` and a
+   `workflow_dispatch` run, whose reported `head_sha` is the commit they checked out. This
+   slice waits on Jun's decision.
 4. **The parent procedure** (`plugins/crw/skills/crw-run/references/merge-readiness.md`,
    beside "Refresh the base yourself when only the base moved", `:824`) and the operator
    page under `docs/relay/`. Red first is a scenario review: a leader forming a train of two,
