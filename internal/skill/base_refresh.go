@@ -262,6 +262,28 @@ func (g *refreshGit) iso(ctx context.Context, extraEnv []string, args ...string)
 	return gitAt(ctx, append(append([]string{}, g.isoEnv...), extraEnv...), append([]string{"--git-dir=" + g.gitdir}, args...)...)
 }
 
+// isoRun is iso for a caller that reads a command's standard output and feeds it standard input,
+// with the same isolated environment: no configuration, hooks, attributes, replace objects or
+// inherited GIT_* variables. The proof of a version reads the payload through it, so the version is
+// derived from the same view of the objects as everything else the proof read.
+func (g *refreshGit) isoRun(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir=" + g.gitdir}, args...)...)
+	cmd.Env = g.isoEnv
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return nil, fmt.Errorf("git %s: exit %d: %s", strings.Join(args, " "), exit.ExitCode(), strings.TrimSpace(stderr.String()))
+		}
+		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return stdout.Bytes(), nil
+}
+
 // resolve reads a revision as a revision, never as an option, and returns the full commit it names.
 func (g *refreshGit) resolve(ctx context.Context, rev string) (string, error) {
 	_, out, err := gitAt(ctx, g.env, "-C", g.checkout, "rev-parse", "--verify", "--end-of-options", rev+"^{commit}")

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -334,20 +335,72 @@ func TestBusinessResendIDStability(t *testing.T) {
 // neither method, so the unload tests wrap them with this.
 type businessResendUnloadApp struct {
 	Adapter
-	host           *scriptedApp
-	archiveErr     error
-	unarchiveErr   error
-	onUnarchive    func()
-	stayLoaded     bool
-	archiveCalls   []string
-	unarchiveCalls []string
+	host         *scriptedApp
+	archiveErr   error
+	unarchiveErr error
+	onUnarchive  func()
+	stayLoaded   bool
+	// archiveLostReply models an archive that applied and whose reply was lost: the call returns
+	// an error, but the child is left archived and unloaded, so the archived listing confirms it
+	// and an unarchive restores it. archivedListing overrides what the archived page answers
+	// ("incomplete" or "error"), and onArchivedList runs on each archived page the reply check
+	// asks for.
+	archiveLostReply bool
+	archivedListing  string
+	onArchivedList   func()
+	archived         map[string]bool
+	listingCalls     int
+	archiveCalls     []string
+	unarchiveCalls   []string
+}
+
+func (a *businessResendUnloadApp) markArchived(id string, archived bool) {
+	if a.archived == nil {
+		a.archived = map[string]bool{}
+	}
+	if archived {
+		a.archived[id] = true
+		return
+	}
+	delete(a.archived, id)
+}
+
+func (a *businessResendUnloadApp) archivedPage() (map[string]any, error) {
+	a.listingCalls++
+	if a.onArchivedList != nil {
+		a.onArchivedList()
+	}
+	switch a.archivedListing {
+	case "incomplete":
+		return map[string]any{"data": "bad"}, nil
+	case "error":
+		return nil, errors.New("thread/list: host refused")
+	}
+	data := []any{}
+	for _, known := range a.host.order {
+		if a.archived[known] {
+			data = append(data, map[string]any{"id": known})
+		}
+	}
+	return map[string]any{"data": data}, nil
 }
 
 func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	id := pyjson.Text(params["threadId"])
 	switch method {
+	case "thread/list":
+		if params["archived"] == true {
+			return a.archivedPage()
+		}
 	case "thread/archive":
 		a.archiveCalls = append(a.archiveCalls, id)
+		if a.archiveLostReply {
+			a.markArchived(id, true)
+			if !a.stayLoaded {
+				a.host.threads[id].status = "notLoaded"
+			}
+			return nil, errors.New("thread/archive: reply lost")
+		}
 		if a.archiveErr != nil {
 			return nil, a.archiveErr
 		}
@@ -363,6 +416,7 @@ func (a *businessResendUnloadApp) HostCall(ctx context.Context, method string, p
 		if a.unarchiveErr != nil {
 			return nil, a.unarchiveErr
 		}
+		a.markArchived(id, false)
 		return map[string]any{}, nil
 	}
 	return a.Adapter.HostCall(ctx, method, params)
@@ -537,5 +591,181 @@ func TestBusinessResendUnloadRecordsArchivedChildWhenCancelled(t *testing.T) {
 	}
 	if !strings.Contains(detail, "t-1") || !strings.Contains(detail, "thread/unarchive t-1") {
 		t.Fatalf("cancelled unload detail: %s", detail)
+	}
+}
+
+// businessResendUnloadDetail is the single managed_resend_unloaded row's detail.
+func businessResendUnloadDetail(t *testing.T, k *reconcileKit) string {
+	t.Helper()
+	var detail string
+	if err := k.start.Store.DB.QueryRow("SELECT detail FROM journal WHERE kind='managed_resend_unloaded'").Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	return detail
+}
+
+// An archive that applied but whose reply was lost leaves the child archived. The gate asks the
+// host once, sees it in the archived listing, and continues exactly as after a successful archive:
+// one unarchive, one journal row naming the lost reply, then the resend.
+func TestBusinessResendUnloadRecoversLostArchiveReply(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveLostReply: true}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	got := k.run()
+	if got["state"] != "admitted" || got["businessTurnId"] != "business" {
+		t.Fatalf("lost archive reply did not recover: %v %v", got["state"], got["reason"])
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("archive/unarchive exactly once: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+	if !reflect.DeepEqual(k.host.threads["t-1"].turns, []string{"standby", "business"}) {
+		t.Fatalf("business turn count: %v", k.host.threads["t-1"].turns)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+		t.Fatalf("unload journal rows: %d", n)
+	}
+	detail := businessResendUnloadDetail(t, k)
+	if !strings.Contains(detail, `"archive":"reply_lost"`) || !strings.Contains(detail, `"unarchive":"ok"`) || !strings.Contains(detail, `"attempt":1`) {
+		t.Fatalf("lost archive reply detail: %s", detail)
+	}
+}
+
+// The reply-lost recovery is still one lowering per business attempt: a replay reconstructs the
+// same attempt from the retained failure, and the row the first lowering wrote stops the second.
+func TestBusinessResendUnloadLostArchiveReplyIsBoundedPerAttempt(t *testing.T) {
+	k, business, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveLostReply: true, stayLoaded: true}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	for range 2 {
+		k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	}
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || !reflect.DeepEqual(app.unarchiveCalls, []string{"t-1"}) {
+		t.Fatalf("replay lowered the child again: %v %v", app.archiveCalls, app.unarchiveCalls)
+	}
+	if k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+		t.Fatal("still loaded child was resent")
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+		t.Fatalf("unload journal rows: %d", n)
+	}
+}
+
+// An archive error the host does not confirm as applied keeps today's answer: the child is not in
+// the archived listing, the listing is incomplete, or the listing read fails, and in every case
+// there is no unarchive, no row and no send.
+func TestBusinessResendUnloadLostArchiveReplyUnconfirmedHolds(t *testing.T) {
+	for _, c := range []struct {
+		name            string
+		archivedListing string
+	}{
+		{"not-archived", ""},
+		{"listing-incomplete", "incomplete"},
+		{"listing-error", "error"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k, _, _ := businessResendKit(t)
+			app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveErr: errors.New("thread/archive: host refused"), archivedListing: c.archivedListing}
+			k.start.Adapter = app
+			k.host.threads["t-1"].status = "idle"
+			for range 2 {
+				k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+			}
+			if len(app.unarchiveCalls) != 0 || k.host.sent != 0 || len(k.host.sends) != 0 {
+				t.Fatalf("unconfirmed lost reply unarchived or sent: %v sent=%d", app.unarchiveCalls, k.host.sent)
+			}
+			if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+				t.Fatalf("unconfirmed lost reply wrote %d unload rows", n)
+			}
+		})
+	}
+}
+
+// A lost archive reply the host confirms, followed by two failed unarchives, answers
+// lifecycle_unknown and records the archived thread for an operator, as the success path does.
+func TestBusinessResendUnloadLostArchiveReplyUnarchiveErrorHolds(t *testing.T) {
+	k, business, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveLostReply: true, unarchiveErr: errors.New("thread/unarchive: host refused")}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	k.expect(k.run(), "incomplete", "lifecycle_unknown", "")
+	if !reflect.DeepEqual(app.archiveCalls, []string{"t-1"}) || len(app.unarchiveCalls) != 2 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+		t.Fatalf("lost reply unarchive retry/withhold: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+	}
+	detail := businessResendUnloadDetail(t, k)
+	if !strings.Contains(detail, `"archive":"reply_lost"`) || !strings.Contains(detail, "thread/unarchive t-1") {
+		t.Fatalf("lost reply unarchive failure detail: %s", detail)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 1 {
+		t.Fatalf("unload journal rows: %d", n)
+	}
+}
+
+// A cancellation that lands during the archive-reply check is reported as the context error, not
+// as a hold: the check's outcome never overrides a cancelled context.
+func TestBusinessResendUnloadLostArchiveReplyCancelledDuringCheck(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveErr: errors.New("thread/archive: cancelled")}
+	app.onArchivedList = cancel
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	r := &startRun{m: k.start, task: "t-1", standby: "standby", businessAttempt: 1, resendFailure: businessResendLegacyReceipt("t-1"), identity: Identity{RequestID: "managed-1"}, ledger: k.host.ledger}
+	if code, err := r.businessResendUnload(ctx); code != "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled reply check: %q %v", code, err)
+	}
+	if len(app.unarchiveCalls) != 0 {
+		t.Fatalf("cancelled check unarchived: %v", app.unarchiveCalls)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+		t.Fatalf("cancelled check wrote %d unload rows", n)
+	}
+}
+
+// A failure the host answered with its own JSON-RPC error response is this call being refused, not
+// an uncertain outcome: another client may have archived the child first, so this invocation did
+// not apply the archive. The archived listing is never asked, nothing is unarchived and no row is
+// written, even when the listing would show the child archived.
+func TestBusinessResendUnloadHostRefusedArchiveHolds(t *testing.T) {
+	k, business, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveErr: &appserver.RPCError{Method: "thread/archive", Code: -32603, Message: "no rollout found"}}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	app.markArchived("t-1", true)
+	for range 2 {
+		k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	}
+	if len(app.archiveCalls) != 2 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+		t.Fatalf("host-refused archive touched the thread: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+	}
+	if app.listingCalls != 0 {
+		t.Fatalf("host-refused archive asked the archived listing %d times", app.listingCalls)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+		t.Fatalf("host-refused archive wrote %d unload rows", n)
+	}
+}
+
+// The unload archives only a child whose history is exactly its standby turn, so no sub-thread can
+// exist to be carried into the archive. This is the constraint the gate pins: a history with any
+// other turn never reaches thread/archive. Widening the precondition beyond the standby-only
+// history would need the childcleanup sub-thread check before the archive; nothing here inspects
+// sub-threads today.
+func TestBusinessResendUnloadNeverArchivesNonStandbyHistory(t *testing.T) {
+	k, _, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host}
+	k.start.Adapter = app
+	k.host.threads["t-1"].turns = []string{"standby", "other"}
+	k.host.threads["t-1"].status = "idle"
+	for range 2 {
+		k.expect(k.run(), "refused", "business_identity_unobserved", "")
+	}
+	if len(app.archiveCalls) != 0 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 {
+		t.Fatalf("non-standby history reached the archive: %v %v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+		t.Fatalf("non-standby history wrote %d unload rows", n)
 	}
 }
