@@ -58,6 +58,44 @@ func TestConfigSetTakesTheConfigLock(t *testing.T) {
 	}
 }
 
+// The manifest that decides the edit is read inside the lock, not from the copy the command saw
+// before it started waiting: a writer that publishes while this command waits must be seen, so the
+// restore cannot be computed from a manifest a concurrent writer has already replaced (failure
+// class 3, the check-then-act race). The two manifests disagree on the recorded prior value, and
+// the resulting config.toml tells which one decided.
+func TestConfigSetReadsTheManifestInsideTheLock(t *testing.T) {
+	home, path := configSetHome(t, "[memories]\ndedicated_tools = true\n", true)
+	// Before the lock: the key was set from "false", so an unset would restore that value.
+	stale := configSetManifest(t, home)
+	prior := "false"
+	stale.TableKeys[configSetKey] = TableKeyRecord{"memories", "dedicated_tools", &prior, "true", true}
+	deactivationSaveManifest(t, home, stale)
+
+	held := configLockWritersHold(t, path)
+	started := make(chan struct{})
+	done := make(chan ConfigSetOutcome, 1)
+	go func() {
+		close(started)
+		r, _ := ApplyManagedKey(ConfigSetDeps{CodexHome: home, ConfigPath: path}, configSetKey, nil)
+		done <- r
+	}()
+	<-started
+	time.Sleep(200 * time.Millisecond) // the command is waiting on the lock now
+	// While it waits, another writer publishes: this key was set from an absent value.
+	fresh := configSetManifest(t, home)
+	fresh.TableKeys[configSetKey] = TableKeyRecord{"memories", "dedicated_tools", nil, "true", true}
+	deactivationSaveManifest(t, home, fresh)
+	held.Release()
+
+	r := <-done
+	if !r.OK || r.AppliedValue != "(absent)" || r.PriorValue != nil {
+		t.Fatalf("outcome %+v", r)
+	}
+	if got := activationRead(t, path); strings.Contains(got, "dedicated_tools") {
+		t.Fatalf("the manifest read before the lock decided the restore: %q", got)
+	}
+}
+
 // crw install features disable (deactivate.go): the drift check, the read and the restore of
 // config.toml are under the lock; the CLI calls that follow rewrite the file themselves and stay
 // outside it.
@@ -74,6 +112,10 @@ func TestDeactivateTakesTheConfigLock(t *testing.T) {
 	if calls != 0 || activationRead(t, path) != before {
 		t.Fatalf("the refused deactivation wrote or reached the CLI: calls=%d config=%q", calls, activationRead(t, path))
 	}
+	// A refusal is not a deactivation: it must not leave self-healing opted out.
+	if marker, e := ReadSelfHealMarkerFile(home); e != nil || marker != nil {
+		t.Fatalf("the refused deactivation recorded consent state: %+v, %v", marker, e)
+	}
 	held.Release()
 
 	// Control: the released lock restores the key exactly as before.
@@ -81,6 +123,10 @@ func TestDeactivateTakesTheConfigLock(t *testing.T) {
 	r, err := Deactivate(deactivationDeps(home, deactivationRun(t, path, map[string]bool{}, &after)))
 	if err != nil || !reflect.DeepEqual(r.RestoredKeys, []string{"memories.dedicated_tools"}) {
 		t.Fatalf("deactivation after the lock was released = %+v, %v", r, err)
+	}
+	marker, err := ReadSelfHealMarkerFile(home)
+	if err != nil || marker == nil || marker.OptedOut == nil || !*marker.OptedOut {
+		t.Fatalf("the deactivation did not record the opt-out: %+v, %v", marker, err)
 	}
 	if got := activationRead(t, path); got != "[memories]\ngenerate_memories = true\n" {
 		t.Fatalf("restored config = %q", got)
@@ -114,5 +160,60 @@ func TestMultiAgentV2SetTakesTheConfigLock(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".crw-lock"); err != nil {
 		t.Fatalf("the sidecar was not left in place: %v", err)
+	}
+}
+
+// An uninstall with nothing to write is not gated on the lock: with no owned table key and no flag
+// CRW enabled, the injected CLI has nothing to disable and no config.toml write to serialize, so a
+// busy lock must not fail the command.
+func TestDeactivateWithNothingToWriteTakesNoLock(t *testing.T) {
+	home := activationHome(t)
+	path := filepath.Join(home, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	m := deactivationManifest(t, home, nil, map[string]FlagRecord{"hooks": {PriorEnabled: true}})
+	m.ConfigPath = path
+	deactivationSaveManifest(t, home, m)
+	held := configLockWritersHold(t, path)
+	defer held.Release()
+	r, err := Deactivate(deactivationDeps(home, func(a []string) CodexRunResult {
+		if a[1] != "list" {
+			t.Fatalf("a disable reached the runner: %v", a)
+		}
+		return CodexRunResult{}
+	}))
+	if err != nil || r.FileDrifted || len(r.RestoredKeys) != 0 || len(r.Disabled) != 0 {
+		t.Fatalf("result=%+v error=%v", r, err)
+	}
+	if activationRead(t, path) != deactivationConfig {
+		t.Fatal("the no-op deactivation changed config.toml")
+	}
+}
+
+// An explicitly empty config path names no file: neither writer derives a sidecar in the working
+// directory, and the missing-path no-op behaviour is kept.
+func TestEmptyConfigPathTakesNoLock(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	empty := ""
+	change, err := SetMultiAgentV2State(MultiAgentV2Deps{ConfigPath: &empty, Run: func([]string) CodexRunResult {
+		t.Fatal("the empty override reached the runner")
+		return CodexRunResult{}
+	}}, MultiAgentV1)
+	if err != nil || change.Changed {
+		t.Fatalf("the empty override no-op changed: %+v, %v", change, err)
+	}
+
+	home := t.TempDir()
+	m := deactivationManifest(t, home, nil, nil)
+	m.ConfigPath = ""
+	deactivationSaveManifest(t, home, m)
+	if _, err := Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} })); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("an empty config path wrote into the working directory: %v, %v", entries, err)
 	}
 }
