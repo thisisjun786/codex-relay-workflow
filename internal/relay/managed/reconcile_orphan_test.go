@@ -163,6 +163,47 @@ func TestReconcileOrphanArchiveSkipsAThreadTheHostDoesNotHold(t *testing.T) {
 	}
 }
 
+// thread/archive unloads an active thread, so an orphan that has taken a turn since the refusal is
+// left alone and the row says skipped.
+func TestReconcileOrphanArchiveLeavesAThreadThatBecameActive(t *testing.T) {
+	t.Parallel()
+	k, app := orphanKit(t, "name-timeout", "accept")
+	k.host.sendReceipts = []map[string]any{orphanStandby("t-1")}
+	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+	// Another client sends the thread its first turn before the next attempt.
+	k.host.threads["t-1"].turns = []string{"someone-elses-turn"}
+	got := k.run()
+	k.expect(got, "admitted", "", "recreated")
+	if got["childTaskId"] != "t-2" || len(app.archiveCalls) != 0 {
+		t.Fatalf("an active thread was archived: child=%v calls=%v", got["childTaskId"], app.archiveCalls)
+	}
+	detail := orphanArchiveDetail(t, k)
+	if detail["archive"] != "skipped" || !strings.Contains(pyjson.Text(detail["error"]), "active") {
+		t.Fatalf("active-thread row: %v", detail)
+	}
+}
+
+// The archive is a host effect, so the readiness policy withholds it: nothing is archived and no
+// row is written, and a later repeat under a ready policy archives the orphan.
+func TestReconcileOrphanArchiveIsWithheldWhenThePolicyIsNotReady(t *testing.T) {
+	t.Parallel()
+	k, app := orphanKit(t, "name-timeout", "accept")
+	k.host.sendReceipts = []map[string]any{orphanStandby("t-1")}
+	k.expect(k.run(), "incomplete", "creation_unknown", "adopted")
+	k.start.Readiness = func(context.Context, map[string]any) (string, error) { return "worker_not_ready", nil }
+	if got := k.run(); got["state"] != "refused" || pyjson.Text(got["reason"]) != "worker_not_ready" {
+		t.Fatalf("unready policy answered %v/%v", got["state"], got["reason"])
+	}
+	if len(app.archiveCalls) != 0 || orphanArchiveRows(t, k) != 0 {
+		t.Fatalf("an unready policy archived: calls=%v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
+	}
+	k.start.Readiness = func(context.Context, map[string]any) (string, error) { return "", nil }
+	k.expect(k.run(), "admitted", "", "recreated")
+	if len(app.archiveCalls) != 1 || orphanArchiveRows(t, k) != 1 {
+		t.Fatalf("the ready repeat did not archive: calls=%v rows=%d", app.archiveCalls, orphanArchiveRows(t, k))
+	}
+}
+
 // Every receipt that does not license abandonment keeps today's answer, and no orphan is archived.
 func TestReconcileOrphanArchiveKeepsEveryUnchangedAnswer(t *testing.T) {
 	t.Parallel()

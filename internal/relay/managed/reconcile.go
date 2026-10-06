@@ -266,7 +266,13 @@ func (r *startRun) abandonOrphan(ctx context.Context, base reconciliation, threa
 // archiveOrphan tries thread/archive once on the orphan and records the attempt in one
 // managed_orphan_archive row. A row already written for this request and attempt stops a second
 // archive, as the resend unload's row does. An error naming a thread the host does not hold is not
-// attempted at all; an archive that fails is recorded and never stops the recreation.
+// attempted at all.
+//
+// thread/archive unloads an active thread and the sub-threads under it, so the orphan is read again
+// immediately before the call, as the resend unload reads the child it lowers, and the readiness
+// policy and the ledger are asked again with it because the archive is a host effect. A thread that
+// has become active is left alone, and an archive that fails or is withheld is recorded and never
+// stops the recreation.
 func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) error {
 	archived, err := r.orphanArchived(ctx)
 	if err != nil {
@@ -278,8 +284,34 @@ func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) er
 	detail := map[string]any{"attempt": r.attempt, "thread": thread, "error": ""}
 	switch {
 	case strings.Contains(errText, "thread not found"):
+		// The host does not hold the thread, so there is nothing to archive.
 		detail["archive"] = "skipped"
 	default:
+		turnless, why, err := r.orphanStillTurnless(ctx, thread)
+		if err != nil {
+			return err
+		}
+		if !turnless {
+			if why == "" {
+				// The read was inconclusive: nothing is decided and no row is written, so a later
+				// repeat may still archive the orphan.
+				return nil
+			}
+			detail["archive"], detail["error"] = "skipped", why
+			break
+		}
+		readiness, err := r.m.ready(ctx, r.req)
+		if err != nil {
+			return err
+		}
+		if readiness != "" {
+			// The policy withholds every host effect, so this one is not taken and no row is
+			// written: a later repeat under a ready policy archives the orphan.
+			return nil
+		}
+		if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
+			return err
+		}
 		if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": thread}); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -292,6 +324,41 @@ func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) er
 	// The orphan is archived either way, so the row is written on a context the caller's
 	// cancellation cannot take away, as the resend unload's row is.
 	return r.recordOrphanArchive(context.WithoutCancel(ctx), detail)
+}
+
+// orphanStillTurnless reads the orphan immediately before the archive. A thread the host still
+// cannot read has no rollout and no turn; a thread that now carries a turn, or that the host
+// reports active, has become someone's work and is left alone. An inconclusive read answers with
+// no reason, and the caller then archives nothing and records nothing.
+func (r *startRun) orphanStillTurnless(ctx context.Context, thread string) (bool, string, error) {
+	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": thread, "includeTurns": false})
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, "", ctx.Err()
+		}
+		if unreadable(err) {
+			return true, "", nil
+		}
+		return false, "", nil
+	}
+	facts := pyjson.Map(read["thread"])
+	if pyjson.Text(pyjson.Map(facts["status"])["type"]) == "active" || strings.TrimSpace(pyjson.Text(facts["preview"])) != "" {
+		return false, "thread/read: the thread has become active", nil
+	}
+	turns, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": thread, "limit": 1, "itemsView": "summary"})
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, "", ctx.Err()
+		}
+		if noTurnAnswer(err) {
+			return true, "", nil
+		}
+		return false, "", nil
+	}
+	if rows, _ := turns["data"].([]any); len(rows) > 0 {
+		return false, "thread/turns/list: the thread has a turn", nil
+	}
+	return true, "", nil
 }
 
 // recordOrphanArchive writes the one managed_orphan_archive row an abandoned orphan leaves.
