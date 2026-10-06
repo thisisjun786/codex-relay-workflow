@@ -62,6 +62,7 @@ type Target struct {
 func registry() []Target {
 	return []Target{
 		echoTarget(),
+		doctorTarget(),
 	}
 }
 
