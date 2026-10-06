@@ -36,6 +36,7 @@ func otherUsers(t *testing.T) {
 // and another user's running a relative script from a hidden working directory while the
 // runtime lies in a home closed to it does not stop remove.
 func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
+	// sequential: replaces the process-owner seam through otherUsers.
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file, so an unreadable one cannot be made")
 	}
@@ -97,6 +98,7 @@ func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
 // install entries, so a bare rollback then says there is nothing to return to, rather than
 // being sent to a directory that is gone and whose entries are not in the record.
 func TestRemovingTheOutgoingRuntimeClearsOutgoing(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)
