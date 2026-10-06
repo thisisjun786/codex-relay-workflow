@@ -5663,3 +5663,263 @@ Only `docs/port/decisions.md` changes: one section at its end. No product code, 
 workflow, contract file, golden, skill document or `plugin.json` changes, and no ruleset,
 repository setting or branch is touched. The implementation, the merge-lane scripts, the CI
 workflow, the rulesets, `POLICY.md` and the test leg rebalance ship as the follow-ups above.
+
+## 82. A busy backoff holds a parent's whole line; the idle edge, not the timer, should release the head (CRW-781)
+
+Decision (design only, 2026-10-06): the relay already bounds a busy recipient and already keeps
+arrival order, and neither of those is the problem. The problem is *what ends the wait*: today
+only a timer does. Choose **option 1, the idle edge**: while a delivery waits out a busy
+backoff, the relay holds a subscription on the recipient and treats the App Server's
+`thread/status/changed` to `idle` (or `notLoaded`) as the signal to attempt the head on the
+next tick, with the existing doubling backoff kept as the safety net for a notification the
+relay never saw. Option 2 (batch a parent's ready backlog into one turn) and option 3 (stop
+turns opened outside the relay from overtaking the backlog) are evaluated below; option 3's
+relay-owned half changes the supervisor channel's ordering rule (I-216) and option 2 changes the
+delivery unit and the acknowledgement shape, so both are named as Jun's decisions and are not
+chosen here. This section changes no running behaviour.
+
+### The hold, from code
+
+Busy is not a guess and not a timeout: it is the host's own answer about the thread, read on
+every attempt.
+
+- `delivery.Observe` (`internal/relay/delivery/lifecycle.go:45`) reads the recipient three ways
+  — `adapter.ReadThread`, `adapter.IsArchived`, `adapter.ReadGoalStatus` — and decides in one
+  switch. `case isText(runtime, "active")` (`lifecycle.go:85`) is the only branch that answers
+  busy: `decide("busy", RecipientBusy)`. `Lifecycle.IsBusy` is exactly `Deliverable == "busy"`
+  (`lifecycle.go:42`). `idle` and `notLoaded` answer `yes` (`lifecycle.go:91`); `systemError`
+  and `canAcceptDirectInput: false` answer `no` and are withheld rather than deferred; anything
+  else with `RequireLifecycleEvidence` is `unknown` and is withheld too.
+- The status is the App Server's: `adapter.ReadThread` (`internal/relay/adapter/adapter.go:175`)
+  calls `thread/read` and takes `thread.status.type` into `RuntimeStatus` and
+  `thread.canAcceptDirectInput` into `CanAcceptInput` (`adapter.go:189-197`). The types the
+  switch names are the host's `active`, `idle`, `notLoaded` and `systemError`.
+- `Service.Attempt` (`internal/relay/delivery/service.go:859`) is the only caller of the busy
+  branch: `observation := Observe(...)`, then `if observation.IsBusy() { return nil,
+  d.deferBusy(ctx, eventID, row, at) }` (`service.go:925-926`). A busy answer never reaches
+  `claim`, so no attempt row is written and the recipient is never asked to interrupt: I-30
+  holds unchanged.
+
+The wait is a doubling timer whose ceiling is five minutes.
+
+- `DefaultPolicy` (`internal/relay/delivery/policy.go:47-49`) sets `BusyBase: 15`,
+  `BusyMax: 300`, `BusyMaxAttempts: 40`.
+- `DelayFor(attemptNo, "busy")` (`policy.go:56-62`) is `min(BusyMax, BusyBase * 2^(attemptNo-1))`
+  — 15 s, 30 s, 60 s, 120 s, 240 s, then 300 s for every later answer. `deferBusy` passes
+  `answers`, the count *including* this one.
+- `CapFor("busy")` is `BusyMaxAttempts` (`policy.go:64-69`) and `CapReason("busy")` is
+  `busy_cap` (`policy.go:71-76`).
+- `deferBusy` (`service.go:1101`) counts the answers with `busyAnswers` (`service.go:1089`: the
+  event's `delivery_deferred_busy` journal rows plus its attempts settled `deferred_busy`), sets
+  `hold_reason = busy_cap` once `answers >= BusyMaxAttempts`, writes `next_eligible_at = now +
+  DelayFor(answers, "busy")`, and journals `delivery_deferred_busy` — all inside the guarded
+  `UPDATE`'s transaction (I-221, I-451). Because the count is durable, a restart does not reset
+  it.
+
+The line is held by that timer alone.
+
+- `busyHeadSQL` (`service.go:321`) is a derived table with one row per recipient: the oldest
+  delivery to it in `eligibleOrder` (`service.go:304` — event `first_seen_at`, then the
+  delivery's `created_at`, then the event id) among those with `state = deferred_busy`,
+  `hold_reason IS NULL`, `next_eligible_at > now`, a live relationship and a final event. Only a
+  busy backoff is in it: a hold, a pre-send withhold, a pause, a stale generation and a
+  relationship that has spent its hour are all excluded, so one relationship's trouble cannot
+  keep its siblings waiting (CRW-259).
+- Four places read it, and together they are I-478: `behindBusyHead` (`service.go:339`) asks it
+  of one delivery; `eligibility` (`service.go:357-363`) joins it and requires
+  `bh.event_id IS NULL`, so a younger delivery is not *due*; `Attempt` returns early for a
+  delivery `behind` a head (`service.go:888-896`); and `claim`'s guarded `UPDATE` carries the
+  same `NOT EXISTS` (`service.go:745`), so the order is decided under the write lock and not
+  only in the selection.
+- The scheduler is what turns the timer into attempts: `RelayDaemon.tick` runs
+  `delivery.Scheduler{...}.Deliver(...)` with `MaxSendsTick = Policy.MaxSends` (4)
+  (`internal/relay/daemon/daemon.go:132`, `daemon.go:49`) every `PollInterval` = 20 s
+  (`daemon.go:49`, `internal/relay/service/launch.go:30`), and one parent may use
+  `MaxSendsPerParentPerTick` = 2 attempts
+  (`internal/relay/delivery/policy.go:49`, `internal/relay/delivery/scheduler.go:224`).
+
+So a head that keeps meeting a busy recipient is sampled at 15 s, 30 s, 60 s, 120 s, 240 s and
+then once every 300 s, and every younger delivery to that recipient is not due while it waits.
+That is the mechanism the issue's measurement caught.
+
+### The supervisor channel is the opposite choice (I-216)
+
+The relay already has the other half of this design, one channel over, and it chose the other
+way.
+
+- `SupervisorAheadSQL` (`internal/relay/store/supervisor_sendable.go:106`) is true for a message
+  that is *claimable* (`SupervisorClaimableSQL`, `:87`: unsent, no hold, due) or in flight with a
+  live lease. A message inside its backoff is neither, so it is not "ahead" and a younger message
+  passes it. `SupervisorAheadInClaimSQL` (`:114`) carries the same rule under the claim's write
+  lock.
+- `attemptRun.eligible` (`internal/relay/supervisor/send.go:415`) asks `oldestAhead`
+  (`send.go:187`) and refuses only when an older message *can be sent now*, with the existing
+  reason `not_claimable` (`send.go:425`).
+
+So the supervisor channel is oldest-of-the-claimable — a backed-off older message is bypassed
+deliberately (I-216) — while the delivery path is oldest-including-the-backoff (I-478). The two
+differ on exactly the question this issue asks, and the difference is a decision, not an
+accident: the delivery path exists to hand a child's receipt to its parent in the order the
+receipts arose, and the supervisor channel exists to raise the newest fact to the level above.
+
+### What the relay can already learn about a thread's state
+
+Nothing, today. The bytes arrive and nothing reads them.
+
+- The App Server client's reader forwards *every* notification it receives:
+  `internal/bridge/appserver/receive.go:46-51` pushes `Notification{msg.Method, msg.Params}` onto
+  `c.notifications`, a channel of 64 (`client.go:24`) that drops when full. The one method it acts
+  on is `turn/completed` (`receive.go:43-45`), and only to tell the subscription manager that a
+  watched turn ended.
+- `Client.Notifications()` (`internal/bridge/appserver/records.go:178`) is the only reader of that
+  channel and nothing in the product calls it; the sole caller is
+  `internal/bridge/appserver/client_more_test.go:203`. So `thread/status/changed`, which is what
+  would carry `idle`, is received and discarded.
+- Subscriptions are opened only around the bridge's own outbound work:
+  `Bridge.watchSubscription` (`internal/bridge/subscription.go:15`) is called from
+  `create.go:135` (a thread this bridge created), `mutations.go:162` (a steer or resume),
+  `worktree.go:165` (a worktree creation) and `internal/relay/adapter/transport.go:339` (the
+  relay's own `guardedSend`, immediately before `thread/resume`). Each one is released by
+  `TurnWatch.Finish` (`internal/bridge/appserver/subscription.go:165`) and the manager sends
+  `thread/unsubscribe` (`internal/bridge/appserver/subscription.go:356`). No subscription is
+  held for a recipient between attempts, so the App Server has no reason to report that
+  recipient's status changes to the relay.
+- The relay daemon does have the socket: its host adapter builds `appserver.New(...)`
+  (`internal/relay/adapter/host.go:39`). So the capability is reachable; the lifetime and the
+  consumer are what is missing.
+
+### The measurement this section uses
+
+The management session's reading of 2026-10-06 15:07 KST: six completion events addressed to one
+project's parent were queued. The head of the queue had been retrying as `deferred_busy` since
+04:47Z, and the oldest queued receipt was 80 minutes old; the other five waited behind it. The
+parent ran turns in that window, so it was not permanently busy — the retries sampled it at the
+wrong instants, and other paths opened new turns in the gaps. Those numbers are that
+observation, not a new measurement; the live relay store and service were not read.
+
+Under `BusyBase`/`BusyMax`/`BusyMaxAttempts` that reading is consistent with the code: the
+backoff reaches its 300 s ceiling on the sixth busy answer and stays there, so 80 minutes is
+roughly twenty attempts, well short of the 40-answer `busy_cap`. The cost is not the attempts;
+it is that each receipt behind the head costs the parent another full turn once it does land.
+
+### Options
+
+The criteria are the issue's: (a) each receipt's claim, ack and verdict proof is unchanged;
+(b) the delivery-order invariants are kept, or the change to them is named for Jun; (c) a busy
+recipient is never interrupted; (d) a contract change is scoped and reuses an existing name
+first; (e) the effect is stated from the measurement above.
+
+| Option | How it ends the wait | (a) proof | (b) invariants | (c) no interrupt | (d) contract | (e) effect |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1. the idle edge releases the head | `thread/status/changed` to `idle` makes the head due, so the next tick attempts it | unchanged: the same claim, the same attempt, the same `sha256(eventId\|turn)` | I-478 kept — the head is still the only row attempted; I-216 untouched | kept: the attempt still reads and withholds before any resume (I-30) | none: no new refusal, field or CLI | the head's next attempt moves from "up to 300 s after the last busy answer" to "the next tick after the recipient goes idle" (20 s plus the send); the five behind it then drain in creation order, one attempt each |
+| 2. batch the parent's ready backlog into one turn | the whole backlog lands in one turn, so the head's backoff is paid once | must be preserved per event, which needs a multi-event message and a per-event acknowledgement from one turn | I-478 kept if the batch takes the head first and then the next N-1 in order | kept, same pre-check | large: the message shape, the attempt and receipt intake, and the acknowledgement and verdict per event | the parent pays one turn instead of six; the delay is the head's backoff, unchanged |
+| 3. keep out-of-relay turns from overtaking | the relay's own channels stop spending the recipient's idle gap before the backlog | unchanged | **changes I-216**: a backed-off older delivery would also hold the supervisor and notice channels, which today bypass it | kept | none for the relay-owned half; the management session's own rule is not the relay's to make | the head wins the next idle gap more often; the relay cannot stop the management session, the operator or any other socket client from opening a turn |
+| 1 plus a shorter head-only retry (added) | if the notification cannot be held, retry the head every tick | unchanged | I-478 kept | kept | none | weaker than 1 (it still samples), but strictly better than today and it needs no subscription |
+
+Options 2 and 3 are not rejected on merit. Each is rejected *for this change* on one criterion:
+option 2 fails (a) unless the delivery unit and the acknowledgement shape change, which is a
+contract decision; option 3 fails (b) unless I-216 changes, which the criteria leave to Jun.
+Option 1 meets all five with no contract change and no invariant change, and the added variant is
+its fallback for a notification that cannot be held.
+
+### The answer, with an order
+
+1. **Option 1 first.** While a delivery to a recipient waits out a busy backoff, the relay holds a
+   subscription on that recipient and consumes `thread/status/changed`. An `idle` or
+   `notLoaded` report makes the busy head due at once (subject to the min send interval and the
+   relationship's hourly budget, which are unchanged), and the next tick attempts it. The doubling
+   backoff is not removed: it stays the safety net for a notification the relay never saw, for a
+   host that reports no status, and for a recipient that is busy again before the attempt lands.
+   I-478 is what makes this enough for the whole backlog: the head is the only row attempted, so
+   releasing the head releases the line.
+2. **Option 3 second, and only as far as the relay owns.** The relay owns three ways to open a
+   turn on a recipient: the delivery path (already ordered), the supervisor channel (I-216) and
+   the notice channel (`internal/relay/supervisor/notice.go`, which goes through the same claim
+   and transport). It does not own the management session's direct sends, the operator, or any
+   other client on the App Server socket. Making the relay's own channels yield to a delivery that
+   holds the line is the part that helps option 1; it changes I-216 and is Jun's decision (below).
+   Until he decides it, the relay-side half is not implemented and the ordering stays as it is.
+3. **Option 2 third.** Batching is the only option that reduces the parent's turn count, which is
+   the cost the issue names, but it changes the delivery unit: one message carrying several
+   events, and an acknowledgement and a verdict per event from one turn. That is a contract
+   decision before it is an implementation (below), and it is larger than options 1 and 3
+   together. It is the right successor, not the right first slice.
+
+The order matters because option 1 alone removes the tens-of-minutes hold; option 3 makes option
+1's trigger win the gap more often; option 2 then lowers what the parent pays for each delivery.
+Option 2 before option 1 would batch receipts that are still held by the same backoff.
+
+### Invariant impacts
+
+Rows read in `docs/relay/invariants.md` at this baseline:
+
+| Row | What the answer does to it |
+| --- | --- |
+| I-478 | **Kept unchanged.** The idle edge changes when the head becomes due, not which row is attempted or in what order. `busyHeadSQL`, `eligibility`, `Attempt` and `claim` keep their meaning; only `next_eligible_at` may be moved earlier by the notification. |
+| I-216 | **Untouched by option 1.** Option 3 would change it, so it is named for Jun rather than decided here. |
+| I-30 | **Kept.** Busy is still decided by `Observe` before any transport call; the notification only decides *when to look*. |
+| I-221, I-451 | **Kept.** `deferBusy` still counts its own journal rows and writes inside the guarded `UPDATE`'s transaction. |
+| I-475 | **Kept.** The min send interval and the per-relationship hourly cap still pace the send; an idle notification does not spend a budget the pacing would refuse. |
+| I-61, I-335, I-403 | **Kept.** A busy recipient is still bounded and still waiting rather than failing; the notification adds no failure. |
+| I-479 | **Kept.** The tick's attempt budget and the parent rotation are unchanged; the notification changes a row's due time, not the walk. |
+| I-70, I-36, I-37 | **Kept.** The claim is still one transaction and the turn identity is still checked; nothing about the send changes. |
+
+No invariant has to change for option 1. Option 3 needs I-216 changed, and option 2 needs the
+acknowledgement and receipt rows widened; both are Jun's, below.
+
+### Decisions left to Jun
+
+1. **Option 1's subscription lifetime.** Approve holding a subscription on a recipient while its
+   backlog waits out a busy backoff, and releasing it when the backlog empties or the delivery is
+   delivered. This is a new lifetime for a watch in the subscription manager's terms, and the
+   notification channel is bounded (64) and drops, so the fallback is the existing backoff.
+   Recommendation: yes.
+2. **Option 3's ordering rule.** Decide whether the relay's own supervisor and notice channels
+   should yield to a delivery that holds the line, which changes I-216. Recommendation: make the
+   *notice* channel yield (it carries no receipt whose order has to be protected) and leave the
+   supervisor channel's oldest-of-the-claimable rule alone, because a fault or a decision it
+   carries has its own cost in delay. This is a genuine trade, and the criteria leave it here.
+3. **Option 2's contract shape.** Decide whether one turn may carry several events' deliveries,
+   and if so what the message, the acknowledgement and the verdict look like. Recommendation:
+   defer until option 1 has run for a while, then decide from the measured turn count.
+4. **The retry interval when no notification can be held.** Decide whether the head-only fallback
+   may retry every tick (20 s) instead of on the doubling curve, or whether the current curve
+   stands. Recommendation: keep the curve and let option 1 be the mechanism; a shorter interval
+   buys less than the notification and costs a `thread/read` per tick per waiting head.
+
+### Follow-up interfaces
+
+No signature, reason registry, output field, CLI, SQL or golden changes in this pull request.
+Each slice is one region and about 600 lines or less, and each is proved red before it is built.
+
+1. **The idle edge** (`internal/relay/delivery`, `internal/relay/daemon`,
+   `internal/bridge/appserver`, `internal/relay/adapter`). Red first: a head whose
+   `next_eligible_at` is 300 s away is attempted on the next tick after an `idle`
+   `thread/status/changed` for that recipient; a notification for another thread changes nothing;
+   a notification the relay never saw leaves the head attempted at `next_eligible_at` as today;
+   a younger delivery to the same recipient is still not attempted while the head waits (I-478);
+   and a busy recipient is still never interrupted. The trigger reuses the existing words: no new
+   refusal reason and no new output field. End condition: with a scripted App Server, the head's
+   attempt follows the idle edge within one tick and every existing `TestBusy_*` and
+   `TestScale_a_busy_backlog_drains_in_creation_order` still passes.
+2. **The relay-owned channels' order** (`internal/relay/supervisor/send.go`,
+   `internal/relay/store/supervisor_sendable.go`, `internal/relay/supervisor/notice.go`). Waits
+   on decision 2. Red first: a supervisor message to a recipient whose delivery waits out a busy
+   backoff is refused `not_claimable` while that delivery holds the line (the existing reason, no
+   new one), and is claimable once the head's backoff ends. End condition: I-216's text is updated
+   in the same change if Jun takes it, or the slice is dropped.
+3. **Batching** (`internal/relay/delivery`, `internal/relay/store`,
+   `internal/relay/delivery/ack.go`, `contract/`). Waits on decision 3. Red first: two receipts
+   to one parent are rendered into one message, each keeps its own claim and its own
+   `sha256(eventId|turn)` proof, each is
+   acknowledged separately, and a batch cut off after the first delivery recovers the rest on the
+   next attempt in creation order. End condition: the contract files, the goldens and the zone
+   ledger are updated together, with the change to the frozen acknowledgement shape explained in
+   the pull request.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test, contract
+file, golden, skill document or `plugin.json` changes, and no ruleset, repository setting or
+branch is touched. The implementation, the subscription lifetime, the ordering rule and the
+batching contract ship as the follow-ups above, each as its own issue.
