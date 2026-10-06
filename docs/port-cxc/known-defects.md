@@ -1349,3 +1349,11 @@ are pinned by the recorded oracle in `internal/runtime/doctor/testdata/harness/r
   wait with `WaitDelay` (the same bound `CodexVersion` uses) and answers the killed status, so a
   stuck probe degrades to the check's WARN instead of a hang; port: kept as a robustness difference
   (the oracle's hang cannot be recorded).
+
+## Found by the managed dispatch and final-gate call port (CRW-372)
+
+Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` (`dispatchSources` :420-449, the managed dispatch loop :892-907, the final-gate call :1072-1079, the fallback notice :1081-1082, the no-op bypass :1086 and the issuance :1094-1102) at v0.2.40, through the ports in `internal/role/spawn/hook_managed.go` and `internal/role/spawn/hook_route.go`.
+
+- `dispatchSources` prefixes the message with the project layer's trust warning and strips it back off before it reads a guard block (source :426-427); the port dropped the project layer (decision 7), so the warning is always empty and the strip is the identity, and the port omits it. The route half keeps the same always-empty `trustPrefix` branch, so the omission is the only difference; port: kept.
+- A managed ledger that is missing or unreadable makes the oracle throw a Node error and the port return a Go error, so the deny text `managed dispatch: <error>` carries Node's wording in the oracle and Go's in the port (source :899 and `internal/role/dispatch_ledger.go`, whose header already records this for the ledger port); port: kept as a runtime diagnostic difference. The recorder therefore records no missing-ledger case, and the Go test asserts the port's own text.
+- The one-time recursion grant a subagent presents is consumed before the managed dispatch marker is checked (source :882 before the managed loop :895-907), so a child whose managed dispatch is refused has already spent its grant and cannot retry that spawn with the same one; the port keeps the oracle's order, consuming the grant in `spawnHookAssemble` before `spawnHookManaged`; port: kept (a review comment of the port's pull request found it, and the recorded managed cases keep the oracle's answers).
