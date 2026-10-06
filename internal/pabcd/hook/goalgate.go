@@ -148,11 +148,12 @@ func GoalGateHandlePreToolUseFailClosed(raw string, env host.LookupEnv, pabcdEna
 
 // goalGateHandle is the dispatcher without its readers bound, so that a test can fail one and reach the recover.
 //
-// The deferred recover is the oracle's try/catch (:316, :321-324), and it is fail-CLOSED: when anything below
-// panics and the input looks like a request_user_input call, the answer is the deny envelope with status
-// unreadable rather than silence. Everything else panics through to the harness, whose FailClosed stage ends the
-// process rather than allowing (hook.go). A parse failure is NOT a panic (goal-gate.ts:316-317): an unparseable
-// payload answers nothing, exactly as the oracle's own test asserts.
+// The deferred recover is the oracle's try/catch (:316, :321-324). Like the oracle's catch it is total: a panic
+// below is answered here, never re-raised, so this handler never lets one reach the harness. It is fail-CLOSED
+// for the case that matters — a payload that looks like a request_user_input call with PABCD on is denied with
+// status unreadable rather than allowed — and for every other payload it answers nothing, which is what the
+// oracle's catch does. A parse failure is not a panic at all (:316-317), so an unparseable payload answers
+// nothing too, as the oracle's own test asserts (goal-gate.test.ts:260-262).
 func goalGateHandle(raw string, pabcdEnabled bool, deps goalGateDeps) (out string) {
 	defer func() {
 		if recover() == nil {
