@@ -10,7 +10,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 ## Seeded from the corpus recording
 
 - `cxc reset --help` is not help: the scope parser defaults to state, so it deletes session state exactly like `reset --state` and exits 0 (fixture `cli__reset__help_is_not_help_and_resets_state`); port: fixed, the one exception.
-- `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: pending.
+- `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: kept (the CRW-618 section carries it as `crw-ops error: unknown hooks option: --help`, the R29-renamed text).
 - `cxc provider` ignores every argument, even `--help`, and runs the same probe (fixture `cli__provider__detect_line_and_ignored_args`); port: pending.
 - `cxc metric parse-line` does not read stdin as its help says: v0.2.40 joins the argv after the verb (the `--session` token included), so the stdin form and the ordinary argv form exit 1 with `null`, and only a form whose session value itself completes the METRIC line, such as `parse-line METRIC --session =1`, succeeds (fixture `cli__metric__record_show_kind_parse_line`; source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:145`); port: kept.
 - `cxc plan init` ignores `--date` whatever its value: the parser reads only `--phases` and `--cwd`, skips every other `--` token and takes the first bare argument as the slug, so the unit date is a YYMMDD prefix of that argument or else the day's date, although the verb's help says `--date` is for callers that carry their own prefix (fixture `cli__plan__init_normalises_slug_and_date`, whose `--date 2026-01-01` coincides with the recorded clock's day; source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:92`, `:95` and `:177`); port: pending.
@@ -1317,3 +1317,35 @@ Source: `plugins/codexclaw/components/pabcd-state/src/plan-gate.ts` at v0.2.40 (
 - A value thrown inside the final-gate identity checks is stringified as `err instanceof Error ? err.message : String(err)`; the Go port recovers the panic and prints `Error()` for an error value and `%v` for anything else, so a thrown object would read differently (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1869`, `:1892`); port: kept.
 - `cmp.detail ?? "changed"` is a nullish test, so a comparison that reports a present but empty detail prints empty parentheses; the Go port's `Comparison.Detail` cannot tell an absent detail from an empty one and prints `changed` (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1913`); port: kept.
 
+
+## Found by the doctor harness assembly and command port (CRW-618)
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` (`runDoctor` :261-360, the inline
+manifest, skills and agents checks :263-323, the metadata :362-378) and
+`plugins/codexclaw/components/cxc-ops/src/cli.ts` (the doctor case :80-93, `parseHookOptions`
+:46-66) at v0.2.40, through the port in `internal/runtime/doctor/harness_run.go`. The whole doctor
+command is exercised by the corpus fixtures `cli__doctor__*`; the assembly and the inline checks
+are pinned by the recorded oracle in `internal/runtime/doctor/testdata/harness/run`.
+
+- The oracle derives its plugin root from its own module path (`pluginRootFrom(metaUrl)`,
+  `plugins/codexclaw/components/cxc-ops/src/cli.ts:27-31`), which a Go binary installed through the
+  runtime pointer (`$HOME/.local/share/crw-runtime/current/bin/`) has no relation to;
+  `crw doctor harness` reads the host-provided `PLUGIN_ROOT` instead (the port's convention,
+  `internal/harness/observation.go:131`, `internal/role/spawn/hook.go:249`), and an unset
+  `PLUGIN_ROOT` is a usage error rather than a report over a guessed root; port: kept (a decision
+  of the port, not an oracle defect).
+- The oracle lists a directory's entries in the filesystem's own order (`readdirSync`), so the
+  `skills` and `agents` evidence can name the entries in any order; the port reads them with
+  `os.ReadDir`, which sorts, so a payload whose directory order differs from sorted order prints a
+  different list (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:301,315`); port: kept as a
+  platform difference.
+- The `manifest` check prints the engine's `SyntaxError` text for an unparseable `plugin.json`
+  (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:277`); the port prints `encoding/json`'s
+  message with the same FAIL severity (asserted by severity and a non-empty evidence in
+  `harness_run_test.go`); port: kept as a runtime diagnostic difference.
+- The oracle's `spawnSync` probe has no bound on a descendant that inherited the output pipe, so
+  a `codex` or `python3` probe whose grandchild holds the pipe can hold the whole report open past
+  its timeout (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:349,620`); the port bounds the
+  wait with `WaitDelay` (the same bound `CodexVersion` uses) and answers the killed status, so a
+  stuck probe degrades to the check's WARN instead of a hang; port: kept as a robustness difference
+  (the oracle's hang cannot be recorded).
