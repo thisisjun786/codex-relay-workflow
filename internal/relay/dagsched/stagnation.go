@@ -188,7 +188,15 @@ func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, n
 		return nil, err
 	}
 	defer rows.Close()
-	var runs []correctionRun
+	// The rows are read to the end and CLOSED before anything else is queried on this querier. The store has one connection
+	// (store.Open: SetMaxOpenConns(1)) and the release path reads Ready outside a transaction, so a second query issued while
+	// these rows are open would wait for the connection they hold, until the context deadline: one node with a correction
+	// generation stopped every release of its plan.
+	type correctionGeneration struct {
+		generation   int64
+		relationship string
+	}
+	var collected []correctionGeneration
 	var seen int64
 	for rows.Next() {
 		var generation int64
@@ -200,8 +208,18 @@ func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, n
 			continue
 		}
 		seen = generation
+		collected = append(collected, correctionGeneration{generation: generation, relationship: rid})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var runs []correctionRun
+	for _, g := range collected {
 		// the generation this one follows: the nearest one below it that was not withdrawn
-		before, err := store.LiveGenerationBefore(ctx, q, rid, generation)
+		before, err := store.LiveGenerationBefore(ctx, q, g.relationship, g.generation)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +228,7 @@ func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, n
 			" JOIN events e ON e.event_id = v.event_id"+
 			" JOIN verdict_context c ON c.event_id = v.event_id"+
 			" WHERE e.relationship_id = ? AND e.execution_generation = ? AND v.verdict = 'needs_changes' AND v.next_generation = ?"+
-			" ORDER BY v.decided_at DESC LIMIT 1", []any{rid, before, generation}, &eventID, &findings)
+			" ORDER BY v.decided_at DESC LIMIT 1", []any{g.relationship, before, g.generation}, &eventID, &findings)
 		if err != nil {
 			return nil, err
 		}
@@ -230,7 +248,7 @@ func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, n
 		}
 		runs = append(runs, correctionRun{digest: digest, count: 1, event: eventOf(eventID)})
 	}
-	return runs, rows.Err()
+	return runs, nil
 }
 
 func eventOf(id *string) string {
