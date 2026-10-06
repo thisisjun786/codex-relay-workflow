@@ -79,8 +79,10 @@ func capacityTestReceipt(t *testing.T, f *capacityFixture, event, parent string,
 			t.Fatal(err)
 		}
 	}
-	exec("INSERT INTO deliveries (event_id, recipient_task_id, created_at) VALUES (?,?,?)", event, parent, created.Format(time.RFC3339))
-	exec("INSERT INTO acks (event_id, ack_at) VALUES (?,?)", event, created.Add(time.Duration(waitMinutes*float64(time.Minute))).Format(time.RFC3339))
+	// The relay stores microsecond stamps with a numeric offset, not whole-second Z, so the fixture
+	// writes the same shape the judgement reads in production.
+	exec("INSERT INTO deliveries (event_id, recipient_task_id, created_at) VALUES (?,?,?)", event, parent, capacityStamp(created))
+	exec("INSERT INTO acks (event_id, ack_at) VALUES (?,?)", event, capacityStamp(created.Add(time.Duration(waitMinutes*float64(time.Minute)))))
 	exec("INSERT INTO events (event_id, outcome) VALUES (?,?)", event, outcome)
 }
 

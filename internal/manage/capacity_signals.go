@@ -240,7 +240,7 @@ func capacityReceiptWaitFor(ctx context.Context, stateDir, parent string, since 
 			" JOIN acks a ON a.event_id = d.event_id"+
 			" JOIN events e ON e.event_id = d.event_id"+
 			" WHERE d.recipient_task_id = ? AND d.created_at >= ? AND e.outcome != 'interrupted'",
-		parent, since.UTC().Format(time.RFC3339))
+		parent, capacityStamp(since))
 	if err != nil {
 		return CapacityReceiptWait{}, err
 	}
@@ -277,3 +277,8 @@ func capacityReceiptWaitFor(ctx context.Context, stateDir, parent string, since 
 	out.MedianMinutes = &rounded
 	return out, nil
 }
+
+// capacityStamp formats a time exactly as the relay stores its timestamps, so the SQL window
+// comparison is between like forms: the relay writes microseconds with a numeric UTC offset, and a
+// whole-second stamp would sort before a stored one inside the same second.
+func capacityStamp(at time.Time) string { return at.UTC().Format("2006-01-02T15:04:05.000000+00:00") }
