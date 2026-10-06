@@ -1265,9 +1265,9 @@ Source: `plugins/codexclaw/scripts/hook-observation.mjs` (`readHookObservations`
 
 ## Found by the goalplan lifecycle port (CRW-542)
 
-- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `complete-task` marks every task that carries the requested id done once any one of them is ready, so on a plan whose duplicate task ids slipped past validation a task whose own dependency is unmet is completed too, in every copy of a duplicated phase (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1359-1378`; recorded case `complete_ok_duplicate_task_ids` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: fixed by CRW-671.
 - `decide` compares the stored answer untrimmed against the trimmed input, so a stored `" yes"` rejects the same `yes` as already having a different answer (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1297`; recorded case `decide_reject_padded_stored_answer`); port: kept.
-- `meet-criterion` judges only the first criterion of a duplicated id, so when that one is already met it answers unchanged and a later open duplicate of the same id can never be met; the plan then never reads complete (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1389-1404`; recorded case `meet_unchanged_duplicate_met_then_open` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: kept.
+- `meet-criterion` judges only the first criterion of a duplicated id, so when that one is already met it answers unchanged and a later open duplicate of the same id can never be met; the plan then never reads complete (source `plugins/codexclaw/components/pabcd-state/src/goalplan.ts:1389-1404`; recorded case `meet_unchanged_duplicate_met_then_open` in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json`); port: fixed by CRW-671.
 
 ## CRW-639 — the deletion guard's shell reader: su's attached program, the depth limit, data operands
 
@@ -1349,3 +1349,41 @@ are pinned by the recorded oracle in `internal/runtime/doctor/testdata/harness/r
   wait with `WaitDelay` (the same bound `CodexVersion` uses) and answers the killed status, so a
   stuck probe degrades to the check's WARN instead of a hang; port: kept as a robustness difference
   (the oracle's hang cannot be recorded).
+
+## Found by the managed dispatch and final-gate call port (CRW-372)
+
+Source: `plugins/codexclaw/components/subagent-config/src/spawn-attach-hook.ts` (`dispatchSources` :420-449, the managed dispatch loop :892-907, the final-gate call :1072-1079, the fallback notice :1081-1082, the no-op bypass :1086 and the issuance :1094-1102) at v0.2.40, through the ports in `internal/role/spawn/hook_managed.go` and `internal/role/spawn/hook_route.go`.
+
+- `dispatchSources` prefixes the message with the project layer's trust warning and strips it back off before it reads a guard block (source :426-427); the port dropped the project layer (decision 7), so the warning is always empty and the strip is the identity, and the port omits it. The route half keeps the same always-empty `trustPrefix` branch, so the omission is the only difference; port: kept.
+- A managed ledger that is missing or unreadable makes the oracle throw a Node error and the port return a Go error, so the deny text `managed dispatch: <error>` carries Node's wording in the oracle and Go's in the port (source :899 and `internal/role/dispatch_ledger.go`, whose header already records this for the ledger port); port: kept as a runtime diagnostic difference. The recorder therefore records no missing-ledger case, and the Go test asserts the port's own text.
+- The one-time recursion grant a subagent presents is consumed before the managed dispatch marker is checked (source :882 before the managed loop :895-907), so a child whose managed dispatch is refused has already spent its grant and cannot retry that spawn with the same one; the port keeps the oracle's order, consuming the grant in `spawnHookAssemble` before `spawnHookManaged`; port: kept (a review comment of the port's pull request found it, and the recorded managed cases keep the oracle's answers).
+
+## Found by the steering op port (CRW-376)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (commit 3c1459ac), through
+`internal/pabcd/goalplan/steering_ops.go`; the ported ranges are `:39-63,72-153,182-239`.
+
+- The minted criterion id is the highest stored `c-N` plus one in float64, so at or above 2^53 the increment is
+  lost and the new id repeats or falls below the highest stored one: on a plan holding `c-9007199254740993` the
+  next criterion is minted as `c-9007199254740992`, where the comment at `:199-201` promises a dense monotonic
+  sequence (source `steering.ts:199-204`; recorded case `mint-2pow53` in the port's differential, and the plan
+  holding that id is refused by the definition integrity rather than corrupted, so nothing is lost);
+  port: kept.
+- An op that is an array passes the op object test (`:90` is a `typeof` test, and an array is an object) and
+  fails the kind read instead, so the refusal names the missing kind of a value that is not an object at all
+  (source `steering.ts:90-92`; the batch is still rejected whole); port: kept.
+
+## Found by the metric lock-acquired cancellation port (CRW-667)
+
+- The lock-acquired check read the context only when the wait had to wait: `appendRow` read `ctx.Err()` before the write only under `waited`, which `metricLockWait` set when the lock came from a retry, so a lock the first non-blocking `Flock(LOCK_NB)` took at once (a free ledger) was written with no look at the context; a `metric ingest` cancelled right after that Flock therefore left a row that did not exist at the interrupt and answered nil, where the oracle's process dies at the signal and writes none (the oracle has no lock and no signal handler, `pabcd-state/src/metrics.ts:119-137` and `pabcd-state/src/metric-cli.ts:92-151` at v0.2.40; no corpus fixture drives an interrupt); port: fixed (port-introduced, not an upstream defect — the ledger lock is this port's): `appendRow` reads `ctx.Err()` once after the lock is taken, whether or not the wait had to wait, and before it writes, closing the file without a write and returning the context's own error as it is, and `metricLockWait` drops its `waited` return; `context.Background` keeps the blocking `Flock`, so every uninterrupted run is unchanged, and the window between the check and `WriteString` stays (`TestRecordMetricsFromTextContextCancelledAfterTheFirstFlockWritesNoRow` and `TestRecordMetricsFromTextContextCancelledAfterTheFirstFlockWithTwoLinesWritesNoRow`, red on the base with a row written, plus CRW-637's two cases and CRW-627's five unchanged, and `TestRecordMetricsFromTextContextStopsBetweenLines` now expects no row).
+
+## Found by the M2b state-copy classifier port (CRW-655)
+
+- The classifier keeps the 255-byte single-path-component name limit and never reads the destination filesystem's real NAME_MAX, so a destination with a smaller limit (not the ext4 or APFS the design assumes) is refused by the publish step rather than the preflight (docs/port-cxc/state-migration.md:106-108 and :176-187); a limitation of this port, not an oracle defect, port: kept.
+
+## CRW-671 — the goalplan completion and meet operations refuse an ambiguous id
+
+Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoalplanTask` :1351-1382, `meetGoalplanCriterion` :1384-1406) at v0.2.40 (commit 3c1459ac), through `internal/pabcd/goalplan/lifecycle.go`.
+
+- `complete-task` and `meet-criterion` judged the first entry of a duplicated id and then rewrote every entry carrying it, so the other entry's outcome or captured evidence was overwritten (the two lines above under the CRW-542 section); port: fixed by CRW-671 (a data-loss defect, fixed by decision like the parity rule revision of 2026-10-03: the operation refuses, changing nothing, when the work phase id matches more than one phase, the task id more than one task of that phase, or the criterion id more than one criterion, in the shape `DecideGoalplanDecision` already uses; the check runs after the not-in-this-plan refusal and before the already-done/met answer and the readiness check; reads that keep duplicates and every other operation are unchanged).
+- Three recorded cases in `internal/pabcd/goalplan/testdata/lifecycle/oracle.json` move with it and are tagged intentionally-changed in the replay, the recording itself unchanged: `complete_ok_duplicate_task_ids` and `meet_unchanged_duplicate_met_then_open` (named by the issue) and `meet_ok_duplicate_criterion_ids`, which the same rule reaches because it holds two open criteria of one id.

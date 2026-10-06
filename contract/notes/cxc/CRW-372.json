@@ -1,0 +1,10 @@
+{
+  "issue": "CRW-372",
+  "pending": [
+    "hook__pre-tool-use-attaching-skills__managed_dispatch_marker_issues_once",
+    "hook__pre-tool-use-attaching-skills__managed_dispatch_refusals",
+    "hook__pre-tool-use-attaching-skills__managed_fallback_candidate_null_effort"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
