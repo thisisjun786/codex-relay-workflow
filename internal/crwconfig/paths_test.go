@@ -275,3 +275,38 @@ func TestAnEmptyHomeIsStillRefused(t *testing.T) {
 		t.Errorf("error %q does not name %q and say the path is not absolute", err, RootTools)
 	}
 }
+
+// The HOME fallback goes through the same join as an XDG variable, so a HOME that
+// ends in a separator resolves to the same roots a clean HOME does.
+func TestAHomeFallbackWithATrailingSeparatorIsCollapsed(t *testing.T) {
+	home := t.TempDir()
+	roots, err := Resolve(rootsEnv("HOME", home+"/"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootsCheck(t, roots, rootsDefaults(home), SourceDefault)
+}
+
+// An override that names a root with an empty value is refused like any other
+// relative path, and the error names the root the override named.
+func TestAnEmptyOverrideValueIsRefused(t *testing.T) {
+	_, env := rootsHome(t)
+	for _, test := range []struct {
+		name      string
+		overrides map[string]string
+		names     string
+	}{
+		{"cache_root", map[string]string{RootCache: ""}, "cache_root"},
+		{"scratch_root", map[string]string{RootScratch: ""}, "scratch_root"},
+		{"tools_root", map[string]string{RootTools: ""}, "tools_root"},
+	} {
+		roots, err := Resolve(env, test.overrides)
+		if err == nil {
+			t.Errorf("an empty %s was accepted as %+v", test.name, roots)
+			continue
+		}
+		if !strings.Contains(err.Error(), "absolute") || !strings.Contains(err.Error(), test.names) {
+			t.Errorf("an empty %s: error %q does not name %q and say the path is not absolute", test.name, err, test.names)
+		}
+	}
+}
