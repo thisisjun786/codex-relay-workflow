@@ -26,11 +26,19 @@ const crwdirSwapLockSuffix = ".crw-lock"
 const crwdirSwapLockPoll = 25 * time.Millisecond
 
 // PublishedError reports that a swap publication exchanged the new content into place and then
-// failed a step that runs after the exchange: syncing the directory that holds it. The new content
-// is visible to every reader, so the failure is not a reason to undo it; the caller counts the
-// publication as done and reports the failure. Err is the underlying failure and Unwrap exposes it,
-// so errors.Is keeps answering for the cause. It is the crwdir form of state.PublishedError.
-type PublishedError struct{ Err error }
+// failed a step that runs after the exchange. The new content is visible to every reader, so the
+// failure is not a reason to undo it; the caller counts the publication as done and reports the
+// failure. Err is the underlying failure and Unwrap exposes it, so errors.Is keeps answering for the
+// cause. It is the crwdir form of state.PublishedError.
+//
+// DisplacedAt names the file that holds the content the exchange displaced when the backup could not
+// be filled: the move to backupPath failed, or backupPath could not be read back. It is empty when
+// backupPath holds the displaced content, which is every other case. A caller that reports the file
+// roles must use DisplacedAt rather than assume the backup path.
+type PublishedError struct {
+	Err         error
+	DisplacedAt string
+}
 
 func (e *PublishedError) Error() string { return e.Err.Error() }
 
@@ -51,6 +59,7 @@ const (
 	crwdirSwapStepMode                           // right after the create, before the temp file takes the target's mode
 	crwdirSwapStepWrite                          // before the data is written
 	crwdirSwapStepSync                           // before the temp file is fsynced
+	crwdirSwapStepReserve                        // before the backup path is reserved
 	crwdirSwapStepReread                         // before the last check, the target read again
 	crwdirSwapStepCompare                        // right after the last check passed, before the exchange
 	crwdirSwapStepExchange                       // before the atomic exchange
@@ -69,12 +78,17 @@ const (
 //   - the temp file and the target are exchanged atomically (linux renameat2 RENAME_EXCHANGE,
 //     darwin renamex_np RENAME_SWAP). A filesystem without the exchange is refused before anything
 //     is written; there is no plain-rename fallback;
+//   - backupPath is reserved before the exchange, with the same exclusive create the oracle's
+//     copyFileSync(target, backup, COPYFILE_EXCL) used, so an occupied backup path refuses the whole
+//     publication before anything is exchanged and a colliding backup name can never leave the
+//     target replaced with the displaced content only at a temporary path;
 //   - the file the exchange displaced is moved to backupPath with a rename that refuses to replace,
 //     so the backup is the very file the publication displaced and nothing the caller did not create
-//     is deleted. An occupied backupPath refuses the move, and the error names the path the
-//     displaced file is still at;
-//   - the directory is fsynced. A failure there is a *PublishedError: the exchange happened, so the
-//     caller counts the publication as done and reports the failure.
+//     is deleted;
+//   - the directory is fsynced. Every failure after the exchange - the move, reading the backup back,
+//     or the sync - is a *PublishedError: the exchange happened, so the caller counts the publication
+//     as done and reports the failure, and PublishedError.DisplacedAt names where the displaced
+//     content is when the backup could not be filled.
 //
 // The answer is the displaced file's bytes, read from backupPath after the move, so the caller can
 // tell a cooperative writer (they equal expected) from one that saved between the last check and the
@@ -146,6 +160,22 @@ func crwdirSwapPublish(target string, expected, next []byte, backupPath string, 
 	if err = f.Close(); err != nil {
 		return nil, err
 	}
+	// An occupied backup path is refused before the exchange, exactly as the oracle's exclusive
+	// copyFileSync(target, backup, COPYFILE_EXCL) refused one before its write: the common collision
+	// (a second run within the same timestamped name) then leaves the target untouched instead of
+	// replaced with the displaced content only at a temporary path. The no-replace move below is the
+	// guarantee for a name taken after this check; its failure is a PublishedError naming where the
+	// displaced content is.
+	if err = at(crwdirSwapStepReserve); err == nil {
+		if _, statErr := os.Lstat(backupPath); statErr == nil {
+			err = &os.LinkError{Op: "rename", Old: tmp, New: backupPath, Err: fs.ErrExist}
+		} else if !errors.Is(statErr, fs.ErrNotExist) {
+			err = statErr
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
 	if err = at(crwdirSwapStepReread); err != nil {
 		return nil, err
 	}
@@ -172,10 +202,10 @@ func crwdirSwapPublish(target string, expected, next []byte, backupPath string, 
 		err = crwdirSwapNoReplace(tmp, backupPath)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w (the content the exchange displaced is kept at %s)", err, tmp)
+		return nil, &PublishedError{Err: fmt.Errorf("%w (the content the exchange displaced is kept at %s)", err, tmp), DisplacedAt: tmp}
 	}
 	if displaced, err = os.ReadFile(backupPath); err != nil {
-		return nil, err
+		return nil, &PublishedError{Err: err, DisplacedAt: backupPath}
 	}
 	if err = at(crwdirSwapStepSyncDir); err == nil {
 		err = syncDir(filepath.Dir(resolved))
@@ -208,7 +238,7 @@ const ConfigLockBusy = "config.toml is busy: another CRW writer holds its lock"
 // locks are unavailable, and the caller must not write. A wait of zero refuses at the first
 // contention.
 func LockConfig(target string, wait time.Duration) (*ConfigLock, error) {
-	resolved, _, err := resolveTarget(target)
+	resolved, err := crwdirSwapResolvePath(target)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +266,18 @@ func LockConfig(target string, wait time.Duration) (*ConfigLock, error) {
 		}
 		time.Sleep(crwdirSwapLockPoll)
 	}
+}
+
+// crwdirSwapResolvePath answers the file a writer must lock and publish: target with a symlink
+// followed to the file it names. Unlike resolveTarget it does not probe the file for write
+// permission, because taking the lock and reading the file are legal on a file this process may not
+// write (a read-only config.toml an activation has nothing to change in is a normal case), and the
+// publication's own probe still refuses the write.
+func crwdirSwapResolvePath(target string) (string, error) {
+	if link, err := os.Lstat(target); err == nil && link.Mode()&fs.ModeSymlink != 0 {
+		return filepath.EvalSymlinks(target)
+	}
+	return target, nil
 }
 
 // Release unlocks and closes the sidecar. The file is never unlinked.

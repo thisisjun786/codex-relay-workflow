@@ -142,9 +142,12 @@ func TestCrwdirSwapDirectorySyncFailureIsPublished(t *testing.T) {
 	}
 }
 
-// Nothing the caller did not create is deleted: an occupied backup path refuses the move, and the
-// error names the path the displaced file is still at.
-func TestCrwdirSwapNeverDeletesAnExistingBackup(t *testing.T) {
+// An occupied backup path refuses the whole publication before the exchange, as the oracle's
+// exclusive copy did: nothing is exchanged, the target keeps the bytes the plan was computed from,
+// and the operator's file is untouched. This is the common collision (a second run within the same
+// timestamped name) and it must not leave the target replaced with the displaced content only at a
+// temporary path.
+func TestCrwdirSwapRefusesAnOccupiedBackupBeforeTheExchange(t *testing.T) {
 	dir := t.TempDir()
 	target, backup := filepath.Join(dir, "config.toml"), swapBackup(dir)
 	before := "model = \"a\"\n"
@@ -152,19 +155,62 @@ func TestCrwdirSwapNeverDeletesAnExistingBackup(t *testing.T) {
 	writeSwapFile(t, target, before, 0o644)
 	writeSwapFile(t, backup, existing, 0o644)
 
-	_, err := crwdirSwapPublish(target, []byte(before), []byte("model = \"b\"\n"), backup, nil, nil)
-	if err == nil {
+	displaced, err := crwdirSwapPublish(target, []byte(before), []byte("model = \"b\"\n"), backup, nil, nil)
+	if err == nil || !errors.Is(err, os.ErrExist) {
 		t.Fatal("an occupied backup path was replaced")
+	}
+	if Published(err) {
+		t.Fatalf("a refusal before the exchange was reported as published: %v", err)
+	}
+	if displaced != nil {
+		t.Fatalf("a refused publication answered displaced content: %q", displaced)
 	}
 	if got := read(t, backup); got != existing {
 		t.Fatalf("the operator's file was overwritten: %q", got)
 	}
-	if got := read(t, target); got != "model = \"b\"\n" {
-		t.Fatalf("the exchange did not happen: %q", got)
+	if got := read(t, target); got != before {
+		t.Fatalf("the target was replaced by a refused publication: %q", got)
 	}
-	kept := tempsLike(t, dir, ".*.crwswap")
-	if len(kept) != 1 || read(t, kept[0]) != before {
-		t.Fatalf("the displaced content was deleted rather than kept: %v", kept)
+	if !slices.Equal(names(t, dir), []string{"config.toml", "config.toml.bak-2026-01-01T00-00-00.000Z"}) {
+		t.Fatalf("the refusal left %v", names(t, dir))
+	}
+}
+
+// A backup path taken between the reservation and the move is the residual window the no-replace
+// move covers: the exchange has run, so the failure is a PublishedError, the new content is in
+// place, the displaced content is still at the path the error names, and nothing is deleted.
+func TestCrwdirSwapKeepsTheDisplacedContentWhenTheMoveFails(t *testing.T) {
+	dir := t.TempDir()
+	target, backup := filepath.Join(dir, "config.toml"), swapBackup(dir)
+	before := "model = \"a\"\n"
+	next := "model = \"b\"\n"
+	writeSwapFile(t, target, before, 0o644)
+
+	displaced, err := crwdirSwapPublish(target, []byte(before), []byte(next), backup, func(at crwdirSwapStep) error {
+		if at != crwdirSwapStepMove {
+			return nil
+		}
+		// A colliding name appears after the reservation and before the move.
+		return os.WriteFile(backup, []byte("an operator's own file\n"), 0o644)
+	}, nil)
+	if !Published(err) {
+		t.Fatalf("a post-exchange move failure was not reported as published: %v", err)
+	}
+	var published *PublishedError
+	if !errors.As(err, &published) || published.DisplacedAt == "" {
+		t.Fatalf("the failure does not name where the displaced content is: %v", err)
+	}
+	if displaced != nil {
+		t.Fatalf("a failed backup read answered displaced content: %q", displaced)
+	}
+	if got := read(t, target); got != next {
+		t.Fatalf("the exchanged content is not in place: %q", got)
+	}
+	if got := read(t, published.DisplacedAt); got != before {
+		t.Fatalf("the displaced content was deleted rather than kept at %s: %q", published.DisplacedAt, got)
+	}
+	if got := read(t, backup); got != "an operator's own file\n" {
+		t.Fatalf("the colliding file was overwritten: %q", got)
 	}
 }
 

@@ -273,3 +273,61 @@ func TestHookTrustRetrustCASReportsThePlanOnSuccess(t *testing.T) {
 		}
 	}
 }
+
+// A failure after the exchange that stopped the backup being filled must be reported as published
+// with the file that really holds the displaced content, not as an unchanged config.
+func TestHookTrustRetrustCASReportsAPostExchangeFailureAsPublished(t *testing.T) {
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+	original := f.read(f.config())
+	kept := filepath.Join(f.root, "displaced.toml")
+	result, _, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			if werr := os.WriteFile(target, next, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.WriteFile(kept, expected, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			return nil, &crwdir.PublishedError{Err: errors.New("injected move failure"), DisplacedAt: kept}
+		},
+	})
+	if err != nil {
+		t.Fatalf("a post-exchange failure was reported as a refusal: %v", err)
+	}
+	if !result.Published || result.Warning == "" || result.DisplacedAt != kept {
+		t.Fatalf("the publication state is wrong: %+v", result)
+	}
+	if result.Conflict {
+		t.Fatalf("a cooperative displaced file was reported as a conflict: %+v", result)
+	}
+	if got := f.read(f.config()); !strings.Contains(got, f.entries[1].Hash) {
+		t.Fatalf("the published content is not in place: %q", got)
+	}
+	if got := f.read(kept); got != original {
+		t.Fatalf("the displaced content is not where the report says: %q", got)
+	}
+}
+
+// A hook that drifts between the pre-write verification and the final diagnosis must not be reported
+// as a success: the published config is no longer trusted.
+func TestHookTrustRetrustCASFailsWhenTheFinalDiagnosisDrifts(t *testing.T) {
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+	// The plan is verified good, the publication succeeds, and only then does the hook file change,
+	// so the final diagnosis reads a hash the published config does not carry.
+	result, verification, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			if werr := os.WriteFile(filepath.Join(f.plugin, "hooks", "two.json"), []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo changed"}]}]}}`+"\n"), 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			return crwdir.PublishSwap(target, expected, next, backupPath)
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "post-publication verification failed") {
+		t.Fatalf("a drifted final diagnosis was reported as success: result=%+v verification=%+v err=%v", result, verification, err)
+	}
+	if !result.Published {
+		t.Fatalf("the publication did happen and must be recorded: %+v", result)
+	}
+}

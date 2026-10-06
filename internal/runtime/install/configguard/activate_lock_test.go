@@ -10,25 +10,30 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
-// CRW-844: the activation publish of config.toml takes the same sidecar lock retrust takes, so a
-// CRW writer holding it makes the activation wait (and, past the wait, refuse) rather than
-// interleave on one config.toml. Every other file this package publishes keeps activationPublish.
+// CRW-844: the activation read-modify-write of config.toml takes the same sidecar lock retrust takes,
+// so a CRW writer holding it makes the activation refuse rather than interleave on one config.toml.
+// Every other file this package publishes keeps activationPublish.
 func TestActivateTakesTheConfigLock(t *testing.T) {
 	home := activationHome(t)
 	path := filepath.Join(home, "config.toml")
 	activationWrite(t, path, "[features]\nhooks = false\n")
 
+	// A CRW writer holding the lock makes the activation itself refuse, with the shared busy message
+	// and nothing written; the test drives the real Activate, not just LockConfig.
 	held, err := crwdir.LockConfig(path, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A waiter with a short deadline refuses with the shared busy message rather than writing.
-	if _, err := crwdir.LockConfig(path, 0); err == nil || !strings.Contains(err.Error(), crwdir.ConfigLockBusy) {
-		t.Fatalf("the lock was not exclusive: %v", err)
+	var calls [][]string
+	if _, e := Activate(activationDeps(t, home, allActivationFlags(), &calls)); e == nil || !strings.Contains(e.Error(), crwdir.ConfigLockBusy) {
+		t.Fatalf("the activation did not refuse while the lock was held: %v", e)
+	}
+	if got := activationRead(t, path); got != "[features]\nhooks = false\n" {
+		t.Fatalf("the refused activation wrote: %q", got)
 	}
 	held.Release()
 
-	var calls [][]string
+	// The released lock lets the activation through.
 	if _, e := Activate(activationDeps(t, home, allActivationFlags(), &calls)); e != nil {
 		t.Fatalf("the activation did not take the released lock: %v", e)
 	}

@@ -84,6 +84,10 @@ type HookTrustRetrustResult struct {
 	Conflict   bool
 	LateWrite  bool
 	Warning    string
+	// DisplacedAt names the file that holds the content the publication displaced when the backup
+	// path could not be filled (a failure after the exchange). It is empty when the backup path
+	// holds it, which is every other case.
+	DisplacedAt string
 	// UpdatedKeys and AppendedKeys name the items the plan rewrote and inserted, in listing order,
 	// so the report can print them for a success, a refusal that had a plan, and a conflict alike.
 	UpdatedKeys  []string
@@ -389,6 +393,16 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 	result.Published = true
 	if err != nil {
 		result.Warning = err.Error()
+		// The backup could not be filled, so the displaced content is wherever PublishSwap says it
+		// is; the report must not claim the backup path holds it, and the displaced bytes must be
+		// read from there so the conflict comparison is against the real content.
+		var published *crwdir.PublishedError
+		if errors.As(err, &published) && published.DisplacedAt != "" {
+			result.DisplacedAt = published.DisplacedAt
+			if displaced, err = os.ReadFile(published.DisplacedAt); err != nil {
+				return result, nil, fmt.Errorf("%w (the content the publication displaced is at %s and could not be read back)", err, published.DisplacedAt)
+			}
+		}
 	}
 	if !bytes.Equal(displaced, raw) {
 		result.Conflict = true
@@ -405,6 +419,19 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 	verification, err := DiagnoseHookTrust(codexHome, pluginRoot, pluginKey)
 	if err != nil {
 		return result, nil, err
+	}
+	// The hooks can drift between the pre-write verification and this read: a declaration or a hook
+	// file that changed in that window makes the published hashes drifted or untrusted, and the
+	// oracle's own post-write check failed on exactly that. Reporting it as success would tell the
+	// operator a config is trusted when it is not.
+	var drifted []string
+	for _, item := range verification {
+		if item.Status != "trusted" {
+			drifted = append(drifted, item.Key)
+		}
+	}
+	if len(drifted) > 0 {
+		return result, verification, errors.New("post-publication verification failed for " + strings.Join(drifted, ", ") + "; the hooks changed after the pre-write verification")
 	}
 	return result, verification, nil
 }
@@ -667,13 +694,20 @@ func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
 	}
 	fmt.Fprintf(stdout, "updated keys: %s\n", hookTrustRetrustList(result.UpdatedKeys))
 	fmt.Fprintf(stdout, "appended keys: %s\n", hookTrustRetrustList(result.AppendedKeys))
+	// displaced names the file that actually holds the content the publication displaced: the backup
+	// path, or, when a failure after the exchange stopped the backup being filled, the file
+	// PublishSwap reports. The report never claims a file holds content it does not.
+	displaced := result.BackupPath
+	if result.DisplacedAt != "" {
+		displaced = result.DisplacedAt
+	}
 	switch {
 	case result.Conflict:
-		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, result.BackupPath)
+		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
 	case result.Published && result.LateWrite:
-		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content it displaced; a newer save was left in place\n", result.ConfigPath, result.BackupPath)
+		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s holds the content retrust displaced\n", result.ConfigPath, displaced)
 	case result.Published:
-		fmt.Fprintf(stdout, "%s holds the rewritten config; %s holds the content it displaced\n", result.ConfigPath, result.BackupPath)
+		fmt.Fprintf(stdout, "%s holds the rewritten config; %s holds the content it displaced\n", result.ConfigPath, displaced)
 	default:
 		fmt.Fprintf(stdout, "%s unchanged; nothing was published\n", result.ConfigPath)
 	}

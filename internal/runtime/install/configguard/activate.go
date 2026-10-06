@@ -60,18 +60,31 @@ func activationPublish(path string, b []byte) error {
 	return crwdir.Publish(path, b)
 }
 
-// activationPublishConfig is activationPublish under the sidecar lock every CRW writer of
-// config.toml takes (CRW-844): the read, the decision and the publish are serialized against
-// retrust and any other CRW writer, so two writers never interleave on one config.toml. The lock is
-// taken only where this package publishes config.toml; the other files it publishes (the install
-// manifest, the self-heal marker) are not shared with another writer and keep activationPublish.
-func activationPublishConfig(path string, b []byte) error {
+// activationSetKeyLocked is the whole read-modify-write of one auto-enabled key under the sidecar
+// lock every CRW writer of config.toml takes (CRW-844): the read, the decision and the publish are
+// serialized against retrust and any other CRW writer, so two writers never interleave on one
+// config.toml, and a retrust that publishes between this read and this write cannot be overwritten
+// with content built from the pre-retrust bytes. The lock is taken only for config.toml; the other
+// files this package publishes (the install manifest, the self-heal marker) are not shared with
+// another writer and keep activationPublish.
+func activationSetKeyLocked(path, table, key string) (TomlEditResult, error) {
 	lock, e := crwdir.LockConfig(path, activationLockWait)
 	if e != nil {
-		return e
+		return TomlEditResult{}, e
 	}
 	defer lock.Release()
-	return activationPublish(lock.Target, b)
+	content, _, e := activationReadFile(lock.Target)
+	if e != nil {
+		return TomlEditResult{}, e
+	}
+	res := SetTableKey(string(content), table, key, true)
+	if !res.Changed {
+		return res, nil
+	}
+	if e := activationPublish(lock.Target, []byte(res.Content)); e != nil {
+		return TomlEditResult{}, e
+	}
+	return res, nil
 }
 
 // activationLockWait is how long the activation publish waits for another CRW writer's sidecar lock.
@@ -206,18 +219,15 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 		if found {
 			priorValue = &value
 		}
-		content, _, e := activationReadFile(path)
+		// The whole read-modify-write is under the sidecar lock every CRW writer of config.toml
+		// takes (CRW-844): reading before the lock and publishing after it would let a retrust that
+		// published in that window be overwritten with content built from the pre-retrust bytes.
+		res, e := activationSetKeyLocked(path, entry.Table, entry.Key)
 		if e != nil {
 			return nil, e
 		}
-		res := SetTableKey(string(content), entry.Table, entry.Key, true)
 		if res.Action == TomlUnsupportedValue {
 			continue
-		}
-		if res.Changed {
-			if e = activationPublishConfig(path, []byte(res.Content)); e != nil {
-				return nil, e
-			}
 		}
 		owned := res.Changed
 		if prior != nil {
