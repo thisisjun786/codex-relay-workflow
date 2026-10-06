@@ -5698,13 +5698,17 @@ git log --first-parent origin/dev --since=2026-10-05T23:00:00Z --until=2026-10-0
 | Cancelled by event | `pull_request` 27, `workflow_dispatch` 3, `push` 1 | the runs list above |
 | Merges | 45 | `git log --first-parent` above; the 45 `push` runs to `dev` agree |
 | Runs per merge | 7.8 (the issue's expectation is about 2.5 to 3) | 350 / 45 |
-| Job slots | one run is ten jobs, so 3,500 in seven hours, about 8.3 a minute sustained | `.github/workflows/ci.yml:19-149`; the jobs list above |
+| Job slots | one run is ten jobs, so up to 3,500 in seven hours, about 8.3 a minute sustained (a cancelled run starts fewer) | `.github/workflows/ci.yml:19-149`; the jobs list above |
 | Repeated runs on one head | 250 distinct head SHAs, 91 ran more than once, 100 runs beyond the first of their head, and 95 of those extra runs are `pull_request` runs on a head that already had one (79 heads ran twice, 8 three times). These are repeated runs on one head, not necessarily runs of one tree: a `pull_request` run reports the pull request head as `head_sha` while it tests `refs/pull/<number>/merge` (§79), so a base advance between two of them changes the tree without changing the head | the runs list above |
-| Run wall time, `created_at` to `updated_at` | `pull_request` median 281 s, p90 730 s, max 2132 s; `push` median 275 s; `workflow_dispatch` median 276 s | the runs list above |
-| Job duration | `test-1` 260 s, `test-2` 259 s, `test-rest` 246 s, `test-3` 197 s, `lint` 148 s, `dist` 144 s, `test-4` 128 s, `validate` 35 s, `secrets` 8 s, `dev-gate` 3 s (medians) | the jobs list above, 26 `pull_request` runs sampled across the window, 260 jobs |
-| Runner wait, job `started_at` minus run `created_at` | the 182 matrix jobs: median 4 s, p90 207 s, max 456 s; 23 of 182 (12.6%) waited 155 s or more and 19 (10.4%) waited 270 s or more; the worst wait in a run has median 6 s and p90 271 s | the jobs list above |
+| Run wall time, `run_started_at` to `updated_at` | `pull_request` median 281 s, p90 730 s, max 1252 s; `push` median 275 s; `workflow_dispatch` median 276 s | the runs list above |
+| Job duration | `test-1` 260 s, `test-2` 259 s, `test-rest` 246 s, `test-3` 197 s, `lint` 148 s, `dist` 144 s, `test-4` 128 s, `validate` 35 s, `secrets` 9 s, `dev-gate` 3 s (medians) | the jobs list above, 26 `pull_request` runs sampled across the window, 260 jobs |
+| Runner wait, job `started_at` minus run `created_at` | the 182 matrix jobs: median 4 s, p90 270 s, max 456 s; 23 of 182 (12.6%) waited 155 s or more and 19 (10.4%) waited 270 s or more; the worst wait in a run has median 6 s and p90 417 s | the jobs list above |
 | Cost of cancellation | 25 of the 27 cancelled `pull_request` runs had jobs that had already started; those jobs ran 26,328 s of job execution time between them, median 1,134 s and max 1,875 s per run, summed per run from each job's `completed_at` minus its `started_at` | the jobs of those runs, read with the jobs endpoint above |
-| Lane CI | §79's measurement of the same day stands: turn median 5.4 min, of which base refresh to CI end 5.2 min. The issue records the lane growing from 4.5 to 11 minutes; the `pull_request` p90 of 12.2 minutes is that tail | the issue body for the lane figure; the runs list above for the tail |
+| Lane CI | §79's measurement of the same day stands: turn median 5.4 min, of which base refresh to CI end 5.2 min. The issue records the lane growing from 4.5 to 11 minutes; the `pull_request` p90 of 730 s, about 12 minutes, is that tail | the issue body for the lane figure; the runs list above for the tail |
+
+Percentiles here are nearest-rank: the p-th percentile is the value at rank `ceil(p*n)` of the sorted
+sample, and a median of an even-sized sample is the lower of the two middle values. Recomputing with
+a different convention moves the p90 values by one rank.
 
 The management session's own observation the same afternoon — 30 jobs running and 14 runs waiting
 (12 `pull_request`, 1 `push`) — is the same picture from the other side and is recorded in the issue
@@ -5721,9 +5725,10 @@ The work is not the problem; the demand is. The slowest leg is 260 s and the med
 but the p90 run is 730 s and the worst matrix job waited 456 s for a runner. The extra minutes are
 queueing, and they land on whichever run is unlucky rather than on the lane.
 
-Most of the runs are avoidable. The 41 `workflow_dispatch` runs started on pull request branches are
-11.7% of every run in the window; the packet stopped that practice on 2026-10-06. Another 95 runs
-re-ran a head that already had a pull request run. Cancellation does not recover what was already
+Most of the runs are avoidable. All 41 `workflow_dispatch` runs report a `codex/` branch as their
+`head_branch`, so they are pull request branches rather than `dev`; they are 11.7% of every run in
+the window, and the packet stopped that practice on 2026-10-06. Another 95 runs re-ran a head that
+already had a pull request run. Cancellation does not recover what was already
 spent: 31 runs were cancelled, and the jobs that had already started in the 27 cancelled pull
 request runs had run 26,328 s of job execution time between them. Cancelling does release the
 runners it stops, but only from the moment of the cancellation, so the queue time those runs had
@@ -5771,9 +5776,9 @@ read 2026-10-06.
 ### Whether a run can be given runner priority
 
 No. The pages read on 2026-10-06 — "Limits", "GitHub-hosted runners", "Larger runners", "Control
-workflow concurrency" and "Self-hosted runners" — document no control that orders one workflow run
-ahead of another on standard GitHub-hosted runners. A run waits for the account's concurrent-job
-capacity, and the only bound the documentation states is a discard: a run "has been successfully
+workflow concurrency", "Self-hosted runners" and "Secure use" — document no control that orders one
+workflow run ahead of another on standard GitHub-hosted runners. A run waits for the account's
+concurrent-job capacity, and the only bound the documentation states is a discard: a run "has been successfully
 queued, but has not been processed by a GitHub-hosted runner within 45 minutes, then the queued
 workflow run is discarded".
 
@@ -5786,8 +5791,9 @@ Sources, read 2026-10-06: "Limits"
 (<https://docs.github.com/en/actions/reference/limits>), "GitHub-hosted runners"
 (<https://docs.github.com/en/actions/concepts/runners/github-hosted-runners>), "Larger runners"
 (<https://docs.github.com/en/actions/concepts/runners/larger-runners>), "Self-hosted runners"
-(<https://docs.github.com/en/actions/concepts/runners/self-hosted-runners>), and "Control workflow
-concurrency" above.
+(<https://docs.github.com/en/actions/concepts/runners/self-hosted-runners>), "Secure use"
+(<https://docs.github.com/en/actions/reference/security/secure-use>, the page option 3's quotation
+comes from), and "Control workflow concurrency" above.
 
 ### The plan limits and cost
 
@@ -5801,9 +5807,12 @@ repositories that use standard GitHub-hosted runners", and "Public repositories:
 free". For this repository the runner minutes therefore cost nothing at any ceiling, and the plan's
 incremental value here is the ceiling and the plan's other features, not minutes.
 
-The monthly plan prices could not be read: <https://github.com/pricing> renders its figures
-client-side, and the documentation pages carry feature lists rather than prices. Two facts that bear
-on the comparison are readable: GitHub Team is described as an organization plan ("In addition to
+The monthly plan prices could not be read from the documentation: the documentation pages carry
+feature lists rather than prices, and <https://github.com/pricing> puts the plan figures in a
+template that the browser fills in (`data-plan="business"` and `data-plan="business_plus"` render
+4 and 21 USD per user a month, and no value is bound for the account's own plan), so this section
+does not state a price. Two facts that bear on the comparison are readable: GitHub Team is
+described as an organization plan ("In addition to
 the features available with GitHub Free for organizations, GitHub Team includes:") and "GitHub bills
 for GitHub Team on a per-user basis". This repository is owned by a user account, so Pro to Team
 means creating an organization and transferring the repository — the transfer cost §79 already
@@ -5826,9 +5835,9 @@ Sources, read 2026-10-06: "Limits" above, "Billing for GitHub Actions"
 | 6. Reuse or omit the dev push run | Unchanged: with the strict gate and a merge commit the dev push tree is the tree the lane verified, which is §79's premise | Names unchanged. A `push` run to `dev` is an admitted source, so reusing it is consistent with §79 (a) | Minus 45 runs per seven hours, 12.9% of all runs, and minus 450 job slots; also removes the dev push cancel race | `POLICY.md`'s release-evidence paragraph, `docs/releases.md`, the `release.yml` check and its contract tests | The release loses a run of its own and a reused result must be labelled as reused; one region | No new trust path | Yes |
 | 7. (added) Make the packet's run-count rules permanent | Unchanged: nothing is weakened | Names unchanged; §79 (a) unaffected | Minus the 41 dispatch runs (11.7%), minus the edited share of the 95 extra pull request runs (the runs API reports `pull_request` for `opened` and `edited` alike, so that share cannot be read here; the edited-run reuse node owns it), plus a shorter longest leg from the leg-rebalance node | Skill text only | Low; one region of skill text | No new trust path | No |
 
-Option 5 is answered as the issue frames it. Devin reviews once when the pull request becomes ready
-and the GitHub Codex review runs once when it is opened, so a draft moves the Codex review earlier
-and leaves Devin's to the ready transition; the receipt waits for whichever has started, and the
+Option 5 is answered as the issue frames it. Both one-shot reviews run once per pull request, when
+it is opened or when it becomes ready (the issue's wording), so a draft moves each of them to the
+ready transition rather than removing it, and the receipt waits for whichever has started. The
 draft buys no CI either way. The packet's own rules — no `workflow_dispatch` on a pull request
 branch, the complete body written before the pull request is created, and at most one failed-job
 rerun per head — are what actually removes runs, and they are option 7.
