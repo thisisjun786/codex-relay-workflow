@@ -340,3 +340,34 @@ Tail prose.
 	root := writeDispatchCasesTree(t, doc, data)
 	expectEqual(t, "generated document", generateDispatchCases(t, root), want)
 }
+
+// The data files keep their links written the way the generated document writes them, and that
+// document is link-checked, so a broken link in a row still fails validate through it. This pins the
+// invariant that lets validate skip the data files: every local link resolves from the document's own
+// directory.
+func TestDispatchCasesDataFileLinksResolveFromTheDocument(t *testing.T) {
+	root := repoRoot()
+	docDir := filepath.Join(root, filepath.Dir(dispatchCasesDoc))
+	for _, section := range dispatchCasesSections {
+		dir := filepath.Join(root, dispatchCasesDir, section.dir)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			text, err := readText(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, match := range markdownLink.FindAllStringSubmatch(text, -1) {
+				local := localPath(strings.Trim(match[1], "<>"))
+				if local == "" || strings.HasPrefix(local, "/") {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(docDir, local)); err != nil {
+					t.Errorf("%s/%s: link %s does not resolve from the document's directory", section.dir, entry.Name(), match[1])
+				}
+			}
+		}
+	}
+}
