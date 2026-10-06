@@ -4397,6 +4397,102 @@
    ]
   }
  ],
+ "managed": [
+  {
+   "name": "managed: issue once",
+   "test": "spawn-items-managed.test.ts:27-44; fallback-dispatch.test.ts",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"rec/exec-primary\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":{\"model\":\"rec/exec-fallback\",\"effort\":null}},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "managed allow: the candidate model and effort replace the caller fields",
+     "files": {
+      ".crw/dispatches/rec-s1/one.json": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"status\":\"active\"}"
+     },
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_use_id\":\"native-1\",\"tool_input\":{\"agent_type\":\"executor\",\"model\":\"wrong-caller\",\"reasoning_effort\":\"low\",\"message\":\"[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-primary\",\"reasoning_effort\":\"high\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "re-issued with the same tool_use_id: idempotent",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_use_id\":\"native-1\",\"tool_input\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-primary\",\"reasoning_effort\":\"high\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-primary\",\"reasoning_effort\":\"high\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a different tool_use_id is refused",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_use_id\":\"native-2\",\"tool_input\":{\"agent_type\":\"executor\",\"message\":\"[CRW-DISPATCH:one:att-1]\\nTASK: locate the owner\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"managed dispatch: attempt already issued to another native call; reconcile before retry\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "managed: candidate null effort",
+   "test": "spawn-items-managed.test.ts:27-44; spawn-attach-hook.ts:1098-1101",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"rec/exec-primary\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "a null candidate effort deletes reasoning_effort from updatedInput",
+     "files": {
+      ".crw/dispatches/rec-s1/one.json": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-fallback\",\"effort\":null},\"claimed\":true,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"claimed\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"status\":\"active\"}"
+     },
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_use_id\":\"native-1\",\"tool_input\":{\"agent_type\":\"executor\",\"model\":\"wrong-caller\",\"reasoning_effort\":\"low\",\"message\":\"[CRW-DISPATCH:one:att-1]\\nTASK: go\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"executor\",\"model\":\"rec/exec-fallback\",\"message\":\"{{V1}}\\n\\n[CRW-DISPATCH:one:att-1]\\nTASK: go\"}}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  },
+  {
+   "name": "managed: refusals",
+   "test": "spawn-items-boundaries.test.ts:184-192; fallback-dispatch.test.ts",
+   "env": {
+    "skills": "plain",
+    "tmp": "present",
+    "store": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"model\",\"model\":\"rec/exec-primary\",\"effort\":\"high\",\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}}}",
+    "unreadableCwd": false
+   },
+   "steps": [
+    {
+     "note": "an invalid marker is refused before issuance",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"executor\",\"message\":\"[CRW-DISPATCH:broken]\\nTASK: inspect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"managed dispatch: invalid managed dispatch marker\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "an unclaimed attempt is refused",
+     "files": {
+      ".crw/dispatches/rec-s1/one.json": "{\"version\":1,\"sessionId\":\"rec-s1\",\"id\":\"one\",\"role\":\"executor\",\"candidates\":[{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},{\"model\":\"rec/exec-fallback\",\"effort\":null}],\"attempts\":[{\"id\":\"att-1\",\"candidate\":{\"model\":\"rec/exec-primary\",\"effort\":\"high\"},\"claimed\":false,\"agentId\":null,\"observedModel\":null,\"code\":null,\"taskFailure\":null,\"status\":\"ready\",\"reconciliation\":null,\"spawnIssued\":false,\"toolUseId\":null}],\"status\":\"active\"}"
+     },
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"executor\",\"message\":\"[CRW-DISPATCH:one:att-1]\\nTASK: inspect\"}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"managed dispatch: managed spawn attempt is not claimed or no longer current\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    },
+    {
+     "note": "a full-history fork is refused before the ledger is read",
+     "stdin": "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"session_id\":\"rec-s1\",\"cwd\":\"{WS}\",\"tool_input\":{\"agent_type\":\"executor\",\"message\":\"[CRW-DISPATCH:one:att-1]\\nTASK: inspect\",\"fork_context\":true}}",
+     "expect": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"managed fallback requires a fresh context\"}}\n",
+     "classification": "intentionally-changed",
+     "reason": "CRW names: guard and skill markers, skill and namespace prefixes, notice wording."
+    }
+   ]
+  }
+ ],
  "deny": [
   {
    "reason": "\"\\ud800\"",
