@@ -9,18 +9,15 @@ import (
 	"testing"
 )
 
-// The estimate signal and the calibrate command (CRW-739): the check reads a line estimate the body
-// states and scales it by the measured actual/estimate ratios from the calibration table; calibrate
-// prints that table's ratio distribution. The expected ratios were computed independently with exact
-// fractions (median 18961/9870, p75 8509/4000).
+// The estimate signal and the calibrate command (CRW-739). The expected ratios were computed
+// independently with exact fractions (median 18961/9870, p75 8509/4000).
 
 const (
-	wantSizeEstimateCalibrationRows = 8
-	wantSizeEstimateCalibrationP50  = 1.9210739614994934 // 18961/9870
-	wantSizeEstimateCalibrationP75  = 2.12725            // 8509/4000
+	wantSizeEstimateRows = 8
+	wantSizeEstimateP50  = 1.9210739614994934 // 18961/9870
+	wantSizeEstimateP75  = 2.12725            // 8509/4000
 )
 
-// sizeEstimateInput is a description body plus optional extra input fields.
 func sizeEstimateInput(body string, extra map[string]any) string {
 	m := map[string]any{"id": "CRW-SYN", "title": "synthetic", "description": body}
 	for k, v := range extra {
@@ -30,8 +27,6 @@ func sizeEstimateInput(body string, extra map[string]any) string {
 	return string(raw)
 }
 
-// sizeEstimateCheck runs the check on a body and returns the exit code, the decoded report and the raw
-// output.
 func sizeEstimateCheck(t testing.TB, body string, extra map[string]any) (int, map[string]any, string) {
 	t.Helper()
 	code, out, errOut := sizeCall(sizeEstimateInput(body, extra))
@@ -46,7 +41,6 @@ func sizeEstimateBody(text string) string {
 	return "## 완료 기준\n1. a\n2. b\n\n## 예상 크기\n" + text + "\n"
 }
 
-// sizeEstimateNumber reads one number out of the report's estimate object.
 func sizeEstimateNumber(t testing.TB, m map[string]any, key string) float64 {
 	t.Helper()
 	f, ok := at(m, "estimate", key).(float64)
@@ -56,10 +50,10 @@ func sizeEstimateNumber(t testing.TB, m map[string]any, key string) float64 {
 	return f
 }
 
-// sizeEstimateTableFile writes a table built from rows and answers its path.
-func sizeEstimateTableFile(t testing.TB, rows []map[string]any) string {
+// sizeEstimateTableFile writes a table with the given schema and answers its path.
+func sizeEstimateTableFile(t testing.TB, schema string, rows []map[string]any) string {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{"schema": "crw-issue-size-calibration/1", "rows": rows})
+	raw, err := json.Marshal(map[string]any{"schema": schema, "rows": rows})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,30 +64,19 @@ func sizeEstimateTableFile(t testing.TB, rows []map[string]any) string {
 	return path
 }
 
-// sizeEstimateReportNumber reads one number out of the report's top level (the calibrate report's ratios).
-func sizeEstimateReportNumber(t testing.TB, m map[string]any, key string) float64 {
-	t.Helper()
-	f, ok := at(m, key).(float64)
-	if !ok {
-		t.Fatalf("%s is not a number in %v", key, m)
-	}
-	return f
-}
-
 func TestIssueSizeEstimateForms(t *testing.T) {
 	for _, test := range []struct {
-		name string
 		text string
 		want int
 	}{
-		{"추정 N줄", "추정 300줄", 300},
-		{"약 N줄", "약 500줄", 500},
-		{"range takes the upper bound", "450~580줄", 580},
-		{"estimate N lines", "estimate 400 lines", 400},
-		{"about N lines", "about 350 lines", 350},
-		{"the largest value wins", "약 200줄, 약 450줄", 450},
+		{"추정 300줄", 300},
+		{"약 500줄", 500},
+		{"450~580줄", 580},
+		{"estimate 400 lines", 400},
+		{"about 350 lines", 350},
+		{"약 200줄, 약 450줄", 450},
 	} {
-		t.Run(test.name, func(t *testing.T) {
+		t.Run(test.text, func(t *testing.T) {
 			_, r, out := sizeEstimateCheck(t, sizeEstimateBody(test.text), nil)
 			if got := atNum(t, r, "estimate", "stated"); got != test.want {
 				t.Errorf("%q: stated %d, want %d: %s", test.text, got, test.want, out)
@@ -102,25 +85,21 @@ func TestIssueSizeEstimateForms(t *testing.T) {
 	}
 }
 
-// An estimate written in a section the check does not read (the completion criteria) is not read.
-func TestIssueSizeEstimateIgnoresTheCriteriaSection(t *testing.T) {
-	body := "## 완료 기준\n1. 약 450줄\n2. b\n"
-	_, r, out := sizeEstimateCheck(t, body, nil)
-	if at(r, "estimate") != nil {
+// An estimate stated as prose in the deliverables section is read too (the section keeps its full
+// text, not only its list items), and one under a section the check does not read is not.
+func TestIssueSizeEstimateReadsTheRightSections(t *testing.T) {
+	if _, r, out := sizeEstimateCheck(t, "## 완료 기준\n1. a\n2. b\n\n## 산출물\n약 450줄\n", nil); atNum(t, r, "estimate", "stated") != 450 {
+		t.Errorf("deliverables prose: estimate %v: %s", at(r, "estimate"), out)
+	}
+	if _, r, out := sizeEstimateCheck(t, "## 완료 기준\n1. 약 450줄\n2. b\n", nil); at(r, "estimate") != nil {
 		t.Errorf("an estimate was read from the criteria section: %s", out)
 	}
 }
 
 func TestIssueSizeEstimateScalesOverTheCeiling(t *testing.T) {
 	code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), nil)
-	if code != 1 {
-		t.Errorf("exit %d, want 1 (split_recommended): %s", code, out)
-	}
-	if got := at(r, "decision"); got != "split_recommended" {
-		t.Errorf("decision %v: %s", got, out)
-	}
-	if got := at(r, "assignable"); got != false {
-		t.Errorf("assignable %v", got)
+	if code != 1 || at(r, "decision") != "split_recommended" || at(r, "assignable") != false {
+		t.Errorf("exit %d, decision %v, assignable %v: %s", code, at(r, "decision"), at(r, "assignable"), out)
 	}
 	found := false
 	for _, reason := range atList(r, "reasons") {
@@ -131,49 +110,41 @@ func TestIssueSizeEstimateScalesOverTheCeiling(t *testing.T) {
 	if !found {
 		t.Errorf("no estimate_scaled_over_ceiling reason: %s", out)
 	}
-	if got := atNum(t, r, "estimate", "stated"); got != 450 {
-		t.Errorf("stated %d", got)
-	}
-	if got := atNum(t, r, "estimate", "ceiling"); got != 600 {
-		t.Errorf("ceiling %d", got)
-	}
-	if got := atNum(t, r, "estimate", "table_rows"); got != wantSizeEstimateCalibrationRows {
-		t.Errorf("table_rows %d", got)
-	}
-	if got := sizeEstimateNumber(t, r, "p75_ratio"); got != wantSizeEstimateCalibrationP75 {
-		t.Errorf("p75_ratio %v, want %v", got, wantSizeEstimateCalibrationP75)
-	}
-	if got := sizeEstimateNumber(t, r, "p50_ratio"); got != wantSizeEstimateCalibrationP50 {
-		t.Errorf("p50_ratio %v, want %v", got, wantSizeEstimateCalibrationP50)
-	}
-	if got := sizeEstimateNumber(t, r, "scaled_p75"); got != 450*wantSizeEstimateCalibrationP75 {
-		t.Errorf("scaled_p75 %v, want %v", got, 450*wantSizeEstimateCalibrationP75)
+	for key, want := range map[string]float64{"stated": 450, "ceiling": 600, "table_rows": wantSizeEstimateRows, "p50_ratio": wantSizeEstimateP50, "p75_ratio": wantSizeEstimateP75, "scaled_p75": 450 * wantSizeEstimateP75} {
+		if got := sizeEstimateNumber(t, r, key); got != want {
+			t.Errorf("estimate.%s %v, want %v", key, got, want)
+		}
 	}
 }
 
-// A ceiling the input states replaces the 600 default: an estimate that scales under it keeps the
-// ok decision but still reports the estimate object.
-func TestIssueSizeEstimateCeilingFromInput(t *testing.T) {
-	code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), map[string]any{"size_ceiling": 2000})
-	if code != 0 {
-		t.Errorf("exit %d, want 0: %s", code, out)
+// A stated ceiling replaces the default; an explicit zero is used as stated; a negative one is
+// refused as unreadable input.
+func TestIssueSizeEstimateCeiling(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		ceiling any
+		exit    int
+		want    int
+	}{
+		{"stated", 2000, 0, 2000},
+		{"zero is used as stated", 0, 1, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), map[string]any{"size_ceiling": test.ceiling})
+			if code != test.exit || atNum(t, r, "estimate", "ceiling") != test.want {
+				t.Errorf("exit %d, ceiling %v, want exit %d ceiling %d: %s", code, at(r, "estimate", "ceiling"), test.exit, test.want, out)
+			}
+		})
 	}
-	if got := at(r, "decision"); got != "ok" {
-		t.Errorf("decision %v", got)
-	}
-	if got := atNum(t, r, "estimate", "ceiling"); got != 2000 {
-		t.Errorf("ceiling %d", got)
-	}
-	if got := atNum(t, r, "estimate", "stated"); got != 450 {
-		t.Errorf("stated %d", got)
+	if code, _, errOut := sizeCall(sizeEstimateInput(sizeEstimateBody("약 450줄"), map[string]any{"size_ceiling": -1})); code != 2 || !strings.Contains(errOut, "size_ceiling") {
+		t.Errorf("negative ceiling: exit %d, stderr %q", code, errOut)
 	}
 }
 
-// A negative ceiling is refused as unreadable input.
-func TestIssueSizeEstimateRefusesANegativeCeiling(t *testing.T) {
-	code, _, errOut := sizeCall(sizeEstimateInput(sizeEstimateBody("약 450줄"), map[string]any{"size_ceiling": -1}))
-	if code != 2 || !strings.Contains(errOut, "size_ceiling") {
-		t.Errorf("exit %d, stderr %q", code, errOut)
+// An estimate large enough that a naive int64 product would overflow is still compared exactly.
+func TestIssueSizeEstimateLargeEstimateDoesNotOverflow(t *testing.T) {
+	if code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 2000000000000000줄"), nil); code != 1 || at(r, "decision") != "split_recommended" {
+		t.Errorf("exit %d, decision %v: %s", code, at(r, "decision"), out)
 	}
 }
 
@@ -192,61 +163,55 @@ func TestIssueSizeNoEstimateIsUnchanged(t *testing.T) {
 func TestIssueSizeEstimateException(t *testing.T) {
 	exception := map[string]any{"issue": "CRW-SYN", "approved_by": "Reviewer", "approved_on": "2026-10-06", "statement": "Keep it as one issue."}
 	code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), map[string]any{"exception": exception})
-	if code != 0 {
-		t.Errorf("exit %d, want 0: %s", code, out)
-	}
-	if got := at(r, "assignable"); got != true {
-		t.Errorf("assignable %v", got)
-	}
-	if got := at(r, "decision"); got != "split_recommended" {
-		t.Errorf("decision %v", got)
-	}
-	if at(r, "exception_record") == nil {
-		t.Errorf("no exception_record: %s", out)
+	if code != 0 || at(r, "assignable") != true || at(r, "decision") != "split_recommended" || at(r, "exception_record") == nil {
+		t.Errorf("exit %d, assignable %v, decision %v: %s", code, at(r, "assignable"), at(r, "decision"), out)
 	}
 }
 
-// calibrate prints the table's ratio distribution.
 func TestIssueSizeCalibrateOutput(t *testing.T) {
 	code, out, errOut := call([]string{"issue-size", "calibrate"}, "")
 	if code != 0 || errOut != "" {
 		t.Fatalf("exit %d: %s%s", code, out, errOut)
 	}
 	r := decodeReport(t, out)
-	if got := at(r, "schema"); got != "crw-issue-size-calibrate/1" {
-		t.Errorf("schema %v", got)
+	if at(r, "schema") != "crw-issue-size-calibrate/1" || atNum(t, r, "table_rows") != wantSizeEstimateRows || len(atList(r, "ratios")) != wantSizeEstimateRows {
+		t.Errorf("schema %v, table_rows %v, %d ratio rows", at(r, "schema"), at(r, "table_rows"), len(atList(r, "ratios")))
 	}
-	if got := atNum(t, r, "table_rows"); got != wantSizeEstimateCalibrationRows {
-		t.Errorf("table_rows %d", got)
-	}
-	if got := sizeEstimateReportNumber(t, r, "p75_ratio"); got != wantSizeEstimateCalibrationP75 {
-		t.Errorf("p75_ratio %v, want %v", got, wantSizeEstimateCalibrationP75)
-	}
-	if got := sizeEstimateReportNumber(t, r, "p50_ratio"); got != wantSizeEstimateCalibrationP50 {
-		t.Errorf("p50_ratio %v, want %v", got, wantSizeEstimateCalibrationP50)
-	}
-	if got := len(atList(r, "ratios")); got != wantSizeEstimateCalibrationRows {
-		t.Errorf("%d ratio rows", got)
+	for key, want := range map[string]float64{"p50_ratio": wantSizeEstimateP50, "p75_ratio": wantSizeEstimateP75} {
+		if got, _ := at(r, key).(float64); got != want {
+			t.Errorf("%s %v, want %v", key, got, want)
+		}
 	}
 }
 
-// calibrate --table reads a table the caller names.
-func TestIssueSizeCalibrateFromAFile(t *testing.T) {
-	path := sizeEstimateTableFile(t, []map[string]any{
+// calibrate --table reads a table the caller names; a table that is not this schema, is missing a
+// cell, or states a negative actual count is refused rather than read as zero or a negative ratio.
+func TestIssueSizeCalibrateTables(t *testing.T) {
+	good := []map[string]any{
 		{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": 150, "actual_test": 50},
 		{"issue": "B", "estimate_low": nil, "estimate_high": 200, "actual_impl": 100, "actual_test": 100},
-	})
-	code, out, errOut := call([]string{"issue-size", "calibrate", "--table", path}, "")
+	}
+	code, out, errOut := call([]string{"issue-size", "calibrate", "--table", sizeEstimateTableFile(t, "crw-issue-size-calibration/1", good)}, "")
 	if code != 0 || errOut != "" {
 		t.Fatalf("exit %d: %s%s", code, out, errOut)
 	}
-	r := decodeReport(t, out)
-	if got := atNum(t, r, "table_rows"); got != 2 {
-		t.Errorf("table_rows %d", got)
+	if r := decodeReport(t, out); atNum(t, r, "table_rows") != 2 || at(r, "p50_ratio") != 1.5 { // ratios 2.0 and 1.0
+		t.Errorf("table_rows %v, p50_ratio %v", at(r, "table_rows"), at(r, "p50_ratio"))
 	}
-	// ratios 2.0 and 1.0; the median is 1.5.
-	if got := sizeEstimateReportNumber(t, r, "p50_ratio"); got != 1.5 {
-		t.Errorf("p50_ratio %v, want 1.5", got)
+	for _, test := range []struct {
+		name   string
+		schema string
+		rows   []map[string]any
+	}{
+		{"foreign schema", "crw-issue-size-calibration/2", good},
+		{"missing cell", "crw-issue-size-calibration/1", []map[string]any{{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": 150, "actual_test": nil}}},
+		{"negative actual", "crw-issue-size-calibration/1", []map[string]any{{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": -150, "actual_test": 0}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if code, _, errOut := call([]string{"issue-size", "calibrate", "--table", sizeEstimateTableFile(t, test.schema, test.rows)}, ""); code != 2 || errOut == "" {
+				t.Errorf("exit %d, stderr %q", code, errOut)
+			}
+		})
 	}
 }
 
@@ -255,16 +220,5 @@ func TestIssueSizeCalibrateIsDeterministic(t *testing.T) {
 	code2, out2, _ := call([]string{"issue-size", "calibrate"}, "")
 	if code1 != 0 || out1 == "" || out1 != out2 {
 		t.Errorf("two runs differ: exit %d/%d\n%s\n---\n%s", code1, code2, out1, out2)
-	}
-}
-
-// A table whose rows are missing cells is refused rather than read as zero.
-func TestIssueSizeCalibrateRefusesAnIncompleteTable(t *testing.T) {
-	path := sizeEstimateTableFile(t, []map[string]any{
-		{"issue": "A", "estimate_low": 100, "estimate_high": 100, "actual_impl": 150, "actual_test": nil},
-	})
-	code, _, errOut := call([]string{"issue-size", "calibrate", "--table", path}, "")
-	if code != 2 || errOut == "" {
-		t.Errorf("exit %d, stderr %q", code, errOut)
 	}
 }

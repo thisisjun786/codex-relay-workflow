@@ -127,7 +127,7 @@ type sizeInput struct {
 	Deliverables *textField          `json:"deliverables"`
 	DependsOn    map[string][]string `json:"depends_on"`
 	Exception    *sizeException      `json:"exception"`
-	SizeCeiling  int                 `json:"size_ceiling"`
+	SizeCeiling  *int                `json:"size_ceiling"`
 }
 
 // The kinds of section the command reads, named by their heading. The headings of the recorded issues
@@ -152,7 +152,7 @@ var headingWords = []struct {
 	{kindCriteria, []string{"완료기준", "completioncriteria", "acceptancecriteria"}, nil},
 	{kindDeliverables, []string{"산출물", "deliverable"}, nil},
 	{kindVerification, []string{"검증", "verification"}, nil},
-	{kindScope, []string{"범위", "결과", "크기", "scope", "outcome", "result", "size"}, nil},
+	{kindScope, []string{"범위", "결과", "크기", "scope", "outcome", "result"}, []string{"size"}},
 }
 
 var (
@@ -467,8 +467,8 @@ func (s section) text() string {
 
 // sizeIssue is what the command counts: the issue's four kinds of text.
 type sizeIssue struct {
-	criteria, research, deliverables, scope, verification, unread []string
-	declaresDeliverables                                          bool
+	criteria, research, deliverables, deliverablesText, scope, verification, unread []string
+	declaresDeliverables                                                            bool
 }
 
 func readSizeIssue(in sizeInput) (sizeIssue, error) {
@@ -486,6 +486,7 @@ func readSizeIssue(in sizeInput) (sizeIssue, error) {
 			issue.research = append(issue.research, s.items()...)
 		case kindDeliverables:
 			issue.deliverables = append(issue.deliverables, s.items()...)
+			issue.deliverablesText = append(issue.deliverablesText, s.text())
 			issue.declaresDeliverables = true
 		case kindScope:
 			issue.scope = append(issue.scope, s.text())
@@ -502,6 +503,9 @@ func readSizeIssue(in sizeInput) (sizeIssue, error) {
 		}
 	}
 	issue.declaresDeliverables = issue.declaresDeliverables || in.Deliverables != nil
+	if in.Deliverables != nil {
+		issue.deliverablesText = in.Deliverables.items
+	}
 	return issue, nil
 }
 
