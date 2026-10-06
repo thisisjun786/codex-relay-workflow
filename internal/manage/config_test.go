@@ -289,6 +289,26 @@ func TestConfigRefusesAManageSectionThatIsNotAnObject(t *testing.T) {
 	}
 }
 
+// A help request reads no configuration, so a file this product cannot use does not take
+// the usage away from an operator who is trying to read it.
+func TestHelpWorksWithAnUnusableConfigurationFile(t *testing.T) {
+	coreTempHome(t)
+	coreConfigAt(t, coreConfigDocument(t, "not an object"))
+	for _, args := range [][]string{
+		{"host-read", "--help"},
+		{"child-check", "--help"},
+		{"audit", "--help"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != 0 {
+			t.Errorf("%q: exit %d, want 0: %s", args, code, errOut)
+		}
+		if !strings.Contains(out, "usage:") {
+			t.Errorf("%q: the usage is missing from %q", args, out)
+		}
+	}
+}
+
 // C5: a write to stdout that fails ends crw manage config with exit 1 and names the
 // failure, rather than reporting a truncated report as success.
 func TestConfigReportsAWriteFailure(t *testing.T) {

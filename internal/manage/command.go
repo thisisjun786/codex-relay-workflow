@@ -69,6 +69,7 @@ func coreNames() []string {
 // --help and help write the usage and the registered commands to stdout and exit 0.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	e := &Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Getenv: os.Getenv, Now: time.Now, Executable: coreExecutable()}
+	defer coreForgetConfig(e)
 	if len(args) == 0 {
 		coreUsage(stderr)
 		fmt.Fprintln(stderr, "crw manage: error: the following arguments are required: command")
@@ -85,7 +86,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			// runs, so no subcommand silently continues with the defaults. config is the one
 			// command that names the file itself (--config), so it reports its own refusal
 			// once it has read its flag.
-			if c.Name != coreConfigCommand.Name {
+			if c.Name != coreConfigCommand.Name && !coreHelpRequested(args[1:]) {
 				if err := coreConfigError(e); err != nil {
 					fmt.Fprintf(stderr, "crw manage: error: %v\n", err)
 					return usageExit

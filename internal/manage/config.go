@@ -97,6 +97,18 @@ func coreDefaults(e *Env) *Config { return coreConfigStateOf(e).cfg }
 // coreConfigError is why the configuration file could not be used, or nil.
 func coreConfigError(e *Env) error { return coreConfigStateOf(e).err }
 
+// coreHelpRequested reports whether a subcommand's arguments ask for its usage. A help
+// request runs no work and reads no configuration, so a file this product cannot use must
+// not take the usage away from an operator who is trying to read it.
+func coreHelpRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 // coreConfigStateOf is this Env's configuration, resolved on first use.
 func coreConfigStateOf(e *Env) coreConfigState {
 	coreConfigMemoMu.Lock()
@@ -107,6 +119,15 @@ func coreConfigStateOf(e *Env) coreConfigState {
 	state := coreLoad(e, "")
 	coreConfigMemo[e] = state
 	return state
+}
+
+// coreForgetConfig drops one Env's remembered configuration. Run calls it when the
+// invocation ends, so a process that embeds Run and calls it many times does not grow a
+// map entry per call; within the invocation every subcommand still reads one resolution.
+func coreForgetConfig(e *Env) {
+	coreConfigMemoMu.Lock()
+	defer coreConfigMemoMu.Unlock()
+	delete(coreConfigMemo, e)
 }
 
 // coreLoad resolves the configuration file and reads its manage object. flagPath is the
@@ -288,9 +309,15 @@ func coreRunConfig(_ context.Context, e *Env, args []string) int {
 	// precedence crwconfig applies, where the flag wins before CRW_CONFIG and the
 	// configuration home are looked at. Without one, the file every other subcommand reads
 	// is the one reported.
-	state := coreConfigStateOf(e)
+	// The flag names the file itself, so nothing lower in the chain is even opened: the
+	// same precedence crwconfig applies, where --config wins before CRW_CONFIG and the
+	// configuration home are looked at. Without a flag the file every other subcommand
+	// reads is the one reported.
+	var state coreConfigState
 	if flagPath != "" {
 		state = coreLoad(e, flagPath)
+	} else {
+		state = coreConfigStateOf(e)
 	}
 	if state.err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage config: error: %v\n", state.err)

@@ -60,10 +60,19 @@ func childCheckDisabled(cfg *Config, named []string) ([]string, error) {
 	if err := cfg.Section("child_check", &section); err != nil {
 		return nil, err
 	}
-	if len(section.DisabledServers) == 0 {
+	// The configured names are trimmed and blanks dropped, exactly as the command line's
+	// are, so a list of blanks is not a comparison list: it would otherwise read the socket
+	// and report blank keys as missing servers.
+	configured := make([]string, 0, len(section.DisabledServers))
+	for _, name := range section.DisabledServers {
+		if name = strings.TrimSpace(name); name != "" {
+			configured = append(configured, name)
+		}
+	}
+	if len(configured) == 0 {
 		return nil, childCheckServersUnsetError{}
 	}
-	return section.DisabledServers, nil
+	return configured, nil
 }
 
 // childCheck compares the thread's model, effort, status and servers with what was asked.

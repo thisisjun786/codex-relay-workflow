@@ -163,6 +163,14 @@ func TestChildCheckRefusesAnEmptyServerList(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "disabled_servers_unset") {
 		t.Fatalf("the refusal is %v, want disabled_servers_unset", err)
 	}
+	// A list of blanks is no more a comparison list than an empty one: it is trimmed and
+	// dropped exactly as the command line's names are.
+	cfg.raw["child_check"] = json.RawMessage("{\"disabled_servers\":[\"\",\" \"]}")
+	if _, err := childCheck(context.Background(), cfg, childCheckOptions{thread: "t1", model: "m", effort: "none"}); err == nil {
+		t.Fatal("childCheck accepted a list of blank server names")
+	} else if !strings.Contains(err.Error(), "disabled_servers_unset") {
+		t.Fatalf("the refusal is %v, want disabled_servers_unset", err)
+	}
 	if requests := host.Requests(); len(requests) != 0 {
 		t.Fatalf("the command read the socket before refusing: %+v", requests)
 	}
