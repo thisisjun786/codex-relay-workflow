@@ -8,6 +8,7 @@ package doctor
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,10 +35,16 @@ func harnessFollowupCache(t *testing.T, marketplace string, versions ...string) 
 }
 
 // harnessFollowupRun drives the command with a temporary working directory and the recorded stub
-// runner; the caller supplies the environment (PLUGIN_ROOT, CODEX_HOME).
+// runner; the caller supplies the environment (PLUGIN_ROOT, CODEX_HOME). A CODEX_HOME the caller
+// does not set is pinned to a temporary directory, so the install-root check never resolves the
+// developer's own Codex home.
 func harnessFollowupRun(t *testing.T, args []string, values map[string]string) (int, string, string) {
 	t.Helper()
 	tmp := t.TempDir()
+	if _, set := values["CODEX_HOME"]; !set {
+		values = maps.Clone(values)
+		values["CODEX_HOME"] = filepath.Join(tmp, "codex")
+	}
 	var stdout, stderr bytes.Buffer
 	states := map[string]bool{"multi_agent": true, "goals": true, "hooks": true, "default_mode_request_user_input": true}
 	code := RunHarnessDoctorCLI(args, &stdout, &stderr, harnessRunEnv(values), func() (string, error) { return tmp, nil }, harnessRunStub(states, "codex-cli 1.2.3\n"), time.Now())
