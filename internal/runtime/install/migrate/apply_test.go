@@ -46,6 +46,15 @@ func apReadOnlySource(t *testing.T, rel string) func(string) {
 	}
 }
 
+// apPrivateSource makes a source directory private (0700), and restores its mode so the temporary tree can be removed.
+func apPrivateSource(t *testing.T, rel string) func(string) {
+	return func(src string) {
+		dir := filepath.Join(src, filepath.FromSlash(rel))
+		must(t, os.Chmod(dir, 0o700))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	}
+}
+
 // apFailRename fails the n-th no-replace rename: the first publishes the canonical .gitignore, the next ones the files.
 func apFailRename(n int) func(string) error {
 	seen := 0
@@ -378,5 +387,46 @@ func TestApplyCountsAWholeFileWhoseDirectorySyncFailed(t *testing.T) {
 	}
 	if get(t, apDst(ws, "sessions/a.json")) != "{\"phase\":\"P\"}" {
 		t.Error("the final file must be whole")
+	}
+}
+
+// A directory this run left at the private marker mode must be finished even when the source mode is itself private, so
+// the sticky marker never survives a rerun.
+func TestApplyClearsTheMarkerOfAPrivateDirectoryAfterAnInterruption(t *testing.T) {
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, apPrivateSource(t, "sessions"))
+	t.Cleanup(func() { _ = os.Chmod(apDst(ws, "sessions"), 0o755) })
+	pub := newPub(t)
+	pub.at = apFailRename(2)
+	if _, err := applyWith(r, p, pub); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("interrupted run: %v", err)
+	}
+	if fi, err := os.Stat(apDst(ws, "sessions")); err != nil || fi.Mode()&fs.ModeSticky == 0 {
+		t.Fatalf("the interrupted run must leave the marker mode: %v %v", fi, err)
+	}
+	if _, err := apply(r, p); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(apDst(ws, "sessions"))
+	if err != nil || fi.Mode().Perm() != 0o700 || fi.Mode()&fs.ModeSticky != 0 {
+		t.Errorf("the rerun must clear the marker: %v %v", fi, err)
+	}
+}
+
+// The same case for a scope root whose source is private, which is common.
+func TestApplyFinishesTheRootModeOfAPrivateSource(t *testing.T) {
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "{\"phase\":\"P\"}"}, apPrivateSource(t, ""))
+	root := filepath.Join(ws, crwdir.DirName)
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+	pub := newPub(t)
+	pub.at = apFailRename(2)
+	if _, err := applyWith(r, p, pub); !errors.Is(err, errApplyInterrupted) {
+		t.Fatalf("interrupted run: %v", err)
+	}
+	if _, err := apply(r, p); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(root)
+	if err != nil || fi.Mode().Perm() != 0o700 || fi.Mode()&fs.ModeSticky != 0 {
+		t.Errorf("the rerun must clear the root marker: %v %v", fi, err)
 	}
 }

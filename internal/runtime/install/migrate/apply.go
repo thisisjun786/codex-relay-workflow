@@ -449,7 +449,7 @@ func (a *applyRun) finishModes() error {
 			return err
 		}
 		switch cur := fs.FileMode(raw).Perm(); {
-		case a.made[applyKey(it.Scope, rel)], raw == applyTempRaw && cur != it.Mode.Perm() && a.entriesExpected(it.Scope, rel, dir):
+		case a.made[applyKey(it.Scope, rel)], raw == applyTempRaw && a.entriesExpected(it.Scope, rel, dir):
 			err = applyChmod(dir, it.Mode.Perm())
 		case cur == it.Mode.Perm():
 		default:
@@ -522,5 +522,5 @@ func applyDirRaw(d *Dir) (uint32, error) {
 	if err := unix.Fstat(d.fd(), &st); err != nil {
 		return 0, &fs.PathError{Op: "stat", Path: d.path, Err: err}
 	}
-	return st.Mode & 0o7777, nil
+	return uint32(st.Mode) & 0o7777, nil
 }
