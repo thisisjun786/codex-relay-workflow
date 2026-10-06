@@ -661,6 +661,8 @@ A child that needs something only a person can give records `blocked_needs_input
 5. **In a DAG project, record the generation** for `split_approval` and `scope_change`: `dag-correct --plan <plan> --node <node> --actor <you> [--expect-epoch <the epoch your dag-coordinator-claim answered>]`, with no `--prepare` and no `--manifest-digest`. It answers `opened_by: decision_reply`. A refusal names what is missing. The decision is not dispatched yet, or the plan holds other criteria: wait, or revise the plan to the decided set, and call again. The node changed beyond its criteria after the dispatch: restore the node exactly or redefine it. An input the child consumed was superseded or replaced: no retry reaches that, so redefine the node. Record the generation before anything else opens another one, with no second decision and no ruling in between: a gap left there is final and the way out is a redefinition. `answer` and `stop` open no generation, so there is nothing to record.
 6. **Rule and accept the result as any result.** The child continues on the same node and its first receipt in the new generation passes no `--supersedes-revision`. Give the verdict, and in a DAG project `dag-accept` it (with `--supersedes` when the node already had an accepted result): the node reads accepted and not stale.
 
+**A child the relay saw end.** A turn the relay itself observed ending `interrupted` or `failed` without a receipt is a second receipt decision-reply answers, and `answer` alone answers it: the child never asked a question, so there is nothing to rule, and the answer continues it in the same generation through the same delivery path, which resumes a `notLoaded` child under the MCP profile its record states. `stop`, `split_approval` and `scope_change` are refused `disposition_conflict` for such a receipt, and every other producer and outcome pair stays refused. decision-show reads the decision back with `answersOutcome` (`blocked_needs_input`, `interrupted` or `failed`), and the message says the relay saw the turn end and to re-read the worktree, branch, commits and pull request and continue from where the child stopped.
+
 **The fallback, and what it records.** A parent that sent the child a message over the thread bridge, outside this route, has told the relay nothing: the relay cannot see that message. The one trace it can hold is an admission: `admit-turn --relationship <rel> --generation <n> --turn <the turn that received it> --actor <your own task id> --reason <why>`. An admission by the relationship's registered parent task is recorded as a direct parent intervention, which `intervention-show --relationship <rel>` reads back (generation, turn, anchor, actor, reason, time); any other actor is only an admission. It is a record and not an authorization. A message that is never admitted leaves no trace, the actor is the statement of whoever ran the command, and the bypass opens no generation, so the DAG learns of it only from the plan revision and the re-registered criteria. Use the route above, and name any use of the fallback in the report and in the handoff.
 
 On a bridge send to a child released with an MCP profile, state `role: child` and
@@ -673,7 +675,10 @@ client already loaded the child under other MCP settings, the relay's `settings_
 names recovery: only after a completed durable turn and a confirmed resumable rollout, release all
 subscriptions and observe `notLoaded` (an operator can use `thread/archive` then `thread/unarchive`
 if it remains loaded); the next relay delivery resumes under the recorded profile. Never unload a
-never-run root. This advice performs no automatic recovery.
+never-run root. This advice performs no automatic recovery, with one narrow exception: a managed
+resend lowers an idle child whose immediately preceding business failure is the structured
+`settings_not_preserved` refusal, once per business attempt, and resends only after the child is
+`notLoaded` again.
 
 ## The four readers a candidate pass also uses
 

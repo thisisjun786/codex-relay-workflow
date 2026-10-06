@@ -875,40 +875,88 @@ func shellVerbKeywordArg(arg []rune) (string, []rune, bool) {
 func shellVerbLiteral(arg []rune) (string, bool) { return shellWriteEscapeLiteral(arg, false) }
 
 // shellWriteEscapeLiteral reads a Python string literal; earlier selects the reading before escapes were decoded, which drops a
-// backslash only before the literal's own quote or another backslash and keeps every other escape as written.
+// backslash only before the literal's own quote or another backslash and keeps every other escape as written. The decoded reading
+// also reads a literal that opens with three of its quote as Python reads a triple-quoted one (shellWriteTripleBody) and folds the
+// doubled braces of a field-free f-string (shellWriteTripleFold); the earlier reading keeps the single-quote walk it always had.
 func shellWriteEscapeLiteral(arg []rune, earlier bool) (string, bool) {
-	i, raw, isBytes := 0, false, false
+	i, raw, isBytes, isF := 0, false, false, false
 	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
 		i++
 	}
 	for ; i < len(arg) && strings.ContainsRune("rRuUbBfF", arg[i]); i++ {
 		raw = raw || arg[i] == 'r' || arg[i] == 'R'
 		isBytes = isBytes || arg[i] == 'b' || arg[i] == 'B'
+		isF = isF || arg[i] == 'f' || arg[i] == 'F'
 	}
 	if i >= len(arg) || arg[i] != '\'' && arg[i] != '"' {
 		return "", false
 	}
 	quote := arg[i]
-	for k := i + 1; k < len(arg); k++ {
+	body, ok := shellWriteTripleBody(arg, i, quote, !earlier && i+2 < len(arg) && arg[i+1] == quote && arg[i+2] == quote)
+	if !ok {
+		return "", false
+	}
+	if raw {
+		return string(shellWriteTripleFold(body, arg, isF && !earlier)), true
+	}
+	if earlier {
+		return shellWriteEscapeUnquote(body, quote), true
+	}
+	return shellWriteEscapePython(shellWriteTripleFold(body, arg, isF), isBytes)
+}
+
+// shellWriteTripleBody is the body of the string literal whose opening quote is arg[i] and whether it closes with spaces alone
+// after it: with triple false the body runs to the first unescaped arg[i], with triple true to the first unescaped run of three
+// arg[i], and a character after a backslash never closes it. The body is a slice of arg, so no body is copied.
+func shellWriteTripleBody(arg []rune, i int, quote rune, triple bool) ([]rune, bool) {
+	open := i + 1
+	if triple {
+		open = i + 3
+	}
+	for k := open; k < len(arg); k++ {
 		switch c := arg[k]; {
 		case c == '\\':
 			k++ // the character after a backslash never closes the literal
-		case c == quote:
-			for _, rest := range arg[k+1:] {
+		case c == quote && (!triple || k+2 < len(arg) && arg[k+1] == quote && arg[k+2] == quote):
+			after := k + 1
+			if triple {
+				after = k + 3
+			}
+			for _, rest := range arg[after:] {
 				if !shellVerbSpaceRune(rest) {
-					return "", false
+					return nil, false
 				}
 			}
-			if raw {
-				return string(arg[i+1 : k]), true
-			}
-			if earlier {
-				return shellWriteEscapeUnquote(arg[i+1:k], quote), true
-			}
-			return shellWriteEscapePython(arg[i+1:k], isBytes)
+			return arg[open:k], true
 		}
 	}
-	return "", false
+	return nil, false
+}
+
+// shellWriteTripleFold is the body of a field-free f-string literal with its doubled braces folded to single ones, as Python folds
+// them before it decodes escapes; any other body is returned unchanged. shellWriteEscapeField decides whether a replacement field
+// is present, so the fold never fires on a body the Path join already treats as dynamic.
+func shellWriteTripleFold(body, arg []rune, f bool) []rune {
+	if !f || shellWriteEscapeField(arg) {
+		return body
+	}
+	i := 0
+	for i+1 < len(body) && !(body[i] == body[i+1] && (body[i] == '{' || body[i] == '}')) {
+		i++
+	}
+	if i+1 >= len(body) {
+		return body
+	}
+	out := append([]rune(nil), body[:i]...)
+	for ; i < len(body); i++ {
+		if i+1 < len(body) && body[i] == body[i+1] && (body[i] == '{' || body[i] == '}') {
+			out = append(out, body[i])
+			i++
+			continue
+		}
+		out = append(out, body[i])
+	}
+	return out
 }
 
 // shellWriteEscapeUnquote is the earlier reading of a non-raw literal's body.
