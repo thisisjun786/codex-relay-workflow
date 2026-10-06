@@ -168,6 +168,20 @@ func textField(entry any, name string) string {
 	return pyvalue.Str(v)
 }
 
+// providerField is the integration a check entry names, with both an absent field and a JSON null
+// read as unknown (""): the collector records a job entry's provider as nil when the check-run
+// listing it read, which is filtered to the latest run, does not hold that job's check-run, so an
+// older run's entry carries a null rather than a value. textField would render that null as the
+// string "None", which would read as a known integration and make two unknown ones look different.
+func providerField(entry any) string {
+	o, _ := Object(entry)
+	v, present := o.Lookup("provider")
+	if !present || v == nil {
+		return ""
+	}
+	return pyvalue.Str(v)
+}
+
 // ShapeProblems is mergeevidence.shape_problems. It must run before semantic predicates.
 func ShapeProblems(review, checks, required any, head *string) []Problem {
 	var problems []Problem
@@ -352,12 +366,17 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 // this the earlier light run's entry would refuse the head forever, and the documented repair could
 // never produce merge evidence (CRW-824).
 //
-// The substitute must be a workflow run of the same integration: a namesake from another provider
-// does not answer this branch's gate, and a published check run or a commit status holds no jobs at
+// The substitute must be a workflow run: a published check run or a commit status holds no jobs at
 // all, so reading either as the evidence that repaired a light run would let an untested head
-// through. A candidate that holds a skipped leg of its own is not the evidence either, and a leg
-// whose step list the collector could not read leaves its own unreadable problem, which refuses the
-// whole reading before this predicate is consulted.
+// through. It must also not be known to come from another integration than the judged entry, since a
+// namesake from elsewhere does not answer this branch's gate. The provider is read leniently on
+// purpose: the collector fills it from the check-run listing filtered to the LATEST run, so an older
+// workflow run whose check-run a newer one replaced carries none, and a strict equality would refuse
+// the labeled full run that is the documented repair. Two known, differing providers are a refusal; an
+// unknown one on either side is not evidence of a different integration. A candidate that holds a
+// skipped leg of its own is not the evidence either, and a leg whose step list the collector could
+// not read leaves its own unreadable problem, which refuses the whole reading before this predicate
+// is consulted.
 func testedElsewhere(checks []any, head, name, provider, run string, highest map[string]*big.Int) bool {
 	for _, entry := range checks {
 		runId := textField(entry, "runId")
@@ -369,7 +388,10 @@ func testedElsewhere(checks []any, head, name, provider, run string, highest map
 			continue
 		}
 		o, _ := Object(entry)
-		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" || textField(entry, "provider") != provider {
+		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
+			continue
+		}
+		if candidateProvider := providerField(entry); provider != "" && candidateProvider != "" && candidateProvider != provider {
 			continue
 		}
 		if len(testSkippedJobs(checks, candidate, highest)) == 0 {
@@ -520,7 +542,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		if skipped := testSkippedJobs(checks, workflowRun(run), highest); len(skipped) > 0 {
 			// Another run of the same required check on this head that ran its tests is the
 			// evidence: the lane's repair for a light run is a labeled full run on the same head.
-			if !testedElsewhere(checks, head, name, textField(entry, "provider"), workflowRun(run), highest) {
+			if !testedElsewhere(checks, head, name, providerField(entry), workflowRun(run), highest) {
 				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
 					lightKey, lightRun, lightName = key, run, skipped[0]
 				}

@@ -175,6 +175,41 @@ func TestCRW824ACommitStatusDoesNotSupersedeALightRun(t *testing.T) {
 	}
 }
 
+// The collector fills a job entry's provider from the check-run listing filtered to the latest run,
+// so an older workflow run whose check-run is no longer latest carries no provider at all. When the
+// branch rule pins no integration, the substitute must not be refused for that: the labeled full run
+// is still the repair. The judged entry's provider is what the substitute is compared against, and a
+// judged entry with no provider accepts a substitute with none.
+func TestCRW824ASubstituteWithoutAProviderSupersedesWhenNoneIsPinned(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+	}
+	// The older light run's entry carries no provider (its check-run is no longer the latest), and the
+	// full run's does; no integration is pinned, so the full run is the evidence.
+	checks[2].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("the labeled full run is the evidence when no integration is pinned, got %v", problems)
+	}
+}
+
+// The reverse spelling: the judged light entry carries the provider and the substitute does not. The
+// substitute is a workflow run of the same check with no skipped leg, so it is the evidence.
+func TestCRW824ASubstituteSupersedesWhenTheJudgedEntryCarriesTheProvider(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+	}
+	checks[0].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("a workflow run of the same check with no skipped leg is the evidence, got %v", problems)
+	}
+}
+
 // A published check run is not a workflow run either: it holds no jobs, so it cannot vouch for a
 // light run's tests.
 func TestCRW824APublishedCheckRunDoesNotSupersedeALightRun(t *testing.T) {
@@ -186,6 +221,31 @@ func TestCRW824APublishedCheckRunDoesNotSupersedeALightRun(t *testing.T) {
 	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
 	if len(problems) != 1 || problems[0].Code != ChecksStale {
 		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+}
+
+// The collector records an entry's provider as a JSON null when the check-run listing it read, which
+// is filtered to the latest run, does not hold that entry's check-run. That null is unknown, not an
+// integration, so it must not be read as one differing from the substitute's value: a text read would
+// render it as the string "None" and refuse the repair.
+func TestCRW824ANullProviderIsUnknownNotAnIntegration(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+	}
+	// The older light entry carries the collector's null; the full run's carries an integration.
+	checks[0].(map[string]any)["provider"] = nil
+	checks[2].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("a null provider is unknown and must not refuse the repair, got %v", problems)
+	}
+	// And the reverse: the judged entry carries an integration and the substitute carries null.
+	checks[0].(map[string]any)["provider"] = "42"
+	checks[2].(map[string]any)["provider"] = nil
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("a null provider is unknown and must not refuse the repair, got %v", problems)
 	}
 }
 
