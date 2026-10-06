@@ -31,14 +31,8 @@ func cliWS(t *testing.T, base string, entries map[string]string) string {
 // cliRun runs the command with the environment isolate set, and returns its exit code and output.
 func cliRun(t *testing.T, ctx context.Context, args ...string) (int, string, string) {
 	t.Helper()
-	return cliRunEnv(t, ctx, os.Environ(), args...)
-}
-
-// cliRunEnv runs the command with an explicit environment.
-func cliRunEnv(t *testing.T, ctx context.Context, env []string, args ...string) (int, string, string) {
-	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Run(ctx, args, env, &stdout, &stderr)
+	code := Run(ctx, args, os.Environ(), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -71,6 +65,13 @@ func TestCLIInvalidArgumentsWriteNothing(t *testing.T) {
 		{[]string{"--cwd", ws, "--to-home", base}, "--scope user"},
 		{[]string{"--cwd", ws, "--codex-home", base}, "--scope codex"},
 		{[]string{"--cwd", ws, "extra"}, "unrecognized arguments"},
+		// An explicitly empty value names no path: an unset shell variable must not silently select
+		// the environment or the working directory instead of the root the operator meant.
+		{[]string{"--cwd", ws, "--scope", "user", "--from-home", ""}, "empty value"},
+		{[]string{"--cwd", ws, "--scope", "user", "--to-home", ""}, "empty value"},
+		{[]string{"--cwd", ws, "--scope", "codex", "--codex-home", ""}, "empty value"},
+		{[]string{"--cwd", ws, "--report", ""}, "empty value"},
+		{[]string{"--cwd", ""}, "empty value"},
 	} {
 		code, out, errOut := cliRun(t, context.Background(), tc.args...)
 		if code != 2 || out != "" || !strings.Contains(errOut, tc.want) {
@@ -134,9 +135,13 @@ func TestCLIScopeDefaultsAndEnvironment(t *testing.T) {
 		}
 		bare = append(bare, entry)
 	}
-	code, out, _ = cliRunEnv(t, context.Background(), bare, "--cwd", ws, "--scope", "user", "--dry-run")
-	if code != 0 || !strings.Contains(out, "user: "+home+"/.codexclaw -> "+home+"/.crw") {
-		t.Fatalf("exit %d\n%s", code, out)
+	var stdout, stderr bytes.Buffer
+	if got := Run(context.Background(), []string{"--cwd", ws, "--scope", "user", "--dry-run"}, bare, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit %d stderr=%q", got, stderr.String())
+	}
+	out = stdout.String()
+	if !strings.Contains(out, "user: "+home+"/.codexclaw -> "+home+"/.crw") {
+		t.Fatalf("%s", out)
 	}
 }
 
@@ -264,49 +269,6 @@ func TestCLIDirectoryOnlyMigrationIsACopy(t *testing.T) {
 	}
 }
 
-// An explicitly empty root or report value names no path, and is a usage error rather than a silent
-// fallback to the environment or the working directory.
-func TestCLIEmptyFlagValuesAreUsageErrors(t *testing.T) {
-	base := isolate(t)
-	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n"})
-	before := tree(t, base)
-	for _, args := range [][]string{
-		{"--cwd", ws, "--from-home", "", "--scope", "user"},
-		{"--cwd", ws, "--to-home", "", "--scope", "user"},
-		{"--cwd", ws, "--codex-home", "", "--scope", "codex"},
-		{"--cwd", ws, "--report", ""},
-		{"--cwd", ""},
-	} {
-		code, out, errOut := cliRun(t, context.Background(), args...)
-		if code != 2 || out != "" || !strings.Contains(errOut, "empty value") {
-			t.Errorf("%v: exit %d stdout=%q stderr=%q", args, code, out, errOut)
-		}
-	}
-	if got := tree(t, base); !reflect.DeepEqual(got, before) {
-		t.Fatalf("an empty flag value wrote: %v", got)
-	}
-}
-
-// A destination that already holds equal bytes but a different mode is a material difference this run
-// does not correct, so both the JSON and the text report carry it.
-func TestCLIReportKeepsTheDestinationModeNote(t *testing.T) {
-	base := isolate(t)
-	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n"})
-	dst := filepath.Join(ws, ".crw", "ledger.jsonl")
-	put(t, dst, "{}\n", 0o600)
-	if err := os.Chmod(dst, 0o640); err != nil {
-		t.Fatal(err)
-	}
-	code, out, _ := cliRun(t, context.Background(), "--cwd", ws)
-	if code != 0 || !strings.Contains(out, "result: already-equal") || !strings.Contains(out, "note: ledger.jsonl: destination kept its mode") {
-		t.Fatalf("exit %d\n%s", code, out)
-	}
-	code, out, _ = cliRun(t, context.Background(), "--cwd", ws, "--json")
-	if code != 0 || !strings.Contains(out, "\"note\"") {
-		t.Fatalf("exit %d\n%s", code, out)
-	}
-}
-
 func TestCLIReportAndJSON(t *testing.T) {
 	base := isolate(t)
 	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n"})
@@ -361,6 +323,20 @@ func TestCLIReportAndJSON(t *testing.T) {
 	}
 	if _, err := os.Stat(inside); !os.IsNotExist(err) {
 		t.Fatalf("the refused report was written: %v", err)
+	}
+	// A destination that already holds equal bytes but a different mode is a material difference this
+	// run does not correct, so both the text and the JSON report carry it.
+	dst := filepath.Join(ws, ".crw", "ledger.jsonl")
+	if err := os.Chmod(dst, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = cliRun(t, context.Background(), "--cwd", ws)
+	if code != 0 || !strings.Contains(out, "result: already-equal") || !strings.Contains(out, "note: ledger.jsonl: destination kept its mode") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	code, out, _ = cliRun(t, context.Background(), "--cwd", ws, "--json")
+	if code != 0 || !strings.Contains(out, "\"note\"") {
+		t.Fatalf("exit %d\n%s", code, out)
 	}
 }
 

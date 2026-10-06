@@ -18,8 +18,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // UsageText is this command's own help. The legacy `crw install` usage line is a frozen contract and
@@ -166,7 +164,7 @@ func structuralWrites(roots *Roots, plan *Plan) bool {
 		if !applyDir(it) {
 			continue
 		}
-		root := destRootOf(roots, it.Scope)
+		root := rootDir(roots, it.Scope, true)
 		if root == nil {
 			return true
 		}
@@ -185,19 +183,6 @@ func structuralWrites(roots *Roots, plan *Plan) bool {
 		}
 	}
 	return false
-}
-
-// destRootOf is a scope's pinned destination root, or nil.
-func destRootOf(roots *Roots, scope Scope) *Dir {
-	switch scope {
-	case ScopeProject:
-		return dirOf(roots.Project, true)
-	case ScopeUser:
-		return dirOf(roots.User, true)
-	case ScopeCodex:
-		return roots.Codex
-	}
-	return nil
 }
 
 // parseCLI reads the command line. A help request is reported as help with no error.
@@ -332,9 +317,11 @@ func (o cli) target(roots *Roots) (*reportTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, tree := range rootTrees(roots) {
-		if within(tree, abs) {
-			return nil, fmt.Errorf("--report %s lies inside %s; the report is written outside the source and destination trees", o.report, tree)
+	for _, root := range reportRoots(roots) {
+		for _, tree := range []string{root.Source, root.Destination} {
+			if within(tree, abs) {
+				return nil, fmt.Errorf("--report %s lies inside %s; the report is written outside the source and destination trees", o.report, tree)
+			}
 		}
 	}
 	dirPart, leaf := filepath.Split(abs)
@@ -357,7 +344,8 @@ func (o cli) target(roots *Roots) (*reportTarget, error) {
 		_ = dir.Close()
 		return nil, fmt.Errorf("--report: %w", err)
 	}
-	for _, tree := range []*Dir{dirOf(roots.Project, false), dirOf(roots.Project, true), dirOf(roots.User, false), dirOf(roots.User, true), roots.Codex} {
+	for _, tree := range []*Dir{rootDir(roots, ScopeProject, false), rootDir(roots, ScopeProject, true),
+		rootDir(roots, ScopeUser, false), rootDir(roots, ScopeUser, true), roots.Codex} {
 		if tree != nil && slices.Contains(chain, tree.id) {
 			_ = dir.Close()
 			return nil, fmt.Errorf("--report %s is the same directory as, or inside, a selected root; the report is written outside the source and destination trees", o.report)
@@ -403,8 +391,15 @@ func (o cli) assemble(roots *Roots, plan *Plan, atts []Attention, res *ApplyResu
 	return rep
 }
 
-// dirOf is a pair's source or destination directory, or nil.
-func dirOf(p *Pair, dest bool) *Dir {
+// rootDir is a scope's pinned directory on the source or destination side, or nil.
+func rootDir(r *Roots, scope Scope, dest bool) *Dir {
+	if scope == ScopeCodex {
+		return r.Codex
+	}
+	p := r.Project
+	if scope == ScopeUser {
+		p = r.User
+	}
 	if p == nil {
 		return nil
 	}
@@ -429,7 +424,8 @@ func reportRoots(r *Roots) []ReportRoot {
 	return out
 }
 
-// namedRoots names the roots of opt as Open resolves them, for a report whose Open was refused.
+// namedRoots names the roots of a run whose Open was refused: the paths it was given, without the
+// default resolution Open would have applied.
 func namedRoots(opt Options) []ReportRoot {
 	scope, err := ParseScope(string(opt.Scope))
 	if err != nil {
@@ -437,29 +433,13 @@ func namedRoots(opt Options) []ReportRoot {
 	}
 	var out []ReportRoot
 	if scope.Has(ScopeProject) {
-		if w, err := absRoot(opt.Cwd); err == nil {
-			out = append(out, ReportRoot{ScopeProject, filepath.Join(w, ProjectSourceName), filepath.Join(w, crwdir.DirName)})
-		}
+		out = append(out, ReportRoot{ScopeProject, opt.Cwd, ""})
 	}
 	if scope.Has(ScopeUser) {
 		out = append(out, ReportRoot{ScopeUser, opt.FromHome, opt.ToHome})
 	}
 	if scope.Has(ScopeCodex) {
 		out = append(out, ReportRoot{ScopeCodex, opt.CodexHome, opt.CodexHome})
-	}
-	return out
-}
-
-// rootTrees is every source and destination tree of the selected scope.
-func rootTrees(r *Roots) []string {
-	var out []string
-	for _, p := range []*Pair{r.Project, r.User} {
-		if p != nil {
-			out = append(out, p.SourcePath, p.DestPath)
-		}
-	}
-	if r.CodexPath != "" {
-		out = append(out, r.CodexPath)
 	}
 	return out
 }
