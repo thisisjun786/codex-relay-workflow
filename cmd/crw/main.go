@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
 	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
@@ -177,6 +178,7 @@ func modes() []mode {
 			return install.Run(ctx, c.args, c.stdout, c.stderr)
 		}},
 		{"review", true, func(c invocation) int { return command.Run(c.ctx, c.args, c.stdout, c.stderr) }},
+		{"manage", true, func(c invocation) int { return manage.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
 		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
 		{"pabcd", false, func(c invocation) int {
 			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
