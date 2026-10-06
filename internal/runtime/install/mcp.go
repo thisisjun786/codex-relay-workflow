@@ -52,6 +52,7 @@ const (
 	RecordWouldUpdate       = "record_would_update"
 	RecordUpdateFailed      = "record_update_failed"
 	RecordNotCanonical      = "record_not_canonical"
+	RecordSymlinked         = "record_symlinked"
 	Conflict                = "CONFLICT"
 	Busy                    = "BUSY"
 	PolicyUnreadable        = "execution_policy_unreadable"
@@ -717,6 +718,15 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return refused(append(base, field("outcome", RecordChangedUnderneath),
 			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
 			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
+	}
+	// A record reached through a symbolic link is refused: the read and the backup follow the link,
+	// but the replacement renames a file over the path itself, which would turn the link into a
+	// regular file and leave its target naming the old policy. The create path writes the same way,
+	// so this is reported rather than quietly done.
+	if info, err := os.Lstat(recordPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return refused(append(base, field("outcome", RecordSymlinked),
+			field("detail", "the record at "+recordPath+" is a symbolic link, and replacing it would turn the link into a regular file rather than update the file it names"),
+			field("repair", "replace the link with the record it names, or register the record at that path afresh")), "nothing was written")
 	}
 	// The bytes of the fields this path keeps are the bytes on disk only when the record is written in
 	// the installer's own canonical form. A record in any other spelling - hand-edited, or written by

@@ -311,6 +311,26 @@ func TestReRegisterPolicyRefusesAndWritesNothing(t *testing.T) {
 		t.Fatalf("a record this installer did not write: exit %d\n%s", code, golden.Canon(nonCanonical))
 	}
 	write(t, recordPath, before)
+	// A record reached through a symbolic link: the replacement would turn the link into a regular
+	// file and leave its target behind, so it is refused with the target untouched.
+	target := filepath.Join(h.home, "record-target.json")
+	write(t, target, before)
+	if err := os.Remove(recordPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, recordPath); err != nil {
+		t.Fatal(err)
+	}
+	linked, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+	if code != install.Refused || at(linked, "outcome") != install.RecordSymlinked || readFile(t, target) != before {
+		t.Fatalf("a symlinked record: exit %d\n%s", code, golden.Canon(linked))
+	}
+	info, err := os.Lstat(recordPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the refusal replaced the link: %v %v", info, err)
+	}
+	os.Remove(recordPath)
+	write(t, recordPath, before)
 	// A Codex configuration that also starts the bridge: the second owner the create path refuses.
 	write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.bridge-by-hand]\ncommand = "+strconv.Quote("/opt/env/bin/codex-thread-bridge")+"\nargs = []\n")
 	second, code, _ := h.updatePolicy(t, "--execution-policy", policy)

@@ -955,6 +955,9 @@ under the ownership lock beside the record, and replaces `executionPolicy` alone
 `digest` become the new file's values and every other field keeps its bytes and its order. That
 promise holds for a record this installer wrote: a record in another spelling is refused as
 `record_not_canonical`, because publishing it would reserialize the fields this path leaves alone.
+The record must also be a regular file at that path: a symbolic link is refused as
+`record_symlinked`, because the replacement renames a file over the path itself and would turn the
+link into a regular file.
 The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
 policy the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is
 written. The bridge's second owner is refused here too: a `config.toml` entry that also starts this
