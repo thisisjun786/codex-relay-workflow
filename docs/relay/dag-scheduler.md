@@ -71,7 +71,7 @@ Candidates are then checked against what lies outside the plan, ranked, and cut 
 | blocked | `blocked:predecessor_cancelled` | the predecessor's relationship was cancelled before its result was usable |
 | blocked | `blocked:release_abandoned` | the managed start of a decided release was released before it created a child |
 | blocked | `blocked:evicted` | a required check failed again on the same head after its one retry, and the node left the merge lane |
-| blocked | `blocked:ambiguous_head` | the relationship has more than one head revision, or an execution has no relationship |
+| blocked | `blocked:ambiguous_head` | the relationship has more than one head revision, or an execution has no relationship. A node whose result is not accepted yet is recovered by the same child: `dag-correct --prepare` prints the instruction and the dispatch request id, the generation is opened under that id (`generation-open`), the instruction line is sent, the turn that carried it is bound (`generation-bind`) and `dag-correct --manifest-digest` records it as a correction; the child then emits one receipt in that generation |
 | defer | `defer:plan_paused` | the plan is paused: nothing is released, accepted, corrected or sent to the merge lane until a resume revision |
 | defer | `defer:node_paused` | the plan paused this node: it is not released, accepted, corrected or sent to the merge lane until a resume revision, and its slot stays held |
 | skip | `skip:node_cancelled` | the plan cancelled this node: it is never released again, its result is not counted as done, and the cancel is not reverted |
