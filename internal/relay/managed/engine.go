@@ -155,7 +155,8 @@ func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]
 	settings := pyjson.Map(child["settings"])
 	sandbox := pyjson.Map(settings["sandbox"])
 	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[pyjson.Text(sandbox["type"])]
-	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: pyjson.Text(child["title"]), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child", MCPProfile: pyjson.Text(settings["mcpProfile"])})
+	// The name the host is given is normalized; the request and its fingerprint keep the title the parent wrote.
+	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: pyjson.Text(settings["cwd"]), Prompt: bootstrap, Title: childTitle(id.IssueKey, pyjson.Text(child["title"])), Sandbox: kind, Model: pyjson.Text(settings["model"]), ReasoningEffort: pyjson.Text(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child", MCPProfile: pyjson.Text(settings["mcpProfile"])})
 	return receipt, "", release, err
 }
 
@@ -328,7 +329,7 @@ func (m *Start) recoverStandby(ctx context.Context, id Identity, req map[string]
 	combined["turnId"] = recovered["turnId"]
 	combined["standbyRecovery"] = recovered
 	if how.adopted {
-		if title := pyjson.Text(pyjson.Map(req["child"])["title"]); title != "" && how.rename {
+		if title := childTitle(id.IssueKey, pyjson.Text(pyjson.Map(req["child"])["title"])); title != "" && how.rename {
 			if _, err := m.Adapter.HostCall(ctx, "thread/name/set", map[string]any{"threadId": task, "name": title}); err != nil {
 				return nil, err
 			}
