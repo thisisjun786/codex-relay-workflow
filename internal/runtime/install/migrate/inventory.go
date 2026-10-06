@@ -257,3 +257,187 @@ func inventoryNameSupported(path, name string) error {
 	}
 	return nil
 }
+
+// inventoryIntermediateRow is one producer temporary of docs/port-cxc/state-migration.md:105 as data: the scope the producer
+// writes in, the root-relative directory it writes in ("" is a scope root, "*" matches any run inside one segment) and the
+// exact basename shape it writes beside its final file. A name is a producer intermediate only when its scope and directory
+// match the row and its basename matches that row's shape.
+type inventoryIntermediateRow struct {
+	scope Scope
+	dir   string
+	match func(name string) bool
+}
+
+// inventoryIntermediateRows names every producer the design's fifth table lists, with the source line that writes its
+// temporary. The first row whose scope, directory and shape all match claims the name; the two user-root rows share a shape
+// because subagents.json and model-catalog.json are written by the same writer pattern, and their comments name the file each
+// covers.
+var inventoryIntermediateRows = []inventoryIntermediateRow{
+	// state.ts:387 publishes sessions/<id>.json through <finalPath>.<pid>.<uuid>.tmp.
+	{ScopeProject, "sessions", inventoryIntermediateFinalPidUUID},
+	// state.ts:625 rewrites sessions/<id>.json through <finalPath>.<pid>.<ms>.tmp.
+	{ScopeProject, "sessions", inventoryIntermediateFinalPidMs},
+	// goalplan.ts:932 writes goalplans/<slug>/goalplan.json through <finalPath>.<pid>.<ms>.tmp.
+	{ScopeProject, "goalplans/*", inventoryIntermediateFinalPidMs},
+	// session-source.ts:188 writes sources/<session>.json through <path>.<uuid>.tmp.
+	{ScopeProject, "sources", inventoryIntermediateFinalUUID},
+	// subagent-evidence.ts:222 writes evidence-attempts/<...>.json through <p>.<pid>.<ms>.tmp.
+	{ScopeProject, "evidence-attempts", inventoryIntermediateFinalPidMs},
+	// subagent-evidence.ts:355 probes evidence-unrecordable/ with .probe-<pid>-<ms>.
+	{ScopeProject, "evidence-unrecordable", inventoryIntermediateProbePidMs},
+	// bg-wake store.ts:55 writes any bg/<path> through <path>.tmp-<pid>-<ms>.
+	{ScopeProject, "bg", inventoryIntermediateFinalTmpPidMs},
+	// bg-wake spawn.ts:50 writes bg/<id>.exit through <exitPath>.tmp, that is <id>.exit.tmp.
+	{ScopeProject, "bg", inventoryIntermediateFinalExitTmp},
+	// subagent-config store.ts:256 writes the project store subagents.json through <storePath>.<uuid>.tmp.
+	{ScopeProject, "", inventoryIntermediateFinalUUID},
+	// subagent-config store.ts:256 writes the user store subagents.json through <globalStorePath>.<uuid>.tmp.
+	{ScopeUser, "", inventoryIntermediateFinalUUID},
+	// subagent-config live-catalog.ts:86 writes the user model-catalog.json through <path>.<uuid>.tmp.
+	{ScopeUser, "", inventoryIntermediateFinalUUID},
+	// config-guard self-heal.ts:275,310 write the Codex-home <marker>.json (and the install manifest) through <path>.tmp.
+	{ScopeCodex, "", inventoryIntermediateFinalJSONTmp},
+	// cxc-ops hook-trust.ts:363 writes the Codex-home config.toml through .config.toml.tmp-<pid>-<ms>.
+	{ScopeCodex, "", inventoryIntermediateConfigTomlTmpPidMs},
+	// subagent-config role-registration.ts:88 writes agents/<role>.toml through .<role>-<uuid>.tmp.
+	{ScopeCodex, "agents", inventoryIntermediateDotRoleUUIDTmp},
+}
+
+// inventoryIntermediateShape reports whether name, in dirPath of scope, is a producer temporary. The directory is matched with
+// the inventory row matcher, so a row's "*" wildcards one segment and a scope root is the empty directory.
+func inventoryIntermediateShape(scope Scope, dirPath, name string) bool {
+	for i := range inventoryIntermediateRows {
+		row := &inventoryIntermediateRows[i]
+		if row.scope != scope || !inventoryIntermediateDir(row.dir, dirPath) || !row.match(name) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// inventoryIntermediateDir matches a row's directory pattern against the directory the walker is in; the empty pattern is the
+// scope root and any other pattern is the inventory segment matcher (literal segments and "*").
+func inventoryIntermediateDir(pattern, dirPath string) bool {
+	if pattern == "" {
+		return dirPath == ""
+	}
+	return inventoryMatch(pattern, dirPath)
+}
+
+// The producer temporary shapes. Each is the exact basename a producer writes beside its final file, with the final-name part
+// required to be non-empty, so a user file such as .123.1760000000000.tmp stays ordinary data. A digit field matches digits
+// only and a uuid field the canonical uuid shape, as the design's row 105 asks; the bounded pid and millisecond widths stay in
+// classifyProducerTemp, which owns the evidence rule.
+
+// inventoryIntermediateDigits reports a non-empty run of ASCII digits.
+func inventoryIntermediateDigits(s string) bool { return classifyDigits(s, 1, len(s)) }
+
+// inventoryIntermediateFinalPidMs is <final>.<pid>.<ms>.tmp.
+func inventoryIntermediateFinalPidMs(name string) bool {
+	rest, ok := strings.CutSuffix(name, tempSuffix)
+	if !ok {
+		return false
+	}
+	rest, ms, cut := classifyCutLast(rest, ".")
+	if !cut || !inventoryIntermediateDigits(ms) {
+		return false
+	}
+	final, pid, cut := classifyCutLast(rest, ".")
+	return cut && final != "" && inventoryIntermediateDigits(pid)
+}
+
+// inventoryIntermediateFinalPidUUID is <final>.<pid>.<uuid>.tmp.
+func inventoryIntermediateFinalPidUUID(name string) bool {
+	rest, ok := strings.CutSuffix(name, tempSuffix)
+	if !ok {
+		return false
+	}
+	rest, uuid, cut := classifyCutLast(rest, ".")
+	if !cut || !classifyUUID(uuid) {
+		return false
+	}
+	final, pid, cut := classifyCutLast(rest, ".")
+	return cut && final != "" && inventoryIntermediateDigits(pid)
+}
+
+// inventoryIntermediateFinalUUID is <final>.<uuid>.tmp.
+func inventoryIntermediateFinalUUID(name string) bool {
+	rest, ok := strings.CutSuffix(name, tempSuffix)
+	if !ok {
+		return false
+	}
+	final, uuid, cut := classifyCutLast(rest, ".")
+	return cut && final != "" && classifyUUID(uuid)
+}
+
+// inventoryIntermediateFinalTmpPidMs is <final>.tmp-<pid>-<ms>, the bg store's atomic write.
+func inventoryIntermediateFinalTmpPidMs(name string) bool {
+	i := strings.LastIndexByte(name, '-')
+	if i < 0 {
+		return false
+	}
+	rest, ms := name[:i], name[i+1:]
+	if !inventoryIntermediateDigits(ms) {
+		return false
+	}
+	j := strings.LastIndexByte(rest, '-')
+	if j < 0 {
+		return false
+	}
+	final, ok := strings.CutSuffix(rest[:j], tempSuffix)
+	return ok && final != "" && inventoryIntermediateDigits(rest[j+1:])
+}
+
+// inventoryIntermediateProbePidMs is .probe-<pid>-<ms>, the unrecordable-directory writability probe.
+func inventoryIntermediateProbePidMs(name string) bool {
+	rest, ok := strings.CutPrefix(name, ".probe-")
+	if !ok {
+		return false
+	}
+	i := strings.LastIndexByte(rest, '-')
+	if i < 0 {
+		return false
+	}
+	return inventoryIntermediateDigits(rest[:i]) && inventoryIntermediateDigits(rest[i+1:])
+}
+
+// inventoryIntermediateFinalExitTmp is <final>.exit.tmp, the bg exit record's temporary.
+func inventoryIntermediateFinalExitTmp(name string) bool {
+	final, ok := strings.CutSuffix(name, ".exit"+tempSuffix)
+	return ok && final != ""
+}
+
+// inventoryIntermediateFinalJSONTmp is <final>.json.tmp, the Codex-home marker and manifest temporary.
+func inventoryIntermediateFinalJSONTmp(name string) bool {
+	final, ok := strings.CutSuffix(name, ".json"+tempSuffix)
+	return ok && final != ""
+}
+
+// inventoryIntermediateConfigTomlTmpPidMs is .config.toml.tmp-<pid>-<ms>, the hook-trust temporary.
+func inventoryIntermediateConfigTomlTmpPidMs(name string) bool {
+	rest, ok := strings.CutPrefix(name, ".config.toml.tmp-")
+	if !ok {
+		return false
+	}
+	i := strings.LastIndexByte(rest, '-')
+	if i < 0 {
+		return false
+	}
+	return inventoryIntermediateDigits(rest[:i]) && inventoryIntermediateDigits(rest[i+1:])
+}
+
+// inventoryIntermediateDotRoleUUIDTmp is .<role>-<uuid>.tmp, the role-registration temporary. The uuid is the last 36
+// characters, so the separator is found from the right rather than at the last "-" inside the uuid.
+func inventoryIntermediateDotRoleUUIDTmp(name string) bool {
+	rest, ok := strings.CutSuffix(name, tempSuffix)
+	if !ok {
+		return false
+	}
+	role, ok := strings.CutPrefix(rest, ".")
+	if !ok || len(role) < 38 {
+		return false
+	}
+	sep := len(role) - 37
+	return role[sep] == '-' && role[:sep] != "" && classifyUUID(role[sep+1:])
+}
