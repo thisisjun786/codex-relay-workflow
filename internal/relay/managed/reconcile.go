@@ -219,7 +219,7 @@ func (r *startRun) decide(ctx context.Context) (decision, error) {
 		// The standby send was decided before: it only names the thread, and what to do about it is recoverStandby's rule for its status.
 		thread := pyjson.Text(standby["threadId"])
 		if abandonable(standby) && !creationMayHaveTurn(r.receipt) {
-			return r.abandon(base, thread, "the host refused to resume it"), nil
+			return r.abandonOrphan(ctx, base, thread, pyjson.Text(standby["error"]))
 		}
 		if delivery.ValidSegment(thread) {
 			base.state, base.thread, base.detail = reconAdopted, thread, "the standby send for this thread was made before"
@@ -242,7 +242,7 @@ func abandonable(receipt map[string]any) bool {
 		return false
 	}
 	err := pyjson.Text(receipt["error"])
-	if strings.Contains(err, "thread not found") && (strings.HasPrefix(err, "thread/read:") || strings.HasPrefix(err, "thread/resume:")) {
+	if unreadableText(err) && (strings.HasPrefix(err, "thread/read:") || strings.HasPrefix(err, "thread/resume:")) {
 		return true
 	}
 	return receipt["statusBeforeResume"] == "notLoaded" && strings.HasPrefix(err, "thread/resume:")
@@ -251,6 +251,136 @@ func abandonable(receipt map[string]any) bool {
 func (r *startRun) abandon(base reconciliation, thread, why string) decision {
 	base.thread = thread
 	return r.recreate(base, fmt.Sprintf("thread %s abandoned: %s", thread, why))
+}
+
+// abandonOrphan is the standby receipt's abandonment: the host refused to read or resume a thread
+// that has no turn, so the thread is archived once before the next attempt is created and then
+// abandoned under the same request. Only this path archives; observe()'s abandonment is unchanged.
+func (r *startRun) abandonOrphan(ctx context.Context, base reconciliation, thread, errText string) (decision, error) {
+	if err := r.archiveOrphan(ctx, thread, errText); err != nil {
+		return decision{}, err
+	}
+	return r.abandon(base, thread, "the host refused to resume it"), nil
+}
+
+// archiveOrphan tries thread/archive once on the orphan and records the attempt in one
+// managed_orphan_archive row. A row already written for this request and attempt stops a second
+// archive, as the resend unload's row does. An error naming a thread the host does not hold is not
+// attempted at all.
+//
+// thread/archive unloads an active thread and the sub-threads under it, so the orphan is read again
+// immediately before the call, as the resend unload reads the child it lowers, and the readiness
+// policy and the ledger are asked again with it because the archive is a host effect. A thread that
+// has become active is left alone, and an archive that fails or is withheld is recorded and never
+// stops the recreation.
+func (r *startRun) archiveOrphan(ctx context.Context, thread, errText string) error {
+	archived, err := r.orphanArchived(ctx)
+	if err != nil {
+		return err
+	}
+	if archived {
+		return nil
+	}
+	detail := map[string]any{"attempt": r.attempt, "thread": thread, "error": ""}
+	switch {
+	case strings.Contains(errText, "thread not found"):
+		// The host does not hold the thread, so there is nothing to archive.
+		detail["archive"] = "skipped"
+	default:
+		turnless, why, err := r.orphanStillTurnless(ctx, thread)
+		if err != nil {
+			return err
+		}
+		if !turnless {
+			if why == "" {
+				// The read was inconclusive: nothing is decided and no row is written, so a later
+				// repeat may still archive the orphan.
+				return nil
+			}
+			detail["archive"], detail["error"] = "skipped", why
+			break
+		}
+		readiness, err := r.m.ready(ctx, r.req)
+		if err != nil {
+			return err
+		}
+		if readiness != "" {
+			// The policy withholds every host effect, so this one is not taken and no row is
+			// written: a later repeat under a ready policy archives the orphan.
+			return nil
+		}
+		if err := r.m.Adapter.RequireLedger(ctx, r.ledger); err != nil {
+			return err
+		}
+		if _, err := r.m.Adapter.HostCall(ctx, "thread/archive", map[string]any{"threadId": thread}); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			detail["archive"], detail["error"] = "failed", err.Error()
+		} else {
+			detail["archive"] = "ok"
+		}
+	}
+	// The orphan is archived either way, so the row is written on a context the caller's
+	// cancellation cannot take away, as the resend unload's row is.
+	return r.recordOrphanArchive(context.WithoutCancel(ctx), detail)
+}
+
+// orphanStillTurnless reads the orphan immediately before the archive. A thread the host still
+// cannot read has no rollout and no turn; a thread that now carries a turn, or that the host
+// reports active, has become someone's work and is left alone. An inconclusive read answers with
+// no reason, and the caller then archives nothing and records nothing.
+func (r *startRun) orphanStillTurnless(ctx context.Context, thread string) (bool, string, error) {
+	read, err := r.m.Adapter.HostCall(ctx, "thread/read", map[string]any{"threadId": thread, "includeTurns": false})
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, "", ctx.Err()
+		}
+		if unreadable(err) {
+			return true, "", nil
+		}
+		return false, "", nil
+	}
+	facts := pyjson.Map(read["thread"])
+	if pyjson.Text(pyjson.Map(facts["status"])["type"]) == "active" || strings.TrimSpace(pyjson.Text(facts["preview"])) != "" {
+		return false, "thread/read: the thread has become active", nil
+	}
+	turns, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": thread, "limit": 1, "itemsView": "summary"})
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, "", ctx.Err()
+		}
+		if noTurnAnswer(err) {
+			return true, "", nil
+		}
+		return false, "", nil
+	}
+	if rows, _ := turns["data"].([]any); len(rows) > 0 {
+		return false, "thread/turns/list: the thread has a turn", nil
+	}
+	return true, "", nil
+}
+
+// recordOrphanArchive writes the one managed_orphan_archive row an abandoned orphan leaves.
+func (r *startRun) recordOrphanArchive(ctx context.Context, detail map[string]any) error {
+	encoded, err := compactPythonJSON(detail)
+	if err != nil {
+		return err
+	}
+	_, err = r.m.Store.Querier(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,?,?,?)", r.m.now(), "managed_orphan_archive", r.identity.RequestID, string(encoded))
+	return err
+}
+
+// orphanArchived reports whether this request and attempt already archived its orphan, read from
+// the row the archive wrote. The detail is the compact, key-sorted object recordOrphanArchive
+// writes, so the attempt is the field "attempt":<n> followed by its separator.
+func (r *startRun) orphanArchived(ctx context.Context) (bool, error) {
+	var rows int
+	err := r.m.Store.Querier(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM journal WHERE kind='managed_orphan_archive' AND subject=? AND detail LIKE ?", r.identity.RequestID, `%"attempt":`+strconv.Itoa(r.attempt)+`,%`).Scan(&rows)
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 func creationMayHaveTurn(receipt map[string]any) bool {
@@ -263,13 +393,20 @@ func creationMayHaveTurn(receipt map[string]any) bool {
 	return receipt["turnId"] != nil || !recorded && receipt["title"] != nil
 }
 
-func unreadable(err error) bool {
-	for _, text := range []string{"thread not found", "missing source rollout", "no rollout found"} {
-		if strings.Contains(err.Error(), text) {
+// unreadableText is the one list of texts the host answers a read or a resume with when the thread
+// it names has no rollout to read. observe() reads them as an unreadable thread; abandonable()
+// reads the same texts on a standby receipt, so one helper serves both.
+func unreadableText(text string) bool {
+	for _, known := range []string{"thread not found", "missing source rollout", "no rollout found"} {
+		if strings.Contains(text, known) {
 			return true
 		}
 	}
 	return false
+}
+
+func unreadable(err error) bool {
+	return unreadableText(err.Error())
 }
 
 // recreate creates the next attempt, unless the creations are spent.
