@@ -1863,26 +1863,23 @@ const (
 // node/nodejs when no script operand and no -e, --eval, -p or --print is present, or the operand is -; sh, bash, dash,
 // ash, zsh or ksh when no -c and no script operand is present, or -s forces stdin. Every other command reads no program
 // from its standard input.
-func shellWriteHeredocKindOf(words []string) (shellWriteHeredocKind, bool) {
+func shellWriteHeredocKindOf(words []string) (kind shellWriteHeredocKind, ok bool, certain bool) {
 	if len(words) == 0 {
-		return 0, false
+		return 0, false, true
 	}
 	verb, args := shellVerbName(words[0]), words[1:]
 	switch {
 	case verb == "python" || verb == "python3" || verb == "py" || shellVerbVersioned(verb):
-		if shellWriteHeredocPythonStdin(args) {
-			return shellWriteHeredocPython, true
-		}
+		stdin, sure := shellWriteHeredocPythonStdin(args)
+		return shellWriteHeredocPython, stdin, sure
 	case verb == "node" || verb == "nodejs":
-		if shellWriteHeredocNodeStdin(args) {
-			return shellWriteHeredocNode, true
-		}
+		stdin, sure := shellWriteHeredocNodeStdin(args)
+		return shellWriteHeredocNode, stdin, sure
 	case shellWriteHeredocIsShell(verb):
-		if shellWriteHeredocShellStdin(args) {
-			return shellWriteHeredocShell, true
-		}
+		stdin, sure := shellWriteHeredocShellStdin(args)
+		return shellWriteHeredocShell, stdin, sure
 	}
-	return 0, false
+	return 0, false, true
 }
 
 // shellWriteHeredocIsShell is the issue's shell set: the POSIX shells whose program may come from standard input. It is
@@ -1900,17 +1897,17 @@ func shellWriteHeredocIsShell(verb string) bool {
 // statements from standard input even without a terminal, so the body is still executable input; the first non-option
 // word is a script operand, and - alone (or a script path that resolves to standard input, /dev/stdin and the fd
 // aliases) is stdin. A script operand that is not stdin makes the body data.
-func shellWriteHeredocPythonStdin(args []string) bool {
-	interactive, inline, sawScript := false, false, false
+func shellWriteHeredocPythonStdin(args []string) (stdin bool, certain bool) {
+	interactive, inline, sawScript, unknown := false, false, false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "-":
-			return true
+			return true, true
 		case a == "--":
 			for _, later := range args[i+1:] {
 				if shellWriteHeredocStdinPath(later) {
-					return true
+					return true, true
 				}
 				sawScript = true
 			}
@@ -1926,18 +1923,27 @@ func shellWriteHeredocPythonStdin(args []string) bool {
 			if shellVerbBundleHas(a, 'i', false) {
 				interactive = true
 			}
+			unknown = true
 		default:
 			if shellWriteHeredocStdinPath(a) {
-				return true
+				return true, true
 			}
 			sawScript = true
 		}
 	}
 	// -i inspects after the initial program even when stdin is not a terminal, so the body is read as statements.
 	if interactive {
-		return true
+		return true, true
 	}
-	return !inline && !sawScript
+	if !inline && !sawScript {
+		return true, true
+	}
+	// A script operand after an option this reader does not model could be that option's value, so the reader cannot
+	// tell whether the body is the program: it is uncertain and fails closed.
+	if unknown && sawScript {
+		return false, false
+	}
+	return false, true
 }
 
 // shellWriteHeredocStdinPath reports whether a script operand names standard input: - and the /dev/stdin and
@@ -1953,24 +1959,26 @@ func shellWriteHeredocStdinPath(p string) bool {
 // shellWriteHeredocNodeStdin reports whether the node command words read their program from standard input. -e/--eval,
 // -p/--print and a bundled -pe give the program inline; the first non-option word is a script operand, and - alone is
 // stdin. -C/--conditions, -r/--require and the loader options take the next word as their value.
-func shellWriteHeredocNodeStdin(args []string) bool {
+func shellWriteHeredocNodeStdin(args []string) (stdin bool, certain bool) {
+	unknown, sawScript := false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "-":
-			return true
+			return true, true
 		case a == "--":
 			for _, later := range args[i+1:] {
 				if shellWriteHeredocStdinPath(later) {
-					return true
+					return true, true
 				}
+				sawScript = true
 			}
-			return false
+			i = len(args)
 		case a == "-e" || a == "--eval" || a == "-p" || a == "--print" || a == "-pe",
 			strings.HasPrefix(a, "--eval=") || strings.HasPrefix(a, "--print="),
 			strings.HasPrefix(a, "-e") && len(a) > 2 && !strings.HasPrefix(a, "--"),
 			strings.HasPrefix(a, "-p") && len(a) > 2 && !strings.HasPrefix(a, "--"):
-			return false
+			return false, true
 		case a == "-C" || a == "--conditions" || a == "-r" || a == "--require" || a == "--loader" || a == "--experimental-loader" || a == "--input-type" || a == "--import":
 			i++ // takes the next word as its value
 		case strings.HasPrefix(a, "--conditions=") || strings.HasPrefix(a, "--require=") || strings.HasPrefix(a, "--loader=") || strings.HasPrefix(a, "--experimental-loader=") || strings.HasPrefix(a, "--input-type="):
@@ -1978,30 +1986,33 @@ func shellWriteHeredocNodeStdin(args []string) bool {
 		case strings.HasPrefix(a, "-C") && len(a) > 2 && !strings.HasPrefix(a, "--"):
 			// the value is attached
 		case len(a) > 1 && a[0] == '-':
-			// another option; the program is still read from standard input
+			unknown = true // another option; the program may still be read from standard input
 		default:
 			if shellWriteHeredocStdinPath(a) {
-				return true
+				return true, true
 			}
-			return false // a script operand
+			sawScript = true
 		}
 	}
-	return true
+	if sawScript && unknown {
+		return false, false
+	}
+	return true, true
 }
 
 // shellWriteHeredocShellStdin reports whether a shell reads its program from standard input. -c (a bundle carrying c)
 // gives the program inline, so it wins; -s forces standard input; -n and -o noexec parse without running anything, so
 // the body is not a program that writes and is not read (their +n and +o noexec forms turn it off); otherwise a script
 // operand is the program, and its absence means the shell reads standard input.
-func shellWriteHeredocShellStdin(args []string) bool {
-	sawC, sawS, sawScript, noExec := false, false, false, false
+func shellWriteHeredocShellStdin(args []string) (stdin bool, certain bool) {
+	sawC, sawS, sawScript, noExec, unknown := false, false, false, false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--":
 			for _, later := range args[i+1:] {
 				if shellWriteHeredocStdinPath(later) {
-					return true
+					return true, true
 				}
 				sawScript = true
 			}
@@ -2016,7 +2027,7 @@ func shellWriteHeredocShellStdin(args []string) bool {
 		case a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
 			i++ // takes the next word as its value
 		case len(a) > 1 && a[0] == '-' && a[1] == '-':
-			// a long option; no program is named
+			unknown = true // a long option this reader does not model
 		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
 			on := a[0] == '-'
 			if on && strings.ContainsRune(a[1:], 'c') {
@@ -2030,21 +2041,24 @@ func shellWriteHeredocShellStdin(args []string) bool {
 			}
 		default:
 			if shellWriteHeredocStdinPath(a) {
-				return true
+				return true, true
 			}
 			sawScript = true
 		}
 	}
 	if noExec {
-		return false // the shell parses without running, so the body executes nothing
+		return false, true // the shell parses without running, so the body executes nothing
 	}
 	if sawC {
-		return false
+		return false, true
 	}
 	if sawS {
-		return true
+		return true, true
 	}
-	return !sawScript
+	if sawScript && unknown {
+		return false, false
+	}
+	return !sawScript, true
 }
 
 // shellWriteHeredocBodyExpands reports whether an unquoted here-document body holds a shell expansion the reader cannot
@@ -2094,8 +2108,10 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 func shellWriteHeredocDestinations(command string, depth int) []string {
 	out := []string{}
 	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
-		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
-		if !ok {
+		kind, ok, certain := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
+		// A here-document attached to an interpreter whose program source the reader cannot decide is not read here;
+		// the fail-closed walk denies it (shellWriteHeredocUnreadableIn).
+		if kind == 0 || !ok || !certain {
 			continue
 		}
 		dests, _ := shellWriteHeredocProgramWrites(h, kind, depth+1)
@@ -2124,8 +2140,13 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
 	}
 	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
-		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
-		if !ok {
+		kind, ok, certain := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
+		if kind != 0 && !certain {
+			// The command names an interpreter, but an option this reader does not model leaves it unclear whether the
+			// here-document is that interpreter's program: the reader cannot tell, so it fails closed.
+			return shellWriteHeredocUnreadableWhat, true
+		}
+		if kind == 0 || !ok {
 			continue
 		}
 		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {

@@ -96,6 +96,27 @@ func TestShellWriteHeredocCorrectionControls(t *testing.T) {
 	}
 }
 
+// TestShellWriteHeredocCorrectionUncertain is the fail-closed default: a here-document attached to a command that names
+// one of the interpreters, whose program source an option the reader does not model leaves undecidable, is denied; a
+// non-interpreter command with the same option is untouched.
+func TestShellWriteHeredocCorrectionUncertain(t *testing.T) {
+	const mem = "/h/memories"
+	for _, c := range []struct{ name, command string }{
+		{"a python option before a script operand", "python3 -Z script.py <<'EOF'\nopen('" + mem + "/a','w')\nEOF"},
+		{"a shell long option before a script operand", "bash --norc script.sh <<'EOF'\necho x > " + mem + "/a\nEOF"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(c.command); !ok || got != shellWriteHeredocWhatWant {
+				t.Errorf("%q: got %q, %v; want %q, true", c.command, got, ok, shellWriteHeredocWhatWant)
+			}
+		})
+	}
+	// A non-interpreter command with the same shape is untouched.
+	if got, ok := shellWriteHeredocUnreadable("cat -A <<'EOF'\n" + mem + "\nEOF"); ok {
+		t.Errorf("a cat row reported unreadable %q", got)
+	}
+}
+
 // TestShellWriteHeredocCorrectionDepthParity pins that the fail-closed walk stops at the same depth and budget as the
 // destination walk: a program past the limit is denied rather than walked to the bottom.
 func TestShellWriteHeredocCorrectionDepthParity(t *testing.T) {
