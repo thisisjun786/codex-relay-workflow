@@ -4,8 +4,7 @@ package migrate
 // the one caller of classify, apply and attention. It parses the command line, resolves the selected
 // scope's roots from the environment it was given, preflights the whole scope and writes through
 // apply. Nothing calls it implicitly: no hook, installer, activation or startup path reaches this
-// package, and the copy runs only when an operator names the command (the transition window is Jun's
-// decision J2).
+// package, so the copy runs only when an operator names the command (the window is decision J2).
 
 import (
 	"context"
@@ -60,13 +59,12 @@ type cli struct {
 	report    string
 }
 
-// cliCancel is a test seam. When it is set, it runs before every publication step, so a test can
-// cancel a run in the middle of the copy without raising a signal; the real path reads ctx, which
-// the install mode cancels on SIGINT, SIGTERM and SIGHUP.
+// cliCancel is a test seam run before every publication step, so a test can cancel a run mid-copy
+// without a signal; the real path reads ctx, which the install mode cancels on SIGINT/TERM/HUP.
 var cliCancel func() error
 
-// Run is `crw install migrate-state`. env is the environment the roots are read from, so the
-// caller's environment decides and this process's own is not consulted behind it.
+// Run is `crw install migrate-state`. env is the environment the roots are read from; this
+// process's own environment is never consulted behind it.
 func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Writer) int {
 	o, help, err := parseCLI(args)
 	if help {
@@ -112,8 +110,7 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	if o.dryRun {
 		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, nil))
 	}
-	// A destination root or directory this run will create is a real filesystem change no file item
-	// accounts for, so the result distinguishes that mutating run from an already-equal one.
+	// A root or directory this run creates is a change no file item reports.
 	structural := structuralWrites(roots, plan)
 	if err := ctx.Err(); err != nil {
 		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
@@ -122,8 +119,7 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	if err != nil {
 		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
 	}
-	// Cancellation reaches the copy itself: every publication step checks the context first, so a
-	// signal after classification stops the run with a failed or partial report instead of copying on.
+	// Every publication step checks the context, so a signal after classification stops the copy.
 	pub.at = func(string) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -137,8 +133,7 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	report := o.assemble(roots, plan, atts, res, err)
 	report.structural = structural
 	report.Result = summarize(report)
-	// The report file is published before stdout is written, and its own failure is folded into the
-	// document the caller reads, so stdout and the exit code never disagree.
+	// The report file is published before stdout, so the two never disagree.
 	if err == nil && target != nil {
 		if perr := target.publish(report); perr != nil {
 			report.Error = reportError(perr)
@@ -149,8 +144,8 @@ func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Wri
 	return o.emit(stdout, stderr, report)
 }
 
-// structuralWrites reports whether the run will create a destination root or a destination
-// directory, changes that no file item of the plan reports. It reads only; nothing is written.
+// structuralWrites reports whether the run will create a root or directory, changes no file item of
+// the plan reports. It reads only; nothing is written.
 func structuralWrites(roots *Roots, plan *Plan) bool {
 	for _, p := range []*Pair{roots.Project, roots.User} {
 		if p != nil && p.Dest == nil {
@@ -227,8 +222,7 @@ func parseCLI(args []string) (cli, bool, error) {
 	if given["codex-home"] && !scope.Has(ScopeCodex) {
 		return cli{}, false, errors.New("--codex-home is read only with --scope codex or --scope all")
 	}
-	// An explicitly empty value names no path: an unset shell variable must not silently select the
-	// environment or the working directory instead of the root the operator meant.
+	// An empty value names no path: an unset variable must not select another root instead.
 	for _, f := range []struct {
 		name  string
 		value string
@@ -241,8 +235,8 @@ func parseCLI(args []string) (cli, bool, error) {
 }
 
 // options resolves the selected scope's roots from env: an explicit flag, else the variable in the
-// environment the caller passed, else the default under the home. Open would otherwise fall back to
-// this process's environment, which the caller did not give it.
+// caller's environment, else the default under the home. Open would otherwise read this process's
+// environment, which the caller did not give it.
 func (o cli) options(env []string) (Options, error) {
 	opt := Options{Scope: o.scope, Cwd: o.cwd}
 	lookup := envLookup(env)
@@ -291,8 +285,8 @@ func envRoot(lookup func(string) (string, bool), explicit, variable, def string)
 	return filepath.Join(home, def), nil
 }
 
-// envHome is the home the default roots hang under: HOME when the caller's environment sets it,
-// else this user's passwd entry, read without consulting the process environment.
+// envHome is the home the defaults hang under: HOME from the caller's environment, else the passwd
+// entry, read without consulting the process environment.
 func envHome(lookup func(string) (string, bool)) (string, error) {
 	if home, set := lookup("HOME"); set && home != "" {
 		return home, nil
@@ -307,8 +301,8 @@ func envHome(lookup func(string) (string, bool)) (string, error) {
 	return u.HomeDir, nil
 }
 
-// target validates --report: an absent leaf outside every selected tree, in a directory that exists.
-// It returns nil when no report was asked for. Nothing is written here.
+// target validates --report: an absent leaf outside every selected tree, in an existing directory;
+// nil when no report was asked for. Nothing is written here.
 func (o cli) target(roots *Roots) (*reportTarget, error) {
 	if o.report == "" {
 		return nil, nil
@@ -336,9 +330,8 @@ func (o cli) target(roots *Roots) (*reportTarget, error) {
 	if dir == nil {
 		return nil, fmt.Errorf("--report: the directory %s does not exist", parent)
 	}
-	// The lexical check above cannot see two spellings of one directory; identity can. The report
-	// parent must not be a selected root or lie inside one, or the run would write into the state
-	// it just verified.
+	// The lexical check cannot see two spellings of one directory; identity can. The report parent
+	// must not be a selected root or lie inside one, or the run would write into the state.
 	_, _, chain, err := pinRoot(parent)
 	if err != nil {
 		_ = dir.Close()
@@ -361,8 +354,8 @@ func (o cli) target(roots *Roots) (*reportTarget, error) {
 	return &reportTarget{parent: dir, leaf: leaf}, nil
 }
 
-// assemble builds one run's report: every planned item with what happened to it, the attention
-// entries and the whole-scope error.
+// assemble builds one run's report: each planned item with its outcome, the attention entries and
+// the whole-scope error.
 func (o cli) assemble(roots *Roots, plan *Plan, atts []Attention, res *ApplyResult, failure error) *Report {
 	rep := &Report{DryRun: o.dryRun, Scope: o.scope, Roots: reportRoots(roots), Attention: atts}
 	switch {
@@ -379,8 +372,7 @@ func (o cli) assemble(roots *Roots, plan *Plan, atts []Attention, res *ApplyResu
 			rep.Items = append(rep.Items, item)
 		}
 		if o.dryRun {
-			// Classification opened, stat'ed and hashed every copy and transform source once — but
-			// only a run that reached the end of the scope examined all of them.
+			// Only a run that reached the end of the scope examined every source.
 			rep.SourceVerified = failure == nil
 		}
 	}
@@ -424,8 +416,7 @@ func reportRoots(r *Roots) []ReportRoot {
 	return out
 }
 
-// namedRoots names the roots of a run whose Open was refused: the paths it was given, without the
-// default resolution Open would have applied.
+// namedRoots names the roots a refused Open was given, without the default resolution.
 func namedRoots(opt Options) []ReportRoot {
 	scope, err := ParseScope(string(opt.Scope))
 	if err != nil {

@@ -2,9 +2,8 @@ package migrate
 
 // cli_test.go holds the M4 red-first cases of docs/port-cxc/state-migration.md: help and invalid
 // flags write nothing, a dry run creates no root and no report, the scope/default/environment
-// resolution, every exit code and cancellation, the legacy install help, and an end-to-end run per
-// scope. Every root is a temporary directory; no test reads or writes the real ~/.codex, ~/.crw or
-// ~/.codexclaw.
+// resolution, every exit code and cancellation, and an end-to-end run per scope. Every root is a
+// temporary directory; no test reads or writes the real ~/.codex, ~/.crw or ~/.codexclaw.
 
 import (
 	"bytes"
@@ -19,7 +18,7 @@ import (
 	"testing"
 )
 
-// cliWS lays out a workspace with a CXC project store under base/ws, and returns the workspace.
+// cliWS lays out a workspace with a CXC project store under base/ws.
 func cliWS(t *testing.T, base string, entries map[string]string) string {
 	t.Helper()
 	ws := filepath.Join(base, "ws")
@@ -28,7 +27,7 @@ func cliWS(t *testing.T, base string, entries map[string]string) string {
 	return ws
 }
 
-// cliRun runs the command with the environment isolate set, and returns its exit code and output.
+// cliRun runs the command with the environment isolate set.
 func cliRun(t *testing.T, ctx context.Context, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -215,13 +214,8 @@ func TestCLIExitCodesAndCancellation(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(ws2, ".crw")); !os.IsNotExist(err) {
 		t.Fatalf("a cancelled run wrote: %v", err)
 	}
-}
-
-// A cancellation that arrives after classification, in the middle of the copy, stops the run: the
-// report is a failure with the writes completed, and no report file is published.
-func TestCLICancellationDuringTheCopy(t *testing.T) {
-	base := isolate(t)
-	ws := cliWS(t, base, map[string]string{"ledger.jsonl": "{}\n", "sessions/a.json": "{\"phase\":\"IDLE\"}\n"})
+	// A cancellation that arrives after classification, in the middle of the copy, stops the run:
+	// the report is the interruption with the writes completed, and no report file is published.
 	report := filepath.Join(base, "report.json")
 	seen := 0
 	cliCancel = func() error {
@@ -231,23 +225,18 @@ func TestCLICancellationDuringTheCopy(t *testing.T) {
 		}
 		return nil
 	}
-	t.Cleanup(func() { cliCancel = nil })
-	code, out, _ := cliRun(t, context.Background(), "--cwd", ws, "--report", report)
+	code, out, _ = cliRun(t, context.Background(), "--cwd", ws2, "--report", report)
 	cliCancel = nil
-	if code != 1 || !strings.Contains(out, "result: interrupted") {
-		t.Fatalf("exit %d\n%s", code, out)
+	if code != 1 || !strings.Contains(out, "result: interrupted") || strings.Contains(out, "result: copied") {
+		t.Fatalf("mid-copy cancellation: exit %d\n%s", code, out)
 	}
 	if _, err := os.Stat(report); !os.IsNotExist(err) {
 		t.Fatalf("a cancelled run published a report: %v", err)
 	}
-	if strings.Contains(out, "result: copied") {
-		t.Fatalf("a cancelled run claimed a copy:\n%s", out)
-	}
 }
 
-// A migration that only creates structure (an absent destination root and its canonical
-// .gitignore, with no file item) still changed the filesystem, so it is a copy rather than an
-// already-equal run, and a dry run over the same source counts no directory as a copy.
+// A migration that only creates structure still changed the filesystem, so it is a copy rather than
+// an already-equal run, and a dry run counts no directory as a file it would copy.
 func TestCLIDirectoryOnlyMigrationIsACopy(t *testing.T) {
 	base := isolate(t)
 	ws := cliWS(t, base, map[string]string{"sessions/": ""})
@@ -324,8 +313,7 @@ func TestCLIReportAndJSON(t *testing.T) {
 	if _, err := os.Stat(inside); !os.IsNotExist(err) {
 		t.Fatalf("the refused report was written: %v", err)
 	}
-	// A destination that already holds equal bytes but a different mode is a material difference this
-	// run does not correct, so both the text and the JSON report carry it.
+	// A destination with equal bytes but a different mode is a difference this run does not correct.
 	dst := filepath.Join(ws, ".crw", "ledger.jsonl")
 	if err := os.Chmod(dst, 0o640); err != nil {
 		t.Fatal(err)

@@ -21,8 +21,8 @@ import (
 // SchemaID is the versioned schema of the JSON report.
 const SchemaID = "crw-state-migration/1"
 
-// Report is one run: the outcome, the selected roots, every planned item with what happened to it,
-// the attention entries, the whole-scope error and the two verification flags.
+// Report is one run: the outcome, the roots, each planned item with its outcome, the attention
+// entries, the whole-scope error and the two verification flags.
 type Report struct {
 	Result          string
 	DryRun          bool
@@ -33,8 +33,7 @@ type Report struct {
 	Error           *ReportError
 	WritesCompleted int
 	SourceVerified  bool
-	// structural records that the run created a destination root or directory, a change no file
-	// item reports, so a run that only made structure still reads as a copy.
+	// structural records a root or directory this run created, a change no file item reports.
 	structural bool
 }
 
@@ -53,9 +52,8 @@ type ReportError struct {
 	Detail string
 }
 
-// summarize picks the report's top-level result: refused or failed for a run that stopped, dry-run
-// for one that wrote nothing by design, copied when anything was written, already-equal when there
-// was nothing left to copy.
+// summarize picks the top-level result: refused or failed for a run that stopped, dry-run for one
+// that wrote nothing by design, copied when anything was written, already-equal when nothing was.
 func summarize(r *Report) string {
 	if r.Error != nil {
 		return r.Error.Kind
@@ -68,8 +66,7 @@ func summarize(r *Report) string {
 			return string(ResultFailed)
 		}
 	}
-	// A run that only created a root, published the canonical .gitignore or finished a directory mode
-	// still changed the filesystem, so it is a copy even though no file item reports one.
+	// Structure the run created is still a change, though no file item reports it.
 	if r.WritesCompleted > 0 || r.structural {
 		return string(ResultCopied)
 	}
@@ -126,8 +123,7 @@ func (r *Report) Object() contract.OrderedObject {
 			{Key: "digest", Value: digestText(it.Digest)},
 			{Key: "mode", Value: modeText(it.Mode)},
 		}
-		// A destination whose mode a publish left alone is a material difference this run deliberately
-		// does not correct, so the report carries the note rather than hiding it.
+		// A destination mode a publish left alone is a difference this run does not correct.
 		if it.Note != "" {
 			item = append(item, contract.Field{Key: "note", Value: it.Note})
 		}
@@ -210,9 +206,8 @@ func (r *Report) Text() string {
 	return b.String()
 }
 
-// oneLine keeps a value on one line: a persisted string (a background note, a command argument) can
-// hold newlines, and writing them verbatim would break the one-line-per-entry format and let a value
-// inject apparent result or attention lines into the report.
+// oneLine keeps a value on one line: a persisted string can hold newlines, and writing them
+// verbatim would break the one-line-per-entry format and let a value inject report lines.
 func oneLine(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
@@ -240,15 +235,13 @@ func (r *Report) counts() (copied, equal, excluded, refused, attention int) {
 		case it.Result == ResultRefused:
 			refused++
 		case it.Result == ResultDryRun:
-			// A directory row is not a copy: a real run creates a directory as part of publishing the
-			// files under it, so counting it would overstate what the run would copy.
+			// A directory row is not a copy: the files under it are.
 			if !applyDir(it.Item) {
 				copied++
 			}
 		}
 	}
-	// A whole-scope refusal (a root-safety or preflight conflict) is stored in the error, not as an
-	// item, so it is counted here rather than leaving `result: refused` beside `refused=0`.
+	// A whole-scope refusal is stored in the error, not as an item, so it is counted here.
 	if r.Error != nil && r.Error.Kind == string(ResultRefused) && refused == 0 {
 		refused = 1
 	}
@@ -278,8 +271,8 @@ func (o cli) emit(stdout, stderr io.Writer, r *Report) int {
 	return r.exitCode()
 }
 
-// reportTarget is the validated --report destination: the pinned directory that holds the leaf and
-// the leaf name. It is published no-replace after the run verified the copied data.
+// reportTarget is the validated --report destination: the pinned parent directory and the leaf,
+// published no-replace after the run verified the copied data.
 type reportTarget struct {
 	parent *Dir
 	leaf   string
