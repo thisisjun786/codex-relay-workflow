@@ -5,6 +5,7 @@ package cxcfuzz
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -124,7 +125,13 @@ func (p *Pool) acquire() (*worker, error) {
 	if w := <-p.slots; w != nil {
 		return w, nil
 	}
-	return p.start()
+	w, err := p.start()
+	if err != nil {
+		// The slot this call took goes back, or Close would wait for it forever.
+		p.slots <- nil
+		return nil, err
+	}
+	return w, nil
 }
 
 func (p *Pool) exchange(w *worker, input, root string) (string, error) {
@@ -137,15 +144,19 @@ func (p *Pool) exchange(w *worker, input, root string) (string, error) {
 		return "", err
 	}
 	request := fmt.Sprintf("{\"id\":%d,\"input\":%s,\"root\":%s}\n", id, input, encoded)
-	if _, err := io.WriteString(w.stdin, request); err != nil {
-		return "", err
-	}
 	type read struct {
 		line string
 		err  error
 	}
+	// The write and the read share one deadline: a worker that stops reading leaves the write
+	// blocked once its pipe fills, and only killing the worker unblocks it. Call does that on
+	// the Timeout this returns.
 	done := make(chan read, 1)
 	go func() {
+		if _, err := io.WriteString(w.stdin, request); err != nil {
+			done <- read{"", err}
+			return
+		}
 		line, err := w.stdout.ReadString('\n')
 		done <- read{line, err}
 	}()
@@ -156,7 +167,7 @@ func (p *Pool) exchange(w *worker, input, root string) (string, error) {
 		if got.err != nil {
 			return "", got.err
 		}
-		return answer(got.line)
+		return answer(id, got.line)
 	case <-timer.C:
 		return "", Timeout{}
 	}
@@ -173,7 +184,7 @@ func (p *Pool) Close() error {
 }
 
 // answer reads one reply line.
-func answer(line string) (string, error) {
+func answer(id int, line string) (string, error) {
 	var body struct {
 		ID     int             `json:"id"`
 		Output json.RawMessage `json:"output"`
@@ -185,13 +196,16 @@ func answer(line string) (string, error) {
 	if err := json.Unmarshal([]byte(line), &body); err != nil {
 		return "", fmt.Errorf("the worker's reply is not JSON: %w", err)
 	}
+	if body.ID != id {
+		return "", fmt.Errorf("the worker answered request %d as %d", id, body.ID)
+	}
 	if body.Error != nil {
 		name, _ := json.Marshal(body.Error.Name)
 		message, _ := json.Marshal(body.Error.Message)
 		return fmt.Sprintf("{\"error\":{\"name\":%s,\"message\":%s}}", name, message), nil
 	}
-	if len(body.Output) == 0 {
-		return "null", nil
+	if body.Output == nil {
+		return "", errors.New("the worker's reply holds neither an output nor an error")
 	}
 	return string(body.Output), nil
 }

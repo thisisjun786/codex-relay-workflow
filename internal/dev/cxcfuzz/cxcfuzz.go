@@ -2,8 +2,9 @@
 
 // Package cxcfuzz is the dev-only differential-fuzz harness. It feeds one generated input to a
 // CXC v0.2.40 oracle worker and to the equivalent Go function, compares the two answers in one
-// canonical form, shrinks a divergence to a minimal input, and pins it as a case the tests replay
-// without Node. It is built only with -tags dev and never ships in a release archive.
+// canonical form, and writes each difference once. Shrinking a difference and replaying it
+// without Node belong to the follow-up issue. It is built only with -tags dev and never ships in
+// a release archive.
 package cxcfuzz
 
 import (
@@ -137,7 +138,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d\n",
 		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts)
-	if summary.Differ+summary.Miss+summary.Extra > 0 {
+	// A case that timed out compared nothing, so it is not an agreement either.
+	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts > 0 {
 		return 1
 	}
 	return 0

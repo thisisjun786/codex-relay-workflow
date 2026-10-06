@@ -224,3 +224,19 @@ func TestDivergenceName(t *testing.T) {
 		t.Fatal("two inputs share a name")
 	}
 }
+
+// A reply is matched to its request: a mismatched id, or a reply carrying neither an output nor an
+// error, is a transport failure rather than an answer, so the worker is replaced instead of the
+// campaign comparing something the oracle never said.
+func TestAnswerRejectsAnUnmatchedOrEmptyReply(t *testing.T) {
+	if _, err := answer(1, `{"id":2,"output":1}`); err == nil {
+		t.Fatal("a reply for another request was accepted")
+	}
+	if _, err := answer(1, `{"id":1}`); err == nil {
+		t.Fatal("a reply with neither an output nor an error was accepted")
+	}
+	got, err := answer(1, `{"id":1,"output":null}`)
+	if err != nil || got != "null" {
+		t.Fatalf("an explicit null output: %q, %v", got, err)
+	}
+}
