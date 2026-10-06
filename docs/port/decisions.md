@@ -5369,6 +5369,18 @@ that is not the branch tip (`check.go:162`, `merge_currency_stale`), and `merge-
 merges under the expected-head guard. What can change is *how the check on B' is satisfied*,
 and every option changes something outside the relay. Nothing relay-only removes that run.
 
+Sources for the two rules, read 2026-10-06: "About required status checks"
+(<https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks>),
+"Troubleshooting required status checks"
+(<https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks>),
+"Managing a merge queue"
+(<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue>),
+"Available rules for rulesets"
+(<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets>),
+and the reusable the merge queue availability sentence comes from,
+`data/reusables/gated-features/merge-queue.md`
+(<https://github.com/github/docs/blob/main/data/reusables/gated-features/merge-queue.md>).
+
 ### Question 1 — how each member head earns its `dev-gate`
 
 The yardsticks are the issue's criteria: no merge condition weaker, one issue one pull
