@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -80,6 +82,12 @@ func businessResendSafe(receipt map[string]any, task string) bool {
 // A one-row complete listing is affirmative evidence. Empty, malformed or
 // paginated history is not proof that the child has only its standby turn, but
 // a visible foreign turn is conclusive even on an incomplete page.
+//
+// This is also the unload's precondition, and the reason it is safe to archive the child:
+// businessResendUnload lowers only a child whose history is exactly its standby turn, so no
+// sub-thread can exist to be carried into the archive with it. Widening that precondition beyond
+// the standby-only history must first run the sub-thread check internal/relay/childcleanup owns;
+// nothing on the unload path inspects sub-threads today.
 func (r *startRun) businessResendOnlyStandby(ctx context.Context) (string, error) {
 	answer, err := r.m.Adapter.HostCall(ctx, "thread/turns/list", map[string]any{"threadId": r.task, "limit": 2, "itemsView": "summary"})
 	if err != nil {
@@ -154,9 +162,12 @@ func (r *startRun) businessResendReady(ctx context.Context) (string, error) {
 // does, and only after the child is notLoaded again with the standby-only history.
 //
 // thread/archive accepts an active sub-thread and unloads it, so the idle precondition is read
-// again here, immediately before the archive. An archive failure leaves the child as it was and
-// answers recipient_not_idle; an unarchive that fails twice answers lifecycle_unknown and names
-// the archived thread for an operator. A child still loaded afterwards answers recipient_not_idle.
+// again here, immediately before the archive. An archive error the host answered is a refusal, so
+// this call did not apply the archive and the child holds as a loaded one does. An error with no
+// host answer may still have applied, so the archived listing is asked once and a confirmed archive
+// continues as a successful one; one the listing does not confirm leaves the child as it was and
+// answers recipient_not_idle. An unarchive that fails twice answers lifecycle_unknown and names the
+// archived thread for an operator. A child still loaded afterwards answers recipient_not_idle.
 func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	status, code, err := r.businessResendThreadStatus(ctx)
 	if err != nil {
@@ -173,8 +184,9 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 	}
 	// One lowering per business attempt is a durable bound, not a per-invocation one: a replay of
 	// an attempt whose unload did not unload the child reconstructs the same attempt from the
-	// retained failure, so the row an earlier lowering wrote is what stops the second one. A
-	// failed archive wrote no row, because it lowered nothing.
+	// retained failure, so the row an earlier lowering wrote is what stops the second one. An
+	// archive error writes no row unless the archived listing shows the child was archived after
+	// all, in which case the lowering is recorded like any other.
 	lowered, err := r.resendUnloadLowered(ctx)
 	if err != nil {
 		return "", err
@@ -199,11 +211,32 @@ func (r *startRun) businessResendUnload(ctx context.Context) (string, error) {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		// Nothing was lowered, so nothing is recorded: the answer is the same one a loaded
-		// child earns, and no unarchive follows a failed archive.
-		return "recipient_not_idle", nil
+		// The host's own error response is a refusal of this call, so this invocation did not apply
+		// the archive: another client may have archived the child first. An archived listing cannot
+		// tell which request archived it, and unarchiving here would undo that client's action, so
+		// the child holds exactly as a loaded one does.
+		var rpcErr *appserver.RPCError
+		if errors.As(err, &rpcErr) {
+			return "recipient_not_idle", nil
+		}
+		// With no host answer read - a transport error, a closed connection, a deadline - the
+		// archive may have applied and only its reply been lost, which would leave the child
+		// archived until an operator unarchived it. Ask the host once, with the same complete
+		// archived scan the resend guard uses, and continue exactly as after a successful archive
+		// when it confirms the child is archived. Every other answer, and a failed check, keeps
+		// the answer a loaded child earns: nothing was lowered as far as this attempt can tell,
+		// so nothing is recorded and no unarchive follows a failed archive.
+		code, checkErr := businessResendCheckHost(ctx, r.m.Adapter, r.task, true)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if checkErr != nil || code != "recipient_archived" {
+			return "recipient_not_idle", nil
+		}
+		detail["archive"] = "reply_lost"
+	} else {
+		detail["archive"] = "ok"
 	}
-	detail["archive"] = "ok"
 	// From here the child is archived, and every way out records the lowering with a context that
 	// survives the caller's cancellation, as the creation attempt marker is: an archived child with
 	// no row would leave an operator nothing to read, and an unarchive whose outcome a cancellation
