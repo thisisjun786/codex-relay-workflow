@@ -48,10 +48,13 @@ func (e targetShapeError) Error() string { return string(e) }
 // pluginRootTarget is PLUGIN_ROOT_TARGET; JS whitespace is checked separately.
 const pluginRootTarget = `\$\{PLUGIN_ROOT\}[\\/]([^"\t\n\v\f\r ]+)`
 
-// targetNodeText is a manifest string as Node's path encoding reads it. pyjson.Loads keeps a lone surrogate
-// escape as three WTF-8 bytes (ED A0..BF 80..BF), which Go reads as three invalid bytes and rewrites as three
-// U+FFFD; V8 writes the one lone surrogate as one U+FFFD (EF BF BD) when a string becomes a file name, so the
-// existence check must look for that name. A valid pair is a four-byte character and stays.
+// targetNodeText is the file-system form of a manifest string: a manifest string as Node's path encoding reads
+// it. pyjson.Loads keeps a lone surrogate escape as three WTF-8 bytes (ED A0..BF 80..BF), which Go reads as
+// three invalid bytes and rewrites as three U+FFFD; V8 writes the one lone surrogate as one U+FFFD (EF BF BD)
+// when a string becomes a file name, so the existence check must look for that name. A valid pair is a
+// four-byte character and stays. Only opening and stat use this form: the string a finding reports, and the
+// string the containment test compares when its realpath calls fail, keep the lone surrogate, as the oracle's
+// JavaScript string does (CRW-652).
 func targetNodeText(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -67,7 +70,7 @@ func targetNodeText(s string) string {
 }
 
 func targetReadJSON(kind TargetKind, path string) (any, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(targetNodeText(path))
 	if err != nil {
 		return nil, err
 	}
@@ -82,13 +85,7 @@ func targetCommands(command any) []string {
 	if !ok {
 		return nil
 	}
-	s = targetNodeText(s)
-	s = strings.Map(func(r rune) rune {
-		if text.Trim(string(r)) == "" {
-			return ' '
-		}
-		return r
-	}, s)
+	s = manifestTargetsCommandText(s)
 	out := []string{}
 	for _, m := range regexp.MustCompile(pluginRootTarget).FindAllStringSubmatch(s, -1) {
 		rel := m[1]
@@ -100,11 +97,37 @@ func targetCommands(command any) []string {
 	return out
 }
 
+// manifestTargetsCommandText is the JavaScript-whitespace mapping the oracle's PLUGIN_ROOT_TARGET leaves to
+// its [^"\s] class: each JavaScript whitespace character becomes a space, so the pattern can be a byte class
+// here. It walks the string by code point instead of strings.Map, which reads each of a lone surrogate's three
+// WTF-8 bytes as U+FFFD and writes three of them, losing the one character the oracle's JavaScript string
+// holds; a byte that is not UTF-8 keeps strings.Map's U+FFFD. The match boundaries are the same either way,
+// because a lone surrogate and U+FFFD are both outside the class.
+func manifestTargetsCommandText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, n := pyjson.CodePoint(s, i)
+		switch {
+		case n == 3 && pyjson.IsSurrogate(r):
+			b.WriteString(s[i : i+n])
+		case n == 1 && pyjson.IsSurrogate(r):
+			b.WriteString("\uFFFD")
+		case text.Trim(string(r)) == "":
+			b.WriteByte(' ')
+		default:
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
+}
+
 // targetEscapesRoot keeps the paired realpath fallback exact: either failure
 // makes BOTH paths lexical. A missing leaf below a link is a missing target.
 func targetEscapesRoot(root, target string) bool {
-	r, e1 := filepath.EvalSymlinks(root)
-	p, e2 := filepath.EvalSymlinks(target)
+	r, e1 := filepath.EvalSymlinks(targetNodeText(root))
+	p, e2 := filepath.EvalSymlinks(targetNodeText(target))
 	if e1 != nil || e2 != nil {
 		r, _ = filepath.Abs(root)
 		p, _ = filepath.Abs(target)
@@ -129,11 +152,11 @@ func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing stri
 		*issues = append(*issues, TargetIssue{kind, "target escapes plugin root: " + rel})
 		return nil
 	}
-	if _, err := os.Stat(abs); err != nil {
+	if _, err := os.Stat(targetNodeText(abs)); err != nil {
 		*issues = append(*issues, TargetIssue{kind, missing})
 		return nil
 	}
-	info, err := os.Stat(abs)
+	info, err := os.Stat(targetNodeText(abs))
 	if err != nil {
 		return err
 	}
@@ -205,7 +228,7 @@ func targetString(v any) string {
 	case nil:
 		return "null"
 	case string:
-		return targetNodeText(x)
+		return x
 	case bool:
 		return strconv.FormatBool(x)
 	case json.Number:
@@ -257,13 +280,12 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 			issues = append(issues, TargetIssue{TargetHook, "manifest hook file must be a string: " + targetString(entry)})
 			continue
 		}
-		rel = targetNodeText(rel)
 		file := targetResolve(pluginRoot, rel)
 		if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
 			issues = append(issues, TargetIssue{TargetHook, "manifest hook file escapes plugin root: " + rel})
 			continue
 		}
-		if _, err := os.Stat(file); err != nil {
+		if _, err := os.Stat(targetNodeText(file)); err != nil {
 			issues = append(issues, TargetIssue{TargetHook, "manifest hook file missing: " + rel})
 			continue
 		}
@@ -287,12 +309,11 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 	if !ok {
 		return issues, nil
 	}
-	rel = targetNodeText(rel)
 	file := targetResolve(pluginRoot, rel)
 	if filepath.IsAbs(rel) || targetEscapesRoot(pluginRoot, file) {
 		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file escapes plugin root: " + rel}), nil
 	}
-	if _, err := os.Stat(file); err != nil {
+	if _, err := os.Stat(targetNodeText(file)); err != nil {
 		return append(issues, TargetIssue{TargetMCP, "manifest mcpServers file missing: " + rel}), nil
 	}
 	v, err := targetReadJSON(TargetMCP, file)
@@ -314,8 +335,7 @@ func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 		}
 		for _, arg := range a {
 			if rel, ok := arg.(string); ok && strings.HasSuffix(rel, ".js") {
-				rel = targetNodeText(rel)
-				if e := targetCheck(&issues, TargetMCP, pluginRoot, rel, "mcp server "+targetNodeText(srv.Key)+" references missing dist: "+rel); e != nil {
+				if e := targetCheck(&issues, TargetMCP, pluginRoot, rel, "mcp server "+srv.Key+" references missing dist: "+rel); e != nil {
 					return nil, e
 				}
 			}
