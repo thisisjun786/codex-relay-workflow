@@ -243,7 +243,8 @@
   {"flag":"--criteria","help":"a JSON array of findings, or @path to one"},
   {"flag":"--restoration","help":"the criterion id whose finding carries this correction's restoration block. The verdict is refused if that finding would not reach the child."},
   {"flag":"--reason","help":"why an aborted or unverified verdict could not conclude"},
-  {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"}]},
+  {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"},
+  {"flag":"--verified-head","help":"the head this ruling verified, as 40 lowercase hex digits. Recorded with the ruling in the same transaction, so a later dag-accept proves a parent-made refresh against it instead of the head the forge shows. Only with --verdict verified, and the same event keeps one head"}]},
 {"name":"decision-raise","summary":"record a user decision: the question, its options, its blocking subjects and its authority, in the relay store. A second raise of the same question (the same fingerprint) folds into the record that already carries it, appending the observation and answering merged true; an identical raise is not a new record. Answers {decisionId, fingerprint, merged, state}","options":[
   {"flag":"--kind","required":true,"help":"design_choice|dependency|merge_approval|cleanup_approval|blocked_escalation|policy"},
   {"flag":"--context","required":true,"help":"one paragraph: what the question is and why it is asked"},
