@@ -754,6 +754,54 @@ BEGIN SELECT RAISE(ABORT, 'dag_acceptance_refreshes rows are append-only: never 
 BEGIN SELECT RAISE(ABORT, 'dag_verified_heads rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_verified_heads_no_delete BEFORE DELETE ON dag_verified_heads
 BEGIN SELECT RAISE(ABORT, 'dag_verified_heads rows are append-only: never deleted'); END`,
+
+	// CRW-767: the merge train. One CI run of a two-member prefix stands for both members (the decision in
+	// docs/port/decisions.md section 79, CRW-725 option (a)); these three tables are its relay record, and the
+	// train commands that write them (a later issue) ship separately. A train row and a member row are written
+	// once and an event is appended, because the zone's triggers abort an UPDATE and a DELETE, and the train's
+	// state is the newest event's kind rather than a column, as a plan's head revision is MAX(revision_no) of
+	// its log. The names carry no dag_ prefix because the decision names them so; the zone is derived from
+	// these statements and not from a name prefix (swapgate.zoneObjects), so a merge-lane table belongs to it
+	// exactly as the DAG tables do. turn_id is a plain column: the zone forbids a key into a v1 table.
+	`CREATE TABLE IF NOT EXISTS merge_trains (
+    train_id       TEXT PRIMARY KEY CHECK (train_id <> ''),
+    target_key     TEXT NOT NULL CHECK (target_key <> ''),
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    base_ref       TEXT NOT NULL CHECK (base_ref <> ''),
+    base_sha       TEXT NOT NULL CHECK (base_sha <> ''),
+    leader_task_id TEXT NOT NULL CHECK (leader_task_id <> ''),
+    created_at     TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_no_update BEFORE UPDATE ON merge_trains
+BEGIN SELECT RAISE(ABORT, 'merge_trains rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_no_delete BEFORE DELETE ON merge_trains
+BEGIN SELECT RAISE(ABORT, 'merge_trains rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS merge_train_members (
+    train_id        TEXT NOT NULL REFERENCES merge_trains (train_id),
+    seq             INTEGER NOT NULL CHECK (seq >= 1),
+    turn_id         TEXT NOT NULL CHECK (turn_id <> ''),
+    pr_number       INTEGER NOT NULL CHECK (pr_number >= 1),
+    relationship_id TEXT NOT NULL CHECK (relationship_id <> ''),
+    member_head     TEXT NOT NULL CHECK (member_head <> ''),
+    PRIMARY KEY (train_id, seq)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_no_update BEFORE UPDATE ON merge_train_members
+BEGIN SELECT RAISE(ABORT, 'merge_train_members rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_members_no_delete BEFORE DELETE ON merge_train_members
+BEGIN SELECT RAISE(ABORT, 'merge_train_members rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS merge_train_events (
+    train_id    TEXT NOT NULL REFERENCES merge_trains (train_id),
+    seq         INTEGER NOT NULL CHECK (seq >= 1),
+    kind        TEXT NOT NULL CHECK (kind IN ('opened','verified','landed','abandoned','done')),
+    actor       TEXT NOT NULL CHECK (actor <> ''),
+    detail_json TEXT NOT NULL CHECK (detail_json <> ''),
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (train_id, seq)
+)`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_no_update BEFORE UPDATE ON merge_train_events
+BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS merge_train_events_no_delete BEFORE DELETE ON merge_train_events
+BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never deleted'); END`,
 	// CRW-736: the user-decision record (crw-user-decision/1, internal/relay/decisions) as a zone
 	// table. One column per field of the record's field list, with the object and array fields held
 	// as JSON text, decision_id as the primary key and fingerprint indexed. The table is not
