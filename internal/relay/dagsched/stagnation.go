@@ -81,8 +81,13 @@ func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string
 		if landed {
 			return nil, nil
 		}
-		// an acceptance is the repair: only what happened after the current result was accepted describes a node that is failing now
-		since = acc.ExecutionGeneration
+		// an acceptance is the repair: only what happened after the current result was accepted describes a node that is failing now. The generation counted from is the one the acceptance
+		// STANDS on, not the one its row names: a recorded base refresh moves an acceptance to a later generation, and the generations before that are history.
+		stand, err := s.standOf(ctx, q, acc)
+		if err != nil {
+			return nil, err
+		}
+		since = stand.Generation
 	}
 	runs, err := s.correctionRuns(ctx, q, plan, n.NodeID, since)
 	if err != nil {
@@ -159,25 +164,31 @@ type correctionRun struct {
 // identity, and both break a run without counting.
 //
 // The ruling is looked up the way RecordCorrection looks it up: the event of the generation BEFORE this one, in this relationship, that was ruled needs_changes and named this generation next. The
-// relationship and the event are what scope it; the verdict alone would let a correction of one node read another relationship’s ruling when the generation numbers coincide.
+// relationship and the event are what scope it; the verdict alone would let a correction of one node read another relationship’s ruling when the generation numbers coincide. A generation that several
+// events of that relationship name (a report superseded by a later one) is read once, from the newest ruling.
 func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, node string, since int64) ([]correctionRun, error) {
 	rows, err := q.QueryContext(ctx, "SELECT e.execution_generation, v.event_id, c.findings FROM dag_node_executions e"+
 		" LEFT JOIN events ev ON ev.relationship_id = e.relationship_id AND ev.execution_generation = e.execution_generation - 1"+
 		" LEFT JOIN verdicts v ON v.event_id = ev.event_id AND v.verdict = 'needs_changes' AND v.next_generation = e.execution_generation"+
 		" LEFT JOIN verdict_context c ON c.event_id = v.event_id"+
 		" WHERE e.plan_id = ? AND e.node_id = ? AND e.kind = 'correction' AND e.execution_generation > ?"+
-		" ORDER BY e.execution_generation, v.decided_at", plan, node, since)
+		" ORDER BY e.execution_generation, v.decided_at DESC", plan, node, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var runs []correctionRun
+	var seen int64
 	for rows.Next() {
 		var generation int64
 		var eventID, findings *string
 		if err := rows.Scan(&generation, &eventID, &findings); err != nil {
 			return nil, err
 		}
+		if generation == seen {
+			continue
+		}
+		seen = generation
 		digest := ""
 		if findings != nil {
 			digest = correctionFindingDigest(*findings)
