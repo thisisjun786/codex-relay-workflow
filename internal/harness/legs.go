@@ -54,7 +54,13 @@ type Leg struct {
 // their own ingress and are not here, and neither are the six events no manifest registers.
 func Legs() []Leg {
 	return []Leg{
-		{"session-start-bootstrapping-pabcd-state", "session-start", "session-start", Generic, false, false, true, nil},
+		{"session-start-bootstrapping-pabcd-state", "session-start", "session-start", Generic, false, false, true, func(c Call) string {
+			p, ok := ParseSessionStart(c.Raw)
+			if !ok {
+				return ""
+			}
+			return pabcdhook.SessionHookSessionStart(pabcdhook.SessionHookSessionStartPayload{Cwd: p.Cwd, SessionID: p.SessionID})
+		}},
 		{"session-start-advising-agent-thread-permissions", "session-start", "session-start-permission-advisory", Permission, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAgentThreadSessionStartAdvisory(c.Raw, os.LookupEnv)
 		}},
@@ -66,10 +72,40 @@ func Legs() []Leg {
 		}},
 		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
 		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
-		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, false, false, true, nil},
-		{"subagent-stop-verifying-evidence", "subagent-stop", "subagent-stop", Generic, false, true, true, nil},
+		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, false, false, true, func(c Call) string {
+			p, ok := ParsePostToolUse(c.Raw)
+			if !ok {
+				return ""
+			}
+			turn := ""
+			if p.TurnID != nil {
+				turn = *p.TurnID
+			}
+			return pabcdhook.SessionHookPostToolUse(pabcdhook.SessionHookPostToolUsePayload{Cwd: p.Cwd, SessionID: p.SessionID,
+				ToolName: p.ToolName, TurnID: turn, ToolInput: p.ToolInput, ToolResponse: p.ToolResponse}, os.LookupEnv)
+		}},
+		{"subagent-stop-verifying-evidence", "subagent-stop", "subagent-stop", Generic, false, true, true, func(c Call) string {
+			p, ok := ParseSubagentStop(c.Raw)
+			if !ok {
+				return ""
+			}
+			value := func(s *string) string {
+				if s != nil {
+					return *s
+				}
+				return ""
+			}
+			return pabcdhook.RunSubagentStopGate(pabcdhook.SubagentStopPayload{Cwd: p.Cwd, SessionID: p.SessionID,
+				AgentType: p.AgentType, AgentID: value(p.AgentID), TurnID: value(p.TurnID), LastAssistantMessage: value(p.LastAssistantMessage)}, os.Getenv)
+		}},
 		{"subagent-stop-observing-review", "subagent-stop", "subagent-stop-review", Generic, false, true, true, nil},
-		{"post-compact-resetting-reinject-cursor", "post-compact", "post-compact", Generic, false, false, true, nil},
+		{"post-compact-resetting-reinject-cursor", "post-compact", "post-compact", Generic, false, false, true, func(c Call) string {
+			p, ok := ParsePostCompact(c.Raw)
+			if !ok {
+				return ""
+			}
+			return pabcdhook.SessionHookPostCompact(pabcdhook.SessionHookPostCompactPayload{Cwd: p.Cwd, SessionID: p.SessionID})
+		}},
 		{"pre-tool-use-linting-apply-patch", "pre-tool-use", "pre-tool-use-edit", Generic, false, false, false, func(c Call) string {
 			out := pabcdhook.HandleApplyPatchLint(c.Raw)
 			if c.PabcdEnabled && out == "" {
@@ -94,7 +130,9 @@ func Legs() []Leg {
 		{"pre-tool-use-guarding-managed-worktree-deletion", "pre-tool-use", "worktree-guard-pretool", Guard, true, false, false, func(c Call) string {
 			return pabcdhook.HandleWorktreeGuardPreTool(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, true, false, false, nil},
+		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, true, false, false, func(c Call) string {
+			return pabcdhook.HandleMemoryWriteGate(c.Raw, os.LookupEnv)
+		}},
 		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, nil},
 	}
 }

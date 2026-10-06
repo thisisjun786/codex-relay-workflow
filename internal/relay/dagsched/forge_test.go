@@ -24,6 +24,10 @@ type ghScript struct {
 	rules   []any
 	rulesOK bool // false: the rules endpoint fails
 	pullsOK bool // false: the pull request endpoint fails
+	// runs and jobs serve the workflow runs of the head and their jobs: the only source of the
+	// collector's notRun mark (CRW-676).
+	runs []any
+	jobs map[int][]any
 	// checkTotal, when set, is the total_count the check-run endpoint reports whatever it returns
 	checkTotal int
 	// statuses are the commit statuses (the combined status endpoint lists the newest of each context)
@@ -93,9 +97,9 @@ func (g *ghScript) runner(argv []string, _ time.Duration) (int, string, string, 
 		}
 		return encode(g.rules)
 	case strings.Contains(last, "/actions/runs/") && strings.Contains(last, "/jobs"):
-		return encode(map[string]any{"total_count": 0, "jobs": []any{}})
+		return encode(page(g.jobs[g.runIDOf(last)], "jobs", 0))
 	case strings.Contains(last, "/actions/runs"):
-		return encode(map[string]any{"total_count": 0, "workflow_runs": []any{}})
+		return encode(page(g.runs, "workflow_runs", 0))
 	case strings.Contains(last, "/check-runs"):
 		return encode(page(g.checks, "check_runs", g.checkTotal))
 	case strings.Contains(last, "/status"):

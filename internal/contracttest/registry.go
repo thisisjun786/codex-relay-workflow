@@ -32,4 +32,13 @@ var runners = map[RunKind]Runner{
 var (
 	crwBinary    = testsupport.CRWPath
 	crwDevBinary = testsupport.CRWDevPath
+
+	// cxcRecallBinary is the crw the cxc corpus replays against: the release-shaped binary plus
+	// the recorder's frozen clock linked into the recall CLI's seam (cmd/crw/recall_clock.go).
+	// 1767225600000 is 2026-01-01T00:00:00Z, the instant the oracle recorded under before its
+	// clock advanced 1 ms per Date read (contract/notes/cxc/README.md "Seams the replay does not
+	// provide").
+	cxcRecallBinary = func() (string, error) {
+		return testsupport.BuildCRWPath("-trimpath", "-ldflags=-X main.recallTestClock=1767225600000")
+	}
 )

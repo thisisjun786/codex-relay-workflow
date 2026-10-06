@@ -263,6 +263,13 @@ func Test26_MTN_18_the_crossed_handoff_replays_refused_where_it_should_be(t *tes
 	}
 	w := newFx(t)
 	w.target.set(fixture.Repository, fixture.BaseRef, "base-0")
+	// the pull requests are on a forge repository, so the check reads them (CRW-608): the fake forge is seeded from the
+	// fixture's own pull request numbers and heads, not from the turns the claims below create
+	forge := newLivePullHeads()
+	for _, p := range fixture.Parents {
+		forge.set(fixture.Repository, p.PR, p.Head)
+	}
+	reader := livePullReader{target: w.target, pulls: forge}
 	var turns []string
 	for _, p := range fixture.Parents {
 		w.bindParent(p.Project, ep(p.Task, p.Host, "/"+p.Task))
@@ -272,7 +279,7 @@ func Test26_MTN_18_the_crossed_handoff_replays_refused_where_it_should_be(t *tes
 		turns = append(turns, answer.(map[string]any)["turnId"].(string))
 	}
 	w.answer(turns[0], "task-hierarchy")
-	w.step(w.m.Check(w.ctx, turns[0], "task-hierarchy", "head-73", "base-0", runChecks("head-73", nil, 1, "dev-gate", "run-1"), green(), []string{"dev-gate"}, w.target))
+	w.step(w.m.Check(w.ctx, turns[0], "task-hierarchy", "head-73", "base-0", runChecks("head-73", nil, 1, "dev-gate", "run-1"), green(), []string{"dev-gate"}, reader))
 	w.step(w.m.Target(w.ctx, fixture.Repository, fixture.BaseRef))
 	w.step(w.m.Attest(w.ctx, turns[0], "return_requested", "return_requested:task-status", "task-status", "my candidate is green"))
 	w.step(w.m.Attest(w.ctx, turns[0], "transport_accepted", "msg-69", "task-status", "the relay accepted the message"))

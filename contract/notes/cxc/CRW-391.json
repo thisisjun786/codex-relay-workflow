@@ -1,0 +1,27 @@
+{
+  "issue": "CRW-391",
+  "identical": [
+    "cli-help__chat__dash_h",
+    "cli-help__chat__dashdash_help",
+    "cli-help__chat__index_dashdash_help",
+    "cli-help__chat__search_dashdash_help",
+    "cli-help__chat__word_help",
+    "cli-help__memory__dash_h",
+    "cli-help__memory__dashdash_help",
+    "cli-help__memory__requeue_dashdash_help",
+    "cli-help__memory__search_dashdash_help",
+    "cli-help__memory__status_dashdash_help",
+    "cli-help__memory__word_help",
+    "cli__chat__help_precedence_writes_nothing",
+    "cli__chat__index_rebuild_with_index_path",
+    "cli__chat__index_status",
+    "cli__chat__search_help_word_is_a_query",
+    "cli__chat__search_rejects_bad_arguments",
+    "cli__memory__requeue_apply_on_seeded_db",
+    "cli__memory__requeue_dry_run",
+    "cli__memory__status_unavailable_and_unsupported"
+  ],
+  "pending": [
+    "cli-help__memory__allow-write_dashdash_help"
+  ]
+}

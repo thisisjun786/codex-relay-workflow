@@ -1,0 +1,3740 @@
+{
+  "oracle": "CXC v0.2.40 3c1459ac",
+  "cases": [
+    {
+      "id": "no_action",
+      "argv": [],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown scan action ''; run cxc scan --help"
+      }
+    },
+    {
+      "id": "missing_session",
+      "argv": [
+        "record"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --session <id> is required (mutating command, no latest-session fallback)"
+      }
+    },
+    {
+      "id": "unknown_action",
+      "argv": [
+        "evidence"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown scan action 'evidence'; run cxc scan --help"
+      }
+    },
+    {
+      "id": "show",
+      "argv": [
+        "show"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown scan action 'show'; run cxc scan --help"
+      }
+    },
+    {
+      "id": "action_case",
+      "argv": [
+        "Record"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown scan action 'Record'; run cxc scan --help"
+      }
+    },
+    {
+      "id": "empty_action",
+      "argv": [
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown scan action ''; run cxc scan --help"
+      }
+    },
+    {
+      "id": "help",
+      "argv": [
+        "help"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "help",
+        "sessionId": "",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "dash_help",
+      "argv": [
+        "--help"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "help",
+        "sessionId": "",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "short_help",
+      "argv": [
+        "-h"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "help",
+        "sessionId": "",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "help_ignores_rest",
+      "argv": [
+        "help",
+        "--cwd",
+        "/other",
+        "--nope"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "help",
+        "sessionId": "",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "help_case",
+      "argv": [
+        "HELP"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown scan action 'HELP'; run cxc scan --help"
+      }
+    },
+    {
+      "id": "session_consumes_flag",
+      "argv": [
+        "record",
+        "--session",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "--derive",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "missing_session_beats_count",
+      "argv": [
+        "record",
+        "--contradictions",
+        "-1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --session <id> is required (mutating command, no latest-session fallback)"
+      }
+    },
+    {
+      "id": "pair_beats_session",
+      "argv": [
+        "record",
+        "--dim",
+        "nope=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'nope' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "default_shape",
+      "argv": [
+        "record",
+        "--session",
+        "s1"
+      ],
+      "cwd": "/some/cwd",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s1",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/some/cwd"
+      }
+    },
+    {
+      "id": "missing_session",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--session"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --session <id> is required (mutating command, no latest-session fallback)"
+      }
+    },
+    {
+      "id": "flag_value_session",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--session",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "--derive",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "missing_cwd",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--cwd"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "flag_value_cwd",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--cwd",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "--derive"
+      }
+    },
+    {
+      "id": "missing_contradictions",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "flag_value_contradictions",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "missing_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "flag_value_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "missing_map",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --map expects <questionId>=<dimension>"
+      }
+    },
+    {
+      "id": "flag_value_map",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --map expects <questionId>=<dimension>"
+      }
+    },
+    {
+      "id": "missing_dim",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim expects <dimension>=<level>"
+      }
+    },
+    {
+      "id": "flag_value_dim",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim expects <dimension>=<level>"
+      }
+    },
+    {
+      "id": "missing_known",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --known expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "flag_value_known",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --known expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "missing_unknown",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --unknown expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "flag_value_unknown",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --unknown expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "missing_confidence",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence expects <dimension>=<0..1>"
+      }
+    },
+    {
+      "id": "flag_value_confidence",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "--derive"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence expects <dimension>=<0..1>"
+      }
+    },
+    {
+      "id": "unknown_flag",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--nope"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown argument '--nope'"
+      }
+    },
+    {
+      "id": "positional",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "text"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown argument 'text'"
+      }
+    },
+    {
+      "id": "record_help",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--help"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown argument '--help'"
+      }
+    },
+    {
+      "id": "equals_flag",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--session=x"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown argument '--session=x'"
+      }
+    },
+    {
+      "id": "double_dash",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown argument '--'"
+      }
+    },
+    {
+      "id": "empty_session",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--session",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --session <id> is required (mutating command, no latest-session fallback)"
+      }
+    },
+    {
+      "id": "whitespace_session",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--session",
+        " "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": " ",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "repeated_session",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--session",
+        "last"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "last",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "empty_cwd",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--cwd",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": ""
+      }
+    },
+    {
+      "id": "repeated_cwd",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--cwd",
+        "/one",
+        "--cwd",
+        "/two"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/two"
+      }
+    },
+    {
+      "id": "cwd_missing_resets",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--cwd",
+        "/one",
+        "--cwd"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "unknown_beats_counts",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "abc",
+        "--nope"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "unknown argument '--nope'"
+      }
+    },
+    {
+      "id": "count_error_order",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "abc",
+        "--high",
+        "-1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "-1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "abc"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        " "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "-0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {
+        "contradictionCount": true
+      },
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_6",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "-0.1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {
+        "contradictionCount": true
+      },
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_7",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "+5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 5,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_8",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        " 7 "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 7,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_9",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "﻿3"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 3,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_10",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "3"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_11",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "５"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_12",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "12abc"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 12,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_13",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "1.9"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 1,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_14",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "1e3"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 1,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_15",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "0x10"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_16",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "Infinity"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_17",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "1_000"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 1,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_18",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "900719925474099267"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 900719925474099300,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_19",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "99999999999999999999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 100000000000000000000,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_20",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "1000000000000000000000"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 1e+21,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "contradictions_21",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --contradictions must be a non-negative integer"
+      }
+    },
+    {
+      "id": "contradictions_22",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 1,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "repeated_contradictions",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--contradictions",
+        "bad",
+        "--contradictions",
+        "2"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 2,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "-1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "abc"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        " "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "-0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {
+        "highContradictionCount": true
+      },
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_6",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "-0.1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {
+        "highContradictionCount": true
+      },
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_7",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "+5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 5,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_8",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        " 7 "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 7,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_9",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "﻿3"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 3,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_10",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "3"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_11",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "５"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_12",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "12abc"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 12,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_13",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "1.9"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 1,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_14",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "1e3"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 1,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_15",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "0x10"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_16",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "Infinity"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_17",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "1_000"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 1,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_18",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "900719925474099267"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 900719925474099300,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_19",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "99999999999999999999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 100000000000000000000,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_20",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "1000000000000000000000"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 1e+21,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "high_21",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --high must be a non-negative integer"
+      }
+    },
+    {
+      "id": "high_22",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 1,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "repeated_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--high",
+        "bad",
+        "--high",
+        "2"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 2,
+        "cwd": "/ws"
+      }
+    },
+    {
+      "id": "map_pair_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --map expects <questionId>=<dimension>"
+      }
+    },
+    {
+      "id": "map_pair_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --map expects <questionId>=<dimension>"
+      }
+    },
+    {
+      "id": "map_pair_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --map expects <questionId>=<dimension>"
+      }
+    },
+    {
+      "id": "map_pair_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "goal="
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension '' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "map_pair_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "nope=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'high' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "map_pair_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "GOAL=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'high' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "dim_pair_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim expects <dimension>=<level>"
+      }
+    },
+    {
+      "id": "dim_pair_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim expects <dimension>=<level>"
+      }
+    },
+    {
+      "id": "dim_pair_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim expects <dimension>=<level>"
+      }
+    },
+    {
+      "id": "dim_pair_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal="
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level '' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "dim_pair_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "nope=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'nope' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "dim_pair_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "GOAL=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'GOAL' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "known_pair_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --known expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "known_pair_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --known expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "known_pair_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --known expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "known_pair_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "goal="
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --known text must not be empty"
+      }
+    },
+    {
+      "id": "known_pair_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "nope=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'nope' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "known_pair_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "GOAL=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'GOAL' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "unknown_pair_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --unknown expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "unknown_pair_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --unknown expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "unknown_pair_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --unknown expects <dimension>=<text>"
+      }
+    },
+    {
+      "id": "unknown_pair_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "goal="
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --unknown text must not be empty"
+      }
+    },
+    {
+      "id": "unknown_pair_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "nope=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'nope' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "unknown_pair_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "GOAL=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'GOAL' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "confidence_pair_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence expects <dimension>=<0..1>"
+      }
+    },
+    {
+      "id": "confidence_pair_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence expects <dimension>=<0..1>"
+      }
+    },
+    {
+      "id": "confidence_pair_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        ""
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence expects <dimension>=<0..1>"
+      }
+    },
+    {
+      "id": "confidence_pair_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal="
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got ''"
+      }
+    },
+    {
+      "id": "confidence_pair_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "nope=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'nope' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "confidence_pair_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "GOAL=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'GOAL' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "goal_low",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=low"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "goal": "low"
+        }
+      }
+    },
+    {
+      "id": "goal_mid",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=mid"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "goal": "mid"
+        }
+      }
+    },
+    {
+      "id": "goal_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "goal": "high"
+        }
+      }
+    },
+    {
+      "id": "goal_max",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=max"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim cannot set 'max'. To make a dimension count for I->P, ask a question, record the answer, and attribute it: `cxc scan record --session <id> --derive --map <questionId>=<dimension>`. The gate re-reads the interview ledger, so a level with no answered question behind it does not open P. If the interview genuinely is NOT complete, bypass it deliberately: write {\"from\":\"I\",\"to\":\"P\",\"did\":\"<reason>\",\"override\":true} to a file and run `cxc orchestrate P --session <id> --attest-file <path>` (the file flag is required on Windows) so the bypass is attested and recorded."
+      }
+    },
+    {
+      "id": "goal_enormous",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=enormous"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'enormous' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "goal_HIGH",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=HIGH"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'HIGH' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "map_goal",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "q": "goal"
+        }
+      }
+    },
+    {
+      "id": "constraint_low",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "constraint=low"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "constraint": "low"
+        }
+      }
+    },
+    {
+      "id": "constraint_mid",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "constraint=mid"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "constraint": "mid"
+        }
+      }
+    },
+    {
+      "id": "constraint_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "constraint=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "constraint": "high"
+        }
+      }
+    },
+    {
+      "id": "constraint_max",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "constraint=max"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim cannot set 'max'. To make a dimension count for I->P, ask a question, record the answer, and attribute it: `cxc scan record --session <id> --derive --map <questionId>=<dimension>`. The gate re-reads the interview ledger, so a level with no answered question behind it does not open P. If the interview genuinely is NOT complete, bypass it deliberately: write {\"from\":\"I\",\"to\":\"P\",\"did\":\"<reason>\",\"override\":true} to a file and run `cxc orchestrate P --session <id> --attest-file <path>` (the file flag is required on Windows) so the bypass is attested and recorded."
+      }
+    },
+    {
+      "id": "constraint_enormous",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "constraint=enormous"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'enormous' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "constraint_HIGH",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "constraint=HIGH"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'HIGH' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "map_constraint",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=constraint"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "q": "constraint"
+        }
+      }
+    },
+    {
+      "id": "success_low",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "success=low"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "success": "low"
+        }
+      }
+    },
+    {
+      "id": "success_mid",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "success=mid"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "success": "mid"
+        }
+      }
+    },
+    {
+      "id": "success_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "success=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "success": "high"
+        }
+      }
+    },
+    {
+      "id": "success_max",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "success=max"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim cannot set 'max'. To make a dimension count for I->P, ask a question, record the answer, and attribute it: `cxc scan record --session <id> --derive --map <questionId>=<dimension>`. The gate re-reads the interview ledger, so a level with no answered question behind it does not open P. If the interview genuinely is NOT complete, bypass it deliberately: write {\"from\":\"I\",\"to\":\"P\",\"did\":\"<reason>\",\"override\":true} to a file and run `cxc orchestrate P --session <id> --attest-file <path>` (the file flag is required on Windows) so the bypass is attested and recorded."
+      }
+    },
+    {
+      "id": "success_enormous",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "success=enormous"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'enormous' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "success_HIGH",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "success=HIGH"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'HIGH' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "map_success",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=success"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "q": "success"
+        }
+      }
+    },
+    {
+      "id": "ontology_low",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "ontology=low"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "ontology": "low"
+        }
+      }
+    },
+    {
+      "id": "ontology_mid",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "ontology=mid"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "ontology": "mid"
+        }
+      }
+    },
+    {
+      "id": "ontology_high",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "ontology=high"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "ontology": "high"
+        }
+      }
+    },
+    {
+      "id": "ontology_max",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "ontology=max"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --dim cannot set 'max'. To make a dimension count for I->P, ask a question, record the answer, and attribute it: `cxc scan record --session <id> --derive --map <questionId>=<dimension>`. The gate re-reads the interview ledger, so a level with no answered question behind it does not open P. If the interview genuinely is NOT complete, bypass it deliberately: write {\"from\":\"I\",\"to\":\"P\",\"did\":\"<reason>\",\"override\":true} to a file and run `cxc orchestrate P --session <id> --attest-file <path>` (the file flag is required on Windows) so the bypass is attested and recorded."
+      }
+    },
+    {
+      "id": "ontology_enormous",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "ontology=enormous"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'enormous' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "ontology_HIGH",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "ontology=HIGH"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: invalid level 'HIGH' (expected low|mid|high|max)"
+      }
+    },
+    {
+      "id": "map_ontology",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=ontology"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "q": "ontology"
+        }
+      }
+    },
+    {
+      "id": "map_key___proto__",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "__proto__=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "__proto__": "goal"
+        }
+      }
+    },
+    {
+      "id": "map_key_toString",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "toString=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "toString": "goal"
+        }
+      }
+    },
+    {
+      "id": "map_key_constructor",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "constructor=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "constructor": "goal"
+        }
+      }
+    },
+    {
+      "id": "map_key_hasOwnProperty",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "hasOwnProperty=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "hasOwnProperty": "goal"
+        }
+      }
+    },
+    {
+      "id": "map_key_q",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "q": "goal"
+        }
+      }
+    },
+    {
+      "id": "map_extra_equals",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=goal=success"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: unknown dimension 'goal=success' (expected goal|constraint|success|ontology)"
+      }
+    },
+    {
+      "id": "map_empty_key",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "=goal"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --map expects <questionId>=<dimension>"
+      }
+    },
+    {
+      "id": "map_repeated",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--map",
+        "q=goal",
+        "--map",
+        "q=success"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "map": {
+          "q": "success"
+        }
+      }
+    },
+    {
+      "id": "dim_repeated",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--dim",
+        "goal=high",
+        "--dim",
+        "goal=low"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "dims": {
+          "goal": "low"
+        }
+      }
+    },
+    {
+      "id": "known_equals_text",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "goal=uses http://x?a=b:c"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "known": [
+          {
+            "dimension": "goal",
+            "text": "uses http://x?a=b:c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "known_space",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "goal=   "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "known": [
+          {
+            "dimension": "goal",
+            "text": "   "
+          }
+        ]
+      }
+    },
+    {
+      "id": "known_duplicates",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "goal=fact",
+        "--known",
+        "goal=fact",
+        "--known",
+        "success=other"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "known": [
+          {
+            "dimension": "goal",
+            "text": "fact"
+          },
+          {
+            "dimension": "goal",
+            "text": "fact"
+          },
+          {
+            "dimension": "success",
+            "text": "other"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown_equals_text",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "goal=uses http://x?a=b:c"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "unknown": [
+          {
+            "dimension": "goal",
+            "text": "uses http://x?a=b:c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown_space",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "goal=   "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "unknown": [
+          {
+            "dimension": "goal",
+            "text": "   "
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown_duplicates",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--unknown",
+        "goal=fact",
+        "--unknown",
+        "goal=fact",
+        "--unknown",
+        "success=other"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "unknown": [
+          {
+            "dimension": "goal",
+            "text": "fact"
+          },
+          {
+            "dimension": "goal",
+            "text": "fact"
+          },
+          {
+            "dimension": "success",
+            "text": "other"
+          }
+        ]
+      }
+    },
+    {
+      "id": "confidence_0",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0.5abc"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '0.5abc'"
+      }
+    },
+    {
+      "id": "confidence_1",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=abc"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got 'abc'"
+      }
+    },
+    {
+      "id": "confidence_2",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal="
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got ''"
+      }
+    },
+    {
+      "id": "confidence_3",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal= "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got ' '"
+      }
+    },
+    {
+      "id": "confidence_4",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1.5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '1.5'"
+      }
+    },
+    {
+      "id": "confidence_5",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=-0.1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '-0.1'"
+      }
+    },
+    {
+      "id": "confidence_6",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0.5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.5
+        }
+      }
+    },
+    {
+      "id": "confidence_7",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0
+        }
+      }
+    },
+    {
+      "id": "confidence_8",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_9",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=-0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {
+        "confidence.goal": true
+      },
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0
+        }
+      }
+    },
+    {
+      "id": "confidence_10",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=-1e-999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {
+        "confidence.goal": true
+      },
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0
+        }
+      }
+    },
+    {
+      "id": "confidence_11",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1e-999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0
+        }
+      }
+    },
+    {
+      "id": "confidence_12",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=.5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.5
+        }
+      }
+    },
+    {
+      "id": "confidence_13",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1."
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_14",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=+.5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.5
+        }
+      }
+    },
+    {
+      "id": "confidence_15",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1e-1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.1
+        }
+      }
+    },
+    {
+      "id": "confidence_16",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0x1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_17",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0X1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_18",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0o1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_19",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0b1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_20",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 1
+        }
+      }
+    },
+    {
+      "id": "confidence_21",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0x10000000000000000"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '0x10000000000000000'"
+      }
+    },
+    {
+      "id": "confidence_22",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0x"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '0x'"
+      }
+    },
+    {
+      "id": "confidence_23",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=+0x1"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '+0x1'"
+      }
+    },
+    {
+      "id": "confidence_24",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=-0x0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '-0x0'"
+      }
+    },
+    {
+      "id": "confidence_25",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0x1p0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '0x1p0'"
+      }
+    },
+    {
+      "id": "confidence_26",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0b2"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '0b2'"
+      }
+    },
+    {
+      "id": "confidence_27",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1_0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '1_0'"
+      }
+    },
+    {
+      "id": "confidence_28",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=Inf"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got 'Inf'"
+      }
+    },
+    {
+      "id": "confidence_29",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=Infinity"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got 'Infinity'"
+      }
+    },
+    {
+      "id": "confidence_30",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=-Infinity"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '-Infinity'"
+      }
+    },
+    {
+      "id": "confidence_31",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=NaN"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got 'NaN'"
+      }
+    },
+    {
+      "id": "confidence_32",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1e999"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '1e999'"
+      }
+    },
+    {
+      "id": "confidence_33",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal= .5 "
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.5
+        }
+      }
+    },
+    {
+      "id": "confidence_34",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=﻿.5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.5
+        }
+      }
+    },
+    {
+      "id": "confidence_35",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=.5"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '.5'"
+      }
+    },
+    {
+      "id": "confidence_36",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=1e"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '1e'"
+      }
+    },
+    {
+      "id": "confidence_37",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=."
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '.'"
+      }
+    },
+    {
+      "id": "confidence_38",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=+"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "error": "scan record: --confidence must be within [0,1], got '+'"
+      }
+    },
+    {
+      "id": "confidence_39",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0x0"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0
+        }
+      }
+    },
+    {
+      "id": "confidence_repeated",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--confidence",
+        "goal=0.2",
+        "--confidence",
+        "goal=0.7"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "confidence": {
+          "goal": 0.7
+        }
+      }
+    },
+    {
+      "id": "user_text_keeps_names",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--known",
+        "goal=cxc scan",
+        "--unknown",
+        "success=cxc orchestrate"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 0,
+        "highContradictionCount": 0,
+        "cwd": "/ws",
+        "known": [
+          {
+            "dimension": "goal",
+            "text": "cxc scan"
+          }
+        ],
+        "unknown": [
+          {
+            "dimension": "success",
+            "text": "cxc orchestrate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "all_fields",
+      "argv": [
+        "record",
+        "--session",
+        "s",
+        "--derive",
+        "--derive",
+        "--map",
+        "q=constraint",
+        "--dim",
+        "goal=high",
+        "--known",
+        "goal=a=b",
+        "--unknown",
+        "success=gap",
+        "--confidence",
+        "ontology=0.5",
+        "--contradictions",
+        "2",
+        "--high",
+        "1",
+        "--cwd",
+        "/other"
+      ],
+      "cwd": "/ws",
+      "negativeZero": {},
+      "want": {
+        "action": "record",
+        "sessionId": "s",
+        "contradictionCount": 2,
+        "highContradictionCount": 1,
+        "cwd": "/other",
+        "derive": true,
+        "map": {
+          "q": "constraint"
+        },
+        "dims": {
+          "goal": "high"
+        },
+        "known": [
+          {
+            "dimension": "goal",
+            "text": "a=b"
+          }
+        ],
+        "unknown": [
+          {
+            "dimension": "success",
+            "text": "gap"
+          }
+        ],
+        "confidence": {
+          "ontology": 0.5
+        }
+      }
+    }
+  ]
+}

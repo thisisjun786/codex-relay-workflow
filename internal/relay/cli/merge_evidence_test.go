@@ -16,6 +16,19 @@ import (
 type scriptedForge struct {
 	unresolved bool
 	late       bool
+	noHead     bool   // the pull request reports no head commit at all
+	head       string // the head commit the pull request reports, when not the default
+}
+
+// reportedHead is the head sha the scripted forge reports for the pull request.
+func (s scriptedForge) reportedHead() string {
+	if s.noHead {
+		return ""
+	}
+	if s.head != "" {
+		return s.head
+	}
+	return lateHead
 }
 
 func (s scriptedForge) run(argv []string, _ time.Duration) (int, string, string, error) {
@@ -48,7 +61,7 @@ func (s scriptedForge) run(argv []string, _ time.Duration) (int, string, string,
 	}
 	switch {
 	case bytes.Contains([]byte(last), []byte("/pulls/")):
-		return 0, `{"number":7,"html_url":"u","state":"open","merged":false,"draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"dev"},"mergeable":true,"mergeable_state":"clean"}`, "", nil
+		return 0, `{"number":7,"html_url":"u","state":"open","merged":false,"draft":false,"head":{"sha":"` + s.reportedHead() + `"},"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"dev"},"mergeable":true,"mergeable_state":"clean"}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/git/ref/")):
 		return 0, `{"ref":"refs/heads/dev"}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/rules/branches/")):
@@ -56,9 +69,9 @@ func (s scriptedForge) run(argv []string, _ time.Duration) (int, string, string,
 	case bytes.Contains([]byte(last), []byte("/actions/runs/1/jobs")):
 		return 0, `{"total_count":1,"jobs":[{"id":11,"name":"dev-gate","run_attempt":1,"status":"completed","conclusion":"success","html_url":"job"}]}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/actions/runs")):
-		return 0, `{"total_count":1,"workflow_runs":[{"id":1,"name":"CI","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workflow_id":100,"event":"pull_request","html_url":"run"}]}`, "", nil
+		return 0, `{"total_count":1,"workflow_runs":[{"id":1,"name":"CI","head_sha":"` + s.reportedHead() + `","workflow_id":100,"event":"pull_request","html_url":"run"}]}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/check-runs")):
-		return 0, `{"total_count":1,"check_runs":[{"id":11,"name":"dev-gate","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"success","app":{"id":42,"slug":"actions"}}]}`, "", nil
+		return 0, `{"total_count":1,"check_runs":[{"id":11,"name":"dev-gate","head_sha":"` + s.reportedHead() + `","status":"completed","conclusion":"success","app":{"id":42,"slug":"actions"}}]}`, "", nil
 	case bytes.Contains([]byte(last), []byte("/status")):
 		return 0, `{"total_count":0,"statuses":[]}`, "", nil
 	}

@@ -33,6 +33,10 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 	if _, restating := args.TruthyString("restate"); lateGiven && !restating {
 		return nil, &dispatch.UsageError{Detail: "--late-dispositions grades a restated record; pass --restate too", Code: contract.ExitUsage}
 	}
+	expectReview := args.Bool("expect-independent-review")
+	if _, restating := args.TruthyString("restate"); expectReview && !restating {
+		return nil, &dispatch.UsageError{Detail: "--expect-independent-review grades a restated record; pass --restate too", Code: contract.ExitUsage}
+	}
 	// A file the command cannot use is refused before anything is read from the forge.
 	var lateDocument any
 	if lateGiven {
@@ -87,6 +91,25 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 			restatement["lateDispositions"] = lateResults
 		}
 		snapshot["restatement"] = restatement
+		// The child's statement about its independent review is read beside the restatement and never
+		// in it: whatever it finds, the problems above, current, the verdict and the exit code stand.
+		// The review is compared with the head the forge reports now, the candidate head the restatement
+		// judges; the record's head is the comparison only when the forge reports none. The record's own
+		// head travels beside it, because the item's headPatchId describes that head and must not clear a
+		// comparison with a candidate head the record does not describe.
+		reviewHead := head
+		if pinned, isObject := snapshot["pinned"].(map[string]any); isObject {
+			if reported, isText := pinned["headSha"].(string); isText && reported != "" {
+				reviewHead = reported
+			}
+		}
+		if coverage := evidence.IndependentReviewCoverage(pyvalue.Str(reviewHead), pyvalue.Str(head), handoff, nil); coverage.Stated || expectReview {
+			warnings := make([]any, len(coverage.Warnings))
+			for i, w := range coverage.Warnings {
+				warnings[i] = map[string]any{"code": w.Code, "detail": w.Detail}
+			}
+			snapshot[evidence.IndependentReviewMember] = map[string]any{"stated": coverage.Stated, "warnings": warnings}
+		}
 		ready = ready && len(problems) == 0
 	}
 	payload := sortedObject(answerValue(snapshot).(map[string]any))

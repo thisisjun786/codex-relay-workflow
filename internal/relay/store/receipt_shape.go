@@ -43,11 +43,13 @@ type ReceiptClaim struct {
 	Producer       string
 	Turn           TurnReference
 	ManifestRef    *string
-	manifest       any
-	document       any
+	// IndependentReview is whether the receipt states the independentReview item.
+	IndependentReview bool
+	manifest          any
+	document          any
 }
 
-var receiptFields = []string{"eventId", "relationshipId", "executionGeneration", "attempt", "revisionHash", "outcome", "producer", "turnRef", "criteria", "emittedAt", "manifest", "manifestRef"}
+var receiptFields = []string{"eventId", "relationshipId", "executionGeneration", "attempt", "revisionHash", "outcome", "producer", "turnRef", "criteria", "emittedAt", "manifest", "manifestRef", "independentReview"}
 var requiredReceiptFields = []string{"emittedAt", "eventId", "executionGeneration", "outcome", "producer", "relationshipId", "revisionHash", "turnRef"}
 
 // pythonStr is str(value) for the scalars a regex check can see.
@@ -141,6 +143,12 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 			return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "manifestRef must be a path")
 		}
 		claim.ManifestRef = &text
+	}
+	if member, present := object.Lookup("independentReview"); present {
+		if _, isObject := member.(pyjson.Object); !isObject {
+			return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "independentReview must be an object")
+		}
+		claim.IndependentReview = true
 	}
 	turn, err := parseTurnRef(get("turnRef"))
 	if err != nil {

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// The host memory bound (CRW-468) reads three numbers of the host and nothing else: MemAvailable, swap use and the some avg60 of the memory pressure (with the some avg10 beside it as information). These tests feed it fake /proc
+// The host memory bound reads available memory, swap use, some avg60 and full avg10 (with some avg10 beside them as information). These tests feed it fake /proc
 // contents; none reads the live host.
 
 // fakeProc writes a /proc root: meminfo and, when pressure is not empty, pressure/memory. An empty text leaves the file absent, as on a kernel without it.
@@ -47,7 +47,7 @@ const kibPerGiB = 1 << 20
 // Every command the CLI tests run reads the host through the environment: point them at a proc root that does not exist and drop the thresholds a developer's shell may carry, so no test of this package reads the live host or depends on it (a test that wants a host sets its own).
 func init() {
 	_ = os.Setenv(EnvHostProcRoot, "/nonexistent/crw-468-proc")
-	for _, name := range []string{EnvHostMinAvailableGiB, EnvHostMaxSwapPercent, EnvHostMaxPressure} {
+	for _, name := range []string{EnvHostMinAvailableGiB, EnvHostMaxSwapPercent, EnvHostMaxPressure, EnvHostMaxPressureFull} {
 		_ = os.Unsetenv(name)
 	}
 }
@@ -76,12 +76,12 @@ func TestProcHostMemoryMissingPressureIsNoReading(t *testing.T) {
 	if got.PressureSomeAvg60 != nil || got.PressureSomeAvg10 != nil {
 		t.Fatalf("pressure = %v/%v, want no reading", got.PressureSomeAvg60, got.PressureSomeAvg10)
 	}
-	if len(got.Unread) != 1 || !strings.HasPrefix(got.Unread[0], "pressure: ") {
-		t.Fatalf("unread = %v, want the pressure dimension named once with its cause", got.Unread)
+	if len(got.Unread) != 2 || !strings.HasPrefix(got.Unread[0], "pressure: ") {
+		t.Fatalf("unread = %v, want both pressure dimensions named with their causes", got.Unread)
 	}
 	verdict := HostMemoryBound{Sample: ReadHostMemory(root), Limits: DefaultHostMemoryLimits()}.Judge()
-	if verdict.State != HostMemoryWithin || !reflect.DeepEqual(verdict.Unmeasured, []string{"pressure"}) || len(verdict.Exceeded) != 0 {
-		t.Fatalf("verdict = %+v, want within with only the pressure unmeasured", verdict)
+	if verdict.State != HostMemoryWithin || !reflect.DeepEqual(verdict.Unmeasured, []string{"pressure", "pressure_full"}) || len(verdict.Exceeded) != 0 {
+		t.Fatalf("verdict = %+v, want within with both pressure signals unmeasured", verdict)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 		{"a MemAvailable that is not a number", "MemAvailable: lots kB\nSwapTotal: 8 kB\nSwapFree: 8 kB\n", psi("0.00", "1.00"), []string{"available"}},
 		{"swap free above swap total", memInfo(40*kibPerGiB, 8, 9), psi("0.00", "1.00"), []string{"swap"}},
 		{"a pressure file without a some line", memInfo(40*kibPerGiB, 8, 8), "full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
-		{"a some line without avg60, though it has an avg10", memInfo(40*kibPerGiB, 8, 8), "some avg10=0.00 avg300=0.00 total=1\n", []string{"pressure"}},
+		{"a some line without avg60, though it has an avg10", memInfo(40*kibPerGiB, 8, 8), "some avg10=0.00 avg300=0.00 total=1\n", []string{"pressure", "pressure_full"}},
 		{"a pressure avg60 that is not a number", memInfo(40*kibPerGiB, 8, 8), psi("0.00", "high"), []string{"pressure"}},
 		{"a pressure avg60 above 100", memInfo(40*kibPerGiB, 8, 8), psi("0.00", "101.00"), []string{"pressure"}},
 	}
@@ -120,7 +120,7 @@ func TestProcHostMemoryUnreadableFilesAreNoReading(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := ReadHostMemory(root)
-		if got.PressureSomeAvg60 != nil || len(got.Unread) != 1 {
+		if got.PressureSomeAvg60 != nil || got.PressureFullAvg10 != nil || len(got.Unread) != 2 {
 			t.Fatalf("a read error of the pressure file: %+v", got)
 		}
 	})
@@ -136,12 +136,14 @@ func TestProcHostMemoryWithoutSwapIsZeroUse(t *testing.T) {
 }
 
 func fixedMemory(available int64, swapTotal, swapFree int64, pressure float64) HostMemory {
-	return HostMemory{AvailableBytes: &available, SwapTotalBytes: &swapTotal, SwapFreeBytes: &swapFree, PressureSomeAvg60: &pressure}
+	full := 0.0
+	return HostMemory{AvailableBytes: &available, SwapTotalBytes: &swapTotal, SwapFreeBytes: &swapFree, PressureSomeAvg60: &pressure, PressureFullAvg10: &full}
 }
 
 // The thresholds are strict: available is below its floor, swap and pressure are above their ceilings. A reading exactly at a threshold is within.
 func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
 	limits := DefaultHostMemoryLimits()
+	limits.MaxSwapPercent = 85 // explicit legacy occupancy ceiling
 	floor := limits.MinAvailableBytes
 	cases := []struct {
 		name      string
@@ -154,7 +156,7 @@ func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
 		{"healthy", 40 << 30, 20 << 30, 0, HostMemoryWithin, nil},
 		{"available exactly at the floor", floor, 20 << 30, 0, HostMemoryWithin, nil},
 		{"available one byte under the floor", floor - 1, 20 << 30, 0, HostMemoryDeferring, []string{"available"}},
-		{"75 percent of the swap is within the default", 40 << 30, 5 << 30, 0, HostMemoryWithin, nil},
+		{"75 percent of the swap is within the explicit ceiling", 40 << 30, 5 << 30, 0, HostMemoryWithin, nil},
 		{"swap exactly at 85 percent", 40 << 30, 3 << 30, 0, HostMemoryWithin, nil},
 		{"swap one byte over 85 percent", 40 << 30, 3<<30 - 1, 0, HostMemoryDeferring, []string{"swap"}},
 		{"pressure avg60 exactly at the ceiling", 40 << 30, 20 << 30, 10, HostMemoryWithin, nil},
@@ -174,9 +176,10 @@ func TestHostMemoryJudgeThresholdBoundaries(t *testing.T) {
 // The documented defaults, and a detail that names every measured value, its threshold and the dimensions nobody read.
 func TestHostMemoryDefaultsAndDetail(t *testing.T) {
 	limits := DefaultHostMemoryLimits()
-	if limits.MinAvailableBytes != 15<<30 || limits.MaxSwapPercent != 85 || limits.MaxPressureSomeAvg60 != 10 {
-		t.Fatalf("defaults = %+v, want 15 GiB, 85 percent and an avg60 of 10", limits)
+	if limits.MinAvailableBytes != 15<<30 || limits.MaxSwapPercent != 100 || limits.MaxPressureSomeAvg60 != 10 || limits.MaxPressureFullAvg10 != 5 {
+		t.Fatalf("defaults = %+v, want 15 GiB, occupancy disabled, some avg60 of 10 and full avg10 of 5", limits)
 	}
+	limits.MaxSwapPercent = 85 // an explicit occupancy ceiling still contributes its detail
 	verdict := HostMemoryBound{Sample: fixedMemory(9<<30, 8<<30, 1<<30, 12.5), Limits: limits}.Judge()
 	detail := verdict.Detail()
 	for _, want := range []string{"available 9.00 GiB is under the 15.00 GiB floor", "swap use 87.50 percent is over the 85.00 percent ceiling", "pressure some avg60 12.50 is over the 10.00 ceiling"} {
@@ -198,7 +201,7 @@ func TestHostMemoryFromEnvironment(t *testing.T) {
 	t.Run("overrides and a proc root", func(t *testing.T) {
 		root := fakeProc(t, memInfo(7*kibPerGiB, 8*kibPerGiB, 8*kibPerGiB), psi("0.00", "0.00"))
 		bound, err := HostMemoryFromEnvironment(env(map[string]string{EnvHostProcRoot: root, EnvHostMinAvailableGiB: "6.5", EnvHostMaxSwapPercent: "80", EnvHostMaxPressure: "25"}))
-		want := HostMemoryLimits{MinAvailableBytes: 13 << 29, MaxSwapPercent: 80, MaxPressureSomeAvg60: 25}
+		want := HostMemoryLimits{MinAvailableBytes: 13 << 29, MaxSwapPercent: 80, MaxPressureSomeAvg60: 25, MaxPressureFullAvg10: 5}
 		if err != nil || bound.Limits != want || bound.LimitsFrom != LimitsEnvironment {
 			t.Fatalf("bound = %+v err = %v, want %+v", bound, err, want)
 		}
@@ -235,7 +238,7 @@ func TestHostMemoryJudgesPressureOnAvg60(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			verdict := HostMemoryBound{Sample: ReadHostMemory(fakeProc(t, memInfo(40*kibPerGiB, 20*kibPerGiB, 20*kibPerGiB), c.file)), Limits: DefaultHostMemoryLimits()}.Judge()
 			info := asJSON(t, verdict.object())["measured"].(map[string]any)["pressure_some_avg10"]
-			if verdict.State != c.state || len(verdict.Sample.Unread) != 0 || (c.avg10 == "") != (info == nil) || (c.avg10 != "" && fmt.Sprintf("%.2f", info) != c.avg10) {
+			if verdict.State != c.state || (len(verdict.Sample.Unread) != 0 && !reflect.DeepEqual(verdict.Unmeasured, []string{hostPressureFull})) || (c.avg10 == "") != (info == nil) || (c.avg10 != "" && fmt.Sprintf("%.2f", info) != c.avg10) {
 				t.Fatalf("verdict = %+v, info %v, want %s with the avg10 %q beside the avg60 and nothing unread", verdict, info, c.state, c.avg10)
 			}
 		})

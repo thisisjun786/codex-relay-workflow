@@ -65,7 +65,7 @@ func TestRestartDoesNotPrescribeAnObservationItsActorCannotMake(t *testing.T) {
 	// the project passes to another parent, who claims the epoch; the relationship stays where it was
 	k.replaceParent("parent-2")
 	second := k.session("g", "parent-2", "session-2")
-	if _, err := second.ObserveIntegration(ctx, "g", "I", "parent-2", []Target{{Repository: k.repo.path, BaseRef: "dev"}}); refusalReason(err) != "scope_role_mismatch" {
+	if _, err := second.ObserveIntegration(ctx, "g", "I", "parent-2", []Target{k.forgeTarget("dev")}); refusalReason(err) != "scope_role_mismatch" {
 		t.Fatalf("the premise: the replacement parent observing the landing = %v", err)
 	}
 	node, found := k.resumeOf(second, "g", "parent-2", "I")

@@ -78,6 +78,13 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	// moved is how the branch got from the last landing's recorded base to the tip, read here
 	// like the tip, before the transaction; nil when there is no landing or nothing moved.
 	var moved *moveReading
+	// A turn that records a pull request or a relationship also has the head restated here compared with what it is bound to
+	// (headCompareVerdict): the check is where a head that was declared wrongly (CRW-538, CRW-586) is stopped before it is
+	// merged. The forge is read before the transaction, through the reader passed to this call (Service.Pulls is not used here):
+	// a forge pull request checked with a reader that cannot read pull requests is refused merge_target_unreadable, never decided
+	// by the record (CRW-608), and the work report of a relationship that is not on a forge pull request is compared whatever the reader.
+	pulls, canReadPulls := reader.(PullRequestHeadReader)
+	var pulled *pullRequestRead
 	if err == nil && early.HolderTaskID == actor && early.State == Holding && early.DeclaredReady == 1 && early.CandidateHead == head {
 		tip, unread = readTarget(ctx, reader, early.Repository, early.BaseRef)
 		if tip.SHA != "" && SameCommit(base, tip.SHA) {
@@ -86,12 +93,17 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 				return nil, readErr
 			}
 		}
+		if canReadPulls && headCompareForge(early) {
+			pulled = readPullRequest(ctx, pulls, early, head)
+		}
 	}
 	at := s.now()
 	var refusal *registry.CoordinationRefusal
 	var verified any
 	var restated map[string]any
+	var decided map[string]any
 	err = s.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		decided = nil
 		row, e := s.row(tx, turn)
 		if e != nil {
 			return e
@@ -137,6 +149,12 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		if refusal == nil && head != row.CandidateHead {
 			refuse(contract.RefusalMergeCandidateMoved, "the candidate head is "+pyvalue.StrRepr(row.CandidateHead)+" and the restated head is "+pyvalue.StrRepr(head)+"; the turn was granted for the first. Restate the head the turn holds, or declare the one you mean with "+restateCommand(turn, actor, head), row.CandidateHead, head)
 		}
+		// after the candidate-moved check above: the head compared here is the one the turn holds
+		if refusal == nil {
+			if refusal, decided, e = s.headCompareVerdict(tx, row, actor, "restates", head, pulled, pulls); e != nil {
+				return e
+			}
+		}
 		if refusal == nil && tip.SHA == "" {
 			refusal = unreadableTarget(row, actor, unread, "the restated base cannot be compared with it")
 		}
@@ -177,7 +195,10 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 			}
 		}
 		if refusal == nil && row.RelationshipID.Valid && row.RelationshipID.String != "" {
-			if verified, refusal, e = s.relationshipRefusal(tx, row, actor, head); e != nil {
+			if decided != nil && decided["decidedBy"] == "work_report" {
+				// the work report verdict above read the reports and the relationship's scope for this head
+				verified = decided["head"]
+			} else if verified, refusal, e = s.relationshipRefusal(tx, row, actor, head); e != nil {
 				return e
 			}
 		}
@@ -212,6 +233,9 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	answer["checkId"] = id
 	answer["requiredDeclared"] = required
 	answer["headVerifiedAgainst"] = verified
+	if decided != nil {
+		answer["pullRequestHead"] = decided
+	}
 	if restated != nil {
 		answer["landingBaseRestated"] = restated
 	}
@@ -219,31 +243,22 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 }
 
 // relationshipRefusal is MergeTurn._relationship_refusal: when the claim named a relay
-// assignment, its current work reports' head must agree.
+// assignment, its current work reports' head must agree. A turn the work reports already decided (headCompareVerdict) does
+// not come here; this is the report check of a turn the forge decided, which passes when the relationship has no report.
 func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsRow, actor, head string) (any, *registry.CoordinationRefusal, error) {
-	rid := row.RelationshipID.String
-	attachment, err := s.Registry.Attachment(ctx, rid)
+	if refusal, err := s.headCompareScope(ctx, row, actor); refusal != nil || err != nil {
+		return nil, refusal, err
+	}
+	reports, err := evidence.CurrentReports(ctx, s.Store, row.RelationshipID.String)
 	if err != nil {
 		return nil, nil, err
 	}
-	if o, ok := attachment.(contract.OrderedObject); ok {
-		if project := o.Get("projectKey"); project != nil && project != row.ProjectKey {
-			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyvalue.StrRepr(rid) + " belongs to project " + pyvalue.Repr(project) + ", not " + pyvalue.StrRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
-		}
-	}
-	current, err := evidence.CurrentReportHeads(ctx, s.Store, rid)
-	if err != nil {
-		return nil, nil, err
-	}
-	heads := slices.Compact(slices.Sorted(slices.Values(current)))
+	heads := headCompareDistinctHeads(reports)
 	if len(heads) == 0 {
 		return nil, nil, nil
 	}
-	if len(heads) > 1 {
-		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalRevisionAmbiguous, Detail: "relationship " + pyvalue.StrRepr(rid) + " has work reports naming " + pyvalue.Repr(heads) + "; which one this candidate is cannot be read off them", Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
-	}
-	if heads[0] != head {
-		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalMergeCandidateMoved, Detail: "the work report for " + pyvalue.StrRepr(rid) + " names head " + pyvalue.StrRepr(heads[0]) + " and this restates " + pyvalue.StrRepr(head), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
+	if refusal := headCompareReportRefusal(row, actor, "restates", head, heads); refusal != nil {
+		return nil, refusal, nil
 	}
 	return heads[0], nil, nil
 }

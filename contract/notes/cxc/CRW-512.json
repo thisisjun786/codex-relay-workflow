@@ -1,0 +1,15 @@
+{
+  "issue": "CRW-512",
+  "pending": [
+    "hook__post-compact-injecting-recall-context__baseline_empty_workspace",
+    "hook__post-compact-injecting-recall-context__silent_even_with_history",
+    "hook__session-start-injecting-recall-context__baseline_empty_workspace",
+    "hook__session-start-injecting-recall-context__compact_source_gets_recovery_directive",
+    "hook__session-start-injecting-recall-context__resume_source_and_dedicated_tools",
+    "hook__session-start-injecting-recall-context__startup_with_index_injects_untrusted_block",
+    "hook__session-start-injecting-recall-context__startup_without_index_advertises_recall",
+    "hook__session-start-injecting-recall-context__unsupported_memory_store_notice"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}

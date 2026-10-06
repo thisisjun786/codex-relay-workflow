@@ -17,8 +17,9 @@ func TestMain(m *testing.M) {
 		os.Exit(sqlitePeer(mode, os.Getenv(sqlitePeerPath)))
 	}
 	testsupport.Main(m, func(string) (func() error, error) {
-		// Both binaries are built before the first scenario, so none spends its deadline linking.
-		for _, binary := range []func() (string, error){crwBinary, crwDevBinary} {
+		// Every binary the domains run is built before the first scenario, so none spends its
+		// deadline linking.
+		for _, binary := range []func() (string, error){crwBinary, crwDevBinary, cxcRecallBinary} {
 			if _, err := binary(); err != nil {
 				return nil, err
 			}
@@ -59,7 +60,9 @@ func TestDomain(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				crw, err := crwBinary()
+				// The cxc corpus replays against its own build: the recorder's frozen clock
+				// is linked into the recall CLI (registry.go cxcRecallBinary).
+				crw, err := cxcRecallBinary()
 				if err != nil {
 					t.Fatal(err)
 				}

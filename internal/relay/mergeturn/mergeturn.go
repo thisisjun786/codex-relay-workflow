@@ -34,6 +34,11 @@ type Service struct {
 	// Delivery is MergeTurn's delivery: absent, a grant carries no wake key at all, as in
 	// Python; the relay CLI always supplies one.
 	Delivery Delivery
+	// Pulls reads the head of a pull request for Ready. Absent, Ready refuses a recorded forge pull request
+	// (merge_target_unreadable) whenever it moves the head or declares readiness: the turn's record never decides which head is
+	// its own, and no reader is built here. Check reads pull requests through the Reader it is given and refuses the same way
+	// when that reader cannot read them.
+	Pulls PullRequestHeadReader
 }
 
 // Delivery is what a promotion hands its grant to (delivery.py grant_channel_in and
@@ -213,6 +218,17 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		}
 		live, e := s.Store.LiveMergeClaim(tx, target, holder)
 		if e == nil {
+			var asked ClaimOptions
+			if len(options) > 0 {
+				asked = options[0]
+			}
+			// the holder has one live claim per target: a request for another pull request is refused, not answered with it
+			if !requestIsLiveClaim(live, asked) {
+				if refusal, e = s.otherPullRequestRefusal(tx, live, asked, holder); e != nil {
+					return e
+				}
+				return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
+			}
 			id = live.TurnID
 			replayed = true
 			return nil

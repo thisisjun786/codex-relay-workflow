@@ -57,6 +57,27 @@ or inaccessible required evidence is unresolved. Accept skipped/neutral results
 only when the repository's gate semantics make them legitimate for this change;
 a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
+A required check that is not a success has two readings, and they call for different
+actions. `checks_not_run` is the reading for a check that did not succeed because its
+workflow run holds a job that concluded cancelled without beginning a step: no runner ever
+picked it up, so the commit was never tested. `merge-evidence` names the run and the jobs
+that did not run in the problem's detail, so a rerun can be aimed at them. `checks_stale` is
+the reading for every other non-success, a real failure, and the lane returns its turn as
+before.
+
+What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
+judge owns it, the lane reruns the failed jobs of that run once on the same head
+(`gh run rerun <run id> --failed`) and waits; when that head already has a queued run it does
+not rerun and waits for that one, and a `checks_not_run` that survives the one rerun is an
+infrastructure failure rather than a code failure, so the lane stops and reports it instead of
+rerunning again. In a DAG-managed project the scheduler owns the one rerun of a head, so the
+lane takes no rerun of its own: it waits for `dag-merge-judge` to record the failure and answer
+`retry_same_sha` first, as [the one rerun of N](#refresh-the-base-yourself-when-only-the-base-moved)
+requires, because a rerun taken before that is invisible to the store and would earn the same
+head a second one.
+
+Neither reading is ready and neither permits a merge.
+
 No configured CI is not a CI pass. Use the repository's permitted local validation
 route if one exists and report that distinction. Do not invent a new hosted CI
 requirement, waive an existing one, or claim readiness when necessary validation
@@ -360,6 +381,59 @@ OPS-9.3 and OPS-9.4 name. The coordinator never edits the child's handoff, never
 if the child had seen it, and never reads its own triage as a verdict or a merge. The verdict, the acceptance and
 the merge turn still run on a record that has seen the thread or a disposition for it, and nothing merges outside
 the lane.
+
+## The independent review is a reference opinion
+
+A child may run the independent code review (`crw review`) on its pull request's head and state what
+it did with the result in an `independentReview` item: on the receipt (`emit --independent-review <file>`)
+and as the `independentReview` member of its handoff record. The result is a reference opinion, like the
+Devin and Codex reviews and unlike [the three gates](#the-three-gates). The merge waits for no
+independent review, a missing one stops nothing, and nothing in this section changes the restatement's
+`current`, its problems, the verdict or the exit code of `merge-evidence`.
+
+**Read the raw artifact.** The item names the review's output file by `artifact.path` and the sha256 of
+its bytes. Read that file, not the child's summary of it: its findings and grades, the `needsContext`
+findings the reviewer could not judge from the material it was given, and the status and reason. An
+unusable reviewer call (`invalidReviewerCalls`, and the calls of the artifact recorded as invalid) is
+not a review that found nothing, so a `partial` or `unavailable` status is read as a review that
+covered less, never as a clean one. A finding is judged by its [impact](#judge-a-finding-by-its-impact)
+whoever raised it. For a pull request that changes activation wiring, an installer or security
+text, the parent may run the review once more itself before it decides; that is its choice and not a rule.
+
+**A head the review did not see is usually a base refresh.** The review runs once per patch-id. A head
+that only merged the base has the patch-id of the head the review covered, so it is not reviewed again
+and no review is awaited for it ([a later head has no review of its own](#the-one-run-of-each-reviewer-awaited-before-the-receipt)).
+The item states `headPatchId`, the patch-id of the head the record is about. The relay does not
+compute it, so confirm it with `git patch-id --stable` over the diff the review bundle builds against
+`origin/dev` (its exact options are in `internal/review/bundle/gitdiff.go` and in the relay's coordination
+document, section "An independent review beside a restatement") and compare it with the artifact's
+`patchId`. The patch-id clears the comparison only when the candidate head is the head the record is
+about; when the candidate head is another head the record does not describe, the relay warns instead of
+reusing the stated patch-id, and the parent reads the artifact against that candidate head. A different
+patch-id means the code changed after the review; the changed part has had no independent look, which the
+verdict says.
+
+**The warnings.** `merge-evidence --restate <record> --expect-independent-review` adds an
+`independentReview` object, `{stated, warnings}`, to its output; without the flag it appears only when
+the record states the item. Every warning code starts `independent_review_`:
+
+| Code | The reading found | What the parent does |
+| --- | --- | --- |
+| `absent` | the record states no item | read the handoff for why: the review did not run, or the child did not say so |
+| `malformed` | the item is not the shape the contract states | ask the child to restate it; read the artifact if the path is in it |
+| `unreadable` | the artifact's path is missing, not a regular file or over 8 MiB | open it yourself or ask for the file |
+| `sha256_mismatch` | the file's bytes are not the stated sha256 | the file changed after the child described it: read it as it is, and say so |
+| `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
+| `status_differs` | the item's status is not the artifact's | trust the artifact |
+| `head_differs` | the artifact covers another head and the candidate head is not the head the record is about, or the stated patch-id is missing or different | run the patch-id check above |
+| `disposition_missing` | a P0, P1 or security finding of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
+| `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
+
+A warning is a question to read the artifact, never a reason to return the candidate by itself. A
+finding that is a defect by impact is a defect whether or not it was warned about, and goes back as any
+other finding does; a warning with no such finding behind it is recorded in the verdict and the merge
+goes on. Do not turn a warning into a gate by waiting for a rerun, a fix or a statement that only the
+warning asked for.
 
 ## Judge a finding by its impact
 
@@ -672,6 +746,81 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    carries the landing and the expected conflicts in its [restoration
    block](task-packet.md#restoration-block).
 
+### Build and vet the merged tree before the verdict
+
+Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
+conflict when they add different files, yet two of them can declare one identifier in one Go
+package (on 2026-10-04 two pairs did: `tokenize` in one package, `ChatOrder` in another). Only a
+build of the merge shows it, and found in the merge lane it costs a whole lane turn. So building the
+merge is a step of judging a receipt: it comes after the comparisons above and before the verdict is
+`verified`, for every receipt that changes Go code.
+
+    crw skill merge-build-check --repo <a checkout that has fetched the head and the base> --head <head> --base origin/dev
+
+It merges the two with `git merge-tree --write-tree`, extracts the merged tree into a scratch
+directory under `TMPDIR` that it removes whatever happens, and in the Go packages the merge changes
+it runs `go build`, `go vet`, `go vet` for `darwin/arm64` and a test compile that runs no test, each
+package with and without the build tag `--tags` names (default `dev`) and for each target that has
+files of it, stopping at the first step that fails. It only reads the checkout: no branch, commit or
+worktree is written. It takes the build cache and the Go settings from the environment, names the
+empty tag set on the command line for the untagged pass so a `-tags` in the caller's `GOFLAGS` or
+Go settings file cannot decide it, keeps the go tool's temporary files and telemetry counters in its
+scratch directory (on macOS, where Go reads the counters from `HOME` rather than from
+`XDG_CONFIG_HOME`, it also moves the tool's `HOME` inside that directory and pins the caches to the
+caller's `go env` values) and passes `-p=4`, so it runs under the same
+[`Go build resources:`](task-packet.md#launch-packet) line as any other local run of the parent, in
+the packages the change touches and never as a full test run. The hosted CI of the head stays the
+test suite.
+
+Read the answer by its first line and its exit status:
+
+- Exit 0, `ok:`: the merge builds and vets. The `evidence:` line (`head`, `base`, `merge_tree`, the
+  package count, the steps that ran, `rule=merged_tree_build`) goes into the verdict's record, as
+  the base-refresh check's does. It holds for the head and the base tip it names: a base that moved
+  since needs the check again. The one exception is the refresh of that head onto that same tip,
+  once the [base-refresh check](#refresh-the-base-yourself-when-only-the-base-moved) has proved it
+  `clean`: its tree is the merge tree the check built.
+- Exit 1, `refused: <code>:`. `build_failed`, `vet_failed`, `vet_darwin_failed`,
+  `test_compile_failed` and `list_failed` mean the merge does not build or vet: a needs-changes
+  finding, the first one of the verdict, with the restoration block. It names the package and quotes
+  the first lines of the output (for a redeclared identifier, both declarations), and the candidate
+  returns to the same child, which merges the base and renames
+  ([Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)).
+  `merge_conflict` is git's, not a build finding: nothing was built, and the candidate is handled as
+  a base conflict is, below. `head_on_base` means the head has already landed or the wrong base was
+  named: read the tip of the base again.
+- Exit 2 and 3 are no answer and not a pass. Exit 2 is an input git could not read (an unknown
+  revision, a checkout that has not fetched the head, git older than 2.41, a `TMPDIR` git cannot
+  write); exit 3 is a go tool that is not on PATH, a run that outran `--timeout`, or an interrupt.
+  Fix the cause and run it again; the verdict waits.
+
+What it does not look at is stated so that a pass is not read for more: the packages that import a
+changed package, the files a package embeds or compiles besides its `.go` files, a dependency change
+in `go.mod` or `go.sum` (it prints a note), a build tag other than `--tags`, and every test. Where the
+installed `crw` does not have the command yet (`crw skill` answers `invalid command
+"merge-build-check"`), run the same steps by hand, in a scratch worktree of the parent's own checkout,
+under the same `Go build resources:`, in bash (zsh does not split `$pkgs` into words):
+
+    scratch=$(mktemp -d) && git worktree add --detach "$scratch/wt" <head> && (
+      set -e
+      cd "$scratch/wt"
+      git merge --no-commit --no-ff <base>    # a conflict stops here: it is not a build finding
+      pkgs=$(git diff --name-only <base>...<head> -- '*.go' | xargs -n1 dirname | sort -u | sed 's|^|./|')
+      for tags in "" dev; do
+        go build -p=4 -tags "$tags" -o /dev/null $pkgs
+        go vet -p=4 -tags "$tags" $pkgs
+        go test -p=4 -tags "$tags" -count=1 -run '^$' -vet=off -exec true $pkgs
+        GOOS=darwin GOARCH=arm64 go vet -p=4 -tags "$tags" $pkgs
+      done
+    ); rc=$?
+    git worktree remove --force "$scratch/wt"; rmdir "$scratch"; [ "$rc" -eq 0 ]
+
+Leave out of `$pkgs` the directories that are gone from the merge, `testdata` directories and the
+ones no file of builds for a target, which the helper lists as skipped. A hand run leaves the go
+tool's temporary files and telemetry counters where they always are; the helper redirects them. The
+planning side of the same failure is the naming rule in
+[issue boundaries](../../crw-plan/references/issue-boundaries.md#decide-the-boundary).
+
 ### Refresh the base yourself when only the base moved
 
 The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
@@ -855,10 +1004,30 @@ a late thread still has a correction route and after it none has
 compares threads with the record and reads the summary comments for findings, and does not need a restatement of the
 record of P on N, which names another head.
 
-**On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
-made at P is restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
+**On the relay's merge lane**, claim the turn with N, naming the pull request and the assignment
+(`merge-turn-request --head N --pr <number> --relationship <rel>`). A claim already made at P is
+restated with `merge-turn-ready --head N`. That resets readiness, so a `--ready` given with
 it is accepted and not recorded, and on a holding turn it issues a new grant. The relay reads no CI when
-readiness is declared, so the order below is yours to keep. Run it in the foreground of the turn, with
+readiness is declared, so the order below is yours to keep. It does read the head of the pull request
+the turn is bound to: `merge-turn-ready --head N` is refused `merge_candidate_moved` when the forge reads
+another head for that pull request, and `merge_target_unreadable` when the forge cannot be read; `merge-turn-check`
+refuses the same two ways, and so does `merge-turn-ready --ready` on a head that did not move. The update that produced N can
+still be settling on the forge, so after a
+refresh read the pull request again and declare the head it shows; a repeated refusal is not an
+escalation, and no other pull request's head is ever declared on the turn you hold. The answer's
+`pullRequestHead` says whether the forge or a work report decided the head. A claim on a repository that is not `owner/name`
+on a forge, or one that names only the assignment, is compared with the assignment's work report instead and is refused
+`merge_target_unreadable` when none names a head: claim with `--pr` on the forge repository.
+
+**A parent holds one live turn per target.** A second `merge-turn-request` for another pull request
+or another relationship is refused `disposition_conflict`, naming the live turn, its pull request and its place
+in the order. That answer is the turn you hold and never a turn for the other pull request: land the held
+turn or return it (`merge-turn-release --disposition returned`; a waiting claim is withdrawn with
+`merge-turn-withdraw`) first, then request the other pull request's turn. Asking again for the same pull request
+returns the same turn (`alreadyClaimed`). A claim made with no pull request and no relationship records
+nothing to compare, so state both on every claim.
+
+Run it in the foreground of the turn, with
 the owner's binding active (`merge-turn-acknowledge` refuses a paused one):
 
 1. The refresh gives N (progress step `base_refresh`).
@@ -875,11 +1044,12 @@ in the answer: an undeclared head is `merge_candidate_moved`, an unanswered gran
 `merge_turn_not_held`, and a check that states another head than the turn holds is
 `merge_candidate_moved` again ([the lane's rules](../../../../../docs/relay/coordination.md#a-restated-head-is-a-new-candidate)).
 `merge-turn-check` states N and the required names read from the reading of N.
-It also compares N with the head of any work report recorded for the assignment, and refuses a
-different one as `merge_candidate_moved`. Nothing in the product records a work report
+A turn on the forge also has N compared with the head of any work report recorded for the assignment, and a
+different one is refused `merge_candidate_moved`. Nothing in the product records a work report
 (`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
 such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
-the candidate back like any other refusal.
+the candidate back like any other refusal. A turn that does not name the pull request on the forge repository has only
+that report to be compared with, so it is refused until a report names the head.
 A merge made outside the lane needs no step from the parent that made it: the next
 `merge-turn-check` finds the base the last landing recorded behind the branch and records it again
 itself when it can confirm the move as merge commits no landing recorded
@@ -986,7 +1156,9 @@ among its commands, the parent does not settle a conflict either.
    with a merge commit: `git merge --no-ff -m "Merge branch 'dev' into <branch>" <D>`. `git diff --name-only
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
-   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below).
+   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below). The one
+   exception is the plugin manifest's version line, which no declaration has to cover: settle it as the
+   paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
      :1:<path>` is the base, `:2:<path>` the candidate and `:3:<path>` the dev tip. When both sides only
@@ -1000,6 +1172,18 @@ among its commands, the parent does not settle a conflict either.
      --record-version`, after the merge of the skills has settled, because the suffix digests the whole
      payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
+
+The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
+`plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
+file in the same mode in both parents and in the head, the check settles it by the built-in rule
+`regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
+that version must keep the release component both parents record (the release is the owner's choice, not the
+payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
+(`crw-dev ci plugin` computes it from the payload). A declaration that touches the file keeps its say, even when it
+does not establish one mechanical rule for it. Any other difference in that file, a version that is not the derived
+one, and every other path keep the refusal they have today, and the proof prints
+`applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
+
 3. Add the settled files and commit; the merge commit has the parents P and D in that order. Before pushing
    anything run, with N the new commit:
 
@@ -1138,7 +1322,9 @@ The verdict `verified` was given, the base moved before `dag-accept`, and the pa
 Parents under one supervision land on the same base ref, so the turn on that target
 is serialized in the coordination record and claimed before integrating, not after
 deciding to merge. Claim with the exact candidate head; a claim with no head cannot
-be checked against one later.
+be checked against one later. A parent holds one turn per target: while one is live, a request for
+another pull request's turn is refused (`disposition_conflict`, naming the live turn), so request it after the
+live one has landed or been returned.
 
 Waiting for your own CI is not the same as merging. While required CI, review, or a
 base update is still outstanding and the merge has not started, a ready peer candidate

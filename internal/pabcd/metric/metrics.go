@@ -8,12 +8,21 @@
 // that holds another session's id, holds U+FFFD, is not a regular file or can not be read (a file read without a string sessionId is
 // replaced). The appender locks the ledger and the kind writer the kind directory, which excludes other writers of this package only.
 //
+// The oracle has no lock and no signal handler: its process dies at the first interrupt and keeps the lines it had appended.
+// RecordMetricsFromTextContext gives the record window that end: it checks its context before each METRIC line and asks for the
+// ledger lock without blocking, again every metricLockRetry, so a wait for another writer ends with the context and nothing more is
+// written; the rows already appended stay. Every lock is checked once more before the row is written, whether or not the wait had to
+// wait for it, because the holder can release it into the hands of a waiter that has already been cancelled and the first
+// non-blocking attempt takes a free lock without the context being read again. A caller without a context, or with one that can
+// never end, waits as it always did.
+//
 // Not literal: a string with a lone surrogate (an escape such as \ud800 in a ledger row) can not exist in Go and reads as U+FFFD, and
 // the oracle's RangeError for a plateau window of more than about 1.2e5 rows is not reproduced. Rows are spelled as JSON.stringify
 // spells them: HTML is not escaped, U+2028 and U+2029 are written literally, NaN and the infinities are null.
 package metric
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,6 +72,9 @@ const (
 
 // timestampLayout is Date.prototype.toISOString.
 const timestampLayout = "2006-01-02T15:04:05.000Z"
+
+// metricLockRetry is how often a record whose context can end asks again for a ledger lock that another holder has.
+const metricLockRetry = 20 * time.Millisecond
 
 // Record is one ledger row (ObjectiveMetricRecord). Baseline is the first reading's baseline and Best the largest reading seen, both
 // carried from row to row.
@@ -206,6 +218,11 @@ func ReadObjectiveMetrics(cwd, sessionID string) []Record {
 // session and metric, else the value; Best is the larger of the last accepted row's best and the value. The value is not checked: NaN
 // and the infinities are written as null, the reader then drops the row, and the caller is told it was recorded.
 func RecordObjectiveMetric(cwd string, in RecordInput) (Record, error) {
+	return recordObjectiveMetric(context.Background(), cwd, in)
+}
+
+// recordObjectiveMetric is RecordObjectiveMetric whose wait for the ledger lock ends with ctx (appendRow).
+func recordObjectiveMetric(ctx context.Context, cwd string, in RecordInput) (Record, error) {
 	name := normalizeMetricName(in.MetricName)
 	baseline, best := in.Value, in.Value
 	if prior := slices.DeleteFunc(ReadObjectiveMetrics(cwd, in.SessionID), func(r Record) bool { return r.MetricName != name }); len(prior) > 0 {
@@ -222,20 +239,30 @@ func RecordObjectiveMetric(cwd string, in RecordInput) (Record, error) {
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return Record{}, err
 	}
-	return rec, appendRow(metricsPath(cwd), Encode(rec))
+	return rec, appendRow(ctx, metricsPath(cwd), Encode(rec))
 }
 
 // appendRow adds the row as one line, after a newline when the ledger does not end in one (the oracle appends the row to the
 // unterminated tail, and neither is read again). A ledger that can not be read may end that way too, so it gets the newline as well
 // (a blank line is skipped by the reader). The check and the write run under a lock on the ledger, so a writer that fails after part
 // of a row is followed by one that sees the fragment.
-func appendRow(path, row string) error {
+// The wait for the lock ends with ctx (metricLockWait): the file is closed without a write and the error is ctx's own. A lock the
+// wait took only after a refused attempt and a lock the first non-blocking attempt took at once are both checked once more before
+// the write, so a cancellation that landed while the context was ending leaves no row.
+func appendRow(ctx context.Context, path, row string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
-	if err = unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil { // dropped by the close
-		return errors.Join(err, f.Close())
+	if err := metricLockWait(ctx, f); err != nil { // dropped by the close
+		if closeErr := f.Close(); err != ctx.Err() { // a wait that ctx ended returns its error as it is
+			err = errors.Join(err, closeErr)
+		}
+		return err
+	}
+	if cerr := ctx.Err(); cerr != nil { // a lock taken while ctx was ending writes nothing, waited or not
+		_ = f.Close() // drops the lock; its error is dropped as the give-up above drops it
+		return cerr
 	}
 	line := row + "\n"
 	if raw, err := os.ReadFile(path); err != nil || len(raw) > 0 && raw[len(raw)-1] != '\n' {
@@ -243,6 +270,34 @@ func appendRow(path, row string) error {
 	}
 	_, err = f.WriteString(line)
 	return errors.Join(err, f.Close())
+}
+
+// metricLockWait takes the exclusive lock on the ledger. A context that can end is asked for it without blocking, and again every
+// metricLockRetry while another holder keeps it, so the wait ends with ctx and returns its error. The context is read again after a
+// sleep: the select takes any ready case, so a timer that won the race against a done context still ends the wait before the next
+// attempt. One context that can never end (context.Background) blocks in the kernel, as every append did before there was a context.
+// A free lock is taken even when ctx has ended since the caller looked: appendRow reads the context once more after the lock, before
+// it writes, and that is where a cancellation landing on a lock taken at once takes effect.
+func metricLockWait(ctx context.Context, f *os.File) error {
+	if ctx.Done() == nil {
+		return unix.Flock(int(f.Fd()), unix.LOCK_EX)
+	}
+	tick := time.NewTicker(metricLockRetry)
+	defer tick.Stop()
+	for {
+		err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+		if cerr := ctx.Err(); cerr != nil { // a timer that beat a done context gives up here, before the next attempt
+			return cerr
+		}
+	}
 }
 
 // Encode is JSON.stringify of the row, without a newline: keys in the oracle's order, numbers as ES6 spells them (-0 is 0, NaN and the
@@ -392,13 +447,24 @@ func ParseMetricLine(line string) (metricName string, value float64, ok bool) {
 // RecordMetricsFromText records every METRIC line of the text, split on LF only (a CR stays in its line and is whitespace to the
 // parser), one RecordObjectiveMetric each. A failure returns the rows recorded before it with the error.
 func RecordMetricsFromText(cwd string, in TextInput) ([]Record, error) {
+	return RecordMetricsFromTextContext(context.Background(), cwd, in)
+}
+
+// RecordMetricsFromTextContext is RecordMetricsFromText for a caller that can be interrupted. ctx is checked before each METRIC line
+// is recorded, ends the lock wait of every record and is read again after each record's ledger lock is taken, before the row is
+// written. On cancellation it returns the rows recorded so far with ctx's error; those rows stay in the ledger, as the lines an
+// interrupted oracle process had appended do.
+func RecordMetricsFromTextContext(ctx context.Context, cwd string, in TextInput) ([]Record, error) {
 	records := []Record{}
 	for _, line := range strings.Split(in.Text, "\n") {
 		name, value, ok := ParseMetricLine(line)
 		if !ok {
 			continue
 		}
-		rec, err := RecordObjectiveMetric(cwd, RecordInput{in.SessionID, name, value, in.Source, in.WorkPhaseID, in.Now})
+		if err := ctx.Err(); err != nil {
+			return records, err
+		}
+		rec, err := recordObjectiveMetric(ctx, cwd, RecordInput{in.SessionID, name, value, in.Source, in.WorkPhaseID, in.Now})
 		if err != nil {
 			return records, err
 		}

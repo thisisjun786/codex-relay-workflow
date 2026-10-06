@@ -34,6 +34,7 @@ type Config struct {
 	TimeLimitFloor               time.Duration // the agy call time limits; zero takes agy's defaults
 	TimeLimitCeiling             time.Duration
 	PostSummary                  bool   // keep the summary comment on pull request PR
+	PostOnly                     bool   // post the recorded result of the patch and run no review; implies PostSummary
 	PR                           int    // the pull request, with PostSummary
 	Gh                           string // the gh executable that talks to the forge; default "gh"
 }
@@ -75,6 +76,7 @@ func parseConfig(args []string, stdout, stderr io.Writer) (c Config, exit int) {
 	fs.StringVar(&c.Model, "model", c.Model, "the agy model (CRW_REVIEW_MODEL)")
 	fs.StringVar(&c.Binary, "agy", c.Binary, "the agy executable (CRW_REVIEW_AGY)")
 	fs.BoolVar(&c.PostSummary, "post-summary", false, "keep the one summary comment of the pull request given by --pr: a reference opinion, never a review thread")
+	fs.BoolVar(&c.PostOnly, "post-only", false, "post the summary comment of the recorded result of this patch, whichever day and whatever the cap: no review runs, nothing is recorded, nothing counts toward the retry or the cap; implies --post-summary")
 	fs.IntVar(&c.PR, "pr", 0, "the pull request of the repository of --repo that --post-summary comments on")
 	fs.StringVar(&c.Gh, "gh", c.Gh, "the gh executable that talks to the forge (CRW_REVIEW_GH)")
 	fs.StringVar(&c.LockPath, "lock", c.LockPath, "the host-wide agy lock file (CRW_REVIEW_LOCK)")
@@ -112,11 +114,12 @@ func parseConfig(args []string, stdout, stderr io.Writer) (c Config, exit int) {
 	if c.DailyCap < 1 {
 		bad = append(bad, fmt.Sprintf("the daily cap must be at least 1, got %d", c.DailyCap))
 	}
+	c.PostSummary = c.PostSummary || c.PostOnly
 	if c.PostSummary && c.PR < 1 {
-		bad = append(bad, "--post-summary needs --pr <number>")
+		bad = append(bad, map[bool]string{false: "--post-summary", true: "--post-only"}[c.PostOnly]+" needs --pr <number>")
 	}
 	if !c.PostSummary && c.PR != 0 {
-		bad = append(bad, "--pr is only used with --post-summary")
+		bad = append(bad, "--pr is only used with --post-summary or --post-only")
 	}
 	if len(bad) > 0 {
 		return c, usageError(stderr, strings.Join(bad, "; "))

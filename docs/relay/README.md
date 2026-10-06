@@ -581,7 +581,7 @@ Global options come BEFORE the subcommand:
 | `ack` | record the parent's acknowledgement |
 | `verify-acks` | complete acknowledgements authored without a host |
 | `verdict` | record a verdict; needs_changes routes a revision to the same child |
-| `decision-reply` / `decision-show` | the parent's decision on a child's blocked_needs_input receipt, delivered to the child; read back |
+| `decision-reply` / `decision-show` | the parent's decision on a child's blocked_needs_input receipt, or an `answer` on a receipt the relay itself observed ending interrupted or failed, delivered to the child; read back |
 | `assignment-show` / `assignment-find` / `assignment-mark` | one issue, one child, and where it stands |
 | `sync-*` | the coordination-document outbox: target, next, claim, operation, reconcile, complete, fail, retry, status, progress |
 | `status` | observable delivery, acknowledgement and verification state |
@@ -602,10 +602,24 @@ A child completing work from inside its own live turn:
       --turn-thread <child task id> --turn-id <this turn> --turn-status inProgress \
       --artifact /abs/path/to/deliverable
 
+A child that ran the independent code review adds `--independent-review <file>` to a `ready_for_review`
+emit; the file is one JSON object, the `independentReview` item of the receipt contract. The relay
+stores it as stated and reads nothing it names ([coordination](coordination.md#an-independent-review-beside-a-restatement)).
+
 The turn status you pass is a claim, not proof. With `--socket` the relay reads the turn from the
 host and uses what the host actually reports. **Offline, a readiness claim can only STAGE**: it is
 stored and visible, and it becomes deliverable only once an independent observation sees that turn
 end normally. A turn that ends failed or interrupted suppresses the claim instead of promoting it.
+
+An emit refuses `unassigned_turn`, writing nothing, in two cases before the receipt is taken. A
+`--turn-id` that does not have the Codex id form (36 lowercase hex digits in 8-4-4-4-12 groups) of a
+`--turn-thread` that does is refused, with or without `--socket`; a thread that is not a Codex id is
+not checked. Without `--socket`, and after that check, emit reads the turn read-only through
+`Adapter.ReadTurn` on the App Server socket the store recorded (`schema_meta.socket_path`), and
+refuses the same way when an exhausted listing does not hold the turn. Everything else stages as it
+did: a listed turn, a store that records no socket, and a host that could not be reached or read
+(a page budget that ran out is not evidence of absence). With `--socket` only the form check is new;
+the host read is the one the flag already made.
 
 A child that itself reports `failed` or `interrupted` from its own live turn states how the turn
 ended: `--turn-status failed` or `--turn-status interrupted`, which is a claim and makes the receipt
@@ -718,24 +732,26 @@ Two limits are part of the contract. The same verdict again is a replay even whe
 
 A child that cannot go on records a `blocked_needs_input` receipt and ends its turn. The receipt carries no artifact (a file attached to it is refused `manifest_forbidden`, and the refusal says to emit the outcome again without `--artifact`, keep the reason in the blocked file and the final message, and send a file that must travel with `ready_for_review`), so it is never the head revision of its generation and a verdict on it is refused `superseded_revision`: the parent's answer has no verdict to travel in. `decision-reply` is the relationship-level route for it. The parent returns a decision, the relay records it, and the delivery engine carries it to the child (held while the child is busy, waking it when it is idle) as a `revision_request` delivery rendered as its own message, `[codex-session-relay] parent decision`. A decision is never a verdict: it writes no ruling, and no ruling writes a decision. A `verified` or `needs_changes` verdict on a blocked receipt is still refused `superseded_revision` once the parent acknowledged it (the receipt is not the head revision), while `aborted` and `unverified` are not refused by the currency check. So the two exclude each other explicitly, each writer checking the other inside its own transaction: a receipt that carries a decision takes no first verdict, and a receipt that already has a verdict takes no decision, each refused `disposition_conflict` (a verdict on an unacknowledged receipt is refused `not_acknowledged` first, as for any verdict).
 
+A second receipt takes a decision, and only one kind of it. A turn the relay itself saw end `interrupted` or `failed` without a receipt is recorded as a final, unsuppressed receipt of the child's generation with producer `daemon_observation` (the daemon's own observation). The child never asked a question, so there is nothing to answer and nothing to rule: the parent's `answer` continues the child in the same generation through the same delivery path, which reaches a `notLoaded` child by resuming it under the MCP profile its record states. `stop`, `split_approval` and `scope_change` are refused `disposition_conflict` for such a receipt, with a reason that says a turn the relay saw end is continued with answer. Every other producer and outcome pair stays refused exactly as before, a child's own `interrupted` or `failed` receipt included.
+
     codex-session-relay decision-reply --event <blocked receipt> --decision <kind> --decision-turn <your turn id> --note <text|@file> [--criteria-digest <digest>]
     codex-session-relay decision-show --relationship <id>
 
 | Decision | Generation | What the relay requires | What the child is told |
 | --- | --- | --- | --- |
-| `answer` | stays | a note | the answer; continue under the criteria already registered |
-| `stop` | stays | a note | stop work and change nothing more; report `interrupted` |
+| `answer` | stays | a note; a child's `blocked_needs_input` receipt, or a receipt the relay itself observed ending `interrupted` or `failed` (there it is the only kind accepted) | the answer; continue under the criteria already registered, and for an observed end that the relay saw the turn end and to re-read the worktree, branch, commits and pull request and continue from where the child stopped |
+| `stop` | stays | a note, on a child's `blocked_needs_input` receipt | stop work and change nothing more; report `interrupted` |
 | `split_approval` | advances to g+1 | a note and `--criteria-digest`, equal to the set registered for the relationship | the criteria changed: here is the set (as registered when the decision was made); continue on the same node under it |
 | `scope_change` | advances to g+1 | the same | the same |
 
 The rule is fixed by the kind. `answer` and `stop` change nothing the child's attempt stands on, so generation g goes on. The child's next turn is not the generation's anchor, so the message prints the continuation claim that admits it (`--continues-anchor <anchor of g> --continuation-actor <child> --continuation-reason ...`); the anchor binding is not offered the reply's turn, which would be refused `anchor_already_bound` and reported on every tick. `split_approval` and `scope_change` change the criteria the output is judged against, so they open generation g+1 (reason `decision_reply`, dispatch request id `decision-<event id>`) in the same transaction, the reply is an event of g+1, and the turn it opens becomes the anchor of g+1 through the same binding a correction uses (a generation that was bound by hand to another turn first is reported as `anchor_already_bound`, as it is for a correction). The child's first receipt there needs no claim and passes no `--supersedes-revision` (the generation holds no earlier revision to replace). The parent registers the new set first (`criteria-register`) and names its digest, so a reply that names a stale set is refused. The record keeps the set as it was registered when the decision was made, and the message prints it (the first ten criteria, an optional one marked, with a count of the rest), so the child works from what the parent approved even if the set is registered again before the message is sent; the child's output is still judged against the set registered when it is ruled, by the re-review rule. `stop` does not change the relationship status: `relationship-status` still pauses, cancels or archives. Opening g+1 marks the older undelivered deliveries `stale_generation`, the blocked receipt's delivery to the parent among them unless the parent acknowledged it.
 
-**What a decision answers.** A final, unsuppressed receipt of the child, `blocked_needs_input`, that is the child's newest final receipt of the relationship's current generation (newest in the order the relay saw the receipts: when it first saw each, and for receipts first seen at one instant the order they were stored in, because an event id is a hash and not a sequence), on an active relationship whose child is an allowed recipient. One decision per receipt: the same decision again (same kind, note and criteria digest) is a replay (the record marked `_replay`, nothing written); any other is refused `disposition_conflict`. The record is the event (outcome `decision_reply`, producer `relay`, id the first 32 hex characters of `sha256(relationship|receipt|decision_reply)`), its delivery, and a `decision_recorded` journal row. A reply that the child has moved past is not sent: a later final receipt of the child in the same generation, later than the receipt that was answered (a receipt staged before the reply and made final after it counts), supersedes it (`superseded_revision`), as a newer generation does (`stale_generation`).
+**What a decision answers.** A final, unsuppressed receipt of the relationship's current generation, on an active relationship whose child is an allowed recipient, that is the newest final receipt of the child the decision is weighed against (newest in the order the relay saw the receipts: when it first saw each, and for receipts first seen at one instant the order they were stored in, because an event id is a hash and not a sequence): the child's own `blocked_needs_input`, which every kind answers, or a receipt the relay itself observed ending `interrupted` or `failed` (producer `daemon_observation`), which `answer` alone answers and the other kinds are refused for. One decision per receipt: the same decision again (same kind, note and criteria digest) is a replay (the record marked `_replay`, nothing written); any other is refused `disposition_conflict`. The record is the event (outcome `decision_reply`, producer `relay`, id the first 32 hex characters of `sha256(relationship|receipt|decision_reply)`), its delivery, and a `decision_recorded` journal row; it carries `answersOutcome`, the outcome of the receipt it answers (`blocked_needs_input`, `interrupted` or `failed`). A reply that the child has moved past is not sent: a later final receipt of the child in the same generation, later than the receipt that was answered (a receipt staged before the reply and made final after it counts), supersedes it (`superseded_revision`), as a newer generation does (`stale_generation`).
 
 | Cause | Reason |
 | --- | --- |
 | no such event | `not_claimable` |
-| the receipt is not a final child `blocked_needs_input` (a receipt with an artifact is ruled with a verdict), another decision or any verdict is on record | `disposition_conflict` |
+| the receipt is neither a final child `blocked_needs_input` nor a final receipt the relay itself observed ending `interrupted` or `failed`, or it is an observed end and the kind is not `answer` (a receipt with an artifact is ruled with a verdict), another decision or any verdict is on record | `disposition_conflict` |
 | the relationship is not active | `relationship_not_active` |
 | the receipt is not of the current generation | `stale_generation` |
 | the child has reported again in this generation | `superseded_revision` |
@@ -906,6 +922,13 @@ because choosing between two policy files by preference is that same failure spe
 way. `service status` reports the declaration as the input to the NEXT launch, beside the digest
 the running worker actually published, so a declaration made while the service runs reads as the
 pending change it is.
+
+`service stop` holds a worker's pidfd while it reads its start ticks. If the identity
+read gives no answer, or the recorded ticks are missing, a readable pidfd confirms
+exit: stop reports the worker as `exited` and clears its recorded identity, so restart
+can proceed past the stop. A running worker whose identity cannot be established stays
+`unverifiable` and receives no signal. The stop deadline, 100 ms termination cadence
+and launch-readiness snapshot remain unchanged (port decisions 27 and 40).
 
 ## How invocation actually becomes automatic
 

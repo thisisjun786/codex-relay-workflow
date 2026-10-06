@@ -1,0 +1,326 @@
+[
+  {
+    "argv": [
+      "chat",
+      "index",
+      "--home",
+      "<HOME>",
+      "--index-path",
+      "<INDEX>",
+      "--help"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "--help"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "index",
+      "--home",
+      "<HOME>",
+      "--index-path",
+      "<INDEX>",
+      "-h"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "index",
+      "--home",
+      "<HOME>",
+      "--index-path",
+      "<INDEX>",
+      "help"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "index",
+      "--home",
+      "<HOME>",
+      "--index-path",
+      "<INDEX>",
+      "/?"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "help",
+      "--home",
+      "<HOME>",
+      "--no-chat",
+      "--json"
+    ],
+    "code": 0,
+    "stdout": "{\n  \"hits\": [],\n  \"warnings\": [\n    \"memories root not found (file search off)\",\n    \"memories db not found (stage1 search off)\"\n  ],\n  \"scannedFiles\": 0,\n  \"elapsedMs\": 0\n}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "search",
+      "help",
+      "--home",
+      "<HOME>",
+      "--scan",
+      "--json"
+    ],
+    "code": 0,
+    "stdout": "{\n  \"hits\": [],\n  \"warnings\": [\n    \"state db not found (metadata enrichment off)\"\n  ],\n  \"scannedFiles\": 0,\n  \"matchedFiles\": 0,\n  \"totalFiles\": 0,\n  \"elapsedMs\": 0,\n  \"mode\": \"scan\",\n  \"clipped\": false\n}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "memory",
+      "--home",
+      "<HOME>",
+      "--cwd-only",
+      "--no-chat",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "Option '--cwd-only' argument is ambiguous.\nDid you forget to specify the option argument for '--cwd-only'?\nTo specify an option argument starting with a dash use '--cwd-only=-XYZ'.\n"
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "memory",
+      "--home",
+      "<HOME>",
+      "--cwd-only=--no-chat",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "--cwd-only path must not start with '-': got \"--no-chat\"\n"
+  },
+  {
+    "argv": [
+      "chat",
+      "search",
+      "q",
+      "--home",
+      "<HOME>",
+      "--cwd",
+      "--json",
+      "--scan"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "Option '--cwd' argument is ambiguous.\nDid you forget to specify the option argument for '--cwd'?\nTo specify an option argument starting with a dash use '--cwd=-XYZ'.\n"
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "q",
+      "--home",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "Option '--home' argument is ambiguous.\nDid you forget to specify the option argument for '--home'?\nTo specify an option argument starting with a dash use '--home=-XYZ'.\n"
+  },
+  {
+    "argv": [
+      "chat",
+      "search",
+      "q",
+      "--home",
+      "<HOME>",
+      "--cwd=--json",
+      "--scan"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "--cwd path must not start with '-': got \"--json\"\n"
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "q",
+      "--home=--json"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "--home path must not start with '-': got \"--json\"\n"
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "q",
+      "--home",
+      "<HOME>",
+      "--cwd-only"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "Option '--cwd-only <value>' argument missing\n"
+  },
+  {
+    "argv": [
+      "chat",
+      "index",
+      "--home",
+      "<HOME>",
+      "--index-path",
+      "<INDEX>",
+      "--not-a-flag"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "Unknown option '--not-a-flag'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--not-a-flag\"\n"
+  },
+  {
+    "argv": [
+      "memory",
+      "search",
+      "foo",
+      "--home",
+      "<HOME>/missing",
+      "--no-chat",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "--home not found: <HOME>/missing\n"
+  },
+  {
+    "argv": [
+      "chat",
+      "search"
+    ],
+    "code": 1,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "search",
+      "q",
+      "--source",
+      "both"
+    ],
+    "code": 1,
+    "stdout": "",
+    "stderr": "invalid --source: both (use main|subagent|all)\n"
+  },
+  {
+    "argv": [
+      "memory",
+      "status",
+      "--home",
+      "<HOME>",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "{\n  \"observationSource\": \"jobs-db\",\n  \"effectiveExtractionRoute\": \"unknown\",\n  \"startupGuardDecision\": \"unknown\",\n  \"state\": \"unavailable\",\n  \"detail\": \"no memories store found under <HOME>\",\n  \"storePath\": null,\n  \"jobs\": [],\n  \"exhausted\": 0,\n  \"exhaustedByCause\": {},\n  \"lastSuccessAt\": null,\n  \"lastFinishedAt\": null\n}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "requeue",
+      "--home",
+      "<HOME>",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "{\n  \"state\": \"unavailable\",\n  \"detail\": \"no memories store found under <HOME>\",\n  \"storePath\": null,\n  \"applied\": false,\n  \"selected\": [],\n  \"skippedByCause\": {},\n  \"changed\": 0,\n  \"retries\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "status",
+      "--home",
+      "<HOME>",
+      "--json=no",
+      "--unknown"
+    ],
+    "code": 1,
+    "stdout": "memory pipeline: unavailable — no memories store found under <HOME>\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "requeue",
+      "--home",
+      "<HOME>",
+      "--limit=2tail",
+      "--json"
+    ],
+    "code": 1,
+    "stdout": "{\n  \"state\": \"unavailable\",\n  \"detail\": \"no memories store found under <HOME>\",\n  \"storePath\": null,\n  \"applied\": false,\n  \"selected\": [],\n  \"skippedByCause\": {},\n  \"changed\": 0,\n  \"retries\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "help"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "memory",
+      "help"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "nonsense"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "chat",
+      "search",
+      "--",
+      "--help"
+    ],
+    "code": 0,
+    "stdout": "crw recall chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncrw recall chat index [--rebuild] [--status] [--json]\ncrw recall memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncrw recall memory status [--json] [--home PATH]\ncrw recall memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+    "stderr": ""
+  }
+]

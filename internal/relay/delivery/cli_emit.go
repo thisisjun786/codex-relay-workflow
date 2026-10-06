@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"regexp"
 	"strconv"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -14,6 +18,51 @@ import (
 // ObserveTurn is installed by the production adapter; nil keeps the existing
 // host-unavailable path. The offline receipt path remains unchanged.
 var ObserveTurn func(context.Context, string, string, string, string) (string, error)
+
+// EmitConfirmTurn is installed by the production adapter beside ObserveTurn. It reads a turn
+// through the App Server socket the store recorded, read-only, and answers whether an exhausted
+// listing holds it: found reports the turn in the listing, confirmed reports the read reached a
+// definite answer (the listing was exhausted, or the turn was found). A build that leaves it nil,
+// a store that records no socket, and a read that could not be made leave the receipt staged as
+// before, because a check that could not be made is not evidence of absence (CRW-675,
+// docs/relay/invariants.md I-218).
+var EmitConfirmTurn func(ctx context.Context, state, socket, thread, turn string) (found, confirmed bool, err error)
+
+// emitCodexID is the Codex id form: 36 characters of lowercase hex in 8-4-4-4-12 groups.
+var emitCodexID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// emitRefuseTurnIDForm refuses a turn id that does not have the thread's Codex id form, before
+// anything is written. A thread that is not a Codex id (a fixture's "thread-1") is not checked, so
+// nothing but a Codex-form thread gains the rule. The refusal is the existing unassigned_turn: no
+// new reason, no output field and no event (CRW-675).
+func emitRefuseTurnIDForm(thread, turn string) error {
+	if !emitCodexID.MatchString(thread) || emitCodexID.MatchString(turn) {
+		return nil
+	}
+	return &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + strconv.Quote(turn) + " is not the Codex id form of the thread " + strconv.Quote(thread) + ": a Codex id is 36 lowercase hex digits in 8-4-4-4-12 groups, so take the id from the command output instead of retyping it"}
+}
+
+// emitConfirmTurn reads the turn read-only through the host the store recorded, and refuses
+// unassigned_turn only when that host answered with an exhausted listing that does not hold it.
+// A store that records no socket, a hook a build leaves nil, and a host that could not be reached
+// or read leave the receipt to stage as before (CRW-675).
+func emitConfirmTurn(c *cliRun, thread, turn string) error {
+	if EmitConfirmTurn == nil || !emitCodexID.MatchString(thread) {
+		return nil
+	}
+	socket := store.StoreSocket(c.state + "/relay.sqlite3")
+	if socket == "" {
+		return nil
+	}
+	found, confirmed, err := EmitConfirmTurn(c.ctx, c.state, socket, thread, turn)
+	if err != nil || !confirmed {
+		return nil
+	}
+	if found {
+		return nil
+	}
+	return &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + strconv.Quote(turn) + " does not exist on " + strconv.Quote(thread) + ": the host's listing was exhausted and does not hold it, so take the current turn id from the command output and emit again"}
+}
 
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
 func cmdEmit(c *cliRun) (any, error) {
@@ -25,6 +74,18 @@ func cmdEmit(c *cliRun) (any, error) {
 	relationship, err := RequireActive(c.ctx, d.Store, rid)
 	if err != nil {
 		return nil, err
+	}
+	// CRW-675: a turn id that is not the thread's Codex id form is refused before anything is
+	// written, and, without --socket, a turn the store's recorded host answers is absent from an
+	// exhausted listing is refused the same way. Both refusals are the existing unassigned_turn.
+	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
+	if err := emitRefuseTurnIDForm(thread, turn); err != nil {
+		return nil, err
+	}
+	if c.socket == "" {
+		if err := emitConfirmTurn(c, thread, turn); err != nil {
+			return nil, err
+		}
 	}
 	generation, _ := c.opt("--generation").(int64)
 	attempt, _ := c.opt("--attempt").(int64)
@@ -48,6 +109,12 @@ func cmdEmit(c *cliRun) (any, error) {
 			records[i] = o
 		}
 		manifest = records
+	}
+	var independentReview Obj
+	if path := c.s("--independent-review"); path != "" {
+		if independentReview, err = readIndependentReview(path); err != nil {
+			return nil, err
+		}
 	}
 	reference := c.s("--manifest-ref")
 	if reference != "" && len(entries) > 0 {
@@ -81,13 +148,15 @@ func cmdEmit(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, dispatch.Host("event identity: " + err.Error())
 	}
-	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
 	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(strconv.FormatInt(generation, 10))}, {Key: "attempt", Value: json.Number(strconv.FormatInt(attempt, 10))},
 		{Key: "revisionHash", Value: digest}, {Key: "outcome", Value: outcome}, {Key: "producer", Value: "child"},
 		{Key: "turnRef", Value: Obj{{Key: "threadId", Value: thread}, {Key: "turnId", Value: turn}, {Key: "turnStatus", Value: status}}},
 		{Key: "manifest", Value: manifest}, {Key: "emittedAt", Value: c.clock.ISO()}}
 	if reference != "" {
 		payload = append(payload, F{Key: "manifestRef", Value: reference})
+	}
+	if independentReview != nil {
+		payload = append(payload, F{Key: "independentReview", Value: independentReview})
 	}
 	options := store.AcceptOptions{}
 	if anchor := c.s("--continues-anchor"); anchor != "" {
@@ -139,6 +208,43 @@ func cmdEmit(c *cliRun) (any, error) {
 		}
 	}
 	return result, nil
+}
+
+// independentReviewCap bounds the file --independent-review reads: the item is a short statement,
+// not the review artifact it names.
+const independentReviewCap = 1 << 20
+
+// readIndependentReview reads the file that holds the independentReview item: one JSON object. What
+// the object says about the artifact is for the parent to grade; emit carries it and reads nothing
+// the item names.
+func readIndependentReview(path string) (Obj, error) {
+	usage := func(detail string) error {
+		return &dispatch.UsageError{Detail: "--independent-review: " + detail, Code: contract.ExitUsage}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, usage("the file could not be read: " + err.Error())
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, independentReviewCap+1))
+	if err != nil {
+		return nil, usage("the file could not be read: " + err.Error())
+	}
+	if len(raw) > independentReviewCap {
+		return nil, usage("the file is larger than " + strconv.Itoa(independentReviewCap) + " bytes, and the item is a short statement that names the artifact rather than holding it")
+	}
+	value, err := loads(string(raw))
+	if err == nil && !json.Valid(raw) {
+		err = errors.New("text follows the value") // loads stops at a closing bracket; the file is one value
+	}
+	if err != nil {
+		return nil, usage("the file is not JSON: " + err.Error())
+	}
+	item, isObject := value.(Obj)
+	if !isObject {
+		return nil, usage("the file must hold one JSON object, not " + quote.Kind(value))
+	}
+	return item, nil
 }
 
 // withContinuationHint adds to the refusal of a turn the generation never admitted, when the

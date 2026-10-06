@@ -28,6 +28,8 @@ const (
 	OutcomeAlreadyReviewed = "already_reviewed"
 	OutcomeDailyCap        = "daily_cap_reached"
 	OutcomeRetryDeferred   = "retry_deferred"
+	OutcomeLockWaitExpired = "lock_wait_expired" // agy was not started because the host-wide lock was not free: nothing counted, nothing closed, try again
+	OutcomeRecorded        = "recorded"          // --post-only: the recorded result of the patch, nothing ran
 )
 
 // Exit statuses besides usageExit.
@@ -51,17 +53,19 @@ type Summary struct {
 	DailyCap  int    `json:"dailyCap,omitempty"`
 	RunsToday int    `json:"runsToday,omitempty"`
 	// already_reviewed only: the head of the earlier review, and whether its artifact file is there now.
-	ReviewedHead    string  `json:"reviewedHead,omitempty"`
-	ArtifactPresent *bool   `json:"artifactPresent,omitempty"`
-	RetryNotBefore  string  `json:"retryNotBefore,omitempty"` // the first UTC day (2006-01-02) on which the one more attempt of a review that could not run is allowed
-	Comment         *Posted `json:"summaryComment,omitempty"`
-	*Counts                 // a review that ran
+	ReviewedHead    string   `json:"reviewedHead,omitempty"`
+	ArtifactPresent *bool    `json:"artifactPresent,omitempty"`
+	Restored        []string `json:"restored,omitempty"`       // the files of the recorded artifact that were missing and were written from the kept copy of the result
+	RetryNotBefore  string   `json:"retryNotBefore,omitempty"` // the first UTC day (2006-01-02) on which the one more attempt of a review that could not run is allowed
+	Comment         *Posted  `json:"summaryComment,omitempty"`
+	*Counts                  // a review that ran
 }
 
 // Posted says what --post-summary did to the pull request: created, updated or unchanged the one summary comment.
 type Posted struct {
 	Action string `json:"action"`
 	URL    string `json:"url,omitempty"`
+	Reason string `json:"reason,omitempty"` // set when the comment shows a newer result of the patch than the one this run holds
 }
 
 type Counts struct {
@@ -119,7 +123,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	case postErr != nil:
 		fmt.Fprintf(stderr, "crw review: error: the summary comment was not posted: %v\n", postErr)
 		return exitError
-	case sum.Outcome == OutcomeDailyCap || sum.Outcome == OutcomeRetryDeferred:
+	case sum.Outcome == OutcomeDailyCap || sum.Outcome == OutcomeRetryDeferred || sum.Outcome == OutcomeLockWaitExpired:
 		return exitRefused
 	}
 	return 0
@@ -140,11 +144,16 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	entry := func(event string) record {
 		return record{Event: event, PatchID: m.PatchID, Base: m.Base, Head: m.Head, Issue: cfg.Issue}
 	}
-	// recorded puts the artifact an earlier attempt recorded into sum.
-	recorded := func(r record) {
+	// recorded puts the artifact an earlier attempt recorded into sum, after writing the files of it that are missing from the copy kept with the record (ledger.restore; locked says that the caller holds the run lock).
+	recorded := func(r record, earlier *record, locked bool) error {
+		restored, err := l.restore(ctx, r, earlier, cfg.Out, locked)
+		if err != nil {
+			return err
+		}
 		info, statErr := os.Stat(r.Artifact)
 		present := statErr == nil && info.Mode().IsRegular()
-		sum.Artifact, sum.SHA256, sum.Status, sum.ReviewedHead, sum.ArtifactPresent = r.Artifact, r.SHA256, r.Status, r.Head, &present
+		sum.Artifact, sum.SHA256, sum.Status, sum.ReviewedHead, sum.ArtifactPresent, sum.Restored = r.Artifact, r.SHA256, r.Status, r.Head, &present, restored
+		return nil
 	}
 	// already reads the ledger and, if this patch is closed, turns sum into the answer that says so. Without the run lock only a finished record closes it (an attempt that runs now may still finish).
 	already := func(locked bool) (recs []record, done bool, err error) {
@@ -154,10 +163,21 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		st := standingOf(recs, m.PatchID)
 		if r, closed := st.closer(); closed && (locked || st.finished != nil) {
 			sum.Outcome = OutcomeAlreadyReviewed
-			recorded(r)
-			return recs, true, nil
+			return recs, true, recorded(r, st.unavailable, locked)
 		}
 		return recs, false, nil
+	}
+	if cfg.PostOnly { // the recorded result of the patch, open or closed: no run lock, no record of any kind, so the one more attempt and the daily cap are untouched whatever the day
+		recs, err := l.read()
+		if err != nil {
+			return nil, err
+		}
+		newest := newestResult(recs, m.PatchID)
+		if newest == nil {
+			return nil, errors.New("this patch has no recorded result to post; --post-only never runs a review")
+		}
+		sum.Outcome = OutcomeRecorded
+		return sum, recorded(*newest, standingOf(recs, m.PatchID).unavailable, false)
 	}
 	if _, done, err := already(false); done || err != nil { // without the lock: a finished record never goes away, and waiting behind another review would only delay this answer
 		return sum, err
@@ -177,10 +197,9 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 		if last := dayOf(st.unavailable.Time); day <= last {
 			sum.Outcome, sum.RetryNotBefore = OutcomeRetryDeferred, nextDay(last)
 			sum.Reason = fmt.Sprintf("the review of this patch could not run on %s (UTC): %s; one more attempt is allowed from %s (UTC)", last, st.unavailable.Reason, sum.RetryNotBefore)
-			recorded(*st.unavailable)
 			refused := entry("refused")
 			refused.Reason = sum.Reason
-			return sum, l.append(refused)
+			return sum, errors.Join(recorded(*st.unavailable, nil, true), l.append(refused))
 		}
 	}
 	if n := runsOn(recs, day); n >= cfg.DailyCap {
@@ -214,6 +233,12 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if lockWaitExpired(a) { // agy was never started (the host-wide lock was not free within the wait): this is not a review of the patch, so nothing is counted, closed, kept or written and the same patch may be tried again at once
+		wait := entry(eventLockWait)
+		wait.Reason, wait.AgyCalled = string(agy.ReasonLockWaitExpired), agyCalledOf(a)
+		sum.Outcome, sum.Reason = OutcomeLockWaitExpired, fmt.Sprintf("agy was not started: the host-wide lock was not free within %s; nothing counted and nothing closed, try again", cfg.LockWait)
+		return sum, l.append(wait)
+	}
 	data, err := a.Marshal(m.Head)
 	if err != nil {
 		return fail(err)
@@ -222,12 +247,14 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	result := entry("finished")
 	result.Time = e.now().UTC().Format(time.RFC3339) // the day the attempt ended, maybe after the one it began on: the ledger line and retryNotBefore must agree on it
 	result.Artifact, result.SHA256, result.Status = artifact, hex.EncodeToString(digest[:]), string(a.Status)
-	if reasons, ok := accountUnavailable(a); ok {
-		result.Reason = reasons
-		if st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
-			result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
-		}
+	if _, ok := retryableUnavailable(a); ok && st.unavailable == nil { // the first attempt that could not run: the patch stays open for one more, on a later day
+		result.Event, sum.RetryNotBefore = "unavailable", nextDay(dayOf(result.Time))
 	}
+	if a.Status != review.StatusComplete { // the failure record of a run that did not end complete, written apart from the retry decision above
+		result.Reason, result.AgyCalled = ledgerFailureReason(a), agyCalledOf(a)
+	}
+	// The result is kept before the review is recorded, so that a record always has its copy; if it cannot be kept, the review is recorded and published all the same (a second model call is what this order exists to avoid) and the failure is reported at the end.
+	keepErr := l.keep(result.SHA256, data)
 	// The review is recorded before its files are written, so that nothing after this point can let the patch be reviewed again.
 	if err = l.append(result); err != nil {
 		return nil, err
@@ -242,6 +269,9 @@ func execute(ctx context.Context, cfg Config, e env) (*Summary, error) {
 	}
 	sum.Artifact, sum.SHA256, sum.Status, sum.Reason = artifact, result.SHA256, result.Status, a.Reason
 	sum.Counts = &Counts{Reviewers: a.Reviewers, Findings: len(a.Findings), Dropped: len(a.Dropped), Calls: len(a.Calls)}
+	if keepErr != nil {
+		return nil, fmt.Errorf("the review is recorded and its files are written, but its result could not be kept in the state directory, so a failed write of the files could not have been repaired without a model call: %w", keepErr)
+	}
 	return sum, nil
 }
 

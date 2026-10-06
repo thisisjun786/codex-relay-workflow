@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"golang.org/x/sys/unix"
 )
 
 // ReceiptCLIArgs is receipt-cli.ts ReceiptCliArgs, including the declared generated paths.
@@ -131,8 +132,53 @@ Notes:
 Example:
   crw pabcd receipt test --session <id> -- npm test`
 
+// receiptInterrupted is the refusal a cancelled receipt test answers with, from the late-cancel
+// check or from the publication windows.
+const receiptInterrupted = "receipt test: the command did not run to completion (interrupted); no receipt written"
+
+// receiptBeforePublishHook, when non-nil, runs after the late-cancellation check and immediately
+// before the receipt is published. It is nil in production; receipt_publish_cancel_test.go sets it
+// to cancel the context in the window between that check and the rename, where PublishContext
+// reports the cancellation at its rename step.
+var receiptBeforePublishHook func()
+
+// receiptAfterPublishHook, when non-nil, runs immediately after the receipt has been published and
+// before the post-publication cancellation check. It is nil in production;
+// receipt_publish_cancel_test.go sets it to cancel the context in the window the check closes,
+// where the rename beat the cancellation.
+var receiptAfterPublishHook func()
+
+// receiptLockRetry is how often a run whose context can end asks again for a receipt directory lock that another run holds.
+const receiptLockRetry = 20 * time.Millisecond
+
+// receiptLateCancelHook, when non-nil, runs immediately before the late-cancellation check in a
+// receipt test. It is nil in production (an uninitialized variable, no package-level work at
+// start); receipt_late_cancel_test.go sets it to cancel the context at the one point where the
+// window the check closes is deterministic, after the command has returned and the source has been
+// captured again.
+var receiptLateCancelHook func()
+
+// receiptLockAfterCompareHook, when non-nil, runs inside a withdrawal after it has compared the receipt on
+// disk with its own bytes and found them equal, and before it unlinks them. It is nil in production;
+// receipt_withdraw_race_test.go uses it to let a second run publish at the one point where a withdrawal
+// that does not exclude other runs would remove that run's receipt.
+var receiptLockAfterCompareHook func()
+
+// receiptLockWaitParkedHook, when non-nil, runs once by the lock wait after its first refused attempt, when
+// the run is parked on a lock another holder has. It is nil in production (an uninitialized variable, no
+// package-level work at start); receipt_withdraw_race_test.go uses it to end the context only once the run
+// is really waiting, instead of from a timer that can fire before the wait begins.
+var receiptLockWaitParkedHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
+// A cancellation seen anywhere before the rename refuses the receipt, and one that lands after the publication check
+// withdraws the receipt the rename beat it to.
+// The publication, the cancellation check after it and that withdrawal run under one exclusive flock on the receipt
+// directory, so a withdrawal never removes a receipt another run published after the withdrawal compared the bytes. The
+// lock is the open directory handle: no lock file is created. A wait for it that ends with the context publishes nothing and
+// answers the interrupted refusal. The lock is cooperative: the run-start removal below, which is the oracle's, and any other
+// writer of the file do not take it.
 // A non-nil error models the oracle's thrown remove/before-capture/publication errors. Atomic publication intentionally fixes
 // the oracle's record-truncation defect; ordinary parser and runner refusals remain result values.
 func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIResult, error) {
@@ -155,9 +201,8 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse("receipt test: no check binding on this session. Step back with `crw pabcd orchestrate B` and re-enter `crw pabcd orchestrate C` to mint one (this cycle predates CHECK-BINDING-01).")
 	}
 	path := ReceiptPathFor(args.Cwd, sid)
-	// unlink never falls back to rmdir: rmSync without recursive refuses an empty directory too.
-	if err := syscall.Unlink(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return ReceiptCLIResult{}, &os.PathError{Op: "unlink", Path: path, Err: err}
+	if err := removeReceipt(path); err != nil {
+		return ReceiptCLIResult{}, err
 	}
 	root, err := session.Resolve(args.Cwd, sid)
 	if err != nil {
@@ -193,6 +238,14 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	case source.ComparisonUnavailable:
 		return refuse("receipt test: git could not resolve the source identity (" + cmp.Reason + "); no receipt written")
 	}
+	// The last moment the publication can still be skipped: a cancellation that landed after the
+	// command returned refuses the receipt here, as the oracle's deferred signal refuses it.
+	if receiptLateCancelHook != nil {
+		receiptLateCancelHook()
+	}
+	if options.Context != nil && options.Context.Err() != nil {
+		return refuse(receiptInterrupted)
+	}
 	record := receiptRecord{Kind: "test", SourceIdentity: after, Command: strings.Join(args.Command, " "), ExitCode: 0, CreatedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), OwnerSessionID: sid, CheckEpoch: *st.CheckEpoch, GeneratedPaths: args.Generated}
 	if _, err = crwdir.EnsureDir(args.Cwd); err != nil {
 		return ReceiptCLIResult{}, err
@@ -201,13 +254,117 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return ReceiptCLIResult{}, err
 	}
 	data, err := encodeReceipt(record)
-	if err == nil {
-		err = crwdir.Publish(path, data)
-	}
 	if err != nil {
 		return ReceiptCLIResult{}, err
 	}
+	if receiptBeforePublishHook != nil {
+		receiptBeforePublishHook()
+	}
+	ctx := options.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return ReceiptCLIResult{}, err
+	}
+	defer dir.Close() // drops the lock
+	if err = receiptLockWait(ctx, dir); err != nil {
+		if ctx.Err() != nil && err == ctx.Err() {
+			return refuse(receiptInterrupted)
+		}
+		return ReceiptCLIResult{}, err
+	}
+	if err = crwdir.PublishContext(ctx, path, data); err != nil {
+		if result, refused := receiptPublishRefusal(ctx, err); refused {
+			return result, nil
+		}
+		return ReceiptCLIResult{}, err
+	}
+	if receiptAfterPublishHook != nil {
+		receiptAfterPublishHook()
+	}
+	// The rename beat a cancellation that landed after the check above: withdraw the receipt just
+	// published, as the oracle's dead process leaves nothing behind either. Only the bytes written
+	// here are removed: a receipt another invocation published in the meantime is left alone.
+	if ctx.Err() != nil {
+		if err := withdrawReceipt(path, data); err != nil {
+			return ReceiptCLIResult{}, err
+		}
+		return refuse(receiptInterrupted)
+	}
 	return ReceiptCLIResult{Output: path}, nil
+}
+
+// receiptPublishRefusal maps the error of the receipt's publish onto the caller's result: the
+// interrupted refusal when the cancellation was clean - err is the context's own error, which
+// PublishContext returns after the temp file it had written was removed - and refused=false when the
+// error must be reported as it happened. That includes a cancellation joined with a failed removal,
+// which publish joins, so a stranded temporary file is never hidden behind "no receipt written".
+func receiptPublishRefusal(ctx context.Context, err error) (ReceiptCLIResult, bool) {
+	if err == nil || ctx.Err() == nil || err != ctx.Err() {
+		return ReceiptCLIResult{}, false
+	}
+	return ReceiptCLIResult{Output: receiptInterrupted, Code: 1}, true
+}
+
+// receiptLockWait takes the exclusive lock on the receipt directory. A context that can end is asked for it without blocking,
+// and again every receiptLockRetry while another run holds it, so the wait ends with ctx and returns its error. One that can
+// never end (context.Background) blocks in the kernel. A free lock is taken even when ctx has ended since the caller looked:
+// PublishContext then reports the cancellation at its rename step, as it did before the lock existed.
+func receiptLockWait(ctx context.Context, dir *os.File) error {
+	if ctx.Done() == nil {
+		return unix.Flock(int(dir.Fd()), unix.LOCK_EX)
+	}
+	tick := time.NewTicker(receiptLockRetry)
+	defer tick.Stop()
+	refused := false
+	for {
+		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			return err
+		}
+		if !refused {
+			refused = true
+			if receiptLockWaitParkedHook != nil {
+				receiptLockWaitParkedHook()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
+// withdrawReceipt removes the receipt this invocation published at path, while the bytes on disk are
+// still the ones it wrote; a path another invocation for the same session replaced stays. An already
+// absent path is fine, and any other failure is reported as it happened.
+func withdrawReceipt(path string, published []byte) error {
+	current, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, published) {
+		return nil
+	}
+	if receiptLockAfterCompareHook != nil {
+		receiptLockAfterCompareHook()
+	}
+	return removeReceipt(path)
+}
+
+// removeReceipt unlinks a receipt; its absence is fine, as rmSync with force treats it. The removal
+// never falls back to rmdir: rmSync without recursive refuses an empty directory too.
+func removeReceipt(path string) error {
+	if err := syscall.Unlink(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return &os.PathError{Op: "unlink", Path: path, Err: err}
+	}
+	return nil
 }
 
 func runReceiptCommand(argv []string, cwd string, o ReceiptRunOptions) error {

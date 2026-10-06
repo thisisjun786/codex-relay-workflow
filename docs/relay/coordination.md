@@ -66,7 +66,10 @@ turn: `merge-turn-resolve` admits only an unknown one.
 So the merge turn reads one fact from the target itself: the commit its base branch points at. It
 reads it at the four moments it records a base, and at no other time. One more reading, how the
 branch got from the last landing's base to that tip, is taken only by a check that finds the two
-differ (below):
+differ (below). Of a pull request it reads one fact as well, the commit its head points at, and only
+for a turn that records a pull request on an `owner/name` repository: when `merge-turn-ready` moves the
+turn's head and when `merge-turn-check` begins the merge
+([a restated head](#a-restated-head-is-a-new-candidate)). The base readings are:
 
 | Command | What it reads and records |
 | --- | --- |
@@ -211,6 +214,39 @@ also be passed on, below), and
 separate facts. The same rule from the other side is that a parent asserting its turn in
 conversation changes nothing: only a write by the registered project parent does.
 
+## One live turn per parent per target
+
+A parent holds at most one live turn (waiting, holding, merging or of unknown effect) on a target,
+and that turn is bound to the pull request it was claimed for: `merge-turn-request --pr <n>
+--relationship <id>` records both. A request for another pull request used to be answered with the
+live turn and nothing said so, and a caller that took it for the turn of the pull request it asked
+about declared that pull request's head on the live one (2026-10-04). It is refused now.
+
+- A request that states no pull request and no relationship is the replay of the live turn, as
+  before (`alreadyClaimed: true`).
+- A request that states some is the replay only when every identity it states is recorded on the turn
+  and equal (the pull request number, the relationship id). Another pull request or another
+  relationship is refused `disposition_conflict`. So is an identity the turn does not record at
+  all, whatever head the request states: two pull requests can point at one commit (2026-10-05), so
+  the head does not tell a request for the turn's own pull request from one for another. A refused
+  request writes nothing to the turns or their ledgers; the refusal is kept as a contest
+  (`merge-turn-show` lists it). It names the live turn, what it is bound to, its state, its place in
+  the order and the step that frees the target, says whether the request contradicts the turn or only
+  names what the turn does not record, and tells the caller to repeat the request with the arguments
+  the claim was made with, which adds or changes no identity of the turn.
+- The place is counted among the live claims on the target in the order the lane serves them: the
+  claims that hold the target first, then the waiting ones by the time they were made, which is the
+  order a released target promotes them in. A claim that closed is not counted.
+- The other pull request's turn, or the same pull request with other identities, is requested after
+  the earlier one lands or is returned (`merge-turn-release --disposition returned`; a waiting claim
+  is withdrawn with `merge-turn-withdraw`). A claim records the identities it was made with and never
+  gains one. A claim made with no pull request and no relationship records nothing to compare, so it
+  answers only a request that states nothing, and a claim that records one kind only (a relationship
+  but no pull request) answers only a request that states that relationship or nothing: state both on
+  every claim.
+- `dag-merge-request` applies a stricter comparison to the turn it is answered with (pull request,
+  relationship, head and project) and refuses `disposition_conflict` as before.
+
 ## A restated head is a new candidate
 
 A holder that refreshes its pull request branch inside its turn has a new head, and the turn still names the old
@@ -231,6 +267,44 @@ the head being a different commit. Both are deliberate: they were written with t
   grant could never answer it, and one that had could merge a candidate it acknowledged nothing about. This grant wakes
   nobody. The answer to the restating call names it, and `merge-turn-show` reads it later. A waiting claim holds no grant;
   it is granted one when it takes the target.
+
+**A head declared or restated on a turn that records a pull request or a relationship is the head of what it is bound to.**
+`merge-turn-ready` and `merge-turn-check` compare the head with a source of truth, in this order:
+
+- A turn that records a pull request on a forge repository (`owner/name`) is compared with that pull request's head: one GET of
+  `repos/<owner>/<name>/pulls/<n>`, before the transaction. Another pull request's head is refused `merge_candidate_moved`,
+  naming the pull request, the head the forge reads and the head declared; a forge that cannot be read is refused
+  `merge_target_unreadable`. The answer's `pullRequestHead` is `{"pullRequest", "decidedBy": "forge", "head", "source"}`.
+- Every other turn that records a pull request or a relationship (a local-path repository, which records a pull request
+  number but not where it lives, or a claim that names only a relationship) is compared with the head the relationship's
+  current work reports name: the latest head-bearing submission of every event in the newest generation that names a head.
+  Another head is refused `merge_candidate_moved`, two different heads `revision_ambiguous`, and a relationship attached to
+  another project `foreign_scope`. A report that names the head for another pull request than the turn's, or for another
+  repository when the turn is on a forge repository, is another pull request's head and is refused `merge_candidate_moved` too
+  (a report that names no pull request has no number to contradict, and a local path cannot be matched to a repository). The answer's `pullRequestHead` is
+  `{"pullRequest" (the number, or null), "decidedBy": "work_report", "head", "relationship"}`.
+- When there is nothing to compare the head with, the call is refused `merge_target_unreadable` and the text says how to get one
+  compared: claim with `--pr` on a forge repository, or with `--relationship` and retry after a work report records the head
+  (a local-path turn with a pull request and no relationship; a relationship with no work report that names a head). Nothing
+  in the product records a work report ([the port decisions](../port/decisions.md), section 53), so a claim that is not on a
+  forge repository with a pull request refuses until a store holds one: the lane is forge-only in practice.
+
+`merge-turn-ready` compares a head that moved, and also readiness declared on a head that did not (`--ready` with the
+turn's own candidate head, or no `--head`): a head recorded wrong from the start is stopped there and not only at the check.
+Withdrawing readiness (`--not-ready`) on a head that did not move asserts nothing about the head and compares nothing. No
+refusal changes the turn, its candidate head or its ledger; each is kept as a contest like the lane's other refusals, and a
+refused `merge-turn-check` as a check row. A claim that records neither a pull request nor a relationship records nothing to
+compare, and is not compared. A recorded forge pull request is never decided by the turn's record: a relay with no pull request
+reader (a service built by a test; the relay commands always supply one) refuses it `merge_target_unreadable` at
+`merge-turn-ready`, moved head or not, and a `merge-turn-check` given a reader that cannot read pull requests refuses it the same
+way even when the relay has one. A work report does not stand in for the missing reader. A branch update is asynchronous on the
+forge, so the first declaration after a refresh can still read the old head: the refusal says to read the pull request again
+and declare the head it shows, and a repeated refusal is not an escalation. A candidate that changes between the read of the
+forge and the transaction is not the candidate that was read
+for: the call is refused `merge_target_unreadable` ("call again"), even when the forge agrees with the head. `merge-turn-check`
+compares the head it restates, before the merge begins and before the base is compared, and is what stops a turn that a relay
+older than this rule left holding another pull request's head. The head a claim states at `merge-turn-request --head` is
+not compared: the check is its gate.
 
 The answer to the restating call carries `readinessReset` whenever the head changed: `previousHead`, `candidateHead`,
 `readyRequested` (what the call asked for), `grantId` (the grant the holder now owes, null for a waiting claim) and
@@ -449,6 +523,65 @@ a pull request comment is never exempted.
   like `--required` and `--actor`; the payload carries each entry so the merge record keeps the
   grade and the evidence that were given.
 
+## An independent review beside a restatement
+
+A child that ran the independent code review (`crw review`) states what it did with the result in an
+`independentReview` item. The item is a reference opinion for the parent and never a merge gate, so
+everything below is a warning: it is read beside the restatement, not in it, and changes neither
+`restatement.current`, its problems, the verdict nor the exit code.
+
+The item is one JSON object (its definition is `definitions.IndependentReview` in the
+completion-receipt contract): `artifact` (`path`, absolute, and `sha256` of the file's bytes), `status`
+(`complete`, `partial` or `unavailable`) with its `reason`, `invalidReviewerCalls`, an optional
+`headPatchId`, and `dispositions`, one `{finding, disposition, evidence}` per answered finding, where
+`finding` is the zero-based position in the artifact's `findings` and `disposition` is `fixed`,
+`refuted` or `recorded`. Without an artifact (`unavailable`, nothing was written) there is nothing to
+compare. The child states it in two places: `emit --independent-review <file>` puts it on a
+`ready_for_review` receipt, which the relay stores as stated and never reads the artifact it names (an
+execution-only receipt carrying it is refused `malformed_receipt`), and the same object is the
+`independentReview` member of the handoff record. The relay's `work_report_handoffs` rows have fixed
+columns and do not carry it.
+
+`merge-evidence --restate <record>` reads the record's member. The payload gains a top-level
+`independentReview` object, `{"stated": <bool>, "warnings": [{"code", "detail"}]}`, when the record states
+the item, or when `--expect-independent-review` is given (the flag grades a restated record and is a
+usage error without `--restate`). Otherwise the payload is exactly what it was.
+
+- **What is compared.** The item's shape; the file at `artifact.path`; its sha256 against the file's
+  bytes; its status against the artifact's; the artifact's head against the forge's current candidate
+  head (the collected snapshot's pinned `headSha`, or the head under restatement when the forge reports
+  none); and every kept P0, P1 or security finding of the artifact against the dispositions. The head
+  matches when it is the same commit, or when the item's `headPatchId` equals the artifact's `patchId`
+  and the candidate head is the head the record is about: a base refresh does not change the patch, and a
+  head whose patch-id is unchanged is not reviewed again. The item's `headPatchId` describes the head the
+  record is about, not the candidate head, so a candidate head the record does not describe is warned
+  about and the stated patch-id is not reused: whether the candidate's code changed after the review is
+  told from a base refresh only when the record already covers that candidate. The relay does not compute
+  the patch-id; the parent confirms the stated one with the diff the review bundle builds (command below;
+  its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain `git diff` differs on binary
+  files).
+- **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
+  `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
+  `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the
+  stated sha256 ends the comparison with that one warning, since nothing read from other bytes
+  describes the file the child meant.
+- **Reading a path the record names.** The path must be absolute; the file is opened without waiting
+  for a writer, must be a regular file and is read to at most 8 MiB. No warning repeats what the file
+  holds, a validator's message or an operating-system error: only fixed text, the item's own scalars and
+  digests.
+- **What the relay does not decide.** Whether a finding is real, or whether an open one matters, is the
+  parent's judgement from the raw artifact ([the crw-run reading](../../plugins/crw/skills/crw-run/references/merge-readiness.md#the-independent-review-is-a-reference-opinion)).
+  The item is unauthenticated, like the rest of the record.
+
+The patch-id of `<head>` against `<base>`, as the review bundle computes it:
+
+```sh
+git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textconv --no-color \
+  --no-relative --diff-algorithm=myers --no-indent-heuristic --inter-hunk-context=0 \
+  --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none -O/dev/null -U3 -p \
+  $(git merge-base <base> <head>) <head> -- | git patch-id --stable
+```
+
 ## What this is not
 - **`reaffirm` spans two transactions, and that is a choice with a stated reason.** The first
   validates and records its refusals - ownership, an open agreement, a revision that actually
@@ -481,9 +614,10 @@ a pull request comment is never exempted.
   able to invoke the CLI is already inside the boundary.
 - **Forge evidence is cross-checked, never observed.** `merge-turn-check` verifies that what
   the caller restated is internally consistent and current against what this store knows. It
-  cannot see the pull request; what it reads from the target is where the base branch points
+  cannot see the pull request's checks, reviews or threads; what it reads from the target is where the base branch points
   and, only when the last landing's recorded base is older than that tip, how the branch got
-  there (see above). An operator who wants proof that required CI was green reads
+  there (see above), and, for a turn bound to a pull request on an `owner/name` repository, the
+  head of that pull request, which it compares with the head it is given. An operator who wants proof that required CI was green reads
   the forge, not this record.
 
 - **An agreement confers nothing.** Not merge permission, not authority to instruct, not a
@@ -503,7 +637,7 @@ a pull request comment is never exempted.
   two totals and neither is a host-wide number.
 - **Required checks are restated, not discovered.** `merge-turn-check --required` is the
   caller's declaration of what branch protection requires, stored as `requiredDeclared`. The
-  merge turn never reads a forge's rules or checks; it reads where the base branch points and, in the one case described under "A merge outside the lane", how it moved. What the check establishes is that the restated evidence is
+  merge turn never reads a forge's rules or checks; it reads where the base branch points, in the one case described under "A merge outside the lane" how it moved, and for a turn bound to a pull request that pull request's head. What the check establishes is that the restated evidence is
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
   here (or restated by the check itself after a confirmed merge outside the lane), and the

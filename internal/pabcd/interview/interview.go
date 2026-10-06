@@ -1,7 +1,7 @@
 // Package interview ports the IPABCD interview tracker of CXC v0.2.40 (pabcd-state
 // interview.ts, commit 3c1459ac): the tracker schema, the bounded fail-closed reconstruct, the
 // readiness predicate (the one source of the session's interview flag) and the I->P soft gate.
-// It is a pure library: it reads no file and starts no process.
+// Apart from freezecli.go, which reads the plan and writes the freeze manifest, it reads no file and starts no process.
 //
 // Behaviour is ported as-is: lossy data reconstructs to fail-closed defaults (an invalid level
 // is "low", an invalid confidence 0, a legacy assumption unrecorded, an unknown severity "high")
