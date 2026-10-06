@@ -399,3 +399,30 @@ func crw737SeedOtherReceiptReply(t *testing.T, state string) {
 		t.Fatal(err)
 	}
 }
+
+// Review findings on PR #778, CLI level: an unknown --decision is the relay's refusal, not a host
+// error, and applying a record that has not been answered is refused.
+func TestCRW737UnknownDecisionAndUnansweredApplyAreRefused(t *testing.T) {
+	state := crw737Store(t)
+	for _, argv := range [][]string{
+		{"decision-answer", "--decision", "ud-nosuch", "--option", "now", "--by", "task-a", "--via", "direct-ask"},
+		{"decision-apply", "--decision", "ud-nosuch", "--event", "ev-1"},
+		{"decision-withdraw", "--decision", "ud-nosuch", "--reason", "obsolete"},
+	} {
+		got := crw737Run(t, append([]string{"--state", state}, argv...)...)
+		if got.code != 2 {
+			t.Fatalf("%v: exit %d, want 2\nstdout %s\nstderr %s", argv, got.code, got.stdout, got.stderr)
+		}
+		value := crw737JSON(t, got)
+		if value["ok"] != false || value["reason"] != "unregistered_relationship" {
+			t.Fatalf("%v answered %v, want an ok false refusal", argv, value)
+		}
+	}
+	// A record that has not been answered cannot be applied, whatever event is named.
+	raised := crw737JSON(t, crw737Raise(t, state, "PRJ-A", "Which window does the host update take?"))
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply",
+		"--decision", raised["decisionId"].(string), "--event", "ev-1"), "disposition_conflict")
+	// A control character in a free-text field is a refusal too, not a host error.
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-withdraw",
+		"--decision", raised["decisionId"].(string), "--reason", "a\x00b"), "bad_invocation")
+}
