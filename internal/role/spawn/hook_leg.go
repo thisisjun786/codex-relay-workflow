@@ -31,7 +31,22 @@ const (
 // RunHook is the oracle's main: read the hook's input, record the invocation unless the input overflowed, and write
 // RunSpawnAttachHook's answer when it has one. It adds no newline of its own (the oracle's `if (out) process.stdout.write(out)`);
 // every envelope it writes already ends with one.
+//
+// The read runs on its own goroutine so the interrupt wins: the oracle's Node process ends at once on SIGINT, even while it
+// waits for its input, so an input that never arrives cannot keep this leg alive. harness.Hook and the sibling component legs
+// (job, recall, affordance) answer the same way. A read that completes after the interrupt is neither recorded nor answered.
 func RunHook(ctx context.Context, in io.Reader, out io.Writer, env host.LookupEnv) int {
+	done := make(chan int, 1)
+	go func() { done <- runHook(ctx, in, out, env) }()
+	select {
+	case code := <-done:
+		return code
+	case <-ctx.Done():
+		return harness.Interrupted
+	}
+}
+
+func runHook(ctx context.Context, in io.Reader, out io.Writer, env host.LookupEnv) int {
 	raw, overflow := harness.ReadStdin(in)
 	if ctx.Err() != nil {
 		return harness.Interrupted

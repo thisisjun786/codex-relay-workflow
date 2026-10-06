@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 )
@@ -255,5 +256,38 @@ func TestSpawnLegInterrupted(t *testing.T) {
 	var out bytes.Buffer
 	if code := RunHook(ctx, strings.NewReader(`{}`), &out, rig.env); code != harness.Interrupted || out.Len() != 0 {
 		t.Fatalf("interrupted: exit %d, output %q", code, out.String())
+	}
+}
+
+// TestSpawnLegEndsOnAnInterruptWhileItsInputIsStillOpen is this leg half of
+// cmd/crw TestAnInterruptEndsAHookLegWaitingForItsInput: the first interrupt ends the leg at once, while the read is
+// still waiting for input the caller never sends. A leg that reads inline would hang here until the pipe closes.
+func TestSpawnLegEndsOnAnInterruptWhileItsInputIsStillOpen(t *testing.T) {
+	rig := spawnHookNewRig(t, spawnHookReadFixture(t).Skills, spawnHookCase{})
+	spawnLegEnv(t, rig)
+	in, hold, err := os.Pipe()
+	spawnHookMust(t, err)
+	defer hold.Close()
+	defer in.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(50*time.Millisecond, cancel)
+	type result struct {
+		code int
+		out  string
+	}
+	got := make(chan result, 1)
+	go func() {
+		var out bytes.Buffer
+		code := RunHook(ctx, in, &out, rig.env)
+		got <- result{code, out.String()}
+	}()
+	select {
+	case r := <-got:
+		if r.code != harness.Interrupted || r.out != "" {
+			t.Fatalf("interrupted leg: exit %d, output %q", r.code, r.out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an interrupted leg is still waiting for its input")
 	}
 }
