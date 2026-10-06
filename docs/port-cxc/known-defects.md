@@ -1291,7 +1291,10 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
   runs only echo because the two words are the shell's `$0` and `$1`, was denied (source `internal/pabcd/hook/worktreedel.go`
   before this change); port: fixed by CRW-670 for sh, bash, dash and ash (`worktreeDelShellDataOperands`: the operands after
   their `-c` program are data, option-like ones included, so a later `-c` is not read for them; a redirection word among the
-  operands and a program that can name its operands still read them all, and `su`, zsh and every other shell keep the reading
+  operands and a program that is not certain still read them all (`worktreeDelCertainProgram`: a program that holds a
+  substitution, a separator, a pipe, a redirection or a parenthesis, or that names its arguments through a dollar sign, a
+  backtick, ARGV, ARGC, argv or the `BASH_AR*` variables, is uncertain, so an obfuscated name such as a grep pattern that
+  spells `BASH_AR.V` still reads them, found by an internal review of this change), and `su`, zsh and every other shell keep the reading
   of every later option-like word, so no other row or fixture changes). A program that holds a backtick can synthesize a
   positional reference it then evaluates, so such a program is not certain either and the operands after it are read too
   (found by the pull request's reviews).

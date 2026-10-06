@@ -748,6 +748,18 @@ func worktreeDelOptionWord(word string) bool {
 	return word != "" && (word[0] == '-' || word[0] == '+')
 }
 
+// worktreeDelCertainProgram says whether a shell program is a plain command that cannot reach the operands the shell hands it as
+// $0, $1 and so on. A program that holds a substitution, a separator, a pipe, a redirection or a parenthesis, or that names the
+// arguments (a dollar sign, a backtick, or ARGV, ARGC, argv or the BASH_AR* variables), is not certain, so the walk reads every
+// operand after it as a program. A name check alone would miss an obfuscation (a grep pattern that spells BASH_ARGV around a
+// wildcard), so any construct that could run a second command makes the program uncertain too.
+func worktreeDelCertainProgram(word string) bool {
+	if strings.ContainsAny(word, "$\x60|;&()<>\n") {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(word), "arg")
+}
+
 // worktreeDelShellProgramEnd is how many of a shell's operands the walk reads as programs: the words from there on are $0, $1
 // and so on, which the shell does not read (bash -c 'echo OK' 'rm -rf x' runs echo). It is every operand, the reading that
 // CRW-611 left, unless the program is certain, and it holds back wherever the option parse could be wrong or the words after the
@@ -755,9 +767,8 @@ func worktreeDelOptionWord(word string) bool {
 // its operands (a dollar sign, BASH_ARGV, argv: bash -c 'eval "$0"' 'rm -rf x' runs rm). For sh, bash, dash and ash the operands
 // after the program are the inner shell's $0, $1 and so on whatever they look like, so a later option-like word is not a program
 // (bash -c 'echo OK' -c 'rm -rf x' runs echo, CRW-670); su, whose last -c is its program, and every other shell keep the reading
-// of every later option-like word, because the walk does not tell those shells apart. A backtick in the program is a command
-// substitution that can synthesize a positional reference the program then evaluates (bash -c 'eval `printf "\x24\x31"`' -c
-// 'rm -rf x' runs rm), so the program is not certain either.
+// of every later option-like word, because the walk does not tell those shells apart. The program is certain only when it is a
+// plain command that cannot reach its operands (worktreeDelCertainProgram).
 func worktreeDelShellProgramEnd(name string, operands []string) int {
 	program := -1
 	switch name {
@@ -775,7 +786,7 @@ func worktreeDelShellProgramEnd(name string, operands []string) int {
 		}
 	}
 	word := operands[program]
-	if strings.Contains(word, "$") || strings.Contains(word, "BASH_ARG") || strings.Contains(word, "argv") || strings.Contains(word, "`") ||
+	if !worktreeDelCertainProgram(word) ||
 		worktreeDelOptionWord(word) && !strings.ContainsAny(word, " \t\r\n;&|()") {
 		return len(operands)
 	}

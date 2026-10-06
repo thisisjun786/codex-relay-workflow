@@ -44,7 +44,9 @@ func TestWorktreeDelOperandDataStaysData(t *testing.T) {
 		"bash -c 'echo OK' \"$(rm -rf ./build)\"",
 	)
 	r.denied(t, "bash -c 'eval \"$0\"' 'rm -rf ../repo'", "rm -r ../repo")
-	r.denied(t, "bash -c 'eval `printf \"\\x24\\x31\"`' -c 'rm -rf ../repo'", "rm -r ../repo") // a program that synthesizes $1 is not certain
+	r.denied(t, "bash -c 'eval `printf \"\\x24\\x31\"`' -c 'rm -rf ../repo'", "rm -r ../repo")                                         // a program that synthesizes $1 is not certain
+	r.denied(t, "bash -c 'declare -p | grep \"^declare -a BASH_AR.V=\" | cut -d\\\" -f2 | bash' -c 'rm -rf ../repo'", "rm -r ../repo") // an obfuscated BASH_ARGV and a pipeline make the program uncertain
+	r.denied(t, "bash -c 'echo $1' -c 'rm -rf ../repo'", "rm -r ../repo")
 	r.denied(t, "su -c 'echo ok' -c 'rm -rf ../repo' root", "rm -r ../repo")
 	r.intact(t)
 }
