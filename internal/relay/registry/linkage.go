@@ -19,6 +19,7 @@ import (
 const (
 	scopeIssue   = "issue"
 	scopeProject = "project"
+	scopeStore   = "store"
 	roleChild    = "child"
 	roleParent   = "parent"
 	linkExec     = "execution"
@@ -243,9 +244,14 @@ func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bo
 	return hasRecord, nil, nil
 }
 
-// bindingPlan is linkage.binding_plan.
+// bindingPlan is linkage.binding_plan for a binding on the role's own level.
 func (l linkage) bindingPlan(ctx context.Context, role, key string, endpoint Endpoint, replacing string) (*bindingPlan, *linkRefusal, error) {
-	kind := roleScope[role]
+	return l.bindingPlanKind(ctx, role, roleScope[role], key, endpoint, replacing)
+}
+
+// bindingPlanKind is linkage.binding_plan for a binding whose scope kind is named rather than the
+// role's own: the store seat is the only binding that names one (CRW-450).
+func (l linkage) bindingPlanKind(ctx context.Context, role, kind, key string, endpoint Endpoint, replacing string) (*bindingPlan, *linkRefusal, error) {
 	if err := encodedID(role, kind, key, endpoint.TaskID); err != nil {
 		return nil, nil, err
 	}
