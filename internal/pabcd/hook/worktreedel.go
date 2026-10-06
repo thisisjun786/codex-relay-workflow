@@ -770,6 +770,19 @@ func worktreeDelQuoteProgramPosition(words []string) bool {
 	return false
 }
 
+// worktreeDelUnreadableProgramIndex is the operand that holds a shell's -c program, or -1 when the option parse is not
+// certain of one: the same parse worktreeDelQuoteProgram and worktreeDelShellProgramEnd use. A candidate the shell's own
+// options cannot place is read only when it holds a blank or a separator, the reading CRW-611 left.
+func worktreeDelUnreadableProgramIndex(name string, operands []string) int {
+	switch name {
+	case "su":
+		return worktreeDelSuProgram(worktreeDelQuoteDropRedirects(operands))
+	case "sh", "bash", "dash", "ash", "zsh", "ksh":
+		return worktreeDelFlagShellProgram(worktreeDelQuoteDropRedirects(operands))
+	}
+	return -1
+}
+
 // worktreeDelShellOperandsJoin is the command line a shell builds from the operands it hands its program as $1, $2 and so
 // on: the words after the program's own $0, joined by blanks. A program that names its operands ($@, $*, BASH_ARGV) runs
 // that line, so the walk reads it as a program too (CRW-726, c14(c)). It is empty when the shell's own option parse did
@@ -1082,6 +1095,7 @@ func worktreeDelSubstitutions(segment, cwd string) []worktreeDelSubstitution {
 	var out []worktreeDelSubstitution
 	r := worktreeDelQuoteReader{prev: ' '}
 	segCwd := cwd
+	brace := 0 // how many ${...} parameter expansions enclose the byte being read
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		if r.escapes(segment, i) {
@@ -1093,18 +1107,24 @@ func worktreeDelSubstitutions(segment, cwd string) []worktreeDelSubstitution {
 			r.step(c)
 			continue
 		}
-		if c == '$' && i+1 < len(segment) && segment[i+1] == '{' {
-			// a ${...} parameter expansion is read to its closing }, where a # is data and never opens a comment (CRW-726, c13)
-			n := worktreeDelBraceEnd(segment[i+2:]) + 2
-			i += n - 1
-			r.prev = 'x'
-			continue
+		// A ${...} parameter expansion is stepped through rather than skipped: a # inside it is data and never opens a comment
+		// (CRW-726, c13), and a command substitution nested in it is still read (a skip would hide it). The reader's brace
+		// flag carries the same suppression into the segmenter and the tokenizer, which call step themselves.
+		switch {
+		case c == '$' && i+1 < len(segment) && segment[i+1] == '{':
+			brace++
+		case c == '}' && brace > 0:
+			brace--
 		}
-		if target, n := worktreeDelCdAt(segment, i, r.prev); n > 0 { // a cd moves the directory the later substitutions run in
-			segCwd = resolveFrom(segCwd, target)
-			i += n - 1
-			r.prev = 'x'
-			continue
+		r.brace = brace > 0
+		if r.state == worktreeDelQuotePlain {
+			// a cd moves the directory the later substitutions run in; text in double quotes is no command of this shell
+			if target, n := worktreeDelCdAt(segment, i, r.prev); n > 0 {
+				segCwd = resolveFrom(segCwd, target)
+				i += n - 1
+				r.prev = 'x'
+				continue
+			}
 		}
 		var body string
 		var n int
@@ -1655,7 +1675,15 @@ func worktreeDelUnreadablePositions(words []worktreeDelUnreadableWord) []worktre
 			}
 		case strings.Contains(worktreeDelQuoteShells, " "+name+" "):
 			operands := plain[i+1:]
-			for k := range operands[:worktreeDelShellProgramEnd(name, operands)] {
+			end := worktreeDelShellProgramEnd(name, operands)
+			program := worktreeDelUnreadableProgramIndex(name, operands)
+			for k := range operands[:end] {
+				// Only a position the shell's own option parse names is a program for sure. When that parse is uncertain the
+				// walk's own reading is kept: a word is a candidate only when it holds a blank or a separator, so an option
+				// argument such as --rcfile "$X" is not refused as a program (CRW-726, c14(d)).
+				if program >= 0 && k != program || program < 0 && !strings.ContainsAny(operands[k], " \t\r\n;&|()") {
+					continue
+				}
 				found = append(found, worktreeDelUnreadableShellParts(name, words[i+1+k])...)
 			}
 		}
@@ -1756,6 +1784,10 @@ func worktreeDelUnreadableCommandWord(words []string) int {
 				i++ // a lone operator takes the next word as its target
 			}
 			i++
+			continue
+		}
+		if isAssignment(words[i]) && i+1 < len(words) {
+			i++ // a leading assignment is no part of the command word (Y=1 $X -rf ../repo runs $X)
 			continue
 		}
 		switch basename(words[i]) {
@@ -2054,6 +2086,33 @@ func worktreeDelUnreadableHereExpansion(body string) bool {
 	return false
 }
 
+// worktreeDelUnreadableDataMask is text with the here-document bodies that are data blanked out, their newlines kept so
+// the line structure of the rest is unchanged: a body is data when the command that opened it is not a listed shell
+// reading its program from standard input. Without this the ordinary segment scan would read a program position inside
+// text the shell only hands to a command such as cat (CRW-726). A body a listed shell reads stays as it is, because it
+// is a program of its own.
+func worktreeDelUnreadableDataMask(text string) string {
+	out := []byte(text)
+	for i := 0; i < len(text); {
+		line, after := worktreeDelUnreadableLine(text, i)
+		ops := worktreeDelUnreadableHereOperators(line)
+		if len(ops) == 0 {
+			i = after
+			continue
+		}
+		_, next := worktreeDelUnreadableHereBodies(text, after, ops)
+		if !worktreeDelUnreadableLineShell(line) {
+			for j := after; j < next; j++ {
+				if out[j] != '\n' {
+					out[j] = ' '
+				}
+			}
+		}
+		i = next
+	}
+	return string(out)
+}
+
 // worktreeDelUnreadableRefusal is what the reading found: command says the CRW-772 command-name rule refused the
 // command rather than a program position, and what names the position the way the refusal reads it.
 type worktreeDelUnreadableRefusal struct {
@@ -2131,7 +2190,7 @@ func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool
 	if refusal, ok := s.heredocs(text, cwd, depth, named); ok {
 		return refusal, true
 	}
-	for _, reading := range worktreeDelReadings(text) {
+	for _, reading := range worktreeDelReadings(worktreeDelUnreadableDataMask(text)) {
 		segCwd := cwd
 		for _, cut := range worktreeDelUnreadableCuts(reading) {
 			if cut.text == "(" || cut.text == ")" {

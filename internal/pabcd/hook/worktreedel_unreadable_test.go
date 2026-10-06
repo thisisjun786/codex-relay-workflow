@@ -216,3 +216,26 @@ func TestWorktreeDelDepthLimitPosition(t *testing.T) {
 	worktreeDelWrapperNestDenied(t, r, "sh -c x8 true", worktreeDelQuoteNest("bash -c true", 8), worktreeDelWrapperDeep)
 	r.intact(t)
 }
+
+// TestWorktreeDelReviewFindings pins the five findings the PR's own Devin review raised. The first two were security
+// regressions this change introduced (a nested substitution hidden by the ${...} skip, and quoted text read as a cd)
+// and the third an over-denial it introduced (here-document data read as a program); the fourth and fifth were
+// over-denial and a bypass in the new reading. Each is fixed here and stays pinned.
+func TestWorktreeDelReviewFindings(t *testing.T) {
+	r := newDelRig(t)
+	// A command substitution nested in a ${...} parameter expansion is still read, in double quotes too.
+	r.denied(t, "echo \"${x:-$(rm -rf ../repo)}\"", "rm -r ../repo")
+	r.allowed(t, "echo \"${x:-$(rm -rf ../other)}\"", "echo \"${x:-$(true)}\"")
+	// Text inside double quotes is no cd of this shell: the substitution after it is judged from the checkout.
+	r.denied(t, "echo \"cd /tmp $(rm -rf ../repo)\"", "rm -r ../repo")
+	r.allowed(t, "echo \"cd /tmp $(rm -rf ../other)\"")
+	// A here-document that feeds a command which is no listed shell is data: no program position is read in it.
+	r.allowed(t, "cat <<EOF\nbash -c \"$X\"\nEOF", "cat <<'EOF'\nbash -c \"$X\"\nEOF")
+	worktreeDelUnreadableDenied(t, r, "bash <<EOF\n$(printf 'rm -rf ../repo')\nEOF", "a shell program read from a here-document")
+	// An option argument is no program position: bash runs the literal script file.
+	r.allowed(t, "bash --rcfile \"$X\" script.sh", "bash --init-file \"$X\" script.sh")
+	// A leading assignment is no part of the command word, so the name word after it is judged.
+	worktreeDelNamedDenied(t, r, "Y=1 $X -rf ../repo", "a command named by an expansion")
+	r.allowed(t, "Y=1 \"$GO\" test ./...")
+	r.intact(t)
+}
