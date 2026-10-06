@@ -985,7 +985,10 @@ func worktreeDelBraceEnd(rest string) int {
 // worktreeDelSubstitutions is the programs a segment runs before it runs: the body of every command substitution, $(...) and
 // backtick, and of every process substitution, <(...) and >(...), that stands in plain text or inside double quotes, because
 // the outer shell reads and runs each of them first (CRW-670). A substitution inside single quotes, inside $'...' or inside a
-// comment is data, and so is a $, < or backtick that a backslash escapes.
+// comment is data, and so is a $, < or backtick that a backslash escapes. The rest of the segment from an opener is judged
+// with the body: the body reader cannot model every construct bash allows inside a substitution (a case pattern's ) closes
+// it early, a nested substitution under an outer double quote confuses its quote state), and a body it cut short would
+// otherwise hide the rest of the substitution. Reading past the body can only deny too much, never too little.
 func worktreeDelSubstitutions(segment string) []string {
 	var out []string
 	r := worktreeDelQuoteReader{prev: ' '}
@@ -1002,14 +1005,18 @@ func worktreeDelSubstitutions(segment string) []string {
 		}
 		var body string
 		var n int
+		var start int // the byte after the opener: the whole rest of the segment is judged with the body
 		switch {
 		case c == '$' && i+1 < len(segment) && segment[i+1] == '(':
+			start = i + 2
 			body, n = worktreeDelSubstitutionBody(segment[i+2:], false)
 			n += 2
 		case c == '`':
+			start = i + 1
 			body, n = worktreeDelSubstitutionBody(segment[i+1:], true)
 			n++
 		case (c == '<' || c == '>') && i+1 < len(segment) && segment[i+1] == '(':
+			start = i + 2
 			body, n = worktreeDelSubstitutionBody(segment[i+2:], false)
 			n += 2
 		default:
@@ -1018,6 +1025,9 @@ func worktreeDelSubstitutions(segment string) []string {
 		}
 		if strings.TrimSpace(body) != "" {
 			out = append(out, body)
+		}
+		if tail := strings.TrimSpace(segment[start:]); tail != strings.TrimSpace(body) { // the rest of the substitution the reader did not delimit
+			out = append(out, tail)
 		}
 		i += n - 1
 		r.prev = 'x' // the substitution is part of the word it stands in: a # after it does not open a comment

@@ -27,6 +27,7 @@ func TestWorktreeDelOperandSubstitutions(t *testing.T) {
 	r.denied(t, "echo `true`#`rm -rf ../repo`", "rm -r ../repo")
 	r.denied(t, "echo \"$(echo ${x:-)}; rm -rf ../repo)\"", "rm -r ../repo")
 	r.denied(t, "bash -c 'echo OK' \"$(echo \")\"; rm -rf ../repo)\"", "rm -r ../repo")
+	r.denied(t, "echo \"$(case x in x) : ;; esac; rm -rf ../repo)\"", "rm -r ../repo") // the rest of the segment is judged with the body
 	worktreeDelWrapperNestDenied(t, r, "sh -c x9 true", worktreeDelQuoteNest("true", 9), worktreeDelWrapperDeep)
 	r.intact(t)
 }

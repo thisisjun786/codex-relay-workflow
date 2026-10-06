@@ -1307,6 +1307,16 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
   direction (found by the pull request's reviews); port: kept (a false positive; follow-up proposal: read `<(...)` and `>(...)`
   only in plain text, where bash performs them).
 
+  by the pull request's reviews).
+
+- The body reader does not model two constructs bash allows inside a substitution, so a removal after either of them inside
+  a double-quoted substitution is not read: a nested substitution whose own quotes confuse the outer double quote's state
+  (`echo "$(printf '%s' "$(echo ")")"; rm -rf ../repo)"`) and a `#` that stands after a blank inside a `${...}` parameter
+  expansion, which the segmenter reads as a comment (`echo "$(echo ${x:- #}; echo `rm -rf ../repo`)"`). Both commands were
+  allowed on the base commit as well (checked against 8a8a466a), so neither is a regression of this change; both need the
+  segmenter to parse nested substitutions and parameter expansions, which is a larger change than this issue carries; port:
+  kept (follow-up proposal).
+
 ## CRW-649 — the review-round working-directory boundary and the plan key
 
 Source: `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts` at v0.2.40 (commit 3c1459ac), through
