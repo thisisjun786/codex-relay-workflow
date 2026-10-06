@@ -178,3 +178,25 @@ func TestDispatchCommandFallsBackWhenTheOpenerFails(t *testing.T) {
 		t.Fatalf("close with a failing opener = %q %q", out.Action, out.Reason)
 	}
 }
+
+// An input that cannot be read as a dispatch record never dials either: the opener is reached only
+// for a record that already reads as a stopped report, so malformed or non-object input takes the
+// same nil-host path as on dev and CheckedDispatch produces its canonical refusal.
+func TestDispatchCommandNeverDialsForUnreadableInput(t *testing.T) {
+	dispatchHostRestoreOpen(t)
+	ws := t.TempDir()
+	t.Chdir(ws)
+	env := dispatchHostEnv(t, dispatchHostNative(t))
+	calls := 0
+	OpenDispatchHost = func(host.LookupEnv) (DispatchHost, func(), error) {
+		calls++
+		return nil, func() {}, nil
+	}
+	for _, input := range []string{"[]", "null", "{}", `{"action":"report"}`, `{"action":"report","outcome":"stopped"}`} {
+		var out bytes.Buffer
+		_ = DispatchCommand(nil, strings.NewReader(input), &out, env)
+	}
+	if calls != 0 {
+		t.Fatalf("the opener was asked for %d times for unreadable or incomplete input", calls)
+	}
+}

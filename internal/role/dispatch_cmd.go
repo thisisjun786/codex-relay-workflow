@@ -66,13 +66,22 @@ func dispatchChecked(ctx context.Context, cwd string, input any, env host.Lookup
 	return CheckedDispatch(ctx, cwd, input, env, h)
 }
 
-// dispatchIsStoppedReport reports whether the input is a report whose outcome is stopped, the one
-// action the stopped close owns. An input that cannot be read as a dispatch record is not one:
-// CheckedDispatch produces the canonical refusal for it.
+// dispatchIsStoppedReport reports whether the input is a stopped close the host could help: a report
+// whose outcome is stopped and that names the record it closes. An input that cannot be read as a
+// dispatch record, or that omits the session, dispatch or attempt id, is not one: the close cannot
+// proceed on it and CheckedDispatch produces the canonical refusal without a host, so nothing dials.
 func dispatchIsStoppedReport(input any) bool {
 	b, err := dispatchRecord(input)
 	if err != nil {
 		return false
 	}
-	return dispatchIs(b["action"], "report") && dispatchIs(b["outcome"], "stopped")
+	if !dispatchIs(b["action"], "report") || !dispatchIs(b["outcome"], "stopped") {
+		return false
+	}
+	for _, key := range []string{"sessionId", "dispatchId", "attemptId"} {
+		if value, _ := b[key].(string); value == "" {
+			return false
+		}
+	}
+	return true
 }
