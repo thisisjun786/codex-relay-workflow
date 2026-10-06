@@ -5311,3 +5311,355 @@ itself, the merge-lane scripts and the skill documents. They ship with the slice
 above in the same rollout, so the lane is never left calling a command it cannot
 satisfy. The version line `plugin.json` records is settled by the coordinator's
 own merge of the tree, as it is for every sibling.
+
+## 79. A merge train reuses a proven tree; it never weakens the strict gate (CRW-725)
+
+Decision (design only, 2026-10-06): the strict conclusion holds for today's ruleset and
+workflow, and the answer to the central question is **tree-keyed result reuse in CI**. A
+merge train verifies the prefix trees of a batch once, in this repository's own workflow,
+and each member pull request then earns its `dev-gate` on its own new head by showing that
+the head's tree is one the workflow already took to success. The train record, the
+per-member tree proof and the CI reuse are follow-up slices; this section changes no
+running behavior.
+
+The ruleset, `POLICY.md` and the CI workflow changes this needs are Jun's decision and are
+collected at the end with a recommendation. The lane keeps one candidate and one turn per
+target; a batch of fewer than two members is today's lane, unchanged.
+
+### The strict conclusion holds, and it is about the check, not the tree
+
+Read with `gh api GET` on 2026-10-06:
+
+- `Protect dev` (ruleset id 23478245, `target: "branch"`, `enforcement: "active"`) applies to
+  `refs/heads/dev` only and carries four rules: `deletion`, `non_fast_forward`, `pull_request`
+  (`allowed_merge_methods: ["merge"]`, `required_approving_review_count: 0`,
+  `required_review_thread_resolution: true`, `dismiss_stale_reviews_on_push: true`,
+  `require_extra_approval_for_unattributed_changes: true`), and `required_status_checks`
+  (`strict_required_status_checks_policy: true`, one context `dev-gate` with
+  `integration_id: 15368`, GitHub Actions). `bypass_actors` is `[]` and
+  `current_user_can_bypass` is `"never"`.
+- `dev-gate` is the last job of `.github/workflows/ci.yml`; it runs `if: always()` with
+  `needs: [validate, secrets, go-product]` and passes only when every entry of
+  `toJSON(needs)` reports `success`. `go-product` is a seven-part matrix (`lint`, `test-1`
+  to `test-4`, `test-rest`, `dist`), so one run is ten jobs.
+- The owner is a user account, not an organization:
+  `repos/thisisjun786/codex-relay-workflow` reports `owner.type: "User"`, `visibility: "public"`.
+
+GitHub's primary documentation gives the two rules that settle the question:
+
+- A required status check is reported against one commit, and with "Require branches to be
+  up to date before merging" the head must contain the base tip and the required check must
+  have succeeded on the head's own latest commit. A branch updated after another landing is
+  a new commit, and the check runs against that commit ("About required status checks",
+  "Troubleshooting required status checks").
+- The native merge queue answers exactly this problem, but it is available "in any public
+  repository owned by an organization, or in private repositories owned by organizations
+  using GitHub Enterprise Cloud" (`data/reusables/gated-features/merge-queue.md`). It builds
+  a temporary merge group, runs the required checks on the group, and merges only after they
+  succeed, without asking the author to update the branch.
+
+So the conclusion holds as the issue states it, and it is a statement about the *check*:
+with the workflow and the ruleset unchanged, all-jobs success on a combined tree T cannot
+make the `dev-gate` required on a member's new head B' pass, because GitHub keys the check
+to B' and B' exists only because A's landing moved the base. The relay's records say the
+same from the other side: `merge_turns.candidate_head` is one head per turn
+(`contract/schema/relay-sqlite.sql:732`), `merge-turn-check` refuses a restated head that is
+not the turn's (`internal/relay/mergeturn/check.go:150`, `merge_candidate_moved`) and a base
+that is not the branch tip (`check.go:162`, `merge_currency_stale`), and `merge-turn-land`
+merges under the expected-head guard. What can change is *how the check on B' is satisfied*,
+and every option changes something outside the relay. Nothing relay-only removes that run.
+
+Sources for the two rules, read 2026-10-06: "About required status checks"
+(<https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks>),
+"Troubleshooting required status checks"
+(<https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks>),
+"Managing a merge queue"
+(<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue>),
+"Available rules for rulesets"
+(<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets>),
+and the reusable the merge queue availability sentence comes from,
+`data/reusables/gated-features/merge-queue.md`
+(<https://github.com/github/docs/blob/main/data/reusables/gated-features/merge-queue.md>).
+The dispatch `ref` rule and the merge ref a pull request run tests come from "Create a
+workflow dispatch event"
+(<https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event>, the
+`ref` is "a branch or tag name") and "Events that trigger workflows"
+(<https://docs.github.com/en/actions/reference/events-that-trigger-workflows>, a
+`pull_request` run's merge commit on the pull request's merge branch).
+
+### Question 1 — how each member head earns its `dev-gate`
+
+The yardsticks are the issue's criteria: no merge condition weaker, one issue one pull
+request, no new trust path, today's lane unchanged for one candidate and after a failed
+batch, and the gain stated in numbers. Estimates use the lane measurement of 2026-10-06
+(turn median 5.4 min, of which base refresh to CI end 5.2 min; about 10 merges an hour) and
+the merge policy draft's 2026-10-02 sample (S0 5.8 min, effective 9.3 min, 2.6 lane CI runs
+per merge, of which 1.6 are post-verdict refreshes).
+
+The 2026-10-06 numbers are the management session's measurement recorded in the CRW-725 issue
+body (turn median 5.4 min; 5.2 min from base refresh to CI end; about 10 merges an hour; the
+last two hours at 8.5). The 2026-10-02 numbers are the merge policy draft's sample, a Linear
+document rather than a file in this repository: S0 5.8 min, effective 9.3 min, 34 parent
+refreshes over 21 merges, 15 excess refreshes, 0 of 33 refresh CI failures, 3 of 21 out-of-lane
+merges, and 8.0 CI runs per merge of which 2.6 are the lane's. Neither is re-measured here, and
+the estimates that use them say so.
+
+| Option | Every landing tree had all jobs succeed on that same tree | Trust path | One issue one PR | Today's lane for one candidate / after a red batch | Lane CI per merge, and the cap | What it changes |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a) tree-keyed result reuse in CI | Yes. The reuse accepts a tree only where this repository's own `ci.yml` ran every job to success on a commit whose tree the relay reads itself, and the member head is proved tree-identical to it. | One, bounded by the criterion: this repository's workflow runs only, and only runs whose tested commit is exactly the commit the run reports (a `workflow_dispatch` or `push` run, not a `pull_request` run); fork runs excluded; no relay or client record is evidence. | Kept. | Unchanged / falls back to the lane. | About 1.0 long run plus a short range-only run per merge, and 1.0 dev push; the cap rises from about 10 to about 16 an hour at k=2. | CI-control change and a POLICY reading; Jun. |
+| (b) strict off, procedural landing proof | No. The guarantee moves from the server to a procedure, and an out-of-lane landing silently breaks it (3 of 21 merges on 2026-10-02). | None new, but the gate itself is weaker. | Kept. | Changed: the check no longer enforces currency. | About 1.0 + 1.0 = 2.0; the cap stops being CI-bound. | Ruleset and POLICY; Jun. |
+| (c) organization transfer, native merge queue | Yes, server-enforced on the merge group. | None. | Kept. | Unchanged / the queue owns the batch. | 1.0 merge_group + 1.0 dev push = 2.0; capacity about 2 x 10 = 20 an hour (runner-bound). | Repository transfer, Go module path, `release.yml` owner check, ruleset, Devin and Linear reconnection; Jun. |
+| (d) no train, shorter CI | Yes, unchanged. | None. | Kept. | Unchanged. | 2.6 unchanged; the leg rebalance lowers S0, so the cap rises from about 10 to about 12 an hour. | The CI test leg rebalance node owns it; no decision here. |
+
+Choose (a). It is the only option that keeps the server-enforced strict gate and the
+criterion's definition of a landing tree while enabling a train, and it needs no repository
+transfer. (b) fails the first criterion by moving the guarantee into a procedure. (c)
+satisfies every criterion and is the better mechanism if Jun prefers a server-native one,
+but it carries the one-time transfer cost listed below. (d) does not answer the question,
+though its leg rebalance is worth doing regardless and shortens every option.
+
+The variant that raises the batch as one pull request is compared and rejected: it breaks
+"one issue one pull request" and it makes Devin re-review the combined diff, whose thread
+then has to be resolved before the merge (`required_review_thread_resolution: true`).
+
+What the reuse trusts, exactly, and the sub-questions the issue names:
+
+- Only runs of this repository's own `.github/workflows/ci.yml` whose **tested commit is
+  known exactly**. A `pull_request` run is **not** a source: it tests
+  `refs/pull/<number>/merge`, the merge of the head into its base, and the runs API reports
+  `head_sha`, the pull request head, so when the head did not contain the base tip at that
+  moment the reported commit's tree is not the tree the run tested. Measured on run 37414778712:
+  `head_sha` is `0dc060c9` (the pull request head) while the run tested merge commit
+  `67e27cdb`, whose tree differs. The admitted sources are therefore a `workflow_dispatch`
+  run and a `push` run, whose reported `head_sha` is the commit the run checked out. A run
+  from a fork is excluded, because the workflow it ran is the fork's. A `push` run to `dev`
+  is admitted as evidence about a tree and never as a release artifact: a reused `dev-gate`
+  is labeled reused and is not the dev push run a release needs (`POLICY.md`, release
+  section).
+- The workflow file is inside the tree, so a tree-identical commit runs the same workflow;
+  the reuse cannot certify a tree whose workflow differs from the one that ran.
+- The comparison is the tree object id of the commit, read by the relay itself from the forge
+  API and never taken from a caller's statement; a head the relay cannot read, a run whose
+  commit it cannot read, or a run whose tested commit is not exactly its reported `head_sha`,
+  is a refusal, not a reuse.
+- The reuse covers the jobs whose outcome is a function of the tree, which is the whole
+  `go-product` matrix. `validate` and `secrets` judge a commit range, not a tree, so they
+  re-run on the member's own head and are cheap. Splitting `validate`'s range-determined
+  large-blob check from its tree-determined parts would shorten that run further and is a
+  further CI-control change Jun may take; this decision does not require it.
+
+### Question 2 — the batch size cap k
+
+Choose **k = 2**, with `k = min(2, floor(concurrent_jobs / 10), ready_waiters)` and a batch
+that needs at least two members. One run is ten jobs, so a batch of k needs 10k concurrent
+jobs while the members' own pull request runs still need room. The account plan's
+concurrent-job limit could not be read with the token available when the merge policy draft
+was written, so the cap is stated as a formula and defaults to the value that fits both the
+Free (20) and the Pro (40) tiers. The flake rate bounds it from the other side: 1 of 21 dev
+pushes on 2026-10-02 was red by a flake and 0 of 33 refresh runs failed, so with a per-run
+flake probability near 5% a batch of two is red about 10% of the time, which Question 3
+absorbs. A larger k multiplies the concurrent runners and the red rate together, and is
+Jun's decision if the plan is confirmed to allow it.
+
+### Question 3 — what a red run does
+
+Choose **one rerun of the red run on the same SHA, then the first red prefix localizes the
+member**. The prefix chain is itself a bisect: prefix i covers members 1..i, so the smallest
+red prefix S_i implicates member i and nothing before it. The order is:
+
+1. Rerun the failed prefix run once on the same SHA (D-12). A green rerun is a flake and the
+   batch goes on; the flake is recorded.
+2. A second red at S_i returns member i to its child through the existing needs-changes
+   route, naming S_i and the failed job. Members 1..i-1 were proved and land; members
+   i+1..k are rebuilt into a new train on the base the landings leave.
+3. A second red at S_1 abandons the train. The lane then runs exactly as it does today, one
+   candidate at a time, and every member keeps its FIFO place.
+
+A separate bisect is not added, because for the k the cap allows the prefix chain already
+answers it, and falling back to one-by-one for the whole batch would throw away prefixes
+that were proved. Today's lane after a failed batch is unchanged, which is the criterion.
+
+### Question 4 — turns across parents
+
+Choose: **one turn per candidate head, unchanged; the train is a separate record that groups
+the consecutive turns on one target.** `merge_turns` keeps its identity, and the refusals
+that stop a turn being lent to another pull request keep their meaning: a parent holds one
+live turn per target, and a second request naming another pull request is refused
+`disposition_conflict` (`internal/relay/mergeturn/mergeturn.go:225-232`).
+
+- Membership is the ready waiters of one target in FIFO order, the order the lane already
+  promotes by (D-16; `internal/relay/mergeturn/lifecycle.go:31`). A candidate that arrives
+  while a train is forming waits for the next train, because inserting it would change the
+  prefix trees already being verified.
+- The parent holding the head-of-line turn is the train's leader. It does the mechanical work
+  the lane already gives it for its own candidate — build the prefix commits and start a run
+  on each — because it already holds the target's turn and lands first. Each prefix goes to
+  its own **branch** `refs/heads/crw-train/<train_id>/<seq>`, not one shared ref: the
+  workflow's concurrency group is keyed on `github.ref` for a dispatch run, so two prefixes
+  on one ref would cancel each other's run (`.github/workflows/ci.yml:13-17`). It must be a
+  branch and not a bare ref: GitHub's "Create a workflow dispatch event" takes a `ref` that
+  is "a branch or tag name", so `refs/crw-train/<train_id>/<seq>` could start no run at all.
+  The leader creates the branch when it opens the train, starts the run on it with a
+  `workflow_dispatch` call naming that branch as `ref` (a push to it triggers nothing, since
+  the workflow's `push` trigger names only `dev`), and deletes the branch when the train
+  closes, landed or abandoned. No ruleset covers `crw-train/*`, so the branch is unprotected
+  and is never a target for a pull request.
+- Every member's own parent still runs its own `merge-turn-check` and `merge-turn-land` on
+  its own head. The train is a shared verification record, not an owner; it neither merges
+  nor speaks for another parent's pull request.
+- A merge outside the lane moves the base the prefixes were built on and the train is
+  abandoned; the existing out-of-lane detection is what notices, and the lane falls back to
+  one candidate at a time.
+
+### Question 5 — the relay contract
+
+No new refusal reason is registered (D-02). The refusals the train needs are the ones the
+lane already has, with the detail naming which one fired: `disposition_conflict` for a train
+whose base a landing outside the lane moved, `merge_target_unreadable` for a prefix run or
+its tree the relay cannot read, `merge_candidate_moved` for a member head whose tree is not
+the proved tree, and `merge_currency_stale` for a base that is no longer the tip.
+
+Three appended tables record a train. All are new `CREATE` statements at the end of the
+additive zone ledger (`internal/relay/store/dag_zone.go`), whose rule is that a shipped
+statement is never edited and a new table arrives as an appended `CREATE`; the swap gate
+admits them as `EXTENDS_ZONE` and releases them with `--backup-state-to`
+(`internal/runtime/swapgate/swapgate.go:248-263`). The zone forbids a key into a v1 table, so
+the member rows carry `turn_id` as a plain column and the writer is what keeps it pointing
+at a real turn. The ledger is called the DAG zone today and a merge-lane table in it
+stretches that name; the alternative, a table in the frozen v1 script, is refused by the
+swap gate without an OPS-4.5 decision, so this decision appends to the existing ledger and
+leaves a second zone route out of scope.
+
+Every train row is written once and every later step is an appended event, because the zone's
+append-only triggers abort an `UPDATE` and a `DELETE`, and a train that had to update its own
+state would be impossible under them. The current state is derived from the event log, the
+way a plan's head revision is `MAX(revision_no)` of its log and never a column
+(`internal/relay/store/dag_zone.go`).
+
+- `merge_trains(train_id, target_key, repository, base_ref, base_sha, leader_task_id,
+  created_at)`: one row per train, written once by `merge-train-open`, `base_sha` the tip the
+  prefixes were built on. No state column.
+- `merge_train_members(train_id, seq, turn_id, pr_number, relationship_id, member_head)`: one
+  row per member, written once by `merge-train-open`, `seq` its FIFO place and `member_head`
+  the head its pull request showed when the train formed. `UNIQUE (train_id, seq)`.
+- `merge_train_events(train_id, seq, kind, actor, detail_json, recorded_at)`: append-only,
+  `UNIQUE (train_id, seq)`, with the zone's `BEFORE UPDATE` and `BEFORE DELETE` triggers as
+  `dag_base_refreshes` has them. `kind` is one of `opened`, `verified`, `landed`,
+  `abandoned`, `done`; the current state is the newest event's kind. A `verified` event's
+  `detail_json` carries the member `seq`, `check_id`, `prefix_head`, `prefix_tree` and
+  `run_id`; a `landed` event's carries the member `seq` and `landed_sha`.
+
+`merge-turn-check` and `merge-turn-land` gain the per-member proof, and neither writes to a
+frozen table or updates an immutable row:
+
+- `Check(ctx context.Context, turn, actor, head, base string, checkList, review any, required
+  []string, reader Reader) (map[string]any, error)` keeps its signature. When the turn is a
+  member of a live train, the check reads the member's head from the forge, reads that
+  commit's tree, and requires it to equal the `prefix_tree` of the train's `verified` event
+  for that member; a mismatch is `merge_candidate_moved`. The check writes its own
+  `merge_turn_checks` row exactly as built, with no new column — `merge_turn_checks` is a
+  frozen v1 table and the proof lives in the train's event log, not on it — and the answer
+  gains `trainId` and `provedTree`.
+- `Land(ctx context.Context, turn, actor, landed, stated, evidence string, reader Reader)
+  (map[string]any, error)` keeps its signature. It reads the landed commit's tree and
+  requires it to equal the `prefix_tree` of that member's `verified` event before recording
+  `landed_sha`; a mismatch is `disposition_conflict` and writes nothing. The expected-head
+  guard is unchanged.
+- New commands, one per step the leader takes, each registered in
+  `internal/relay/argparse/specs.json` beside `merge-turn-request` (`specs.json:594`):
+  `merge-train-open --turn <the leader's turn> --actor --base-sha <D> --member <pr>...`;
+  `merge-train-verify --train --actor --seq --check <check_id> --prefix-head --prefix-tree
+  --run`; `merge-train-close --train --actor --state <done|abandoned> --reason`, whose
+  `--state` is the event kind it appends and not a column; and `merge-train-show --train`,
+  which derives the state from the newest event.
+  `merge-train-verify` requires `--actor` to equal the train's `leader_task_id` and is
+  refused `disposition_conflict` otherwise, so only the head-of-line parent advances the
+  shared record. It does not trust what that caller states: it **reads the run and the prefix
+  commit itself** and uses `--prefix-head`, `--prefix-tree` and `--run` only as cross-checks.
+  It reads the run from the forge and requires that its `path` is this repository's
+  `.github/workflows/ci.yml` and its `head_repository` is this repository, not a fork's,
+  that its `event` is one the reuse admits (`workflow_dispatch` or `push` per Question 1),
+  that its `head_sha` equals the `--prefix-head` the caller named, and that every job of the
+  run's newest attempt reads `conclusion: success`; it reads the prefix commit's tree from
+  the forge's commit reading as well. A run it cannot read, or a prefix commit it cannot read, is
+  `merge_target_unreadable`; a run of another workflow, a run from a fork, a run whose
+  `head_sha` is not the stated prefix head, a run with a job that is not a success on its
+  newest attempt, or a tree that differs from the stated `--prefix-tree`, is
+  `disposition_conflict` and appends no event. The `verified` event it appends therefore
+  records the tree the relay read, not the tree a caller claimed.
+
+The DAG lane is unchanged: `dag-accept` still records the head the forge shows, the merge
+judge still reads the member's jobs on that head (green by reuse, so `eligible` rather than
+`checks_pending`), and the integration observation still reads the member integrated after
+its landing. The train changes only what `merge-turn-check` cites and what `merge-turn-land`
+proves.
+
+### Decisions left to Jun
+
+1. **The CI-control change (recommended).** Approve the tree-keyed reuse in
+   `.github/workflows/ci.yml`: the reuse lookup, its admission of only `workflow_dispatch`
+   and `push` runs (never a `pull_request` run, whose reported `head_sha` is not the commit
+   it tested), its exclusion of fork runs, its labeling of a reused `dev-gate`, and the
+   POLICY sentence that names a reused result as evidence about a landing tree but never as
+   the dev push run a release needs.
+2. **Or the organization transfer instead.** If Jun prefers a server-native mechanism, take
+   (c): transfer the repository to an organization, then add the `merge_queue` rule. That
+   raises the Go module path question (at this baseline 629 non-test Go files import
+   `github.com/thisisjun786/codex-relay-workflow`; the draft's count is stale), the
+   `release.yml` owner check, and Devin and Linear reconnection; the draft's transfer
+   checklist stands.
+3. **Keep strict.** Recommend keeping `strict_required_status_checks_policy: true`. Turning
+   it off is the one option the first criterion rejects.
+4. **The runner concurrency and k.** Confirm the account's concurrent-job limit so the cap
+   can be read rather than assumed, and decide whether k may exceed 2.
+5. **POLICY wording.** The sentence that ties a green gate to "a current base" gains the
+   reuse rule; the release-evidence sentence keeps excluding a reused result.
+
+### Follow-up interfaces
+
+No signature, reason registry, output field, CLI, SQL or golden changes in this pull
+request. Each slice is one region and about 600 lines or less, and each is proved red before
+it is built.
+
+1. **The train record** (`internal/relay/store`). The three appended `CREATE` statements and
+  their `testdata` snapshot entries, the row types and their readers beside
+  `MergeTurnsRow` (`internal/relay/store/domain_rows.go:277`), and the insert. Red first:
+  the zone inventory and the frozen-text tests fail until the tables and their snapshot
+  entries exist; a swap-gate test reads the new tables as `ExtendsZone` and releases them
+  only with `--backup-state-to`; an `UPDATE` and a `DELETE` of a train, member or event row
+  abort, as they do for `dag_base_refreshes`, and a train that opens, verifies and lands
+  appends three events with the derived state `done` and no row rewritten. No shipped
+  statement is edited and the install zone route is unchanged.
+2. **The train commands and the per-member proof** (`internal/relay/mergeturn`,
+   `internal/relay/argparse/specs.json`). Red first: a member head whose tree differs from
+   `prefix_tree` is `merge_candidate_moved` and writes no check row; a landing whose tree
+   differs is refused and writes nothing; a train whose base moved is `disposition_conflict`;
+   a second request naming another pull request is still `disposition_conflict`; a batch of
+   one is today's lane; `merge-train-verify` with a stated tree that differs from the tree
+   the relay reads from the forge is `disposition_conflict` and appends no event; a run of
+   another workflow, a run from a fork, a run whose `head_sha` is not the stated prefix head,
+   and a run with a job that is not a success on its newest attempt are each refused and
+   append no event; a run or prefix commit the relay cannot read is
+   `merge_target_unreadable`. Green controls: an unchanged single-candidate turn, a turn
+   that is not a member, a train whose members land in order, and a `workflow_dispatch` run
+   whose stated values agree with what the relay reads.
+3. **The tree-keyed CI reuse** (`.github/workflows/ci.yml` and whatever the lookup needs).
+   Red first: a tree this repository never verified is not reused and the test legs run; a
+   fork run is not a source; a `pull_request` run on a head that did not contain the base tip
+   is not a source for that head's tree, because the run tested `refs/pull/<number>/merge`
+   and reported the head as `head_sha`; a reused `dev-gate` is labeled reused and the release
+   check that reads a dev push run refuses it. Green controls: a `push` run to `dev` and a
+   `workflow_dispatch` run, whose reported `head_sha` is the commit they checked out. This
+   slice waits on Jun's decision.
+4. **The parent procedure** (`plugins/crw/skills/crw-run/references/merge-readiness.md`,
+   beside "Refresh the base yourself when only the base moved", `:824`) and the operator
+   page under `docs/relay/`. Red first is a scenario review: a leader forming a train of two,
+   a member arriving mid-train, a red prefix, and an out-of-lane landing; the skill checks and
+   the link check run.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test,
+workflow, contract file, golden, skill document or `plugin.json` changes, and no ruleset,
+repository setting or branch is touched. The implementation, the merge-lane scripts, the CI
+workflow, the rulesets, `POLICY.md` and the test leg rebalance ship as the follow-ups above.
