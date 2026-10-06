@@ -50,6 +50,53 @@ func spawnHookDeepGatePayload(ws, message, junk string) string {
 		`},"tool_use_id":"rec-call-1"}`
 }
 
+// spawnHookDeepGateItemsPayload is an items-form spawn (no message, so the items are read): the text
+// items are joined by "\n\n" for the gate, and junk is nested inside the last text item as an
+// unrelated field, built as JSON text.
+func spawnHookDeepGateItemsPayload(ws string, texts []string, junk string) string {
+	var b strings.Builder
+	b.WriteString(`{"hook_event_name":"PreToolUse","session_id":"rec-s1","cwd":` + strconv.Quote(ws) +
+		`,"turn_id":"rec-t1","tool_name":"spawn_agent","tool_input":{"items":[`)
+	for i, text := range texts {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		field := ""
+		if i == len(texts)-1 && junk != "" {
+			field = `,"junk":` + junk
+		}
+		b.WriteString(`{"type":"text","text":` + strconv.Quote(text) + field + "}")
+	}
+	b.WriteString(`]},"tool_use_id":"rec-call-1"}`)
+	return b.String()
+}
+
+// TestSpawnHookDeepGateItemsMarkerInALaterItem: an items-form packet whose final-gate marker sits in
+// its second text item, with an unrelated deep field in that item, is denied: the gate text is the
+// joined text items, so the marker is seen, and the gate runs before the depth return.
+func TestSpawnHookDeepGateItemsMarkerInALaterItem(t *testing.T) {
+	rig := spawnHookNewRig(t, spawnHookReadFixture(t).Skills, spawnHookCase{})
+	spawnLegEnv(t, rig)
+	spawnHookDeepGatePlan(t, rig.ws, "")
+	payload := spawnHookDeepGateItemsPayload(rig.ws,
+		[]string{"first part", "[CRW-FINAL-GATE] please review the final gate"}, spawnHookDeepGateJunk(5000))
+	if got, want := RunSpawnAttachHook(payload, rig.env), DenyEnvelope(spawnHookDeepGateOracleReason(t)); got != want {
+		t.Fatalf("a deep items packet with a late marker:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestSpawnHookDeepGateItemsWithoutMarkerPrintsNothing: an items-form packet with no final-gate
+// marker and a deep field still answers nothing, the depth return.
+func TestSpawnHookDeepGateItemsWithoutMarkerPrintsNothing(t *testing.T) {
+	rig := spawnHookNewRig(t, spawnHookReadFixture(t).Skills, spawnHookCase{})
+	spawnLegEnv(t, rig)
+	spawnHookDeepGatePlan(t, rig.ws, "")
+	payload := spawnHookDeepGateItemsPayload(rig.ws, []string{"first part", "second part"}, spawnHookDeepGateJunk(5000))
+	if got := RunSpawnAttachHook(payload, rig.env); got != "" {
+		t.Errorf("a deep items packet without the marker prints nothing, got %.120q", got)
+	}
+}
+
 // spawnHookDeepGateOracleReason is the recorded oracle deny reason of
 // hook__pre-tool-use-attaching-skills__final_gate_missing_test_receipt_denied with the name
 // substitution applied (R23 [codexclaw -> [crw, R26 .codexclaw -> .crw), the expected answer of the

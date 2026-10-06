@@ -271,17 +271,21 @@ func spawnHookRoute(a spawnHookAssembly, env host.LookupEnv) string {
 	}
 	var items []any
 	changed := message != a.message || promptChanged
-	if a.validItems && !tooDeep {
+	if a.validItems {
 		items = spawnHookRouteItems(a, message)
-		changed = spawnHookRouteStringify(items) != spawnHookRouteStringify(a.itemInput)
+		if !tooDeep {
+			changed = spawnHookRouteStringify(items) != spawnHookRouteStringify(a.itemInput)
+		}
 	}
 	// Final-gate prerequisites (:1072-1079): the packet's text items joined, or the message, and the session. A refusal is the
 	// deny envelope; every other path fails open. It runs before the depth return below so a denial reaches the caller, as the
-	// oracle's check runs before the JSON.stringify at :1103. A tool_input nested past the depth limit cannot build the item text
-	// without an unbounded recursion, so the gate reads the message instead, which is the same string a shallow packet yields: the
-	// gate still decides, and a deep packet the gate refuses is denied (fail closed).
+	// oracle's check runs before the JSON.stringify at :1103. Only the item/input comparison recurses over the whole value, so it is
+	// skipped for a tool_input nested past the depth limit; spawnHookRouteItems reads each item's type and text shallowly, so the
+	// gate text is the same joined item text (or message) a shallow packet yields and the gate still decides. A deep packet the
+	// gate refuses is denied, where the oracle's JSON.stringify throws before its own gate and its outer catch allows it: the gate
+	// first and fail closed, as the issue answers.
 	gateText := message
-	if a.validItems && !tooDeep {
+	if a.validItems {
 		var texts []string
 		for _, item := range items {
 			if o, ok := item.(pyjson.Object); ok && o.Get("type") == "text" {
