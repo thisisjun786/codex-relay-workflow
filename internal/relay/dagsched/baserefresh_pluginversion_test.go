@@ -234,3 +234,44 @@ func TestBaseRefreshPluginVersionRefusals(t *testing.T) {
 		})
 	}
 }
+
+// pluginVersionContributor lands a node on dev that re-records the manifest and declares the rule
+// given for it, so the manifest has an identified contributing node whose declaration covers it. With
+// a contributor the selector agrees on a declared rule and the path takes the declared-rule branch of
+// applyMechanical rather than the built-in one, which is a different code path.
+func pluginVersionContributor(t *testing.T, s *refreshScenario, rule string) {
+	t.Helper()
+	r := s.repo
+	r.git("checkout", "-q", "-b", "plugin-contributor", "dev")
+	pluginVersionCommit(t, r, "contributor work", map[string]string{
+		// a skill file neither side of the refresh touches, so the contributor's landing conflicts
+		// with nothing but the manifest's version line
+		pluginversion.PluginRelative + "/skills/crw-check/SKILL.md": pluginVersionSkillText("crw-check"),
+	}, true)
+	region := Region{Repository: s.target(), Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: rule}
+	if _, err := s.sched.DeclareRegions(context.Background(), "g", "D", "parent", []Region{region}); err != nil {
+		t.Fatal(err)
+	}
+	s.acceptRefreshNode("D", acceptOpts{HeadSHA: r.git("rev-parse", "HEAD"), PR: 8})
+	r.git("checkout", "-q", "dev")
+	r.git("merge", "-q", "--no-ff", "-m", "land plugin contributor", "plugin-contributor")
+}
+
+// A declared rule that every declaration agrees on and that the checker cannot prove leaves the
+// manifest to the parent's --resolved name: it is never stamped with the built-in rule. This is the
+// identified-contributor form of the same invariant, and it reaches applyMechanical by a different
+// branch (the selector agrees on the declared rule, so the path is not one the built-in rule is tried
+// on).
+func TestBaseRefreshPluginVersionDeclaredRuleWithContributorStaysManual(t *testing.T) {
+	s := newPluginVersionRefreshScenarioDeclaring(t, true, []Region{{Path: pluginversion.ManifestRepoPath, Kind: "file", Change: "edit", Grade: GradeMechanical, Rule: "regenerate:false"}})
+	pluginVersionContributor(t, s, "regenerate:false")
+	s.pluginVersionMerge(t, true, nil)
+	if _, err := s.record(); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), pluginversion.ManifestRepoPath) || s.refreshRows() != 0 {
+		t.Fatalf("an agreed declared rule the checker could not prove was marked built-in: %v rows=%d", err, s.refreshRows())
+	}
+	got, err := s.record(pluginversion.ManifestRepoPath)
+	if err != nil || got.Replayed || s.refreshRows() != 1 {
+		t.Fatalf("naming the file the parent read = %v %+v rows=%d", err, got, s.refreshRows())
+	}
+	refreshRuleRecord(t, s, pluginversion.ManifestRepoPath, "")
+}
