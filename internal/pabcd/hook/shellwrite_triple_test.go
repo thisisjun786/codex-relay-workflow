@@ -62,3 +62,17 @@ func TestShellWriteTripleScanUnits(t *testing.T) {
 		}
 	}
 }
+
+// TestShellWriteTripleScanNodeKeepsTheDestination is the guard for the regression the Codex Code Review found on this change:
+// the triple-quoted region rule is Python's, and a JavaScript program is not Python source. A template literal holding three
+// quotes must not open a region that swallows the rest of the program, which would lose the decoded destination of a write the
+// reader named before the rule existed. node -e drives the same scriptWriteDestinations path as python -c. An odd run of quotes
+// in a template literal still desyncs the Node walk, exactly as it did before this change: the scanner reads no template literal,
+// so that is the pre-existing hardened-path limit, not a regression.
+func TestShellWriteTripleScanNodeKeepsTheDestination(t *testing.T) {
+	js := func(program string) string { return "node -e '" + program + "'" }
+	shellWriteEscapeRun(t, []shellWriteEscapeCase{
+		{command: js("const x = " + "\x60" + `""""` + "\x60" + `; fs.open("\x2freview/memories/a", "w", cb)`), has: []string{"/review/memories/a"}},
+		{command: js("const x = " + "\x60" + `""""` + "\x60" + `; fs.writeFileSync("\x2freview/memories/c", "x")`), has: []string{"/review/memories/c"}},
+	})
+}

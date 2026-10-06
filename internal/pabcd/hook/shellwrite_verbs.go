@@ -388,9 +388,9 @@ func shellVerbPythonNode(verb string, args []string, hard bool) []string {
 	if script == "" {
 		return []string{}
 	}
-	out := shellVerbScriptWrites(script, hard)
+	out := shellVerbScriptWritesIn(script, hard, isPy)
 	if un := shellVerbUnescape(script); hard && un != script {
-		out = append(out, shellVerbScriptWrites(un, true)...)
+		out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
 	}
 	return out
 }
@@ -655,6 +655,14 @@ func shellVerbCpMvWrites(args []string) []string {
 // lazy matching and each pattern matches what the backtracking original does. hard adds template literal paths, the open() and
 // Path reader and the decoded value of a JavaScript literal, after the oracle's raw text.
 func shellVerbScriptWrites(script string, hard bool) []string {
+	return shellVerbScriptWritesIn(script, hard, true)
+}
+
+// shellVerbScriptWritesIn is shellVerbScriptWrites with the program's language: python selects the Python readers, whose
+// triple-quoted region rule belongs to Python source alone. A JavaScript program is not Python source, so three quotes inside a
+// template literal must not open a triple-quoted region and swallow the rest of the program, which would lose the destination
+// of a later write; a Node program keeps the single-quote walk the reader always had.
+func shellVerbScriptWritesIn(script string, hard, python bool) []string {
 	s, dot, pre := lintSpace, lintDot, "[rRuUbBfF]*"
 	quoted := func(body string) string { return "(?:'(" + body + ")'|\"(" + body + ")\")" }
 	callQuote, callGroups := quoted(dot+"*?"), 2
@@ -678,7 +686,7 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 	}
 	if hard {
 		out = append(out, shellWriteEscapeJSWrites(script, out)...)
-		out = append(out, shellVerbOpenWrites(script)...)
+		out = append(out, shellVerbOpenWritesIn(script, python)...)
 	}
 	return out
 }
@@ -689,18 +697,24 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 // bracket and arguments are spans of the text, so unclosed and nested calls cost no more than their own characters. A
 // Path(...).write_text or .write_bytes call names the join of its arguments (shellWriteEscapePath).
 func shellVerbOpenWrites(script string) []string {
+	return shellVerbOpenWritesIn(script, true)
+}
+
+// shellVerbOpenWritesIn is shellVerbOpenWrites with the program's language: python enables the triple-quoted region rule, so a
+// Node program is scanned exactly as it was before that rule existed (shellVerbScriptWritesIn).
+func shellVerbOpenWritesIn(script string, python bool) []string {
 	type frame struct {
 		kind  byte // 'o' for open(, 'p' for Path(, else 0
 		start int
 		args  [][2]int
 	}
-	rs := shellVerbWithoutComments(script)
+	rs := shellVerbWithoutComments(script, python)
 	var stack []frame
 	out := []string{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
 		case c == '\'' || c == '"':
-			i = shellWriteTripleScanRegion(rs, i) - 1
+			i = shellWriteTripleScanRegion(rs, i, python) - 1
 		case c == '(' || c == '[' || c == '{':
 			stack = append(stack, frame{kind: shellVerbCallKind(rs, i, c), start: i + 1})
 		case c == ',' && len(stack) > 0:
@@ -723,12 +737,12 @@ func shellVerbOpenWrites(script string) []string {
 
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
 // quote in a comment opens no string and a comment inside a call is no argument.
-func shellVerbWithoutComments(script string) []rune {
+func shellVerbWithoutComments(script string, python bool) []rune {
 	rs, out := []rune(script), []rune{}
 	for i := 0; i < len(rs); {
 		switch c := rs[i]; {
 		case c == '\'' || c == '"':
-			end := shellWriteTripleScanRegion(rs, i)
+			end := shellWriteTripleScanRegion(rs, i, python)
 			out = append(out, rs[i:end]...)
 			i = end
 		case c == '#':
@@ -952,11 +966,12 @@ func shellWriteTripleScanNewlines(body []rune) []rune {
 // shellWriteTripleScanRegion is the index just past the string region that opens at the quote rs[i], as Python reads it: a
 // triple-quoted literal (the quote repeated three times) runs to the first unescaped run of three of the same quote, and a
 // single-quoted region to the first unescaped quote; a character after a backslash closes neither. An unterminated region ends
-// at len(rs). The scanners shellVerbOpenWrites and shellVerbWithoutComments use it so a triple-quoted literal is one region
-// instead of a run of single-quoted ones.
-func shellWriteTripleScanRegion(rs []rune, i int) int {
+// at len(rs). The scanners shellVerbOpenWritesIn and shellVerbWithoutComments use it so a triple-quoted literal is one region
+// instead of a run of single-quoted ones. python selects the triple-quoted rule; with python false the region is one quote
+// wide, which is what a JavaScript program needs (its three quotes are three empty strings, not a Python triple quote).
+func shellWriteTripleScanRegion(rs []rune, i int, python bool) int {
 	quote := rs[i]
-	triple := i+2 < len(rs) && rs[i+1] == quote && rs[i+2] == quote
+	triple := python && i+2 < len(rs) && rs[i+1] == quote && rs[i+2] == quote
 	k := i + 1
 	if triple {
 		k = i + 3
