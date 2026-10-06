@@ -5390,6 +5390,14 @@ batch, and the gain stated in numbers. Estimates use the lane measurement of 202
 the merge policy draft's 2026-10-02 sample (S0 5.8 min, effective 9.3 min, 2.6 lane CI runs
 per merge, of which 1.6 are post-verdict refreshes).
 
+The 2026-10-06 numbers are the management session's measurement recorded in the CRW-725 issue
+body (turn median 5.4 min; 5.2 min from base refresh to CI end; about 10 merges an hour; the
+last two hours at 8.5). The 2026-10-02 numbers are the merge policy draft's sample, a Linear
+document rather than a file in this repository: S0 5.8 min, effective 9.3 min, 34 parent
+refreshes over 21 merges, 15 excess refreshes, 0 of 33 refresh CI failures, 3 of 21 out-of-lane
+merges, and 8.0 CI runs per merge of which 2.6 are the lane's. Neither is re-measured here, and
+the estimates that use them say so.
+
 | Option | Every landing tree had all jobs succeed on that same tree | Trust path | One issue one PR | Today's lane for one candidate / after a red batch | Lane CI per merge, and the cap | What it changes |
 | --- | --- | --- | --- | --- | --- | --- |
 | (a) tree-keyed result reuse in CI | Yes. The reuse accepts a tree only where this repository's own `ci.yml` ran every job to success, and the member head is proved tree-identical to it. | One, bounded by the criterion: this repository's workflow runs only; fork runs excluded; no relay or client record is evidence. | Kept. | Unchanged / falls back to the lane. | About 1.0 long run plus a short range-only run per merge, and 1.0 dev push; the cap rises from about 10 to about 16 an hour at k=2. | CI-control change and a POLICY reading; Jun. |
@@ -5560,7 +5568,8 @@ proves.
    a landing tree but never as the dev push run a release needs.
 2. **Or the organization transfer instead.** If Jun prefers a server-native mechanism, take
    (c): transfer the repository to an organization, then add the `merge_queue` rule. That
-   raises the Go module path question (903 Go files import the current path), the
+   raises the Go module path question (at this baseline 629 non-test Go files import
+   `github.com/thisisjun786/codex-relay-workflow`; the draft's count is stale), the
    `release.yml` owner check, and Devin and Linear reconnection; the draft's transfer
    checklist stands.
 3. **Keep strict.** Recommend keeping `strict_required_status_checks_policy: true`. Turning
