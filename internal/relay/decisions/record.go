@@ -337,9 +337,11 @@ func Validate(record Record) error {
 	return nil
 }
 
-// checkControlCharacters refuses the first free-text field that holds a control character: U+0000
-// to U+001F or U+007F. The context alone may hold a newline or a tab, because a question is a
-// paragraph. The fields walked are the ones the format carries as free text.
+// checkControlCharacters refuses the first string field that holds a control character: U+0000 to
+// U+001F or U+007F. The context alone may hold a newline or a tab, because a question is a
+// paragraph. Every string the record carries as text is walked, the identifiers and the raise
+// fields included; the fields with their own vocabulary or timestamp check (schema, kind, state,
+// needed_by, fingerprint) are the ones it does not repeat.
 func checkControlCharacters(record Record) error {
 	// hasControl reports a control character; allowLines exempts a newline and a tab.
 	hasControl := func(text string, allowLines bool) bool {
@@ -403,12 +405,15 @@ func checkControlCharacters(record Record) error {
 		}
 	}
 	for _, field := range []struct{ name, value string }{
+		{"decision_id", record.DecisionID},
 		{"origin.issue", record.Origin.Issue},
 		{"origin.project", record.Origin.Project},
 		{"source.kind", record.Source.Kind},
 		{"source.ref", record.Source.Ref},
 		{"authority.kind", record.Authority.Kind},
 		{"authority.ref", record.Authority.Ref},
+		{"raised_at", record.RaisedAt},
+		{"raised_via", record.RaisedVia},
 		{"answered_at", record.AnsweredAt},
 		{"answered_by", record.AnsweredBy},
 		{"answered_via", record.AnsweredVia},
@@ -441,14 +446,14 @@ func sameAnswer(first, second Record) bool {
 }
 
 // Merge folds a second statement of the same question into the first. The two must name the same
-// question (the same fingerprint) and carry the same answer, and the second record's seen entries
-// are appended to the first record's. The stored statement survives: its kind, options,
-// recommendation and origin are the ones the merged record keeps. A statement that differs beyond
-// its seen entries is refused with ErrMergeConflict rather than overwritten, so no stale field and
-// no later answer is lost. Each record must also be well formed and its stored fingerprint must
-// match its content. The identity and answer checks run before the per-record validation so that a
-// differing answer is reported as the conflict it is, rather than masked by a format refusal in
-// one of the very fields the comparison covers.
+// question (the same fingerprint) and carry the same answer: the ten answer fields are compared one
+// by one, and a differing answer is ErrMergeConflict. Everything else the fingerprint does not
+// cover — kind, options, recommendation, origin, source, authority and the raise fields — is not
+// compared, so the stored statement survives and the merged record keeps the first record's values
+// for them; only the second record's seen entries are appended. Each record must also be well formed
+// and its stored fingerprint must match its content. The identity and answer checks run before the
+// per-record validation so that a differing answer is reported as the conflict it is, rather than
+// masked by a format refusal in one of the very fields the comparison covers.
 func Merge(first, second Record) (Record, error) {
 	if first.Fingerprint != second.Fingerprint {
 		return Record{}, fmt.Errorf("%w: %s and %s", ErrFingerprintMismatch, first.Fingerprint, second.Fingerprint)

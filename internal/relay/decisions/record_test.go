@@ -1,6 +1,8 @@
 package decisions
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -337,6 +339,7 @@ func TestC4MergeKeepsTheStoredStatement(t *testing.T) {
 func TestC3ValidateRefusesControlCharacters(t *testing.T) {
 	valid := func() Record {
 		return Record{Schema: Schema, Kind: KindPolicy, Context: "a question", State: StateOpen,
+			DecisionID:     "ud-0001",
 			Options:        []Option{{ID: "a", Label: "adopt", Effect: "stored"}, {ID: "b"}},
 			Blocking:       []Blocking{{Kind: "issue", Ref: "CRW-1"}},
 			Origin:         Origin{Issue: "CRW-791", Project: "PRJ-A"},
@@ -344,7 +347,8 @@ func TestC3ValidateRefusesControlCharacters(t *testing.T) {
 			Authority:      Authority{Kind: AuthorityUser, Ref: "jun"},
 			Seen:           []Seen{{At: "2026-10-06T00:00:00Z", Source: "report:1", Note: "first"}},
 			Recommendation: &Recommendation{Option: "a", OneLine: "adopt"},
-			AnsweredAt:     "2026-10-06T01:00:00Z", AnsweredBy: "jun", AnsweredVia: "chat",
+			RaisedAt:       "2026-10-06T00:00:00Z", RaisedVia: "direct-ask",
+			AnsweredAt: "2026-10-06T01:00:00Z", AnsweredBy: "jun", AnsweredVia: "chat",
 			AnswerText: "adopt", AppliedAt: "2026-10-06T02:00:00Z", AppliedEvent: "ev-1",
 			WithdrawnReason: "superseded", ExpiredReason: "passed"}
 	}
@@ -354,6 +358,7 @@ func TestC3ValidateRefusesControlCharacters(t *testing.T) {
 		mutate func(*Record)
 	}{
 		{"context", func(r *Record) { r.Context = bad }},
+		{"decision_id", func(r *Record) { r.DecisionID = bad }},
 		{"option id", func(r *Record) { r.Options[0].ID = bad }},
 		{"option label", func(r *Record) { r.Options[0].Label = bad }},
 		{"option effect", func(r *Record) { r.Options[0].Effect = bad }},
@@ -368,6 +373,8 @@ func TestC3ValidateRefusesControlCharacters(t *testing.T) {
 		{"authority ref", func(r *Record) { r.Authority.Ref = bad }},
 		{"seen source", func(r *Record) { r.Seen[0].Source = bad }},
 		{"seen note", func(r *Record) { r.Seen[0].Note = bad }},
+		{"raised_at", func(r *Record) { r.RaisedAt = bad }},
+		{"raised_via", func(r *Record) { r.RaisedVia = bad }},
 		{"answered_at", func(r *Record) { r.AnsweredAt = bad }},
 		{"answered_by", func(r *Record) { r.AnsweredBy = bad }},
 		{"answered_via", func(r *Record) { r.AnsweredVia = bad }},
@@ -393,5 +400,30 @@ func TestC3ValidateRefusesControlCharacters(t *testing.T) {
 	record.Context = "first line\nsecond\tcolumn"
 	if err := Validate(record); err != nil {
 		t.Fatalf("a newline or tab in the context must validate: %v", err)
+	}
+}
+
+// The material is the exact JSON the encoding rule names: an encoder with different escaping or
+// spacing would fingerprint the same question differently, so the bytes are pinned here and the
+// same rule is stated in testdata/fingerprint_vectors.json.
+func TestC1FingerprintMaterialIsThePinnedJSONEncoding(t *testing.T) {
+	material, err := json.Marshal([]any{
+		"r&d <window>",
+		[][2]string{{"issue", "x"}},
+		[]string{"later", "now"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `["r\u0026d \u003cwindow\u003e",[["issue","x"]],["later","now"]]`
+	if string(material) != want {
+		t.Fatalf("the encoding rule changed: material = %s", material)
+	}
+	sum := sha256.Sum256(material)
+	if got := hex.EncodeToString(sum[:])[:16]; got != "42ec25d4de714b9a" {
+		t.Fatalf("the vector is not this material's fingerprint: %s", got)
+	}
+	if got := Fingerprint("R&D <window>", []Blocking{{Kind: "issue", Ref: "x"}}, []Option{{ID: "now"}, {ID: "later"}}); got != "42ec25d4de714b9a" {
+		t.Fatalf("Fingerprint = %s", got)
 	}
 }

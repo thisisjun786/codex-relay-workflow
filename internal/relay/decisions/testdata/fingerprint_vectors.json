@@ -1,10 +1,10 @@
 {
-  "schema": "crw-user-decision-fingerprint-vectors/1",
   "algorithm": "sha256(json([normalize(context), sorted [[normalize(kind), normalize(ref)], ...], sorted [normalize(option id), ...]])); first 16 hex characters, lowercase",
-  "encoding": "the material is the JSON encoding of one array of three elements, so a delimiter inside a field cannot join or split it; the blocking subjects are sorted as [kind, ref] pairs and the option ids as strings",
-  "normalization": "ASCII letters lowercased only (A-Z to a-z; every other rune unchanged); each run of whitespace collapses to one space; leading and trailing whitespace dropped",
   "ambiguity": "Validate still refuses a '|' in the context, a ',' in an option id and a ':' or ',' in a blocking ref, as a second guard behind the encoding",
+  "encoding": "the material is the compact JSON encoding Go's encoding/json produces (json.Marshal): no spaces between elements, and the quotation mark, the reverse solidus, the controls below U+0020, the HTML characters \u003c \u003e \u0026 and the separators U+2028 U+2029 written as \\uXXXX escapes; every other rune, non-ASCII included, written as UTF-8 as it is. An encoder with different escaping or spacing fingerprints the same question differently, so this rule is part of the format.",
+  "normalization": "ASCII letters lowercased only (A-Z to a-z; every other rune unchanged); each run of whitespace collapses to one space; leading and trailing whitespace dropped",
   "note": "Fixed input/output pairs. This vector is the reference a second implementation is compared against; the Go test internal/relay/decisions must reproduce every fingerprint here.",
+  "schema": "crw-user-decision-fingerprint-vectors/1",
   "vectors": [
     {
       "name": "host-window",
@@ -244,6 +244,51 @@
         "zz"
       ],
       "fingerprint": "2fa2fbe0d0c650e5"
+    },
+    {
+      "name": "html-escapes",
+      "context": "R\u0026D \u003cwindow\u003e at 10:00",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "c608945c5c867550"
+    },
+    {
+      "name": "line-separators",
+      "context": "first\u2028second\u2029third",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "now",
+        "later"
+      ],
+      "fingerprint": "92e2e2ed038aed29"
+    },
+    {
+      "name": "html-escapes-in-option",
+      "context": "Pick the channel.",
+      "blocking": [
+        {
+          "kind": "issue",
+          "ref": "CRW-284"
+        }
+      ],
+      "optionIds": [
+        "a\u003cb",
+        "c\u0026d"
+      ],
+      "fingerprint": "17bde3a14eb9e7e8"
     }
   ]
 }
