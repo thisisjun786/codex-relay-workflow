@@ -161,7 +161,10 @@ type lifecycleOracleCase struct {
 // build (goalplan.ts:1236-1445, commit 3c1459ac) for the lifecycle operations: the
 // kind, the refusal or unchanged reason, the projected resulting plan, and the
 // projected input a mutation would change. The corpus is generated (record-oracle.mjs
-// beside it) and never hand-edited.
+// beside it) and never hand-edited. Three recorded cases are tagged intentionally-changed,
+// because this port refuses an ambiguous id where the oracle rewrote every entry carrying it and
+// lost the other entry's outcome or evidence (lifecycle.go, CRW-671); the recording keeps the
+// oracle's answer and the tag gives the port's.
 func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "lifecycle", "oracle.json"))
 	if err != nil {
@@ -177,6 +180,23 @@ func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 	}
 	if len(corpus.Cases) != 79 {
 		t.Fatalf("recorded corpus changed: %d cases", len(corpus.Cases))
+	}
+	// The oracle answered each of these by rewriting every entry of a duplicated id; this port
+	// refuses the id instead. meet_ok_duplicate_criterion_ids is the same rule as the named
+	// meet_unchanged_duplicate_met_then_open: two criteria of one id, both open.
+	changed := map[string]string{
+		"complete_ok_duplicate_task_ids":         `{"kind":"rejected","reason":"task id 'wp1/t-1' is ambiguous (2 entries); repair the plan first","plan":null}`,
+		"meet_ok_duplicate_criterion_ids":        `{"kind":"rejected","reason":"criterion id 'c-1' is ambiguous (2 entries); repair the plan first","plan":null}`,
+		"meet_unchanged_duplicate_met_then_open": `{"kind":"rejected","reason":"criterion id 'c-1' is ambiguous (2 entries); repair the plan first","plan":null}`,
+	}
+	recorded := map[string]bool{}
+	for _, c := range corpus.Cases {
+		recorded[c.Name] = true
+	}
+	for name := range changed {
+		if !recorded[name] {
+			t.Fatalf("%s is tagged intentionally-changed but is not a recorded case", name)
+		}
 	}
 	for _, c := range corpus.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -253,6 +273,16 @@ func TestGoalplanLifecycleOracleCorpus(t *testing.T) {
 				want["ids"] = c.Expect.IDs
 			} else if c.Expect.Value != nil {
 				want["value"] = *c.Expect.Value
+			}
+			if override, ok := changed[c.Name]; ok {
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(override), &parsed); err != nil {
+					t.Fatal(err)
+				}
+				if reflect.DeepEqual(lifecycleJSON(t, want), lifecycleJSON(t, parsed)) {
+					t.Fatal("tagged intentionally-changed but the recorded answer is the new one")
+				}
+				want = parsed
 			}
 			if !reflect.DeepEqual(lifecycleJSON(t, got), lifecycleJSON(t, want)) {
 				gotRaw, _ := json.Marshal(lifecycleJSON(t, got))

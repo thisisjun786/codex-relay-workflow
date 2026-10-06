@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
@@ -27,6 +29,16 @@ const mechanicalResolution = "mechanical_resolution"
 const mechanicalSafeSide = "safe side: this head is not accepted. Return the candidate to its child, naming the code and the paths above. Nothing here turns a refusal into a pass: a hand recheck only decides what the correction says"
 
 const defaultRegenerateTimeout = 10 * time.Minute
+
+// pluginVersionRule is the rule the check applies itself, outside the declarations, to the plugin
+// manifest's version line (CRW-664): the line is derived from the payload, so two nodes that both
+// recorded it conflict on nothing but that line, and the head's value can be recomputed from the
+// head itself.
+const pluginVersionRule = dagsched.RuleRegeneratePref + "plugin-version"
+
+// builtinResolution is a path the check settled by a rule of its own, outside the declarations: the
+// rule and the line the proof prints for it.
+type builtinResolution struct{ rule, applied string }
 
 // stringList is a flag that may be given more than once.
 type stringList []string
@@ -280,11 +292,30 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 		return refuse("nothing_resolved", "the tree of %s is what git merges from %s and %s, with no conflict: nothing was settled by a rule, and the proof of such a head is check", head, previous, tip)
 	}
 	rules := map[string]string{}
+	builtin := map[string]builtinResolution{}
 	var openConflicts, openDifferences []string
 	for _, p := range resolved {
 		if rule, ok := cov.ruleFor(p); ok {
 			rules[p] = rule
-		} else if _, conflicted := merged.conflicts[p]; conflicted {
+			continue
+		}
+		// The plugin manifest's version line is the one place no declaration has to cover: the line
+		// is derived from the payload, and the check can recompute it from the head itself (CRW-664).
+		// A declaration that names the place keeps its say even when it does not establish one
+		// mechanical rule for it: the built-in rule stands in for a declaration, and does not
+		// override one.
+		if p == pluginversion.ManifestRepoPath && !cov.coversPath(p) {
+			resolution, settled, err := g.pluginVersionResolution(ctx, previous, head, tip)
+			if err != nil {
+				return nil, nil, err
+			}
+			if settled {
+				rules[p] = resolution.rule
+				builtin[p] = resolution
+				continue
+			}
+		}
+		if _, conflicted := merged.conflicts[p]; conflicted {
 			openConflicts = append(openConflicts, p)
 		} else {
 			openDifferences = append(openDifferences, p)
@@ -296,18 +327,22 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 	if len(openDifferences) > 0 {
 		return refuse("differs_outside_mechanical", "the tree of %s differs from the clean three-way result of %s and %s in %s, which no declared mechanical region covers with one rule", head, previous, tip, nameList(openDifferences))
 	}
-	return g.settleMechanical(ctx, facts, previous, head, tip, cov, resolved, merged, timeout)
+	return g.settleMechanical(ctx, facts, previous, head, tip, cov, resolved, merged, builtin, timeout)
 }
 
 // settleMechanical evaluates selected paths with the same guards and rules as the full skill check.
 // The relay has separately proved that all other changes are confined to conflict files.
-func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, previous, head, tip string, cov coverage, resolved []string, merged *mergeOutcome, timeout time.Duration) (*mechanicalProof, *refreshRefusal, error) {
+func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, previous, head, tip string, cov coverage, resolved []string, merged *mergeOutcome, builtin map[string]builtinResolution, timeout time.Duration) (*mechanicalProof, *refreshRefusal, error) {
 	refuse := func(code, format string, args ...any) (*mechanicalProof, *refreshRefusal, error) {
 		return nil, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: mechanicalSafeSide, facts: facts}, nil
 	}
 	var err error
 	rules := map[string]string{}
 	for _, p := range resolved {
+		if resolution, ok := builtin[p]; ok {
+			rules[p] = resolution.rule
+			continue
+		}
 		rules[p], _ = cov.ruleFor(p)
 	}
 	conflicted := make([]string, 0, len(merged.conflicts))
@@ -353,7 +388,7 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 		}
 	}
 	var proof mechanicalProof
-	var unionPaths, renumberPaths []string
+	var unionPaths, renumberPaths, pluginVersionPaths []string
 	regenerate := map[string][]string{}
 	for _, p := range resolved {
 		switch rule := rules[p]; {
@@ -361,6 +396,8 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 			unionPaths = append(unionPaths, p)
 		case rule == dagsched.RuleRenumber:
 			renumberPaths = append(renumberPaths, p)
+		case rule == pluginVersionRule && builtin[p].rule == pluginVersionRule:
+			pluginVersionPaths = append(pluginVersionPaths, p)
 		default:
 			command := strings.TrimPrefix(rule, dagsched.RuleRegeneratePref)
 			regenerate[command] = append(regenerate[command], p)
@@ -378,6 +415,9 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 			return refuse(code, "%s", detail)
 		}
 		proof.applied = append(proof.applied, appliedRule{p, applied})
+	}
+	for _, p := range pluginVersionPaths {
+		proof.applied = append(proof.applied, appliedRule{p, builtin[p].applied})
 	}
 	if len(regenerate) > 0 {
 		var mergedEntries map[string]treeEntry
@@ -421,6 +461,69 @@ func (g *refreshGit) settleMechanical(ctx context.Context, facts refreshFacts, p
 	sort.Slice(proof.applied, func(i, j int) bool { return proof.applied[i].path < proof.applied[j].path })
 	proof.previous, proof.devTip, proof.head, proof.tree = previous, tip, head, facts.headTree
 	return &proof, nil, nil
+}
+
+// pluginVersionResolution decides whether the plugin manifest is settled by the built-in rule
+// regenerate:plugin-version. The head's manifest must equal both parents' byte for byte but for the
+// version it records, hold the same file mode as both parents, keep the release component both
+// parents record, and record the version the head's own payload derives. It answers the resolution
+// and true, or false when the file is anything else and keeps the judgment it has today: a missing
+// or unreadable manifest, a parent that differs outside the version line, a mode change, a release
+// change, a payload that cannot name a version, and a version that is not the derived one.
+func (g *refreshGit) pluginVersionResolution(ctx context.Context, previous, head, tip string) (builtinResolution, bool, error) {
+	elided := [3][]byte{}
+	versions := [3]string{}
+	modes := [3]string{}
+	for i, commit := range []string{previous, head, tip} {
+		entries, err := g.treeEntries(ctx, commit)
+		if err != nil {
+			return builtinResolution{}, false, err
+		}
+		manifest, ok := entries[pluginversion.ManifestRepoPath]
+		if !ok || manifest.kind != "blob" || (manifest.mode != "100644" && manifest.mode != "100755") {
+			return builtinResolution{}, false, nil
+		}
+		modes[i] = manifest.mode
+		content, err := g.blob(ctx, manifest.oid)
+		if err != nil {
+			return builtinResolution{}, false, err
+		}
+		if elided[i], versions[i], err = pluginversion.ManifestVersionElided([]byte(content)); err != nil {
+			return builtinResolution{}, false, nil
+		}
+	}
+	if modes[1] != modes[0] || modes[1] != modes[2] {
+		return builtinResolution{}, false, nil
+	}
+	if !bytes.Equal(elided[1], elided[0]) || !bytes.Equal(elided[1], elided[2]) {
+		return builtinResolution{}, false, nil
+	}
+	// The release component is the owner's, not the payload's: the rule settles the version line the
+	// payload derives, and it may not choose or drop a release. Both parents have to record one
+	// release and the head has to keep it.
+	release := releaseOf(versions[1])
+	for _, version := range versions {
+		if releaseOf(version) != release {
+			return builtinResolution{}, false, nil
+		}
+	}
+	// The payload is read through the same isolated repository the rest of the proof reads, so a
+	// replace ref or an inherited GIT_* variable cannot make this digest a different tree's.
+	want, reason, err := pluginversion.TreeVersion(ctx, g.isoRun, head)
+	if err != nil {
+		return builtinResolution{}, false, err
+	}
+	if reason != "" || versions[1] != want {
+		return builtinResolution{}, false, nil
+	}
+	return builtinResolution{rule: pluginVersionRule,
+		applied: fmt.Sprintf("applied: regenerate path=%s rule=%s version=%s", pluginversion.ManifestRepoPath, pluginVersionRule, versions[1])}, true, nil
+}
+
+// releaseOf is a version's release component.
+func releaseOf(version string) string {
+	release, _ := pluginversion.SplitVersion(version)
+	return release
 }
 
 func sortedCommands(m map[string][]string) []string {
