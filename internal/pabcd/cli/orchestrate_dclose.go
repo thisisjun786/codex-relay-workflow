@@ -101,9 +101,12 @@ type orchestrateDcloseLockAnswer struct {
 }
 
 // orchestrateDcloseReadJSONLObjects is readJsonlObjects (:431-435): every non-empty line of the file
-// as a JSON object. A missing file is no rows; a line JSON.parse would refuse is an error, as the
-// oracle's throw is, so a damaged ledger fails the close loudly instead of silently answering "no row
-// yet" and writing a duplicate.
+// as a JSON object. A missing file is no rows. A line the oracle's readers would refuse is an error,
+// so a damaged ledger fails the close loudly instead of silently answering "no row yet" and writing a
+// duplicate: text JSON.parse cannot read at all, and a bare `null`, whose property access is the
+// TypeError the oracle's .some() callback throws. A line that is another JSON value is not an error
+// there - property access on a number, string, boolean or array answers undefined - so it is dropped
+// as a row that matches nothing, and no reader is fooled into treating it as an empty object.
 func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -117,9 +120,16 @@ func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 		if line == "" {
 			continue
 		}
-		var row map[string]any
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
+		var value any
+		if err := json.Unmarshal([]byte(line), &value); err != nil {
 			return nil, err
+		}
+		if value == nil {
+			return nil, errors.New("ledger line " + strconv.Quote(line) + " is null, which the oracle's readers refuse")
+		}
+		row, isObject := value.(map[string]any)
+		if !isObject {
+			continue
 		}
 		rows = append(rows, row)
 	}
@@ -163,6 +173,11 @@ func orchestrateDcloseRowMatchesKey(row map[string]any, key string, want *string
 // this close's C -> IDLE row for this session, check epoch and closed work phase. It is the guard
 // that makes a retry append the row once.
 func orchestrateDcloseHasPabcdCloseRow(cwd, sessionID string, checkEpoch, closedWorkPhaseID *string) (bool, error) {
+	return orchestrateDcloseHasDoneRow(cwd, sessionID, checkEpoch, closedWorkPhaseID)
+}
+
+// orchestrateDcloseHasDoneRow is the shared reader behind both guards.
+func orchestrateDcloseHasDoneRow(cwd, sessionID string, checkEpoch, closedWorkPhaseID *string) (bool, error) {
 	rows, err := orchestrateDcloseReadJSONLObjects(filepath.Join(cwd, crwdir.DirName, state.LedgerFile))
 	if err != nil {
 		return false, err
@@ -284,7 +299,6 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 			" \u2192 IDLE, cycle closed, session " + sessionID + ")"
 		return CliResult{Code: 0, Output: orchestrateDcloseAnswer(output, warnings)}, nil
 	}
-
 	slug := cur.Slug
 	allDoneClose := false
 	locked, err := goalplan.WithGoalplanWriteLock(cwd, slug, func(plan *goalplan.Goalplan) (orchestrateDcloseLockAnswer, error) {

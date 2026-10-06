@@ -1061,3 +1061,131 @@ func TestOrchestrateDcloseHarnessPathRunsThePortedBody(t *testing.T) {
 		t.Fatal("the close did not reach IDLE")
 	}
 }
+
+// TestOrchestrateDcloseFailsClosedOnADamagedLedger is the Codex review finding on this pull request: a
+// ledger line that is exactly `null` decodes without an error, and a scanner that read it as an empty
+// object would answer "no row yet" and append a duplicate. The oracle throws there, so the port refuses
+// too. The all-done path shows it: its row guard runs inside the first lock, before any write, so the
+// refusal leaves the plan, the state and both ledgers exactly as they were.
+func TestOrchestrateDcloseFailsClosedOnADamagedLedger(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id, slug := "damaged-ledger", "damaged-ledger-plan"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "damaged ledger"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp-1", Title: "closed", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}}}
+	plan.ActiveWorkPhaseID = nil
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	epoch := "c-test-epoch"
+	s := state.DefaultState(id, slug)
+	s.Phase, s.CheckEpoch = state.PhaseC, &epoch
+	if err := state.WriteState(cwd, s); err != nil {
+		t.Fatal(err)
+	}
+	orchestrateDcloseSeedReceipt(t, cwd, id, epoch)
+	ledgerPath := filepath.Join(cwd, ".crw", "ledger.jsonl")
+	if err := os.WriteFile(ledgerPath, []byte("null\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(cwd, ".crw", "goalplans", slug, "goalplan.json")
+	before := orchestrateDcloseSnapshot(t, planPath, ledgerPath, state.StatePath(cwd, id))
+
+	if _, err := orchestrateDcloseRun(t, cwd, id, orchestrateDcloseSeam{}); err == nil {
+		t.Fatal("a damaged ledger was read as an empty one")
+	}
+	orchestrateDcloseAssertUnchanged(t, before)
+	if state.ReadState(cwd, id).Phase != state.PhaseC {
+		t.Fatal("the refusal moved the session")
+	}
+}
+
+// TestOrchestrateDcloseUnboundOrderIsTheOracles pins the departure the unbound close keeps on purpose
+// (docs/port-cxc/known-defects/CRW-756.md, port: kept): the oracle publishes IDLE before it appends the
+// done row, so an append that fails leaves the session resting with no record of the close, and the FSM
+// has no IDLE -> D edge for a retry to use. The issue states that order as the answer, so the port keeps
+// it, and this test holds the shape so a later issue changes it deliberately.
+func TestOrchestrateDcloseUnboundOrderIsTheOracles(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id := "cycle-hitl-order"
+	s := state.DefaultState(id, "")
+	s.Phase = state.PhaseC
+	if err := state.WriteState(cwd, s); err != nil {
+		t.Fatal(err)
+	}
+	// A ledger path that cannot be appended to, so the state write succeeds and the append fails.
+	if err := os.MkdirAll(filepath.Join(cwd, ".crw", "ledger.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	zero := float64(0)
+	att := &attest.Attestation{From: state.PhaseC, To: state.PhaseD, Did: "ran the suite", CheckOutput: "722 pass", ExitCode: &zero}
+
+	if _, err := orchestrateDclose(cwd, id, "", state.ReadState(cwd, id), att, false, orchestrateDcloseSeam{}); err == nil {
+		t.Fatal("a failed append was reported as success")
+	}
+	// The oracle's order: the state is already published when the append fails.
+	if state.ReadState(cwd, id).Phase != state.PhaseIdle {
+		t.Fatal("the unbound close did not publish IDLE before the append")
+	}
+	if rows := orchestrateTransitionLedger(t, cwd); len(rows) != 0 {
+		t.Fatalf("a row survived a failed append: %+v", rows)
+	}
+	// And the FSM refuses the retry that would restore it, which is the defect the record names.
+	got := orchestrateTransitionRun(t, cwd, "D", "--session", id, "--attest",
+		"{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests passed\",\"exitCode\":0}")
+	if got.Code == 0 {
+		t.Fatalf("a retry of the unbound close was accepted: %+v", got)
+	}
+}
+
+// TestOrchestrateDcloseAllDoneStateWriteFailureReconciles covers the Devin review finding on this pull
+// request: the all-done branch appends its C -> IDLE row inside the first lock and the IDLE state write
+// happens later, so a write that fails before publication leaves a done row beside a session still at C.
+// That order is the oracle §40 Z2 decision (deferring the row to a second lock could lose it for good),
+// and the leftover state is one the same D request reconciles: the row guard finds the row, the retry
+// skips it, and the state reaches IDLE with exactly one row. This test is that reconciliation.
+func TestOrchestrateDcloseAllDoneStateWriteFailureReconciles(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id, slug := "all-done-state-failure", "all-done-state-failure-plan"
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "already finished"})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{{ID: "wp-1", Title: "first", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}}}
+	plan.ActiveWorkPhaseID = nil
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	epoch := "c-all-done"
+	s := state.DefaultState(id, slug)
+	s.Phase, s.CheckEpoch, s.OrchestrationActive = state.PhaseC, &epoch, true
+	if err := state.WriteState(cwd, s); err != nil {
+		t.Fatal(err)
+	}
+	orchestrateDcloseSeedReceipt(t, cwd, id, epoch)
+
+	// The state write fails before publication, so the close reports it and the session stays at C.
+	failing := orchestrateDcloseSeam{writeState: func(string, state.State) error { return syscall.EIO }}
+	if _, err := orchestrateDcloseRun(t, cwd, id, failing); err == nil {
+		t.Fatal("a pre-publication failure was reported as success")
+	}
+	if state.ReadState(cwd, id).Phase != state.PhaseC {
+		t.Fatal("the failed write moved the session")
+	}
+	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 1 {
+		t.Fatalf("done rows = %d, want the row the all-done branch wrote inside the lock", n)
+	}
+
+	// The same request reconciles: no second row, and the state reaches IDLE.
+	got, err := orchestrateDcloseRun(t, cwd, id, orchestrateDcloseSeam{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != 0 {
+		t.Fatalf("retry: %+v", got)
+	}
+	if state.ReadState(cwd, id).Phase != state.PhaseIdle {
+		t.Fatal("the retry did not reach IDLE")
+	}
+	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 1 {
+		t.Fatalf("done rows = %d, want 1", n)
+	}
+}
