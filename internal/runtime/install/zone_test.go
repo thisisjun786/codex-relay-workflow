@@ -200,6 +200,7 @@ func mustRead(t *testing.T, path string) []byte {
 }
 
 func TestTheZoneArrivalIsRefusedWithoutTheRouteAndTheRefusalNamesIt(t *testing.T) {
+	t.Parallel()
 	h, _, second, old, _ := zoneInstalled(t)
 	zoneStore(t, h)
 	before := digestTree(t, h.relayState)
@@ -216,6 +217,7 @@ func TestTheZoneArrivalIsRefusedWithoutTheRouteAndTheRefusalNamesIt(t *testing.T
 }
 
 func TestTheZoneArrivalWithTheRouteIsBackedUpByteForByteAndThenSwaps(t *testing.T) {
+	// sequential: replaces the state-backup seam through atCopy.
 	h, _, second, _, next := zoneInstalled(t)
 	outside := zoneStore(t, h)
 	before := digestTree(t, h.relayState)
@@ -300,6 +302,7 @@ func TestTheZoneArrivalWithTheRouteIsBackedUpByteForByteAndThenSwaps(t *testing.
 // The route is for the zone arriving alone. Any other difference refuses with the acknowledgement as without it, and
 // no backup is made for it.
 func TestTheRouteDoesNotCarryAnythingButTheZoneArrivingAlone(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		prepare func(t *testing.T, db *sql.DB)
 		answer  string
@@ -350,6 +353,7 @@ func TestTheRouteDoesNotCarryAnythingButTheZoneArrivingAlone(t *testing.T) {
 // An open attempt refuses the swap whatever else holds, so it refuses the zone arrival that was acknowledged, and no
 // backup is made for a swap that does not happen.
 func TestAnOpenAttemptStillRefusesTheAcknowledgedArrivalAndNothingIsCopied(t *testing.T) {
+	t.Parallel()
 	h, _, second, old, _ := zoneInstalled(t)
 	zoneStore(t, h)
 	db, err := sql.Open("sqlite", filepath.Join(h.relayState, "relay.sqlite3"))
@@ -382,6 +386,7 @@ func TestAnOpenAttemptStillRefusesTheAcknowledgedArrivalAndNothingIsCopied(t *te
 // Where the backup may not go: over anything, into the state directory, or into the install's own tree, which a failed
 // run removes. Each is refused before a byte is copied.
 func TestTheBackupDestinationIsRefusedWhereItCouldNotSurvive(t *testing.T) {
+	t.Parallel()
 	h, _, second, old, next := zoneInstalled(t)
 	zoneStore(t, h)
 	before := digestTree(t, h.relayState)
@@ -428,6 +433,7 @@ func appendTo(path, text string) error {
 // A backup that fails part-way, or whose source moved while it was copied, refuses the swap, and what was copied stays:
 // nothing is deleted, there is no manifest to vouch for it, and the pointer is where it was.
 func TestABackupThatFailsOrIsNotOfOneMomentRefusesTheSwapAndKeepsWhatItCopied(t *testing.T) {
+	// sequential: replaces the state-backup seam.
 	for name, tc := range map[string]struct {
 		step func(h *host) error
 		want string
@@ -482,6 +488,7 @@ func TestABackupThatFailsOrIsNotOfOneMomentRefusesTheSwapAndKeepsWhatItCopied(t 
 // A failure after the backup leaves it where it is: the pointer move that fails is put back, and the copy is a faithful
 // copy of a store nothing wrote.
 func TestTheBackupSurvivesAPromotionThatFailsAfterIt(t *testing.T) {
+	// sequential: replaces the pointer-placement seam.
 	h, _, second, old, _ := zoneInstalled(t)
 	zoneStore(t, h)
 	seen, observe := atCopy(t, h)
@@ -505,6 +512,7 @@ func TestTheBackupSurvivesAPromotionThatFailsAfterIt(t *testing.T) {
 
 // The acknowledgement for a swap that needs none is not a refusal and takes no backup.
 func TestTheAcknowledgementWhereTheZoneDoesNotArriveTakesNoBackup(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	o := h.options()
@@ -549,6 +557,7 @@ func openedByThisBuild(t *testing.T, h *host) {
 // Returning to a runtime that does not declare the zone is not refused for the zone, and needs no acknowledgement and no
 // backup: on a promotion, on a promotion an interrupted run left to finish, and on a rollback that moves the pointer.
 func TestAStoreThatOnlyHoldsTheZoneDoesNotRefuseARuntimeThatDoesNotDeclareIt(t *testing.T) {
+	t.Parallel()
 	t.Run("an update", func(t *testing.T) {
 		h, _, second, _, next := zoneInstalled(t)
 		openedByThisBuild(t, h)
@@ -590,6 +599,7 @@ func TestAStoreThatOnlyHoldsTheZoneDoesNotRefuseARuntimeThatDoesNotDeclareIt(t *
 // The route is on every path that moves the pointer: an interrupted promotion finished by a rerun, and a rollback to a
 // runtime that declares the zone while the store still lacks it.
 func TestTheRouteIsOnTheResumeAndOnTheRollbackToo(t *testing.T) {
+	// sequential: replaces the state-backup seam.
 	t.Run("resume", func(t *testing.T) {
 		h, _, second, old, next := zoneInstalled(t)
 		h.mustInstall(t, "update", second)
@@ -654,6 +664,7 @@ func TestTheRouteIsOnTheResumeAndOnTheRollbackToo(t *testing.T) {
 // The command line: --backup-state-to is on install, update and rollback, and nowhere else; an empty one names no
 // directory.
 func TestTheBackupFlagIsOnTheCommandsThatSwapAndNowhereElse(t *testing.T) {
+	// sequential: t.Setenv("PATH") is process-wide.
 	// Main reads the Codex version from the codex on the process PATH (Options.CodexVersion is not reachable from the
 	// command line), so a host without one is given a stand-in that answers as the real one does.
 	fakeBin := t.TempDir()
@@ -697,6 +708,7 @@ func TestTheBackupFlagIsOnTheCommandsThatSwapAndNowhereElse(t *testing.T) {
 // A store whose database is a link to a file elsewhere keeps its write-ahead log beside that file: the backup carries
 // the log too, so a commit that only the log held is in the backup, and the backup opened on its own has it.
 func TestTheBackupOfALinkedStoreCarriesItsLog(t *testing.T) {
+	t.Parallel()
 	h, _, second, _, next := zoneInstalled(t)
 	elsewhere := t.TempDir()
 	real := filepath.Join(elsewhere, "real.sqlite3")
@@ -761,6 +773,7 @@ func TestTheBackupOfALinkedStoreCarriesItsLog(t *testing.T) {
 // A refusal after the backup was taken still reports it, on every path that moves the pointer: the copy is there, it is
 // kept, and the result says where, so "nothing was written" is never told of a run that wrote a backup.
 func TestARefusalAfterTheBackupStillReportsItOnResumeAndOnRollback(t *testing.T) {
+	// sequential: replaces the state-backup and pointer-placement seams.
 	failPlacement := func() func() {
 		return install.ReplacePointerPlacement(func(path, target string) error { return errors.New("injected: the pointer move failed") })
 	}
@@ -806,6 +819,7 @@ func TestARefusalAfterTheBackupStillReportsItOnResumeAndOnRollback(t *testing.T)
 // The backup, its manifest and the directories made for them are synced in their parents once the manifest is written:
 // until then a power loss can keep the files and lose the names that reach them.
 func TestTheBackupAndItsManifestAreSyncedInTheirParents(t *testing.T) {
+	// sequential: replaces the directory-sync seam.
 	h, _, second, _, next := zoneInstalled(t)
 	zoneStore(t, h)
 	dest := filepath.Join(h.home, "deep", "er", "backup")
@@ -842,6 +856,7 @@ func TestTheBackupAndItsManifestAreSyncedInTheirParents(t *testing.T) {
 // A mode set on a copy reaches the disk only when that copy is synced after it is set: the file and the directory are
 // synced with the mode they are to keep, not before it.
 func TestTheModesOfTheBackupAreSyncedAfterTheyAreSet(t *testing.T) {
+	// sequential: replaces the mode-sync seam.
 	h, _, second, _, _ := zoneInstalled(t)
 	zoneStore(t, h)
 	dest := backupOf(h, "modes")
@@ -871,6 +886,7 @@ func TestTheModesOfTheBackupAreSyncedAfterTheyAreSet(t *testing.T) {
 // A copy is opened by the user who took the backup, to sync it and to restore from it: the owner can always read it,
 // whatever the mode of a source that was readable only through its group.
 func TestACopyIsGivenTheSourcesModeWithTheOwnerAbleToOpenIt(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		dir  bool
 		mode os.FileMode
@@ -889,6 +905,7 @@ func TestACopyIsGivenTheSourcesModeWithTheOwnerAbleToOpenIt(t *testing.T) {
 
 // The listing records the mode of the source and the mode its copy is to be given, for a file and for a directory.
 func TestTheListingRecordsTheModeOfTheCopyBesideTheModeOfTheSource(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "group-only"), "x")
 	write(t, filepath.Join(dir, "plain"), "x")
