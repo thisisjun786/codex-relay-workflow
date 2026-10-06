@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -323,5 +324,14 @@ func TestShellWriteExecDepthStaysBounded(t *testing.T) {
 	}
 	if got := ShellWriteDestinations(command); slices.Contains(got, "/m/a") {
 		t.Errorf("a 200-level program named %q; the walk must stop at the depth limit", got)
+	}
+	// The work stays bounded as well as the answer: the walk stops at the limit, so 200 levels cost about as much as 32.
+	// A reader that expanded every level would take far longer than this budget, which is generous enough not to be flaky
+	// (the same wall-clock-budget convention the Stop-hook package uses).
+	start := time.Now()
+	ShellWriteDestinations(command)
+	shellWriteFStringUnreadable(command)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("200 levels took %v; the walk is not bounded by the depth limit", elapsed)
 	}
 }
