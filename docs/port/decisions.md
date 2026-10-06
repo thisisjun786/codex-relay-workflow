@@ -5970,9 +5970,11 @@ the research report names. The counter is read from rows the store already keeps
 for them: a node's correction generations (`dag_node_executions`, kind `correction`) with the finding
 each ruling carried, its merge-check history (`dag_merge_checks`, `round` and the failed required
 check names) and its revalidations (`dag_acceptance_revalidations`). The reading carries an optional
-`stagnation` object beside `release` and `merge_order` on a node whose count is not zero, and
-`pass.stagnation` counts the nodes at each rung, so the object is absent from a reading of a plan
-nobody has corrected twice, exactly as `lifecycle` and `plan_state` are.
+`stagnation` object beside `release` and `merge_order` on a node whose count has reached the
+threshold, and `pass.stagnation` counts the nodes at each rung. The threshold is 2: one correction
+is not repetition, and the object appears once the same finding has been carried by two consecutive
+corrections of the node, so it is absent from a reading of a plan nobody has corrected twice, exactly
+as `lifecycle` and `plan_state` are absent when they do not apply.
 
 *Where the finding identity comes from.* A correction generation's finding is the ruling that opened
 it: `RecordCorrection` reads `verdict_context.findings` of the `needs_changes` verdict whose
@@ -6017,9 +6019,12 @@ the stale routes and the merge lane already refuse.
 assert the reading raises `count` to 2 and names `edit_packet`, then a third time and assert it names
 `split_node`; green controls where the second correction carries a different finding and the count
 resets, where a generation the coordinator opened by hand raises no repeated-finding count, where a
-node that landed reads no stagnation object, and where the ladder stops at `full_replan` and the next
-raise is refused `disposition_conflict` with nothing written. A second red test covers the cap:
-`TestTheStagnationLadderStopsAtFullReplan`.
+node that landed reads no stagnation object, and where a fourth correction past `full_replan` leaves
+the rung at `full_replan` and writes nothing. A second red test covers the cap:
+`TestTheStagnationLadderStopsAtFullReplan`, which asserts the same: the rung stops at the last one
+and the reading stays a function of the store. Neither test asserts a refusal, because this reading
+refuses nothing; a later issue that wants the last rung to be refused would add it where the
+triggering command runs, with the existing `disposition_conflict`.
 
 *Not in this slice.* The transport caps of R-8 (`internal/relay/delivery/policy.go`) are unchanged,
 the progress view that CRW-186 owns is not extended here (the scheduler's own reading carries the
