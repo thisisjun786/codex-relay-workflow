@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -348,6 +349,7 @@ type businessResendUnloadApp struct {
 	archivedListing  string
 	onArchivedList   func()
 	archived         map[string]bool
+	listingCalls     int
 	archiveCalls     []string
 	unarchiveCalls   []string
 }
@@ -364,6 +366,7 @@ func (a *businessResendUnloadApp) markArchived(id string, archived bool) {
 }
 
 func (a *businessResendUnloadApp) archivedPage() (map[string]any, error) {
+	a.listingCalls++
 	if a.onArchivedList != nil {
 		a.onArchivedList()
 	}
@@ -718,6 +721,30 @@ func TestBusinessResendUnloadLostArchiveReplyCancelledDuringCheck(t *testing.T) 
 	}
 	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
 		t.Fatalf("cancelled check wrote %d unload rows", n)
+	}
+}
+
+// A failure the host answered with its own JSON-RPC error response is this call being refused, not
+// an uncertain outcome: another client may have archived the child first, so this invocation did
+// not apply the archive. The archived listing is never asked, nothing is unarchived and no row is
+// written, even when the listing would show the child archived.
+func TestBusinessResendUnloadHostRefusedArchiveHolds(t *testing.T) {
+	k, business, _ := businessResendKit(t)
+	app := &businessResendUnloadApp{Adapter: k.start.Adapter, host: k.host, archiveErr: &appserver.RPCError{Method: "thread/archive", Code: -32603, Message: "no rollout found"}}
+	k.start.Adapter = app
+	k.host.threads["t-1"].status = "idle"
+	app.markArchived("t-1", true)
+	for range 2 {
+		k.expect(k.run(), "incomplete", "recipient_not_idle", "")
+	}
+	if len(app.archiveCalls) != 2 || len(app.unarchiveCalls) != 0 || k.host.sent != 0 || k.host.operations[businessResendID("managed-1", business, 1)] != nil {
+		t.Fatalf("host-refused archive touched the thread: archive=%v unarchive=%v sent=%d", app.archiveCalls, app.unarchiveCalls, k.host.sent)
+	}
+	if app.listingCalls != 0 {
+		t.Fatalf("host-refused archive asked the archived listing %d times", app.listingCalls)
+	}
+	if n := businessResendJournalCount(t, k, "managed_resend_unloaded"); n != 0 {
+		t.Fatalf("host-refused archive wrote %d unload rows", n)
 	}
 }
 
