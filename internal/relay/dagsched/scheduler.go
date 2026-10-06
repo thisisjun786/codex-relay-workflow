@@ -98,10 +98,16 @@ type Check struct {
 	// Stamp is when the forge last changed the check (a commit status has no attempt, so this is what tells a status that failed again from the same status read twice).
 	Stamp   string
 	Attempt int64
-	// NotRun is the collector's mark that the job began no step: a cancelled job the runner never
-	// picked up. It is read as a strict boolean and written back into the restated rows only when
-	// it is true, so a row without it gains no field (CRW-676).
+	// NotRun is the collector's mark that the job began no step: a job that concluded cancelled,
+	// failure or timed_out without a started step, which the runner never picked up. It is read as
+	// a strict boolean and written back into the restated rows only when it is true, so a row
+	// without it gains no field (CRW-676, CRW-681).
 	NotRun bool
+	// TestSkipped is the collector's mark that a go-product test leg concluded success without
+	// running its test step: CI light mode skips the leg's work while the job still reads success,
+	// so the leg says nothing about the commit. It is read as a strict boolean and written back
+	// into the restated rows only when it is true, so a row without it gains no field (CRW-824).
+	TestSkipped bool
 }
 
 // Problem is one problem code of a merge-evidence snapshot.

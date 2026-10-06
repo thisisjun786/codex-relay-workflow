@@ -85,6 +85,9 @@ func RunMemoryCLI(a MemoryAllowWriteArgs) (string, int) {
 		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
 			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
+		if !cliInterviewIntact(a.Cwd, a.SessionID) {
+			return errors.New(cliInterviewRefusalReason)
+		}
 		s.MemoryWriteGrant = true
 		return state.WriteState(a.Cwd, s)
 	})
@@ -110,4 +113,25 @@ func cliVerdictsIntact(cwd, sessionID string, count int) bool {
 	}
 	s, unreadable := state.ReadStateStrict(cwd, sessionID)
 	return !unreadable && len(s.UnverifiedSubagents) == count && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
+}
+
+// cliInterviewRefusalReason is the reason a cli writer gives when the rewrite would drop stored interview records.
+const cliInterviewRefusalReason = "session state holds interview records this command cannot rewrite without losing them; refusing to rewrite it"
+
+// cliInterviewIntact prevents publishing a reconstructed interview tracker that discarded or changed
+// raw records: ReadStateStrict rebuilds the tracker through interview.ReconstructInterview, which caps
+// contradictions and assumptions at interview.MaxTrackerArray (drop-oldest) and drops an ontology entity
+// with no name and a relationship with no target, so a rewrite from that read loses those records for
+// good (state.RewriteKeepsInterview). A file that does not exist stores nothing to lose; one that cannot be
+// read is refused, as is one the reader calls unreadable. Reads occur under WithSessionLock, as cliVerdictsIntact's do.
+func cliInterviewIntact(cwd, sessionID string) bool {
+	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	s, unreadable := state.ReadStateStrict(cwd, sessionID)
+	return !unreadable && state.RewriteKeepsInterview(raw, s.Interview)
 }
