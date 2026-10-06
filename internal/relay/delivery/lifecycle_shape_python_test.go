@@ -44,6 +44,7 @@ func (shapeLifecycleHost) RecipientFingerprint(context.Context, string) (string,
 }
 
 func Test28LifecycleContainerComparisonsMatchPython(t *testing.T) {
+	t.Parallel()
 	values := []any{[]any{"active"}, map[string]any{"type": "active"}}
 	cases := []shapeLifecycleHost{}
 	for _, value := range values {

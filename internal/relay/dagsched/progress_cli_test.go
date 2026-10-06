@@ -130,6 +130,7 @@ func sameStore(t testing.TB, what string, before, after map[string]string) {
 // Criterion c2: the query reads the store and changes nothing in it. The command runs with PATH emptied (no git, no gh to start) and the journal sequence, every object and every row are the same
 // afterwards.
 func TestCLIProgressReadsOnlyTheStore(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	db := filepath.Join(state, "relay.sqlite3")
 	// a journal that is not empty, so a query that wrote a row would move a sequence that has somewhere to move from
@@ -210,6 +211,7 @@ func owingState(t *testing.T) (state, db string) {
 // Criterion c2, the opener: the command opens the store strictly read-only. A store that still owes the repairs a writer's open makes stays exactly as it is; the control shows that the writer's opener,
 // which dag-ready uses, does repair such a store, so the check can tell the two openers apart.
 func TestCLIProgressOpensTheStoreReadOnly(t *testing.T) {
+	t.Parallel()
 	controlState, controlDB := owingState(t)
 	owed := dumpStore(t, controlDB)
 	if _, errs, code := crwRun(t, controlState, nil, "dag-ready", "--plan", "p1"); code != 0 {
@@ -235,6 +237,7 @@ func TestCLIProgressOpensTheStoreReadOnly(t *testing.T) {
 // The refusals are the relay's: a missing option is the parser's (exit 2, usage on stderr), an unknown plan is unregistered_scope, and a state directory with no store is the reason every read-only
 // relay command gives, which dag-progress must give as dag-ready does.
 func TestCLIProgressRefusals(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	db := filepath.Join(state, "relay.sqlite3")
 	before := dumpStore(t, db)
@@ -277,6 +280,7 @@ func TestCLIProgressRefusals(t *testing.T) {
 
 // Criterion c2 and c3 end to end: with every artifact file deleted the printed document is the same bytes, where dag-ready, which reads the files, now blocks a node.
 func TestCLIProgressDoesNotReadArtifacts(t *testing.T) {
+	t.Parallel()
 	state, _ := cliState(t)
 	var artifacts []string
 	db := filepath.Join(state, "relay.sqlite3")

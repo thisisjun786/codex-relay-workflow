@@ -1,0 +1,13 @@
+{
+  "schema": "crw-issue-size-calibration/1",
+  "rows": [
+    {"issue": "CRW-624", "estimate_low": 450, "estimate_high": 580, "actual_impl": 884, "actual_test": 589},
+    {"issue": "CRW-369", "estimate_low": 500, "estimate_high": 500, "actual_impl": 266, "actual_test": 816},
+    {"issue": "CRW-376", "estimate_low": 470, "estimate_high": 470, "actual_impl": 502, "actual_test": 422},
+    {"issue": "CRW-378", "estimate_low": 420, "estimate_high": 420, "actual_impl": 296, "actual_test": 492},
+    {"issue": "CRW-382", "estimate_low": 550, "estimate_high": 550, "actual_impl": 494, "actual_test": 290},
+    {"issue": "CRW-664", "estimate_low": null, "estimate_high": 600, "actual_impl": 782, "actual_test": 487},
+    {"issue": "CRW-685", "estimate_low": null, "estimate_high": 600, "actual_impl": 429, "actual_test": 531},
+    {"issue": "CRW-716", "estimate_low": null, "estimate_high": 600, "actual_impl": 470, "actual_test": 370}
+  ]
+}

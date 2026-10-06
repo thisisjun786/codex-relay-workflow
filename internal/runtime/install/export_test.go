@@ -118,3 +118,9 @@ func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
 	processOwner = owner
 	return func() { processOwner = saved }
 }
+
+// WriteExecutable is writeExecutable, for the tests in install_test that write a file this
+// process then runs.
+func WriteExecutable(target string, body []byte, mode os.FileMode) error {
+	return writeExecutable(target, body, mode)
+}

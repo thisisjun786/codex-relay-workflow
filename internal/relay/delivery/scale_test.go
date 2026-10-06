@@ -461,6 +461,7 @@ func TestScale_a_legacy_scheduler_cursor_is_not_a_pointer(t *testing.T) {
 // Whether a relationship has spent its hour is one grouped read joined to the due list, not an
 // expression evaluated for each candidate: ten thousand queued deliveries of a runaway relationship
 // are set aside in a fraction of a second (the per-candidate form took six seconds).
+// sequential: asserts a three-second wall-clock bound on the selection, which a host running the package's tests in parallel can exceed.
 func TestScale_a_large_backlog_of_a_capped_relationship_is_set_aside_in_linear_time(t *testing.T) {
 	const backlog = 10000
 	w := newScaleWorld(t, 2)

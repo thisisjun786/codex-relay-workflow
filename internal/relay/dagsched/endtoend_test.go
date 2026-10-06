@@ -178,6 +178,7 @@ func (f *forkJoin) snapshot(plan string) string {
 
 // Criterion c11, c2, c3, c5, c7, c8 end to end: a fork and a join through the real bridge, store, delivery and merge lane. Before an acceptance nothing downstream is ready; an acceptance
 // alone opens no integrated edge; landing opens the fork; the join waits for both branches; every node has exactly one child however often it is woken; the slots return as nodes integrate.
+// sequential: t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR") is process-wide.
 func TestForkJoinEndToEnd(t *testing.T) {
 	f := newForkJoin(t)
 	repo := f.repo

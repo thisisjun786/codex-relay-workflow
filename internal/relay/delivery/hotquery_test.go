@@ -302,6 +302,7 @@ func (w *hotWorld) holdsTheSame(t *testing.T, parents int) (due, open, pending i
 // c3: in worlds where every condition of the three queries is met by some rows and missed by others,
 // each query returns the rows it returned before and in the order it did.
 func TestHotQueriesReturnTheRowsTheyReturnedInTheOrderTheyDid(t *testing.T) {
+	t.Parallel()
 	for _, salt := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("salt=%d", salt), func(t *testing.T) {
 			t.Parallel()
@@ -344,6 +345,7 @@ func TestHotQueriesReturnTheRowsTheyReturnedInTheOrderTheyDid(t *testing.T) {
 // c3: the same holds on the store the benchmarks measure, at the issue's scale, with something to find
 // and with nothing.
 func TestHotQueriesReturnTheSameRowsAtTheIssuesScale(t *testing.T) {
+	t.Parallel()
 	for _, busy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("busy=%v", busy), func(t *testing.T) {
 			t.Parallel()

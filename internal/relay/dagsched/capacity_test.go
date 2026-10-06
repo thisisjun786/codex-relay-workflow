@@ -21,6 +21,7 @@ func (f *fixture) capacityNow() Capacity {
 // D-05: the DAG never runs more children than the standing cap of 6 unless a cap basis documents a larger ceiling. The clamp is DAG policy
 // (capacity.Reserve knows nothing of it), so the reader decides it from the declared limit and the basis table.
 func TestCapacityClamp(t *testing.T) {
+	t.Parallel()
 	t.Run("no limit declared: the standing cap", func(t *testing.T) {
 		f := newFixture(t)
 		if c := f.capacityNow(); c.Ceiling != 6 || c.Source != "standing_cap" || c.Free != 6 {

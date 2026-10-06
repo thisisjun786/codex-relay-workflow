@@ -9,6 +9,7 @@ import (
 // Contract 8.2: a stale result or stale criteria never opens an edge. After a node's acceptance each change below must close what the acceptance opened (or, for an archived relationship,
 // leave the durable acceptance standing), with the reason the contract names.
 func TestStaleResultNeverOpensAnEdge(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		reason string // "" = still satisfied
@@ -67,6 +68,7 @@ func TestStaleResultNeverOpensAnEdge(t *testing.T) {
 // Contract 8.2 on an integrated edge: a landing is a fact about a commit, not a reason to trust the result it belongs to. After the head landed (observation and merged mark), anything that
 // makes the acceptance stale, altered or foreign closes what the landing opened, exactly as it does on an artifact edge.
 func TestStaleResultNeverOpensAnIntegratedEdge(t *testing.T) {
+	t.Parallel()
 	pinned := acceptOpts{HeadSHA: head1, PR: 7, Forge: "owner/repo", Repository: "owner/repo"}
 	cases := []struct {
 		name   string
