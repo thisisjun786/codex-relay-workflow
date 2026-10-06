@@ -4,12 +4,12 @@ package cxcfuzz
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 )
@@ -57,8 +57,20 @@ func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the shim did not answer the handshake: %v", err)
 			}
-			if !strings.Contains(line, "\"id\":1") {
-				t.Fatalf("the handshake answer %q is not the reply to request 1", line)
+			// The answer must be the inert one: the reply to request 1 carrying a null output. A shim
+			// that ran the case still answers (an error envelope or a case answer) and may leave no file
+			// behind, so checking only for a reply and an empty directory would miss it: the pyjson shim
+			// would spawn python3 on every worker start and still pass.
+			var reply struct {
+				ID     int
+				Output any
+				Error  any
+			}
+			if err := json.Unmarshal([]byte(line), &reply); err != nil {
+				t.Fatalf("the handshake answer %q is not JSON: %v", line, err)
+			}
+			if reply.ID != 1 || reply.Output != nil || reply.Error != nil {
+				t.Fatalf("the handshake answer %q is not the inert reply {id:1, output:null}", line)
 			}
 			// The reply is discarded by the pool, so only its presence matters. Wait for the process
 			// to exit, then prove the handshake wrote nothing under the worker's working directory.
