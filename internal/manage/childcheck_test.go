@@ -106,8 +106,7 @@ func TestChildCheckReadsTheDisabledServersFromTheConfigSection(t *testing.T) {
 	}
 }
 
-// A read failure is host_unreachable exit 3, a paged server list is host_error exit 3, an unusable
-// command line is exit 2, -h is exit 0.
+// A read failure is host_unreachable exit 3, a paged list host_error exit 3, a bad line exit 2, -h exit 0.
 func TestChildCheckFailuresAndCommandLine(t *testing.T) {
 	hostReadEnv(t, "")
 	code, out := hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none")
@@ -116,7 +115,8 @@ func TestChildCheckFailuresAndCommandLine(t *testing.T) {
 	}
 	host := fakehost.Start(t)
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"model": "m", "reasoningEffort": "none", "status": map[string]any{"type": "idle"}}}})
-	host.Respond("mcpServerStatus/list", fakehost.Reply{Result: map[string]any{"data": []any{}, "nextCursor": "page-2"}})
+	// A cursor that is not a string is paged too: internal/bridge reads any non-nil, non-empty cursor.
+	host.Respond("mcpServerStatus/list", fakehost.Reply{Result: map[string]any{"data": []any{}, "nextCursor": float64(2)}})
 	hostReadEnv(t, host.SocketPath)
 	code, out = hostReadRun(t, "child-check", "--thread", "t1", "--model", "m", "--effort", "none", "--disabled", "alpha")
 	if got := hostReadDecode(t, out); code != 3 || got.Reason != "host_error" {

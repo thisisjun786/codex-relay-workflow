@@ -20,8 +20,8 @@ func hostReadConfig(socket string) *Config {
 }
 
 // hostReadEnv points HOME, CODEX_HOME and XDG_STATE_HOME at a fresh short tree and links the command's
-// default socket path to socket (absent when socket is empty). Not t.TempDir(): its path carries the
-// test name, which would push the socket past the 108-byte unix socket bound.
+// default socket path to socket (absent when empty). Not t.TempDir(): its path carries the test name,
+// which would push the socket past the 108-byte unix socket bound.
 func hostReadEnv(t *testing.T, socket string) {
 	t.Helper()
 	home, err := os.MkdirTemp("", "crw686-")
@@ -67,8 +67,7 @@ func hostReadDecode(t *testing.T, out string) hostReadOut {
 	return got
 }
 
-// C1: every write method is refused as method_not_read_only exit 2 before any connection (a live fake
-// records no request; with no socket the same refusal replaces host_unreachable). HostRead too.
+// C1: every write method is refused as method_not_read_only exit 2 before any connection; HostRead too.
 func TestHostReadRefusesWriteMethods(t *testing.T) {
 	host := fakehost.Start(t)
 	host.Respond("thread/read", fakehost.Reply{})
@@ -91,8 +90,7 @@ func TestHostReadRefusesWriteMethods(t *testing.T) {
 }
 
 // C2: every allow-listed method returns the fake's result bytes unchanged, --params reaches the host
-// unchanged, an omitted --params sends the empty object, HostRead returns the host's bytes, and the
-// envelope splices a result in rather than compacting it.
+// unchanged, an omitted --params sends {}, and the envelope splices a result in rather than compacting it.
 func TestHostReadReturnsAllowedResultsVerbatim(t *testing.T) {
 	host := fakehost.Start(t)
 	for _, method := range hostReadAllowedMethods {

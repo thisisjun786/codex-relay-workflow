@@ -43,8 +43,7 @@ func hostReadReason(err error) (hostReadRefusal, string) {
 	return hostReadHostError, err.Error()
 }
 
-// HostRead performs one allow-listed read against the App Server socket in cfg; a method outside it is
-// refused before any connection.
+// HostRead performs one allow-listed read against the App Server socket in cfg.
 func HostRead(ctx context.Context, cfg *Config, method string, params map[string]any) (json.RawMessage, error) {
 	if !hostReadMethods[method] {
 		return nil, &hostReadError{reason: hostReadMethodNotReadOnly}
@@ -71,7 +70,11 @@ type hostReadFailure struct {
 
 // hostReadWrite writes one JSON value and a newline to w.
 func hostReadWrite(w io.Writer, value any) {
-	data, _ := json.Marshal(value)
+	data, err := json.Marshal(value)
+	if err != nil {
+		fmt.Fprintf(w, "{\"ok\":false,\"reason\":\"host_error\",\"detail\":%q}\n", err.Error())
+		return
+	}
 	fmt.Fprintf(w, "%s\n", data)
 }
 

@@ -89,8 +89,7 @@ func childCheck(ctx context.Context, cfg *Config, opts childCheckOptions) (*chil
 	return report, nil
 }
 
-// childCheckServerStatus reads the host's per-server MCP status, keyed by name; a paged answer is
-// refused, as internal/bridge reads it, since a later page's server would be reported missing.
+// childCheckServerStatus reads the host's per-server MCP status, keyed by name; a paged answer is refused.
 func childCheckServerStatus(ctx context.Context, cfg *Config, thread string) (map[string]string, error) {
 	raw, err := HostRead(ctx, cfg, "mcpServerStatus/list", map[string]any{"threadId": thread, "detail": "toolsAndAuthOnly", "limit": 500})
 	if err != nil {
@@ -98,12 +97,13 @@ func childCheckServerStatus(ctx context.Context, cfg *Config, thread string) (ma
 	}
 	var answer struct {
 		Data       []struct{ Name, RuntimeStatus string }
-		NextCursor string
+		NextCursor any
 	}
 	if err := json.Unmarshal(raw, &answer); err != nil {
 		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list result: " + err.Error()}
 	}
-	if answer.NextCursor != "" {
+	// Any non-nil, non-empty cursor means paged, the reading internal/bridge makes of the answer.
+	if answer.NextCursor != nil && answer.NextCursor != "" {
 		return nil, &hostReadError{reason: hostReadHostError, detail: "mcpServerStatus/list answer is paged; the server list is incomplete"}
 	}
 	status := map[string]string{}
