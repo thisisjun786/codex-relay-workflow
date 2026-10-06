@@ -106,7 +106,7 @@ func harnessInstallExpected(recorded, root string) string {
 
 // harnessInstallGot is one ported check in the recorded shape.
 func harnessInstallGot(check HarnessCheck) harnessInstallCheckRecorded {
-	return harnessInstallCheckRecorded{Name: check.Name, Severity: string(check.Severity), Evidence: check.Evidence, Repair: check.Repair}
+	return harnessInstallCheckRecorded{Name: check.Name, Severity: string(check.Severity), Evidence: check.Evidence, Repair: harnessReportRepairString(check.Repair)}
 }
 
 // harnessInstallRecover runs one check and answers the panic value as an error, the port's shape
@@ -544,7 +544,7 @@ func TestHarnessInstallCorruptRepairRendersPort(t *testing.T) {
 	root := t.TempDir()
 	ws := harnessInstallPabcdWorkspace(t, root, "corrupt_one")
 	check := HarnessPabcdCheck(ws)
-	if check.Severity != HarnessWarn || check.Repair != "crw pabcd reset --state" {
+	if check.Severity != HarnessWarn || harnessReportRepairString(check.Repair) != "crw pabcd reset --state" {
 		t.Fatalf("check = %+v, want the corrupt-session WARN with the reset repair", check)
 	}
 	text := RenderHarnessReport(HarnessReport{SchemaVersion: HarnessSchemaVersion, Overall: HarnessWarn, Checks: []HarnessCheck{check}})
