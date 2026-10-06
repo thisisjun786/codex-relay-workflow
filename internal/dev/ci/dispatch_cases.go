@@ -52,7 +52,7 @@ var dispatchCasesSections = []dispatchCasesSection{
 	{"## Contrast cases", "contrast", dispatchCasesBlocks},
 }
 
-var dispatchCasesName = regexp.MustCompile("^([0-9]{4})-(.+)\\.md$")
+var dispatchCasesName = regexp.MustCompile(`^([0-9]{4})-(.+)\.md$`)
 
 // dispatchCasesCaseID is the id line's bold lead names, and whether line is a case block's first
 // line at all: two asterisks, the id, a space, an em dash (U+2014) and a space.
