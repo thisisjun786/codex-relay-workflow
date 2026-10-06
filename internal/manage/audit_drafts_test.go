@@ -158,10 +158,7 @@ func TestAuditDraftDefaultThresholdCreatesNoDraftBelowP1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
+	names := auditDraftJSONNames(entries)
 	if len(names) != 3 || !strings.Contains(strings.Join(names, ","), auditDraftIndexFile) {
 		t.Errorf("the drafts directory holds %v, want two drafts and the index", names)
 	}
@@ -336,8 +333,8 @@ func TestAuditDraftCapCutsAndReportsTheRemaining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 4 {
-		t.Errorf("the drafts directory holds %d entries, want three drafts and the index", len(entries))
+	if names := auditDraftJSONNames(entries); len(names) != 4 {
+		t.Errorf("the drafts directory holds %v, want three drafts and the index", names)
 	}
 }
 
@@ -661,4 +658,81 @@ func TestAuditDraftCommandPrintsTheReport(t *testing.T) {
 	if report.Created[0].File != report.Created[0].Fingerprint+".json" {
 		t.Errorf("the summary names %q", report.Created[0].File)
 	}
+}
+
+// Two runs must not create or grow one draft at once: a second caller is refused while the
+// first holds the drafts lock, and a later run succeeds once the lock is released.
+func TestAuditDraftLockRefusesTheSecondRun(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	e, _, _ := auditEnv(t)
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auditDraftLock(e, cfg); err == nil {
+		t.Error("a second run took the drafts lock")
+	} else if !strings.Contains(err.Error(), "drafts_locked") {
+		t.Errorf("the refusal reads %q, want it to name drafts_locked", err)
+	}
+	release()
+	if _, err := auditDraftLock(e, cfg); err != nil {
+		t.Errorf("the lock was not released: %v", err)
+	}
+}
+
+// An update must not drop a field the draft file carries that this product does not name: a
+// key the record does not read is refused rather than silently rewritten away.
+func TestAuditDraftUpdateRefusesAnUnknownField(t *testing.T) {
+	state := t.TempDir()
+	defect := AuditDefect{Severity: "P1", What: "a defect", Where: "a.go:1"}
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s1", head: "h1", round: "r1", gradedAt: "2026-01-01T00:00:00Z", defects: []AuditDefect{defect},
+	})
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	first := auditDraftRunOf(t, cfg, auditDraftScope{})
+	path := filepath.Join(state, "drafts", first.Created[0].Fingerprint+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["a_field_from_a_later_version"] = json.RawMessage(`"keep me"`)
+	patched, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(patched, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s2", head: "h2", round: "r2", gradedAt: "2026-02-01T00:00:00Z", defects: []AuditDefect{defect},
+	})
+	e, _, _ := auditEnv(t)
+	if _, err := auditDraftsRun(e, cfg, auditDraftScope{}); err == nil {
+		t.Fatal("a draft carrying an unread field was rewritten")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "a_field_from_a_later_version") {
+		t.Error("the update dropped the field it does not read")
+	}
+}
+
+// auditDraftJSONNames is the JSON artifacts a drafts directory holds: the drafts and the
+// index. The lock file the run takes is not one of them.
+func auditDraftJSONNames(entries []os.DirEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		names = append(names, entry.Name())
+	}
+	return names
 }

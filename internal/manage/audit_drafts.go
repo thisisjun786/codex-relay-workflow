@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -140,6 +141,58 @@ type auditDraftCandidate struct {
 	criteria    []auditGradeCriterion
 	seen        []auditDraftSeen
 	order       int
+}
+
+// auditDraftKnownKeys is every key a draft document may carry. A file that carries another
+// one was written by a version this build does not know, and rewriting it would drop that
+// field, so such a file is refused rather than silently narrowed.
+var auditDraftKnownKeys = map[string]bool{
+	"schema": true, "fingerprint": true, "source": true, "project": true, "title": true,
+	"severity": true, "body": true, "labels": true, "seen": true, "state": true, "posted": true,
+}
+
+// auditDraftUnknownKeys names the keys of a draft document this build does not read, in
+// document order.
+func auditDraftUnknownKeys(data []byte) ([]string, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	var unknown []string
+	for key := range doc {
+		if !auditDraftKnownKeys[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown, nil
+}
+
+// auditDraftLock takes the drafts directory's lock for the whole read-modify-write of one
+// run, so two processes cannot create or grow one draft at once. It is non-blocking: a second
+// caller is refused by name rather than waiting. The lock file itself is never removed,
+// because another process may hold it.
+func auditDraftLock(e *Env, cfg *Config) (func(), error) {
+	dir := auditDraftDir(e, cfg)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(dir, "drafts.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("drafts_locked: %s is held by another process", filepath.Base(lockPath))
+		}
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // auditDraftDir is where the drafts live, below the state directory the configuration names.
@@ -349,6 +402,11 @@ func auditDraftLoad(path string) (*auditDraft, error) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if unknown, err := auditDraftUnknownKeys(data); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	} else if len(unknown) > 0 {
+		return nil, fmt.Errorf("%s: the keys %s are not part of %s, and rewriting the file would drop them", path, strings.Join(unknown, ", "), auditDraftSchema)
+	}
 	if doc.Schema != auditDraftSchema {
 		return nil, fmt.Errorf("%s: schema %q is not %s", path, doc.Schema, auditDraftSchema)
 	}
@@ -502,6 +560,11 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		return report, fmt.Errorf("the severity %q is not P0, P1, P2 or P3", threshold)
 	}
 	dir := auditDraftDir(e, cfg)
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return report, err
+	}
+	defer release()
 	index, err := auditDraftIndexLoad(dir)
 	if err != nil {
 		return report, err
@@ -697,7 +760,14 @@ func auditDraftRunMark(e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)
 		return usageExit
 	}
-	path := filepath.Join(auditDraftDir(e, coreDefaults(e)), values["fingerprint"]+".json")
+	cfg := coreDefaults(e)
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)
+		return 1
+	}
+	defer release()
+	path := filepath.Join(auditDraftDir(e, cfg), values["fingerprint"]+".json")
 	doc, err := auditDraftLoad(path)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)
