@@ -374,3 +374,17 @@ func workPhaseAdvance(plan *Goalplan) WorkPhaseAdvanceResult {
 	}
 	return WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceOK, ClosedID: closed.ClosedID, Plan: closed.Plan}
 }
+
+// AdvanceWorkPhase, CloseFixedWorkPhase and ResumeAbsentTarget are the exported wrappers of the
+// three unexported transforms above. The chat D-close (internal/pabcd/hook/prompt_dclose.go) and
+// the CLI D-close are separate surfaces in the oracle and share these helpers there, so the port
+// shares them here through one exported name each. Nothing else in this file changes.
+func AdvanceWorkPhase(plan *Goalplan) WorkPhaseAdvanceResult { return workPhaseAdvance(plan) }
+
+func CloseFixedWorkPhase(plan *Goalplan, workPhaseID string, recordedNext WorkPhaseRecordedNext) WorkPhaseCloseFixedResult {
+	return workPhaseCloseFixed(plan, workPhaseID, recordedNext)
+}
+
+func ResumeAbsentTarget(plan *Goalplan, recordedNext string) WorkPhaseResumeAbsentTargetResult {
+	return workPhaseResumeAbsentTarget(plan, recordedNext)
+}

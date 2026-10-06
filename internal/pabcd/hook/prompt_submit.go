@@ -56,12 +56,20 @@ type PromptSubmitPayload struct {
 // PromptSubmitHandle is the leading section of handleUserPromptSubmit (hook.ts:656-754). It returns
 // the context to inject, or "" for every path that injects nothing.
 func PromptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupEnv) string {
-	return promptSubmitHandle(p, platform, env, state.WithSessionLock)
+	return promptSubmitHandleWith(p, platform, env, state.WithSessionLock, nil)
 }
 
 // promptSubmitHandle takes the session lock as an argument so that a test can land a participating
 // writer's update before the handler's own read, the way the oracle's unlocked read would miss it.
 func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error) string {
+	return promptSubmitHandleWith(p, platform, env, lock, nil)
+}
+
+// promptSubmitHandleWith is promptSubmitHandle with the bound D-close's four commit seams, which
+// the oracle's own handleUserPromptSubmit takes as its dcloseCommitHooks argument. They are threaded
+// as a parameter rather than held in a package-level variable, so no package initializer does work
+// and a production run passes nil.
+func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, seams *promptDcloseSeams) string {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -113,7 +121,7 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	// edges advance without --attest. The loose detectTrigger heuristic below runs ONLY when this
 	// returns null.
 	if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil {
-		if out, handled := promptSubmitOrchestrateCommand(p, current, turn, env, lock, command); handled {
+		if out, handled := promptSubmitOrchestrateCommandWith(p, current, turn, env, lock, command, seams); handled {
 			return out
 		}
 		// not handled => fall through to the loose path (e.g. suppressed interview).
@@ -274,5 +282,11 @@ func promptSubmitAppendTurn(turns []string, turn string) []string {
 // and, when it was, the context to inject. Unhandled means control falls through to the loose path,
 // exactly as the oracle's null return does.
 func promptSubmitOrchestrateCommand(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand) (string, bool) {
-	return promptOrchestrateHandle(p, current, turn, env, lock, command)
+	return promptSubmitOrchestrateCommandWith(p, current, turn, env, lock, command, nil)
+}
+
+// promptSubmitOrchestrateCommandWith is promptSubmitOrchestrateCommand with the bound D-close's
+// commit seams.
+func promptSubmitOrchestrateCommandWith(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand, seams *promptDcloseSeams) (string, bool) {
+	return promptOrchestrateHandle(p, current, turn, env, lock, command, seams)
 }
