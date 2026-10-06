@@ -36,7 +36,8 @@ func memlogWriteTree(t *testing.T, root string, procs []memlogProcSpec) {
 	write(filepath.Join(root, "pressure", "memory"), "some avg10=1.50 avg60=0.75 avg300=0.10 total=42\nfull avg10=0.25 avg60=0.05 avg300=0.01 total=7\n")
 	for _, p := range procs {
 		dir := filepath.Join(root, strconv.Itoa(p.pid))
-		write(filepath.Join(dir, "stat"), fmt.Sprintf("%d (proc) S %d 1 1 0\n", p.pid, p.ppid))
+		// The command name carries a ")" on purpose: the parent is the field after the last one.
+		write(filepath.Join(dir, "stat"), fmt.Sprintf("%d (pr)oc) S %d 1 1 0\n", p.pid, p.ppid))
 		write(filepath.Join(dir, "status"), fmt.Sprintf("Name:\tproc\nVmRSS:\t%d kB\n", p.rss))
 		write(filepath.Join(dir, "cmdline"), strings.ReplaceAll(p.cmd, " ", "\x00")+"\x00")
 	}

@@ -150,12 +150,13 @@ func memlogReadProc(dir string, pid int) (memlogProc, error) {
 	if err != nil {
 		return memlogProc{}, err
 	}
-	// The command name in parentheses may hold spaces, so the parent follows the last ")".
-	_, after, ok := strings.Cut(string(stat), ")")
-	if !ok {
+	// The command name in parentheses may hold spaces and even a ")", so the parent is the
+	// field after the last ")" of the line.
+	close := strings.LastIndex(string(stat), ")")
+	if close < 0 {
 		return memlogProc{}, fmt.Errorf("the stat of %d has no command name", pid)
 	}
-	fields := strings.Fields(after)
+	fields := strings.Fields(string(stat)[close+1:])
 	if len(fields) < 2 {
 		return memlogProc{}, fmt.Errorf("the stat of %d has no parent", pid)
 	}
@@ -269,7 +270,7 @@ func memlogBuildRecord(now time.Time, snapshot memlogSnapshot, rules []memlogGro
 		}
 		top = append(top, memlogTopEntry{PID: p.PID, RSSKB: p.RSSKB, Group: groups[p.PID], Cmd: cmd})
 	}
-	return memlogRecord{At: now.UTC().Format(time.RFC3339), MemAvailableKB: snapshot.MemAvailableKB,
+	return memlogRecord{At: now.UTC().Format(time.RFC3339Nano), MemAvailableKB: snapshot.MemAvailableKB,
 		SwapUsedKB: snapshot.SwapTotalKB - snapshot.SwapFreeKB, PSI: snapshot.PSI, Groups: sums, Top: top}
 }
 
