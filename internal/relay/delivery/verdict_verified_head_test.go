@@ -195,7 +195,7 @@ func TestVerdictVerifiedHeadIsACommandLineFlag(t *testing.T) {
 	if code != contract.ExitOk || !strings.Contains(help, "--verified-head") {
 		t.Fatalf("verdict --help (exit %d) does not name --verified-head: %s", code, help)
 	}
-	for _, bad := range []string{"", "0123456789abcdef0123456789abcdef0123456", "0123456789ABCDEF0123456789abcdef01234567", "zz23456789abcdef0123456789abcdef01234567"} {
+	for _, bad := range []string{"", "0123456789abcdef0123456789abcdef0123456", "0123456789ABCDEF0123456789abcdef01234567", "zz23456789abcdef0123456789abcdef01234567", " " + vhHead, vhHead + " "} {
 		_, code := side.run("verdict", "--event", "4a7c8d2e7b0b06e7e2b4b71c55f2b7c1", "--verdict", "verified", "--verdict-turn", "v", "--verified-head", bad)
 		if code != contract.ExitUsage {
 			t.Fatalf("--verified-head %q: exit %d, want %d", bad, code, contract.ExitUsage)

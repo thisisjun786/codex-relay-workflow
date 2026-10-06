@@ -449,7 +449,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 	event := c.s("--event")
 	var verifiedHead []string
 	if c.opt("--verified-head") != nil {
-		head := strings.TrimSpace(c.s("--verified-head"))
+		head := c.s("--verified-head")
 		if !verifiedHeadPattern.MatchString(head) {
 			return nil, &dispatch.UsageError{Detail: "--verified-head takes the 40 lowercase hex digits of the head this verified ruling handled, not " + strconv.Quote(head) + ". The head is recorded with the ruling and a later dag-accept proves a parent-made refresh against it, so it is the commit id itself", Code: contract.ExitUsage}
 		}
