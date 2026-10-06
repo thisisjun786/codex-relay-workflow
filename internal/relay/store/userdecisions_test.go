@@ -442,3 +442,69 @@ func TestCRW737UpdateAndGet(t *testing.T) {
 		t.Fatalf("after a refused mutation: %+v %v", listed, err)
 	}
 }
+
+// Review findings on PR #778 (fixed in this PR).
+
+// Both reviewers: the project predicate was OR-ed with the state predicate at the top level, so a
+// --state filter was bypassed by any record an observation named the project for.
+func TestCRW737ListGroupsTheProjectAlternativesUnderTheStateFilter(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	ctx := context.Background()
+	const question = "Which window does the host update take?"
+	first := userDecision("ud-1", question, "PRJ-A", decisions.StateRaised)
+	first.Seen = []decisions.Seen{{At: "2026-10-06T00:00:00Z", Source: "project:PRJ-A"}}
+	_, _, err := s.Raise(ctx, first)
+	must(t, err)
+	// The same question from PRJ-B folds into the record, which is then answered and applied: a
+	// record whose origin is PRJ-A and whose observation names PRJ-B, in a state that is neither
+	// open nor raised.
+	second := userDecision("ud-2", question, "PRJ-B", decisions.StateRaised)
+	second.Seen = []decisions.Seen{{At: "2026-10-06T01:00:00Z", Source: "project:PRJ-B"}}
+	_, _, err = s.Raise(ctx, second)
+	must(t, err)
+	if _, err := s.DB.ExecContext(ctx, "UPDATE dag_user_decisions SET state = ? WHERE decision_id = ?", "applied", "ud-1"); err != nil {
+		t.Fatal(err)
+	}
+	// PRJ-B still sees the folded record when no state is asked for.
+	if listed, err := s.List(ctx, UserDecisionFilter{Project: "PRJ-B"}); err != nil || len(listed) != 1 {
+		t.Fatalf("List(Project PRJ-B) = %+v %v", listed, err)
+	}
+	// A state filter still applies to it: the record is applied, so it is not in the open set.
+	for _, state := range []decisions.State{decisions.StateOpen, decisions.StateRaised} {
+		listed, err := s.List(ctx, UserDecisionFilter{State: state, Project: "PRJ-B"})
+		must(t, err)
+		if len(listed) != 0 {
+			t.Fatalf("List(State %s, Project PRJ-B) = %+v, want no record", state, listed)
+		}
+	}
+	if listed, err := s.List(ctx, UserDecisionFilter{State: decisions.StateApplied, Project: "PRJ-B"}); err != nil || len(listed) != 1 {
+		t.Fatalf("List(State applied, Project PRJ-B) = %+v %v", listed, err)
+	}
+}
+
+// Devin: a record whose stored raised_at is not a timestamp can be listed, so it must also be
+// answerable and withdrawable: Update writes back the value it read, unchanged.
+func TestCRW737UpdateKeepsALegacyRaisedAtAndStillChangesTheRecord(t *testing.T) {
+	t.Parallel()
+	s := recordStore(t)
+	ctx := context.Background()
+	record := userDecision("ud-1", "Which window does the host update take?", "PRJ-A", decisions.StateRaised)
+	_, _, err := s.Raise(ctx, record)
+	must(t, err)
+	if _, err := s.DB.ExecContext(ctx, "UPDATE dag_user_decisions SET raised_at = ? WHERE decision_id = ?", "not a time", "ud-1"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.Update(ctx, "ud-1", func(_ context.Context, current decisions.Record) (decisions.Record, error) {
+		return decisions.ValidateAnswer(current, decisions.Answer{Option: "a", By: "task-a", Via: decisions.ViaDirectAsk})
+	})
+	must(t, err)
+	if updated.State != decisions.StateAnswered || updated.RaisedAt != "not a time" {
+		t.Fatalf("Update returned %+v, want the answered record with its stored raised_at", updated)
+	}
+	listed, err := s.List(ctx, UserDecisionFilter{})
+	must(t, err)
+	if len(listed) != 1 || listed[0].State != decisions.StateAnswered || listed[0].RaisedAt != "not a time" {
+		t.Fatalf("List read back %+v", listed)
+	}
+}

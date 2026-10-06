@@ -118,10 +118,11 @@ func (s *Store) List(ctx context.Context, filter UserDecisionFilter) ([]decision
 	if filter.Project != "" {
 		// The origin object and the seen array are JSON text, guarded as the rest of the store
 		// guards it: a row written by another writer with text that is not JSON cannot make the
-		// whole read fail.
-		query += " AND (CASE WHEN json_valid(origin_json) THEN json_extract(origin_json, '$.project') END) = ?" +
+		// whole read fail. The two alternatives are parenthesised as one predicate, so a state
+		// filter beside them still applies to both.
+		query += " AND ((CASE WHEN json_valid(origin_json) THEN json_extract(origin_json, '$.project') END) = ?" +
 			" OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(seen_json) THEN seen_json ELSE '[]' END) AS entry" +
-			"  WHERE (CASE WHEN json_valid(entry.value) THEN json_extract(entry.value, '$.source') END) = 'project:' || ?)"
+			"  WHERE (CASE WHEN json_valid(entry.value) THEN json_extract(entry.value, '$.source') END) = 'project:' || ?))"
 		args = append(args, filter.Project, filter.Project)
 	}
 	rows, err := s.All(ctx, query, args...)
@@ -405,8 +406,19 @@ func (s *Store) Update(ctx context.Context, decisionID string, mutate func(conte
 		if err != nil {
 			return err
 		}
-		if err := validateUserDecision(updated); err != nil {
-			return err
+		// The stored record is written back with the raised_at it was read with: a value the
+		// format refuses (a row written before the check, or by a hand edit) must not make the
+		// record unanswerable, so the writer validates the record without re-checking the one
+		// field the reader deliberately preserves. Every other field, and any raised_at the
+		// mutation changed, is still checked.
+		keptRaisedAt := updated.RaisedAt
+		if keptRaisedAt == stored.RaisedAt {
+			updated.RaisedAt = ""
+		}
+		validationErr := validateUserDecision(updated)
+		updated.RaisedAt = keptRaisedAt
+		if validationErr != nil {
+			return validationErr
 		}
 		if err := s.writeUserDecision(txCtx, updated); err != nil {
 			return err

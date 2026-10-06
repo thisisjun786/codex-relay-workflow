@@ -208,7 +208,7 @@ func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dis
 		return answered, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, decisionRefusal(err)
 	}
 	return contract.OrderedObject{
 		{Key: "decisionId", Value: stored.DecisionID},
@@ -249,7 +249,7 @@ func runDecisionApply(ctx context.Context, services dispatch.Services, args disp
 		return applied, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, decisionRefusal(err)
 	}
 	return contract.OrderedObject{
 		{Key: "decisionId", Value: stored.DecisionID},
@@ -268,12 +268,15 @@ var decisionReplyOutcome = delivery.DecisionReply
 // keeps a row a child could author from applying a decision.
 const decisionReplyProducer = "relay"
 
-// decisionReplyEvent reports whether the events row named event is the decision_reply event of a
-// relationship the record blocks. The relay's own id for that event is delivery.DecisionEventID(
-// relationship, answersEvent), read from the delivery package rather than re-derived, because
-// decision.go belongs to another project. The row must also be the relay's own decision_reply of
-// the relationship the record blocks: a reply about another relationship, or one another producer
-// wrote, never applies this decision.
+// decisionReplyEvent reports whether the events row named event is the decision_reply event that
+// answers the receipt this decision was raised on, for a relationship the decision blocks.
+//
+// Three things must hold, and all three are needed: the row must be the relay's own decision_reply
+// (a child never writes that outcome); the relationship it answers must be one the decision blocks;
+// and its answersEvent must be the receipt this decision was raised on (the record's source ref),
+// so an older reply to another receipt of the same relationship cannot apply a later decision. The
+// relay's own id for that reply is delivery.DecisionEventID(relationship, answersEvent), read from
+// the delivery package rather than re-derived, because decision.go belongs to another project.
 func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisions.Record, event string) (bool, error) {
 	row, err := opened.One(ctx, "SELECT relationship_id, outcome, producer, receipt FROM events WHERE event_id = ?", event)
 	if err != nil {
@@ -292,6 +295,12 @@ func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisio
 	}
 	answers, _ := get(receipt, "answersEvent").(string)
 	if answers == "" {
+		return false, nil
+	}
+	// The reply must answer the receipt this decision was raised on, not merely some receipt of
+	// the blocked relationship: decision-raise names that receipt as the record's source, so an
+	// older reply to another receipt on the same relationship cannot apply a later decision.
+	if strings.TrimSpace(record.Source.Ref) != answers {
 		return false, nil
 	}
 	return delivery.DecisionEventID(relationship, answers) == event, nil
@@ -328,7 +337,7 @@ func runDecisionWithdraw(ctx context.Context, services dispatch.Services, args d
 		return withdrawn, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, decisionRefusal(err)
 	}
 	return contract.OrderedObject{
 		{Key: "decisionId", Value: stored.DecisionID},
@@ -504,6 +513,7 @@ func decisionRecordObject(record decisions.Record) contract.OrderedObject {
 		contract.Field{Key: "answer_text", Value: nullableText(record.AnswerText)},
 		contract.Field{Key: "applied_at", Value: nullableText(record.AppliedAt)},
 		contract.Field{Key: "applied_event", Value: nullableText(record.AppliedEvent)},
+		contract.Field{Key: "applied_generation", Value: record.AppliedGeneration},
 		contract.Field{Key: "withdrawn_reason", Value: nullableText(record.WithdrawnReason)},
 		contract.Field{Key: "expired_reason", Value: nullableText(record.ExpiredReason)},
 	)

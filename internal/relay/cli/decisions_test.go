@@ -279,7 +279,7 @@ func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
 		"--context", "Hold the merge until the retention decision?", "--option", "hold=h:hold the merge",
 		"--option", "merge=m:merge now", "--blocking", "relationship=rel-737",
-		"--origin-project", "PRJ-A", "--source", "report=3", "--authority", "user"))
+		"--origin-project", "PRJ-A", "--source", "receipt=ev-blocked", "--authority", "user"))
 	decision, _ := raised["decisionId"].(string)
 	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "hold",
 		"--by", "task-a", "--via", "direct-ask"); got.code != 0 {
@@ -299,6 +299,13 @@ func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", "ev-child-reply"), "disposition_conflict")
 	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
 		t.Fatalf("a child-written row applied the record: %v", record)
+	}
+	// A reply that answers another receipt of the same relationship does not apply it, even though
+	// its id is internally consistent: the decision names the receipt it was raised on.
+	crw737SeedOtherReceiptReply(t, state)
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", "ev-other-reply"), "disposition_conflict")
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
+		t.Fatalf("an older reply applied the record: %v", record)
 	}
 	// The decision_reply event of the blocked relationship does: the relay's own id for the reply
 	// to the receipt the question answered is delivery.DecisionEventID(relationship, answersEvent).
@@ -370,6 +377,25 @@ func crw737SeedChildReply(t *testing.T, state string) {
 	defer opened.Close()
 	if _, err := opened.Querier(ctx).ExecContext(ctx, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		"ev-child-reply", "rel-737", int64(1), "no_deliverable", "decision_reply", "child", "thread", "turn-2", "inProgress", `{}`, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// crw737SeedOtherReceiptReply writes the relay's own decision_reply for another receipt of the
+// same relationship: its id hashes its own answersEvent, so only the decision's own source ref
+// keeps it from applying the record.
+func crw737SeedOtherReceiptReply(t *testing.T, state string) {
+	t.Helper()
+	ctx := context.Background()
+	opened, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	event := delivery.DecisionEventID("rel-737", "ev-unrelated")
+	receipt := `{"eventId":"` + event + `","relationshipId":"rel-737","executionGeneration":1,"kind":"decision_reply","decision":"answer","answersEvent":"ev-unrelated","note":"n","generationEffect":"stays","anchorTurnId":"turn-1","childTaskId":"child","decidedAt":"2026-10-06T00:00:00Z"}`
+	if _, err := opened.Querier(ctx).ExecContext(ctx, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		event, "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-3", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 }
