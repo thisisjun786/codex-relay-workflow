@@ -17,7 +17,8 @@ import (
 
 // A record is one line of ledger.jsonl. Event is started (counts toward the daily cap), finished (the patch-id is reviewed from then on), unavailable (a review that could not run at all for a reason of
 // the account or the configuration or because the runner failed: the patch-id is still open for one more attempt, see standing), lock_wait (the attempt's agy was never started because the host-wide lock
-// was not free: the attempt counts toward nothing and closes nothing), failed (history only) or refused (the run rules stopped it).
+// was not free: the attempt counts toward nothing and closes nothing), failed (history only) or refused (the run rules stopped it). The line that ends a run which did not end complete -- a finished line
+// whose status is partial or unavailable, or the unavailable line that opens the one more attempt -- also records the failure it knows in Reason and AgyCalled.
 type record struct {
 	Time      string `json:"time"`
 	Event     string `json:"event"`
@@ -29,7 +30,7 @@ type record struct {
 	Artifact  string `json:"artifact,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`
 	Status    string `json:"status,omitempty"`
-	AgyCalled *bool  `json:"agyCalled,omitempty"` // whether agy was actually called, when that can be told: false for a lock wait or a runner that never started agy, true for a failure agy reported; absent when it cannot be told
+	AgyCalled *bool  `json:"agyCalled,omitempty"` // of a run that did not end complete: whether agy was actually called, when that can be told -- true when a review call ended normal, ended invalid or failed with a reason agy reported itself, false when every review call is a lock wait or agy that never started, absent for a crash or a runner error; a complete run's line carries neither this nor a reason
 }
 
 // The ledger event a lock wait writes: the attempt was recorded as started and then agy was never started because the host-wide lock was not free. It closes nothing, counts toward nothing, and is

@@ -490,10 +490,31 @@ func worktreeDelQuoteTokenize(segment string) []string {
 			}
 			cur = append(cur, c)
 			has = true
+			if c == '<' && string(cur) == "<<<" && worktreeDelHereStringTarget(segment, i) {
+				flush() // a here-string written without a blank before its target: the operator is a word of its own
+			}
 		}
 	}
 	flush()
 	return tokens
+}
+
+// worktreeDelHereStringTarget says whether the byte after the here-string operator whose third '<' stands at i begins the
+// operator's target: a here-string written without a blank, `<<<'program'`, is the operator and its target, exactly as when
+// a blank stands between them (worktreeDelQuoteTokenize flushes the operator and reads the target as the next word). A
+// blank, another redirection byte, a command separator or the end of the text leaves the operator a word of its own.
+func worktreeDelHereStringTarget(segment string, i int) bool {
+	if i+1 >= len(segment) {
+		return false
+	}
+	if worktreeDelQuoteSpace(segment[i+1:]) > 0 {
+		return false
+	}
+	switch segment[i+1] {
+	case '<', '>', ';', '|', '&', '(', ')':
+		return false
+	}
+	return true
 }
 
 // worktreeDelQuoteSpace is the length of the JavaScript whitespace character that opens s, and 0 when s opens with another.

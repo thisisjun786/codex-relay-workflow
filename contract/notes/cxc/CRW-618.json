@@ -1,0 +1,14 @@
+{
+  "issue": "CRW-618",
+  "pending": [],
+  "identical": [],
+  "intentionally-changed": [
+    {
+      "id": "cli__doctor__help_is_an_unknown_option",
+      "reason": "R29 renames the component word in the catch prefix (cxc-ops -> crw-ops); a rewrite rule cannot be applied to the expectation, so the claim names the port's text.",
+      "set": {
+        "steps/0/stderr": "crw-ops error: unknown hooks option: --help\n"
+      }
+    }
+  ]
+}
