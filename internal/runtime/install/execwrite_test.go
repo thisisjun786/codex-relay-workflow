@@ -160,3 +160,35 @@ func TestAPlainWriteRacesConcurrentForks(t *testing.T) {
 	busy, written, elapsed := execRace(t, plainWrite)
 	t.Logf("unlocked: %d of %d executables hit ETXTBSY in %s (%d bytes written)", busy, execWriters*execIterations, elapsed, written)
 }
+
+// The helper's callers rely on three properties beyond the lock, and the helper is the only writer
+// of the release binary, so they are pinned here rather than left to whichever call site notices:
+// it makes the directory the file goes in, it gives the file the mode it was asked for, and it
+// refuses to write over a file that is already there.
+func TestWriteExecutableKeepsItsCallersContract(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	target := filepath.Join(root, "absent", "deeper", "program")
+	if err := install.WriteExecutable(target, []byte("#!/bin/sh\ntrue\n"), 0o755); err != nil {
+		t.Fatalf("writing into a directory that does not exist yet: %v", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The mode is the one asked for, less whatever the process's umask clears: the owner's execute
+	// bit is the one every caller needs, and it survives any umask.
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("%s came out mode %v, without the owner's execute bit", target, info.Mode().Perm())
+	}
+	if err := install.WriteExecutable(target, []byte("other"), 0o755); err == nil {
+		t.Fatal("a second write over an existing file was allowed")
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "#!/bin/sh\ntrue\n" {
+		t.Fatalf("the refused second write changed the file to %q", raw)
+	}
+}
