@@ -66,7 +66,7 @@ func RunHarnessDoctor(pluginRoot string, runner HarnessRunner, options HarnessOp
 	checks = append(checks, HarnessHookTrustCheck(pluginRoot, options, env))
 	checks = append(checks, HarnessHookExecutionCheck(pluginRoot, options, env, now))
 	checks = append(checks, HarnessAstGrepCheck(pluginRoot, runner))
-	checks = append(checks, HarnessInstalledRootCheck(pluginRoot, options))
+	checks = append(checks, HarnessInstalledRootCheck(pluginRoot, options, env))
 	checks = append(checks, HarnessPabcdCheck(projectRoot))
 	checks = append(checks, HarnessFeaturesCheck(runner("codex", []string{"features", "list"}, harnessRunFeaturesTimeout)))
 	checks = append(checks, HarnessWslCheck())

@@ -25,11 +25,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
 // harnessInstallTempToken is the recorder's placeholder for its temporary root.
 const harnessInstallTempToken = "$" + "{TEMP}"
+
+// harnessInstallTestEnv is the ambient environment the recorded install cases pass: they set
+// CODEX_HOME, HOME and the unset state on the process environment with t.Setenv and
+// harnessInstallUnsetEnv, which is what the oracle read from process.env.
+var harnessInstallTestEnv host.LookupEnv = os.LookupEnv
 
 // harnessInstallPluginRootToken is the oracle's manifest placeholder, kept as the validator reads
 // it.
@@ -365,23 +371,23 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 			var check HarnessCheck
 			switch name {
 			case "matching_root":
-				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"local", "crw", "0.4.0"}}))
+				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"local", "crw", "0.4.0"}}), harnessInstallTestEnv)
 			case "stale_root":
-				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"local", "crw", "0.1.0"}}))
+				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"local", "crw", "0.1.0"}}), harnessInstallTestEnv)
 			case "matching_and_stale":
-				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"local", "crw", "0.1.0"}, {"mkt", "crw", "0.4.0"}}))
+				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"local", "crw", "0.1.0"}, {"mkt", "crw", "0.4.0"}}), harnessInstallTestEnv)
 			case "two_stale":
-				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"mkt1", "crw", "0.1.0"}, {"mkt2", "crw", "0.2.0"}}))
+				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"mkt1", "crw", "0.1.0"}, {"mkt2", "crw", "0.2.0"}}), harnessInstallTestEnv)
 			case "no_cache":
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "empty-home"))})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "empty-home"))}, harnessInstallTestEnv)
 			case "not_installed":
-				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"mkt", "other", "1.0.0"}}))
+				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"mkt", "other", "1.0.0"}}), harnessInstallTestEnv)
 			case "no_name_version":
-				check = HarnessInstalledRootCheck(payload("{}"), home(name, nil))
+				check = HarnessInstalledRootCheck(payload("{}"), home(name, nil), harnessInstallTestEnv)
 			case "manifest_absent":
-				check = HarnessInstalledRootCheck(payload(""), home(name, nil))
+				check = HarnessInstalledRootCheck(payload(""), home(name, nil), harnessInstallTestEnv)
 			case "manifest_null":
-				check = HarnessInstalledRootCheck(payload("null"), home(name, nil))
+				check = HarnessInstalledRootCheck(payload("null"), home(name, nil), harnessInstallTestEnv)
 			case "linked_root":
 				options := home(name, [][]string{{"mkt", "crw", "0.4.0"}})
 				elsewhere := filepath.Join(root, "elsewhere-"+name)
@@ -395,7 +401,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				if err := os.Symlink(elsewhere, entry); err != nil {
 					t.Fatal(err)
 				}
-				check = HarnessInstalledRootCheck(payload(manifest), options)
+				check = HarnessInstalledRootCheck(payload(manifest), options, harnessInstallTestEnv)
 			case "entry_is_file":
 				options := home(name, nil)
 				if err := os.MkdirAll(filepath.Join(*options.CodexHome, "plugins", "cache", "mkt2"), 0o755); err != nil {
@@ -404,21 +410,21 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(*options.CodexHome, "plugins", "cache", "mkt2", "crw"), []byte("not a dir"), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				check = HarnessInstalledRootCheck(payload(manifest), options)
+				check = HarnessInstalledRootCheck(payload(manifest), options, harnessInstallTestEnv)
 			case "env_empty":
 				t.Setenv("CODEX_HOME", "")
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{}, harnessInstallTestEnv)
 			case "home_empty":
 				harnessInstallUnsetEnv(t, "CODEX_HOME")
 				t.Setenv("HOME", "")
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{}, harnessInstallTestEnv)
 			case "option_wins":
 				t.Setenv("CODEX_HOME", harnessInstallHomeAt(t, root, name+"_env", [][]string{{"mkt", "crw", "0.4.0"}}))
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "option-empty-home"))})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "option-empty-home"))}, harnessInstallTestEnv)
 			case "env_wins_over_home":
 				t.Setenv("CODEX_HOME", harnessInstallHomeAt(t, root, name, [][]string{{"mkt", "crw", "0.4.0"}}))
 				t.Setenv("HOME", filepath.Join(root, "home-no-cache"))
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{}, harnessInstallTestEnv)
 			case "surrogate_name", "surrogate_missing":
 				// The manifest text holds the JSON escape for a lone surrogate; Go source cannot spell it
 				// as a unicode escape, so it is assembled. The cache directory is named with U+FFFD, which
@@ -429,7 +435,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				if name == "surrogate_missing" {
 					entries = [][]string{{"mkt", "other", "0.4.0"}}
 				}
-				check = HarnessInstalledRootCheck(payload(surrogate), home(name, entries))
+				check = HarnessInstalledRootCheck(payload(surrogate), home(name, entries), harnessInstallTestEnv)
 			case "invalid_market_name":
 				// One ill-formed byte in the market segment: the oracle decodes it to U+FFFD and then
 				// misses the directory, so the plugin reads as not installed.
@@ -437,7 +443,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				if err := os.MkdirAll(filepath.Join(*options.CodexHome, "plugins", "cache", string([]byte{'m', 0xff}), "crw", "0.1.0"), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				check = HarnessInstalledRootCheck(payload(manifest), options)
+				check = HarnessInstalledRootCheck(payload(manifest), options, harnessInstallTestEnv)
 			default:
 				t.Fatalf("no builder for %q", name)
 			}
@@ -530,7 +536,7 @@ func TestHarnessInstallResolverPanicsBeforeManifest(t *testing.T) {
 func TestHarnessInstallMalformedManifestPort(t *testing.T) {
 	recorded := harnessInstallOracleRecorded(t).MalformedManifest
 	root := t.TempDir()
-	check := HarnessInstalledRootCheck(harnessInstallPayloadAt(t, root, "malformed_manifest", "not json"), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "home"))})
+	check := HarnessInstalledRootCheck(harnessInstallPayloadAt(t, root, "malformed_manifest", "not json"), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "home"))}, harnessInstallTestEnv)
 	if string(check.Severity) != recorded.Severity || check.Name != "install-root" || check.Evidence == "" {
 		t.Fatalf("malformed manifest check = %+v, want the recorded %s install-root check", check, recorded.Severity)
 	}

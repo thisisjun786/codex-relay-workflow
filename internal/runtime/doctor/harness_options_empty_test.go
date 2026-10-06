@@ -58,6 +58,24 @@ func harnessOptionsPlugin(t *testing.T) (plugin, home string) {
 	return plugin, home
 }
 
+// TestHarnessInstalledRootCheckReadsTheInjectedEnvironment pins the one-report-one-home rule: the
+// install check resolves the option against the environment the report passes in, never the
+// process environment, so a nil option and the hook checks of the same report name the same Codex
+// home and a test never falls back to the developer machine.
+func TestHarnessInstalledRootCheckReadsTheInjectedEnvironment(t *testing.T) {
+	root := t.TempDir()
+	payload := harnessInstallPayloadAt(t, root, "injected", harnessInstallValue(map[string]any{"name": "crw", "version": "0.4.0"}))
+	injected := harnessInstallHomeAt(t, root, "injected-env", [][]string{{"mkt", "crw", "0.4.0"}})
+	// The process environment names a home with no cache; the injected one holds the version.
+	t.Setenv("CODEX_HOME", filepath.Join(root, "process-home"))
+	t.Setenv("HOME", filepath.Join(root, "process-home"))
+
+	check := HarnessInstalledRootCheck(payload, HarnessOptions{}, harnessOptionsEnv(map[string]string{"CODEX_HOME": injected}))
+	if check.Severity != HarnessPass {
+		t.Fatalf("injected environment = %+v, want the injected CODEX_HOME PASS", check)
+	}
+}
+
 // TestHarnessOptionsExplicitEmptyCodexHomeIsNotAbsent is the install-root half of the issue red-first
 // case: an explicit empty option is kept verbatim, so the check looks at the relative
 // ./plugins/cache while CODEX_HOME names another installation whose cache would PASS.
@@ -65,11 +83,10 @@ func TestHarnessOptionsExplicitEmptyCodexHomeIsNotAbsent(t *testing.T) {
 	root := t.TempDir()
 	payload := harnessInstallPayloadAt(t, root, "option-empty", harnessInstallValue(map[string]any{"name": "crw", "version": "0.4.0"}))
 	env := harnessInstallHomeAt(t, root, "option-empty-env", [][]string{{"mkt", "crw", "0.4.0"}})
-	t.Setenv("CODEX_HOME", env)
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	ambient := harnessOptionsEnv(map[string]string{"CODEX_HOME": env, "HOME": filepath.Join(root, "home")})
 	t.Chdir(t.TempDir())
 
-	check := HarnessInstalledRootCheck(payload, HarnessOptions{CodexHome: harnessOptionsPtr("")})
+	check := HarnessInstalledRootCheck(payload, HarnessOptions{CodexHome: harnessOptionsPtr("")}, ambient)
 	want := "no plugin cache at " + filepath.Join("", "plugins", "cache") + " (running uninstalled?)"
 	if check.Name != "install-root" || check.Severity != HarnessWarn || check.Evidence != want {
 		t.Fatalf("explicit empty codexHome = %+v, want the install-root WARN %q", check, want)
@@ -78,7 +95,7 @@ func TestHarnessOptionsExplicitEmptyCodexHomeIsNotAbsent(t *testing.T) {
 	// The control: nil is absent, so today resolution stands and CODEX_HOME cache is found. The
 	// install-root PASS names no path, so the contrast is the severity: the same installation and the
 	// same payload PASS through CODEX_HOME and WARN through an explicitly empty option.
-	nilCheck := HarnessInstalledRootCheck(payload, HarnessOptions{})
+	nilCheck := HarnessInstalledRootCheck(payload, HarnessOptions{}, ambient)
 	if nilCheck.Severity != HarnessPass {
 		t.Fatalf("nil codexHome = %+v, want the CODEX_HOME PASS", nilCheck)
 	}

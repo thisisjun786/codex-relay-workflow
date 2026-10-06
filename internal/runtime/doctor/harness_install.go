@@ -23,6 +23,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -131,11 +132,13 @@ func HarnessManifestTargetChecks(pluginRoot string) []HarnessCheck {
 // HarnessInstalledRootCheck is runInstalledRootCheck (doctor.ts:401-445): the STALE-ROOT-01 check
 // that compares the payload's declared version with the version directories the plugin cache
 // holds. A throw inside its try is a WARN whose evidence is the oracle's message; a homedir that
-// cannot be established is outside that try and aborts, as the port panics.
-func HarnessInstalledRootCheck(pluginRoot string, options HarnessOptions) HarnessCheck {
+// cannot be established is outside that try and aborts, as the port panics. env is the ambient
+// read the report passes to every check, so one report resolves one Codex home (the oracle reads
+// process.env here, doctor.ts:402).
+func HarnessInstalledRootCheck(pluginRoot string, options HarnessOptions, env host.LookupEnv) HarnessCheck {
 	return harnessInstallInstalledRootCheck(pluginRoot,
 		func() (string, error) {
-			return harnessInstallCodexHome(options.CodexHome, os.LookupEnv, harnessInstallPasswdHome)
+			return harnessInstallCodexHome(options.CodexHome, record.Environ(env), harnessInstallPasswdHome)
 		},
 		os.ReadFile)
 }
