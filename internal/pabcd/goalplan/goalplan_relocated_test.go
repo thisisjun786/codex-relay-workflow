@@ -192,3 +192,48 @@ func TestGoalplanRelocatedIdentityErrorType(t *testing.T) {
 		t.Errorf("text = %q, want %q", got, text)
 	}
 }
+
+// The review finding on this PR (Devin red, Codex P2): a directory that moved after the rename AND
+// is unreadable fails the post-rename open with EACCES, and the permission shortcut read that as a
+// successful publication. The held descriptor's own identity is checked instead, so a relocated
+// directory is refused however its open failed.
+func TestGoalplanRelocatedUnreadableDirectoryIsRefused(t *testing.T) {
+	cwd, slug := steeringApplyWorkspace(t)
+	result, err := ApplySteeringBatch(cwd, slug, goalplanPublishedBatch(), &SteeringBatchOptions{
+		Now: func() string { return "2026-03-03T00:00:00.000Z" },
+		publish: &goalplanPublishedOptions{
+			AfterRename: goalplanRelocatedMoveAfterRename(t, cwd, slug),
+			OpenDir: func(*os.File, string) (*os.File, error) {
+				return nil, &os.PathError{Op: "open", Path: ".", Err: syscall.EACCES}
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("a relocated, unreadable plan directory was answered %q, want an error", result.Kind)
+	}
+	if state.Published(err) {
+		t.Errorf("a relocated, unreadable plan directory is reported as published: %v", err)
+	}
+	if got := steeringApplyEventRows(t, cwd, slug, EventSteered); got != 0 {
+		t.Errorf("steered rows at the slug path = %d, want 0", got)
+	}
+}
+
+// c1(3): a search/write-only plan directory that is still at its path keeps returning nil on the
+// permission-denied open, so the batch stays applied with no warning and its one steered row.
+func TestGoalplanRelocatedPermissionDeniedStaysPublished(t *testing.T) {
+	cwd, slug := steeringApplyWorkspace(t)
+	result, err := ApplySteeringBatch(cwd, slug, goalplanPublishedBatch(), &SteeringBatchOptions{
+		Now:     func() string { return "2026-03-03T00:00:00.000Z" },
+		publish: goalplanRelocatedOpenDirFails(syscall.EACCES),
+	})
+	if err != nil {
+		t.Fatalf("ApplySteeringBatch: %v", err)
+	}
+	if result.Kind != SteerResultApplied || result.Warning != "" {
+		t.Fatalf("kind = %q warning = %q, want applied with no warning", result.Kind, result.Warning)
+	}
+	if got := steeringApplyEventRows(t, cwd, slug, EventSteered); got != 1 {
+		t.Errorf("steered rows = %d, want 1", got)
+	}
+}

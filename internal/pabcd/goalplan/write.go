@@ -360,6 +360,16 @@ func goalplanPublishedWritePublishAt(dir *os.File, real string, data []byte, o *
 	// File fsync and rename remain available to a search/write-only directory,
 	// as in the oracle. Directory fsync additionally runs when readable.
 	if errors.Is(err, os.ErrPermission) {
+		// The open failed only because the directory is not readable, which a search/write-only
+		// plan directory legitimately is. The held descriptor's own identity is checked first
+		// without needing read permission on the directory, so a directory that moved or was
+		// replaced after the rename is refused however its open failed (CRW-856).
+		if identity := boundFile(dir, real, true); identity != nil {
+			var relocated *goalplanRelocatedError
+			if errors.As(identity, &relocated) {
+				return fmt.Errorf("goalplan '%s' directory moved after publication; the plan at its path is not the one written", filepath.Base(real))
+			}
+		}
 		return nil
 	}
 	// A path-identity failure means the descriptor the plan was written into is no longer the
