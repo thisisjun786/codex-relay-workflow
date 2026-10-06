@@ -175,3 +175,16 @@ func TestValidateRunsTheBacklogCheck(t *testing.T) {
 func TestTheCheckedInBacklogMatchesItsFragments(t *testing.T) {
 	expectEqual(t, "--check", goCheck(t, repoRoot(), nil, "refactor-backlog", "--check"), result{0, "", ""})
 }
+
+// An entry fragment written without a trailing newline must not fuse with the next one: each
+// entry is one bullet line, however its file was written.
+func TestRefactorBacklogEntryWithoutTrailingNewline(t *testing.T) {
+	r := newRepo(t)
+	fragment(t, r, "01-a/_section.md", "## A\n")
+	fragment(t, r, "01-a/CRW-2-1.md", "- first")
+	fragment(t, r, "01-a/CRW-2-2.md", "- second\n")
+	if got := goCheck(t, r.root, nil, "refactor-backlog", "--write"); got.code != 0 {
+		t.Fatalf("--write: %+v", got)
+	}
+	expectEqual(t, "generated", readBacklog(t, r), "## A\n\n- first\n- second\n")
+}

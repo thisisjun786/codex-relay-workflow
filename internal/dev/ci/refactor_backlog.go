@@ -130,8 +130,9 @@ func assembleRefactorBacklog(source string) (string, error) {
 }
 
 // assembleRefactorBacklogSection is one directory block: its _section.md, then the other
-// fragments by name. Each piece loses its trailing newlines and one blank line separates them, so
-// a fragment that ends in a newline and one that does not assemble the same way.
+// fragments by name. Each piece loses its trailing newlines, so a fragment that ends in a newline
+// and one that does not assemble the same way; one blank line separates the section from the
+// entries, and the entries stay consecutive lines.
 func assembleRefactorBacklogSection(dir string) (string, error) {
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -154,7 +155,7 @@ func assembleRefactorBacklogSection(dir string) (string, error) {
 			section, found = strings.TrimRight(text, "\n"), true
 			continue
 		}
-		entries += text
+		entries += strings.TrimRight(text, "\n") + "\n"
 	}
 	if !found {
 		return "", fmt.Errorf("%s: no %s", dir, refactorBacklogSection)
