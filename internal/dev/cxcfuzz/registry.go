@@ -65,6 +65,8 @@ func registry() []Target {
 		shellwriteTarget(),
 		memorygateTarget(),
 		doctorTarget(),
+		worktreeDelTarget(),
+		spawnTarget(),
 	}
 }
 
