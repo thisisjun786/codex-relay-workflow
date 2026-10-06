@@ -3,6 +3,10 @@
 // stdout:
 //   {"id":1,"input":<any>,"root":"<case root>"}  ->  {"id":1,"output":<any>}
 //   a request it cannot answer                   ->  {"id":1,"error":{"name":...,"message":...}}
+//   {"id":N,"input":null,"root":""}              ->  {"id":N,"output":null}   (start-up handshake)
+//
+// The pool's start-up handshake carries a null input and an empty root, and its reply is discarded;
+// the shim answers it inertly and spawns no python3 for it (CRW-854).
 //
 // The oracle is the Python standard library's json module, reached through
 // `python3 -m json.tool`, one python3 process per request, the case's JSON text on its stdin. Its

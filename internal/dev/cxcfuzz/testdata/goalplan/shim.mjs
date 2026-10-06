@@ -3,6 +3,10 @@
 // stdout:
 //   {"id":1,"input":<any>,"root":"<case root>"}  ->  {"id":1,"output":<any>}
 //   a request it cannot answer                   ->  {"id":1,"error":{"name":...,"message":...}}
+//   {"id":N,"input":null,"root":""}              ->  {"id":N,"output":null}   (start-up handshake)
+//
+// The pool's start-up handshake carries a null input and an empty root, and its reply is discarded;
+// the shim answers it inertly, before any path, mirror, read or write (CRW-854).
 //
 // The oracle is CXC v0.2.40's readGoalplanDetailed and writeGoalplan
 // (plugins/codexclaw/components/pabcd-state/dist/goalplan.js:698, :921), imported under ORACLE_ROOT
