@@ -57,6 +57,27 @@ or inaccessible required evidence is unresolved. Accept skipped/neutral results
 only when the repository's gate semantics make them legitimate for this change;
 a green PR summary alone is insufficient. Resolve routine failures and recheck.
 
+A required check that is not a success has two readings, and they call for different
+actions. `checks_not_run` is the reading for a check that did not succeed because its
+workflow run holds a job that concluded cancelled without beginning a step: no runner ever
+picked it up, so the commit was never tested. `merge-evidence` names the run and the jobs
+that did not run in the problem's detail, so a rerun can be aimed at them. `checks_stale` is
+the reading for every other non-success, a real failure, and the lane returns its turn as
+before.
+
+What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
+judge owns it, the lane reruns the failed jobs of that run once on the same head
+(`gh run rerun <run id> --failed`) and waits; when that head already has a queued run it does
+not rerun and waits for that one, and a `checks_not_run` that survives the one rerun is an
+infrastructure failure rather than a code failure, so the lane stops and reports it instead of
+rerunning again. In a DAG-managed project the scheduler owns the one rerun of a head, so the
+lane takes no rerun of its own: it waits for `dag-merge-judge` to record the failure and answer
+`retry_same_sha` first, as [the one rerun of N](#refresh-the-base-yourself-when-only-the-base-moved)
+requires, because a rerun taken before that is invisible to the store and would earn the same
+head a second one.
+
+Neither reading is ready and neither permits a merge.
+
 No configured CI is not a CI pass. Use the repository's permitted local validation
 route if one exists and report that distinction. Do not invent a new hosted CI
 requirement, waive an existing one, or claim readiness when necessary validation
@@ -382,12 +403,15 @@ text, the parent may run the review once more itself before it decides; that is 
 **A head the review did not see is usually a base refresh.** The review runs once per patch-id. A head
 that only merged the base has the patch-id of the head the review covered, so it is not reviewed again
 and no review is awaited for it ([a later head has no review of its own](#the-one-run-of-each-reviewer-awaited-before-the-receipt)).
-The item states the candidate's `headPatchId` when the artifact covers another head. The relay does not
+The item states `headPatchId`, the patch-id of the head the record is about. The relay does not
 compute it, so confirm it with `git patch-id --stable` over the diff the review bundle builds against
 `origin/dev` (its exact options are in `internal/review/bundle/gitdiff.go` and in the relay's coordination
 document, section "An independent review beside a restatement") and compare it with the artifact's
-`patchId`. A different patch-id means the code changed after the
-review; the changed part has had no independent look, which the verdict says.
+`patchId`. The patch-id clears the comparison only when the candidate head is the head the record is
+about; when the candidate head is another head the record does not describe, the relay warns instead of
+reusing the stated patch-id, and the parent reads the artifact against that candidate head. A different
+patch-id means the code changed after the review; the changed part has had no independent look, which the
+verdict says.
 
 **The warnings.** `merge-evidence --restate <record> --expect-independent-review` adds an
 `independentReview` object, `{stated, warnings}`, to its output; without the flag it appears only when
@@ -401,7 +425,7 @@ the record states the item. Every warning code starts `independent_review_`:
 | `sha256_mismatch` | the file's bytes are not the stated sha256 | the file changed after the child described it: read it as it is, and say so |
 | `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
 | `status_differs` | the item's status is not the artifact's | trust the artifact |
-| `head_differs` | the artifact covers another head and the stated patch-id is missing or different | run the patch-id check above |
+| `head_differs` | the artifact covers another head and the candidate head is not the head the record is about, or the stated patch-id is missing or different | run the patch-id check above |
 | `disposition_missing` | a P0, P1 or security finding of the artifact has no disposition | ask the child, or judge the finding yourself by its impact |
 | `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
 

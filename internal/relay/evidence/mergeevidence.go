@@ -18,6 +18,7 @@ const (
 	ReviewUnstated         = "review_unstated"
 	ReviewIncomplete       = "review_incomplete"
 	ChecksStale            = "checks_stale"
+	ChecksNotRun           = "checks_not_run"
 	RequiredUndeclared     = "required_undeclared"
 	ReviewChangesRequested = "review_changes_requested"
 	CandidateNotOpen       = "candidate_not_open"
@@ -214,8 +215,56 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 		} else if n.Sign() < 1 {
 			bad(where + " states attempt " + quote.Value(value) + ", and attempts are counted from one; a lower value is read as the first attempt and hides the newest one")
 		}
+		if value, present := o.Lookup("notRun"); present {
+			if _, isBool := value.(bool); !isBool {
+				bad(where + " states notRun as " + quote.Kind(value) + ", not true or false; the collector sets it to say a job began no step, and a value of another type cannot say that")
+			}
+		}
 	}
 	return problems
+}
+
+// workflowRun is the workflow run a check entry belongs to, read from the collector's
+// "workflow-run:<run id>:<job name>#<index>" identity. An entry that is not a workflow job (a
+// published check run or a commit status) names its own run and holds no job, so it answers "".
+func workflowRun(runId string) string {
+	rest, ok := strings.CutPrefix(runId, "workflow-run:")
+	if !ok {
+		return ""
+	}
+	run, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		return ""
+	}
+	return run
+}
+
+// notRunJobs lists the names of the entries of one workflow run, at one attempt, that the
+// collector marked notRun: the jobs whose runner never picked them up. The flag is read as a strict
+// boolean, so a restated record that states anything else cannot steer the lane toward a rerun.
+func notRunJobs(checks []any, run string, at *big.Int) []string {
+	if run == "" {
+		return nil
+	}
+	var names []string
+	for _, entry := range checks {
+		if workflowRun(textField(entry, "runId")) != run || attempt(entry).Cmp(at) != 0 {
+			continue
+		}
+		o, _ := Object(entry)
+		// Only a cancelled job can be one that began no step: the collector marks nothing else,
+		// and a restated record that says otherwise cannot steer the lane toward a rerun.
+		if o.Get("conclusion") != "cancelled" {
+			continue
+		}
+		flag, isBool := o.Get("notRun").(bool)
+		if !isBool || !flag {
+			continue
+		}
+		names = append(names, textField(entry, "name"))
+	}
+	slices.Sort(names)
+	return names
 }
 
 // ChecksProblems is mergeevidence.checks_problems with the merge-turn defaults.
@@ -272,6 +321,19 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		}
 		return false
 	}
+	// Every newest required non-success is read before the answer is chosen, and the answer is
+	// checks_not_run only when every one of them is a job the runner never picked up. With more
+	// than one required check, returning on whichever the forge enumerated first would let the
+	// same set of results read as checks_not_run or as checks_stale by accident of order, and one
+	// required check that stands unexplained says the commit was tested and failed, whatever the
+	// others say. The named run is the lowest (run, name) pair, so the detail does not move with
+	// the enumeration either (CRW-661).
+	var firstRun, firstName string
+	var firstConclusion any
+	unexplained := false
+	var notRunKey, notRunRun, notRunName string
+	var notRunConclusion any
+	var notRunNames []string
 	for _, entry := range checks {
 		run := textField(entry, "runId")
 		if attempt(entry).Cmp(highest[run]) != 0 {
@@ -281,9 +343,31 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		if o.Get("headSha") != any(head) {
 			return stale("check run "+pyvalue.StrRepr(run)+" reports head "+pyvalue.Repr(o.Get("headSha"))+", not "+pyvalue.StrRepr(head), run)
 		}
-		if isRequired(textField(entry, "name")) && answers(entry, textField(entry, "name")) && o.Get("conclusion") != "success" {
-			return stale("required check "+pyvalue.Repr(o.Get("name"))+" (run "+pyvalue.StrRepr(run)+") concluded "+pyvalue.Repr(o.Get("conclusion"))+" on its newest attempt", run)
+		name := textField(entry, "name")
+		if !isRequired(name) || !answers(entry, name) || o.Get("conclusion") == "success" {
+			continue
 		}
+		if firstRun == "" {
+			firstRun, firstName, firstConclusion = run, name, o.Get("conclusion")
+		}
+		// A required check that did not succeed because its runner never picked the jobs up is
+		// told apart from one that failed: the lane may rerun the newest run's failed jobs once
+		// on the same head instead of returning its turn. The reading is not a merge condition,
+		// so the answer stays not ready either way (CRW-661).
+		jobs := notRunJobs(checks, workflowRun(run), attempt(entry))
+		if len(jobs) == 0 {
+			unexplained = true
+			continue
+		}
+		if key := run + "\x00" + name; notRunKey == "" || key < notRunKey {
+			notRunKey, notRunRun, notRunName, notRunConclusion, notRunNames = key, run, name, o.Get("conclusion"), jobs
+		}
+	}
+	if notRunRun != "" && !unexplained {
+		return []Problem{{Code: ChecksNotRun, Detail: "required check " + pyvalue.Repr(notRunName) + " (run " + pyvalue.StrRepr(notRunRun) + ") concluded " + pyvalue.Repr(notRunConclusion) + " on its newest attempt, and workflow run " + pyvalue.StrRepr(workflowRun(notRunRun)) + " holds jobs that began no step, so no runner picked them up rather than the code failing: " + pyvalue.Repr(notRunNames) + ". Rerun the failed jobs of that run once on the same head", Incumbent: notRunRun}}
+	}
+	if firstRun != "" {
+		return stale("required check "+pyvalue.Repr(firstName)+" (run "+pyvalue.StrRepr(firstRun)+") concluded "+pyvalue.Repr(firstConclusion)+" on its newest attempt", firstRun)
 	}
 	present := map[string]bool{}
 	for _, entry := range checks {

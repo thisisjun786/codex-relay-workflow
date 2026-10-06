@@ -1,0 +1,10 @@
+{
+  "issue": "CRW-649",
+  "identical": [],
+  "intentionally-changed": [],
+  "pending": [
+    "cli__review-round__open_signoff_and_binding_verdict",
+    "cli__review-round__show_and_open_refusals",
+    "cli__review-round__unparsed_signoff_noted_and_abort"
+  ]
+}
