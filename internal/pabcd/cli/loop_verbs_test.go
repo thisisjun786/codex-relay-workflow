@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
@@ -483,5 +486,76 @@ func TestLoopReadyJSONKeepsJSONStringifyBytes(t *testing.T) {
 		if strings.Contains(result.Output, escaped) {
 			t.Fatalf("ready --json used Go escaping %q: %q", escaped, result.Output)
 		}
+	}
+}
+
+// loopSeedSession writes body verbatim as the session's state file, so a case can store a record the
+// strict reader cannot keep whole. The file is written directly, not through state.WriteState, because
+// that is what a case needs: bytes on disk the reader would rebuild differently.
+func loopSeedSession(t *testing.T, cwd, id, body string) []byte {
+	t.Helper()
+	path := state.StatePath(cwd, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(body)
+}
+
+// TestLoopInitRefusesToRewriteASessionStateItCannotKeep is the generation-2 correction: the binding
+// re-reads the session with the strict reader and writes it back, and that reader rebuilds records it
+// cannot keep whole, so the write-back would replace the stored records with the cut ones. Every Go
+// writer of the session state already refuses such a rewrite by decision (the memory gate and memory
+// CLI through state.RewriteKeepsUnverified, the idle-edit counter and the two session hooks through
+// sessionHookStateRewritable); this new writer follows the same rule. The four bodies are four ways the
+// reader changes a stored record.
+func TestLoopInitRefusesToRewriteASessionStateItCannotKeep(t *testing.T) {
+	// A record whose receiptClaimed is longer than state.MaxReceiptClaimLen (256 UTF-16 units), so the
+	// reader cuts it.
+	longReceipt := strings.Repeat("r", state.MaxReceiptClaimLen+44)
+	record := func(receipt string) string {
+		return `{"agentId":"a1","recordedAt":"2026-01-01T00:00:00.000Z","turnId":"t1","agentType":"executor","attempts":3,"receiptClaimed":"` + receipt + `","resolvable":true}`
+	}
+	// More records than the reader keeps (state.MaxUnverifiedSubagents), so it stops at the cap.
+	overflow := make([]string, state.MaxUnverifiedSubagents+1)
+	for i := range overflow {
+		overflow[i] = record("none")
+	}
+	// More contradictions than interview.MaxTrackerArray, so the reader drops the oldest.
+	contradictions := make([]string, interview.MaxTrackerArray+1)
+	for i := range contradictions {
+		contradictions[i] = `{"contradictionId":"c` + fmt.Sprint(i) + `","severity":"high","summary":"s"}`
+	}
+	for _, c := range []struct {
+		name string
+		body string
+	}{
+		{"a receipt longer than the reader keeps", `{"phase":"IDLE","sessionId":"rec-s9","unverifiedSubagents":[` + record(longReceipt) + `]}`},
+		{"an unverified list longer than the reader keeps", `{"phase":"IDLE","sessionId":"rec-s9","unverifiedSubagents":[` + strings.Join(overflow, ",") + `]}`},
+		{"a legacy D-close marker", `{"phase":"IDLE","sessionId":"rec-s9","dcloseRecovery":{"sessionId":"rec-s9","checkEpoch":"e","closedWorkPhaseId":"wp1","nextWorkPhaseId":7}}`},
+		{"an interview tracker longer than the reader keeps", `{"phase":"IDLE","sessionId":"rec-s9","interview":{"roundId":0,"contradictions":[` + strings.Join(contradictions, ",") + `]}}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := loopReadWorkspace(t)
+			gitInit(t, cwd)
+			before := loopSeedSession(t, cwd, "rec-s9", c.body)
+			result := loopRun(t, cwd, "init", "--objective", "Probe objective", "--session", "rec-s9")
+			want := "loop init: session rec-s9 holds records a rewrite would change; refusing to overwrite it\nNothing was written."
+			if result.Code != 1 || result.Output != want {
+				t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
+			}
+			after, err := os.ReadFile(state.StatePath(cwd, "rec-s9"))
+			if err != nil || !bytes.Equal(after, before) {
+				t.Fatalf("the refusal changed the state file (%d bytes, was %d; %v)", len(after), len(before), err)
+			}
+			if _, err := os.Stat(filepath.Join(cwd, ".crw", "goalplans")); !os.IsNotExist(err) {
+				t.Fatalf("a refused init wrote a plan: %v", err)
+			}
+			if slug := state.ReadState(cwd, "rec-s9").Slug; slug != "" {
+				t.Fatalf("the refused init bound a slug: %q", slug)
+			}
+		})
 	}
 }
