@@ -130,6 +130,15 @@ func githubPostHomeListing() string {
 // githubPostFake builds a key-shaped value from pieces, so no key-shaped literal sits in this file.
 func githubPostFake(prefix string, n int) string { return prefix + strings.Repeat("a", n) }
 
+// githubPostNested wraps a program in n shell -c levels, each double-quoted, so the guard has to read n
+// programs one level down before it reaches the text.
+func githubPostNested(n int, program string) string {
+	for i := 0; i < n; i++ {
+		program = "bash -c " + strconv.Quote(program)
+	}
+	return program
+}
+
 // TestGitHubPostGuardJudgements is every command-level case, including the shapes the reviews found.
 func TestGitHubPostGuardJudgements(t *testing.T) {
 	githubPostTempHome(t)
@@ -264,6 +273,37 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"xargs runner with a variable", "xargs -n 1 gh pr comment 1 -b \"$TOKEN\"", githubPostRuleExpand, githubPostWhereCommand},
 		{"find exec runner", "find . -exec gh pr comment 1 -b plain \\;", githubPostRuleInline, githubPostWhereCommand},
 		{"siblings keep their depth", "sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'true'; sh -c 'gh pr comment 1 -b \"$TOKEN\"'", githubPostRuleExpand, githubPostWhereCommand},
+		// The class-7 forms the failure-class audit found: a here-string is not a heredoc, a runner the
+		// guard did not read, a shell program from a heredoc, and a program it cannot read at all.
+		{"herestring is not a heredoc", "tee /dev/stderr <<< 'x' | gh pr comment 1 -F -", githubPostRuleUnread, githubPostWhereCommand},
+		{"herestring body file", "gh pr comment 1 --body-file - <<< 'plain'", githubPostRuleUnread, githubPostWhereCommand},
+		{"su command", "su -c 'gh pr comment 1 -b plain' root", githubPostRuleInline, githubPostWhereCommand},
+		{"su command long", "su --command 'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"su command attached", "su -c'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"su command in a bundle", "su -lc 'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"su command after a value option", "su -s /bin/sh -c 'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"su without a post", "su -c 'echo hi' root", "", ""},
+		{"shell heredoc program", "bash <<'EOF'\ngh pr comment 1 -b plain\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
+		{"shell heredoc without a post", "bash <<'EOF'\necho hi\nEOF\n", "", ""},
+		{"split string", "env -S 'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"split string attached", "env -S'gh pr comment 1 -b plain'", githubPostRuleInline, githubPostWhereCommand},
+		{"split string without a post", "env -S 'echo hi'", "", ""},
+		{"python program", "python3 -c 'import os; os.system(\"gh pr comment 1 -b plain\")'", githubPostRuleUnread, githubPostWhereCommand},
+		{"perl program", "perl -e 'system \"gh pr comment 1 -b plain\"'", githubPostRuleUnread, githubPostWhereCommand},
+		{"node program", "node -e 'require(\"child_process\").execSync(\"gh pr comment 1 -b plain\")'", githubPostRuleUnread, githubPostWhereCommand},
+		{"awk program", "awk 'BEGIN{system(\"gh pr comment 1 -b plain\")}'", githubPostRuleUnread, githubPostWhereCommand},
+		{"python without a post", "python3 -c 'print(1)'", "", ""},
+		{"awk without a post", "awk '{print $1}' file.txt", "", ""},
+		// The depth bound: a program the guard can no longer read is refused, never allowed because the
+		// budget ran out; one that names no post is still nothing to judge.
+		{"depth exhausted", githubPostNested(12, "gh pr comment 1 -b plain"), githubPostRuleUnread, githubPostWhereCommand},
+		{"depth exhausted without a post", githubPostNested(12, "echo hi"), "", ""},
+		{"depth exhausted with a variable", githubPostNested(12, "gh pr comment 1 -b \"$TOKEN\""), githubPostRuleUnread, githubPostWhereCommand},
+		{"split string with a variable", "env -S 'gh pr comment 1 -b \"$TOKEN\"'", githubPostRuleExpand, githubPostWhereCommand},
+		{"su command with a variable", "su -c 'gh pr comment 1 -b \"$TOKEN\"' root", githubPostRuleExpand, githubPostWhereCommand},
+		{"heredoc program with a variable", "bash <<'EOF'\ngh pr comment 1 -b \"$TOKEN\"\nEOF\n", githubPostRuleExpand, githubPostWhereCommand},
+		{"heredoc program with a secret", "bash <<'EOF'\ngh pr comment 1 -b " + githubPostFake("sk-", 16) + "\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
+		{"herestring with a secret", "gh pr comment 1 --body-file - <<< " + githubPostFake("sk-", 16), githubPostRuleUnread, githubPostWhereCommand},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)

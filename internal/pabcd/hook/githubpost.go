@@ -152,11 +152,16 @@ func githubPostUnread(command string) (githubPostSite, bool) {
 	return githubPostSite{}, false
 }
 
-// command judges one simple command: a gh post, a shell -c or eval program read deeper, a command that
-// names the post later in the same line (find's -exec), or nothing. The depth is spent by the recursive
-// read alone, so sibling programs each get their own allowance.
+// command judges one simple command: a gh post, a program read deeper (a shell -c, su --command, a
+// quoted heredoc that feeds a shell, env --split-string, eval), a command that names the post later in
+// the same line (find's -exec), a program in a language the guard cannot read that names a post, or
+// nothing. The depth is spent by the recursive read alone, so sibling programs each get their own
+// allowance.
 func (s *githubPostScan) command(words []githubPostWord, segment string) (githubPostSite, bool) {
-	rest := githubPostStripPrefixes(words)
+	rest, split := githubPostStripPrefixes(words)
+	if split != "" {
+		return s.program(split, segment)
+	}
 	if len(rest) == 0 {
 		return githubPostSite{}, false
 	}
@@ -172,19 +177,28 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 		}
 		return githubPostSite{}, false
 	}
-	if s.depth <= 0 {
-		return githubPostSite{}, false
-	}
 	spelled := make([]string, len(rest))
 	for i, w := range rest {
 		spelled[i] = w.text
 	}
-	program, ok := strings.Join(spelled[1:], " "), verb == "eval"
-	if shellVerbIsShell(verb) {
-		program, ok = shellVerbShellScript(spelled[1:])
-	}
+	program, ok := githubPostProgram(verb, spelled[1:], s.bodies)
 	if !ok {
+		// A program in a language the guard cannot read, naming a post, is refused: the guard never
+		// runs it through its own reader, so passing it would be a fail-open.
+		if githubPostForeignProgram(verb, spelled[1:]) {
+			return githubPostUnread(segment)
+		}
 		return githubPostSite{}, false
+	}
+	return s.program(program, segment)
+}
+
+// program reads a program text one level down, spending one level of the depth. A program the guard can
+// no longer read, or one holding an expansion it cannot see the result of, is refused: it is never
+// allowed because the depth or the reading ran out.
+func (s *githubPostScan) program(program, segment string) (githubPostSite, bool) {
+	if s.depth <= 0 {
+		return githubPostUnread(program)
 	}
 	if githubPostExpands(program, true) {
 		return githubPostUnread(segment)
@@ -192,6 +206,166 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 	deeper := *s
 	deeper.depth--
 	return deeper.text(program)
+}
+
+// githubPostProgram is the program text a simple command runs one level down: eval's words, a shell's
+// -c operand or the quoted heredoc that feeds the shell on standard input, and su's --command operand.
+func githubPostProgram(verb string, args []string, bodies []string) (string, bool) {
+	switch {
+	case verb == "eval":
+		return strings.Join(args, " "), true
+	case shellVerbIsShell(verb):
+		if program, ok := shellVerbShellScript(args); ok {
+			return program, true
+		}
+		// A shell with no -c reads its program from standard input, the quoted heredoc of its line.
+		if len(bodies) > 0 {
+			return bodies[0], true
+		}
+		return "", false
+	case verb == "su":
+		return githubPostSuCommand(args)
+	}
+	return "", false
+}
+
+// githubPostSuCommand is su's --command operand, the program the target user's shell runs. su's other
+// value-taking options are skipped and its user operand is not the program.
+func githubPostSuCommand(args []string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			continue
+		case a == "-c" || a == "--command" || a == "--session-command":
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		case strings.HasPrefix(a, "--command="):
+			return strings.TrimPrefix(a, "--command="), true
+		case strings.HasPrefix(a, "--session-command="):
+			return strings.TrimPrefix(a, "--session-command="), true
+		case len(a) > 1 && a[0] == '-' && a[1] != '-':
+			// A short bundle: a value-taking letter ends it, and an attached value is the program.
+			for j := 1; j < len(a); j++ {
+				switch a[j] {
+				case 'c':
+					if j+1 < len(a) {
+						return a[j+1:], true
+					}
+					if i+1 < len(args) {
+						return args[i+1], true
+					}
+					return "", false
+				case 's', 'g', 'G', 'w':
+					i++ // this letter takes the next word as its value
+					j = len(a)
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// githubPostForeignProgram is a one-line program in a language the guard cannot read (python, node,
+// perl, ruby, lua, php, awk and their kin) that names a post. Its text never goes through the shell
+// reader, so the guard refuses it rather than allowing a post it did not judge.
+func githubPostForeignProgram(verb string, args []string) bool {
+	program, ok := githubPostForeignOperand(verb, args)
+	return ok && githubPostMentions(program)
+}
+
+// githubPostForeignOperand is the program of a one-line interpreter: the option that carries it (python
+// -c, node -e or -p, perl, ruby and lua -e, php -r), or awk's first operand.
+func githubPostForeignOperand(verb string, args []string) (string, bool) {
+	if githubPostForeignAwk(verb) {
+		return githubPostAwkProgram(args)
+	}
+	short, long := githubPostForeignOption(verb)
+	if short == "" {
+		return "", false
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return "", false
+		case a == "":
+			continue
+		case a[0] != '-' || a == "-":
+			return "", false
+		case strings.HasPrefix(a, "--"):
+			name, value, attached := strings.Cut(a, "=")
+			if !strings.Contains(" "+long+" ", " "+name+" ") {
+				continue
+			}
+			if attached {
+				return value, true
+			}
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		default:
+			for j := 1; j < len(a); j++ {
+				if !strings.ContainsRune(short, rune(a[j])) {
+					continue
+				}
+				if j+1 < len(a) {
+					return a[j+1:], true
+				}
+				if i+1 < len(args) {
+					return args[i+1], true
+				}
+				return "", false
+			}
+		}
+	}
+	return "", false
+}
+
+// githubPostForeignAwk is the awk family, whose program is its first operand rather than an option's value.
+func githubPostForeignAwk(verb string) bool {
+	for _, name := range [...]string{"awk", "gawk", "mawk", "nawk"} {
+		if verb == name {
+			return true
+		}
+	}
+	return false
+}
+
+// githubPostAwkProgram is awk's program, the first operand. A program read from a file (-f, --file) is
+// not the command text, so the guard reads nothing.
+func githubPostAwkProgram(args []string) (string, bool) {
+	for _, a := range args {
+		switch {
+		case a == "--":
+			return "", false
+		case a == "":
+			continue
+		case a == "-f" || a == "--file" || strings.HasPrefix(a, "--file=") || strings.HasPrefix(a, "-f") && len(a) > 2:
+			return "", false
+		case a[0] != '-' || a == "-":
+			return a, true
+		}
+	}
+	return "", false
+}
+
+// githubPostForeignOption is an interpreter's program options: the short letters and the long names.
+func githubPostForeignOption(verb string) (string, string) {
+	switch {
+	case verb == "python" || verb == "python2" || verb == "python3" || shellVerbVersioned(verb):
+		return "c", "command"
+	case verb == "node" || verb == "nodejs":
+		return "ep", "eval print"
+	case verb == "perl" || verb == "ruby" || verb == "lua" || verb == "luajit":
+		return "e", ""
+	case verb == "php":
+		return "r", ""
+	}
+	return "", ""
 }
 
 // gh judges a gh command: pr create|edit|comment|review, issue create|comment|edit, or api with a field;
@@ -437,7 +611,11 @@ func githubPostLines(command string) ([]githubPostLine, bool) {
 					return nil, false
 				}
 				i = end
-			case c == '<' && i+1 < len(rs) && rs[i+1] == '<' && (i+2 >= len(rs) || rs[i+2] != '<'):
+			case c == '<' && i+2 < len(rs) && rs[i+1] == '<' && rs[i+2] == '<':
+				// A here-string (<<<) is a word, not a heredoc: its text is not a body the guard reads,
+				// so the file it would feed stays unreadable.
+				i += 3
+			case c == '<' && i+1 < len(rs) && rs[i+1] == '<':
 				// A heredoc operator: its quoted delimiter names a body the shell does not expand.
 				if delim, ok := githubPostHeredocDelimiter(rs, i); ok {
 					delims = append(delims, delim)
@@ -649,7 +827,8 @@ func githubPostExpands(raw string, unreadable bool) bool {
 // githubPostStripPrefixes is the command a simple command starts with: grouping words, wrappers and
 // assignments. A post in (gh ...), { gh ...; } or ! gh ... is still read, and each wrapper's own options,
 // option values and numbers go with it, so a post behind a runner prefix (timeout, xargs) is read too.
-func githubPostStripPrefixes(words []githubPostWord) []githubPostWord {
+// env's --split-string value is a whole command line rather than a command, and is returned as one.
+func githubPostStripPrefixes(words []githubPostWord) ([]githubPostWord, string) {
 	out := []githubPostWord{}
 	for _, w := range words {
 		if t := strings.TrimLeft(w.text, "({!"); t != "" && t != "}" {
@@ -660,11 +839,14 @@ func githubPostStripPrefixes(words []githubPostWord) []githubPostWord {
 	for head < len(words) {
 		name := shellVerbName(words[head].text)
 		if !githubPostWrapper(name) && !shellVerbAssignment(words[head].text) {
-			return words[head:]
+			return words[head:], ""
 		}
 		head++
 		for head < len(words) {
 			word := words[head].text
+			if split, ok := githubPostSplitString(name, word, words, head); ok {
+				return nil, split
+			}
 			if githubPostWrapperValue(name, word) && !strings.Contains(word, "=") && head+1 < len(words) {
 				head += 2
 				continue
@@ -678,7 +860,39 @@ func githubPostStripPrefixes(words []githubPostWord) []githubPostWord {
 			head++
 		}
 	}
-	return words[head:]
+	return words[head:], ""
+}
+
+// githubPostSplitString is env's --split-string value, a whole command line env splits and runs.
+func githubPostSplitString(name, word string, words []githubPostWord, head int) (string, bool) {
+	if name != "env" {
+		return "", false
+	}
+	switch {
+	case strings.HasPrefix(word, "--split-string="):
+		return strings.TrimPrefix(word, "--split-string="), true
+	case word == "--split-string":
+		if head+1 < len(words) {
+			return words[head+1].text, true
+		}
+		return "", false
+	case len(word) > 1 && word[0] == '-' && word[1] != '-':
+		for j := 1; j < len(word); j++ {
+			switch word[j] {
+			case 'S':
+				if j+1 < len(word) {
+					return strings.TrimPrefix(word[j+1:], "="), true
+				}
+				if head+1 < len(words) {
+					return words[head+1].text, true
+				}
+				return "", false
+			case 'u', 'C':
+				return "", false
+			}
+		}
+	}
+	return "", false
 }
 
 // githubPostWrapperWord is a word belonging to the wrapper: an assignment, an option, or a number.
