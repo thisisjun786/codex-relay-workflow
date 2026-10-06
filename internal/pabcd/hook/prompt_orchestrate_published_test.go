@@ -54,8 +54,9 @@ func TestPromptOrchestratePublishedWriteAnswersApplied(t *testing.T) {
 	}
 }
 
-// (b) The same failure in the loop-arm write is not silence either: the arming mandate is still
-// answered, because the callers that judge only == promptSubmitFailed keep their answers.
+// (b) The same failure in the loop-arm write is not silence either: a published write no longer maps
+// to promptSubmitFailed, so the caller that judges only that outcome proceeds and answers the arming
+// mandate, as the oracle's successful unlocked write does.
 func TestPromptOrchestratePublishedLoopArmWriteAnswersTheMandate(t *testing.T) {
 	cwd := t.TempDir()
 	const prompt = "이 유닛 crw-loop로 알아서 끝까지 해줘"
@@ -68,6 +69,21 @@ func TestPromptOrchestratePublishedLoopArmWriteAnswersTheMandate(t *testing.T) {
 	}
 	if s := state.ReadState(cwd, "s1"); !s.LoopArmSeen || s.Phase != state.PhaseIdle {
 		t.Errorf("the loop-arm state: %+v", s)
+	}
+}
+
+// A published write on the passive trigger path is not silence either: the trigger branch's own write
+// judges only == promptSubmitFailed, so it answers its directive, as the oracle's successful write
+// does. The passive trigger records only dedup bookkeeping and never moves the phase.
+func TestPromptOrchestratePublishedTriggerWriteAnswersTheDirective(t *testing.T) {
+	cwd := t.TempDir()
+	got := promptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1",
+		Prompt: "Use crw-pabcd to start Check phase", TurnID: "t1", PabcdEnabled: true}, "", promptSubmitHost(cwd), promptOrchestratePublishedLock)
+	if !strings.Contains(got, "[crw: CHECK]") {
+		t.Errorf("a published trigger write answered %q, want the check directive", got)
+	}
+	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle {
+		t.Errorf("a passive trigger moved the phase: %+v", s)
 	}
 }
 

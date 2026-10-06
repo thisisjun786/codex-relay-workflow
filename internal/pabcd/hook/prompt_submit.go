@@ -247,8 +247,10 @@ func promptSubmitWriteState(lock func(cwd, sessionID string, fn func() error) er
 // published the state and then failed a step after the rename. A *state.PublishedError means the rename
 // landed and only the directory open or fsync after it failed (state.WriteState), so the change counts as
 // written: the outcome is promptSubmitPublished rather than promptSubmitFailed, and the second answer is
-// the sentence promptDcloseWriteLanded builds for the same case on the bound D-close. The callers that
-// judge only == promptSubmitFailed keep their answers unchanged and call the one-answer form above.
+// the sentence promptDcloseWriteLanded builds for the same case on the bound D-close. A caller that has no
+// answer to decorate calls the one-answer form above; a caller that judges only == promptSubmitFailed
+// (the Stop-budget stamp, the loop-arm branch, prompt_trigger.go's writes) treats a published write as
+// written too, so it answers as the oracle's successful unlocked write does and simply drops the warning.
 func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
