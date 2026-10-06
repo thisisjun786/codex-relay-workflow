@@ -11,6 +11,7 @@ import (
 // when the first one failed before it wrote anything.
 
 func TestLandingRunsTheSweepItOwes(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	k.sched.Checkout = k.repo.path
@@ -56,6 +57,7 @@ func TestLandingRunsTheSweepItOwes(t *testing.T) {
 
 // A head that did not land owes no sweep, and a landing with no checkout to measure in skips it, says so, and records the landing all the same.
 func TestLandingWithNothingToSweep(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	w.accept("D")
@@ -78,6 +80,7 @@ func TestLandingWithNothingToSweep(t *testing.T) {
 // Taking a receipt in is the other trigger: the sweep rests on the acceptance, measures the pull request's head with the other live heads and against the tip of its base branch, and a repeat of the
 // acceptance finds it done.
 func TestAcceptRunsTheSweepOfAReceipt(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	k.sched.Checkout = k.repo.path
@@ -113,6 +116,7 @@ func TestAcceptRunsTheSweepOfAReceipt(t *testing.T) {
 
 // A head that lands on a second target later owes a sweep for that landing too: the sweep rests on every observation of a landing, so the new one is a new trigger, and a repeat of the same call finds it done.
 func TestLandingOnASecondTargetIsSweptToo(t *testing.T) {
+	t.Parallel()
 	w := newSweepWorld(t)
 	k := w.k
 	k.sched.Checkout = k.repo.path

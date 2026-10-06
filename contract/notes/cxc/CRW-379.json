@@ -1,0 +1,18 @@
+{
+  "issue": "CRW-379",
+  "identical": [
+    "hook__pre-tool-use-guarding-goal-budget__baseline_empty_workspace",
+    "hook__pre-tool-use-guarding-goal-budget__non_object_input_fails_closed",
+    "hook__pre-tool-use-guarding-goal-budget__token_budget_denied",
+    "hook__pre-tool-use-guarding-interview-in-goal__active_goal_denies",
+    "hook__pre-tool-use-guarding-interview-in-goal__baseline_empty_workspace",
+    "hook__pre-tool-use-guarding-interview-in-goal__unreadable_goal_fails_closed",
+    "hook__pre-tool-use-guarding-goal-complete__blocked_allowed"
+  ],
+  "pending": [
+    "hook__pre-tool-use-guarding-goal-complete__baseline_empty_workspace",
+    "hook__pre-tool-use-guarding-goal-complete__bound_plan_with_open_work_denied",
+    "hook__pre-tool-use-guarding-goal-complete__mid_cycle_complete_denied"
+  ],
+  "intentionally-changed": []
+}

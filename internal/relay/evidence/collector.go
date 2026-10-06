@@ -340,14 +340,18 @@ func outcome(n map[string]any) string {
 	return "unknown"
 }
 
-// jobNeverRan reports whether a workflow job concluded cancelled without beginning any step. The
-// jobs API leaves the step list empty (or absent) and every started_at unset for a job no runner
-// ever picked up, which is the shape the Actions incident of 2026-10-05 produced; such a job says
-// nothing about the commit, so the collector marks it and merge-evidence answers checks_not_run
-// instead of checks_stale (CRW-661). A job that began a step is not this, however it ended, and
-// anything the collector cannot read is left unmarked rather than called a job that never ran.
+// jobNeverRan reports whether a workflow job ended without beginning any step. The jobs API leaves
+// the step list empty (or absent) and every started_at unset for a job no runner ever picked up,
+// which is the shape the Actions incident of 2026-10-05 produced; such a job says nothing about the
+// commit, so the collector marks it and merge-evidence answers checks_not_run instead of
+// checks_stale. A job that began a step is not this, however it ended, and anything the collector
+// cannot read is left unmarked rather than called a job that never ran. The conclusion is read from
+// an allow-list (CRW-681): a job that ended without a step says nothing about the commit whether it
+// was cancelled, failed or timed out, and every other conclusion is not this.
 func jobNeverRan(j map[string]any) bool {
-	if !strings.EqualFold(strOf(j["conclusion"]), "cancelled") {
+	switch strings.ToLower(strOf(j["conclusion"])) {
+	case "cancelled", "failure", "timed_out":
+	default:
 		return false
 	}
 	steps, ok := List(j["steps"])

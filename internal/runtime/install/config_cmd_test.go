@@ -40,6 +40,7 @@ func runConfigCommand(t *testing.T, h featureHome, args ...string) (int, string,
 }
 
 func TestConfigCommandArgumentsAndReads(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		args     []string
@@ -81,6 +82,7 @@ func TestConfigCommandArgumentsAndReads(t *testing.T) {
 }
 
 func TestConfigCommandSetRepeatUnset(t *testing.T) {
+	t.Parallel()
 	h := configCommandHome(t, "[memories]\ndedicated_tools = false # user\nforeign = true\n", true)
 	for i, args := range [][]string{{"set", "memories.dedicated_tools", "true", "--help"}, {"set", "memories.dedicated_tools", "true"}, {"unset", "memories.dedicated_tools"}} {
 		code, out, err := runConfigCommand(t, h, args...)
@@ -104,6 +106,7 @@ func TestConfigCommandSetRepeatUnset(t *testing.T) {
 }
 
 func TestConfigCommandRefusalsAndHome(t *testing.T) {
+	t.Parallel()
 	for _, content := range []string{"[memories]\nforeign = true\n", "[memories]\ndedicated_tools = [true]\n"} {
 		h := configCommandHome(t, content, strings.Contains(content, "[true]"))
 		code, out, err := runConfigCommand(t, h, "set", "memories.dedicated_tools", "false")
