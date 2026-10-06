@@ -37,6 +37,7 @@ const (
 	upgradeReasonStoreRead     = "store_unreadable"
 	upgradeReasonOpenAttempts  = "open_attempts"
 	upgradeReasonPointer       = "pointer_missing"
+	upgradeReasonStopFailed    = "service_stop_failed"
 	upgradeReasonPostCheck     = "postcheck_failed"
 	upgradeReasonUpdateFailed  = "update_failed"
 )
@@ -206,12 +207,12 @@ func (r *upgradeRunState) execute() (int, string) {
 		return code, reason
 	}
 
-	updateCode := r.stopAndUpdate()
+	updateCode, updateReason := r.stopAndUpdate()
 	r.start()
 
 	postCode, postReason := r.postCheck()
 	if updateCode != 0 {
-		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
+		return updateCode, updateReason
 	}
 	if postCode != 0 {
 		return postCode, postReason

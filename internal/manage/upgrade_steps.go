@@ -283,16 +283,17 @@ func (r *upgradeRunState) snapshot() (int, string) {
 }
 
 // stopAndUpdate is step 6: stop with the running executable, then install with the extracted one.
-func (r *upgradeRunState) stopAndUpdate() int {
+// It returns the status and reason to report: a stop that did not succeed stops the run before
+// the runtime is replaced, and the two failures are named apart in the record.
+func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
-		r.note(upgradeStepStop, nil, 1, "", err)
-		return upgradeExitRefused
+		return r.refuse(upgradeStepStop, upgradeReasonStopFailed, "", err)
 	}
 	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepStop,
 		filepath.Join(pointer, "bin", "codex-session-relay"),
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil || code != 0 {
-		return upgradeExitRefused
+		return upgradeExitRefused, upgradeReasonStopFailed
 	}
 	args := []string{"install", "update", "--from", r.archive, "--state", r.state,
 		"--socket", r.cfg.Relay.Socket, "--backup-state-to", filepath.Join(r.dir, "state-backup")}
@@ -301,9 +302,12 @@ func (r *upgradeRunState) stopAndUpdate() int {
 	}
 	_, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
 	if err != nil {
-		return upgradeExitRefused
+		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
 	}
-	return code
+	if code != 0 {
+		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
+	}
+	return 0, ""
 }
 
 // start is step 7: start from the new pointer's executable, whether or not the update succeeded.

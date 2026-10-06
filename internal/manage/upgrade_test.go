@@ -37,6 +37,7 @@ type upgradeHarnessOptions struct {
 	pointer      bool
 	installExit  int
 	mutateConfig bool
+	stopExit     int
 }
 
 type upgradeGhAnswer struct {
@@ -64,7 +65,7 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 		calls: filepath.Join(home, "crw-calls.jsonl"), ghCalls: filepath.Join(home, "gh-calls.jsonl")}
 	h.writeArchive(opts)
 	h.writeStore(opts.openAttempts)
-	h.writeFakes(opts.gh)
+	h.writeFakes(opts)
 	h.installPointer(opts.pointer)
 	return h
 }
@@ -141,7 +142,7 @@ func (h *upgradeEnv) writeStore(openAttempts int) {
 
 // writeFakes places the fake crw and gh on PATH: crw records its arguments and answers doctor,
 // --version and service status; gh answers the API paths asked.
-func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
+func (h *upgradeEnv) writeFakes(opts upgradeHarnessOptions) {
 	h.t.Helper()
 	bin := filepath.Join(h.home, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {
@@ -149,9 +150,13 @@ func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
 	}
 	// Branches match the whole argument list: the relay is called as
 	// "codex-session-relay --state S --socket K service status", flags first.
+	stop := ""
+	if opts.stopExit != 0 {
+		stop = "*\"service stop\"*) exit " + fmt.Sprint(opts.stopExit) + ";;\n"
+	}
 	crw := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + coreShellQuote(h.calls) + "\n" +
-		"case \"$*\" in\n" +
+		"case \"$*\" in\n" + stop +
 		"*doctor*) printf '%s\\n' " + coreShellQuote("{\"stateSelection\":{\"path\":\""+h.state+"\"}}") + "; exit 0;;\n" +
 		"*\"--version\"*) printf '%s\\n' " + coreShellQuote("v0.4.0-4633-geb2567df7") + "; exit 0;;\n" +
 		"*\"service status\"*) printf '%s\\n' " + coreShellQuote("{\"running\":true,\"launchPolicy\":{\"matchesRunning\":\"same\"}}") + "; exit 0;;\n" +
@@ -163,7 +168,7 @@ func (h *upgradeEnv) writeFakes(gh map[string]upgradeGhAnswer) {
 	var body strings.Builder
 	body.WriteString("#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + coreShellQuote(h.ghCalls) + "\n")
 	body.WriteString("case \"$2\" in\n")
-	for path, answer := range gh {
+	for path, answer := range opts.gh {
 		body.WriteString(coreShellQuote(path) + ") printf '%s\\n' " + coreShellQuote(answer.Body) + "; exit " + fmt.Sprint(answer.Exit) + ";;\n")
 	}
 	body.WriteString("*) exit 1;;\nesac\n")

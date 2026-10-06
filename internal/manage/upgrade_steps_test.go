@@ -9,6 +9,8 @@ import (
 )
 
 // C1: a stop at each of steps 1 to 4 calls no later step, proven by the fakes' received calls.
+// The pointer is in place in every case, so a fall-through would really reach the snapshot's
+// install call and the service calls; the absence assertion is therefore not vacuous.
 func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 	commit := upgradeGoodCommit
 	badSums := func(t *testing.T, h *upgradeEnv) {
@@ -30,14 +32,14 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 		reason string
 		absent []string
 	}{
-		{"step 1", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(commit)}, badSums,
-			2, upgradeReasonSumsFailed, []string{"commits/", "check-runs", "service"}},
-		{"step 2", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: map[string]upgradeGhAnswer{}}, nil,
-			2, upgradeReasonCommitUnknown, []string{"check-runs", "service"}},
-		{"step 3", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: gate("{\"check_runs\":[]}")}, nil,
-			2, upgradeReasonDevGate, []string{"service"}},
-		{"step 4", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", openAttempts: 1, gh: upgradeGhPaths(commit)}, nil,
-			3, upgradeReasonOpenAttempts, []string{"service"}},
+		{"step 1", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(commit), pointer: true}, badSums,
+			2, upgradeReasonSumsFailed, []string{"commits/", "check-runs", "install", "service"}},
+		{"step 2", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: map[string]upgradeGhAnswer{}, pointer: true}, nil,
+			2, upgradeReasonCommitUnknown, []string{"check-runs", "install", "service"}},
+		{"step 3", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: gate("{\"check_runs\":[]}"), pointer: true}, nil,
+			2, upgradeReasonDevGate, []string{"install", "service"}},
+		{"step 4", upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", openAttempts: 1, gh: upgradeGhPaths(commit), pointer: true}, nil,
+			3, upgradeReasonOpenAttempts, []string{"install", "service"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := upgradeHarness(t, tc.opts)
@@ -106,6 +108,21 @@ func TestUpgradeExitsFourWhenTheConfigChanged(t *testing.T) {
 	}
 	if got := h.recordOf(t).Reason; got != upgradeReasonPostCheck {
 		t.Errorf("reason %q, want %q", got, upgradeReasonPostCheck)
+	}
+}
+
+// A stop that runs but fails stops the run before the runtime is replaced: the record names the
+// stop and no install follows.
+func TestUpgradeRefusesAFailedStop(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{version: "v0.4.0-4633-geb2567df7", gh: upgradeGhPaths(upgradeGoodCommit), pointer: true, stopExit: 1})
+	if code := h.run("--release-dir", h.release); code != upgradeExitRefused {
+		t.Fatalf("exit %d, want %d", code, upgradeExitRefused)
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonStopFailed {
+		t.Errorf("reason %q, want %q", got, upgradeReasonStopFailed)
+	}
+	if joined := strings.Join(h.crwCalls(), " "); strings.Contains(joined, "install update") {
+		t.Errorf("a failed stop still installed: %q", joined)
 	}
 }
 
