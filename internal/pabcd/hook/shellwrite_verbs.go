@@ -388,9 +388,9 @@ func shellVerbPythonNode(verb string, args []string, hard bool) []string {
 	if script == "" {
 		return []string{}
 	}
-	out := shellVerbScriptWrites(script, hard)
+	out := shellVerbScriptWritesIn(script, hard, isPy)
 	if un := shellVerbUnescape(script); hard && un != script {
-		out = append(out, shellVerbScriptWrites(un, true)...)
+		out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
 	}
 	return out
 }
@@ -655,6 +655,14 @@ func shellVerbCpMvWrites(args []string) []string {
 // lazy matching and each pattern matches what the backtracking original does. hard adds template literal paths, the open() and
 // Path reader and the decoded value of a JavaScript literal, after the oracle's raw text.
 func shellVerbScriptWrites(script string, hard bool) []string {
+	return shellVerbScriptWritesIn(script, hard, true)
+}
+
+// shellVerbScriptWritesIn is shellVerbScriptWrites with the program's language: python selects the Python readers, whose
+// triple-quoted region rule belongs to Python source alone. A JavaScript program is not Python source, so three quotes inside a
+// template literal must not open a triple-quoted region and swallow the rest of the program, which would lose the destination
+// of a later write; a Node program keeps the single-quote walk the reader always had.
+func shellVerbScriptWritesIn(script string, hard, python bool) []string {
 	s, dot, pre := lintSpace, lintDot, "[rRuUbBfF]*"
 	quoted := func(body string) string { return "(?:'(" + body + ")'|\"(" + body + ")\")" }
 	callQuote, callGroups := quoted(dot+"*?"), 2
@@ -678,7 +686,7 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 	}
 	if hard {
 		out = append(out, shellWriteEscapeJSWrites(script, out)...)
-		out = append(out, shellVerbOpenWrites(script)...)
+		out = append(out, shellVerbOpenWritesIn(script, python)...)
 	}
 	return out
 }
@@ -689,25 +697,41 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 // bracket and arguments are spans of the text, so unclosed and nested calls cost no more than their own characters. A
 // Path(...).write_text or .write_bytes call names the join of its arguments (shellWriteEscapePath).
 func shellVerbOpenWrites(script string) []string {
+	return shellVerbOpenWritesIn(script, true)
+}
+
+// shellVerbOpenWritesIn is shellVerbOpenWrites with the program's language: python enables the triple-quoted region rule, so a
+// Node program is scanned exactly as it was before that rule existed (shellVerbScriptWritesIn).
+func shellVerbOpenWritesIn(script string, python bool) []string {
+	return shellWriteFStringOpenWritesRunes(shellVerbWithoutComments(script, python), python)
+}
+
+// shellWriteFStringOpenWritesRunes is shellVerbOpenWritesIn over an already comment-stripped program. A string literal whose
+// prefix holds an f is walked rather than skipped as one region (shellWriteFStringRegion), and each replacement field's
+// expression is read as program text by this same walk, so an open() or Path() call inside a field names its path
+// (CRW-741). Every other literal keeps the one-region rule of shellWriteTripleScanRegion.
+func shellWriteFStringOpenWritesRunes(rs []rune, python bool) []string {
 	type frame struct {
 		kind  byte // 'o' for open(, 'p' for Path(, else 0
 		start int
 		args  [][2]int
 	}
-	rs := shellVerbWithoutComments(script)
 	var stack []frame
-	var quote rune
 	out := []string{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
-		case quote != 0:
-			if c == '\\' {
-				i++
-			} else if c == quote {
-				quote = 0
-			}
 		case c == '\'' || c == '"':
-			quote = c
+			if python && shellWriteFStringPrefix(rs, i) {
+				end, fields, _ := shellWriteFStringRegion(rs, i, 0)
+				for _, f := range fields {
+					// The expression is read as program text: its comments are cut first, so a quote or brace in one
+					// is no syntax (a Python 3.12+ multi-line field allows a comment).
+					out = append(out, shellVerbOpenWritesIn(string(rs[f[0]:f[1]]), python)...)
+				}
+				i = end - 1
+				continue
+			}
+			i = shellWriteTripleScanRegion(rs, i, python) - 1
 		case c == '(' || c == '[' || c == '{':
 			stack = append(stack, frame{kind: shellVerbCallKind(rs, i, c), start: i + 1})
 		case c == ',' && len(stack) > 0:
@@ -730,27 +754,23 @@ func shellVerbOpenWrites(script string) []string {
 
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
 // quote in a comment opens no string and a comment inside a call is no argument.
-func shellVerbWithoutComments(script string) []rune {
+func shellVerbWithoutComments(script string, python bool) []rune {
 	rs, out := []rune(script), []rune{}
-	var quote rune
-	for i := 0; i < len(rs); i++ {
+	for i := 0; i < len(rs); {
 		switch c := rs[i]; {
-		case quote != 0:
-			if c == '\\' && i+1 < len(rs) {
-				out = append(out, c)
-				i++
-			} else if c == quote {
-				quote = 0
-			}
 		case c == '\'' || c == '"':
-			quote = c
+			end := shellWriteTripleScanRegion(rs, i, python)
+			out = append(out, rs[i:end]...)
+			i = end
 		case c == '#':
-			for i+1 < len(rs) && rs[i+1] != '\n' {
+			i++
+			for i < len(rs) && rs[i] != '\n' {
 				i++
 			}
-			continue
+		default:
+			out = append(out, c)
+			i++
 		}
-		out = append(out, rs[i])
 	}
 	return out
 }
@@ -907,7 +927,8 @@ func shellWriteEscapeLiteral(arg []rune, earlier bool) (string, bool) {
 
 // shellWriteTripleBody is the body of the string literal whose opening quote is arg[i] and whether it closes with spaces alone
 // after it: with triple false the body runs to the first unescaped arg[i], with triple true to the first unescaped run of three
-// arg[i], and a character after a backslash never closes it. The body is a slice of arg, so no body is copied.
+// arg[i], and a character after a backslash never closes it. A single-quoted body is a slice of arg, so it is not copied; a
+// triple-quoted body is copied only when its physical line breaks need normalising (shellWriteTripleScanNewlines).
 func shellWriteTripleBody(arg []rune, i int, quote rune, triple bool) ([]rune, bool) {
 	open := i + 1
 	if triple {
@@ -927,10 +948,367 @@ func shellWriteTripleBody(arg []rune, i int, quote rune, triple bool) ([]rune, b
 					return nil, false
 				}
 			}
+			if triple {
+				return shellWriteTripleScanNewlines(arg[open:k]), true
+			}
 			return arg[open:k], true
 		}
 	}
 	return nil, false
+}
+
+// shellWriteTripleScanNewlines is a triple-quoted body with the physical line breaks Python's source decoding gives it: a CRLF
+// and a lone CR both read as LF before the literal is evaluated, so a destination written with either names the path Python
+// writes. A body with no CR is returned as it is; otherwise the copy is one pass.
+func shellWriteTripleScanNewlines(body []rune) []rune {
+	at := slices.Index(body, '\r')
+	if at < 0 {
+		return body
+	}
+	out := append(make([]rune, 0, len(body)), body[:at]...)
+	for ; at < len(body); at++ {
+		switch {
+		case body[at] != '\r':
+			out = append(out, body[at])
+		case at+1 < len(body) && body[at+1] == '\n':
+			out = append(out, '\n')
+			at++
+		default:
+			out = append(out, '\n')
+		}
+	}
+	return out
+}
+
+// shellWriteTripleScanRegion is the index just past the string region that opens at the quote rs[i], as Python reads it: a
+// triple-quoted literal (the quote repeated three times) runs to the first unescaped run of three of the same quote, and a
+// single-quoted region to the first unescaped quote; a character after a backslash closes neither. An unterminated region ends
+// at len(rs). The scanners shellVerbOpenWritesIn and shellVerbWithoutComments use it so a triple-quoted literal is one region
+// instead of a run of single-quoted ones. python selects the triple-quoted rule; with python false the region is one quote
+// wide, which is what a JavaScript program needs (its three quotes are three empty strings, not a Python triple quote).
+// A literal whose prefix holds an f is not one region: its body is walked as Python reads it (shellWriteFStringRegion), so a
+// replacement field's expression is reached by the scanners (CRW-741).
+func shellWriteTripleScanRegion(rs []rune, i int, python bool) int {
+	if python && shellWriteFStringPrefix(rs, i) {
+		end, _, _ := shellWriteFStringRegion(rs, i, 0)
+		return end
+	}
+	quote := rs[i]
+	triple := python && i+2 < len(rs) && rs[i+1] == quote && rs[i+2] == quote
+	k := i + 1
+	if triple {
+		k = i + 3
+	}
+	for ; k < len(rs); k++ {
+		switch c := rs[k]; {
+		case c == '\\':
+			k++
+		case c == quote && (!triple || k+2 < len(rs) && rs[k+1] == quote && rs[k+2] == quote):
+			if triple {
+				return k + 3
+			}
+			return k + 1
+		}
+	}
+	return len(rs)
+}
+
+// shellWriteFStringMaxDepth bounds the replacement-field nesting the walk reads: a deeper one is unreadable, so the memory
+// gate fails closed rather than reading a program it cannot finish (CRW-741, criterion c2).
+const shellWriteFStringMaxDepth = 32
+
+// shellWriteFStringUnreadableWhat is the what shellWriteFStringUnreadable reports for a program it cannot read (the deny
+// reason names it as "(a program the gate cannot read: " + what + ")"; CRW-741, criterion c2).
+const shellWriteFStringUnreadableWhat = "a Python f-string replacement field"
+
+// shellWriteFStringPrefix reports whether the string literal whose opening quote stands at rs[i] carries an f (or F) in its
+// prefix (f, F, rf, fr, Rf, fR and the other case mixes), so its body is walked as Python reads it rather than skipped as one
+// region. A run of prefix letters that is the tail of a longer name (a variable ending in r, u, b or f) is not a prefix.
+func shellWriteFStringPrefix(rs []rune, i int) bool {
+	j, f := i, false
+	for j > 0 && strings.ContainsRune("rRuUbBfF", rs[j-1]) {
+		j--
+		if rs[j] == 'f' || rs[j] == 'F' {
+			f = true
+		}
+	}
+	if !f {
+		return false
+	}
+	if j == 0 {
+		return true
+	}
+	b := rs[j-1]
+	return !(b >= 128 || b == '_' || shellVerbLetter(byte(b), true))
+}
+
+// shellWriteFStringRegion reads the f-string literal whose opening quote stands at rs[i] as Python reads it: the literal runs
+// to the first closing quote (three of the same quote for a triple-quoted one) outside every replacement field, literal text
+// and the doubled {{ and }} are skipped, and each field's expression span is returned so the caller can read it as program
+// text. depth counts the enclosing f-strings and fields. bad reports a field the walk cannot read: one not closed before the
+// literal or the program ends, an unpaired } outside a field, or nesting deeper than shellWriteFStringMaxDepth. A literal
+// without an f in its prefix is not this function's case (shellWriteTripleScanRegion keeps the one-region rule for it).
+func shellWriteFStringRegion(rs []rune, i, depth int) (end int, fields [][2]int, bad bool) {
+	if depth > shellWriteFStringMaxDepth {
+		return len(rs), nil, true
+	}
+	quote := rs[i]
+	triple := i+2 < len(rs) && rs[i+1] == quote && rs[i+2] == quote
+	k := i + 1
+	if triple {
+		k = i + 3
+	}
+	for k < len(rs) {
+		switch c := rs[k]; {
+		case c == '\\':
+			// A backslash escapes the next character for the string's own escapes, but it never escapes a brace:
+			// {{ and }} are the only brace escapes in an f-string, so a brace after a backslash still opens or
+			// closes a field (rf'\{x}' holds a field, not a literal brace).
+			if k+1 < len(rs) && rs[k+1] != '{' && rs[k+1] != '}' {
+				k += 2
+			} else {
+				k++
+			}
+		case c == '{':
+			if k+1 < len(rs) && rs[k+1] == '{' {
+				k += 2
+				continue
+			}
+			var more [][2]int
+			k, more, bad = shellWriteFStringField(rs, k+1, depth)
+			fields = append(fields, more...)
+			if bad {
+				return len(rs), fields, true
+			}
+		case c == '}':
+			if k+1 < len(rs) && rs[k+1] == '}' {
+				k += 2
+				continue
+			}
+			return len(rs), fields, true
+		case c == quote:
+			if !triple || k+2 < len(rs) && rs[k+1] == quote && rs[k+2] == quote {
+				if triple {
+					return k + 3, fields, false
+				}
+				return k + 1, fields, false
+			}
+			k++
+		default:
+			k++
+		}
+	}
+	return len(rs), fields, true
+}
+
+// shellWriteFStringField reads one replacement field whose text begins just after its { at rs[from]. Its expression ends at a
+// same-depth ! (a conversion; != is not one), : (a format spec) or }, and brackets, string literals (the outer quote included,
+// PEP 701) and an inner f-string inside it are followed. It returns the index just past the field's closing }, the expression
+// spans to read as program text, and whether the field is unreadable.
+func shellWriteFStringField(rs []rune, from, depth int) (next int, fields [][2]int, bad bool) {
+	if depth > shellWriteFStringMaxDepth {
+		return len(rs), nil, true
+	}
+	k, bracket := from, 0
+	for k < len(rs) {
+		switch c := rs[k]; {
+		case c == '\\':
+			// In a replacement field a backslash is a line continuation (or part of a string literal, read by the
+			// quote case below); it never hides a delimiter.
+			if k+1 < len(rs) && (rs[k+1] == '\n' || rs[k+1] == '\r') {
+				k += 2
+			} else {
+				k++
+			}
+		case c == '#':
+			// Python 3.12+ allows a comment inside a multi-line replacement field: it runs to the end of the line and
+			// is no part of the expression, so a quote or brace inside it is not live syntax.
+			for k < len(rs) && rs[k] != '\n' {
+				k++
+			}
+		case c == '\'' || c == '"':
+			if shellWriteFStringPrefix(rs, k) {
+				end, _, innerBad := shellWriteFStringRegion(rs, k, depth+1)
+				if innerBad {
+					return len(rs), fields, true
+				}
+				k = end
+				continue
+			}
+			k = shellWriteTripleScanRegion(rs, k, true)
+		case c == '(' || c == '[' || c == '{':
+			bracket++
+			k++
+		case c == ')' || c == ']':
+			if bracket > 0 {
+				bracket--
+			}
+			k++
+		case c == '}':
+			if bracket > 0 {
+				bracket--
+				k++
+				continue
+			}
+			fields = append(fields, [2]int{from, k})
+			return k + 1, fields, false
+		case bracket == 0 && c == '!' && (k+1 >= len(rs) || rs[k+1] != '='):
+			fields = append(fields, [2]int{from, k})
+			return shellWriteFStringSpec(rs, k+2, depth, fields)
+		case bracket == 0 && c == ':':
+			fields = append(fields, [2]int{from, k})
+			return shellWriteFStringSpec(rs, k+1, depth, fields)
+		default:
+			k++
+		}
+	}
+	return len(rs), fields, true
+}
+
+// shellWriteFStringSpec reads a field's format spec from rs[from] to the field's closing }, collecting the expression spans
+// of any {...} fields the spec holds; fields already carries the field's own expression.
+func shellWriteFStringSpec(rs []rune, from, depth int, fields [][2]int) (next int, out [][2]int, bad bool) {
+	k := from
+	for k < len(rs) {
+		switch c := rs[k]; {
+		case c == '\\':
+			// In a format spec a backslash is literal text, so a brace after it still opens a nested field.
+			k++
+		case c == '}':
+			return k + 1, fields, false
+		case c == '{':
+			var more [][2]int
+			k, more, bad = shellWriteFStringField(rs, k+1, depth+1)
+			fields = append(fields, more...)
+			if bad {
+				return len(rs), fields, true
+			}
+		default:
+			k++
+		}
+	}
+	return len(rs), fields, true
+}
+
+// shellWriteFStringUnreadable reports whether a command holds a Python program with an f-string replacement field the walk
+// cannot read (shellWriteFStringRegion). It looks at the same programs ShellWriteDestinations reads as Python - the
+// python -c and --command programs of a segment, including the ones a nested shell -c or eval runs - and returns what the
+// deny reason names (CRW-741, criterion c2).
+func shellWriteFStringUnreadable(command string) (string, bool) {
+	budget := 32*len(command) + 65536
+	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
+		if what, ok := shellWriteFStringUnreadableIn(shellString(segment), &budget); ok {
+			return what, true
+		}
+	}
+	return "", false
+}
+
+// shellWriteFStringUnreadableIn scans one segment's commands for a Python program and reports the first unreadable
+// f-string, over both the program and its shell-unescaped reading, as shellVerbPythonNode reads them. A command a nested
+// shell -c or eval runs is read again within the shared budget, the way shellVerbNested reads it for the destinations.
+func shellWriteFStringUnreadableIn(segment string, budget *int) (string, bool) {
+	for _, command := range shellVerbSubsegments(segment) {
+		tokens := shellVerbSkipWrappers(shellTokenize(command))
+		if script, ok := shellWriteFStringPythonScript(tokens); ok {
+			if what, bad := shellWriteFStringUnreadableProgram(script); bad {
+				return what, true
+			}
+			continue
+		}
+		nested, ok := shellWriteFStringNestedScript(tokens)
+		if !ok {
+			continue
+		}
+		if *budget -= len(nested); *budget < 0 {
+			continue
+		}
+		if what, bad := shellWriteFStringUnreadableIn(nested, budget); bad {
+			return what, true
+		}
+	}
+	return "", false
+}
+
+// shellWriteFStringNestedScript is the command string a shell -c or eval runs, as shellVerbRun reads it, so the fail-closed
+// scan reaches a Python program one level down the way the destination walk does.
+func shellWriteFStringNestedScript(tokens []string) (string, bool) {
+	if len(tokens) == 0 {
+		return "", false
+	}
+	verb, args := shellVerbName(tokens[0]), tokens[1:]
+	if shellVerbIsShell(verb) {
+		return shellVerbShellScript(args)
+	}
+	if verb != "eval" {
+		return "", false
+	}
+	for { // eval builtin eval X runs X: a chain is peeled here, not read level by level
+		next := shellVerbSkipWrappers(args)
+		if len(next) == 0 || shellVerbName(next[0]) != "eval" {
+			break
+		}
+		args = next[1:]
+	}
+	return strings.Join(args, " "), true
+}
+
+// shellWriteFStringUnreadableProgram scans a Python program and its shell-unescaped reading for an unreadable f-string.
+func shellWriteFStringUnreadableProgram(script string) (string, bool) {
+	if what, bad := shellWriteFStringProgramUnreadable(script); bad {
+		return what, true
+	}
+	if un := shellVerbUnescape(script); un != script {
+		if what, bad := shellWriteFStringProgramUnreadable(un); bad {
+			return what, true
+		}
+	}
+	return "", false
+}
+
+// shellWriteFStringPythonScript is the program of a python -c/--command command, as shellVerbPythonNode reads it: a bundled
+// -c (with no -m, -W or -X) and a versioned interpreter name (python3.11) count too.
+func shellWriteFStringPythonScript(tokens []string) (string, bool) {
+	if len(tokens) == 0 {
+		return "", false
+	}
+	verb := shellVerbName(tokens[0])
+	if verb != "python" && verb != "python3" && verb != "py" && !shellVerbVersioned(verb) {
+		return "", false
+	}
+	args := tokens[1:]
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-c" || a == "--command":
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		case strings.HasPrefix(a, "-c") && len(a) > 2:
+			return a[2:], true
+		case shellVerbBundleEnds(a, 'c', false) && !strings.ContainsAny(a, "mWXQ"):
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// shellWriteFStringProgramUnreadable scans one Python program for an f-string the walk cannot read.
+func shellWriteFStringProgramUnreadable(program string) (string, bool) {
+	rs := shellVerbWithoutComments(program, true)
+	for i := 0; i < len(rs); i++ {
+		if c := rs[i]; (c == '\'' || c == '"') && shellWriteFStringPrefix(rs, i) {
+			end, _, bad := shellWriteFStringRegion(rs, i, 0)
+			if bad {
+				return shellWriteFStringUnreadableWhat, true
+			}
+			i = end - 1
+		}
+	}
+	return "", false
 }
 
 // shellWriteTripleFold is the body of a field-free f-string literal with its doubled braces folded to single ones, as Python folds
