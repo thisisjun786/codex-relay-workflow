@@ -3,12 +3,14 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // The pump tests drive rounds through injected sources, an injected clock and the fake bridge, so
@@ -652,5 +654,63 @@ func TestPumpPRSourceRepeatStateIsNew(t *testing.T) {
 	}
 	if res.Events[0].ID == closedID {
 		t.Errorf("the reopening reused the CLOSED event id %q", closedID)
+	}
+}
+
+// The rollout limits count characters, not bytes, and the marker stays inside the limit.
+func TestPumpTruncateCountsCharacters(t *testing.T) {
+	// A 6000-character Korean report is 6000 runes but 18000 bytes; it must not be cut early.
+	text := strings.Repeat("가", 6000)
+	if got := pumpTruncate(text, 6000); got != text {
+		t.Errorf("a 6000-character report was changed (len %d)", len([]rune(got)))
+	}
+	long := strings.Repeat("가", 7000)
+	cut := pumpTruncate(long, 6000)
+	if n := utf8.RuneCountInString(cut); n > 6000 {
+		t.Errorf("the truncation returned %d characters, want at most 6000", n)
+	}
+	if !strings.HasSuffix(cut, pumpRolloutTruncated) {
+		t.Errorf("the cut was not marked: %q", cut[len(cut)-20:])
+	}
+}
+
+// A burst that would exceed the delivery limit is split into a bounded, stable prefix.
+func TestPumpBatchPrefixBoundsTheBody(t *testing.T) {
+	events := make([]pumpEvent, 0, 40)
+	big := strings.Repeat("x", 5900)
+	for i := 0; i < 40; i++ {
+		events = append(events, pumpEvent{ID: fmt.Sprintf("e%d", i), Kind: pumpKindLow, Text: big})
+	}
+	batch := pumpBatchPrefix(events, pumpTestNow, false, "")
+	if len(batch) == 0 || len(batch) >= len(events) {
+		t.Fatalf("the prefix took %d of %d events", len(batch), len(events))
+	}
+	if body := pumpBody(batch, pumpTestNow, false, ""); len(body) > pumpBatchLimit {
+		t.Errorf("the body is %d bytes, over the %d limit", len(body), pumpBatchLimit)
+	}
+	// The prefix is stable for the same pending set.
+	again := pumpBatchPrefix(events, pumpTestNow, false, "")
+	if pumpBatchID(batch) != pumpBatchID(again) {
+		t.Error("the prefix is not stable across calls")
+	}
+}
+
+// A legacy state that carries the prs baseline but not prs_seen still reports the change.
+func TestPumpPRSourceLegacyBaselineReportsChange(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	cfg := pumpTestConfig(t, "")
+	cfg.Repository = "owner/repo"
+	saved := pumpExec
+	t.Cleanup(func() { pumpExec = saved })
+	st := pumpTestReadState(t, cfg)
+	// The legacy document: a baseline, no prs_seen flag.
+	st.PRs = map[string]string{"12": "CRW-1 #12 OPEN"}
+	st.PRsSeen = false
+	out, _ := json.Marshal([]map[string]any{{"number": 12, "state": "MERGED", "title": "CRW-1: x"}})
+	pumpExec = func(_ context.Context, _ string, _ ...string) ([]byte, error) { return out, nil }
+	res := pumpPRSource{}.Collect(context.Background(), e, cfg, &st, pumpSettingsFrom(cfg))
+	if len(res.Events) != 1 {
+		t.Fatalf("the legacy baseline reported %d events, want 1", len(res.Events))
 	}
 }

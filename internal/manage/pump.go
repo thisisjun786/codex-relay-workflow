@@ -350,6 +350,22 @@ func pumpDue(pending []pumpEvent, firstAt *float64, now time.Time, s pumpSetting
 	return false, false
 }
 
+// pumpBatchLimit bounds one batch's body below the delivery core's message limit, so a burst of
+// events is split into stable prefixes rather than forming a batch that can never be accepted.
+const pumpBatchLimit = 90000
+
+// pumpBatchPrefix is the longest prefix of the pending events whose body stays inside the batch
+// limit. The prefix is stable for a given pending set, so the frozen attempt and its logical id
+// are stable across rounds.
+func pumpBatchPrefix(events []pumpEvent, now time.Time, urgent bool, footer string) []pumpEvent {
+	for n := len(events); n > 0; n-- {
+		if len(pumpBody(events[:n], now, urgent, footer)) <= pumpBatchLimit {
+			return events[:n]
+		}
+	}
+	return events[:1]
+}
+
 // pumpBody is the delivered text: the issue's first line, the event bodies, then the configured
 // footer.
 func pumpBody(events []pumpEvent, now time.Time, urgent bool, footer string) string {
@@ -426,15 +442,16 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 		// is formed.
 		if dry {
 			fmt.Fprintln(e.Stdout, st.Attempt.Text)
-		} else if code, err := pumpDeliver(ctx, e, cfg, &st, ""); err != nil {
+		} else if code, err := pumpDeliver(ctx, e, cfg, &st, nil, ""); err != nil {
 			return code, err
 		}
 	default:
 		if due, urgent := pumpDue(st.Pending, st.FirstAt, now, s); due {
-			body := pumpBody(st.Pending, now, urgent, s.Footer)
+			batch := pumpBatchPrefix(st.Pending, now, urgent, s.Footer)
+			body := pumpBody(batch, now, urgent, s.Footer)
 			if dry {
 				fmt.Fprintln(e.Stdout, body)
-			} else if code, err := pumpDeliver(ctx, e, cfg, &st, body); err != nil {
+			} else if code, err := pumpDeliver(ctx, e, cfg, &st, batch, body); err != nil {
 				return code, err
 			}
 		}
@@ -448,12 +465,12 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 
 // pumpDeliver sends the pending batch and clears it only on accepted. On unknown or refused the
 // batch stays pending, and the next round reconciles it under the same logical id.
-func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, body string) (int, error) {
+func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch []pumpEvent, body string) (int, error) {
 	// The attempt is frozen before the send: an event collected while it is in flight cannot change
 	// the logical id, so a later round reconciles the same request id instead of resending a batch
 	// that may already have been accepted. An attempt already frozen is reused as it stands.
 	if st.Attempt == nil {
-		attempt := pumpAttempt{LogicalID: pumpBatchID(st.Pending), IDs: pumpPendingIDs(st.Pending), Text: body}
+		attempt := pumpAttempt{LogicalID: pumpBatchID(batch), IDs: pumpPendingIDs(batch), Text: body}
 		st.Attempt = &attempt
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
@@ -620,7 +637,11 @@ func pumpRun(ctx context.Context, e *Env, args []string) int {
 	for {
 		if code, err := pumpRound(ctx, e, cfg, pumpSettingsFrom(cfg), dry); err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage pump: error: %v\n", err)
-			return code
+			if once || dry {
+				// A one-round run reports the failure; the long-running pump logs it and keeps
+				// its loop, so one failed delivery never stops the pump as if it had succeeded.
+				return code
+			}
 		}
 		if once || dry {
 			return 0

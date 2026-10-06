@@ -35,17 +35,23 @@ var pumpExec = func(ctx context.Context, name string, args ...string) ([]byte, e
 	return out, nil
 }
 
-// pumpTruncate cuts text at limit characters on a rune boundary, so a cut never leaves a broken
-// rune, and marks that it cut.
+// pumpTruncate cuts text to limit CHARACTERS, not bytes, and marks that it cut. A multibyte report
+// is measured in runes so a 6000-character limit is 6000 characters; the marker is reserved inside
+// the limit so the result never exceeds it.
 func pumpTruncate(text string, limit int) string {
-	if len(text) <= limit {
+	if utf8.RuneCountInString(text) <= limit {
 		return text
 	}
-	cut := limit
-	for cut > 0 && !utf8.RuneStart(text[cut]) {
-		cut--
+	marker := utf8.RuneCountInString(pumpRolloutTruncated)
+	room := limit - marker
+	if room < 0 {
+		room = 0
 	}
-	return text[:cut] + pumpRolloutTruncated
+	runes := []rune(text)
+	if len(runes) > room {
+		runes = runes[:room]
+	}
+	return string(runes) + pumpRolloutTruncated
 }
 
 // pumpRolloutSource reads the configured parents' rollout files: a finished turn's report and a
@@ -265,7 +271,10 @@ func (pumpPRSource) Collect(ctx context.Context, _ *Env, cfg *Config, st *pumpSt
 		states[number] = row.State
 	}
 	previous := st.PRs
-	seen := st.PRsSeen
+	// A state written by the ported workflow already carries the prs baseline but not the
+	// prs_seen flag, so a non-empty baseline counts as initialized and its changes are reported
+	// rather than silently swallowed by a fresh first run.
+	seen := st.PRsSeen || len(previous) > 0
 	st.PRs, st.PRsSeen = current, true
 	if !seen {
 		// The first run stores the state only.
