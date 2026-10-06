@@ -670,6 +670,7 @@ func RefreshDigest(r AcceptanceRefreshRow) string {
 	return "dar-" + digest(pyjson.Dumps(map[string]any{
 		"schema":               AcceptanceRefreshSchema,
 		"acceptance_id":        r.AcceptanceID,
+		"refresh_seq":          r.RefreshSeq,
 		"relationship_id":      r.RelationshipID,
 		"execution_generation": r.ExecutionGeneration,
 		"event_id":             r.EventID,
@@ -725,6 +726,9 @@ func AcceptanceRefresh(ctx context.Context, s *Store, acceptanceID string, refre
 		return AcceptanceRefreshRow{}, ErrRefreshNotRecorded
 	}
 	row, err := queryRow(ctx, s, scanAcceptanceRefresh, "SELECT "+acceptanceRefreshColumns+" FROM dag_acceptance_refreshes WHERE acceptance_id = ? AND refresh_seq = ?", acceptanceID, refreshSeq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AcceptanceRefreshRow{}, ErrRefreshNotRecorded
+	}
 	if err != nil {
 		return AcceptanceRefreshRow{}, err
 	}

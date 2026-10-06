@@ -119,6 +119,17 @@ func TestDAGAcceptanceRefreshRoundTrips(t *testing.T) {
 	if _, err := AcceptanceRefresh(ctx, s, acceptance, 2); !errors.Is(err, ErrRefreshNotRecorded) {
 		t.Fatalf("a hand-written row read back by sequence: %v", err)
 	}
+	// a sequence the acceptance never held is absence too, not a database failure
+	if _, err := AcceptanceRefresh(ctx, s, acceptance, 7); !errors.Is(err, ErrRefreshNotRecorded) {
+		t.Fatalf("a sequence with no row: %v", err)
+	}
+	// the sequence number is part of the content the id digests: two rows that differ only in it
+	// are two identities
+	elsewhere := row
+	elsewhere.RefreshSeq = 3
+	if RefreshDigest(elsewhere) == row.RefreshID {
+		t.Fatal("two rows differing only in refresh_seq share one id")
+	}
 	// a refresh of an acceptance that does not exist is the foreign key's refusal
 	missing := row
 	missing.AcceptanceID, missing.RefreshSeq, missing.HeadSHA = "acc-none", 1, "h9"
