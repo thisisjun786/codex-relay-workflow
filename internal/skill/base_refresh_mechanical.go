@@ -31,10 +31,10 @@ const mechanicalSafeSide = "safe side: this head is not accepted. Return the can
 const defaultRegenerateTimeout = 10 * time.Minute
 
 // pluginVersionRule is the rule the check applies itself, outside the declarations, to the plugin
-// manifest's version line (CRW-664): the line is derived from the payload, so two nodes that both
-// recorded it conflict on nothing but that line, and the head's value can be recomputed from the
-// head itself.
-const pluginVersionRule = dagsched.RuleRegeneratePref + "plugin-version"
+// manifest's version line (CRW-664, widened by CRW-732): the line is derived from the payload, so two
+// nodes that both recorded it conflict on nothing but that line, and the head's value can be
+// recomputed from the head itself. The relay's proof reads the same name (dagsched.BuiltinPluginVersionRule).
+const pluginVersionRule = dagsched.BuiltinPluginVersionRule
 
 // builtinResolution is a path the check settled by a rule of its own, outside the declarations: the
 // rule and the line the proof prints for it.
@@ -300,11 +300,13 @@ func (g *refreshGit) proveMechanical(ctx context.Context, previous, head, tip st
 			continue
 		}
 		// The plugin manifest's version line is the one place no declaration has to cover: the line
-		// is derived from the payload, and the check can recompute it from the head itself (CRW-664).
-		// A declaration that names the place keeps its say even when it does not establish one
-		// mechanical rule for it: the built-in rule stands in for a declaration, and does not
-		// override one.
-		if p == pluginversion.ManifestRepoPath && !cov.coversPath(p) {
+		// is derived from the payload, and the check can recompute it from the head itself (CRW-664,
+		// widened by CRW-732). A declaration that settles the place with one rule agreed by every
+		// declaration given keeps its say (ruleFor answered above); a declaration that touches the
+		// place without establishing such a rule does not take the built-in rule's place, because the
+		// built-in rule requires the manifest to equal both parents but for the version line and that
+		// line to be the one the head's own payload derives.
+		if p == pluginversion.ManifestRepoPath {
 			resolution, settled, err := g.pluginVersionResolution(ctx, previous, head, tip)
 			if err != nil {
 				return nil, nil, err
