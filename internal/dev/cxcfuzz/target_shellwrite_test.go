@@ -55,6 +55,16 @@ func TestShellwriteGeneratorShape(t *testing.T) {
 		if strings.ContainsAny(command, "\x00") {
 			t.Fatalf("command holds NUL: %q", command)
 		}
+		// The input must survive the JSON round trip the campaign makes, or the Go side and the
+		// shim would read different commands.
+		decoded, err := decode(canonical(input))
+		if err != nil {
+			t.Fatalf("the input is not JSON: %v", err)
+		}
+		again, found := field(decoded, "command")
+		if !found || again != command {
+			t.Fatalf("the command changed in the round trip: %q -> %v", command, again)
+		}
 	}
 }
 
@@ -100,6 +110,27 @@ func TestShellwriteGoAnswersTheReader(t *testing.T) {
 	empty, err := shellWriteGo(pyjson.Object{{Key: "command", Value: "true"}}, env)
 	if err != nil || canonical(empty) != "[]" {
 		t.Fatalf("empty: %s, %v", canonical(empty), err)
+	}
+}
+
+// The same input names each side's own root: two different roots substitute the placeholder
+// independently, so the harness can compare one input against two trees. Pinned here because the
+// whole target depends on it and a campaign only sees it indirectly.
+func TestShellwriteRootPlaceholderNamesEachSidesRoot(t *testing.T) {
+	one, two := t.TempDir(), t.TempDir()
+	input := pyjson.Object{{Key: "command", Value: "echo hi > " + rootPlaceholder + "/m/n.md; tee " + rootPlaceholder + "/m/t"}}
+	for _, root := range []string{one, two} {
+		got, err := shellWriteGo(input, RootEnv(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := canonical(got)
+		if !strings.Contains(text, root+"/m/n.md") || !strings.Contains(text, root+"/m/t") {
+			t.Fatalf("root %s: %s", root, text)
+		}
+		if strings.Contains(text, rootPlaceholder) {
+			t.Fatalf("the placeholder reached the answer: %s", text)
+		}
 	}
 }
 
