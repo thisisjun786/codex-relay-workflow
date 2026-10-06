@@ -159,14 +159,17 @@ func TestDR01_an_answer_keeps_the_generation_and_reaches_the_child(t *testing.T)
 			t.Fatalf("the message does not carry %q:\n%s", want, message.message)
 		}
 	}
-	// the child's next turn is admitted only through the claim the message prints
+	// the reply's turn is admitted by the relay's own dispatch of it (CRW-669), so the child's
+	// receipt from that turn is accepted; the claim the message prints is still taken, and is no
+	// longer required, because the admission is already recorded.
 	turn := d.host.threads[child].turns[len(d.host.threads[child].turns)-1].TurnID
 	next := d.executionPayload(d.rid, 1, "failed", 2, turnRef{child, turn, "completed"})
-	if _, err := d.accept(next, store.AcceptOptions{}); Reason(err) != "unassigned_turn" {
-		t.Fatalf("a receipt from the reply's turn without a claim: %v, want unassigned_turn", err)
+	if _, err := d.accept(next, store.AcceptOptions{}); err != nil {
+		t.Fatalf("a receipt from the reply's turn, which the relay admitted: %v", err)
 	}
-	if _, err := d.accept(next, store.AcceptOptions{Continuation: d.claimJSON(dispatchTurn)}); err != nil {
-		t.Fatalf("a receipt from the reply's turn with the claim the message prints: %v", err)
+	admitted := d.one("SELECT evidence, actor, detail FROM generation_turns WHERE relationship_id = ? AND execution_generation = 1 AND turn_id = ?", d.rid, turn)
+	if admitted == nil || admitted.S("evidence") != admitBound || admitted.S("actor") != "relay" || admitted.S("detail") != "decision reply "+event {
+		t.Fatalf("the reply's turn was not admitted by the relay: %v", admitted)
 	}
 }
 

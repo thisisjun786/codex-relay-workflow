@@ -134,7 +134,8 @@ func TestCreatedArchivedAppServerParity(t *testing.T) {
 	for _, tc := range []struct {
 		status string
 		closes bool
-	}{{"notLoaded", true}, {"active", false}} {
+		calls  int // the created report's read, plus the close's identity read and its turn list
+	}{{"notLoaded", true, 3}, {"active", false, 2}} {
 		t.Run(tc.status, func(t *testing.T) {
 			ws, env, start, file := dispatchTestFixture(t)
 			h := &createdCheckFake{reply: createdCheckReply("session-test", "subagent", tc.status)}
@@ -155,7 +156,7 @@ func TestCreatedArchivedAppServerParity(t *testing.T) {
 			case err == nil || !strings.Contains(err.Error(), "active") || string(before) != string(must(os.ReadFile(file))):
 				t.Fatalf("active child closed or ledger changed: %v", err)
 			}
-			if h.calls != 2 {
+			if h.calls != tc.calls {
 				t.Fatalf("host calls = %d", h.calls)
 			}
 		})
