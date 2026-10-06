@@ -267,6 +267,47 @@ func TestMemlogRedactsCredentialsInTheRecordedCommand(t *testing.T) {
 	}
 }
 
+// C3: each of the three argument shapes the issue names is masked: NAME=VALUE,
+// --NAME=VALUE, and the token after a bare --NAME or -NAME. The mask looks at the
+// argument name only, so an unrelated argument and a bare name with no value are kept.
+func TestMemlogRedactsEachCredentialShape(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{"name=value", "/usr/bin/svc TOKEN=abc", "/usr/bin/svc TOKEN=***"},
+		{"long name=value", "/usr/bin/svc --api-key=sk-x", "/usr/bin/svc --api-key=***"},
+		{"long name then value", "/usr/bin/svc --password hunter2", "/usr/bin/svc --password ***"},
+		{"short name then value", "/usr/bin/svc -token plain-y", "/usr/bin/svc -token ***"},
+		{"mixed case name", "/usr/bin/svc Api_Key=sk-z", "/usr/bin/svc Api_Key=***"},
+		{"unrelated arguments are kept", "/usr/bin/svc --socket /run/x --dbpath /data/go",
+			"/usr/bin/svc --socket /run/x --dbpath /data/go"},
+		{"a bare name with no value", "/usr/bin/svc --password", "/usr/bin/svc --password"},
+		{"no argument at all", "/usr/bin/svc", "/usr/bin/svc"},
+	} {
+		if got := memlogRedactCommand(tc.cmd); got != tc.want {
+			t.Errorf("%s: %q became %q, want %q", tc.name, tc.cmd, got, tc.want)
+		}
+	}
+}
+
+// C3: the mask is applied before the 120-rune cut, so a long value cannot push the mask
+// out of the record and the masked line still fits the limit.
+func TestMemlogRedactsBeforeItCuts(t *testing.T) {
+	cmd := "/usr/bin/svc --token " + strings.Repeat("s", 400) + " --socket x"
+	got := memlogRedactCommand(cmd)
+	if runes := []rune(got); len(runes) > memlogCommandLimit {
+		t.Errorf("the masked line is %d runes, want at most %d", len(runes), memlogCommandLimit)
+	}
+	if strings.Contains(got, "ssss") {
+		t.Errorf("the masked line still carries the value: %q", got)
+	}
+	if !strings.HasPrefix(got, "/usr/bin/svc --token ***") {
+		t.Errorf("the masked line reads %q", got)
+	}
+}
+
 // C3: the group assignment reads the original command line, so a group that matches a
 // value the record masks still claims the process.
 func TestMemlogClassifiesOnTheOriginalCommandLine(t *testing.T) {
