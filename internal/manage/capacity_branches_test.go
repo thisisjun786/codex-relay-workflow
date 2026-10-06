@@ -301,6 +301,51 @@ func branchWant(t *testing.T, got []string, want ...string) {
 	}
 }
 
+// A plan with nothing detachable carries an empty list, and a hold plan carries no key at all:
+// the two are different answers and the document must keep them apart, because a reader cannot
+// tell "nobody looked" from "nothing was there" if both read as the same JSON.
+func TestBranchCandidatesKeepTheOmittedListApartFromTheEmptyOne(t *testing.T) {
+	document := func(t *testing.T, plan CapacityPlan) map[string]any {
+		t.Helper()
+		data, err := json.Marshal(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+
+	// An expand_candidate plan whose one component is the whole plan: looked at, nothing detachable.
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	f.node("A", "CRW-1").node("B", "CRW-2")
+	f.edge("e1", "A", "B")
+	f.region("A", "a.go", "file", "", "edit", false)
+	f.region("B", "b.go", "file", "", "edit", false)
+	f.publish()
+	plan := f.run()
+	if plan.Verdict != capacityExpand {
+		t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
+	}
+	doc := document(t, plan)
+	empty, ok := doc["branches"].([]any)
+	if !ok || len(empty) != 0 {
+		t.Fatalf("branches = %v, want an empty list rather than no key", doc["branches"])
+	}
+
+	// The same plan held back by the host memory bound carries no key at all.
+	branchWriteReady(t, filepath.Join(f.dir, "ready.json"), f.ready, "deferring")
+	hold := f.run()
+	if hold.Verdict != capacityHold {
+		t.Fatalf("the plan is %s, want %s", hold.Verdict, capacityHold)
+	}
+	if _, present := document(t, hold)["branches"]; present {
+		t.Fatal("a hold plan without --branches-always carries a branches key")
+	}
+}
+
 // A threshold this build cannot read is a refusal, never a silent fall back to the default: a
 // bundle reported against the wrong floor is a wrong answer, not a missing one.
 func TestBranchCandidatesRefuseAnUnreadableThreshold(t *testing.T) {
