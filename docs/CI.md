@@ -11,6 +11,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci validate` | `validate`: skill metadata, local Markdown links, and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` or `port/cxc/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)) |
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
+| `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
@@ -72,6 +73,39 @@ During iteration run the affected tests and reuse valid evidence for unchanged s
 and environments. CI concurrency cancels obsolete runs within the same PR or branch. An
 interrupted dev push is not release evidence: rerun that exact push run if the owner later
 chooses its commit.
+
+## The body-only edit mirror
+
+No job reads a pull request's title or body, but a title or body edit fires the `edited` trigger
+again and used to rerun all ten jobs on the same commit. Such a run now mirrors what the head has
+already proved.
+
+An `edited` event whose base did not change (`github.event.action == 'edited' &&
+!github.event.changes.base`) joins the pull request's own concurrency group, so it waits behind a
+running run instead of cancelling it, and a later push cancels it in turn. Every other event,
+a retarget included, still cancels obsolete runs.
+
+`validate`, `secrets` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
+and only on such an edit. The script reads, with `gh api`, the newest completed run of this workflow,
+of this repository, for the same `head_sha`, other than the run it is in, and mirrors the job when
+that run's same-named job's newest attempt concluded `success`. It answers `mirrored=true` with the
+run id in its step output and its step summary, or `mirrored=false`.
+
+Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
+condition the step already had. The full checkout is one of them, and the sparse checkout of
+`scripts/ci` above the mirror is what has to exist before the script can decide. A mirrored job
+succeeds without running its steps, and nothing is skipped at job level: GitHub reports a skipped
+job's check as success, so a skipped `dev-gate` could hide an earlier red run.
+
+The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing job,
+another head, workflow or repository, an unreadable API and the run itself all answer
+`mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
+unchanged, and the three jobs add only `actions: read` to the workflow's `contents: read`, which is
+what reading the runs and jobs endpoints needs.
+
+Mirroring is safe because it repeats a result this head already has. `dev` is strict, so a merge
+candidate contains dev's tip, and the same `head_sha` is the same tree: the run being mirrored is a
+run of the same pull request's own head, never another tree's.
 
 ## The test legs
 

@@ -1393,6 +1393,31 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`completeGoa
 
 - The unsynced primary state publications above (`state.ts:389` and `:630-631` at CXC v0.2.40) are fixed by this authorized durability change; port: fixed by CRW-479 (new Go fault-injection tests cover file-sync refusal, unchanged previous bytes, file/publication/directory ordering and returned directory-sync errors; existing recorded cases are unchanged, so there is no intentionally-changed recorded answer and no new corpus note). The existing fallback still lacks directory fsync, and newly created ancestor directories are not fsynced by this change; a host power loss is not exercised. No additional oracle defect was found.
 
+## CRW-640 — the doctor harness report: the cut's lone high surrogate and the empty repair (port-introduced parity defects, fixed)
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` (`buildDeclaredFeaturesCheck` :132-164
+and the `CheckResult` type :25-32) at v0.2.40, through the port in
+`internal/runtime/doctor/harness_report.go`. Both are deviations the port introduced from the
+oracle, not oracle defects, and this change repairs them; the first supersedes the CRW-346 line
+above (`## CRW-346 — the doctor text renderer stderr slice`).
+
+- The 160-unit slice of a features-probe stderr can end inside a surrogate pair
+  (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:137`); the oracle keeps the lone high
+  surrogate in the string, so its `--json` report writes the `\ud83d` escape
+  (`plugins/codexclaw/components/cxc-ops/src/cli.ts:84-86`) while the UTF-8 encoder writes U+FFFD
+  in the text report. The port held U+FFFD in both and lost the escape (the CRW-346 line above);
+  this change keeps the surrogate as its WTF-8 bytes and writes the escape in `--json`, so both
+  outputs match the oracle; port: fixed (the recorded case `stderr_slice_cuts_a_surrogate_pair` in
+  `internal/runtime/doctor/testdata/harness/report/oracle.json`, re-recorded without
+  `toWellFormed()` so the recorder holds the oracle's JSON string, plus
+  `harness_report_parity_test.go`).
+- `CheckResult.repair` is optional (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:31`), so an
+  explicit empty repair is a present value: the oracle's `--json` report keeps `"repair":""`
+  while `renderDoctor` drops it (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:653`). The
+  port's `HarnessCheck.Repair` was a plain string with `omitempty`, so an explicit empty repair was
+  indistinguishable from an absent one and the key was always dropped; this change makes it a
+  `*string` (nil absent, a pointer to "" present), so the key survives a round trip; port: fixed.
+
 ## Found by the spawn hook leg port (CRW-634)
 
 These were found while classifying the 32 `hook__pre-tool-use-attaching-skills__*` corpus fixtures against the
@@ -1453,3 +1478,17 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
   the shared lock builds (`goalplan '<slug>' does not exist`), exactly as the oracle compares its own
   lock's reason (`:327`). The two spellings are kept in step by `TestSteeringApplyUnboundSlugIsRefused`,
   which pins the resulting `no goalplan found at slug '<slug>'` text and the fact that no state is created.
+
+## Found by the producer-intermediate port (CRW-672)
+
+- The M2b classifier matched a producer temporary by name only — any name ending `.tmp`, any name containing `.tmp-`, any
+  name starting `.probe-` (`internal/runtime/install/migrate/classify.go:548-556` at 5a09b73d) — so a durable record whose
+  own id carries a temp-like substring was skipped instead of reaching its row and record judge (`bg/job.tmp-live.json`, a
+  valid record the bg writer accepts through `RunOptions.ID`, so a running job could be copied incompletely), and the
+  evidence rule's millisecond branch never checked the final-name part, so a user file such as
+  `evidence/x/.123.1760000000000.tmp` was skipped (`classify.go:574-597`); port: fixed — the exact temporary shapes of
+  docs/port-cxc/state-migration.md:105 are now matched only inside the directory of the producer that writes them, and the
+  final-name part before `.<pid>.` must be non-empty, with the red-first cases in `inventory_intermediate_test.go`.
+  Consequence of the fix, disclosed: a `.tmp` or `.probe-` name of a producer row 105 does not name (the `dispatches/`,
+  `objective-kind/` and `divergence/` writers) now reports `not in the inventory` instead of `producer intermediate`; the
+  disposition is unchanged (skip, never copied).
