@@ -380,17 +380,25 @@ func improveInputPaths(section improveSection) []string {
 }
 
 // improveResolvedPath is a path with its symlinks followed, so two spellings of one file
-// compare equal. A path that does not exist yet keeps its absolute spelling.
+// compare equal. A path that does not exist yet is its resolved parent directory joined with
+// its final name, so a name reached through a symlinked directory still compares equal to the
+// same name spelled through that directory's target; EvalSymlinks alone fails on the missing
+// final component and would leave the parent's symlinks unresolved. A path whose parent cannot
+// be resolved either keeps its absolute spelling, which the source read reports.
 func improveResolvedPath(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
+	if err == nil {
+		return resolved, nil
+	}
+	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if parentErr != nil {
 		return absolute, nil
 	}
-	return resolved, nil
+	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
 // improveWriteFile writes the bundle in the resolved parent directory and renames it onto

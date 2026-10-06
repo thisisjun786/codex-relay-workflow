@@ -305,3 +305,36 @@ func TestImproveInputKeepsTheConfiguredDirectoryRule(t *testing.T) {
 		t.Errorf("the refused run left a bundle in the source directory (stat err %v)", err)
 	}
 }
+
+// TestImproveInputResolvesTheParentOfASourceSpelledThroughALink covers the input side of the
+// issue's rule: every input's comparison uses the fully resolved path, and a path that does not
+// exist yet is its resolved parent directory joined with its final name. The configured relay
+// source is an absent store file spelled through a link to its directory, and the destination
+// names the same absent file through that directory itself. Nothing else catches this pair: the
+// configured path is a file, so no directory prefix applies, and the file is absent, so no
+// (device, inode) comparison can be made.
+func TestImproveInputResolvesTheParentOfASourceSpelledThroughALink(t *testing.T) {
+	s := improveTestSetup(t)
+	real := filepath.Join(s.root, "real-state")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(s.root, "state-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(real, improveStoreFile)); !os.IsNotExist(err) {
+		t.Fatalf("the fixture left a store behind (stat err %v)", err)
+	}
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": filepath.Join(link, improveStoreFile)}},
+	}}})
+	out := filepath.Join(real, improveStoreFile)
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputIsInput) {
+		t.Fatalf("an output naming the source through its directory: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputIsInput)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("the refused run left a file at the source's name (stat err %v)", err)
+	}
+}
