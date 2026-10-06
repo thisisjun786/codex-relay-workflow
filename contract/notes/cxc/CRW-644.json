@@ -1,0 +1,28 @@
+{
+  "issue": "CRW-644",
+  "identical": [
+    "hook__user-prompt-submit-checking-pabcd-trigger__baseline_empty_workspace",
+    "hook__user-prompt-submit-checking-pabcd-trigger__pabcd_off_keeps_memory_marker",
+    "hook__user-prompt-submit-checking-pabcd-trigger__loop_arm_request",
+    "hook__user-prompt-submit-checking-pabcd-trigger__korean_plan_request",
+    "hook__user-prompt-submit-checking-pabcd-trigger__goal_firewall_suppresses_interview",
+    "hook__user-prompt-submit-checking-pabcd-trigger__english_negation_is_not_a_request",
+    "hook__user-prompt-submit-checking-pabcd-trigger__explanatory_backticks_are_not_a_request",
+    "hook__user-prompt-submit-checking-pabcd-trigger__korean_negation_is_not_a_request"
+  ],
+  "intentionally-changed": [],
+  "pending": [
+    "hook__user-prompt-submit-checking-pabcd-trigger__active_cycle_passive_reinjection",
+    "hook__user-prompt-submit-checking-pabcd-trigger__agbrowse_search_request",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_a_free_pass_from_p",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_illegal_edge_refused",
+    "hook__user-prompt-submit-checking-pabcd-trigger__chat_orchestrate_p_enters_plan",
+    "hook__user-prompt-submit-checking-pabcd-trigger__codexclaw_cxc_override_in_directive",
+    "hook__user-prompt-submit-checking-pabcd-trigger__explicit_plan_request_advises_never_activates",
+    "hook__user-prompt-submit-checking-pabcd-trigger__interview_policy_always",
+    "hook__user-prompt-submit-checking-pabcd-trigger__interview_policy_off",
+    "hook__user-prompt-submit-checking-pabcd-trigger__interview_request",
+    "hook__user-prompt-submit-checking-pabcd-trigger__plugin_form_skill_mention",
+    "hook__user-prompt-submit-checking-pabcd-trigger__same_turn_injects_once"
+  ]
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -70,21 +71,23 @@ func (f hostFactory) observeTurn(ctx context.Context, state, socket, thread, tur
 
 // confirmTurn answers emit's existence check without --socket: it reads the turn read-only through
 // the host the store recorded, on the socket the caller resolved, and selects no store of its own.
-// Like observeTurn it takes the caller's state directory without reading it, and lets the adapter
-// place the operations ledger where every other host path places it, the directory that serves the
-// socket (ResolveStateDir), so a --state directory that differs from it gains no second ledger.
+// Like observeTurn it takes the caller's state directory without reading it. It resolves the socket
+// the way adapter.Open does, but opens no operations ledger: the read keeps no ledger, so neither a
+// refused nor a staged emit leaves one behind (CRW-680). The adapter is built without a ledger, so
+// it has no transport, and Adapter.Close leaves the RPC client alone; the client is closed here.
 // confirmed is false whenever the read could not be made (no connection, a failed call, or
 // HostUnavailable from a listing the page budget ran out on), which leaves emit to stage the receipt
 // as before (CRW-675).
 func (f hostFactory) confirmTurn(ctx context.Context, state, socket, thread, turn string) (found, confirmed bool, err error) {
-	selection, err := store.ResolveStateDir("", socket)
+	canonical, err := ledger.CanonicalEndpoint(socket)
 	if err != nil {
 		return false, false, err
 	}
-	a, err := f.open(socket, selection.Path, Options{})
-	if err != nil {
-		return false, false, err
-	}
+	// No Ledger and no LedgerPath: the adapter is read-only, so ReadTurn never opens one. The
+	// client is closed explicitly, because a ledger-free adapter has no transport to close it.
+	client := appserver.New(canonical, appserver.DefaultBounds)
+	defer func() { _ = client.Close() }()
+	a := New(Options{ConfigureClient: f.configure, RPC: client})
 	defer func() { _ = a.Close() }()
 	observed, err := a.ReadTurn(ctx, thread, turn)
 	if err != nil {
