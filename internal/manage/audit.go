@@ -47,6 +47,14 @@ type AuditJob struct {
 	Round  string
 }
 
+// AuditCriterion is one acceptance criterion's outcome in a graded result, in the shape
+// crw-audit-result/1 fixes.
+type AuditCriterion struct {
+	ID      string `json:"id"`
+	Verdict string `json:"verdict"`
+	Note    string `json:"note"`
+}
+
 // AuditDefect is one defect a grader reported, in the shape crw-audit-result/1 fixes.
 type AuditDefect struct {
 	Severity string `json:"severity"`
@@ -58,18 +66,19 @@ type AuditDefect struct {
 // AuditResult is one graded bundle: the ledger row's fields and the defects it found. It
 // is what a mode issue reads to decide what to report.
 type AuditResult struct {
-	Mode     string        `json:"mode"`
-	Subject  string        `json:"subject"`
-	Head     string        `json:"head"`
-	Issue    string        `json:"issue"`
-	Pair     string        `json:"pair"`
-	Phase    string        `json:"phase"`
-	Round    string        `json:"round"`
-	Status   string        `json:"status"`
-	Score    int           `json:"score"`
-	GradedAt string        `json:"graded_at"`
-	Bundle   string        `json:"bundle"`
-	Defects  []AuditDefect `json:"defects"`
+	Mode     string           `json:"mode"`
+	Subject  string           `json:"subject"`
+	Head     string           `json:"head"`
+	Issue    string           `json:"issue"`
+	Pair     string           `json:"pair"`
+	Phase    string           `json:"phase"`
+	Round    string           `json:"round"`
+	Status   string           `json:"status"`
+	Score    int              `json:"score"`
+	GradedAt string           `json:"graded_at"`
+	Bundle   string           `json:"bundle"`
+	Criteria []AuditCriterion `json:"criteria"`
+	Defects  []AuditDefect    `json:"defects"`
 }
 
 // auditBundle is a bundle.json this product has checked.
@@ -154,7 +163,12 @@ func auditPrompt(b *auditBundle) string {
 		out.WriteString("This is a package audit. There is no single change to review: `candidate/tree/` is the whole source tree, and the criteria and the issue text name what it is judged against. Read the tree as it stands and judge the package.")
 	}
 	if b.CriteriaUnavailable {
-		out.WriteString("\n\nThis bundle declares `criteria_unavailable`. Judge against the issue text under `inputs/` and the candidate's own description, and say in each note which of the two you used.")
+		out.WriteString("\n\nThis bundle declares `criteria_unavailable`. ")
+		if b.Mode == auditModePR {
+			out.WriteString("Judge against the issue text under `inputs/` and the description in `candidate/pr.md`, and say in each note which of the two you used.")
+		} else {
+			out.WriteString("There is no criteria file and no description to fall back on: judge the package against the issue text under `inputs/` and what the tree itself shows, and say in each note which file or symbol you used.")
+		}
 	}
 	return out.String()
 }

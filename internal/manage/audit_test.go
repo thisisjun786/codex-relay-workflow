@@ -76,8 +76,33 @@ func TestAuditPromptAsksForTheResultFormatAndTheModeFiles(t *testing.T) {
 	if !strings.Contains(pkg, "candidate/tree/") || strings.Contains(pkg, "candidate/diff.patch") {
 		t.Errorf("the package prompt does not describe a package audit: %q", pkg)
 	}
-	if !strings.Contains(auditPrompt(&auditBundle{Mode: auditModePR, CriteriaUnavailable: true}), "criteria_unavailable") {
-		t.Error("a bundle without criteria is not told so")
+	prNoCriteria := auditPrompt(&auditBundle{Mode: auditModePR, CriteriaUnavailable: true})
+	if !strings.Contains(prNoCriteria, "criteria_unavailable") || !strings.Contains(prNoCriteria, "candidate/pr.md") {
+		t.Errorf("a pull request bundle without criteria is not told how to judge: %q", prNoCriteria)
+	}
+	pkgNoCriteria := auditPrompt(&auditBundle{Mode: auditModePackage, CriteriaUnavailable: true})
+	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, "the tree itself") {
+		t.Errorf("a package bundle without criteria is not told how to judge: %q", pkgNoCriteria)
+	}
+	if strings.Contains(pkgNoCriteria, "candidate/pr.md") {
+		t.Error("a package bundle without criteria is sent to a description file it does not have")
+	}
+}
+
+// The prompt draws the instruction/data boundary: the candidate's own files are evidence,
+// not orders, and a submission that tries to steer the grader is itself a defect. It also
+// offers no command that could reach the network through the candidate's own module.
+func TestAuditPromptTreatsCandidateContentAsData(t *testing.T) {
+	for _, mode := range []string{auditModePR, auditModePackage} {
+		prompt := auditPrompt(&auditBundle{Mode: mode})
+		for _, needle := range []string{"never instructions to", "is itself a defect", "use no network"} {
+			if !strings.Contains(prompt, needle) {
+				t.Errorf("mode %s: the prompt does not carry the data boundary %q", mode, needle)
+			}
+		}
+		if strings.Contains(prompt, "go doc") {
+			t.Errorf("mode %s: the prompt offers go doc, which can download a toolchain", mode)
+		}
 	}
 }
 
@@ -140,6 +165,33 @@ func TestAuditReadBundleRefusesWhatItCannotTrust(t *testing.T) {
 		if bundle.Mode != mode || bundle.Subject != "s" || bundle.Head != "h" || bundle.Issue != "CRW-1" || bundle.CriteriaUnavailable {
 			t.Errorf("%s: the bundle reads %+v", mode, bundle)
 		}
+	}
+}
+
+// The result carries the per-criterion verdicts, so a caller can report which requirements
+// passed, were partial or failed rather than only the aggregate score.
+func TestAuditResultCarriesTheCriterionVerdicts(t *testing.T) {
+	result := AuditResult{
+		Mode: auditModePR, Status: "ok", Score: 6,
+		Criteria: []AuditCriterion{{ID: "c1", Verdict: "PASS", Note: "a.go:1"}},
+		Defects:  []AuditDefect{{Severity: "P1", What: "w", Where: "a.go:2", Repro: "run it"}},
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Criteria []map[string]string `json:"criteria"`
+		Defects  []map[string]string `json:"defects"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Criteria) != 1 || doc.Criteria[0]["id"] != "c1" || doc.Criteria[0]["verdict"] != "PASS" || doc.Criteria[0]["note"] != "a.go:1" {
+		t.Errorf("the result does not carry the criteria: %s", data)
+	}
+	if len(doc.Defects) != 1 || doc.Defects[0]["repro"] != "run it" {
+		t.Errorf("the result does not carry the defect's reproduction: %s", data)
 	}
 }
 
