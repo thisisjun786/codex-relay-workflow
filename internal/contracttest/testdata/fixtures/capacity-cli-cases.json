@@ -710,6 +710,37 @@
     "--scope",
     "PRJ-A"
    ]
+  },
+  {
+   "sql": "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, supersedes, superseded_by, handover_note, created_at, updated_at) VALUES ('bnd-seat','supervisor','store','store','01management','host-s',NULL,NULL,'active',1,NULL,NULL,NULL,'2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "limit-declare",
+    "--scope-kind",
+    "store",
+    "--scope",
+    "store",
+    "--dimension",
+    "runs",
+    "--unit",
+    "runs",
+    "--ceiling",
+    "5",
+    "--declared-by",
+    "01management",
+    "--source",
+    "operator"
+   ]
+  },
+  {
+   "argv": [
+    "capacity-show",
+    "--scope-kind",
+    "store",
+    "--scope",
+    "store"
+   ]
   }
  ]
 }

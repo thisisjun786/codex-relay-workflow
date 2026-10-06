@@ -136,6 +136,7 @@ func wantOptimism(t *testing.T, reading Reading, state string) {
 }
 
 func TestSlowLandingSwitchesOptimismOffAndCleanLandingsSwitchItOnAgain(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1", "l2", "l3", "l4")
 	if reading := w.f.read("p"); reading.ReleasePolicy != nil || reading.node("cand").Disposition != DispReady {
 		t.Fatalf("a plan with no policy = %+v, want a ready candidate and no release policy", reading.ReleasePolicy)
@@ -201,6 +202,7 @@ func TestSlowLandingSwitchesOptimismOffAndCleanLandingsSwitchItOnAgain(t *testin
 }
 
 func TestARedRecordedLateSwitchesOptimismOffWithoutANewLanding(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1", "l2")
 	w.policy(3, 600, 1, 2)
 	w.land("l1", 1, 0)
@@ -227,6 +229,7 @@ func TestARedRecordedLateSwitchesOptimismOffWithoutANewLanding(t *testing.T) {
 }
 
 func TestTwoRedsAreNeededWhenThePolicySaysTwo(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1", "l2", "l3")
 	w.policy(3, 600, 2, 1)
 	w.land("l1", 1, 0)
@@ -243,6 +246,7 @@ func TestTwoRedsAreNeededWhenThePolicySaysTwo(t *testing.T) {
 
 // A landing is ordered by its time and then its node id, whatever order the rows were written in, so two readings of one store agree.
 func TestLandingsOfOneInstantAreOrderedByNodeID(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "a", "b")
 	w.policy(2, 600, 1, 1)
 	w.land("b", 5, 0)
@@ -257,6 +261,7 @@ func TestLandingsOfOneInstantAreOrderedByNodeID(t *testing.T) {
 
 // The conflict handling time starts at the first sweep after the node's first acceptance that measured its head against a tip with a conflict.
 func TestHandlingTimeCountsTheSweepsAfterTheHandOver(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		setup func(w *policyWorld)
@@ -309,6 +314,7 @@ func TestHandlingTimeCountsTheSweepsAfterTheHandOver(t *testing.T) {
 
 // A plan with no policy row, or a store whose zone predates the tables, reads and digests as it did before the policy existed.
 func TestAPlanWithoutAPolicyReadsAsBefore(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1")
 	w.land("l1", 1, 1800)
 	withTables := w.f.read("p")
@@ -332,6 +338,7 @@ func TestAPlanWithoutAPolicyReadsAsBefore(t *testing.T) {
 }
 
 func TestPolicyBoundsAndAuthority(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t)
 	ctx := context.Background()
 	for name, in := range map[string]PolicyInput{
@@ -364,6 +371,7 @@ func TestPolicyBoundsAndAuthority(t *testing.T) {
 }
 
 func TestLandingResultsAreStatementsOfTheParent(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1")
 	ctx := context.Background()
 	rec := func(node, actor string, in ResultInput) (ResultRecord, error) {
@@ -404,6 +412,7 @@ func TestLandingResultsAreStatementsOfTheParent(t *testing.T) {
 
 // A fenced decision keeps the epoch of the session that made it, as the other decision rows do: a parent that restarts under a later epoch leaves rows that say which session decided.
 func TestPolicyAndResultRowsKeepTheCoordinatorEpoch(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1")
 	ctx := context.Background()
 	claim, err := w.f.sched.ClaimEpoch(ctx, "p", ClaimInput{Actor: "parent", SessionNonce: "session-1"})
@@ -433,6 +442,7 @@ func TestPolicyAndResultRowsKeepTheCoordinatorEpoch(t *testing.T) {
 
 // A plan revision that retires a node or changes its kind after its pull request landed leaves the landed work as it was: the parent can still state what dev did, and the release policy reads it.
 func TestAResultCanBeStatedForWorkThatAPlanRevisionRetired(t *testing.T) {
+	t.Parallel()
 	w := newPolicyWorld(t, "l1", "l2")
 	w.policy(3, 600, 1, 1)
 	w.land("l1", 1, 0)

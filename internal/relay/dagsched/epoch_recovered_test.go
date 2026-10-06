@@ -10,6 +10,7 @@ import (
 // Restart reads the frozen request of the intent that is open, the successor's after a close and a release again, and not the one of the closed release: a replacement parent that released the node
 // again is the parent of the intent it can replay, and the tombstone of a start the operator released names the command that ends it.
 func TestRestartReadsTheFrozenRequestOfARecoveredIntent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")

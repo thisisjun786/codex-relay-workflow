@@ -185,6 +185,18 @@
           ]
         }
       ]
+    },
+    {
+      "file": "tests/fixtures/fake-lipo.mjs",
+      "reason": "Move the S-class skill-script test crw-dev-devops/tests/fixtures/fake-lipo.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "09e3b8039ee9879e9541a30582aa1637ee7a8f4ab36b7b3412726941ef2302fa"
+    },
+    {
+      "file": "tests/lipo-oracle.test.mjs",
+      "reason": "Move the S-class skill-script test lipo-oracle.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "c4a887f9a78b2cf92b07428a9ae1da92e90d5df84fb1790af53f605b18c73444"
     }
   ]
 }
