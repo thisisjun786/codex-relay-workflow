@@ -228,6 +228,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	defer func() {
 		if listener != nil {
 			_ = listener.Close()
+			hookPeerStep("clear")
 		}
 		workers.Wait()
 	}()
