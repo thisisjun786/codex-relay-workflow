@@ -109,6 +109,95 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         if: steps.mirror.outputs.mirrored != 'true'
 
+  # The staged skills ship Node helper scripts, and their tests travel with them (G5). The job
+  # runs only when a staged skill path changed: a change that does not touch them ends the job
+  # before any runner setup, and a skipped run counts as success. Node is needed here and when an
+  # agent runs a skill script, never on a hook path or in the crw binary.
+  skill-scripts-node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The mirror reads this repository's runs and jobs with the workflow's own token.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      # The staged skills root, named once: the changed-path filter and the test run both read it.
+      SKILLS_ROOT: port/cxc/skills
+    steps:
+      # A body-only edit needs only the mirror script, and the script has to exist before the
+      # mirror decides, so it is fetched sparsely first. Every other run skips this step.
+      - name: Check out scripts/ci for the body-only edit mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      # On a body-only edit, a job this head already ran successfully stands down. Every later
+      # step of this job carries the answer, so no step is skipped at job level, which GitHub
+      # would report as a success and a skipped dev-gate could hide an earlier red run with.
+      - name: Mirror the jobs this head already ran
+        id: mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        run: bash scripts/ci/edit_mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_NAME: skill-scripts-node
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.mirror.outputs.mirrored != 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide from the changed files whether the staged skills changed
+        id: paths
+        if: steps.mirror.outputs.mirrored != 'true'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull request compares its base with its head, a push to dev the previous commit with
+          # this one. A manual dispatch has neither, so it runs the tests.
+          if [[ -n "${PR_BASE_SHA}" ]]; then
+            base="${PR_BASE_SHA}"; head="${PR_HEAD_SHA}"
+          elif [[ -n "${PUSH_BEFORE_SHA}" && "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            base="${PUSH_BEFORE_SHA}"; head="${GITHUB_SHA}"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo 'no base to compare with; the staged skill-script tests run'
+            exit 0
+          fi
+          changed="$(git diff --name-only "${base}" "${head}" -- "${SKILLS_ROOT}")"
+          if [[ -n "${changed}" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            printf 'staged skill paths changed:\n%s\n' "${changed}"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo 'no staged skill path changed; the job ends without installing Node'
+          fi
+      - if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # An exact release, not the floating major: the moved tests are timing- and
+          # runtime-sensitive, so the same commit must meet the same Node.
+          node-version: '24.20.0'
+      - name: Run the staged skill-script tests
+        if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("${SKILLS_ROOT}"/*/tests/*.test.mjs)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo 'no staged skill-script test file'
+            exit 0
+          fi
+          node --test "${files[@]}"
+
   go-product:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -217,7 +306,7 @@ jobs:
   # step's own script, never passed in the environment, whose size the runner bounds.
   dev-gate:
     if: always()
-    needs: [validate, secrets, go-product]
+    needs: [validate, secrets, skill-scripts-node, go-product]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
