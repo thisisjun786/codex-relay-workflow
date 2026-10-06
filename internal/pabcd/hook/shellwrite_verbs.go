@@ -696,18 +696,11 @@ func shellVerbOpenWrites(script string) []string {
 	}
 	rs := shellVerbWithoutComments(script)
 	var stack []frame
-	var quote rune
 	out := []string{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
-		case quote != 0:
-			if c == '\\' {
-				i++
-			} else if c == quote {
-				quote = 0
-			}
 		case c == '\'' || c == '"':
-			quote = c
+			i = shellWriteTripleScanRegion(rs, i) - 1
 		case c == '(' || c == '[' || c == '{':
 			stack = append(stack, frame{kind: shellVerbCallKind(rs, i, c), start: i + 1})
 		case c == ',' && len(stack) > 0:
@@ -732,25 +725,21 @@ func shellVerbOpenWrites(script string) []string {
 // quote in a comment opens no string and a comment inside a call is no argument.
 func shellVerbWithoutComments(script string) []rune {
 	rs, out := []rune(script), []rune{}
-	var quote rune
-	for i := 0; i < len(rs); i++ {
+	for i := 0; i < len(rs); {
 		switch c := rs[i]; {
-		case quote != 0:
-			if c == '\\' && i+1 < len(rs) {
-				out = append(out, c)
-				i++
-			} else if c == quote {
-				quote = 0
-			}
 		case c == '\'' || c == '"':
-			quote = c
+			end := shellWriteTripleScanRegion(rs, i)
+			out = append(out, rs[i:end]...)
+			i = end
 		case c == '#':
-			for i+1 < len(rs) && rs[i+1] != '\n' {
+			i++
+			for i < len(rs) && rs[i] != '\n' {
 				i++
 			}
-			continue
+		default:
+			out = append(out, c)
+			i++
 		}
-		out = append(out, rs[i])
 	}
 	return out
 }
@@ -907,7 +896,8 @@ func shellWriteEscapeLiteral(arg []rune, earlier bool) (string, bool) {
 
 // shellWriteTripleBody is the body of the string literal whose opening quote is arg[i] and whether it closes with spaces alone
 // after it: with triple false the body runs to the first unescaped arg[i], with triple true to the first unescaped run of three
-// arg[i], and a character after a backslash never closes it. The body is a slice of arg, so no body is copied.
+// arg[i], and a character after a backslash never closes it. A single-quoted body is a slice of arg, so it is not copied; a
+// triple-quoted body is copied only when its physical line breaks need normalising (shellWriteTripleScanNewlines).
 func shellWriteTripleBody(arg []rune, i int, quote rune, triple bool) ([]rune, bool) {
 	open := i + 1
 	if triple {
@@ -927,10 +917,62 @@ func shellWriteTripleBody(arg []rune, i int, quote rune, triple bool) ([]rune, b
 					return nil, false
 				}
 			}
+			if triple {
+				return shellWriteTripleScanNewlines(arg[open:k]), true
+			}
 			return arg[open:k], true
 		}
 	}
 	return nil, false
+}
+
+// shellWriteTripleScanNewlines is a triple-quoted body with the physical line breaks Python's source decoding gives it: a CRLF
+// and a lone CR both read as LF before the literal is evaluated, so a destination written with either names the path Python
+// writes. A body with no CR is returned as it is; otherwise the copy is one pass.
+func shellWriteTripleScanNewlines(body []rune) []rune {
+	at := slices.Index(body, '\r')
+	if at < 0 {
+		return body
+	}
+	out := append(make([]rune, 0, len(body)), body[:at]...)
+	for ; at < len(body); at++ {
+		switch {
+		case body[at] != '\r':
+			out = append(out, body[at])
+		case at+1 < len(body) && body[at+1] == '\n':
+			out = append(out, '\n')
+			at++
+		default:
+			out = append(out, '\n')
+		}
+	}
+	return out
+}
+
+// shellWriteTripleScanRegion is the index just past the string region that opens at the quote rs[i], as Python reads it: a
+// triple-quoted literal (the quote repeated three times) runs to the first unescaped run of three of the same quote, and a
+// single-quoted region to the first unescaped quote; a character after a backslash closes neither. An unterminated region ends
+// at len(rs). The scanners shellVerbOpenWrites and shellVerbWithoutComments use it so a triple-quoted literal is one region
+// instead of a run of single-quoted ones.
+func shellWriteTripleScanRegion(rs []rune, i int) int {
+	quote := rs[i]
+	triple := i+2 < len(rs) && rs[i+1] == quote && rs[i+2] == quote
+	k := i + 1
+	if triple {
+		k = i + 3
+	}
+	for ; k < len(rs); k++ {
+		switch c := rs[k]; {
+		case c == '\\':
+			k++
+		case c == quote && (!triple || k+2 < len(rs) && rs[k+1] == quote && rs[k+2] == quote):
+			if triple {
+				return k + 3
+			}
+			return k + 1
+		}
+	}
+	return len(rs)
 }
 
 // shellWriteTripleFold is the body of a field-free f-string literal with its doubled braces folded to single ones, as Python folds
