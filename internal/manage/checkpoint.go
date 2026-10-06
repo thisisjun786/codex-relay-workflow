@@ -668,14 +668,15 @@ func checkpointCountsInWindow(instants []checkpointProjectInstant, project strin
 }
 
 // checkpointWindowStart is where a rolling window begins: its own edge, or the baseline when the
-// baseline is strictly later. The second result is true when the start is the baseline, which
-// makes that instant exclusive: the issue makes the checkpoint record the next calculation's
-// baseline, so a window reaching behind it would keep reporting events the checkpoint already
-// looked at and the signal could never clear. A baseline that merely coincides with the window's
-// own edge is not the baseline start the issue excludes, so that edge stays inclusive.
+// baseline reaches at least as far back. The second result is true when the start is the
+// baseline, which makes that instant exclusive: the issue makes the checkpoint record the next
+// calculation's baseline, so a window reaching behind it would keep reporting events the
+// checkpoint already looked at and the signal could never clear. A baseline that coincides
+// exactly with the window's own edge is still the baseline the checkpoint wrote, so it is
+// exclusive too; the edge is inclusive only when no such baseline exists.
 func checkpointWindowStart(now time.Time, window time.Duration, since time.Time, hasSince bool) (time.Time, bool) {
 	start := now.Add(-window)
-	if hasSince && since.After(start) {
+	if hasSince && !since.Before(start) {
 		return since, true
 	}
 	return start, false
@@ -883,13 +884,16 @@ func checkpointBuildReport(in checkpointInput) CheckpointReport {
 		unmeasured(checkpointSignalMilestone, in.exportReason)
 		unmeasured(checkpointSignalBacklog, in.exportReason)
 	case in.export != nil:
-		milestone, skipped := checkpointMilestone(in, since, hasSince)
+		milestone, skipped, milestoneReason := checkpointMilestone(in, since, hasSince)
 		report.Counts.MilestoneIntegrated = milestone
 		if milestone == nil {
-			unmeasured(checkpointSignalMilestone, "every fully closed milestone of the project has an unknown completion instant, so when one integrated is unknown")
+			if milestoneReason == "" {
+				milestoneReason = "every fully closed milestone of the project has an issue with an unknown completion instant, so when one integrated is unknown"
+			}
+			unmeasured(checkpointSignalMilestone, milestoneReason)
 		}
 		for _, name := range skipped {
-			report.UnmeasuredReasons[name] = "the milestone " + name + " is fully closed but no issue of it carries a completion instant, so when it integrated is unknown"
+			report.UnmeasuredReasons[checkpointMilestoneKey(name)] = "the milestone " + name + " is fully closed but at least one of its issues carries no completion instant, so when it integrated is unknown"
 		}
 		backlog, backlogReason, backlogMeasured := checkpointBacklogNet(in, since, hasSince)
 		report.Counts.BacklogNet4h = backlog
@@ -939,22 +943,30 @@ func checkpointReasons(thresholds checkpointThresholds, report *CheckpointReport
 	return reasons
 }
 
+// checkpointMilestoneKey namespaces a skipped milestone in the report's reason map, so a
+// milestone whose name happens to equal a signal identifier cannot overwrite that signal's own
+// explanation. Signal identifiers carry no colon, so the two namespaces cannot collide.
+func checkpointMilestoneKey(name string) string { return "milestone:" + name }
+
 // checkpointMilestone counts the project's integrated milestones. A milestone whose every issue
-// is closed has integrated; the reading is unmeasured only when every fully closed milestone's
-// completion instant is unknown, because whether it integrated after the baseline is then
-// unknowable rather than zero. A single milestone with unknown timing no longer blanks the whole
-// signal: it is skipped and named, so a confirmed milestone beside it is still counted.
+// is closed has integrated, and its integration instant is its LAST issue's completion, so the
+// milestone's instant is knowable only when every closed issue of it carries a completion
+// instant. A fully closed milestone with any unknown completion instant is skipped and named: the
+// unknown one may have closed after the baseline, so counting the known maximum would report a
+// false zero. A single such milestone no longer blanks the whole signal.
 //
 // The second result names the milestones that were skipped for unknown timing, which the report
-// carries as reasons whether or not the signal itself ended up unmeasured.
-func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*int, []string) {
+// carries as reasons whether or not the signal itself ended up unmeasured. The third is the
+// signal's own reason when the export names no milestone for the project at all, which is a
+// missing input rather than an unknown time and must not be reported as one.
+func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*int, []string, string) {
 	type milestone struct {
 		total     int
 		completed int
 		latest    time.Time
-		// timed is true when at least one closed issue of the milestone carried a completion
-		// instant, which is what makes the milestone's own instant knowable.
-		timed bool
+		// untimed counts the closed issues whose completion instant is missing or unreadable.
+		// The milestone's instant is the last issue's, so any one of them makes it unknowable.
+		untimed int
 	}
 	seen := map[string]*milestone{}
 	for _, issue := range in.export.Issues {
@@ -973,15 +985,15 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 		entry.completed++
 		completed, ok := checkpointInstant(issue.CompletedAt)
 		if !ok {
+			entry.untimed++
 			continue
 		}
-		entry.timed = true
 		if completed.After(entry.latest) {
 			entry.latest = completed
 		}
 	}
 	if len(seen) == 0 {
-		return nil, nil
+		return nil, nil, "the linear export names no milestone for the project, so no milestone is read"
 	}
 	count := 0
 	var skipped []string
@@ -993,7 +1005,7 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 			continue
 		}
 		closed++
-		if !entry.timed {
+		if entry.untimed > 0 {
 			skipped = append(skipped, name)
 			continue
 		}
@@ -1004,12 +1016,12 @@ func checkpointMilestone(in checkpointInput, since time.Time, hasSince bool) (*i
 		count++
 	}
 	// The decided answer: the signal is unmeasured only when every fully closed milestone has
-	// unknown timing. A milestone with a known completion before the baseline keeps the signal
-	// measured (0), because the integration instant is knowable and simply predates the baseline.
+	// unknown timing. A milestone whose every closed issue is timed but predates the baseline
+	// keeps the signal measured (0), because its integration instant is knowable.
 	if closed > 0 && timedClosed == 0 {
-		return nil, skipped
+		return nil, skipped, ""
 	}
-	return &count, skipped
+	return &count, skipped, ""
 }
 
 // checkpointBacklogNet is the backlog's net change over the rolling window: the issues that

@@ -905,7 +905,7 @@ func TestCheckpointMilestoneWithoutCompletionTimeIsUnmeasured(t *testing.T) {
 	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
 		t.Errorf("the milestone reading is not unmeasured: %+v", report.Unmeasured)
 	}
-	if report.UnmeasuredReasons["M1"] == "" {
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
 		t.Errorf("the skipped milestone is not named in the reasons: %+v", report.UnmeasuredReasons)
 	}
 }
@@ -929,7 +929,7 @@ func TestCheckpointUnknownMilestoneTimingDoesNotHideAnother(t *testing.T) {
 	if checkpointHasUnmeasured(report, checkpointSignalMilestone) {
 		t.Errorf("the signal is unmeasured although a confirmed milestone was counted: %+v", report.Unmeasured)
 	}
-	if report.UnmeasuredReasons["M1"] == "" {
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
 		t.Errorf("the skipped milestone is not named in the reasons: %+v", report.UnmeasuredReasons)
 	}
 }
@@ -951,8 +951,91 @@ func TestCheckpointMilestoneWithKnownTimingBeforeTheBaselineStaysMeasured(t *tes
 	if report.Counts.MilestoneIntegrated == nil || *report.Counts.MilestoneIntegrated != 0 {
 		t.Fatalf("a milestone whose completion predates the baseline was not measured as zero: %+v", report.Counts.MilestoneIntegrated)
 	}
-	if report.UnmeasuredReasons["M1"] == "" {
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
 		t.Errorf("the skipped milestone is not named in the reasons: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C4: a milestone is integrated when every one of its issues is closed, so its instant is the
+// LAST issue's completion. A fully closed milestone where one issue carries no completion instant
+// is therefore unknown and must be skipped, even when another issue's instant is known: counting
+// the known maximum would report a false zero when the untimed issue closed after the baseline.
+func TestCheckpointPartiallyTimedMilestoneIsSkipped(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(10), "a checkpoint")
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			// M1: one issue closed before the baseline with an instant, one closed with none.
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\",\"completedAt\":\""+checkpointAt(3)+"\"},"+
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.MilestoneIntegrated != nil {
+		t.Fatalf("a partly timed milestone was measured: %+v", report.Counts.MilestoneIntegrated)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
+		t.Errorf("the milestone reading is not unmeasured: %+v", report.Unmeasured)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
+		t.Errorf("the skipped milestone is not named: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C4: an export that names no milestone for the project is a missing input, not an unknown
+// completion time, so its reason says so rather than pointing at completion dates.
+func TestCheckpointAbsentMilestonesNameTheMissingInput(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
+		t.Fatalf("a milestone reading without milestones is not unmeasured: %+v", report.Unmeasured)
+	}
+	if reason := report.UnmeasuredReasons[checkpointSignalMilestone]; !strings.Contains(reason, "names no milestone") {
+		t.Errorf("the reason does not name the missing milestone input: %q", reason)
+	}
+}
+
+// A milestone whose name equals a signal identifier cannot overwrite that signal's own reason,
+// because a skipped milestone is namespaced.
+func TestCheckpointMilestoneReasonCannotShadowASignal(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	// The milestone is named after a signal, and it is fully closed with no completion instant.
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\""+checkpointSignalBacklog+"\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	// The milestone signal's own reason must survive, and the milestone must appear under its key.
+	if reason := report.UnmeasuredReasons[checkpointSignalMilestone]; !strings.Contains(reason, "unknown completion instant") {
+		t.Errorf("the milestone signal's reason was overwritten: %q", reason)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey(checkpointSignalBacklog)] == "" {
+		t.Errorf("the skipped milestone is not namespaced: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C3: a baseline that coincides exactly with the window's own edge is still the checkpoint the
+// reading must not re-count, so an event at that instant is excluded.
+func TestCheckpointBaselineCoincidingWithTheWindowEdgeIsExcluded(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	// now is base+24h; a 2h window's edge is base+22h, and the baseline is exactly there.
+	f.verdict("event-at-edge", "relationship-1", "needs_changes", checkpointAt(22))
+	f.verdict("event-after", "relationship-1", "needs_changes", checkpointAt(22.5))
+	f.close()
+	f.record("project-1", checkpointAt(22), "a checkpoint at the window edge")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.NeedsChangesOrSplit2h != 1 {
+		t.Fatalf("needs_changes_or_split_2h = %d, want 1 (the event at the coincident baseline excluded)", report.Counts.NeedsChangesOrSplit2h)
 	}
 }
 
