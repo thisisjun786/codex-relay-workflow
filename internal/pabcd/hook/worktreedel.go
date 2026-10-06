@@ -293,6 +293,9 @@ const (
 type worktreeDelQuoteReader struct {
 	state int
 	prev  byte
+	// brace keeps a # from opening a comment while a ${...} parameter expansion is read: bash opens a comment only at the
+	// start of a word in plain text, and a # inside the expansion is data (CRW-726, c13).
+	brace bool
 }
 
 // escapes says whether the byte at i is a backslash that escapes the byte after it.
@@ -319,7 +322,7 @@ func (r *worktreeDelQuoteReader) step(c byte) {
 			}
 		case c == '"':
 			r.state = worktreeDelQuoteDouble
-		case c == '#' && strings.IndexByte(" \t\n;&|()", r.prev) >= 0:
+		case c == '#' && !r.brace && strings.IndexByte(" \t\n;&|()", r.prev) >= 0:
 			r.state = worktreeDelQuoteComment
 		case c == '$' && r.prev == '$':
 			r.prev = 'x'
@@ -691,6 +694,8 @@ const (
 // the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm). atDepth also returns a program that holds no
 // blank, which the walk judges only to deny it at the reading depth limit: a program string still unread there is denied
 // whether or not it holds a blank (CRW-670).
+// A program that can name the operands the shell hands it ($@, $*, BASH_ARGV and the like) is read a second time as those
+// operands joined by blanks, which is the command line the shell builds from them (CRW-726, c14(c)).
 func worktreeDelQuoteProgram(words []string, atDepth bool) []string {
 	for i, word := range words {
 		name := basename(word)
@@ -704,7 +709,8 @@ func worktreeDelQuoteProgram(words []string, atDepth bool) []string {
 		}
 		if strings.Contains(worktreeDelQuoteShells, " "+name+" ") {
 			operands := words[i+1:]
-			for _, operand := range operands[:worktreeDelShellProgramEnd(name, operands)] { // the words from there on are data: $0, $1...
+			end := worktreeDelShellProgramEnd(name, operands)
+			for _, operand := range operands[:end] { // the words from there on are data: $0, $1...
 				candidates := []string{operand}
 				if _, value, attached := strings.Cut(operand, "="); attached && strings.HasPrefix(operand, "--") { // --command='...'
 					candidates = append(candidates, value)
@@ -720,6 +726,11 @@ func worktreeDelQuoteProgram(words []string, atDepth bool) []string {
 					}
 				}
 			}
+			if end == len(operands) { // the program is uncertain, so it may run the operands as a command line of its own
+				if joined := worktreeDelShellOperandsJoin(name, operands); joined != "" {
+					programs = append(programs, joined)
+				}
+			}
 		}
 		if len(programs) > 0 {
 			return programs
@@ -731,6 +742,50 @@ func worktreeDelQuoteProgram(words []string, atDepth bool) []string {
 		}
 	}
 	return nil
+}
+
+// worktreeDelQuoteProgramPosition says whether a segment's words hand a program to a shell for sure: the -c program a
+// listed shell's own option parse takes, an eval operand, or a source or . operand. At the reading-depth limit only
+// these count, because a word the walk merely guessed at - an option, or an operand its over-reading fallback kept - is
+// no program position, and refusing on one denies a command the guard could read (CRW-726, c14(d)).
+func worktreeDelQuoteProgramPosition(words []string) bool {
+	for i, word := range words {
+		name := basename(word)
+		switch name {
+		case "eval":
+			return len(worktreeDelUnreadableEvalIndices(words[i+1:])) > 0
+		case "source", ".":
+			return worktreeDelUnreadableSourceIndex(words[i+1:]) >= 0
+		case "su":
+			return worktreeDelSuProgram(worktreeDelQuoteDropRedirects(words[i+1:])) >= 0
+		case "sh", "bash", "dash", "ash", "zsh", "ksh", "mksh":
+			return worktreeDelFlagShellProgram(worktreeDelQuoteDropRedirects(words[i+1:])) >= 0
+		}
+		number := word != "" && word[0] >= '0' && word[0] <= '9'
+		if !(strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") || strings.HasPrefix(word, "-") || isAssignment(word) || number ||
+			i > 0 && strings.HasPrefix(words[i-1], "-")) {
+			break
+		}
+	}
+	return false
+}
+
+// worktreeDelShellOperandsJoin is the command line a shell builds from the operands it hands its program as $1, $2 and so
+// on: the words after the program's own $0, joined by blanks. A program that names its operands ($@, $*, BASH_ARGV) runs
+// that line, so the walk reads it as a program too (CRW-726, c14(c)). It is empty when the shell's own option parse did
+// not place a program or no operand stands after its $0.
+func worktreeDelShellOperandsJoin(name string, operands []string) string {
+	program := -1
+	switch name {
+	case "su":
+		program = worktreeDelSuProgram(operands)
+	case "sh", "bash", "dash", "ash", "zsh":
+		program = worktreeDelFlagShellProgram(operands)
+	}
+	if program < 0 || program+2 > len(operands) {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(operands[program+2:], " "))
 }
 
 // worktreeDelRedirectWord says whether a word starts like a redirection that the outer shell takes out of the arguments (>f, 2>f,
@@ -757,10 +812,15 @@ func worktreeDelOptionWord(word string) bool {
 // operand after it as a program. A name check alone would miss an obfuscation (a grep pattern that spells BASH_ARGV around a
 // wildcard), so any construct that could run a second command makes the program uncertain too.
 func worktreeDelCertainProgram(word string) bool {
-	if strings.ContainsAny(word, "$\x60|;&()<>\n") {
-		return false
+	if strings.ContainsAny(word, "$\x60") || strings.Contains(word, "<(") || strings.Contains(word, ">(") {
+		return false // the program names a value or runs a second command of its own
 	}
-	return !strings.Contains(strings.ToLower(word), "arg")
+	for _, field := range strings.Fields(strings.ToLower(word)) {
+		if strings.HasPrefix(field, "bash_ar") || field == "argv" || field == "argc" {
+			return false // the program can name its own operands, which the shell hands it as $0, $1 and so on
+		}
+	}
+	return true
 }
 
 // worktreeDelShellProgramEnd is how many of a shell's operands the walk reads as programs: the words from there on are $0, $1
@@ -977,7 +1037,7 @@ func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int, bool)
 // body may hold nested braces, quotes and backslashes; an unterminated one runs to the end.
 func worktreeDelBraceEnd(rest string) int {
 	depth := 1
-	r := worktreeDelQuoteReader{prev: ' '}
+	r := worktreeDelQuoteReader{prev: ' ', brace: true}
 	for i := 0; i < len(rest); i++ {
 		c := rest[i]
 		if r.escapes(rest, i) {
@@ -1009,8 +1069,19 @@ func worktreeDelBraceEnd(rest string) int {
 // otherwise hide the rest of the substitution. Reading past the body can only deny too much, never too little. The body is a
 // program of its own, one depth deeper; the rest is the same text, not a nested program, and the caller judges it at the
 // segment's own depth, which also keeps the walk bounded (CRW-670).
-func worktreeDelSubstitutions(segment string) (bodies, tails []string) {
+// worktreeDelSubstitution is one program a segment runs before it runs: the body of a command or process substitution,
+// the rest of the segment after its opener (the same text, not a nested program), and the directory the substitution
+// runs in, which is the cwd after every cd command that stands before its opener (CRW-726, c14(b)).
+type worktreeDelSubstitution struct {
+	body string
+	tail string
+	cwd  string
+}
+
+func worktreeDelSubstitutions(segment, cwd string) []worktreeDelSubstitution {
+	var out []worktreeDelSubstitution
 	r := worktreeDelQuoteReader{prev: ' '}
+	segCwd := cwd
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		if r.escapes(segment, i) {
@@ -1022,9 +1093,23 @@ func worktreeDelSubstitutions(segment string) (bodies, tails []string) {
 			r.step(c)
 			continue
 		}
+		if c == '$' && i+1 < len(segment) && segment[i+1] == '{' {
+			// a ${...} parameter expansion is read to its closing }, where a # is data and never opens a comment (CRW-726, c13)
+			n := worktreeDelBraceEnd(segment[i+2:]) + 2
+			i += n - 1
+			r.prev = 'x'
+			continue
+		}
+		if target, n := worktreeDelCdAt(segment, i, r.prev); n > 0 { // a cd moves the directory the later substitutions run in
+			segCwd = resolveFrom(segCwd, target)
+			i += n - 1
+			r.prev = 'x'
+			continue
+		}
 		var body string
 		var n int
 		var start int // the byte after the opener: the whole rest of the segment is judged with the body
+		state := r.state
 		switch {
 		case c == '$' && i+1 < len(segment) && segment[i+1] == '(':
 			start = i + 2
@@ -1042,16 +1127,59 @@ func worktreeDelSubstitutions(segment string) (bodies, tails []string) {
 			r.step(c)
 			continue
 		}
+		sub := worktreeDelSubstitution{cwd: segCwd}
 		if strings.TrimSpace(body) != "" {
-			bodies = append(bodies, body)
+			sub.body = body
 		}
-		if tail := strings.TrimSpace(segment[start:]); tail != strings.TrimSpace(body) { // the rest of the substitution the reader did not delimit
-			tails = append(tails, tail)
+		// The rest of the segment from the opener: the body reader cannot model every construct bash allows inside a
+		// substitution (a case pattern's ) closes it early), so the rest is judged too. When the reader stopped at the
+		// substitution's own closing byte the rest is the text after it, read in the quote state the opener stood in, so
+		// text in single quotes after the substitution stays data (CRW-726, c14(a)); when it stopped early the rest is
+		// still the substitution's program, which bash parses from its own start, and is read from plain state.
+		if tail := strings.TrimSpace(segment[start:]); tail != strings.TrimSpace(body) {
+			if state == worktreeDelQuoteDouble && (i+n >= len(segment) || segment[i+n] == '"') {
+				tail = "\"" + tail
+			}
+			sub.tail = tail
+		}
+		if sub.body != "" || sub.tail != "" {
+			out = append(out, sub)
 		}
 		i += n - 1
 		r.prev = 'x' // the substitution is part of the word it stands in: a # after it does not open a comment
 	}
-	return bodies, tails
+	return out
+}
+
+// worktreeDelCdAt is the target of the cd command that opens at byte i of a text, and how many bytes of the command that
+// took; n is 0 when no cd opens there. The caller passes the byte the reader read last, so that a cd is read only where a
+// command starts, the way the walk's segment loop reads it.
+func worktreeDelCdAt(text string, i int, prev byte) (string, int) {
+	if strings.IndexByte(" \t\n;&|(", prev) < 0 {
+		return "", 0
+	}
+	if !strings.HasPrefix(text[i:], "cd") {
+		return "", 0
+	}
+	j := i + 2
+	if j < len(text) && text[j] != ' ' && text[j] != '\t' {
+		return "", 0
+	}
+	for j < len(text) && (text[j] == ' ' || text[j] == '\t') {
+		j++
+	}
+	start := j
+	for j < len(text) && strings.IndexByte(" \t\r\n;&|()<>", text[j]) < 0 {
+		j++
+	}
+	if start == j {
+		return "", 0
+	}
+	target := text[start:j]
+	if strings.ContainsAny(target, "$\x60\"'\\<>(") { // a target the shell builds is no move this reader can follow
+		return "", 0
+	}
+	return target, j - i
 }
 
 // worktreeDelQuoteDepth is how many program strings deep the walk follows a shell's program (sh -c 'sh -c ...'). A program
@@ -1115,15 +1243,16 @@ func (s *worktreeDelWalkState) judgeReadings(command, cwd string, id WorktreeIde
 		}
 	}
 	for _, reading := range readings {
-		bodies, tails := worktreeDelSubstitutions(reading)
-		for _, body := range bodies { // a substitution body is a program of its own, one depth deeper
-			if verdict := s.judge(body, cwd, id, depth+1); verdict.Deny {
-				return verdict
+		for _, sub := range worktreeDelSubstitutions(reading, cwd) {
+			if sub.body != "" { // a substitution body is a program of its own, one depth deeper
+				if verdict := s.judge(sub.body, sub.cwd, id, depth+1); verdict.Deny {
+					return verdict
+				}
 			}
-		}
-		for _, tail := range tails { // the rest of the text after an opener is the same text, not a nested program
-			if verdict := s.judge(tail, cwd, id, depth); verdict.Deny {
-				return verdict
+			if sub.tail != "" { // the rest of the text after an opener is the same text, not a nested program
+				if verdict := s.judge(sub.tail, sub.cwd, id, depth); verdict.Deny {
+					return verdict
+				}
 			}
 		}
 	}
@@ -1162,7 +1291,7 @@ func (s *worktreeDelWalkState) walk(command, cwd string, id WorktreeIdentity, ex
 		tokens := worktreeDelQuoteTokens(segment, quoting)
 		if quoting {
 			programs := worktreeDelQuoteProgram(tokens, depth >= worktreeDelQuoteDepth)
-			if depth >= worktreeDelQuoteDepth && len(programs) > 0 {
+			if depth >= worktreeDelQuoteDepth && worktreeDelQuoteProgramPosition(tokens) {
 				return GuardVerdict{Deny: true, Reason: denyReason("a shell program nested past the reading depth", id)}
 			}
 			for _, program := range programs {
@@ -1170,15 +1299,16 @@ func (s *worktreeDelWalkState) walk(command, cwd string, id WorktreeIdentity, ex
 					return verdict
 				}
 			}
-			bodies, tails := worktreeDelSubstitutions(segment) // the outer shell runs a substitution before it runs cd
-			for _, body := range bodies {                      // a substitution body is a program of its own, one depth deeper
-				if verdict := s.judge(body, segCwd, id, depth+1); verdict.Deny {
-					return verdict
+			for _, sub := range worktreeDelSubstitutions(segment, segCwd) { // the outer shell runs a substitution before it runs cd
+				if sub.body != "" { // a substitution body is a program of its own, one depth deeper
+					if verdict := s.judge(sub.body, sub.cwd, id, depth+1); verdict.Deny {
+						return verdict
+					}
 				}
-			}
-			for _, tail := range tails { // the rest of the segment after an opener is the same text, not a nested program
-				if verdict := s.judge(tail, segCwd, id, depth); verdict.Deny {
-					return verdict
+				if sub.tail != "" { // the rest of the segment after an opener is the same text, not a nested program
+					if verdict := s.judge(sub.tail, sub.cwd, id, depth); verdict.Deny {
+						return verdict
+					}
 				}
 			}
 		}
@@ -1223,7 +1353,12 @@ func worktreeDelEvaluate(command, cwd string, id WorktreeIdentity, budget int) G
 	if verdict := state.walk(command, cwd, id, false, false, 0); verdict.Deny {
 		return verdict
 	}
-	return state.judge(command, cwd, id, 0)
+	if verdict := state.judge(command, cwd, id, 0); verdict.Deny {
+		return verdict
+	}
+	// The walk read every program it could see; a program position, or a command name, that the outer shell builds at
+	// run time is still a program the guard cannot read, so the second reading refuses it (CRW-726).
+	return worktreeDelUnreadableGuard(command, cwd, id)
 }
 
 func denyReason(what string, id WorktreeIdentity) string {
@@ -1265,4 +1400,883 @@ func HandleWorktreeGuardPreTool(raw string, env host.LookupEnv) string {
 		return ""
 	}
 	return editAnswer("deny", verdict.Reason, verdict.Reason)
+}
+
+// --------------------------------------------------------------------------------------------------------------------
+// CRW-726: a program position, or a command name, that the outer shell builds at run time.
+//
+// Both guards read shell text and run nothing. A position that hands a program to a shell - the -c program of a listed
+// shell, the operands of eval, the first operand of source or ., the standard input of a shell that stands to the right
+// of a single pipe or takes a here-string, or the here-document a shell reads - is readable only when the outer shell
+// hands the program over as written. When the word that holds it carries an expansion the outer shell performs first,
+// the program is not known until it runs, so the guard refuses the command (fail closed). A simple command whose name
+// word is built the same way is judged as rm -r with its literal operands, or refused outright when the whole name is a
+// command substitution. CXC v0.2.40 allows every such form: this is a security fix under the parity rule revision of
+// 2026-10-03 (port: fixed), not a port of the oracle's behaviour.
+//
+// The reading runs after the walk, over a command the walk allowed, so a deny the walk already found for the same
+// command keeps its own reason.
+// --------------------------------------------------------------------------------------------------------------------
+
+// worktreeDelUnreadableShells are the shells this reading finds a program position for: the -c program of each of them,
+// and the program each of them reads from standard input. worktreeDelUnreadableHereShells are the ones that also read a
+// here-document as a program (su reads its standard input through the shell it starts, so it is not among them).
+const (
+	worktreeDelUnreadableShells     = " sh bash dash ash zsh ksh su "
+	worktreeDelUnreadableHereShells = " sh bash dash ash zsh ksh "
+)
+
+// worktreeDelUnreadableWord is one word of a command as the outer shell reads it: text is the word with the outer
+// shell's quotes and escaping backslashes removed, raw is the word as written, outer says the word holds an expansion
+// the outer shell performs before the command runs, and whole says the word is nothing but one command substitution
+// (or one backtick pair), which the shell runs as a command line of its own.
+type worktreeDelUnreadableWord struct {
+	text  string
+	raw   string
+	outer bool
+	whole bool
+}
+
+// worktreeDelUnreadableWords is worktreeDelQuoteTokenize over bash's own reading, keeping each word's written text and
+// the two marks above. It walks the same bytes with the same reader and cuts at the same places as the walk's
+// tokenizer, so the words and their order are the same.
+func worktreeDelUnreadableWords(segment string) []worktreeDelUnreadableWord {
+	var words []worktreeDelUnreadableWord
+	var text, raw []byte
+	r := worktreeDelQuoteReader{prev: ' '}
+	has, nul := false, false
+	flush := func() {
+		if has {
+			written := string(raw)
+			words = append(words, worktreeDelUnreadableWord{
+				text:  string(text),
+				raw:   written,
+				outer: worktreeDelUnreadableOuter(written),
+				whole: worktreeDelUnreadableWholeSubstitution(written),
+			})
+			text, raw, has = text[:0], raw[:0], false
+		}
+	}
+	for i := 0; i < len(segment); i++ {
+		c := segment[i]
+		if r.escapes(segment, i) {
+			out, n := worktreeDelQuoteEscape(r.state, segment[i+1:])
+			if r.state == worktreeDelQuoteANSIC && slices.Contains(out, 0) {
+				nul = true
+			}
+			raw = append(raw, segment[i:i+1+n]...)
+			if !nul {
+				text = append(text, out...)
+			}
+			i += n
+			has = has || len(out) > 0
+			r.pair()
+			continue
+		}
+		if r.state == worktreeDelQuotePlain || r.state == worktreeDelQuoteDouble {
+			if n, ok := worktreeDelUnreadableRegion(segment, i); ok {
+				// the outer shell performs the expansion while it reads the word it stands in, so a blank inside it never
+				// ends that word: $(printf 'a b'), ${x:-a b} and a backtick pair are one word
+				raw = append(raw, segment[i:i+n]...)
+				text = append(text, segment[i:i+n]...)
+				i += n - 1
+				has = true
+				r.prev = 'x'
+				continue
+			}
+		}
+		state, prev := r.state, r.prev
+		r.step(c)
+		switch {
+		case state == worktreeDelQuoteComment || r.state == worktreeDelQuoteComment:
+			// a comment is dropped from both readings
+		case state == worktreeDelQuotePlain && r.state != worktreeDelQuotePlain:
+			if prev == '$' && len(text) > 0 {
+				text = text[:len(text)-1] // the dollar of $'...' or $"..." is quoting, not part of the word
+			}
+			raw = append(raw, c)
+			has = true
+		case state != worktreeDelQuotePlain && r.state == worktreeDelQuotePlain:
+			raw = append(raw, c)
+			nul = false
+		case state != worktreeDelQuotePlain:
+			raw = append(raw, c)
+			if !nul {
+				text = append(text, c)
+			}
+		default:
+			if w := worktreeDelQuoteSpace(segment[i:]); w > 0 {
+				flush()
+				i += w - 1
+				break
+			}
+			if (c == '<' || c == '>') && prev != '<' && prev != '>' {
+				flush() // a redirection operator ends the word before it
+			}
+			raw = append(raw, c)
+			text = append(text, c)
+			has = true
+			if c == '<' && string(text) == "<<<" && worktreeDelHereStringTarget(segment, i) {
+				flush() // a here-string written without a blank before its target
+			}
+		}
+	}
+	flush()
+	return words
+}
+
+// worktreeDelUnreadableRegion is the length of the expansion that opens at byte i, when one does: a command substitution
+// $(...), an arithmetic expansion $((...)), a parameter expansion ${...} or a backtick pair. It is 0 when no expansion
+// opens there.
+func worktreeDelUnreadableRegion(segment string, i int) (int, bool) {
+	switch {
+	case segment[i] == '$' && i+1 < len(segment) && segment[i+1] == '{':
+		return worktreeDelBraceEnd(segment[i+2:]) + 2, true
+	case segment[i] == '$' && i+1 < len(segment) && segment[i+1] == '(':
+		_, n, _ := worktreeDelSubstitutionBody(segment[i+2:], false)
+		return n + 2, true
+	case segment[i] == 96:
+		_, n, _ := worktreeDelSubstitutionBody(segment[i+1:], true)
+		return n + 1, true
+	}
+	return 0, false
+}
+
+// worktreeDelUnreadablePlainTexts is the words of a word list as the inner shell reads them.
+func worktreeDelUnreadablePlainTexts(words []worktreeDelUnreadableWord) []string {
+	out := make([]string, 0, len(words))
+	for _, word := range words {
+		out = append(out, word.text)
+	}
+	return out
+}
+
+// worktreeDelUnreadableOuter says whether a word holds, outside single quotes and $'...' and not escaped by a backslash,
+// an expansion the outer shell performs before the command runs: a command substitution ($(...) or a backtick), a
+// parameter expansion ($name, ${...}, $1, $@ and the like), an arithmetic expansion $((...)), or, outside any quotes, a
+// process substitution <(...) or >(...).
+func worktreeDelUnreadableOuter(raw string) bool {
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(raw); i++ {
+		if r.escapes(raw, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(raw[i])
+		if worktreeDelUnreadableOuterAt(raw, i, state) {
+			return true
+		}
+	}
+	return false
+}
+
+// worktreeDelUnreadableOuterAt says whether the byte at i, read in the state state, opens an expansion the outer shell
+// performs. Single quotes and $'...' keep their text literal and a backslash escapes the byte after it, so a caller never
+// asks about a byte read in those states. A dollar and a backtick expand inside double quotes too, while <(...) and
+// >(...) are performed in plain text only.
+func worktreeDelUnreadableOuterAt(raw string, i, state int) bool {
+	if state == worktreeDelQuoteSingle || state == worktreeDelQuoteANSIC || state == worktreeDelQuoteComment {
+		return false
+	}
+	switch c := raw[i]; c {
+	case 96: // a backtick
+		return true
+	case '<', '>':
+		return state == worktreeDelQuotePlain && i+1 < len(raw) && raw[i+1] == '('
+	case '$':
+		if i+1 >= len(raw) {
+			return false
+		}
+		switch n := raw[i+1]; {
+		case n == '(' || n == '{':
+			return true
+		case n == 39 || n == '"':
+			return false // $'...' and $"..." quote a literal, they expand nothing
+		case n == '_' || n == '@' || n == '*' || n == '#' || n == '?' || n == '$' || n == '!' || n == '-':
+			return true
+		default:
+			return n >= '0' && n <= '9' || n >= 'a' && n <= 'z' || n >= 'A' && n <= 'Z'
+		}
+	}
+	return false
+}
+
+// worktreeDelUnreadableWholeSubstitution says whether a written word is nothing but one command substitution or one
+// backtick pair, with at most one layer of double quotes around it, so the shell runs the substitution's output as a
+// command line of its own. An arithmetic expansion is not one: the shell does not run its value as a command line.
+func worktreeDelUnreadableWholeSubstitution(raw string) bool {
+	word := strings.TrimSpace(raw)
+	for len(word) > 1 && word[0] == '"' && word[len(word)-1] == '"' {
+		word = word[1 : len(word)-1]
+	}
+	switch {
+	case strings.HasPrefix(word, "$(("):
+		return false
+	case strings.HasPrefix(word, "$("):
+		_, n, closed := worktreeDelSubstitutionBody(word[2:], false)
+		return closed && 2+n == len(word)
+	case strings.HasPrefix(word, "`"):
+		_, n, closed := worktreeDelSubstitutionBody(word[1:], true)
+		return closed && 1+n == len(word)
+	}
+	return false
+}
+
+// worktreeDelUnreadablePosition is one place a segment hands a program to a shell: text is the word the inner shell
+// reads, raw is that word as written, and what names the position the way the refusal reads it.
+type worktreeDelUnreadablePosition struct {
+	text  string
+	raw   string
+	check string
+	what  string
+}
+
+// worktreeDelUnreadablePositions is the program positions of a segment's words: the -c program of a listed shell, the
+// operands of eval, and the first operand of source or .. It mirrors worktreeDelQuoteProgram's scan of the same words -
+// the same wrappers, options, assignments and numbers before a shell name, the same shell option tables, the same
+// --command= value and su -cPROGRAM suffix - so a word the walk reads as a program is a position here too. Unlike the
+// walk it keeps every operand, whether or not it holds a blank, because a position is unreadable as soon as its word
+// carries an expansion.
+func worktreeDelUnreadablePositions(words []worktreeDelUnreadableWord) []worktreeDelUnreadablePosition {
+	plain := worktreeDelUnreadablePlainTexts(words)
+	for i, word := range plain {
+		name := basename(word)
+		var found []worktreeDelUnreadablePosition
+		switch {
+		case name == "eval":
+			for _, j := range worktreeDelUnreadableEvalIndices(plain[i+1:]) {
+				found = append(found, worktreeDelUnreadablePosition{text: words[i+1+j].text, raw: words[i+1+j].raw, check: words[i+1+j].raw, what: "an eval operand"})
+			}
+		case name == "source" || name == ".":
+			if j := worktreeDelUnreadableSourceIndex(plain[i+1:]); j >= 0 {
+				found = append(found, worktreeDelUnreadablePosition{text: words[i+1+j].text, raw: words[i+1+j].raw, check: words[i+1+j].raw, what: "a source operand"})
+			}
+		case strings.Contains(worktreeDelQuoteShells, " "+name+" "):
+			operands := plain[i+1:]
+			for k := range operands[:worktreeDelShellProgramEnd(name, operands)] {
+				found = append(found, worktreeDelUnreadableShellParts(name, words[i+1+k])...)
+			}
+		}
+		if len(found) > 0 {
+			return found
+		}
+		number := word != "" && word[0] >= '0' && word[0] <= '9' // 5, 0.5, 5s
+		if !(strings.Contains(worktreeDelQuoteWrappers, " "+name+" ") || strings.HasPrefix(word, "-") || isAssignment(word) || number ||
+			i > 0 && strings.HasPrefix(words[i-1].text, "-")) {
+			break
+		}
+	}
+	return nil
+}
+
+// worktreeDelUnreadableShellParts is the candidate programs a shell's operand word can hand to it: the word itself and,
+// for --command= and su -cPROGRAM, the suffix the shell reads. worktreeDelQuoteProgram reads the same candidates.
+func worktreeDelUnreadableShellParts(name string, word worktreeDelUnreadableWord) []worktreeDelUnreadablePosition {
+	what := "a " + name + " -c program"
+	out := []worktreeDelUnreadablePosition{{text: word.text, raw: word.raw, check: word.raw, what: what}}
+	if _, value, attached := strings.Cut(word.raw, "="); attached && strings.HasPrefix(word.raw, "--") {
+		out = append(out, worktreeDelUnreadablePart(value, what))
+	} else if (name == "su" || name == "fish") && len(word.raw) > 2 && word.raw[0] == '-' && word.raw[1] != '-' {
+		// getopt gives the rest of a cluster to its first option that takes an argument (c, g, G, s or w for su)
+		if k := strings.IndexAny(word.raw[1:], "cgGsw") + 1; k > 0 && k < len(word.raw) && word.raw[k] == 'c' {
+			out = append(out, worktreeDelUnreadablePart(word.raw[k+1:], what))
+		}
+	}
+	return out
+}
+
+// worktreeDelUnreadablePart is one piece of a written word as the inner shell reads it: the piece with the outer shell's
+// quotes removed.
+func worktreeDelUnreadablePart(part, what string) worktreeDelUnreadablePosition {
+	plain := worktreeDelUnreadablePlainText(part)
+	return worktreeDelUnreadablePosition{text: plain, raw: part, check: plain, what: what}
+}
+
+// worktreeDelUnreadablePlainText is a written piece of text with the outer shell's quotes and escaping backslashes
+// removed, the way worktreeDelQuoteTokenize reads a segment's words; the words are joined because a piece of a word holds
+// no unquoted blank.
+func worktreeDelUnreadablePlainText(raw string) string {
+	return strings.Join(worktreeDelQuoteTokenize(raw), "")
+}
+
+// worktreeDelUnreadableEvalIndices is the indices, in a word list's tail, of the operands eval joins into its program:
+// worktreeDelQuoteEvalArgs keeps those operands in order after dropping the redirections and the leading dash words, so
+// walking the two lists together maps them back without a second option parse.
+func worktreeDelUnreadableEvalIndices(tail []string) []int {
+	operands := worktreeDelQuoteEvalArgs(tail)
+	out := make([]int, 0, len(operands))
+	j := 0
+	for _, operand := range operands {
+		for j < len(tail) && tail[j] != operand {
+			j++
+		}
+		if j == len(tail) {
+			break
+		}
+		out = append(out, j)
+		j++
+	}
+	return out
+}
+
+// worktreeDelUnreadableSourceIndex is the index, in a source or . command's tail, of the file the shell reads: its first
+// operand, after -- and the leading dash words. -1 when there is none.
+func worktreeDelUnreadableSourceIndex(tail []string) int {
+	for i, word := range tail {
+		switch {
+		case word == "--":
+			if i+1 < len(tail) {
+				return i + 1
+			}
+			return -1
+		case len(word) > 1 && word[0] == '-':
+		default:
+			return i
+		}
+	}
+	return -1
+}
+
+// worktreeDelUnreadableCommandWord is the index, in a word list, of the word stripPrefixes keeps first: the word that
+// names the command, after sudo, command, builtin and env with its assignments. -1 when every word is a prefix.
+func worktreeDelUnreadableCommandWord(words []string) int {
+	for i := 0; i < len(words); {
+		if i+1 < len(words) && strings.Trim(words[i], "0123456789") == "" && worktreeDelRedirectWord(words[i+1]) {
+			i += 2 // a descriptor and the redirection it belongs to stand before the command word
+			continue
+		}
+		if words[i] == "(" || words[i] == "{" {
+			i++ // a subshell or a group opener stands before the command word
+			continue
+		}
+		if worktreeDelRedirectWord(words[i]) { // a redirection stands before the command word and is no part of it
+			if strings.Trim(words[i], "0123456789&<>") == "" && i+1 < len(words) {
+				i++ // a lone operator takes the next word as its target
+			}
+			i++
+			continue
+		}
+		switch basename(words[i]) {
+		case "sudo", "command", "builtin":
+			i++
+		case "env":
+			i++
+			for i < len(words) && isAssignment(words[i]) {
+				i++
+			}
+		default:
+			return i
+		}
+	}
+	return -1
+}
+
+// worktreeDelUnreadableCut is one piece of a command as the shell cuts it, with the operator that ended the piece
+// before it: "|", "||", "&&", ";" or "&" for a separator, a newline for a line break, and "" for the first piece
+// and for a parenthesis. The reading needs the operator, because a shell that stands to the right of a single pipe
+// reads its program from it.
+type worktreeDelUnreadableCut struct {
+	text string
+	sep  string
+}
+
+// worktreeDelUnreadableCuts is worktreeDelQuoteSegments' cut of a command, keeping the operator that ended each piece.
+func worktreeDelUnreadableCuts(command string) []worktreeDelUnreadableCut {
+	var cuts []worktreeDelUnreadableCut
+	var cur []byte
+	r := worktreeDelQuoteReader{prev: ' '}
+	opened := false // the number of backticks read in plain state is odd
+	pending := ""
+	edge := func(b byte) bool { return strings.IndexByte(" \t\r\n;&|(){}", b) >= 0 }
+	cut := func(sep string) {
+		if s := text.Trim(string(cur)); s != "" {
+			cuts = append(cuts, worktreeDelUnreadableCut{text: s, sep: pending})
+			pending = sep
+		} else if sep != "" {
+			pending = sep
+		}
+		cur = cur[:0]
+	}
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		if r.escapes(command, i) {
+			cur = append(cur, c, command[i+1])
+			i++
+			r.pair()
+			continue
+		}
+		if r.state == worktreeDelQuoteDouble && (c == '`' || c == '$' && i+1 < len(command) && command[i+1] == '(') {
+			// an outer double quote keeps a substitution together: a quote, a separator or a parenthesis inside it is not this shell's
+			skip := 0
+			if c == '`' {
+				if _, n, closed := worktreeDelSubstitutionBody(command[i+1:], true); closed {
+					skip = 1 + n
+				}
+			} else if _, n, closed := worktreeDelSubstitutionBody(command[i+2:], false); closed {
+				skip = 2 + n
+			}
+			if skip > 0 {
+				cur = append(cur, command[i:i+skip]...)
+				i += skip - 1
+				r.prev = 'x'
+				continue
+			}
+		}
+		if r.state == worktreeDelQuoteComment && opened && c == '`' && worktreeDelQuoteBackslashes(command[:i])%2 == 0 {
+			r.state, r.prev, opened = worktreeDelQuotePlain, '`', false
+			cur = append(cur, c)
+			continue
+		}
+		state, prev := r.state, r.prev
+		r.step(c)
+		switch {
+		case state == worktreeDelQuoteComment || r.state == worktreeDelQuoteComment:
+			if c == '\n' {
+				cut("\n")
+			}
+		case state != worktreeDelQuotePlain || r.state != worktreeDelQuotePlain:
+			cur = append(cur, c)
+		case c == '&' && (prev == '>' || prev == '<' || i+1 < len(command) && command[i+1] == '>'):
+			cur = append(cur, c) // part of a redirection (2>&1, >&2, &>f), not the end of a command
+		case c == ';' || c == '|' || c == '&' || c == '\n' || (c == '{' || c == '}') && edge(prev) && (i+1 == len(command) || edge(command[i+1])) && !worktreeDelQuoteRemoves(cur):
+			sep := string(c)
+			if (c == '|' || c == '&') && i+1 < len(command) && command[i+1] == c {
+				sep, i = string(c)+string(c), i+1
+			}
+			cut(sep)
+		default:
+			cur = append(cur, c)
+			if c == '`' {
+				if opened = !opened; opened {
+					r.prev = ' '
+				}
+			}
+		}
+	}
+	cut("")
+	return cuts
+}
+
+// worktreeDelUnreadableStdinShell says whether a shell named name with these operands reads its program from standard
+// input: it has no -c program and no script operand, or it was asked for standard input with -s. The option parse is
+// the one worktreeDelFlagShellProgram and worktreeDelSuProgram use, so a word the walk reads as a -c program is one
+// here too.
+func worktreeDelUnreadableStdinShell(name string, operands []string) bool {
+	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
+	if name == "su" {
+		return worktreeDelSuProgram(args) < 0
+	}
+	if worktreeDelFlagShellProgram(args) >= 0 {
+		return false
+	}
+	for _, word := range args {
+		if len(word) > 1 && word[0] == '-' && word[1] != '-' && strings.ContainsRune(word[1:], 's') {
+			return true
+		}
+	}
+	return worktreeDelUnreadableScriptOperand(args) < 0
+}
+
+// worktreeDelUnreadableHereArgs is operands without the here-document and here-string operators and the target words
+// that go with them, which the outer shell takes out of the command's arguments before the shell sees them.
+func worktreeDelUnreadableHereArgs(operands []string) []string {
+	out := make([]string, 0, len(operands))
+	for i := 0; i < len(operands); i++ {
+		word := operands[i]
+		if !strings.HasPrefix(word, "<<") {
+			out = append(out, word)
+			continue
+		}
+		rest := strings.TrimPrefix(strings.TrimPrefix(word[2:], "-"), "<")
+		if rest == "" {
+			i++ // the operator is a word of its own: its target is the next word
+		}
+	}
+	return out
+}
+
+// worktreeDelUnreadableScriptOperand is the index, in a shell's operands, of the first word the shell reads as its
+// script file: worktreeDelFlagShellProgram's option parse continued past -c, where the program would stand. -1 when
+// every operand is an option, the argument of one, or a lone - (which asks for standard input).
+func worktreeDelUnreadableScriptOperand(operands []string) int {
+	for i := 0; i < len(operands); i++ {
+		word := operands[i]
+		switch {
+		case word == "-":
+			return -1
+		case word == "--":
+			if i+1 < len(operands) {
+				return i + 1
+			}
+			return -1
+		case strings.HasPrefix(word, "--"):
+			if !strings.Contains(worktreeDelBashLongs, " "+word+" ") {
+				return -1
+			}
+			if word == "--rcfile" || word == "--init-file" {
+				i++
+			}
+		case len(word) > 1 && (word[0] == '-' || word[0] == '+'):
+			for _, letter := range word[1:] {
+				if letter == 'o' || letter == 'O' {
+					i++
+				}
+			}
+		default:
+			return i
+		}
+	}
+	return -1
+}
+
+// worktreeDelUnreadableHereString is the index, in a shell's operands, of the word a here-string operator feeds it: the
+// word after a <<< operand. -1 when the shell takes no here-string.
+func worktreeDelUnreadableHereString(operands []string) int {
+	for i, word := range operands {
+		if word == "<<<" && i+1 < len(operands) {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// worktreeDelUnreadableHereOperator is one here-document operator of a command line.
+type worktreeDelUnreadableHereOperator struct {
+	word      string // the delimiter word as written
+	delimiter string // the delimiter word with the outer shell's quotes removed
+	literal   bool   // the delimiter word holds a quote or a backslash, so the outer shell does not expand the body
+	stripTabs bool   // <<- strips the leading tabs of the body and of its delimiter line
+}
+
+// worktreeDelUnreadableHereOperators is every here-document operator of a command line, in the order they stand: <<WORD,
+// <<-WORD and a descriptor before the operator (0<<WORD). A here-string (<<<) and a quoted << are not operators.
+func worktreeDelUnreadableHereOperators(line string) []worktreeDelUnreadableHereOperator {
+	var ops []worktreeDelUnreadableHereOperator
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if r.escapes(line, i) {
+			r.pair()
+			i++
+			continue
+		}
+		state := r.state
+		r.step(c)
+		if state != worktreeDelQuotePlain || c != '<' || i+1 >= len(line) || line[i+1] != '<' {
+			continue
+		}
+		if i+2 < len(line) && line[i+2] == '<' { // a here-string operator (<<<), not a here-document
+			i += 2
+			continue
+		}
+		start := i + 2
+		op := worktreeDelUnreadableHereOperator{}
+		if start < len(line) && line[start] == '-' {
+			op.stripTabs, start = true, start+1
+		}
+		for start < len(line) && worktreeDelQuoteSpace(line[start:]) > 0 {
+			start += worktreeDelQuoteSpace(line[start:])
+		}
+		end := start
+		for end < len(line) {
+			if worktreeDelQuoteSpace(line[end:]) > 0 || strings.IndexByte(";&|()<>", line[end]) >= 0 {
+				break
+			}
+			end++
+		}
+		op.word = line[start:end]
+		op.delimiter = worktreeDelUnreadablePlainText(op.word)
+		op.literal = op.word != op.delimiter
+		ops = append(ops, op)
+		i = end - 1
+	}
+	return ops
+}
+
+// worktreeDelUnreadableHereBody is one here-document of a command: the operator that opened it, the body text up to the
+// line that closes it, and whether that line was found.
+type worktreeDelUnreadableHereBody struct {
+	op     worktreeDelUnreadableHereOperator
+	body   string
+	closed bool
+}
+
+// worktreeDelUnreadableLine is the line that opens at i, its newline kept, and the index after it.
+func worktreeDelUnreadableLine(text string, i int) (string, int) {
+	if j := strings.IndexByte(text[i:], '\n'); j >= 0 {
+		return text[i : i+j+1], i + j + 1
+	}
+	return text[i:], len(text)
+}
+
+// worktreeDelUnreadableHereBodies reads the here-document bodies that follow a command line, in the order the operators
+// stand: each body runs from the next line to the line that holds its delimiter. A body whose delimiter line is missing
+// runs to the end of the text and reports closed false.
+func worktreeDelUnreadableHereBodies(text string, from int, ops []worktreeDelUnreadableHereOperator) ([]worktreeDelUnreadableHereBody, int) {
+	bodies := make([]worktreeDelUnreadableHereBody, 0, len(ops))
+	i := from
+	for _, op := range ops {
+		var body []byte
+		closed := false
+		for i < len(text) {
+			line, after := worktreeDelUnreadableLine(text, i)
+			compare := strings.TrimSuffix(line, "\n")
+			if op.stripTabs {
+				compare = strings.TrimLeft(compare, "\t")
+			}
+			if compare == op.delimiter {
+				closed, i = true, after
+				break
+			}
+			body = append(body, line...)
+			i = after
+		}
+		bodies = append(bodies, worktreeDelUnreadableHereBody{op: op, body: string(body), closed: closed})
+	}
+	return bodies, i
+}
+
+// worktreeDelUnreadableHereExpansion says whether a here-document body with an unquoted delimiter holds an expansion the
+// outer shell performs on it before the shell reads it. A quote in the body protects nothing there, because the outer
+// shell expands the body first, so every byte is read in plain state and only a backslash escape hides one.
+func worktreeDelUnreadableHereExpansion(body string) bool {
+	for i := 0; i < len(body); i++ {
+		if body[i] == '\\' {
+			i++
+			continue
+		}
+		if worktreeDelUnreadableOuterAt(body, i, worktreeDelQuotePlain) {
+			return true
+		}
+	}
+	return false
+}
+
+// worktreeDelUnreadableRefusal is what the reading found: command says the CRW-772 command-name rule refused the
+// command rather than a program position, and what names the position the way the refusal reads it.
+type worktreeDelUnreadableRefusal struct {
+	command bool
+	what    string
+}
+
+// worktreeDelUnreadableScanKey identifies one text the reading covers. The same text can answer differently in another
+// directory or at another depth, so both are part of the key.
+type worktreeDelUnreadableScanKey struct {
+	text  string
+	cwd   string
+	depth int
+	named bool
+}
+
+// worktreeDelUnreadableScan is one evaluation's reading of the programs a command hands to a shell: the texts it has
+// already covered, and how many it may still cover. named also turns on the CRW-772 command-name rule, which needs the
+// worktree identity and the directory each segment runs in. It is never shared between evaluations.
+type worktreeDelUnreadableScan struct {
+	seen     map[worktreeDelUnreadableScanKey]bool
+	budget   int
+	named    bool
+	id       WorktreeIdentity
+	extended bool
+}
+
+// worktreeDelUnreadableProgram reports the first program position of a command whose text the guard cannot read before
+// the outer shell runs it (CRW-726): a shell's -c program, an eval operand, a source or . operand, a shell reading its
+// program from a pipe or a here-string, or a shell reading a here-document. what names the position the way the refusal
+// reads it. It is target-free, so the memory gate (CRW-727) reads the same answer, and it reads the command and every
+// program the command hands to a shell, down to worktreeDelQuoteDepth levels.
+func worktreeDelUnreadableProgram(command string) (string, bool) {
+	scan := &worktreeDelUnreadableScan{seen: map[worktreeDelUnreadableScanKey]bool{}, budget: worktreeDelWalkBudget}
+	refusal, ok := scan.read(command, "", 0, false)
+	return refusal.what, ok && !refusal.command
+}
+
+// worktreeDelUnreadableGuard is CRW-726's second reading of a command the walk allowed: the walk read every program it
+// could see, but a program position, or a command name, that the outer shell builds at run time is still a program the
+// guard cannot read, and the guard refuses it (fail closed). It runs after the walk, so a deny the guard already found
+// for the same command keeps its own reason.
+func worktreeDelUnreadableGuard(command, cwd string, id WorktreeIdentity) GuardVerdict {
+	scan := &worktreeDelUnreadableScan{seen: map[worktreeDelUnreadableScanKey]bool{}, budget: worktreeDelWalkBudget, named: true, id: id, extended: true}
+	refusal, ok := scan.read(command, cwd, 0, true)
+	if !ok {
+		return GuardVerdict{}
+	}
+	if refusal.command {
+		return GuardVerdict{Deny: true, Reason: denyReason("a command the guard cannot name before it runs: "+refusal.what, id)}
+	}
+	return GuardVerdict{Deny: true, Reason: denyReason("a program the guard cannot read before it runs: "+refusal.what, id)}
+}
+
+// read is the reading of one text: the program positions of each of its segments, the shells that read a program from a
+// pipe or a here-string, the command names the outer shell builds, and the programs a substitution, a here-document or a
+// program position hands to a shell one depth deeper. cwd follows the cd segments the way the walk's does, because a
+// target is judged from the directory its segment runs in.
+// named turns the command-name rule on for this text: it holds for a command line the guard reads, and not for the rest
+// of a segment after a substitution opener, which is the same text rather than a command of its own.
+func (s *worktreeDelUnreadableScan) read(text, cwd string, depth int, named bool) (worktreeDelUnreadableRefusal, bool) {
+	if depth > worktreeDelQuoteDepth {
+		return worktreeDelUnreadableRefusal{}, false
+	}
+	key := worktreeDelUnreadableScanKey{text: text, cwd: cwd, depth: depth, named: named}
+	if s.seen[key] {
+		return worktreeDelUnreadableRefusal{}, false
+	}
+	if s.budget--; s.budget < 0 {
+		return worktreeDelUnreadableRefusal{what: "a command too complex for the guard to read"}, true
+	}
+	s.seen[key] = true
+	// A here-document a listed shell reads as its program is judged first, so its refusal names the here-document even
+	// when the body also holds a command substitution (CRW-726, c1(e)).
+	if refusal, ok := s.heredocs(text, cwd, depth, named); ok {
+		return refusal, true
+	}
+	for _, reading := range worktreeDelReadings(text) {
+		segCwd := cwd
+		for _, cut := range worktreeDelUnreadableCuts(reading) {
+			if cut.text == "(" || cut.text == ")" {
+				continue
+			}
+			words := worktreeDelUnreadableWords(cut.text)
+			if len(words) == 0 {
+				continue
+			}
+			plain := worktreeDelUnreadablePlainTexts(words)
+			if what, ok := worktreeDelUnreadableStdin(cut, words, plain); ok {
+				return worktreeDelUnreadableRefusal{what: what}, true
+			}
+			for _, position := range worktreeDelUnreadablePositions(words) {
+				if worktreeDelUnreadableOuter(position.check) {
+					return worktreeDelUnreadableRefusal{what: position.what}, true
+				}
+				if refusal, ok := s.read(position.text, segCwd, depth+1, named); ok {
+					return refusal, true
+				}
+			}
+			if named {
+				if what, ok := worktreeDelNamedByExpansion(cut.text, segCwd, s.id, s.extended); ok {
+					return worktreeDelUnreadableRefusal{command: true, what: what}, true
+				}
+			}
+			if len(plain) > 1 && plain[0] == "cd" && plain[1] != "" {
+				segCwd = resolveFrom(segCwd, plain[1])
+			}
+		}
+		for _, sub := range worktreeDelSubstitutions(reading, cwd) {
+			if sub.body != "" {
+				if refusal, ok := s.read(sub.body, sub.cwd, depth+1, named); ok {
+					return refusal, true
+				}
+			}
+			if sub.tail != "" {
+				if refusal, ok := s.read(sub.tail, sub.cwd, depth, false); ok {
+					return refusal, true
+				}
+			}
+		}
+	}
+	return worktreeDelUnreadableRefusal{}, false
+}
+
+// worktreeDelUnreadableStdin is the rule for a shell that reads its program from its standard input: it stands to the
+// right of a single pipe, whose left side the guard can never read, or it takes a here-string, whose word is judged as a
+// -c program is. The shell must have no -c program and no script operand.
+func worktreeDelUnreadableStdin(cut worktreeDelUnreadableCut, words []worktreeDelUnreadableWord, plain []string) (string, bool) {
+	i := worktreeDelUnreadableCommandWord(plain)
+	if i < 0 {
+		return "", false
+	}
+	name := basename(plain[i])
+	if !strings.Contains(worktreeDelUnreadableShells, " "+name+" ") || !worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
+		return "", false
+	}
+	if cut.sep == "|" {
+		return "a shell program read from a pipe", true
+	}
+	if j := worktreeDelUnreadableHereString(plain[i+1:]); j >= 0 && worktreeDelUnreadableOuter(words[i+1+j].raw) {
+		return "a shell program read from a here-string", true
+	}
+	return "", false
+}
+
+// heredocs judges every here-document of a text that a listed shell reads as its program: with a delimiter word that
+// holds a quote or a backslash the body is literal and is read as shell text, and with an unquoted delimiter the outer
+// shell expands the body first, so a body holding an expansion is a program the guard cannot read. A body whose closing
+// delimiter line is missing never ends, so it is refused too.
+func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named bool) (worktreeDelUnreadableRefusal, bool) {
+	for i := 0; i < len(text); {
+		line, after := worktreeDelUnreadableLine(text, i)
+		ops := worktreeDelUnreadableHereOperators(line)
+		if len(ops) == 0 {
+			i = after
+			continue
+		}
+		bodies, next := worktreeDelUnreadableHereBodies(text, after, ops)
+		if worktreeDelUnreadableLineShell(line) {
+			for _, body := range bodies {
+				if !body.closed || !body.op.literal && worktreeDelUnreadableHereExpansion(body.body) {
+					return worktreeDelUnreadableRefusal{what: "a shell program read from a here-document"}, true
+				}
+				if refusal, ok := s.read(body.body, cwd, depth+1, named); ok {
+					return refusal, true
+				}
+			}
+		}
+		i = next
+	}
+	return worktreeDelUnreadableRefusal{}, false
+}
+
+// worktreeDelUnreadableLineShell says whether a command line runs a listed shell that reads its program from standard
+// input, so that the here-documents opened on that line are the program it reads.
+func worktreeDelUnreadableLineShell(line string) bool {
+	for _, cut := range worktreeDelUnreadableCuts(line) {
+		if cut.text == "(" || cut.text == ")" {
+			continue
+		}
+		plain := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(cut.text))
+		i := worktreeDelUnreadableCommandWord(plain)
+		if i < 0 {
+			continue
+		}
+		name := basename(plain[i])
+		if strings.Contains(worktreeDelUnreadableHereShells, " "+name+" ") && worktreeDelUnreadableStdinShell(name, plain[i+1:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// worktreeDelNamedByExpansion is the refusal of a simple command whose name word the outer shell builds at run time
+// (CRW-772). A name word that is wholly one command substitution or one backtick pair is a command line the shell
+// runs, so it is refused whatever its operands; a name word that carries a parameter expansion is judged as rm -r with
+// the command's literal operands, so it is refused only when one of them reaches the protected worktree. A literal
+// name, an assignment-only command and a parameter-expansion name whose operands reach nothing protected are read as
+// today.
+func worktreeDelNamedByExpansion(segment, cwd string, id WorktreeIdentity, extended bool) (string, bool) {
+	words := worktreeDelUnreadableWords(segment)
+	if len(words) == 0 {
+		return "", false
+	}
+	plain := worktreeDelUnreadablePlainTexts(words)
+	i := worktreeDelUnreadableCommandWord(plain)
+	if i < 0 || !words[i].outer || isAssignment(plain[i]) {
+		return "", false
+	}
+	if words[i].whole {
+		return "a command line built by a command substitution", true
+	}
+	flagsDone := false
+	for _, operand := range plain[i+1:] {
+		switch {
+		case !flagsDone && operand == "--":
+			flagsDone = true
+		case !flagsDone && strings.HasPrefix(operand, "-") && len(operand) > 1:
+		default:
+			if isProtectedTarget(operand, cwd, id, extended) {
+				return "a command named by an expansion", true
+			}
+		}
+	}
+	return "", false
 }
