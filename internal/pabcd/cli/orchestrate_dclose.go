@@ -25,7 +25,6 @@ package cli
 // program start.
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -38,7 +37,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // orchestrateDcloseSeam is the oracle's OrchestrateCommitHooks (:424-429), the seam its own tests use
@@ -102,13 +103,32 @@ type orchestrateDcloseLockAnswer struct {
 	Output  string
 }
 
+// orchestrateDcloseSurrogateOptions is the reading both guards take of a ledger line: the oracle's
+// JSON.parse. Surrogates keeps a lone surrogate escape as the three WTF-8 bytes a Go string holds a
+// lone surrogate in, where encoding/json folds it into U+FFFD - that folding is the defect CRW-850
+// fixes, because a stored "closed wp-\\ud800" row then compared equal to a U+FFFD close and the close
+// skipped the row it owed (data loss). Map reads an object into a map[string]any, as the oracle's
+// Record is, and SpelledNumbers keeps a number as spelled, which is what JSON.parse's double holds
+// for an integer the way the guard keys never read a number.
+var orchestrateDcloseSurrogateOptions = pyjson.LoadOptions{Surrogates: true, Map: true, Numbers: pyjson.SpelledNumbers}
+
 // orchestrateDcloseReadJSONLObjects is readJsonlObjects (:431-435): every non-empty line of the file
-// as a JSON object. A missing file is no rows. A line the oracle's readers would refuse is an error,
-// so a damaged ledger fails the close loudly instead of silently answering "no row yet" and writing a
-// duplicate: text JSON.parse cannot read at all, and a bare `null`, whose property access is the
-// TypeError the oracle's .some() callback throws. A line that is another JSON value is not an error
-// there - property access on a number, string, boolean or array answers undefined - so it is dropped
-// as a row that matches nothing, and no reader is fooled into treating it as an empty object.
+// as a JSON object. A missing file is no rows. The bytes are decoded as UTF-8 first (source.DecodeUTF8,
+// what Node's readFileSync(path, "utf8") and goalplan read.go both do: an invalid byte becomes one
+// U+FFFD), then each non-empty line is parsed the way the oracle's JSON.parse parses it.
+//
+// A line the oracle's readers would refuse is an error, so a damaged ledger fails the close loudly
+// instead of silently answering "no row yet" and writing a duplicate: text JSON.parse cannot read at
+// all, and a bare `null`, whose property access is the TypeError the oracle's .some() callback throws.
+// A line that is another JSON value is not an error there - property access on a number, string,
+// boolean or array answers undefined - so it is dropped as a row that matches nothing, and no reader
+// is fooled into treating it as an empty object. A repeated key keeps its last value, as a JS object
+// literal and a Python dict both do.
+//
+// The error text is the reader's own, not the oracle's V8 SyntaxError text. Two refusals differ from
+// the encoding/json reading this replaces, both named in the pull request: a number past float64's
+// range is now read rather than refused, and text after the value reads as "trailing data after the
+// JSON value" rather than encoding/json's own wording.
 func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -118,12 +138,12 @@ func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 		return nil, err
 	}
 	rows := []map[string]any{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(source.DecodeUTF8(raw), "\n") {
 		if line == "" {
 			continue
 		}
-		var value any
-		if err := json.Unmarshal([]byte(line), &value); err != nil {
+		value, err := pyjson.Loads(line, orchestrateDcloseSurrogateOptions)
+		if err != nil {
 			return nil, err
 		}
 		if value == nil {
