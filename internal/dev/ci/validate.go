@@ -285,6 +285,14 @@ func pythonShebang(path string) bool {
 	return bytes.HasPrefix(line, []byte("#!")) && bytes.Contains(line, []byte("python"))
 }
 
+// refactorBacklogFragment reports whether name is one of the refactor backlog source fragments.
+// A fragment is not a document of its own: its bytes are assembled into
+// docs/port/refactor-backlog.md, which the link check reads with that file directory as the base,
+// so a link written relative to the generated file is checked where it belongs.
+func refactorBacklogFragment(name string) bool {
+	return strings.HasPrefix(name, refactorBacklogSource+"/")
+}
+
 // repositoryRoot is the resolved top level of the checkout holding the working directory.
 func repositoryRoot() (string, error) {
 	out, err := runGit(".", "rev-parse", "--show-toplevel")
@@ -322,9 +330,10 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	count := 0
 	for _, name := range names {
 		path := filepath.Join(root, name)
-		// The dispatch-cases data files are generator inputs, not documents: their relative links are
-		// written for the generated document's directory, and that document is link-checked itself.
-		if filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) {
+		// The dispatch-cases data files and the refactor backlog fragments are generator inputs, not
+		// documents: their relative links are written for the generated document's directory, and that
+		// document is link-checked itself.
+		if filepath.Ext(name) == ".md" && !dispatchCasesDataFile(name) && !refactorBacklogFragment(name) {
 			found, err := LinkErrors(root, name)
 			if err != nil {
 				errs = append(errs, name+": "+err.Error())
@@ -350,6 +359,9 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	}
 	blobErrs, blobSummary := largeBlobCheck(root, os.Getenv)
 	errs = append(errs, blobErrs...)
+	if err := refactorBacklogError(root); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(errs, "\n"))
 	}
