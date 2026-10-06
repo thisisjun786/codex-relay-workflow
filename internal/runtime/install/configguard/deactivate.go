@@ -1,6 +1,10 @@
 package configguard
 
-import "time"
+import (
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+)
 
 type DeactivateDeps struct {
 	Run                   CodexRunner
@@ -82,6 +86,18 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	if path == "" {
 		path = m.ConfigPath
 	}
+	// The drift check, the read and the restore of config.toml are one critical section under the
+	// sidecar lock every CRW writer of config.toml takes (CRW-866), the shape of activate.go's
+	// activationSetKeyLocked: a retrust or an activation that published between the read and the
+	// restore would otherwise be overwritten with content built from the pre-change bytes. The lock
+	// covers this read-modify-write of config.toml only; the injected CLI calls below rewrite the
+	// file themselves and the self-heal marker is not shared with another CRW writer.
+	lock, err := crwdir.LockConfig(path, activationLockWait)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
+	path = lock.Target
 	if m.PostActivateHash != nil {
 		hash, err := hashOrNull(path)
 		if err != nil {
@@ -100,6 +116,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			return nil, err
 		}
 	}
+	// The config.toml critical section ends here. The CLI calls below are the injected runner's
+	// own writes to the file and stay outside the lock.
+	lock.Release()
 	live, err := ReadDeclaredState(deps.Run)
 	r.FeaturesStateUnavailable = err != nil
 	for _, key := range manifestOrder(m.flagOrder, m.Flags) {

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -176,6 +177,19 @@ func multiAgentV2Preserve(pre, post string, enabled bool) (string, bool) {
 // atomically. The injected runner remains responsible for its own settings writes.
 func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*MultiAgentV2Change, error) {
 	path := multiAgentV2ConfigPath(deps)
+	// The pre-image read, the injected runner that rewrites config.toml, the repair and its publish
+	// are one critical section under the sidecar lock every CRW writer of config.toml takes
+	// (CRW-866), the shape of activate.go's activationSetKeyLocked: a retrust or an activation that
+	// published in that window would otherwise be overwritten by the repair, which is computed from
+	// the pre-image this read took.
+	lock, err := crwdir.LockConfig(path, activationLockWait)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
+	// target is the file the lock guards: the caller's path with a symlink followed, so two
+	// writers reaching one file through different spellings share one lock.
+	path = lock.Target
 	pre, _, err := activationReadFile(path)
 	if err != nil {
 		return nil, err

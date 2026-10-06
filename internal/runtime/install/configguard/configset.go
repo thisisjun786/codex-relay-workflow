@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
@@ -54,7 +55,28 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 	if path == "" {
 		path = filepath.Join(deps.CodexHome, "config.toml")
 	}
-	pre, exists, err := activationReadFile(path)
+	// The read, the decision, the backup and the publish of config.toml are one critical section
+	// under the sidecar lock every CRW writer of config.toml takes (CRW-866), the shape of
+	// activate.go's activationSetKeyLocked: a retrust or an activation that published between this
+	// read and this write would otherwise be overwritten with content built from the pre-change
+	// bytes, and neither command would report it. The lock covers config.toml only; the install
+	// manifest keeps the unlocked publish.
+	lock, err := crwdir.LockConfig(path, activationLockWait)
+	if err != nil {
+		return ConfigSetOutcome{}, err
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			lock.Release()
+		}
+	}
+	defer release()
+	// target is the file the lock guards: the caller's path with a symlink followed, so two
+	// writers reaching one file through different spellings share one lock.
+	target := lock.Target
+	pre, exists, err := activationReadFile(target)
 	if err != nil {
 		return ConfigSetOutcome{}, err
 	}
@@ -100,10 +122,13 @@ func ApplyManagedKey(deps ConfigSetDeps, id string, value *bool) (ConfigSetOutco
 			}
 			backup = &name
 		}
-		if err := activationPublish(path, []byte(res.Content)); err != nil {
+		if err := activationPublish(target, []byte(res.Content)); err != nil {
 			return ConfigSetOutcome{}, err
 		}
 	}
+	// The config.toml critical section ends here: the manifest below is not shared with another
+	// CRW writer and keeps the unlocked publish.
+	release()
 	if value == nil {
 		delete(m.TableKeys, keyID)
 	} else {
