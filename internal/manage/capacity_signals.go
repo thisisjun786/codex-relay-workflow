@@ -80,8 +80,8 @@ func capacityMergeCount(ctx context.Context, cfg *Config, since time.Time) (*int
 	return &count, nil
 }
 
-// capacityActionsRead reports the first unresolved incident naming Actions; a read that fails, or an
-// answer with no incidents field, is unknown with no incident.
+// capacityActionsRead reports the first unresolved incident naming Actions; a read that fails, or
+// an answer with no incidents field, is unknown with no incident.
 func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 	if url == "" {
 		url = capacityDefaultActionsStatusURL
@@ -121,8 +121,20 @@ func capacityActionsRead(ctx context.Context, url string) (string, *string) {
 	return capacityMeasured, nil
 }
 
+// capacityUsageRecord is one line of the child model usage log, and one attempt inside it.
+type capacityUsageRecord struct {
+	Timestamp int64                  `json:"timestamp"`
+	Attempts  []capacityUsageAttempt `json:"attempts"`
+}
+
+type capacityUsageAttempt struct {
+	Status int    `json:"status"`
+	Model  string `json:"model"`
+}
+
 // capacityChild429Count counts the attempts whose status is 429 and whose model contains one of the
-// child model strings. A log that is absent, unreadable or undecodable is unmeasured.
+// child model strings. A log that is absent, unreadable or undecodable is unmeasured, and a last
+// line still being written is not a record, so the count stops before it.
 func capacityChild429Count(logPath string, models []string, since time.Time) (string, *int) {
 	if logPath == "" {
 		return capacityUnmeasured, nil
@@ -136,40 +148,25 @@ func capacityChild429Count(logPath string, models []string, since time.Time) (st
 	reader := bufio.NewReader(file)
 	for {
 		line, readErr := reader.ReadBytes('\n')
-		// A final line with no newline is a write still in progress, not a record: stop at it rather
-		// than reading a partial record as the end of the log.
 		if len(line) > 0 && line[len(line)-1] != '\n' {
 			break
 		}
-		if len(bytes.TrimSpace(line)) == 0 && readErr != nil {
-			break
-		}
-		var record struct {
-			Timestamp int64 `json:"timestamp"`
-			Attempts  []struct {
-				Status int    `json:"status"`
-				Model  string `json:"model"`
-			} `json:"attempts"`
-		}
-		// A record in the middle that cannot be decoded leaves the whole log unmeasured, rather than
-		// reporting a partial count as if the window had been read.
-		if err := json.Unmarshal(line, &record); err != nil {
-			return capacityUnmeasured, nil
-		}
-		if record.Timestamp < since.UnixMilli() {
-			if readErr != nil {
-				break
+		if len(bytes.TrimSpace(line)) > 0 {
+			var record capacityUsageRecord
+			if json.Unmarshal(line, &record) != nil {
+				return capacityUnmeasured, nil
 			}
-			continue
-		}
-		for _, attempt := range record.Attempts {
-			if attempt.Status != 429 {
-				continue
-			}
-			for _, model := range models {
-				if model != "" && strings.Contains(attempt.Model, model) {
-					count++
-					break
+			if record.Timestamp >= since.UnixMilli() {
+				for _, attempt := range record.Attempts {
+					if attempt.Status != 429 {
+						continue
+					}
+					for _, model := range models {
+						if model != "" && strings.Contains(attempt.Model, model) {
+							count++
+							break
+						}
+					}
 				}
 			}
 		}
@@ -187,9 +184,9 @@ type capacityWaiting struct {
 	HostMemory string
 }
 
-// capacityWaitingFor asks the relay for one plan's ready set: the ready nodes and the nodes deferred
-// for want of capacity, with the pass's slots and host memory bound. A relay that refuses or answers
-// something unreadable is the read failure reported as exit 3.
+// capacityWaitingFor asks the relay for one plan's ready set: the ready nodes and the nodes
+// deferred for want of capacity, with the pass's slots and host memory bound. A relay that refuses
+// or answers something unreadable is the read failure reported as exit 3.
 func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (capacityWaiting, error) {
 	stdout, code, err := e.Relay(ctx, cfg, "dag-ready", "--plan", plan)
 	if err != nil {

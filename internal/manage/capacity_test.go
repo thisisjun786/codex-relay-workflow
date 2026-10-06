@@ -59,9 +59,7 @@ func capacityTestFixture(t *testing.T, plans []map[string]any) *capacityFixture 
 func capacityTestLoad(t *testing.T, f *capacityFixture) {
 	t.Helper()
 	raw, err := json.Marshal(f.section)
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	cfg := coreDefaults(f.env)
 	cfg.Repository, cfg.StateDir, cfg.Relay.State = "owner/repo", f.stateDir, f.relayDir
 	cfg.raw = map[string]json.RawMessage{"capacity": raw}
@@ -81,9 +79,7 @@ func capacityTestState(t *testing.T, f *capacityFixture, plan string, since time
 		entry["alerted_at"] = float64(alertedAt.Unix())
 	}
 	data, err := json.Marshal(map[string]any{"plans": map[string]any{plan: entry}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	capacityTestMust(t, os.MkdirAll(f.stateDir, 0o755))
 	capacityTestMust(t, os.WriteFile(filepath.Join(f.stateDir, capacityStateFile), data, 0o600))
 }
@@ -236,9 +232,7 @@ func TestCapacityStateIsWrittenOnlyByARealRun(t *testing.T) {
 	f := capacityTestReady(t, capacityTestPlans)
 	path := filepath.Join(f.stateDir, capacityStateFile)
 	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	if plan := capacityTestRun(t, f, true).Plans[0]; plan.Verdict != capacityExpand || !plan.Alert {
 		t.Fatalf("the dry run did not judge: %+v", plan)
 	}
@@ -256,9 +250,7 @@ func TestCapacityStateIsWrittenOnlyByARealRun(t *testing.T) {
 		t.Fatalf("the first real run did not alert: %+v", first)
 	}
 	saved, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	var doc map[string]any
 	capacityTestMust(t, json.Unmarshal(saved, &doc))
 	state, _ := doc["plans"].(map[string]any)["p-crw-129"].(map[string]any)

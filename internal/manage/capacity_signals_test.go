@@ -19,9 +19,7 @@ import (
 
 func capacityTestStore(t *testing.T, path string) {
 	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE TABLE deliveries (event_id TEXT PRIMARY KEY, recipient_task_id TEXT NOT NULL, created_at TEXT NOT NULL)",
@@ -37,9 +35,7 @@ func capacityTestStore(t *testing.T, path string) {
 func capacityTestRelay(t *testing.T, f *capacityFixture, reading map[string]any) {
 	t.Helper()
 	answer, err := json.Marshal(reading)
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	file := filepath.Join(filepath.Dir(f.env.Executable), "answer.json")
 	capacityTestMust(t, os.WriteFile(file, answer, 0o600))
 	script := "#!/bin/sh\n" + "case \"$*\" in\n" +
@@ -66,9 +62,7 @@ func capacityTestReading(waiting, extraWaiting []string, held, ceiling int, host
 
 func capacityTestReceipt(t *testing.T, f *capacityFixture, event, parent string, waitMinutes float64, interrupted bool) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.relayDir, "relay.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	defer db.Close()
 	created := capacityTestNow.Add(-time.Duration(waitMinutes+1) * time.Minute)
 	outcome := "ready_for_review"
@@ -87,8 +81,8 @@ func capacityTestReceipt(t *testing.T, f *capacityFixture, event, parent string,
 	exec("INSERT INTO events (event_id, outcome) VALUES (?,?)", event, outcome)
 }
 
-// capacityTestSeams replaces the gh and status-page seams for one test: merges is the lane count,
-// a nil status makes gh fail and a non-nil statusErr makes the status read fail.
+// capacityTestSeams replaces the gh and status-page seams for one test: merges is the lane count, a
+// nil status makes gh fail and a non-nil statusErr makes the status read fail.
 func capacityTestSeams(t *testing.T, merges int, status []byte, statusErr error) {
 	t.Helper()
 	exec, get := capacityExec, capacityHTTPGet
@@ -119,9 +113,7 @@ func capacityTestUsageLog(t *testing.T, f *capacityFixture, status int, model st
 	log := filepath.Join(t.TempDir(), "usage.jsonl")
 	data, err := json.Marshal(map[string]any{"timestamp": at.UnixMilli(),
 		"attempts": []any{map[string]any{"status": status, "model": model}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	capacityTestMust(t, err)
 	capacityTestMust(t, os.WriteFile(log, append(data, '\n'), 0o600))
 	capacityTestSection(t, f, "usage_log", log)
 	capacityTestSection(t, f, "child_models", []string{"deepseek-v4.1-flash"})
@@ -166,12 +158,11 @@ func TestCapacityUnreadableSignalsDoNotSuppress(t *testing.T) {
 	}
 }
 
-// A log whose last line is still being written is read to its last complete record; a record that
-// cannot be decoded anywhere in the middle leaves the whole log unmeasured.
+// A log whose last line is still being written is read to its last complete record; a corrupt
+// record in the middle leaves the whole log unmeasured.
 func TestCapacityUsageLogTailAndCorruption(t *testing.T) {
 	dir := t.TempDir()
-	complete := "{\"timestamp\":%d,\"attempts\":[{\"status\":429,\"model\":\"deepseek-v4.1-flash\"}]}\n"
-	record := fmt.Sprintf(complete, capacityTestNow.UnixMilli())
+	record := fmt.Sprintf("{\"timestamp\":%d,\"attempts\":[{\"status\":429,\"model\":\"deepseek-v4.1-flash\"}]}\n", capacityTestNow.UnixMilli())
 
 	tail := filepath.Join(dir, "tail.jsonl")
 	capacityTestMust(t, os.WriteFile(tail, []byte(record+"{\"timestamp\":1,\"attemp"), 0o600))

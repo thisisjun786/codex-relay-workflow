@@ -143,8 +143,8 @@ func capacityFamilyOf(ref capacityPlanRef) string {
 
 // Capacity judges whether there is room to add a parent, and why not. It emits the judgement and
 // its evidence and changes nothing outside its own state file; creating projects and starting
-// parents is the management session's work. dry judges without writing that state, and a relay
-// read failure is an error the command reports as exit 3.
+// parents is the management session's work. dry judges without writing that state, and a relay read
+// failure is an error the command reports as exit 3.
 func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityReport, error) {
 	settings := capacitySettings{}
 	if err := cfg.Section("capacity", &settings); err != nil {
