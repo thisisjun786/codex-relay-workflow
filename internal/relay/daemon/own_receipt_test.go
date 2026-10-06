@@ -204,3 +204,47 @@ func TestOwnReceipt02_TheOwnReceiptIsCheckedAgainInsideTheTransaction(t *testing
 		})
 	}
 }
+
+// c1: a receipt the turn emits between the first lookup and the settlement transaction silences the
+// end too. The lookup is made again inside the transaction rather than trusted, so the daemon does
+// not synthesize a second word on a turn that has already reported.
+func TestOwnReceipt03_AReceiptThatArrivesInTheGapStillSilencesTheEnd(t *testing.T) {
+	t.Parallel()
+	ctx, s := lateStore(t)
+	for _, turn := range []string{"anchor", "continuation"} {
+		exec(t, s, "INSERT INTO assignment_settlements(relationship_id,thread_id,turn_id,terminal_status,settled_at) VALUES('r','child',?,'completed','2023-11-14T22:13:20Z')", turn)
+	}
+	host := &observationHost{status: "completed", statuses: map[string]string{"business": "interrupted"}}
+	d := New(s, host, &delivery.FakeClock{T: 1700000000}, nil)
+	d.Policy.MaxTurnReads, d.Policy.MaxSends = 3, -1
+	arrived := false
+	d.beforeSettle = func(turn store.TurnReference) {
+		if turn.TurnID != "business" || arrived {
+			return
+		}
+		arrived = true
+		ownReceipt(t, s, "business", "ready_for_review", "final", "", owedQueued)
+	}
+	report, err := d.Tick(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !arrived {
+		t.Fatal("the turn was never settled, so the receipt never arrived")
+	}
+	if n := count(t, s, "SELECT COUNT(*) FROM events WHERE producer='daemon_observation' AND turn_id='business'"); n != 0 {
+		t.Errorf("daemon observations of business: %d, want none", n)
+	}
+	if n := count(t, s, "SELECT COUNT(*) FROM deliveries d JOIN events e ON e.event_id=d.event_id WHERE e.producer='daemon_observation' AND e.turn_id='business'"); n != 0 {
+		t.Errorf("deliveries of an observation of business: %d, want none", n)
+	}
+	if n := count(t, s, "SELECT COUNT(*) FROM assignment_settlements WHERE turn_id='business'"); n != 1 {
+		t.Errorf("settlements of business: %d, want 1", n)
+	}
+	if n := count(t, s, "SELECT COUNT(*) FROM journal WHERE kind='observation_not_asserted' AND subject='business'"); n != 1 {
+		t.Errorf("journal rows saying business was not asserted: %d, want 1", n)
+	}
+	if noted := notesSaying(report.Notes, "not asserted"); noted != 1 {
+		t.Errorf("notes %q: want one saying the observation was not asserted", report.Notes)
+	}
+}

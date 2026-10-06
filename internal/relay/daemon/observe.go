@@ -269,25 +269,28 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			if standby {
 				return errManagedStandby
 			}
-			if ownEvent != "" {
-				// The transaction holds the writer lock until it commits, so what it finds is what the
-				// settlement is written on. A generation opened, a relationship paused or a delivery
-				// superseded since the first lookup leaves nothing to silence the end, and the turn is
-				// not settled.
+			// The transaction holds the writer lock until it commits, so what it finds is what the
+			// settlement is written on. The lookups are made again rather than trusted, so a receipt
+			// that arrived after the first lookups silences the end here as well, and one that a
+			// generation opened, a relationship paused or a superseded delivery has since taken away
+			// leaves nothing to silence it: then the turn is not settled and is judged again on the
+			// next pass.
+			if ended {
 				eventNow, err := d.ownReceipt(tx, r.ID, turn)
 				if err != nil {
 					return fmt.Errorf("own receipt lookup failed: %w", err)
 				}
-				if eventNow == "" {
+				if ownEvent != "" && eventNow == "" {
 					return errNotSilenced
 				}
 				ownEvent = eventNow
-			} else if laterEvent != "" {
+			}
+			if ownEvent == "" && (laterEvent != "" || ended) {
 				turnNow, eventNow, err := d.laterReceipt(tx, r.ID, turn)
 				if err != nil {
 					return fmt.Errorf("later receipt lookup failed: %w", err)
 				}
-				if eventNow == "" {
+				if laterEvent != "" && eventNow == "" {
 					return errNotSilenced
 				}
 				laterTurn, laterEvent = turnNow, eventNow
