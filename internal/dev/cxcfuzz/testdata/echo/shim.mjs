@@ -5,9 +5,11 @@
 //
 // It is the echo target's oracle side: the answer is the input itself. Two environment variables
 // make it disagree on purpose, which is how the harness's own tests prove a divergence is found
-// and that a stalled request is timed out:
+// and that a worker which never answers is timed out:
 //   CXCFUZZ_MUTATE=1  appends "!" to the "text" string of an input carrying "mutate": true
-//   CXCFUZZ_STALL=1   leaves the first request unanswered
+//   CXCFUZZ_STALL=1   leaves the first request unanswered; the pool sends a start-up handshake
+//                     before it sends a case, so with this set every worker stalls at its
+//                     handshake and its start-up deadline, not a case's per-case deadline, expires
 //
 // A real target's shim imports its dist module under ORACLE_ROOT the way the record-oracle.mjs
 // recorders do; ORACLE_ROOT defaults to the extracted CXC v0.2.40 component tree. echo imports

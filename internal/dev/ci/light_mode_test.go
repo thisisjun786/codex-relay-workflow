@@ -169,11 +169,13 @@ func TestLightMode_the_labeled_trigger_is_added_and_the_concurrency_is_unchanged
 	}
 }
 
-// Only go-product reads the light condition. validate, secrets and dev-gate name it nowhere, so
-// they always run in full, and no job carries a job-level if, which could skip it.
+// Only go-product reads the light condition. validate, secrets, skill-scripts-node, gui and
+// dev-gate name it nowhere, so they always run in full, and no job carries a job-level if,
+// which could skip it. skill-scripts-node (CRW-353) and gui (CRW-831) each gate themselves on
+// the changed paths instead, and that gate is a step condition, not a job-level one.
 func TestLightMode_only_the_go_product_job_reads_the_light_condition(t *testing.T) {
 	jobs, _ := workflowJobs(t)
-	for _, name := range []string{"validate", "secrets", "dev-gate"} {
+	for _, name := range []string{"validate", "secrets", "skill-scripts-node", "gui", "dev-gate"} {
 		for _, word := range []string{lightEnvKey, "CRW_CI_MODE"} {
 			if strings.Contains(jobs[name], word) {
 				t.Errorf("%s names %q; only go-product reads the light condition", name, word)
@@ -190,14 +192,15 @@ func TestLightMode_only_the_go_product_job_reads_the_light_condition(t *testing.
 	}
 }
 
-// The mode changes no check name: the four jobs, the seven go-product legs and dev-gate's
-// prerequisites are the ten checks the branch protection requires.
-func TestLightMode_the_ten_check_names_are_unchanged(t *testing.T) {
+// The mode changes no check name: the six jobs, the seven go-product legs and dev-gate's
+// prerequisites are the twelve checks the branch protection requires. skill-scripts-node
+// (CRW-353) and gui (CRW-831) are dev-gate prerequisites like the rest.
+func TestLightMode_the_check_names_are_unchanged(t *testing.T) {
 	jobs, order := workflowJobs(t)
-	expectEqual(t, "the job names", sortedCopy(order), []string{"dev-gate", "go-product", "secrets", "validate"})
+	expectEqual(t, "the job names", sortedCopy(order), []string{"dev-gate", "go-product", "gui", "secrets", "skill-scripts-node", "validate"})
 	expectEqual(t, "the go-product legs", sortedCopy(matrixValues(t, jobs["go-product"], "part")),
 		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-rest"})
-	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, go-product\]$`).MatchString(jobs["dev-gate"]) {
+	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, skill-scripts-node, gui, go-product\]$`).MatchString(jobs["dev-gate"]) {
 		t.Error("dev-gate's prerequisites changed")
 	}
 }

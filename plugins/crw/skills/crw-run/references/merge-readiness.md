@@ -27,7 +27,7 @@ Neither the GitHub Codex review nor Devin Review is a CRW completion or merge ga
 request either one, re-request it after a push, or wait for a fresh-head review or a settling
 period. Jun's decision of 2026-10-03 lets each run once per pull request, Codex when the pull
 request is opened and Devin when it becomes ready for review, and that one run of each is
-awaited to its end before the child's receipt, as
+awaited within the waiting budget below before the child's receipt, as
 [Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)
 says. Anything beyond that run requires a new explicit user decision; an old assignment, review comment, or pending check
 does not supply one. Record a skipped or absent run as such, never as a successful review.
@@ -64,6 +64,11 @@ step: no runner ever picked it up, so the commit was never tested. `merge-eviden
 and the jobs that did not run in the problem's detail, so a rerun can be aimed at them.
 `checks_stale` is the reading for every other non-success, a real failure, and the lane returns
 its turn as before.
+
+A `go-product (test-*)` leg that concluded `success` while its test step did not run (the temporary
+CI light mode of CRW-790, where a pull request without the `crw-lane` label skips the legs' work)
+is `checks_stale` too, never a pass and never a rerun: the run tested nothing, so the lane labels
+the pull request `crw-lane` and judges the full run.
 
 What the lane does about `checks_not_run` depends on who owns the retry ledger. Where no
 judge owns it, the lane reruns the failed jobs of that run once on the same head
@@ -149,8 +154,8 @@ to its expected runtime. If unavailable or stalled, use sufficient independent
 review already available or obtain a permitted local review. Record the gap and
 continue when the repository's requirements and relevant review coverage are met.
 Do not wait for every historical or possible future reviewer. The one run each of Devin
-and Codex makes on a pull request is the exception: it is awaited to its end before the
-child's receipt
+and Codex makes on a pull request is the exception: it is awaited within the waiting
+budget below before the child's receipt
 ([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
 Fallback review cannot replace required CI, a required review source, or mandatory formal approval.
 Inspection does not authorize enabling integrations, new paid usage, or sending
@@ -161,7 +166,7 @@ private source to another service.
 Devin Review and the GitHub Codex review are references. Neither is a merge gate, and a run that is
 skipped or never shows is not waited for. Each runs once per pull request, Devin when the pull request
 becomes ready for review and Codex when it is opened, and the merge waits for neither. The child does wait
-for that one run of each to end before it emits its receipt. A review thread that reaches the head after the receipt is found outside
+for that one run of each, within the waiting budget below, before it emits its receipt. A review thread that reaches the head after the receipt is found outside
 the record's `threadsSeen` when the parent restates it, and the handoff no longer describes the candidate.
 A thread the parent judges minor it dispositions itself
 ([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)); for any
@@ -181,9 +186,10 @@ A pull request merges when all three hold on one and the same head:
    counts only where the repository's gate semantics make it legitimate); here `dev-gate` needs every other
    job, so that is every job of the CI workflow, all of them on the head the merge names and not on a mix of
    heads;
-2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and reran the
-   tests the criteria rest on (a result it already holds for this same head, criteria and environment is not
-   run twice);
+2. the coordinator verified the candidate by its usual procedure: it read the diff and the code, checked the
+   integration part ([Build and vet the merged tree before the verdict](#build-and-vet-the-merged-tree-before-the-verdict)),
+   and reran the tests the criteria rest on; it reuses valid evidence rather than rerunning everything without
+   reason, and a result it already holds for this same head, criteria and environment is not run twice;
 3. the local gates pass: the checks the repository names for the change, run through the repository's
    permitted local validation route.
 
@@ -222,7 +228,7 @@ Pull requests that change activation wiring, manifest declarations, the installe
 | | Devin Review | Codex review |
 | --- | --- | --- |
 | Runs | once, when the pull request becomes ready | once, when the pull request is opened: a code review and a security review |
-| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, with no time limit | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
+| In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, up to the waiting budget | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
 | Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone and each of its two reviews, the code review and the security review, is either `Completed` in its summary comment or skipped by the bot's notice that names it; a thumbs-up counts for both when no row contradicts it |
 | Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's issue comment that it skipped for limits, for the review it names (observed: `You have reached your Codex usage limits for security reviews. Please try again later.`, which ended the security review only) |
 | Findings | a review and inline threads by `devin-ai-integration` | a review by `chatgpt-codex-connector[bot]` whose inline comments start with a `P0` to `P3` badge |
@@ -242,11 +248,19 @@ Devin skipped, and `Completed analysis in 4s` stays a completion when the state 
 seconds on a head that only merged the base is still a completion; such a head carries no review object of its
 own, which is normal.
 
+**The waiting budget.** For the optional external reviewers the fixed time is a waiting budget, never
+evidence that a review stalled or finished ([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)).
+It runs 45 minutes from the review's first signal; a skip ends the wait at once. When the budget is used up
+and the review is still running, the child records it as **pending (not complete)** in the handoff and goes on.
+The wait is released that way only where the candidate's required independent review has already read the
+current head and every important finding it raised has a recorded disposition; where that independent review
+is missing, the child obtains it through the existing approved path before it hands off. Never record a pending
+review as done, skipped or passed.
+
 When neither reviewer shows a signal of any kind (no status, no comment, no reaction) 30 minutes after the
 pull request became ready (Devin) or was opened (Codex), the handoff says `review unavailable (no signal)`
-and the child goes on. A reviewer that has shown a signal is waited for to its end or its skip, however long.
-A description or row status that is not in the table is such a signal: record it exactly as read and keep
-waiting. The skill does not guess its meaning; a child that cannot tell whether the run is still going asks
+and the child goes on. A description or row status that is not in the table is a signal: record it exactly as read and keep
+waiting, inside the same budget. The skill does not guess its meaning; a child that cannot tell whether the run is still going asks
 through the usual `blocked_needs_input` route, as for any question only a person can answer. When only one
 reviewer is silent while the other has run, the child applies the same 30 minutes to the silent one, records
 it as `no signal by <time>`, goes on, and says in the handoff that it applied the rule to one reviewer. The
@@ -748,7 +762,7 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
 
 ### Build and vet the merged tree before the verdict
 
-Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
+This is the integration part of gate 2, and it is kept. Each sibling pull request is green on its own base, and the forge and `git merge-tree` report no
 conflict when they add different files, yet two of them can declare one identifier in one Go
 package (on 2026-10-04 two pairs did: `tokenize` in one package, `ChatOrder` in another). Only a
 build of the merge shows it, and found in the merge lane it costs a whole lane turn. So building the
@@ -1157,7 +1171,7 @@ among its commands, the parent does not settle a conflict either.
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
    is `renumber` end it here: `git merge --abort`, and the candidate goes back to its child (below). The one
-   exception is the plugin manifest's version line, which no declaration has to cover: settle it as the
+   exception is the plugin manifest's version line, which no declaration has to settle with one agreed rule: settle it as the
    paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
@@ -1177,16 +1191,22 @@ among its commands, the parent does not settle a conflict either.
      check runs it there.
      For the generated case sections of `plugins/crw/skills/crw-run/references/dispatch-verification.md` it is
      `go run -tags dev ./cmd/crw-dev ci dispatch-cases --write`, which rebuilds that document from the row and
-     block files under `docs/crw-run/dispatch-cases/`.
+     block files under `docs/crw-run/dispatch-cases/`. A case is authored in those files, never in the
+     generated document: a change made only in the document drifts from its inputs and `crw-dev ci validate` refuses it.
 
-The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
-`plugins/crw/.codex-plugin/plugin.json`, no declaration given touches it at all, and the file is the same regular
-file in the same mode in both parents and in the head, the check settles it by the built-in rule
+The one file no declaration has to settle with one agreed rule is the plugin manifest's version line. When the
+file is in play (a conflict in `plugins/crw/.codex-plugin/plugin.json`, or a clean merge whose head re-recorded it), no
+declaration given has to touch it at all, and the file is the same regular file in the same mode in both parents and
+in the head, the check settles it by the built-in rule
 `regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
 that version must keep the release component both parents record (the release is the owner's choice, not the
 payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
-(`crw-dev ci plugin` computes it from the payload). A declaration that touches the file keeps its say, even when it
-does not establish one mechanical rule for it. Any other difference in that file, a version that is not the derived
+(`crw-dev ci plugin` computes it from the payload). A declaration that settles the file with one
+rule agreed by every declaration given keeps its say; a declaration that merely touches the file does not take the
+built-in rule's place, because the rule already holds the manifest to both parents apart from the version line and
+to the version the head's own payload derives. The rule applies whether the manifest conflicted or merged cleanly
+and was recorded again at the head, which is the shape a parent's own update leaves when only one side re-recorded
+the version. Any other difference in that file, a version that is not the derived
 one, and every other path keep the refusal they have today, and the proof prints
 `applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
 
@@ -1293,7 +1313,7 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
        codex-session-relay --state "$RELAY_STATE" dag-base-refresh --plan <plan> --node <node> \
          --actor <the parent's task id> --checkout <checkout> --expect-epoch <the epoch you hold>
 
-   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. Every conflict file retains its blob in `steps`; an optional `rule` names a mechanical resolution proved by the refreshed node's declaration, every identifiable contributing node's agreeing declaration, and the shared checker. An unidentified path-changing base landing or a missing/disagreeing declaration requires the exact `--resolved` name. `resolved_paths` contains only files still requiring a manual name (if any hop needs one, that path stays in the set). Name exactly that set, including no rule-proved extra files. A rule mismatch is `tree_differs` naming the file and rule and cannot be overridden by naming it; an evaluator error is `merge_target_unreadable`. `renumber` is unchecked and refused. Automatic regeneration additionally requires two independent absent-output reconstructions of each original tree (previous head, base parent and new head). All candidate-declared regeneration outputs are removed and Git metadata is replaced by an input-only repository before each witness; this excludes HEAD/history recovery and circular output copies. Any reconstruction failure makes that path manual, including partly generated files such as the version-only `plugin.json`. Eligible paths still pass the existing head evaluator. Commands run each tree's own code with the caller's rights and the existing per-run timeout, not in a sandbox. See [the exact rule](region-grades.md#record-an-accepted-nodes-base-refresh). A build without the linked checker requires manual names; a valid older record replays its stored names without evaluating again. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names a missing commit or an evaluator failure: fetch and retry only for a missing commit; for a command error or timeout, address the stated evaluation failure before retrying. Calling again with the same facts is a replay.
+   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. Every conflict file retains its blob in `steps`; an optional `rule` names a mechanical resolution proved by the refreshed node's declaration, every identifiable contributing node's agreeing declaration, and the shared checker. An unidentified path-changing base landing or a missing/disagreeing declaration requires the exact `--resolved` name. `resolved_paths` contains only files still requiring a manual name (if any hop needs one, that path stays in the set). Name exactly that set, including no rule-proved extra files. A rule mismatch is `tree_differs` naming the file and rule and cannot be overridden by naming it; an evaluator error is `merge_target_unreadable`. `renumber` is unchecked and refused. Automatic regeneration additionally requires two independent absent-output reconstructions of each original tree (previous head, base parent and new head). All candidate-declared regeneration outputs are removed and Git metadata is replaced by an input-only repository before each witness; this excludes HEAD/history recovery and circular output copies. Any reconstruction failure makes that path manual, including partly generated files such as the version-only `plugin.json` (the plugin manifest's version line is the exception named above: when no declaration settles it with one agreed rule, the built-in `regenerate:plugin-version` rule proves it from the head's own payload and the file is not in `resolved_paths`). Eligible paths still pass the existing head evaluator. Commands run each tree's own code with the caller's rights and the existing per-run timeout, not in a sandbox. See [the exact rule](region-grades.md#record-an-accepted-nodes-base-refresh). A build without the linked checker requires manual names; a valid older record replays its stored names without evaluating again. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names a missing commit or an evaluator failure: fetch and retry only for a missing commit; for a command error or timeout, address the stated evaluation failure before retrying. Calling again with the same facts is a replay.
 5. **Merge through the lane**, as for any accepted candidate, at the head the record names. `dag-merge-judge` and `dag-merge-request` compare the pull request with the head the acceptance stands on, which after the record is that head, so the refreshed pull request is judged (the jobs on it are read there, `checks_pending` is waited on, the first failure is the `retry_same_sha` above) and gets its turn for that head. Then the lane's own steps, unchanged: acknowledge the grant, `merge-turn-check` on that head, the merge on the forge (`gh pr merge --match-head-commit <head>`), `merge-turn-land`, and the merge marked on that generation's event:
 
        codex-session-relay --state "$RELAY_STATE" assignment-mark --relationship <rel> --mark merged \

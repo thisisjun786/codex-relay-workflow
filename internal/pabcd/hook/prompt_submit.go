@@ -56,12 +56,20 @@ type PromptSubmitPayload struct {
 // PromptSubmitHandle is the leading section of handleUserPromptSubmit (hook.ts:656-754). It returns
 // the context to inject, or "" for every path that injects nothing.
 func PromptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupEnv) string {
-	return promptSubmitHandle(p, platform, env, state.WithSessionLock)
+	return promptSubmitHandleWith(p, platform, env, state.WithSessionLock, nil)
 }
 
 // promptSubmitHandle takes the session lock as an argument so that a test can land a participating
 // writer's update before the handler's own read, the way the oracle's unlocked read would miss it.
 func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error) string {
+	return promptSubmitHandleWith(p, platform, env, lock, nil)
+}
+
+// promptSubmitHandleWith is promptSubmitHandle with the bound D-close's four commit seams, which
+// the oracle's own handleUserPromptSubmit takes as its dcloseCommitHooks argument. They are threaded
+// as a parameter rather than held in a package-level variable, so no package initializer does work
+// and a production run passes nil.
+func promptSubmitHandleWith(p PromptSubmitPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, seams *promptDcloseSeams) string {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -113,7 +121,7 @@ func promptSubmitHandle(p PromptSubmitPayload, platform string, env host.LookupE
 	// edges advance without --attest. The loose detectTrigger heuristic below runs ONLY when this
 	// returns null.
 	if command := fsm.ParseOrchestrateCommand(p.Prompt); command != nil {
-		if out, handled := promptSubmitOrchestrateCommand(p, current, turn, env, lock, command); handled {
+		if out, handled := promptSubmitOrchestrateCommand(p, current, turn, env, lock, command, seams); handled {
 			return out
 		}
 		// not handled => fall through to the loose path (e.g. suppressed interview).
@@ -213,6 +221,12 @@ const (
 	// promptSubmitFailed: the session lock could not be taken, or the write itself failed. The oracle's own
 	// writeState would have thrown out of the handler, which cli.ts catches as silence.
 	promptSubmitFailed
+	// promptSubmitPublished: the state reached its final path and only a step after the rename failed, so
+	// state.WriteState reported a *state.PublishedError. The state is visible to every reader, so the change
+	// counts as written and is not rolled back; only its durability is in question, and the caller that has an
+	// answer to decorate reports the warning the CRW-797 helper builds (the CLI's CRW-744/793/811 rule). The
+	// callers that judge only == promptSubmitFailed treat it as written, as the oracle's unlocked write does.
+	promptSubmitPublished
 )
 
 // promptSubmitWriteState applies change to the session state and writes it back, reporting what it did.
@@ -225,6 +239,19 @@ const (
 // (the judgement handlePostCompact, the memory gate and the idle-edit counter already use). change
 // returns false to leave the state as it is.
 func promptSubmitWriteState(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) promptSubmitWriteOutcome {
+	outcome, _ := promptSubmitWriteStateWarning(lock, cwd, sessionID, change)
+	return outcome
+}
+
+// promptSubmitWriteStateWarning is promptSubmitWriteState with the durability warning of a write that
+// published the state and then failed a step after the rename. A *state.PublishedError means the rename
+// landed and only the directory open or fsync after it failed (state.WriteState), so the change counts as
+// written: the outcome is promptSubmitPublished rather than promptSubmitFailed, and the second answer is
+// the sentence promptDcloseWriteLanded builds for the same case on the bound D-close. A caller that has no
+// answer to decorate calls the one-answer form above; a caller that judges only == promptSubmitFailed
+// (the Stop-budget stamp, the loop-arm branch, prompt_trigger.go's writes) treats a published write as
+// written too, so it answers as the oracle's successful unlocked write does and simply drops the warning.
+func promptSubmitWriteStateWarning(lock func(cwd, sessionID string, fn func() error) error, cwd, sessionID string, change func(*state.State) bool) (promptSubmitWriteOutcome, string) {
 	outcome := promptSubmitSkipped
 	err := lock(cwd, sessionID, func() error {
 		fresh, unreadable := state.ReadStateStrict(cwd, sessionID)
@@ -237,10 +264,14 @@ func promptSubmitWriteState(lock func(cwd, sessionID string, fn func() error) er
 		outcome = promptSubmitWrote
 		return nil
 	})
-	if err != nil {
-		return promptSubmitFailed
+	if err == nil {
+		return outcome, ""
 	}
-	return outcome
+	if state.Published(err) {
+		_, warning := promptDcloseWriteLanded(err)
+		return promptSubmitPublished, warning
+	}
+	return promptSubmitFailed, ""
 }
 
 // promptSubmitRewritable says whether writing next back over the session file would keep every record the file stores: each
@@ -273,6 +304,6 @@ func promptSubmitAppendTurn(turns []string, turn string) []string {
 // forward, status, reset and unbound-D-close commands. It reports whether the command was handled
 // and, when it was, the context to inject. Unhandled means control falls through to the loose path,
 // exactly as the oracle's null return does.
-func promptSubmitOrchestrateCommand(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand) (string, bool) {
-	return promptOrchestrateHandle(p, current, turn, env, lock, command)
+func promptSubmitOrchestrateCommand(p PromptSubmitPayload, current state.State, turn string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, command *fsm.OrchestrateCommand, seams *promptDcloseSeams) (string, bool) {
+	return promptOrchestrateHandle(p, current, turn, env, lock, command, seams)
 }
