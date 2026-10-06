@@ -62,8 +62,12 @@ func invBg(id, status string) string {
 	return `{"id":"` + id + `","cwd":"/ws","command":["x"],"status":"` + status + `"}`
 }
 
+// invDispatch is a dispatch record in the shape internal/role/dispatch_ledger.go writes: one candidate and one attempt
+// whose candidate equals it, claimed and spawnIssued as booleans, and every nullable member written. The preflight now
+// judges the record with dispatchPinnedDecode, which reads the whole record before it decides anything, so a fixture the
+// real reader refuses (an empty candidates array, a null attempt id) is not a record this store can write.
 func invDispatch(id, record, attempt string) string {
-	return `{"version":1,"sessionId":"rec-1","id":"` + id + `","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","candidate":{},"claimed":false,"status":"` + attempt + `"}],"status":"` + record + `"}`
+	return invDispatchFull("rec-1", id, record, attempt)
 }
 
 const invStamp = "2026-01-01T00-00-00-000Z"
@@ -295,7 +299,7 @@ func TestInventoryEvidenceProducerTemps(t *testing.T) {
 		"evidence/s1/" + producer: "half a write",
 		"evidence/s1/notes.tmp":   "ordinary evidence data",
 		"plan/u/draft.tmp":        "ordinary plan data",
-		"sessions/rec-1.json":     "{}",
+		"sessions/rec-1.json":     "{\"phase\":\"P\"}",
 	})
 	p, err := invClassify(t, Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
@@ -338,9 +342,14 @@ func TestInventoryCodexLeafRootOnly(t *testing.T) {
 	}
 }
 
-// invDispatchFull is a dispatch record in the shape internal/role/dispatch_ledger.go writes.
+// invDispatchFull is a dispatch record in the shape internal/role/dispatch_ledger.go writes: one candidate and one
+// attempt whose candidate equals it, claimed and spawnIssued as booleans, and every nullable member written. The
+// preflight now judges the record with dispatchPinnedDecode, which reads the whole record before it decides anything,
+// so a fixture the real reader refuses (an empty candidates array, a null attempt id) is not a record this store can
+// write.
 func invDispatchFull(session, id, record, attempt string) string {
-	return `{"version":1,"sessionId":"` + session + `","id":"` + id + `","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","candidate":{},"claimed":false,"status":"` + attempt + `"}],"status":"` + record + `"}`
+	candidate := `{"model":null,"effort":null}`
+	return `{"version":1,"sessionId":"` + session + `","id":"` + id + `","role":"reviewer","candidates":[` + candidate + `],"attempts":[{"id":"a-1","candidate":` + candidate + `,"claimed":false,"agentId":null,"observedModel":null,"code":null,"taskFailure":null,"status":"` + attempt + `","reconciliation":null,"spawnIssued":false,"toolUseId":null}],"status":"` + record + `"}`
 }
 
 // TestInventoryDispatchShape proves a dispatch record is judged by the store shape: a sparse, path-mismatched or unknown-status
@@ -366,7 +375,7 @@ func TestInventoryDispatchShape(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ws, src, dst := invRowProject(t)
-			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}", "dispatches/s1/d-1.json": c.record})
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{\"phase\":\"P\"}", "dispatches/s1/d-1.json": c.record})
 			if c.want != "" {
 				invRowRefusal(t, ws, src, dst, c.want)
 				return
