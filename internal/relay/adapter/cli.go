@@ -69,12 +69,19 @@ func (f hostFactory) observeTurn(ctx context.Context, state, socket, thread, tur
 }
 
 // confirmTurn answers emit's existence check without --socket: it reads the turn read-only through
-// the host the store recorded, on the socket the caller resolved and the state directory it named,
-// so it selects no store of its own. confirmed is false whenever the read could not be made (no
-// connection, a failed call, or HostUnavailable from a listing the page budget ran out on), which
-// leaves emit to stage the receipt as before (CRW-675).
+// the host the store recorded, on the socket the caller resolved, and selects no store of its own.
+// Like observeTurn it takes the caller's state directory without reading it, and lets the adapter
+// place the operations ledger where every other host path places it, the directory that serves the
+// socket (ResolveStateDir), so a --state directory that differs from it gains no second ledger.
+// confirmed is false whenever the read could not be made (no connection, a failed call, or
+// HostUnavailable from a listing the page budget ran out on), which leaves emit to stage the receipt
+// as before (CRW-675).
 func (f hostFactory) confirmTurn(ctx context.Context, state, socket, thread, turn string) (found, confirmed bool, err error) {
-	a, err := f.open(socket, state, Options{})
+	selection, err := store.ResolveStateDir("", socket)
+	if err != nil {
+		return false, false, err
+	}
+	a, err := f.open(socket, selection.Path, Options{})
 	if err != nil {
 		return false, false, err
 	}

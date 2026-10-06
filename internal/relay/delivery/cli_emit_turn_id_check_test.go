@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,6 +120,15 @@ func TestCRW675_emit_refuses_a_turn_the_recorded_host_does_not_hold(t *testing.T
 	}
 	if after := crw675Wrote(t, side); after != before {
 		t.Fatalf("a refused emit wrote %s, want %s", after, before)
+	}
+	// The existence check reached the host, and the ledger it opens goes to the directory that
+	// serves the socket, as every other host path places it: the --state directory gains none.
+	entries, err := os.ReadDir(side.state)
+	mustDo(t, err)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "operations-") {
+			t.Fatalf("the existence check left %s in the --state directory", entry.Name())
+		}
 	}
 }
 
