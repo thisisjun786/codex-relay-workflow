@@ -159,6 +159,31 @@ func TestImproveParseDraftWithoutAFingerprintIsUnreadable(t *testing.T) {
 	}
 }
 
+// TestImproveParseDraftFileThatIsNotAnObjectIsRefused covers the reader's fail-closed edge: a
+// .json file in the drafts directory that is not an object is neither a draft nor a document of
+// another schema, so the source is unreadable rather than reported as a complete bundle that
+// quietly left the file out.
+func TestImproveParseDraftFileThatIsNotAnObjectIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+	dir := improveParseDraftsDir(t, s)
+	improveParseWriteDraft(t, dir, improveParseDraft("aaaa1111bbbb2222", "project-a", "a real draft",
+		[]auditDraftSeen{{At: "2026-10-06T01:00:00Z"}}))
+	improveTestWrite(t, filepath.Join(dir, "torn.json"), "[\"not an object\"]\n")
+	out := improveParseConfig(t, s, dir)
+
+	code, stdout, stderr := improveTestRun(t, s, "--out", out)
+	if code != 1 || !strings.Contains(stderr, improveReasonSourceUnreadable) {
+		t.Fatalf("a candidate that is not an object: exit %d, stderr %q, want exit 1 naming %s", code, stderr, improveReasonSourceUnreadable)
+	}
+	if stdout != "" {
+		t.Errorf("a refused run wrote to stdout: %q", stdout)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("a refused run left a bundle behind (stat err %v)", err)
+	}
+}
+
 // TestImproveParseBlockedReasonComesFromTheDecisionReply covers C2: a child receipt carries no
 // reason field, so the reason of a blockage is the note of the decision reply that answered it,
 // and a blockage no decision answered keeps the bare outcome name.

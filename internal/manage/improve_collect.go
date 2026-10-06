@@ -887,12 +887,17 @@ func improveReadInterventions(path string, acc *improveAccumulator) (int, error)
 }
 
 // improveReadDrafts reads the audit drafts a management session keeps: one crw-issue-draft/1
-// document per draft, under a directory or as a single file. A candidate that is not a draft
-// document — the directory's index.json, or any file whose schema is not crw-issue-draft/1 — is
-// skipped and not counted, so the listing is never read as a draft of its own. Each draft becomes
-// one record keyed by its fingerprint, whose first and last sighting are the earliest and latest
-// seen[].at. A document whose schema is right but whose fingerprint is empty is refused: a record
-// keyed on nothing would merge two different drafts.
+// document per draft, under a directory or as a single file. A candidate that decodes to an object
+// of another schema — the directory's index.json, or any other document — is skipped and not
+// counted, so the listing is never read as a draft of its own. Each draft becomes one record keyed
+// by its fingerprint, whose first and last sighting are the earliest and latest seen[].at. A
+// document whose schema is right but whose fingerprint is empty is refused, because a record keyed
+// on nothing would merge two different drafts.
+//
+// A candidate that is not a JSON object at all is refused rather than skipped: it is not a
+// document of another schema, so reading it as nothing would report a complete bundle over a file
+// the drafts directory could not be read from. That is the rule improveReadJSONLines already
+// applies to a null line, and it is what this reader did before the schema gate existed.
 func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
 	files, err := improveParseDraftFiles(path)
 	if err != nil {
@@ -904,7 +909,11 @@ func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if improveParseDraftSchema(data) != auditDraftSchema {
+		schema, err := improveParseDraftSchema(file, data)
+		if err != nil {
+			return 0, err
+		}
+		if schema != auditDraftSchema {
 			continue
 		}
 		// auditDraftLoad (CRW-695) is the writer's own reader: it refuses an empty or mismatched
@@ -946,14 +955,15 @@ func improveParseDraftFiles(path string) ([]string, error) {
 	return files, nil
 }
 
-// improveParseDraftSchema is the schema a candidate file declares, or "" when it is not a JSON
-// object carrying one.
-func improveParseDraftSchema(data []byte) string {
+// improveParseDraftSchema is the schema a candidate file declares. A file that is not a JSON
+// object carries no schema and is refused, because the drafts directory could not be read as what
+// it holds rather than as a document of another schema.
+func improveParseDraftSchema(path string, data []byte) (string, error) {
 	object := improveParseJSONObject(string(data))
 	if object == nil {
-		return ""
+		return "", fmt.Errorf("%s: not a JSON object", path)
 	}
-	return improveStringField(object, "schema")
+	return improveStringField(object, "schema"), nil
 }
 
 // improveParseSeenBounds is the earliest and latest sighting of a draft's seen list, compared as
