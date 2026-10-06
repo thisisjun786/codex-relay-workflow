@@ -390,16 +390,18 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 				// §40 Z2: finish the PABCD close row inside THIS lock. all-done mints no marker, so
 				// if the row were left to a second lock and that lock failed, the retry would hit
 				// `IDLE -> D` with nothing to recover from and the row would be lost for good.
-				have, err := orchestrateDcloseHasPabcdCloseRow(cwd, sessionID, cur.CheckEpoch, nil)
-				if err != nil {
-					return orchestrateDcloseLockAnswer{}, err
-				}
-				if cur.Phase == state.PhaseC && !have {
-					if err := orchestrateDcloseAppendPabcdRow(cwd, cur, cur.CheckEpoch, nil, att); err != nil {
+				if cur.Phase == state.PhaseC {
+					have, err := orchestrateDcloseHasPabcdCloseRow(cwd, sessionID, cur.CheckEpoch, nil)
+					if err != nil {
 						return orchestrateDcloseLockAnswer{}, err
 					}
-					if err := orchestrateDcloseRunHook(seam.afterPabcdLedgerAppend); err != nil {
-						return orchestrateDcloseLockAnswer{}, err
+					if !have {
+						if err := orchestrateDcloseAppendPabcdRow(cwd, cur, cur.CheckEpoch, nil, att); err != nil {
+							return orchestrateDcloseLockAnswer{}, err
+						}
+						if err := orchestrateDcloseRunHook(seam.afterPabcdLedgerAppend); err != nil {
+							return orchestrateDcloseLockAnswer{}, err
+						}
 					}
 				}
 				return orchestrateDcloseLockAnswer{Code: 0, AllDone: true}, nil
@@ -535,12 +537,13 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 	}
 	if cur.Phase != state.PhaseIdle {
 		next := fsm.ClearedIdle(cur)
-		if allDoneClose {
-			next.CheckEpoch, next.DcloseRecovery = nil, nil
-		} else {
-			next.CheckEpoch, next.DcloseRecovery = closeCheckEpoch, recovery
-		}
 		next.StopBlockPhase, next.StopBlockCount = nil, 0
+		// clearedIdle already nulled both; only a live marker puts them back, so the state keeps the
+		// epoch this close ran under until the finalize clears it (oracle :1023-1027).
+		if !allDoneClose && recovery != nil {
+			epoch := recovery.CheckEpoch
+			next.CheckEpoch, next.DcloseRecovery = &epoch, recovery
+		}
 		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
 		if err != nil {
 			return CliResult{}, err
