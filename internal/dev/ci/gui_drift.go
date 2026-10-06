@@ -59,7 +59,7 @@ func GuiDrift(args []string, stdout, stderr io.Writer) int {
 		for _, problem := range problems {
 			fmt.Fprintln(stderr, "  "+problem)
 		}
-		fmt.Fprintf(stderr, "\nRebuild with `make gui` and commit the result. Nothing was modified.\n")
+		fmt.Fprintf(stderr, "\nRun `make gui-assets` to rebuild %s and commit the result. Nothing was modified.\n", guiAssetsDir)
 		return 1
 	}
 	fmt.Fprintf(stdout, "The built screens match %s at %s, byte for byte.\n", guiAssetsDir, *revision)
@@ -79,6 +79,12 @@ type guiDriftEntry struct {
 // which is never a pass: an unreadable repository, an unresolvable revision, a tree that is not a
 // blob, a built directory that does not exist, one that holds no index.html, and one that is the
 // committed tree itself are all refused.
+//
+// The working tree at internal/gui/assets is compared too: `//go:embed all:assets` compiles that
+// directory, not the revision, so a file a local edit left there would be embedded while the
+// built and committed trees still agreed. It is compared with HEAD, whatever revision the build
+// side was judged against, because HEAD is what this checkout would build. Every difference - an
+// extra file, a modification, a deletion - is reported with the "working tree" marker.
 func guiDriftProblems(root, revision, built string) ([]string, error) {
 	committed, err := guiDriftCommitted(root, revision)
 	if err != nil {
@@ -93,6 +99,11 @@ func guiDriftProblems(root, revision, built string) ([]string, error) {
 		return nil, err
 	}
 	var problems []string
+	workingProblems, err := guiDriftWorkingTree(root)
+	if err != nil {
+		return nil, err
+	}
+	problems = append(problems, workingProblems...)
 	for path, entry := range committed {
 		data, ok := fresh[path]
 		if !ok {
@@ -116,6 +127,66 @@ func guiDriftProblems(root, revision, built string) ([]string, error) {
 		}
 	}
 	sort.Strings(problems)
+	return problems, nil
+}
+
+// guiDriftWorkingTree compares the working tree at internal/gui/assets with HEAD, which is what a
+// local `go build` would embed. The directory must exist and hold exactly HEAD's paths with
+// exactly HEAD's bytes: an untracked file, a modification and a deletion are each reported. A
+// checkout that did not write the directory at all is an error rather than a pass, so the check
+// cannot be satisfied by an empty tree.
+func guiDriftWorkingTree(root string) ([]string, error) {
+	committed, err := guiDriftCommitted(root, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(root, filepath.FromSlash(guiAssetsDir))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("the working tree has no %s directory", guiAssetsDir)
+	}
+	working := map[string][]byte{}
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		working[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	var problems []string
+	for rel, entry := range committed {
+		data, ok := working[rel]
+		if !ok {
+			problems = append(problems, rel+": working tree has no such file (a local build would embed the committed bytes, not this tree)")
+			continue
+		}
+		committedBytes, err := guiDriftBlob(root, entry.oid)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(committedBytes, data) {
+			problems = append(problems, fmt.Sprintf("%s: working tree differs from %s (committed %d bytes, working tree %d bytes)",
+				rel, entry.path, len(committedBytes), len(data)))
+		}
+	}
+	for rel := range working {
+		if _, ok := committed[rel]; !ok {
+			problems = append(problems, rel+": in the working tree but not committed (a local build would embed a file the commit does not hold)")
+		}
+	}
 	return problems, nil
 }
 

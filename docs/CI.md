@@ -189,18 +189,23 @@ When the answer is `true` the job installs `actions/setup-go` (the drift check i
 subcommand) and `actions/setup-node` pinned by commit at Node 24.20.0, runs `npm ci` from the
 committed lockfile, `npm test`, a build into `$RUNNER_TEMP/gui-built`, and then
 `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"`. When it is `false` the job ends
-successfully without installing Node. `make gui` runs the same three commands locally.
+successfully without installing Node. `make gui` runs the same three commands locally, and
+`make gui-assets` regenerates the committed tree after a `web/` change: it builds into
+`internal/gui/assets` (vite's configured `outDir`), so the result is what a contributor commits.
 
-The drift check reads the committed tree from git (`git ls-tree -r -l` and `git cat-file blob` at
-the named revision, `HEAD` by default) and never from the working tree: `//go:embed all:assets`
-compiles whatever the working tree holds, so a file that is present but untracked is exactly the
-drift to catch. The fresh side is the directory `--built` names, which is required and must hold
-an `index.html`; naming the committed tree itself, a directory that was never built, or a tree
-that cannot be read is refused rather than passed, so a run without a build cannot compare the
-commit against itself. The two trees are compared as sorted path-and-bytes pairs: a built file the
-commit does not hold, a committed file the build does not produce, a renamed asset (which is both)
-and a byte difference are each refused and named, and a committed asset over 2 MiB is refused
-before the comparison. `internal/dev/ci/gui_drift_test.go` pins each rejection and the pass;
+The drift check compares three trees. The committed tree comes from git (`git ls-tree -r -l` and
+`git cat-file blob` at the named revision, `HEAD` by default) and never from the working tree. The
+fresh side is the directory `--built` names, which is required and must hold an `index.html`;
+naming the committed tree itself, a directory that was never built, or a tree that cannot be read
+is refused rather than passed, so a run without a build cannot compare the commit against itself.
+The third is the working tree at `internal/gui/assets`, which is what `//go:embed all:assets`
+actually compiles: an untracked file, a modification or a deletion there is refused even when the
+built and committed trees agree, so a local edit cannot be approved and then embedded. The trees
+are compared as sorted path-and-bytes pairs: a built file the commit does not hold, a committed
+file the build does not produce, a renamed asset (which is both) and a byte difference are each
+refused and named, and a committed asset over 2 MiB is refused before the comparison. The refusal
+names `make gui-assets` as the regeneration command.
+`internal/dev/ci/gui_drift_test.go` pins each rejection and the pass;
 `internal/dev/ci/gui_paths_test.go` pins the decision.
 
 The job never reads `CRW_CI_MODE`, so [light mode](#the-temporary-light-mode) cannot skip the

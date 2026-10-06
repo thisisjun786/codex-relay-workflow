@@ -5,6 +5,7 @@ package ci
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -218,6 +219,64 @@ func TestGUIDriftCommandReportsDriftAndPass(t *testing.T) {
 	}
 	if !strings.Contains(got.stderr, "index-DDDD.js") {
 		t.Errorf("the refusal does not name the differing file: %q", got.stderr)
+	}
+}
+
+// The working tree at internal/gui/assets is what //go:embed compiles, so a stray file, a
+// modification or a deletion there is drift even when the built and committed trees agree. Without
+// this, a local edit to the embedded tree would be approved and then compiled into the binary.
+func TestGUIDriftRejectsADirtyWorkingTree(t *testing.T) {
+	for _, row := range []struct {
+		name   string
+		mutate func(t *testing.T, r *fixtureRepo)
+		want   string
+	}{
+		{"an extra untracked file", func(t *testing.T, r *fixtureRepo) {
+			r.write("internal/gui/assets/assets/index-STRAY.js", "console.log('stray')\n")
+		}, "index-STRAY.js"},
+		{"a modified file", func(t *testing.T, r *fixtureRepo) {
+			r.write("internal/gui/assets/assets/index-AAAA.js", "console.log(2)\n")
+		}, "index-AAAA.js"},
+		{"a deleted file", func(t *testing.T, r *fixtureRepo) {
+			if err := os.Remove(filepath.Join(r.root, "internal/gui/assets/assets/index-AAAA.js")); err != nil {
+				t.Fatal(err)
+			}
+		}, "index-AAAA.js"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			r := guiDriftRepo(t)
+			built := guiDriftBuild(t, r)
+			row.mutate(t, r)
+			problems, err := guiDriftRun(t, r, built)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(problems) == 0 {
+				t.Fatalf("%s in the embedded working tree passed", row.name)
+			}
+			guiDriftWants(t, problems, row.want, "working tree")
+		})
+	}
+}
+
+// The refusal names the command that regenerates the committed tree, and that command exists.
+func TestGUIDriftNamesTheRegenerationCommand(t *testing.T) {
+	r := guiDriftRepo(t)
+	built := guiDriftBuild(t, r)
+	guiDriftBuildWrite(t, built, "assets/index-EEEE.js", "console.log(1)\n")
+	got := goCheck(t, r.root, nil, "gui-drift", "--built", built)
+	if got.code == 0 {
+		t.Fatal("drift passed")
+	}
+	if !strings.Contains(got.stderr, "make gui-assets") {
+		t.Errorf("the refusal does not name the regeneration command: %q", got.stderr)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot(), "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^gui-assets:`).MatchString(string(data)) {
+		t.Error("the Makefile has no gui-assets target, so the named command does not exist")
 	}
 }
 
