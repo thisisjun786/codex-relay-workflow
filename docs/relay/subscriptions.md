@@ -178,16 +178,19 @@ business attempt inside the existing successor chain: a replay reconstructs the 
 the retained failure, so the journal row an earlier lowering wrote is what stops the next one. An
 `active` child, one whose history shows a foreign turn and one whose preceding failure is not that
 refusal are never archived and hold as before.
-An archive error answers incomplete `recipient_not_idle` with no unarchive and no send; an
-unarchive that fails twice answers incomplete `lifecycle_unknown`, naming the archived thread for
-an operator in the journal; a child still loaded afterwards answers `recipient_not_idle`. Every
-unload writes one `managed_resend_unloaded` journal row naming the thread, the archive and
-unarchive results and the load state observed afterwards; once the archive has succeeded the row
-is written with a context that survives the caller's cancellation, because an archived child with
-no row would leave an operator nothing to read. Empty, missing-rollout or unreadable
-history stays held as `lifecycle_unknown`; another turn refuses as
-`business_identity_unobserved`. The final business guard repeats the standby-only check after
-the recorded-profile resume.
+An archive error answers incomplete `recipient_not_idle` with no unarchive and no send, unless the
+host confirms the archive applied after all: the gate asks the same complete archived scan the
+resend guard uses, and an answer of `recipient_archived` continues exactly as after a successful
+archive, recording `reply_lost` as the archive result in the row; any other answer, and a failed
+check, keeps that hold. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
+naming the archived thread for an operator in the journal; a child still loaded afterwards answers
+`recipient_not_idle`. Every unload writes one `managed_resend_unloaded` journal row naming the
+thread, the archive and unarchive results and the load state observed afterwards; once the archive
+has succeeded the row is written with a context that survives the caller's cancellation, because
+an archived child with no row would leave an operator nothing to read. Empty, missing-rollout or
+unreadable history stays held as `lifecycle_unknown`; another turn refuses as
+`business_identity_unobserved`. The final business guard repeats the standby-only check after the
+recorded-profile resume.
 The recovery guard retains the complete archived scan and positive thread/goal reads,
 and skips the unnecessary unarchived listing, so its history check fits the existing
 ten-request deadline budget (at most seven calls).
