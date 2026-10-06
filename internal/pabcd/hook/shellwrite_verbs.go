@@ -18,13 +18,14 @@ import (
 
 // shellVerbDestinations is the verb step of ShellWriteDestinations: the oracle's destinations, then the others. The command
 // strings a shell -c or eval runs are read again within a budget of 32 times the segment plus 64 KiB, so the work stays linear.
-func shellVerbDestinations(segment string) []string {
+// depth is the here-document nesting the caller is already inside.
+func shellVerbDestinations(segment string, depth int) []string {
 	budget := 32*len(segment) + 65536
-	return shellVerbSegment(segment, &budget)
+	return shellVerbSegment(segment, &budget, depth)
 }
 
-func shellVerbSegment(segment string, budget *int) []string {
-	return shellVerbAppendNew(shellVerbOracle(shellTokenize(segment)), shellVerbHardened(segment, budget))
+func shellVerbSegment(segment string, budget *int, depth int) []string {
+	return shellVerbAppendNew(shellVerbOracle(shellTokenize(segment)), shellVerbHardened(segment, budget, depth))
 }
 
 // shellVerbAppendNew appends the destinations of more that out does not hold, keeping out's own order and duplicates.
@@ -42,9 +43,15 @@ func shellVerbAppendNew(out, more []string) []string {
 	return out
 }
 
-// shellVerbNested is ShellWriteDestinations for the command string a shell -c or eval runs, one level deeper: the same
-// segments, redirects and verbs. With the budget spent it reads redirects and the oracle's verbs only.
+// shellVerbNested is the top-level entry to the nested reader, the form the recorded budget cases call.
 func shellVerbNested(command string, budget *int) []string {
+	return shellVerbNestedIn(command, budget, 0)
+}
+
+// shellVerbNestedIn is ShellWriteDestinations for the command string a shell -c or eval runs, one level deeper: the same
+// segments, redirects and verbs. With the budget spent it reads redirects and the oracle's verbs only. depth is the
+// caller's here-document nesting, carried through so the depth limit holds across alternating -c and heredoc levels.
+func shellVerbNestedIn(command string, budget *int, depth int) []string {
 	*budget -= len(command)
 	out := []string{}
 	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
@@ -52,18 +59,18 @@ func shellVerbNested(command string, budget *int) []string {
 		if *budget < 0 {
 			out = append(out, shellVerbOracle(shellTokenize(shellString(segment)))...)
 		} else {
-			out = append(out, shellVerbSegment(shellString(segment), budget)...)
+			out = append(out, shellVerbSegment(shellString(segment), budget, depth)...)
 		}
 	}
-	return shellVerbAppendNew(shellVerbAppendNew(out, literalRedirectDestinations(command)), shellWriteHeredocDestinations(command, 1))
+	return shellVerbAppendNew(shellVerbAppendNew(out, literalRedirectDestinations(command)), shellWriteHeredocDestinations(command, depth))
 }
 
 // shellVerbNestedBoth reads a command string as the token holds it and again with its shell escapes removed (the token does not
 // say which quotes held it, and each reading can hide what the other shows).
-func shellVerbNestedBoth(command string, budget *int) []string {
-	out := shellVerbNested(command, budget)
+func shellVerbNestedBoth(command string, budget *int, depth int) []string {
+	out := shellVerbNestedIn(command, budget, depth)
 	if un := shellVerbUnescape(command); un != command {
-		out = shellVerbAppendNew(out, shellVerbNested(un, budget))
+		out = shellVerbAppendNew(out, shellVerbNestedIn(un, budget, depth))
 	}
 	return out
 }
@@ -74,11 +81,12 @@ func shellVerbOracle(tokens []string) []string {
 	for len(rest) > 0 && rest[0] == "&" {
 		rest = rest[1:]
 	}
-	return shellVerbRun(rest, false, nil)
+	return shellVerbRun(rest, false, nil, 0)
 }
 
-// shellVerbRun reads the destinations of the command rest; hard selects the additions to the oracle's reading.
-func shellVerbRun(rest []string, hard bool, budget *int) []string {
+// shellVerbRun reads the destinations of the command rest; hard selects the additions to the oracle's reading. depth is
+// the here-document nesting the caller is inside, carried into a nested shell -c or eval program.
+func shellVerbRun(rest []string, hard bool, budget *int, depth int) []string {
 	if len(rest) == 0 || rest[0] == "" {
 		return []string{}
 	}
@@ -101,7 +109,7 @@ func shellVerbRun(rest []string, hard bool, budget *int) []string {
 		return shellVerbPythonNode(verb, args, hard)
 	case hard && shellVerbIsShell(verb):
 		if script, ok := shellVerbShellScript(args); ok {
-			return shellVerbNestedBoth(script, budget)
+			return shellVerbNestedBoth(script, budget, depth+1)
 		}
 	case hard && verb == "eval":
 		for { // eval builtin eval X runs X: a chain is peeled here, not read level by level
@@ -111,7 +119,7 @@ func shellVerbRun(rest []string, hard bool, budget *int) []string {
 			}
 			args = next[1:]
 		}
-		return shellVerbNestedBoth(strings.Join(args, " "), budget)
+		return shellVerbNestedBoth(strings.Join(args, " "), budget, depth+1)
 	}
 	return []string{}
 }
@@ -404,10 +412,10 @@ func shellVerbUnescape(s string) string {
 // shellVerbHardened reads each command of the segment again the way the shell does: the segment is cut at newlines and at a
 // lone & outside quotes, a leading keyword, brace, NAME=value word or wrapper command (with its options) is skipped, and the
 // verb is read with the getopt-style readers below. Its destinations are appended after the oracle's.
-func shellVerbHardened(segment string, budget *int) []string {
+func shellVerbHardened(segment string, budget *int, depth int) []string {
 	out := []string{}
 	for _, command := range shellVerbSubsegments(segment) {
-		out = append(out, shellVerbRun(shellVerbSkipWrappers(shellTokenize(command)), true, budget)...)
+		out = append(out, shellVerbRun(shellVerbSkipWrappers(shellTokenize(command)), true, budget, depth)...)
 	}
 	return out
 }
@@ -1851,9 +1859,10 @@ const (
 // shellWriteHeredocKindOf reports the interpreter a command runs and whether it reads its program from standard input,
 // so a here-document attached to it is program text rather than data. It reads the command words the way the verb step
 // does (through shellVerbSkipWrappers and shellVerbName): python/python3/py/versioned read stdin when no script operand
-// and no -c, --command or -m is present, or the operand is -; node/nodejs when no script operand and no -e, --eval, -p
-// or --print is present, or the operand is -; sh, bash, dash, ash, zsh or ksh when no -c and no script operand is
-// present, or -s forces stdin. Every other command reads no program from its standard input.
+// and no -c, --command or -m is present, or the operand is -, or -i forces interactive input after an initial program;
+// node/nodejs when no script operand and no -e, --eval, -p or --print is present, or the operand is -; sh, bash, dash,
+// ash, zsh or ksh when no -c and no script operand is present, or -s forces stdin. Every other command reads no program
+// from its standard input.
 func shellWriteHeredocKindOf(words []string) (shellWriteHeredocKind, bool) {
 	if len(words) == 0 {
 		return 0, false
@@ -1887,34 +1896,63 @@ func shellWriteHeredocIsShell(verb string) bool {
 }
 
 // shellWriteHeredocPythonStdin reports whether the python command words read their program from standard input. A -c
-// (or a bundle carrying c) or -m gives the program inline or from a module, so a heredoc then feeds the program's own
-// stdin, which this issue leaves unread; the first non-option word is a script operand, and - alone is stdin.
+// (or a bundle carrying c) or -m gives the program inline or from a module, and -i (PYTHONINSPECT) then reads further
+// statements from standard input even without a terminal, so the body is still executable input; the first non-option
+// word is a script operand, and - alone (or a script path that resolves to standard input, /dev/stdin and the fd
+// aliases) is stdin. A script operand that is not stdin makes the body data.
 func shellWriteHeredocPythonStdin(args []string) bool {
+	interactive, inline, sawScript := false, false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "-":
 			return true
 		case a == "--":
-			return i+1 >= len(args)
+			for _, later := range args[i+1:] {
+				if shellWriteHeredocStdinPath(later) {
+					return true
+				}
+				sawScript = true
+			}
+			i = len(args)
 		case a == "-c" || a == "--command" || a == "-m" || strings.HasPrefix(a, "-c") && len(a) > 2 || strings.HasPrefix(a, "-m") && len(a) > 2:
-			return false
+			inline = true
 		case a == "-W" || a == "-X" || a == "--check-hash-based-pycs":
 			i++ // takes the next word as its value
 		case len(a) > 1 && a[0] == '-':
 			if shellVerbBundleHas(a, 'c', false) {
-				return false
+				inline = true
+			}
+			if shellVerbBundleHas(a, 'i', false) {
+				interactive = true
 			}
 		default:
-			return false // a script operand
+			if shellWriteHeredocStdinPath(a) {
+				return true
+			}
+			sawScript = true
 		}
 	}
-	return true
+	// -i inspects after the initial program even when stdin is not a terminal, so the body is read as statements.
+	if interactive {
+		return true
+	}
+	return !inline && !sawScript
+}
+
+// shellWriteHeredocStdinPath reports whether a script operand names standard input: - and the /dev/stdin and
+// /dev/fd/0, /proc/self/fd/0 aliases the platforms this runtime runs on expose.
+func shellWriteHeredocStdinPath(p string) bool {
+	switch p {
+	case "-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0":
+		return true
+	}
+	return false
 }
 
 // shellWriteHeredocNodeStdin reports whether the node command words read their program from standard input. -e/--eval,
 // -p/--print and a bundled -pe give the program inline; the first non-option word is a script operand, and - alone is
-// stdin.
+// stdin. -C/--conditions, -r/--require and the loader options take the next word as their value.
 func shellWriteHeredocNodeStdin(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -1922,17 +1960,29 @@ func shellWriteHeredocNodeStdin(args []string) bool {
 		case a == "-":
 			return true
 		case a == "--":
-			return i+1 >= len(args)
+			for _, later := range args[i+1:] {
+				if shellWriteHeredocStdinPath(later) {
+					return true
+				}
+			}
+			return false
 		case a == "-e" || a == "--eval" || a == "-p" || a == "--print" || a == "-pe",
 			strings.HasPrefix(a, "--eval=") || strings.HasPrefix(a, "--print="),
 			strings.HasPrefix(a, "-e") && len(a) > 2 && !strings.HasPrefix(a, "--"),
 			strings.HasPrefix(a, "-p") && len(a) > 2 && !strings.HasPrefix(a, "--"):
 			return false
-		case a == "-r" || a == "--require" || a == "--loader" || a == "--experimental-loader" || a == "--input-type":
+		case a == "-C" || a == "--conditions" || a == "-r" || a == "--require" || a == "--loader" || a == "--experimental-loader" || a == "--input-type" || a == "--import":
 			i++ // takes the next word as its value
+		case strings.HasPrefix(a, "--conditions=") || strings.HasPrefix(a, "--require=") || strings.HasPrefix(a, "--loader=") || strings.HasPrefix(a, "--experimental-loader=") || strings.HasPrefix(a, "--input-type="):
+			// the value is attached
+		case strings.HasPrefix(a, "-C") && len(a) > 2 && !strings.HasPrefix(a, "--"):
+			// the value is attached
 		case len(a) > 1 && a[0] == '-':
 			// another option; the program is still read from standard input
 		default:
+			if shellWriteHeredocStdinPath(a) {
+				return true
+			}
 			return false // a script operand
 		}
 	}
@@ -1940,30 +1990,53 @@ func shellWriteHeredocNodeStdin(args []string) bool {
 }
 
 // shellWriteHeredocShellStdin reports whether a shell reads its program from standard input. -c (a bundle carrying c)
-// gives the program inline, so it wins; -s forces standard input; otherwise a script operand is the program, and its
-// absence means the shell reads standard input.
+// gives the program inline, so it wins; -s forces standard input; -n and -o noexec parse without running anything, so
+// the body is not a program that writes and is not read (their +n and +o noexec forms turn it off); otherwise a script
+// operand is the program, and its absence means the shell reads standard input.
 func shellWriteHeredocShellStdin(args []string) bool {
-	sawC, sawS, sawScript := false, false, false
+	sawC, sawS, sawScript, noExec := false, false, false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--":
-			sawScript = i+1 < len(args)
+			for _, later := range args[i+1:] {
+				if shellWriteHeredocStdinPath(later) {
+					return true
+				}
+				sawScript = true
+			}
 			i = len(args)
-		case a == "-o" || a == "+o" || a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
+		case a == "-o" || a == "+o":
+			if i+1 < len(args) {
+				if args[i+1] == "noexec" {
+					noExec = a[0] == '-'
+				}
+				i++
+			}
+		case a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
 			i++ // takes the next word as its value
 		case len(a) > 1 && a[0] == '-' && a[1] == '-':
 			// a long option; no program is named
 		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
-			if a[0] == '-' && strings.ContainsRune(a[1:], 'c') {
+			on := a[0] == '-'
+			if on && strings.ContainsRune(a[1:], 'c') {
 				sawC = true
 			}
-			if a[0] == '-' && strings.ContainsRune(a[1:], 's') {
+			if on && strings.ContainsRune(a[1:], 's') {
 				sawS = true
 			}
+			if strings.ContainsRune(a[1:], 'n') {
+				noExec = on
+			}
 		default:
+			if shellWriteHeredocStdinPath(a) {
+				return true
+			}
 			sawScript = true
 		}
+	}
+	if noExec {
+		return false // the shell parses without running, so the body executes nothing
 	}
 	if sawC {
 		return false
@@ -1992,10 +2065,11 @@ func shellWriteHeredocBodyExpands(body []uint16) bool {
 // shellWriteHeredocProgramWrites reads one interpreter here-document as program text and returns the destinations it
 // names plus the what of a program the reader cannot finish. A quoted delimiter makes the body literal; an unquoted one
 // lets the outer shell expand it, so a body holding an expansion is unreadable, and one without is read like the quoted
-// case. Past shellWriteHeredocMaxDepth the program is not read. Python goes through the CRW-741/CRW-754 walk, node
-// through the Node reader, and a shell body through ShellWriteDestinations one level deeper.
-func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocKind, depth int) ([]string, string) {
-	if depth > shellWriteHeredocMaxDepth {
+// case. bodyDepth is the level the body's own program sits at (the top command is 1); past shellWriteHeredocMaxDepth the
+// program is not read. Python goes through the CRW-741/CRW-754 walk, node through the Node reader, and a shell body
+// through ShellWriteDestinations at that level.
+func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocKind, bodyDepth int) ([]string, string) {
+	if bodyDepth > shellWriteHeredocMaxDepth {
 		return nil, shellWriteHeredocUnreadableWhat
 	}
 	if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
@@ -2009,7 +2083,7 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 	case shellWriteHeredocNode:
 		return shellVerbScriptWritesIn(body, true, false), ""
 	case shellWriteHeredocShell:
-		return shellWriteDestinationsIn(body, depth+1), ""
+		return shellWriteDestinationsIn(body, bodyDepth), ""
 	}
 	return nil, ""
 }
@@ -2020,11 +2094,11 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 func shellWriteHeredocDestinations(command string, depth int) []string {
 	out := []string{}
 	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
-		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellTokenize(shellString(h.command))))
+		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
 		if !ok {
 			continue
 		}
-		dests, _ := shellWriteHeredocProgramWrites(h, kind, depth)
+		dests, _ := shellWriteHeredocProgramWrites(h, kind, depth+1)
 		out = append(out, dests...)
 	}
 	return out
@@ -2037,18 +2111,21 @@ func shellWriteHeredocUnreadable(command string) (string, bool) {
 	return shellWriteHeredocUnreadableIn(command, 0)
 }
 
-// shellWriteHeredocUnreadableIn scans one command at one nesting depth, the way shellWriteHeredocDestinations reads it.
+// shellWriteHeredocUnreadableIn scans one command at one nesting depth, the way shellWriteHeredocDestinations reads it:
+// its here-documents, and again within the command string a nested shell -c or eval runs (a quoted token, so the
+// here-document inside it is not visible from the outer command). A shell body is scanned one level deeper, so the
+// depth limit holds across alternating -c and here-document levels (CRW-765 review).
 func shellWriteHeredocUnreadableIn(command string, depth int) (string, bool) {
 	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
-		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellTokenize(shellString(h.command))))
+		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
 		if !ok {
 			continue
 		}
 		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
 			return shellWriteHeredocUnreadableWhat, true
 		}
-		// A here-document nested past the reader's depth limit is a program it cannot finish.
-		if depth > shellWriteHeredocMaxDepth {
+		// A program nested past the depth limit holds a write the reader will not follow, so it fails closed.
+		if depth+1 > shellWriteHeredocMaxDepth {
 			return shellWriteHeredocUnreadableWhat, true
 		}
 		switch kind {
@@ -2060,6 +2137,22 @@ func shellWriteHeredocUnreadableIn(command string, depth int) (string, bool) {
 			if what, bad := shellWriteHeredocUnreadableIn(shellString(h.body), depth+1); bad {
 				return what, true
 			}
+		}
+	}
+	return shellWriteHeredocUnreadableNested(command, depth)
+}
+
+// shellWriteHeredocUnreadableNested reads each command of the command string the way shellVerbRun does and scans the
+// program a nested shell -c or eval runs, so a here-document inside that program is not missed.
+func shellWriteHeredocUnreadableNested(command string, depth int) (string, bool) {
+	for _, sub := range shellVerbSubsegments(command) {
+		tokens := shellVerbSkipWrappers(shellTokenize(sub))
+		nested, ok := shellWriteFStringNestedScript(tokens)
+		if !ok {
+			continue
+		}
+		if what, bad := shellWriteHeredocUnreadableIn(nested, depth+1); bad {
+			return what, true
 		}
 	}
 	return "", false
