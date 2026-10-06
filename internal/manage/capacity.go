@@ -382,24 +382,23 @@ func capacityRun(ctx context.Context, e *Env, args []string) int {
 func capacityLines(report CapacityReport) []string {
 	lines := make([]string, 0, len(report.Plans))
 	for _, plan := range report.Plans {
-		median, merges := "unmeasured", "unknown"
+		median, merges, alert := "unmeasured", "unknown", ""
 		if plan.ReceiptWait.MedianMinutes != nil {
 			median = fmt.Sprintf("%.1f minutes", *plan.ReceiptWait.MedianMinutes)
 		}
 		if report.Lane.MergesLastHour != nil {
 			merges = fmt.Sprintf("%d", *report.Lane.MergesLastHour)
 		}
-		line := fmt.Sprintf("capacity: %s parent %s family %s: %s", plan.Plan, plan.Parent, plan.Family, plan.Verdict)
 		if len(plan.Reasons) > 0 {
-			line += " (" + strings.Join(plan.Reasons, ",") + ")"
+			alert = " (" + strings.Join(plan.Reasons, ",") + ")"
 		}
-		line += fmt.Sprintf("; waiting %d [%s] for %.0f minutes; slots %d/%d; host %s; receipts %s of %d; merges %s",
-			len(plan.Waiting), strings.Join(plan.Waiting, ","), plan.WaitingMinutes, plan.Held, plan.Ceiling,
-			plan.HostMemory, median, plan.ReceiptWait.Count, merges)
 		if plan.Verdict == capacityExpand {
-			line += fmt.Sprintf("; alert %t", plan.Alert)
+			alert += fmt.Sprintf("; alert %t", plan.Alert)
 		}
-		lines = append(lines, line)
+		lines = append(lines, fmt.Sprintf("capacity: %s parent %s family %s: %s%s; waiting %d [%s] for %.0f minutes;"+
+			" slots %d/%d; host %s; receipts %s of %d; merges %s", plan.Plan, plan.Parent, plan.Family, plan.Verdict,
+			alert, len(plan.Waiting), strings.Join(plan.Waiting, ","), plan.WaitingMinutes, plan.Held, plan.Ceiling,
+			plan.HostMemory, median, plan.ReceiptWait.Count, merges))
 	}
 	return lines
 }
