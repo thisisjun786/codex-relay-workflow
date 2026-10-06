@@ -306,19 +306,22 @@ func notRunJobs(checks []any, run string, at *big.Int) []string {
 	return names
 }
 
-// testSkippedJobs lists the names of the entries of one workflow run, at one attempt, that the
-// collector marked testSkipped: go-product test legs that concluded success without running their
-// test step (CRW-824). The flag is read as a strict boolean, the entry must be at its own newest
-// attempt, and the name must be a test leg, so a restated record that states anything else cannot
-// make the lane treat an untested head as tested.
-func testSkippedJobs(checks []any, run string, at *big.Int, highest map[string]*big.Int) []string {
+// testSkippedJobs lists the names of the entries of one workflow run that the collector marked
+// testSkipped: go-product test legs that concluded success without running their test step
+// (CRW-824). The flag is read as a strict boolean and the name must be a test leg, so a restated
+// record that states anything else cannot make the lane treat an untested head as tested. Each leg
+// is read at its OWN newest attempt within the run rather than at the judged check's attempt: a
+// rerun of the failed jobs leaves the successful skipped legs at an earlier attempt than the
+// rerun's dev-gate, and that leg still says the head's tests did not run. Reading it at its own
+// newest attempt only ever refuses more, so it cannot widen what merges.
+func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []string {
 	if run == "" {
 		return nil
 	}
 	var names []string
 	for _, entry := range checks {
 		runId := textField(entry, "runId")
-		if workflowRun(runId) != run || attempt(entry).Cmp(at) != 0 {
+		if workflowRun(runId) != run {
 			continue
 		}
 		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
@@ -340,6 +343,34 @@ func testSkippedJobs(checks []any, run string, at *big.Int, highest map[string]*
 	}
 	slices.Sort(names)
 	return names
+}
+
+// testedElsewhere reports whether another run on this head answered the same required check
+// successfully and holds no test leg that skipped its tests: the lane's own repair for a light run
+// is to label the pull request crw-lane, which starts a full run on the same head, and that run's
+// evidence is what the head should be judged on. Without this the earlier light run's entry would
+// refuse the head forever, and the documented repair could never produce merge evidence (CRW-824).
+// The reading is fail-closed on its own terms: the run that answers must have succeeded and must
+// hold no skipped leg, and a leg whose step list the collector could not read leaves its own
+// unreadable problem, which refuses the whole reading before this predicate is consulted.
+func testedElsewhere(checks []any, head, name, run string, highest map[string]*big.Int) bool {
+	for _, entry := range checks {
+		runId := textField(entry, "runId")
+		if workflowRun(runId) == run || textField(entry, "name") != name {
+			continue
+		}
+		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
+			continue
+		}
+		o, _ := Object(entry)
+		if o.Get("headSha") != any(head) || o.Get("conclusion") != "success" {
+			continue
+		}
+		if len(testSkippedJobs(checks, workflowRun(runId), highest)) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // beganFailureBeside reports whether the same workflow run and attempt as a required check holds a
@@ -480,9 +511,13 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		// five test legs skipped their work (CRW-824). The answer is the existing checks_stale: a
 		// light leg makes the run no merge evidence, never a rerun. The lowest (run, name) pair is
 		// kept, so the detail does not move with the enumeration (CRW-661).
-		if skipped := testSkippedJobs(checks, workflowRun(run), attempt(entry), highest); len(skipped) > 0 {
-			if key := run + "\x00" + name; lightKey == "" || key < lightKey {
-				lightKey, lightRun, lightName = key, run, skipped[0]
+		if skipped := testSkippedJobs(checks, workflowRun(run), highest); len(skipped) > 0 {
+			// Another run of the same required check on this head that ran its tests is the
+			// evidence: the lane's repair for a light run is a labeled full run on the same head.
+			if !testedElsewhere(checks, head, name, workflowRun(run), highest) {
+				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
+					lightKey, lightRun, lightName = key, run, skipped[0]
+				}
 			}
 		}
 		if o.Get("conclusion") == "success" {

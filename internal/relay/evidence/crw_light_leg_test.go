@@ -75,18 +75,26 @@ func TestCRW824LightLegOfAnotherRunDoesNotCount(t *testing.T) {
 	}
 }
 
-// A light leg of an older attempt does not speak for the newest one.
-func TestCRW824LightLegOfAnOlderAttemptDoesNotCount(t *testing.T) {
+// A partial rerun (gh run rerun --failed) leaves the successful skipped legs at attempt 1 while the
+// failed job and its dependent dev-gate rerun at attempt 2. The skipped leg is still the leg's own
+// newest attempt, so it still says the head's tests did not run: reading each leg at its own newest
+// attempt rather than at the judged check's attempt is what keeps this from being accepted.
+func TestCRW824ASkippedLegSurvivesTheGatesPartialRerun(t *testing.T) {
 	checks := []any{
 		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 2, false),
 		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
 	}
-	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
-		t.Fatalf("want no problem, got %v", problems)
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light detail is the answer, got %q", problems[0].Detail)
 	}
 }
 
-// The same job at a newer attempt that ran its tests is the job's answer, not the skipped older one.
+// The same leg rerun at a newer attempt that ran its tests is the leg's answer, not the skipped
+// older attempt.
 func TestCRW824ASupersededLightLegDoesNotCount(t *testing.T) {
 	checks := []any{
 		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
@@ -95,6 +103,52 @@ func TestCRW824ASupersededLightLegDoesNotCount(t *testing.T) {
 	}
 	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
 		t.Fatalf("want no problem, got %v", problems)
+	}
+}
+
+// The lane's own repair for a light run is to label the pull request crw-lane, which starts a full
+// run on the same head. That run's dev-gate is the evidence, so the earlier light run no longer
+// refuses the head.
+func TestCRW824ALabeledFullRunSupersedesTheEarlierLightRun(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+	}
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("the labeled full run is the evidence, want no problem, got %v", problems)
+	}
+}
+
+// The full run answers only for the check it holds: a required check the full run does not carry is
+// still refused by the light run that does.
+func TestCRW824ALabeledFullRunMustAnswerTheSameCheck(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:other-gate#0", "other-gate", "success", 1, false),
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light detail is the answer, got %q", problems[0].Detail)
+	}
+}
+
+// A full run whose own legs skipped their tests is not the evidence that repairs a light run.
+func TestCRW824ALightRunDoesNotSupersedeAnother(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("want one %s, got %v", ChecksStale, problems)
 	}
 }
 
@@ -266,6 +320,58 @@ func TestCRW824CollectorMarksTheLightLeg(t *testing.T) {
 		if marked[name] {
 			t.Fatalf("%s cannot be read and must not be marked testSkipped: %v", name, marked)
 		}
+	}
+}
+
+// A body-only pull request edit mirrors a leg whose earlier run of this head already ran its tests:
+// the job concludes success with its test step skipped, which is the shape a light leg has. The
+// mirror's own step tells the two apart, so a mirrored leg is not marked and editing a description
+// after a full run cannot turn the head into merge evidence.
+func TestCRW824AMirroredLegIsNotALightLeg(t *testing.T) {
+	jobs := []any{
+		map[string]any{"id": 41, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-06T07:00:00Z", "steps": []any{
+			map[string]any{"name": "Check out scripts/ci for the body-only edit mirror", "conclusion": "success", "started_at": "2026-10-06T07:00:01Z"},
+			map[string]any{"name": lightMirrorStep, "conclusion": "success", "started_at": "2026-10-06T07:00:02Z"},
+			map[string]any{"name": "Test and replay the contract corpus (test-1)", "conclusion": "skipped", "started_at": nil},
+		}},
+		map[string]any{"id": 42, "name": "go-product (test-2)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-06T07:01:00Z", "steps": []any{
+			map[string]any{"name": "Test and replay the contract corpus (test-2)", "conclusion": "success", "started_at": "2026-10-06T07:01:01Z"},
+		}},
+	}
+	snapshot, _ := Collect(fixedForge(&collectorScript{
+		threads: 1, unresolved: map[int]bool{},
+		runs: []any{map[string]any{"id": 9, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request"}},
+		jobs: map[int][]any{9: jobs},
+	}), "owner/name", 7)
+	for _, raw := range listOf(mapOf(snapshot["handoff"])["checks"]) {
+		if _, present := mapOf(raw)["testSkipped"]; present {
+			t.Fatalf("a mirrored leg ran its tests on this head and must not be marked: %v", raw)
+		}
+	}
+}
+
+// A leg whose mirror step did not succeed is not mirrored: its test step skipped without a mirror
+// vouching for it, so it is a light leg.
+func TestCRW824AMirrorThatDidNotSucceedIsStillALightLeg(t *testing.T) {
+	job := map[string]any{"id": 43, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-06T07:02:00Z", "steps": []any{
+		map[string]any{"name": lightMirrorStep, "conclusion": "failure", "started_at": "2026-10-06T07:02:01Z"},
+		map[string]any{"name": "Test and replay the contract corpus (test-1)", "conclusion": "skipped", "started_at": nil},
+	}}
+	snapshot, _ := Collect(fixedForge(&collectorScript{
+		threads: 1, unresolved: map[int]bool{},
+		runs: []any{map[string]any{"id": 10, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request"}},
+		jobs: map[int][]any{10: {job}},
+	}), "owner/name", 7)
+	marked := false
+	for _, raw := range listOf(mapOf(snapshot["handoff"])["checks"]) {
+		if value, present := mapOf(raw)["testSkipped"]; present {
+			if flag, isBool := value.(bool); isBool && flag {
+				marked = true
+			}
+		}
+	}
+	if !marked {
+		t.Fatalf("a leg whose mirror did not succeed skipped its tests and must be marked: %v", snapshot["handoff"])
 	}
 }
 

@@ -382,6 +382,12 @@ const lightLegPrefix = "go-product (test-"
 // leg that did not run its tests is told from one that did by this step's conclusion.
 const lightTestStepPrefix = "Test and replay the contract corpus ("
 
+// lightMirrorStep is the step the body-only edit mirror runs. A leg whose earlier run of the same
+// head already ran its tests successfully is mirrored: the job concludes success with its test step
+// skipped, which is the shape a light leg has, so the mirror's own step tells the two apart. A
+// mirrored leg's tests ran on this head, so it is not a leg that skipped them (CRW-824).
+const lightMirrorStep = "Mirror the jobs this head already ran"
+
 // jobTestSkipped reports whether a go-product test leg concluded success while its test step did
 // not: CRW-790's light mode leaves the job success and skips the step, so the leg says nothing
 // about the commit (CRW-824). A job whose steps the collector cannot read is not called a skipped
@@ -399,22 +405,36 @@ func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail stri
 	if !ok {
 		return false, unreadable
 	}
+	mirrored := false
+	testStep, testConclusion, testReadable := "", "", false
 	for _, raw := range steps {
 		step, isObject := Object(raw)
 		if !isObject {
 			return false, unreadable
 		}
-		if !strings.HasPrefix(strOf(step.Get("name")), lightTestStepPrefix) {
-			continue
+		stepName := strOf(step.Get("name"))
+		if stepName == lightMirrorStep && step.Get("conclusion") == "success" {
+			mirrored = true
 		}
-		conclusion, isString := step.Get("conclusion").(string)
-		if !isString {
-			return false, unreadable
+		if strings.HasPrefix(stepName, lightTestStepPrefix) {
+			testStep = stepName
+			conclusion, isString := step.Get("conclusion").(string)
+			testConclusion, testReadable = conclusion, isString
 		}
-		return conclusion != "success", ""
 	}
-	// The test step is absent from a readable list: the leg's test run did not conclude success.
-	return true, ""
+	if mirrored {
+		// The leg's tests ran in an earlier run of this head: the mirror vouched for it, so this is
+		// not a leg that skipped its tests.
+		return false, ""
+	}
+	if testStep == "" {
+		// The test step is absent from a readable list: the leg's test run did not conclude success.
+		return true, ""
+	}
+	if !testReadable {
+		return false, unreadable
+	}
+	return testConclusion != "success", ""
 }
 
 func provider(n map[string]any) any {
