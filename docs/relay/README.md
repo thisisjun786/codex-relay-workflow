@@ -691,6 +691,38 @@ set in force at that moment, and a managed assignment refuses a verdict that is 
 Editing a criterion's text afterwards, even keeping its id, invalidates that review rather than
 passing it, and the assignment reports `re_review_needed` instead of `verified`.
 
+## Fixing the head a verified ruling handled
+
+A `verified` ruling may carry the head it handled:
+
+    codex-session-relay --socket $SOCK verdict --event <eventId> --verdict verified --verdict-turn <my turn id> --verified-head <40-hex commit id>
+
+`--verified-head` takes the 40 lowercase hex digits of one commit id and is optional. When it is
+given with `--verdict verified`, the ruling writes one `dag_verified_heads` row — the event, the
+relationship, the generation the event belongs to, the verdict turn, the head, the recorder and the
+time — in the same transaction that writes the ruling, so the two cannot disagree and a failure of
+either rolls both back. The recorder is the relationship's registered parent, which is the only task
+that can rule the event. This is the head a later `dag-accept` starts its parent-made-refresh proof
+from, instead of the head the forge shows at accept time.
+
+The ruling's own answer does not change: the record is read back from `dag_verified_heads`, never
+returned, so no output field and no refusal reason is added.
+
+| Case | Answer |
+| --- | --- |
+| `verified` with `--verified-head H`, first ruling | the ruling is recorded and one row holds `H` |
+| `verified` with `--verified-head H` again | the replay of the recorded ruling: nothing is written, and the row still holds `H` |
+| `verified` with `--verified-head H` after a `verified` ruling that fixed no head | refused `disposition_conflict`: the head is recorded with the ruling that fixes it, and a replay writes nothing |
+| `verified` with `--verified-head H2` when the event already records `H` | refused `disposition_conflict`, and the row still holds `H`: one event keeps the head its verified ruling fixed |
+| a verdict other than `verified` with `--verified-head` | refused `disposition_conflict`, and neither a verdict nor a row is written: a verified head is recorded only with a verified ruling |
+| `verified` without `--verified-head` | exactly what it was before, and no row |
+
+A re-review ruled `verified` under a re-registered criteria set keeps the head the event already
+records; it does not write a second row, because one event has one verified head.
+
+A value that is not 40 lowercase hex digits is a usage error (exit 4), like any other option value
+this command refuses.
+
 There is no parameter that turns any of this off.
 
 ## Ruling an event that is already ruled

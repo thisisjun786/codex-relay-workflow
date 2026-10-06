@@ -241,7 +241,8 @@
   {"flag":"--criteria","help":"a JSON array of findings, or @path to one"},
   {"flag":"--restoration","help":"the criterion id whose finding carries this correction's restoration block. The verdict is refused if that finding would not reach the child."},
   {"flag":"--reason","help":"why an aborted or unverified verdict could not conclude"},
-  {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"}]},
+  {"flag":"--expect-criteria-digest","help":"refuse unless the canonical criteria set still has this digest"},
+  {"flag":"--verified-head","help":"the head this ruling verified, as 40 lowercase hex digits. Recorded with the ruling in the same transaction, so a later dag-accept proves a parent-made refresh against it instead of the head the forge shows. Only with --verdict verified, and the same event keeps one head"}]},
 {"name":"decision-reply","summary":"record the parent's decision on a child's blocked_needs_input receipt, or an answer on a receipt the relay itself observed ending interrupted or failed, and queue it to the child. answer and stop keep the generation; split_approval and scope_change open the next one and name the criteria digest registered for the relationship","options":[
   {"flag":"--event","required":true,"help":"the blocked_needs_input receipt this answers, or a receipt the relay itself observed ending interrupted or failed, which answer alone answers"},
   {"flag":"--decision","required":true,"choices":["answer","stop","split_approval","scope_change"]},
