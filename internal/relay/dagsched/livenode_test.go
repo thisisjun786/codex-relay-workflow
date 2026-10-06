@@ -10,6 +10,7 @@ import (
 // The four ways a command finds the node it acts on: the same reason (unregistered_scope), and the words of the command that asks, which are the relay's output and so do not move.
 // The activation is a node id the plan does not hold; the node it does hold comes back as the plan's own.
 func TestAnAbsentNodeIsRefusedInTheWordsOfTheCommandThatAsked(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	ctx := context.Background()

@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,11 @@ import (
 // regular one. WriteDivergenceMode does not replace a mode file that holds another session's id or U+FFFD, is not a regular file, is
 // nested too deeply to read or can not be read (a file read without a string sessionId is replaced), and creates its temp file
 // exclusively. The appender locks the archive and the mode writer the divergence directory: other writers of this package only.
+//
+// CRW-632 gives both writers of this file the end the metric ingest got: WriteDivergenceModeContext and RecordDivergenceCandidateContext
+// take the invocation's context, the wait for the directory or the archive lock ends with it (metricLockWait) and the context is read
+// once more after the lock is taken, before anything is written, so a cancelled run leaves the mode file and the archive as their
+// holder had them and returns the context's own error. The plain forms keep the blocking wait every existing caller has.
 //
 // Not literal: a Go string can not hold a lone surrogate, so one in a stored row reads as U+FFFD; the readers do not read a file nested
 // deeper than the Go decoder allows (10,000 levels); and CompareTimestamps knows the root order of ICU's collation for ASCII only.
@@ -236,10 +242,16 @@ func EncodeCandidate(c DivergenceCandidate) string {
 // replaced. The temp file is created exclusively (the oracle's write follows a symlink at its name and truncates the target). A lock on
 // the divergence directory, held from the read to the rename, excludes other writers.
 func WriteDivergenceMode(cwd string, in ModeInput) (DivergenceMode, error) {
-	return writeDivergenceMode(cwd, in, time.Now(), crwdir.Rename)
+	return WriteDivergenceModeContext(context.Background(), cwd, in)
 }
 
-func writeDivergenceMode(cwd string, in ModeInput, wall time.Time, rename func(tmp, finalPath string) error) (DivergenceMode, error) {
+// WriteDivergenceModeContext is WriteDivergenceMode for a caller that can be interrupted: the wait for the divergence-directory lock
+// ends with ctx, and the file is neither read for its owner nor replaced once the context has ended. The caller gets ctx's own error.
+func WriteDivergenceModeContext(ctx context.Context, cwd string, in ModeInput) (DivergenceMode, error) {
+	return writeDivergenceMode(ctx, cwd, in, time.Now(), crwdir.Rename)
+}
+
+func writeDivergenceMode(ctx context.Context, cwd string, in ModeInput, wall time.Time, rename func(tmp, finalPath string) error) (DivergenceMode, error) {
 	mode := DivergenceMode{in.SessionID, in.Active, Maximize, in.CollapsePoint, in.Reason, wall.UTC().Format(timestampLayout)}
 	if in.Now != nil {
 		mode.UpdatedAt = in.Now()
@@ -254,9 +266,12 @@ func writeDivergenceMode(cwd string, in ModeInput, wall time.Time, rename func(t
 	if err != nil {
 		return DivergenceMode{}, err
 	}
-	defer dir.Close() // drops the lock
-	if err = unix.Flock(int(dir.Fd()), unix.LOCK_EX); err != nil {
+	defer dir.Close()                               // drops the lock
+	if err = metricLockWait(ctx, dir); err != nil { // dropped by the close
 		return DivergenceMode{}, err
+	}
+	if cerr := ctx.Err(); cerr != nil { // a lock taken while ctx was ending replaces nothing, waited or not (CRW-632)
+		return DivergenceMode{}, cerr
 	}
 	finalPath := modePath(cwd, in.SessionID)
 	if info, err := os.Stat(finalPath); err == nil && !info.Mode().IsRegular() { // a FIFO would block the read below
@@ -314,6 +329,12 @@ func ReadDivergenceMode(cwd, sessionID string) (DivergenceMode, bool) {
 // are empty after normalising, or a given changeClass or killedAtPhase is not one of the values. The id is the slug of ID, else the
 // kind and the slug of the title. The append is the ledger's (see appendRow) but does not follow a link at the archive's path.
 func RecordDivergenceCandidate(cwd string, in CandidateInput) (DivergenceCandidate, error) {
+	return RecordDivergenceCandidateContext(context.Background(), cwd, in)
+}
+
+// RecordDivergenceCandidateContext is RecordDivergenceCandidate for a caller that can be interrupted: the wait for the archive lock
+// ends with ctx and no row is appended once the context has ended. The caller gets the context's own error.
+func RecordDivergenceCandidateContext(ctx context.Context, cwd string, in CandidateInput) (DivergenceCandidate, error) {
 	sources := normalizeSources(in.SourceURLs)
 	if len(sources) == 0 {
 		return DivergenceCandidate{}, errors.New("divergence candidate requires at least one grounding source URL")
@@ -360,13 +381,14 @@ func RecordDivergenceCandidate(cwd string, in CandidateInput) (DivergenceCandida
 	if err := os.MkdirAll(divergenceDir(cwd), 0o777); err != nil {
 		return DivergenceCandidate{}, err
 	}
-	return c, appendCandidateRow(candidatesPath(cwd), EncodeCandidate(c))
+	return c, appendCandidateRow(ctx, candidatesPath(cwd), EncodeCandidate(c))
 }
 
 // appendCandidateRow is appendRow with the archive opened without following a symbolic link (the oracle's append writes into the target
 // of one) and refused unless it is a regular file (the oracle writes to a FIFO that has a reader, which would block here); the
-// security fix. metrics.go's appendRow, which this repeats, still follows a link.
-func appendCandidateRow(path, row string) error {
+// security fix. metrics.go's appendRow, which this repeats, still follows a link. Like it, the wait for the archive lock ends with ctx
+// and the context is read once more after the lock is taken, before the row is written (CRW-632).
+func appendCandidateRow(ctx context.Context, path, row string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0o666)
 	if err != nil {
 		return err
@@ -374,8 +396,15 @@ func appendCandidateRow(path, row string) error {
 	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() { // a FIFO would block the read below
 		return errors.Join(err, fmt.Errorf("%s is not a regular file", path), f.Close())
 	}
-	if err = unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil { // dropped by the close
-		return errors.Join(err, f.Close())
+	if err = metricLockWait(ctx, f); err != nil { // dropped by the close
+		if closeErr := f.Close(); err != ctx.Err() { // a wait that ctx ended returns its error as it is
+			err = errors.Join(err, closeErr)
+		}
+		return err
+	}
+	if cerr := ctx.Err(); cerr != nil { // a lock taken while ctx was ending writes nothing, waited or not
+		_ = f.Close() // drops the lock
+		return cerr
 	}
 	line := row + "\n"
 	if raw, err := os.ReadFile(path); err != nil || len(raw) > 0 && raw[len(raw)-1] != '\n' {

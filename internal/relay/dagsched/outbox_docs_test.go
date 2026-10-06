@@ -21,6 +21,7 @@ func readText(t *testing.T, path string) string {
 }
 
 func TestSummaryPageSkillAndSpecsNameTheSameCommands(t *testing.T) {
+	t.Parallel()
 	page := readText(t, "../../../docs/relay/dag-outbox.md")
 	skill := readText(t, "../../../plugins/crw/skills/crw-run/references/relay.md")
 	specs := readText(t, "../argparse/specs.json")

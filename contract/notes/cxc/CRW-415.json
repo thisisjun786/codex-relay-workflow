@@ -22,21 +22,21 @@
       "id": "cli-help__top-level__dash_h",
       "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\n"
       }
     },
     {
       "id": "cli-help__top-level__dashdash_help",
       "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\n"
       }
     },
     {
       "id": "cli-help__top-level__word_help",
       "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\n"
       }
     },
     {
@@ -61,7 +61,7 @@
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\ncrw: error: argument command: invalid choice: \"-v\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\ncrw: error: argument command: invalid choice: \"-v\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'config', 'help', 'version')\n"
       }
     },
     {
@@ -72,7 +72,7 @@
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\ncrw: error: the following arguments are required: command\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\ncrw: error: the following arguments are required: command\n"
       }
     },
     {
@@ -83,14 +83,14 @@
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'config', 'help', 'version')\n"
       }
     },
     {
       "id": "cli-help__payload-dispatcher__dashdash_help",
       "reason": "crw has one dispatcher, so the payload dispatcher's help is the same usage line",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\n"
       }
     },
     {
@@ -108,7 +108,7 @@
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'config', 'help', 'version')\n"
       }
     },
     {
@@ -119,7 +119,7 @@
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,help,version} ...\ncrw: error: argument command: invalid choice: \"gui\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,config,help,version} ...\ncrw: error: argument command: invalid choice: \"gui\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'config', 'help', 'version')\n"
       }
     }
   ]

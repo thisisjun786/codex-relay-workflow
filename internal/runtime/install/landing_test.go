@@ -17,6 +17,7 @@ import (
 // binary unexecutable), the pointer is put back, the selection restored and the run refused -
 // never a promotion reported for a pointer no host can use.
 func TestAPromotionProvesThePointerItPlaced(t *testing.T) {
+	// sequential: replaces the pointer-placement seam.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)
@@ -41,6 +42,7 @@ func TestAPromotionProvesThePointerItPlaced(t *testing.T) {
 // pointer names, and the pointer placed at it would loop. It is refused before anything is
 // created.
 func TestADestinationInsideTheRuntimeIsRefused(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)

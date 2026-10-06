@@ -21,7 +21,18 @@ for (const folder of ['dev', 'search', 'dev-testing', 'loop', 'pabcd']) {
   fs.writeFileSync(path.join(skillsDir, folder, 'references/development-practice.md'), 'Detail reference is not automatically loaded.\n');
 }
 const symbolic = s => s.replaceAll(skillsDir, '${SKILLS}');
-const rename = s => s.replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('[CXC-', '[CRW-').replaceAll('cxc orchestrate', 'crw orchestrate').replaceAll('cxc loop', 'crw loop').replaceAll('cxc orchestration', 'crw orchestration').replace(/\/(dev|search|dev-testing)(?=\/SKILL\.md)/g, '/crw-$1');
+// The cli rows of contract/schema/cxc/name-substitution.json drive the command renames, as the Go replay's
+// verbPass does (internal/dev/cxccorpus/schema.go): longest cxc verb first, a \b after the verb. The kept
+// "cxc orchestration" rule is the noun in the V1 notice, which is not the verb "orchestrate" and so is not a
+// cli row; the oracle's bare-cxc rule (R33) renames its prefix.
+const cliRows = (() => {
+  const table = JSON.parse(fs.readFileSync(new URL('../../../../../contract/schema/cxc/name-substitution.json', import.meta.url), 'utf8'));
+  const esc = w => w.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+  const rules = table.cli.filter(r => r.crw !== null).sort((a, b) => b.cxc.length - a.cxc.length)
+    .map(r => [new RegExp('\\bcxc ' + r.cxc.map(esc).join(' ') + '\\b', 'g'), 'crw ' + r.crw.join(' ')]);
+  return s => { for (const [re, to] of rules) s = s.replace(re, to); return s; };
+})();
+const rename = s => cliRows(s).replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('[CXC-', '[CRW-').replaceAll('cxc orchestration', 'crw orchestration').replace(/\/(dev|search|dev-testing)(?=\/SKILL\.md)/g, '/crw-$1');
 const groups = [];
 let group;
 const wrap = op => (...args) => {
