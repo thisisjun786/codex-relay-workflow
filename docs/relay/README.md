@@ -344,7 +344,10 @@ is neither a letter nor a digit, is sent as it is; any other nonempty title is s
 `<issueKey> · <title>` (middle dot U+00B7, one space each side) while that value is at most 500
 bytes, the limit the bridge applies to a create's title, and is otherwise sent unchanged, so the
 prefix never makes a request the bridge refuses. A `managed-start` request cannot carry an empty
-title, because `child.title` is required and non-blank. The rule applies to the name the host is
+title, because `child.title` is required and non-blank, and `child.title` is itself at most 500
+bytes, the same bound the bridge applies to a create's title: a title of fewer than 500 characters
+whose UTF-8 encoding is longer is refused before the request is armed, so the request and the
+bridge agree on the limit. The rule applies to the name the host is
 given on `thread/start` and again when the engine renames the thread after an adopted standby. It
 never rewrites the stored request or its fingerprint, so a repeat of the same request is still the
 same replay.
