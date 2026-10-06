@@ -1149,10 +1149,16 @@ its correction; the operator page is `docs/relay/README.md`).
 
 **Choosing the members.** The parent that holds the lane turn is the leader.
 
-- Among the verified pull requests waiting for the lane, choose those that merge onto the current dev
-  in order without a conflict. Gather related ones (the same package or area) first; pull requests
-  whose packages do not overlap may ride together too, because a failure can then be narrowed by
-  package.
+- Every member must be a verified, accepted candidate. Before the leader opens the bundle, each
+  member's own parent runs `dag-accept` on the member pull request's head, so the member's relationship
+  carries an active acceptance standing on that head. The leader picks members whose `dag-ready` reads
+  `done:accepted` on the head their turn holds, and `merge-train-open` refuses the others: a member
+  with no active acceptance, or one whose acceptance stands on another head, is a
+  `disposition_conflict` naming the member, with no event. A member whose acceptance stands on a
+  recorded base-refresh head is accepted, because that head is what the ruling covers now.
+- Among those, choose the pull requests that merge onto the current dev in order without a conflict.
+  Gather related ones (the same package or area) first; pull requests whose packages do not overlap may
+  ride together too, because a failure can then be narrowed by package.
 - Leave out a member that needs a base-refresh correction.
 - Members may belong to different parents. There is no count cap. The order follows the plan's
   precedence edges: a member whose plan predecessor is also in the bundle must stand after it.

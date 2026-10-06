@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -158,14 +159,35 @@ func (w *tr) claim(project, task, head string, pr int64) map[string]any {
 	if err != nil {
 		w.t.Fatal(err)
 	}
+	w.acceptOn("rel-"+task, head)
 	return answer
 }
 
-// waiting makes a waiting turn for a member: another project's parent asks for the same target.
+// waiting makes a waiting turn for a member: another project's parent asks for the same target, and
+// the member's relationship is accepted on that head, which is what the bundle gate requires.
 func (w *tr) waiting(project, task, head string, pr int64) {
 	w.t.Helper()
 	w.bind(project, task, trHost)
 	w.claim(project, task, head, pr)
+}
+
+// acceptOn writes one active acceptance of a relationship standing on a head, the shape dag-accept
+// leaves: the acceptance row plus its forge row.
+func (w *tr) acceptOn(relationship, head string) {
+	w.t.Helper()
+	var existing int64
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT count(*) FROM dag_acceptances WHERE relationship_id = ? AND state = 'active'", relationship).Scan(&existing); err != nil {
+		w.t.Fatal(err)
+	}
+	if existing > 0 {
+		return
+	}
+	id := "acc-" + relationship
+	w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		id, "plan-x", "node-"+relationship, "manifest-"+relationship, relationship, int64(1), "ev-"+relationship, "rev-"+relationship, "crit-"+relationship, "verified",
+		head, trRepo, int64(1), "bound", "turn-"+relationship, "{}", trLeader, int64(0), "2026-10-01T00:00:00Z", "active")
+	w.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, 'owner/repo', 1)", id)
 }
 
 // pr registers a pull request the forge answers with.
@@ -273,19 +295,22 @@ func TestTrainOpenVerifyLandCloseDone(t *testing.T) {
 	if answer["state"] != "landed" {
 		t.Fatalf("state after land = %v, want landed", answer["state"])
 	}
-	// every member turn landed, the leader's included, with M
-	for _, m := range []struct{ turn, head string }{{leader, "head-lead"}} {
-		row := w.turn(m.turn)
+	// every member turn landed, the leader's included, with M: the two waiting members too
+	memberTurns, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? ORDER BY seq", train)
+	if err != nil || len(memberTurns) != 3 {
+		t.Fatalf("members: %v", err)
+	}
+	for _, m := range memberTurns {
+		turn := m.Get("turn_id").(string)
+		row := w.turn(turn)
 		if row.State != "landed" || row.LandedSHA.String != "merge-1" {
-			t.Fatalf("turn %s = %s/%s, want landed/merge-1", m.turn, row.State, row.LandedSHA.String)
+			t.Fatalf("member turn %s = %s/%s, want landed/merge-1", turn, row.State, row.LandedSHA.String)
 		}
 		if !strings.Contains(row.CloseReason.String, "landed via bundle "+train+" merge-1") {
-			t.Fatalf("close reason = %q", row.CloseReason.String)
+			t.Fatalf("member turn %s close reason = %q", turn, row.CloseReason.String)
 		}
 	}
-	for _, turn := range []string{leader} {
-		_ = turn
-	}
+	_ = leader
 	// close done
 	answer, err = w.m.Close(w.ctx, train, trLeader, "done", "every member landed")
 	if err != nil {
@@ -577,15 +602,15 @@ func TestTrainLandRefusals(t *testing.T) {
 	}{
 		{"a dev tip other than M", func(w *tr) {
 			w.tip.set(trRepo, trBase, "somewhere-else")
-			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}}
+			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
 		}, "merge-1", "disposition_conflict"},
 		{"an M whose second parent is not H", func(w *tr) {
 			w.tip.set(trRepo, trBase, "merge-1")
-			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-other"}}
+			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-other"}, Tree: "tree-bundle"}
 		}, "merge-1", "disposition_conflict"},
 		{"a member whose accepted head is not an ancestor of M", func(w *tr) {
 			w.tip.set(trRepo, trBase, "merge-1")
-			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}}
+			w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
 			w.forge.compares["head-m2..merge-1"] = "diverged"
 		}, "merge-1", "disposition_conflict"},
 	}
@@ -829,52 +854,72 @@ func TestTrainChainProverAgainstRealGit(t *testing.T) {
 	}
 }
 
-// TestTrainDecisionTenMapping: verify and land details carry every per-member column, and a change of
-// base, member head or order after a verify is refused by land.
+// TestTrainDecisionTenMapping: the opened, verified and landed details carry every per-member column
+// decision 10 names (the relationship, the ruled event, the head fixed at the ruling, the accepted
+// stand head, the member head and the order) and the train-level base D, combined head H, tree and
+// merge SHA M, each with a non-empty value; and a change of base, member head or order after a verify
+// is refused by land.
 func TestTrainDecisionTenMapping(t *testing.T) {
 	w := newTr(t)
 	train := w.verifiedTrain()
-	// the verified event records the mapping
-	rows, err := w.s.All(w.ctx, "SELECT detail_json FROM merge_train_events WHERE train_id = ? AND kind = 'verified'", train)
+	// the opened event records the mapping and the base
+	assertTrainMapping(t, "opened", w.eventDetail(train, "opened"), []string{"baseSha"}, []string{"members"})
+	// the verified event records the mapping, the base, the head, the tree and the run
+	assertTrainMapping(t, "verified", w.eventDetail(train, "verified"), []string{"baseSha", "head", "tree", "run"}, []string{"bundlePr", "members"})
+	// the landed event records the mapping, the base, the head, the tree and the merge commit
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge); err != nil {
+		t.Fatal(err)
+	}
+	assertTrainMapping(t, "landed", w.eventDetail(train, "landed"), []string{"baseSha", "head", "tree", "landedSha"}, []string{"members"})
+}
+
+// eventDetail is one event's detail object of a train.
+func (w *tr) eventDetail(train, kind string) map[string]any {
+	w.t.Helper()
+	rows, err := w.s.All(w.ctx, "SELECT detail_json FROM merge_train_events WHERE train_id = ? AND kind = ? ORDER BY seq DESC LIMIT 1", train, kind)
 	if err != nil || len(rows) != 1 {
-		t.Fatalf("verified event: %v", err)
+		w.t.Fatalf("%s event: %v", kind, err)
 	}
 	var detail map[string]any
 	if err := json.Unmarshal([]byte(rows[0].Get("detail_json").(string)), &detail); err != nil {
-		t.Fatal(err)
+		w.t.Fatal(err)
 	}
-	for _, key := range []string{"bundlePr", "head", "tree", "run", "members"} {
-		if _, ok := detail[key]; !ok {
-			t.Fatalf("the verified detail has no %s", key)
+	return detail
+}
+
+// assertTrainMapping asserts the train-level keys and every per-member column, each non-empty, in one
+// event detail (the mapping test the criteria name).
+func assertTrainMapping(t *testing.T, kind string, detail map[string]any, top, present []string) {
+	t.Helper()
+	for _, key := range append(append([]string{}, top...), present...) {
+		v, ok := detail[key]
+		if !ok {
+			t.Fatalf("the %s detail has no %s", kind, key)
+		}
+		if s, isString := v.(string); isString && s == "" {
+			t.Fatalf("the %s detail's %s is empty", kind, key)
 		}
 	}
 	members, _ := detail["members"].([]any)
 	if len(members) != 3 {
-		t.Fatalf("the verified mapping holds %d members", len(members))
+		t.Fatalf("the %s mapping holds %d members, want 3", kind, len(members))
 	}
-	first, _ := members[0].(map[string]any)
-	for _, key := range []string{"seq", "turnId", "prNumber", "relationshipId", "acceptedHead", "memberHead"} {
-		if _, ok := first[key]; !ok {
-			t.Fatalf("a member mapping has no %s", key)
+	for _, raw := range members {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("the %s mapping holds a non-object member", kind)
 		}
-	}
-	// a change of the combined head after verify: M's second parent is not the verified head H, so
-	// land refuses and writes nothing. The member rows are append-only, so the recorded mapping is
-	// what land compares and cannot be edited between verify and land.
-	w.tip.set(trRepo, trBase, "merge-1")
-	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-changed"}}
-	_, err = w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
-	if err == nil || trReason(err) != "disposition_conflict" {
-		t.Fatalf("land after the combined head changed: %v", err)
-	}
-	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
-		t.Fatalf("a refused land wrote %d landed event(s)", n)
-	}
-	// a base change after verify: M's first parent is not the train's base D
-	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-moved", "head-bundle"}}
-	_, err = w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
-	if err == nil || trReason(err) != "disposition_conflict" {
-		t.Fatalf("land after the base changed: %v", err)
+		for _, key := range []string{"seq", "turnId", "prNumber", "relationshipId", "ruledEventId", "rulingHead", "acceptedHead", "memberHead"} {
+			v, present := m[key]
+			if !present {
+				t.Fatalf("the %s member mapping has no %s", kind, key)
+			}
+			if s, isString := v.(string); isString && s == "" {
+				t.Fatalf("the %s member mapping's %s is empty", kind, key)
+			}
+		}
 	}
 }
 
@@ -1204,4 +1249,226 @@ func TestTrainFindingsFromTheFirstReview(t *testing.T) {
 			t.Fatalf("reconcile did not read the verified head: %v", rec)
 		}
 	})
+}
+
+// TestTrainAcceptanceGate: Blocking 1. Open requires, for every member (the leader included), an active
+// acceptance of the member turn's relationship whose stand head is the head its pull request shows and
+// its turn holds.
+func TestTrainAcceptanceGate(t *testing.T) {
+	t.Run("open refuses a member with no active acceptance", func(t *testing.T) {
+		w := newTr(t)
+		leader := w.claim(trLane, trLeader, "head-lead", 101)["turnId"].(string)
+		w.pr(101, "head-lead")
+		// a waiting turn whose relationship was never accepted
+		w.bind("PRJ-M2", "task-m2", trHost)
+		if _, err := w.m.Request(w.ctx, trRepo, trBase, "PRJ-M2", "task-m2", trHost, "head-m2", true,
+			ClaimOptions{PR: sql.NullInt64{Int64: 102, Valid: true}, Relationship: sql.NullString{String: "rel-m2", Valid: true}}); err != nil {
+			t.Fatal(err)
+		}
+		w.pr(102, "head-m2")
+		_, err := w.open(leader, trLeader, "base-0", 101, 102)
+		if err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member with no acceptance: %v", err)
+		}
+		if n := w.trainEvents(); n != 0 {
+			t.Fatalf("a refused open wrote %d event(s)", n)
+		}
+	})
+
+	t.Run("open refuses a member whose acceptance stands on another head", func(t *testing.T) {
+		w := newTr(t)
+		leader, members := w.threeMembers()
+		// the member's acceptance stands on a head its turn does not hold
+		w.exec("UPDATE dag_acceptances SET head_sha = 'head-elsewhere' WHERE relationship_id = 'rel-task-m2' AND state = 'active'")
+		if _, err := w.open(leader, trLeader, "base-0", members...); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a member standing on another head: %v", err)
+		}
+		if n := w.trainEvents(); n != 0 {
+			t.Fatalf("a refused open wrote %d event(s)", n)
+		}
+	})
+
+	t.Run("open accepts a member whose acceptance stands on a recorded base-refresh head", func(t *testing.T) {
+		w := newTr(t)
+		leader, members := w.threeMembers()
+		// the member's acceptance was refreshed: the stand head is the newest valid refresh's head, and
+		// the member's turn and pull request hold that same head
+		w.refreshStand("acc-rel-task-m2", "rel-task-m2", "head-m2-refreshed")
+		_ = w
+		w.exec("UPDATE merge_turns SET candidate_head = 'head-m2-refreshed' WHERE relationship_id = 'rel-task-m2'")
+		w.forge.pulls[102] = TrainPullRequest{Number: 102, State: "open", BaseRef: trBase, HeadSHA: "head-m2-refreshed"}
+		answer, err := w.open(leader, trLeader, "base-0", members...)
+		if err != nil {
+			t.Fatalf("a member standing on a recorded refresh head: %v", err)
+		}
+		train := answer["train"].(map[string]any)["trainId"].(string)
+		rows, _ := w.s.All(w.ctx, "SELECT detail_json FROM merge_train_events WHERE train_id = ? AND kind = 'opened'", train)
+		var detail map[string]any
+		if err := json.Unmarshal([]byte(rows[0].Get("detail_json").(string)), &detail); err != nil {
+			t.Fatal(err)
+		}
+		memberList, _ := detail["members"].([]any)
+		second, _ := memberList[1].(map[string]any)
+		if second["acceptedHead"] != "head-m2-refreshed" {
+			t.Fatalf("the opened mapping records acceptedHead %v, want the refresh head", second["acceptedHead"])
+		}
+	})
+
+	t.Run("land refuses after a member's acceptance was withdrawn", func(t *testing.T) {
+		w := newTr(t)
+		train := w.verifiedTrain()
+		// the member's acceptance is withdrawn between verify and land
+		w.exec("UPDATE dag_acceptances SET state = 'revoked' WHERE relationship_id = 'rel-task-m2' AND state = 'active'")
+		w.tip.set(trRepo, trBase, "merge-1")
+		w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+		_, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+		if err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a withdrawn acceptance at land: %v", err)
+		}
+		if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+			t.Fatalf("a refused land wrote %d landed event(s)", n)
+		}
+		if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+			t.Fatalf("a refused land landed %d turn(s)", n)
+		}
+	})
+
+	t.Run("verify refuses a member whose acceptance moved after open", func(t *testing.T) {
+		w := newTr(t)
+		train := w.openedTrain()
+		w.pr(900, "head-bundle", TrainLaneLabel)
+		w.forge.runs["run-1"] = runFor("head-bundle")
+		w.exec("UPDATE dag_acceptances SET head_sha = 'head-elsewhere' WHERE relationship_id = 'rel-task-m3' AND state = 'active'")
+		if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err == nil || trReason(err) != "disposition_conflict" {
+			t.Fatalf("a moved acceptance at verify: %v", err)
+		}
+		if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'verified'"); n != 0 {
+			t.Fatalf("a refused verify wrote %d verified event(s)", n)
+		}
+	})
+}
+
+// refreshStand records one valid base refresh of an acceptance, the shape dag-base-refresh leaves: a
+// dag_base_refreshes row whose id is the digest of its content, which is the table dagsched's standOf
+// reads and the merge train now reads through the same package.
+func (w *tr) refreshStand(acceptanceID, relationship, head string) {
+	w.t.Helper()
+	var seq int64
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT COALESCE(MAX(refresh_seq),0)+1 FROM dag_base_refreshes WHERE acceptance_id = ?", acceptanceID).Scan(&seq); err != nil {
+		w.t.Fatal(err)
+	}
+	event, revision, generation := "ev-refresh-"+head, "rev-"+head, int64(2)
+	id := acceptance.RefreshDigest(acceptanceID, relationship, generation, event, revision, head, trRepo, trBase, "base-0", "{}", "[]")
+	w.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		id, acceptanceID, seq, relationship, generation, event, revision, head, trRepo, trBase, "base-0", "{}", "[]", trLeader, int64(0), "2026-10-01T00:00:00Z")
+}
+
+// TestTrainMemberGuardLand: gap (a). The merge-turn-land command's member guard is exercised through
+// Service.Land, not TrainLand (which takes a train id and refuses a turn id for its own reason).
+func TestTrainMemberGuardLand(t *testing.T) {
+	w := newTr(t)
+	train := w.openedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 2: %v", err)
+	}
+	memberTurn := rows[0].Get("turn_id").(string)
+	// Service.Land is merge-turn-land: on a member turn it must refuse with the member guard
+	if _, err := w.m.Land(w.ctx, memberTurn, "task-m2", "merge-1", "", "merged", w.tip); err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("merge-turn-land on a member: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+		t.Fatalf("the guard let %d turn(s) land", n)
+	}
+}
+
+// TestTrainLandWritesNoFeatureState: gap (d). A land records member integration only; it writes no
+// feature, relationship or criteria state, so partial integration never shows a feature complete.
+func TestTrainLandWritesNoFeatureState(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	before := w.stateCounts()
+	if _, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge); err != nil {
+		t.Fatal(err)
+	}
+	after := w.stateCounts()
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("a land changed feature/relationship/criteria state: %v -> %v", before, after)
+	}
+	// the member turns are the only turns that moved
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 3 {
+		t.Fatalf("landed turns = %d, want 3", n)
+	}
+}
+
+// stateCounts is every row count a land must leave alone.
+func (w *tr) stateCounts() map[string]int64 {
+	w.t.Helper()
+	out := map[string]int64{}
+	for _, table := range []string{"dag_acceptances", "dag_integration_observations", "assignment_marks", "relationships"} {
+		var n int64
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&n); err != nil {
+			w.t.Fatal(err)
+		}
+		if n == 0 {
+			continue
+		}
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+			w.t.Fatal(err)
+		}
+		out[table] = n
+	}
+	return out
+}
+
+// TestTrainOpenRefusesAMemberOfAnotherLiveTrain: gap (e).
+func TestTrainOpenRefusesAMemberOfAnotherLiveTrain(t *testing.T) {
+	w := newTr(t)
+	// a member already riding another live train is refused before any run is spent. Build the other
+	// live train first, because the zone's train rows are append-only.
+	leader := w.claim(trLane, trLeader, "head-lead", 101)["turnId"].(string)
+	w.pr(101, "head-lead")
+	w.waiting("PRJ-M2", "task-m2", "head-m2", 102)
+	w.pr(102, "head-m2")
+	rows, _ := w.s.All(w.ctx, "SELECT turn_id FROM merge_turns WHERE relationship_id = 'rel-task-m2'")
+	memberTurn := rows[0].Get("turn_id").(string)
+	w.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('aaa-other','tgt','owner/repo','dev','base-0','task-leader','2026-10-01T00:00:00Z')")
+	w.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('aaa-other',1,?,102,'rel-task-m2','head-m2')", memberTurn)
+	w.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('aaa-other',1,'opened','task-leader','{}','2026-10-01T00:00:00Z')")
+	if _, err := w.open(leader, trLeader, "base-0", 101, 102); err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a member already in another live train: %v", err)
+	}
+}
+
+// TestTrainLandRefusesAnUnreadableTree: gap (c). A forge commit answer that carries no tree is
+// merge_target_unreadable, never a skipped comparison.
+func TestTrainLandRefusesAnUnreadableTree(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	w.tip.set(trRepo, trBase, "merge-1")
+	// the forge answers the commit with its parents and no tree
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}}
+	_, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err == nil || trReason(err) != "merge_target_unreadable" {
+		t.Fatalf("a commit with no tree: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+		t.Fatalf("a refused land wrote %d landed event(s)", n)
+	}
+	// and a verified event that names no tree is unreadable too. The events are append-only, so this
+	// case gets its own train and a verified event written by hand without a tree.
+	w2 := newTr(t)
+	train2 := w2.openedTrain()
+	w2.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES (?,2,'verified','task-leader','{\"head\":\"head-bundle\"}','2026-10-01T00:00:02Z')", train2)
+	w2.tip.set(trRepo, trBase, "merge-1")
+	w2.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	if _, err := w2.m.TrainLand(w2.ctx, train2, trLeader, "merge-1", "", w2.tip, w2.forge); err == nil || trReason(err) != "merge_target_unreadable" {
+		t.Fatalf("a verified event with no tree: %v", err)
+	}
+	if n := w2.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+		t.Fatalf("a refused land wrote %d landed event(s)", n)
+	}
 }

@@ -636,9 +636,14 @@ like the `merge-turn-*` ones.
 
 The steps, with the command names:
 
-1. **Choose the members.** Among the verified pull requests waiting for the lane, take those that
-   merge onto the current dev in order without a conflict; related ones (the same package) first, and
-   non-overlapping packages may ride together. Leave out a member that needs a base-refresh
+1. **Choose the members.** Every member must be a verified, accepted candidate: each member's own
+   parent runs `dag-accept` on the member pull request's head before the leader opens the bundle, and
+   the leader takes members whose `dag-ready` reads `done:accepted` on the head their turn holds.
+   `merge-train-open` refuses the rest (a member with no active acceptance, or one whose acceptance
+   stands on another head, is `disposition_conflict` naming the member, with no event); a member whose
+   acceptance stands on a recorded base-refresh head is accepted. Among those, take the pull requests
+   that merge onto the current dev in order without a conflict; related ones (the same package) first,
+   and non-overlapping packages may ride together. Leave out a member that needs a base-refresh
    correction. Members may belong to different parents. There is no count cap. The order follows the
    plan's precedence edges.
 2. **The leader.** `merge-train-open --turn <the leader's turn> --actor <leader> --base-sha <D>
