@@ -641,3 +641,58 @@ func TestImproveCollectLeavesNoTemporaryFileBesideTheOutput(t *testing.T) {
 		t.Errorf("the output directory holds %v, want only bundle.json", names)
 	}
 }
+
+// TestImproveCollectWritesNothingWhenTheContextEnds covers cancellation: a context that
+// ended while the sources were read leaves no bundle behind.
+func TestImproveCollectWritesNothingWhenTheContextEnds(t *testing.T) {
+	s := improveTestSetup(t)
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a','manifest_forbidden','detail')")
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	out := filepath.Join(s.root, "bundle.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr strings.Builder
+	code := improveRunCollect(ctx, improveTestEnv(s, &stdout, &stderr), []string{"--out", out})
+	if code == 0 {
+		t.Fatalf("an ended context reported success")
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("an ended context left a bundle behind (stat err %v)", err)
+	}
+}
+
+// TestImproveCollectKeepsDelimitedValuesApart covers the record identity: a value that
+// carries a delimiter stays its own record rather than merging with another.
+func TestImproveCollectKeepsDelimitedValuesApart(t *testing.T) {
+	s := improveTestSetup(t)
+	hostile := "quoted \" and newline \n inside"
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a',?,'hostile')", hostile)
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T02:00:00Z','rel-b','ev-b','plain','plain')")
+	})
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{"relay": map[string]any{"path": s.stateDir}},
+	}}})
+	out := filepath.Join(s.root, "bundle.json")
+	if code, _, stderr := improveTestRun(t, s, "--out", out); code != 0 {
+		t.Fatalf("collect: exit %d, stderr %s", code, stderr)
+	}
+	bundle := improveTestReadBundle(t, out)
+	refusals := improveTestRecordsOf(bundle, improveKindRefusal)
+	if len(refusals) != 2 {
+		t.Fatalf("refusal records = %d, want 2 (the hostile reason stays its own record): %+v", len(refusals), refusals)
+	}
+	found := false
+	for _, record := range refusals {
+		if record.Key == hostile {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the hostile reason did not round-trip: %+v", refusals)
+	}
+}
