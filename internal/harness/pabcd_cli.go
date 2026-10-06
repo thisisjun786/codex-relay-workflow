@@ -203,10 +203,14 @@ func reviewRoundVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 // The record window that follows is under the same context (CRW-627): the library ends its lock wait and its loop over the METRIC
 // lines with it, and an ingest whose run ends by cancellation, or after which the context has ended, answers Interrupted with nothing
 // printed too. The rows recorded before the signal stay, as the lines the oracle's process had appended do when it dies at the
-// signal. Every other metric row and every uninterrupted run answers as before.
+// signal. Since CRW-632 the record and kind writers take the same context, so a run of theirs that ends by cancellation, or after
+// which the context has ended, answers Interrupted the same way with nothing printed and nothing written; the reading verbs (show,
+// parse-line, help) print their answer even under an ended context, which TestPabcdMetricRowsUnchangedWithoutAnInterrupt pins. Every
+// uninterrupted run answers as before.
 func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer) int {
 	raw := ""
 	ingest := len(args) > 0 && args[0] == "ingest"
+	writer := metricWrites(args)
 	if ingest {
 		type stdinRead struct {
 			raw      string
@@ -238,7 +242,7 @@ func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr
 		return 1
 	}
 	result, err := cli.RunMetricCLIContext(ctx, args, cwd, raw)
-	if ingest && (errors.Is(err, context.Canceled) || ctx.Err() != nil) {
+	if writer && (errors.Is(err, context.Canceled) || ctx.Err() != nil) {
 		return Interrupted
 	}
 	if err != nil {
@@ -249,20 +253,56 @@ func metricVerb(ctx context.Context, args []string, in io.Reader, stdout, stderr
 	return result.Code
 }
 
+// metricWrites reports whether the metric row's arguments can write the ledger or the kind file, which are the runs the
+// invocation's context can cut short (CRW-632). metric kind writes only when it names a kind (cli.MetricKindRequested);
+// without one it reads, as metric show does, and a reading run still prints its answer under an ended context.
+func metricWrites(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "ingest", "record":
+		return true
+	case "kind":
+		return cli.MetricKindRequested(args) != nil
+	}
+	return false
+}
+
 // divergenceVerb is the divergence row (cli.ts:183-189). The library's error is the oracle's one
 // uncaught path (the mode write), reported as "crw cli failed: "; every result goes to stdout with
-// its code.
-func divergenceVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+// its code. It takes the invocation's context like the metric row does (CRW-632): a writing run
+// (mode on/off, candidate add) whose lock wait ends with the context, or whose context has ended
+// after it, answers Interrupted (130) with nothing printed, as the oracle's process dies at the
+// signal and prints nothing; the reading paths (mode with no on/off, candidate list) and the help
+// token print their answer even under an ended context.
+func divergenceVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	cwd, err := syscall.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1
 	}
-	result, err := cli.RunDivergenceCli(args, cwd)
+	result, err := cli.RunDivergenceCliContext(ctx, args, cwd)
+	if divergenceWrites(args) && (errors.Is(err, context.Canceled) || ctx.Err() != nil) {
+		return Interrupted
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "crw cli failed: "+err.Error())
 		return 1
 	}
 	fmt.Fprintln(stdout, result.Output)
 	return result.Code
+}
+
+// divergenceWrites reports whether the divergence row's arguments name one of the two writing verbs, which are the runs the
+// invocation's context can cut short (CRW-632). It mirrors the library's own topic/verb split (cli/divergence.go:220-230).
+func divergenceWrites(args []string) bool {
+	topic, verb := "", ""
+	if len(args) > 0 {
+		topic = args[0]
+	}
+	if len(args) > 1 {
+		verb = args[1]
+	}
+	return topic == "mode" && (verb == "on" || verb == "off") || topic == "candidate" && verb == "add"
 }

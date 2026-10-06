@@ -56,6 +56,7 @@ var errNoSpace = &os.PathError{Op: "write", Path: "injected", Err: syscall.ENOSP
 // that the settings were created, and leaves nothing at the path; a write that lands and does not
 // read back as written is a refusal too, naming config_applied_unverified.
 func TestAFailedSettingsWriteIsARefusal(t *testing.T) {
+	// sequential: replaces the settings-writer seam.
 	path := func(h *host) string { return filepath.Join(h.codex, install.SettingsName) }
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
@@ -92,6 +93,7 @@ func must[T any](v T, err error) T {
 // rewrites, are the very file it found. Checked for an update and for a rollback to the runtime
 // the update replaced.
 func TestAFailedPromotionPutsBackEverythingItChanged(t *testing.T) {
+	// sequential: replaces the commit and pointer-placement seams.
 	commitFails := func(t *testing.T) func() {
 		return install.ReplaceSelectionCommit(func(string, int, record.Delta) (reading.Reading, error) {
 			return reading.Reading{}, errNoSpace
@@ -160,6 +162,7 @@ func TestAFailedPromotionPutsBackEverythingItChanged(t *testing.T) {
 // selected runtime holds the store, its service reads itself running, the swap is blocked, the
 // candidate is released and the pointer stays where it was.
 func TestARunningDaemonOfTheSelectedRuntimeBlocksTheSwap(t *testing.T) {
+	// sequential: starts a real relay daemon whose ready-wait deadline is load-sensitive.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)
