@@ -2,10 +2,13 @@ package migrate
 
 import (
 	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // invTree writes entries below base: a key ending in "/" is a directory, every other key a file with mode 0644.
@@ -60,7 +63,7 @@ func invBg(id, status string) string {
 }
 
 func invDispatch(id, record, attempt string) string {
-	return `{"version":1,"sessionId":"rec-1","id":"` + id + `","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","status":"` + attempt + `"}],"status":"` + record + `"}`
+	return `{"version":1,"sessionId":"rec-1","id":"` + id + `","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","candidate":{},"claimed":false,"status":"` + attempt + `"}],"status":"` + record + `"}`
 }
 
 const invStamp = "2026-01-01T00-00-00-000Z"
@@ -281,9 +284,8 @@ func TestInventoryCodexRows(t *testing.T) {
 // (internal/pabcd/crwdir/atomic.go:92 publishes through "." + final + "." + rand.Text() + ".tmp").
 const invRun = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-// TestInventoryEvidenceProducerTemps proves the evidence/** producer-temporary rule of c1: a file whose name exactly matches a
-// producer's temporary shape is reported and skipped with inventoryReasonIntermediate, while any other .tmp name in evidence/**
-// (and any .tmp name in plan/**) is ordinary data and is copied.
+// TestInventoryEvidenceProducerTemps proves the c1 evidence producer-temporary rule: an exact producer temp name is skipped and
+// reported, while other .tmp names in evidence/** and plan/** are ordinary data.
 func TestInventoryEvidenceProducerTemps(t *testing.T) {
 	base := isolate(t)
 	ws := filepath.Join(base, "ws")
@@ -306,4 +308,105 @@ func TestInventoryEvidenceProducerTemps(t *testing.T) {
 	if it := invWant(t, p, ScopeProject, "plan/u/draft.tmp", DispCopy); it.Destination != "plan/u/draft.tmp" {
 		t.Errorf("a user .tmp in plan is ordinary data; got %+v", it)
 	}
+}
+
+// TestInventoryCodexLeafRootOnly proves the Codex leaf map applies only to direct children of the Codex-home root.
+func TestInventoryCodexLeafRootOnly(t *testing.T) {
+	base := isolate(t)
+	c := filepath.Join(base, "ec")
+	invTree(t, c, map[string]string{
+		"codexclaw-self-heal.json":                   "{}",
+		"config.toml.codexclaw-" + invStamp + ".bak": "bak",
+		"agents/codexclaw-self-heal.json":            "{}",
+		"codexclaw/codexclaw-self-heal.json":         "{}",
+	})
+	p, err := invClassify(t, Options{Scope: ScopeCodex, CodexHome: c})
+	must(t, err)
+	if it := invWant(t, p, ScopeCodex, "codexclaw-self-heal.json", DispTransform); it.Destination != "crw-self-heal.json" {
+		t.Errorf("the root self-heal marker dest = %q, want crw-self-heal.json", it.Destination)
+	}
+	if it := invWant(t, p, ScopeCodex, "config.toml.codexclaw-"+invStamp+".bak", DispTransform); it.Destination != "config.toml.crw-"+invStamp+".bak" {
+		t.Errorf("the root config backup dest = %q", it.Destination)
+	}
+	for _, s := range []string{"agents/codexclaw-self-heal.json", "codexclaw/codexclaw-self-heal.json"} {
+		invWant(t, p, ScopeCodex, s, DispSkip)
+	}
+	for _, it := range p.Items {
+		if it.Disposition == DispTransform && it.Source != "codexclaw-self-heal.json" && !strings.HasPrefix(it.Source, "config.toml.codexclaw-") {
+			t.Errorf("a leaf below the Codex root was transformed: %+v", it)
+		}
+	}
+}
+
+// invDispatchFull is a dispatch record in the shape internal/role/dispatch_ledger.go writes.
+func invDispatchFull(session, id, record, attempt string) string {
+	return `{"version":1,"sessionId":"` + session + `","id":"` + id + `","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","candidate":{},"claimed":false,"status":"` + attempt + `"}],"status":"` + record + `"}`
+}
+
+// TestInventoryDispatchShape proves a dispatch record is judged by the store shape: a sparse, path-mismatched or unknown-status
+// record refuses unreadable, a full terminal record copies, and a full active record refuses active.
+func TestInventoryDispatchShape(t *testing.T) {
+	cases := []struct {
+		name   string
+		record string
+		want   Reason // "" means the record copies
+	}{
+		{"sparse record refuses unreadable", `{"status":"complete","attempts":[{"status":"complete"}]}`, ReasonUnreadable},
+		{"unknown status refuses unreadable", invDispatchFull("s1", "d-1", "bogus", "complete"), ReasonUnreadable},
+		{"session mismatch refuses unreadable", invDispatchFull("other", "d-1", "complete", "complete"), ReasonUnreadable},
+		{"id mismatch refuses unreadable", invDispatchFull("s1", "other", "complete", "complete"), ReasonUnreadable},
+		{"missing role refuses unreadable", `{"version":1,"sessionId":"s1","id":"d-1","candidates":[],"attempts":[{"id":"a-1","candidate":{},"claimed":false,"status":"complete"}],"status":"complete"}`, ReasonUnreadable},
+		{"missing candidates refuses unreadable", `{"version":1,"sessionId":"s1","id":"d-1","role":"reviewer","attempts":[{"id":"a-1","candidate":{},"claimed":false,"status":"complete"}],"status":"complete"}`, ReasonUnreadable},
+		{"attempt without claimed refuses unreadable", `{"version":1,"sessionId":"s1","id":"d-1","role":"reviewer","candidates":[],"attempts":[{"id":"a-1","candidate":{},"status":"complete"}],"status":"complete"}`, ReasonUnreadable},
+		{"full complete record copies", invDispatchFull("s1", "d-1", "complete", "complete"), ""},
+		{"full stopped record copies", invDispatchFull("s1", "d-1", "stopped", "failed"), ""},
+		{"full active record refuses active", invDispatchFull("s1", "d-1", "active", "complete"), ReasonActive},
+		{"in-flight attempt refuses active", invDispatchFull("s1", "d-1", "complete", "running"), ReasonActive},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ws, src, dst := invRowProject(t)
+			invTree(t, src, map[string]string{"sessions/rec-1.json": "{}", "dispatches/s1/d-1.json": c.record})
+			if c.want != "" {
+				invRowRefusal(t, ws, src, dst, c.want)
+				return
+			}
+			p, err := invClassify(t, Options{Scope: ScopeProject, Cwd: ws})
+			must(t, err)
+			invWant(t, p, ScopeProject, "dispatches/s1/d-1.json", DispCopy)
+		})
+	}
+}
+
+// invRowProject builds an empty project and returns the workspace, the source and the destination paths.
+func invRowProject(t *testing.T) (ws, src, dst string) {
+	t.Helper()
+	base := isolate(t)
+	ws = filepath.Join(base, "ws")
+	src = filepath.Join(ws, ProjectSourceName)
+	dst = filepath.Join(ws, crwdir.DirName)
+	mkdirs(t, src)
+	return ws, src, dst
+}
+
+// invRowRefusal classifies the project of ws, requires the refusal want, and proves a refusal writes nothing.
+func invRowRefusal(t *testing.T, ws, src, dst string, want Reason) *Plan {
+	t.Helper()
+	mkdirs(t, dst)
+	beforeSrc, beforeDst := fingerprint(t, src), fingerprint(t, dst)
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	defer r.Close()
+	p, err := classify(r)
+	var ref *RefusedError
+	if !errors.As(err, &ref) {
+		t.Fatalf("classify = %v, want a refusal with reason %q", err, want)
+	}
+	if ref.Reason != want {
+		t.Fatalf("refusal = %q (%s), want %q", ref.Reason, ref.Detail, want)
+	}
+	if fingerprint(t, src) != beforeSrc || fingerprint(t, dst) != beforeDst {
+		t.Error("a refusal changed the source or the destination tree")
+	}
+	return p
 }
