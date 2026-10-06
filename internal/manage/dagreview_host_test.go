@@ -410,3 +410,94 @@ func TestDagHostNormalStateRaisesNothing(t *testing.T) {
 		}
 	}
 }
+
+// A context cancelled while the review reads the host writes no offset: the offset file is a
+// durable effect, and a cancelled review produces none.
+func TestDagHostCancelledContextWritesNoOffset(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostRefusalRollout(t)...)
+	f.close()
+	ctx, cancel := context.WithCancel(context.Background())
+	host := fakehost.Start(t)
+	// The fake cancels the context while it answers the parent read, so the review is cancelled
+	// by the time it would commit the offsets.
+	host.Handle("thread/read", func(json.RawMessage) fakehost.Reply {
+		cancel()
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+			"status": map[string]any{"type": "idle"}, "path": rollout,
+		}}}
+	})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+	// The cancelled review may report the cancellation as an error; either way it must not have
+	// committed the offset file.
+	_, _ = DagReview(ctx, dagReviewEnv(t), cfg)
+	if _, err := os.Stat(filepath.Join(stateDir, dagHostStateFile)); !os.IsNotExist(err) {
+		t.Fatalf("a cancelled review wrote the offset file: %v", err)
+	}
+}
+
+// The offset file keeps every top-level key it already holds, so a key a later build adds is not
+// lost when this review rewrites the offsets.
+func TestDagHostOffsetFileKeepsUnknownKeys(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := t.TempDir()
+	path := filepath.Join(stateDir, dagHostStateFile)
+	if err := os.WriteFile(path, []byte(`{"offsets":{},"note":"keep me"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostRefusalRollout(t)...)
+	f.close()
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "idle"}, "path": rollout,
+	}}})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, stateDir, 0)
+
+	dagHostRun(t, context.Background(), f, cfg)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("the offset file is not a JSON object: %v\n%s", err, data)
+	}
+	if string(document["note"]) != `"keep me"` {
+		t.Fatalf("the unknown key was dropped: %s", data)
+	}
+	var offsets map[string]int64
+	if err := json.Unmarshal(document["offsets"], &offsets); err != nil {
+		t.Fatal(err)
+	}
+	if len(offsets) != 1 {
+		t.Fatalf("the offsets were not written beside the unknown key: %s", data)
+	}
+}
+
+// A rollout line that is not JSON is skipped rather than failing the reading: the scan reports the
+// duplicate it can see and names no unmeasured check.
+func TestDagHostMalformedRolloutLineIsSkipped(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		"{not json",
+		dagHostToolCall(t, "call-1", "crw relay status"),
+		dagHostToolOutput(t, "call-1", "first"),
+		dagHostToolOutput(t, "call-1", "second"),
+	)
+	f.close()
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "idle"}, "path": rollout,
+	}}})
+	cfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, "", 0)
+
+	review := dagHostRun(t, context.Background(), f, cfg)
+	if found := dagReviewFind(review, dagHostKindDuplicateToolOutputs); len(found) != 1 {
+		t.Fatalf("the malformed line hid the duplicate: %+v", found)
+	}
+	if dagHostUnmeasured(review, "parent_rollout:parent-1") {
+		t.Fatalf("a malformed line was reported as unmeasured: %+v", review.Checks)
+	}
+}

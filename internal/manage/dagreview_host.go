@@ -134,7 +134,7 @@ func dagHostSortedParents(parents map[string]string) []dagHostParent {
 // dagHostParentsRead reads every configured parent's thread and rollout.
 func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostScope) error {
 	cfg := scope.config()
-	offsets := dagHostOffsets{Offsets: map[string]int64{}}
+	offsets := dagHostOffsets{Offsets: map[string]int64{}, raw: map[string]json.RawMessage{}}
 	offsetsRead := false
 	if !scope.noState && scope.stateDir != "" {
 		state, err := dagHostLoadOffsets(scope.stateDir)
@@ -186,6 +186,11 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 		dagHostParentRollout(in, parent, read.Thread.Path, &offsets, offsetsRead)
 	}
 	if offsetsRead {
+		// A cancelled review writes no durable effect: the offset file is the one host state this
+		// review touches, and a cancelled run must leave it as it was.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := dagHostSaveOffsets(scope.stateDir, offsets); err != nil {
 			in.review.Checks = append(in.review.Checks, Check{
 				Name: "dag_review_state", State: dagReviewUnmeasured,
@@ -417,40 +422,58 @@ func dagHostFileSize(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-// dagHostOffsets is the offset file's content: the resume offset of each rollout.
+// dagHostOffsets is the offset file's content: the resume offset of each rollout, plus the
+// document's other keys verbatim, so a rewrite does not drop a key this build does not name.
 type dagHostOffsets struct {
-	Offsets map[string]int64 `json:"offsets"`
+	Offsets map[string]int64
+	raw     map[string]json.RawMessage
 }
 
 // dagHostLoadOffsets reads the offset file; an absent file is no offsets yet, and an unreadable one
 // is an error rather than an empty set, so a corrupt file cannot silently re-report every refusal
-// or clobber the offsets it holds.
+// or clobber the offsets it holds. The document's other keys are kept verbatim.
 func dagHostLoadOffsets(stateDir string) (dagHostOffsets, error) {
 	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return dagHostOffsets{Offsets: map[string]int64{}}, nil
+		return dagHostOffsets{Offsets: map[string]int64{}, raw: map[string]json.RawMessage{}}, nil
 	}
 	if err != nil {
 		return dagHostOffsets{}, err
 	}
-	state := dagHostOffsets{}
-	if err := json.Unmarshal(data, &state); err != nil {
+	raw := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return dagHostOffsets{}, fmt.Errorf("the offset file %s is not readable: %w", dagHostStateFile, err)
 	}
-	if state.Offsets == nil {
-		state.Offsets = map[string]int64{}
+	state := dagHostOffsets{Offsets: map[string]int64{}, raw: raw}
+	if held, ok := raw["offsets"]; ok {
+		if err := json.Unmarshal(held, &state.Offsets); err != nil {
+			return dagHostOffsets{}, fmt.Errorf("the offset file %s holds an unreadable offsets member: %w", dagHostStateFile, err)
+		}
+		if state.Offsets == nil {
+			state.Offsets = map[string]int64{}
+		}
 	}
 	return state, nil
 }
 
 // dagHostSaveOffsets writes the offset file atomically: a private temporary file in the same
 // directory, synced, renamed over the target, then the directory synced, so a reader never sees a
-// half-written file and a crash leaves either the old offsets or the new ones.
+// half-written file and a crash leaves either the old offsets or the new ones. Every key the file
+// already held is written back unchanged, so a key this build does not name is not lost.
 func dagHostSaveOffsets(stateDir string, state dagHostOffsets) error {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
 	}
-	data, err := json.Marshal(state)
+	offsets, err := json.Marshal(state.Offsets)
+	if err != nil {
+		return err
+	}
+	document := map[string]json.RawMessage{}
+	for key, value := range state.raw {
+		document[key] = value
+	}
+	document["offsets"] = offsets
+	data, err := json.Marshal(document)
 	if err != nil {
 		return err
 	}
