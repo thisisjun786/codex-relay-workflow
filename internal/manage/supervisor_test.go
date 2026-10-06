@@ -416,6 +416,42 @@ func TestSupervisorShowReportsAnUnreadableSettingsAnswer(t *testing.T) {
 	}
 }
 
+// A live binding that kept a working directory other than the one this run asked for is named on
+// stderr: the relay applies no update to a live same-host binding, so the run must not look as if
+// the requested cwd took effect. The run still succeeds, because the seat is the recorded binding.
+func TestSupervisorRegisterNamesAStaleCwd(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"linkage-bind":    `{"bindingId":"bnd-1","cwd":"/old/cwd"}`,
+		"settings-record": `{"taskId":"task-supervisor","settings":{}}`,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, out, errOut := supervisorEnv(exe)
+	if code := supervisorRegister(context.Background(), e, nil); code != 0 {
+		t.Fatalf("register: exit %d, stderr %q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "/old/cwd") || !strings.Contains(errOut.String(), "/work/management") {
+		t.Errorf("the stale cwd was not named: %q", errOut.String())
+	}
+	if !strings.Contains(out.String(), `"cwd":"/old/cwd"`) {
+		t.Errorf("the answer does not carry the binding's own cwd: %s", out.String())
+	}
+}
+
+// A binding whose cwd matches, or a run that named none, says nothing about it.
+func TestSupervisorRegisterIsSilentWhenTheCwdMatches(t *testing.T) {
+	exe, _ := supervisorScript(t, map[string]string{
+		"linkage-bind":    `{"bindingId":"bnd-1","cwd":"/work/management"}`,
+		"settings-record": `{"taskId":"task-supervisor","settings":{}}`,
+	})
+	section := supervisorTestSection()
+	supervisorUseConfig(t, supervisorTestConfig(&section))
+	e, _, errOut := supervisorEnv(exe)
+	if code := supervisorRegister(context.Background(), e, nil); code != 0 || errOut.String() != "" {
+		t.Fatalf("exit %d, stderr %q", code, errOut.String())
+	}
+}
+
 // A relay that answers a host failure (exit 3) on a read is passed through the same way, so the
 // two failure kinds stay distinguishable at the command's own exit status.
 func TestSupervisorShowPassesThroughARelayHostFailure(t *testing.T) {

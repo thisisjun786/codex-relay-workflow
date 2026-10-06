@@ -184,6 +184,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 	if !ok {
 		return supervisorUnreadableAnswer(e, "linkage-bind", bound)
 	}
+	supervisorWarnStaleCwd(e, boundValue, section.Cwd)
 	recordedValue, ok := supervisorAnswer(recorded)
 	if !ok {
 		return supervisorUnreadableAnswer(e, "settings-record", recorded)
@@ -191,6 +192,28 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 	supervisorWrite(e.Stdout, supervisorRecord{OK: true, TaskID: section.TaskID,
 		Binding: boundValue, Settings: recordedValue})
 	return 0
+}
+
+// supervisorWarnStaleCwd names a binding that kept a working directory other than the one this run
+// asked for. The relay treats a live same-host binding for the same task as already present and
+// applies no update, so a re-registration with a new cwd succeeds without moving the endpoint; the
+// binding is still the recorded seat, so this is reported rather than refused, and the caller sees
+// the binding's own cwd in the answer. A binding whose cwd matches, or a run that named no cwd, is
+// silent.
+func supervisorWarnStaleCwd(e *Env, binding json.RawMessage, wanted string) {
+	if wanted == "" {
+		return
+	}
+	var record struct {
+		Cwd string `json:"cwd"`
+	}
+	if err := json.Unmarshal(binding, &record); err != nil {
+		return
+	}
+	if record.Cwd != "" && record.Cwd != wanted {
+		fmt.Fprintf(e.Stderr, "crw manage supervisor: the live binding kept cwd %q and this run asked for %q; the seat keeps one owner and does not move its endpoint, so the binding still names %q\n",
+			record.Cwd, wanted, record.Cwd)
+	}
 }
 
 // supervisorShow is crw manage supervisor show: the recorded settings and the recorded store
