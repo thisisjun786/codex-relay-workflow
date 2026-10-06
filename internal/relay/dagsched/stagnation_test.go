@@ -247,6 +247,23 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 		}
 	})
 
+	t.Run("a revalidation does not raise a count of its own", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		// the accepted output is re-verified under the plan’s criteria: the same output, no new generation and no new child (E-11, E-21)
+		f.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv1', ?, 'criteria', ?, 'verdict-turn', 1, 'parent', 't')",
+			a.Acceptance.AcceptanceID, a.Event)
+		if st := f.stagnationOf("sp", "I"); st != nil {
+			t.Fatalf("a revalidated result reads %+v, want no object", st)
+		}
+		// a revalidation writes no correction generation, so it cannot be the identity of one either
+		if n := f.count("SELECT COUNT(*) FROM dag_node_executions WHERE kind = 'correction'"); n != 0 {
+			t.Fatalf("the revalidation wrote %d correction generations", n)
+		}
+	})
+
 	t.Run("the reading prints the object and counts the rung", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()

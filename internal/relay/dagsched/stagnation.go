@@ -68,6 +68,10 @@ func (st Stagnation) canonical() map[string]any {
 //
 // What counts is the current state of the node: an acceptance is the repair, so the rows of the generations before it, and the check rows of a head other than the one it stands on, are the history
 // of a result that was already repaired. A node with no active acceptance counts everything it has.
+//
+// A revalidation (dag_acceptance_revalidations) is read as part of the acceptance it re-verifies and not as a row of its own: it re-verifies the SAME accepted output under the plan’s criteria and
+// writes no correction generation, so it moves neither the floor nor the run. It matters here for the other direction: because the active acceptance is what the floor comes from, a node whose result
+// was re-verified keeps counting only what happened after it, exactly as an acceptance does.
 func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stagnation, error) {
 	// a node that landed is never run again, so the ladder has nothing to say about it
 	since := int64(0)
