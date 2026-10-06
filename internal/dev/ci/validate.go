@@ -344,6 +344,9 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	}
 	blobErrs, blobSummary := largeBlobCheck(root, os.Getenv)
 	errs = append(errs, blobErrs...)
+	if err := refactorBacklogError(root); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(errs, "\n"))
 	}

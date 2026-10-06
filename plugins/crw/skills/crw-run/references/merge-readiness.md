@@ -1170,7 +1170,10 @@ among its commands, the parent does not settle a conflict either.
      <path>`) and run the declared command on the merged tree, from the repository root. For
      `plugins/crw/.codex-plugin/plugin.json` that is `go run -tags dev ./cmd/crw-dev ci plugin
      --record-version`, after the merge of the skills has settled, because the suffix digests the whole
-     payload. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
+     payload. For `docs/port/refactor-backlog.md` that is `go run -tags dev ./cmd/crw-dev ci
+     refactor-backlog --write`, after the merge of the fragment tree `docs/port/refactor-backlog.d/` has
+     settled (entry files both sides add merge as the union), because the file is assembled from those
+     fragments. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
      check runs it there.
 
 The one file no declaration has to cover is the plugin manifest's version line. When the conflict is in
