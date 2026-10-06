@@ -18,6 +18,15 @@ func invLink(t *testing.T, path, target string) {
 	}
 }
 
+// invRootStamp renders a directory's own type, mode and mtime. The shared fingerprint helper skips the directory it is
+// given (publish_test.go), so a test that must prove the directory itself is untouched compares this stamp beside it.
+func invRootStamp(t *testing.T, path string) string {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	must(t, err)
+	return fi.Mode().String() + " " + fi.ModTime().String()
+}
+
 func TestClassifyLockRefusals(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -119,6 +128,7 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	// content, mode and mtime. Captured before the classification and compared after it, it proves the run neither
 	// rewrote nor retimed the temporary (the Lstat below only proves it was not removed).
 	beforeTemp := fingerprint(t, filepath.Join(dst, "sessions"))
+	beforeDestRoot := invRootStamp(t, filepath.Join(dst, "sessions"))
 	invTree(t, src, map[string]string{"sessions/rec-2.json": "{}"})
 	p2, err := invClassify(t, Options{Scope: ScopeProject, Cwd: ws})
 	must(t, err)
@@ -131,6 +141,9 @@ func TestClassifyUserPlanTmp(t *testing.T) {
 	}
 	if after := fingerprint(t, filepath.Join(dst, "sessions")); after != beforeTemp {
 		t.Errorf("classification changed the destination temporary:\nbefore: %q\nafter:  %q", beforeTemp, after)
+	}
+	if after := invRootStamp(t, filepath.Join(dst, "sessions")); after != beforeDestRoot {
+		t.Errorf("classification changed the destination directory: before %q, after %q", beforeDestRoot, after)
 	}
 }
 
@@ -227,6 +240,7 @@ func TestClassifyDestinationConflicts(t *testing.T) {
 			"config.toml":             "cfg",
 		})
 		before := fingerprint(t, c)
+		beforeRoot := invRootStamp(t, c)
 		r, err := Open(Options{Scope: ScopeCodex, CodexHome: c})
 		must(t, err)
 		defer r.Close()
@@ -237,6 +251,9 @@ func TestClassifyDestinationConflicts(t *testing.T) {
 		}
 		if fingerprint(t, c) != before {
 			t.Error("the destination conflict refusal wrote into the codex home")
+		}
+		if after := invRootStamp(t, c); after != beforeRoot {
+			t.Errorf("the destination conflict refusal changed the codex home root: before %q, after %q", beforeRoot, after)
 		}
 	})
 }
