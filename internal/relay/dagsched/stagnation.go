@@ -62,11 +62,15 @@ func (st Stagnation) canonical() map[string]any {
 	return map[string]any{"node_id": st.NodeID, "count": st.Count, "cause": st.Cause, "rung": st.Rung, "next": st.Next, "finding_digest": st.FindingDigest, "last_event_id": st.LastEventID}
 }
 
-// Stagnation reads a node's stagnation counter from the rows the store already keeps: its correction generations (dag_node_executions, kind correction) with the finding each ruling carried,
+// Stagnation reads a node’s stagnation counter from the rows the store already keeps: its correction generations (dag_node_executions, kind correction) with the finding each ruling carried,
 // its merge-check history (dag_merge_checks, the round and the failed required checks) and its revalidations (dag_acceptance_revalidations). It returns nil below the threshold of 2, and a
 // node that landed reads none whatever the rows say (it is never run again, E-20). It reads no clock and writes nothing.
+//
+// What counts is the current state of the node: an acceptance is the repair, so the rows of the generations before it, and the check rows of a head other than the one it stands on, are the history
+// of a result that was already repaired. A node with no active acceptance counts everything it has.
 func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stagnation, error) {
 	// a node that landed is never run again, so the ladder has nothing to say about it
+	since := int64(0)
 	if acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID); err != nil {
 		return nil, err
 	} else if has {
@@ -77,8 +81,10 @@ func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string
 		if landed {
 			return nil, nil
 		}
+		// an acceptance is the repair: only what happened after the current result was accepted describes a node that is failing now
+		since = acc.ExecutionGeneration
 	}
-	runs, err := s.correctionRuns(ctx, q, plan, n.NodeID)
+	runs, err := s.correctionRuns(ctx, q, plan, n.NodeID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -154,13 +160,13 @@ type correctionRun struct {
 //
 // The ruling is looked up the way RecordCorrection looks it up: the event of the generation BEFORE this one, in this relationship, that was ruled needs_changes and named this generation next. The
 // relationship and the event are what scope it; the verdict alone would let a correction of one node read another relationship’s ruling when the generation numbers coincide.
-func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, node string) ([]correctionRun, error) {
+func (s *Scheduler) correctionRuns(ctx context.Context, q store.Querier, plan, node string, since int64) ([]correctionRun, error) {
 	rows, err := q.QueryContext(ctx, "SELECT e.execution_generation, v.event_id, c.findings FROM dag_node_executions e"+
 		" LEFT JOIN events ev ON ev.relationship_id = e.relationship_id AND ev.execution_generation = e.execution_generation - 1"+
 		" LEFT JOIN verdicts v ON v.event_id = ev.event_id AND v.verdict = 'needs_changes' AND v.next_generation = e.execution_generation"+
 		" LEFT JOIN verdict_context c ON c.event_id = v.event_id"+
-		" WHERE e.plan_id = ? AND e.node_id = ? AND e.kind = 'correction'"+
-		" ORDER BY e.execution_generation, v.decided_at", plan, node)
+		" WHERE e.plan_id = ? AND e.node_id = ? AND e.kind = 'correction' AND e.execution_generation > ?"+
+		" ORDER BY e.execution_generation, v.decided_at", plan, node, since)
 	if err != nil {
 		return nil, err
 	}
@@ -225,9 +231,10 @@ func correctionFindingDigest(findings string) string {
 // repeatedCheckFailure is a node's run of repeated failed required checks: the newest merge-check row of the node's acceptance, and the consecutive rows before it that failed the same non-empty set of
 // required check names as the newest rows of the node's merge-check history, newest first (the merge lane's retry round and its eviction, D-12). Count 2 is the failure seen again after the retry; the round is carried in the history but is not what ends the run, because a head accepted again restarts it. The digest is empty: a check failure has no finding text, and the failed check names are its identity.
 func (s *Scheduler) repeatedCheckFailure(ctx context.Context, q store.Querier, plan, node string) (correctionRun, error) {
+	// only the rows of the head the node’s active acceptance stands on: the checks ran on the commit, so a head accepted again carries its own history and an older head’s failures are history
 	rows, err := q.QueryContext(ctx, "SELECT c.round_no, c.failed_required_json FROM dag_merge_checks c"+
 		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id"+
-		" WHERE a.plan_id = ? AND a.node_id = ? ORDER BY c.rowid DESC", plan, node)
+		" WHERE a.plan_id = ? AND a.node_id = ? AND a.state = 'active' AND c.head_sha = a.head_sha ORDER BY c.rowid DESC", plan, node)
 	if err != nil {
 		return correctionRun{}, err
 	}

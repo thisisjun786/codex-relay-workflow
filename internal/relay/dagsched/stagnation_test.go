@@ -203,6 +203,50 @@ func TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung(t *testing.
 		}
 	})
 
+	t.Run("an acceptance clears the count", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		rid := f.startNode("sp", "I")
+		f.addCorrection("sp", "I", rid, 2, rulingFinding("the same thing", 2), false)
+		f.addCorrection("sp", "I", rid, 3, rulingFinding("the same thing", 3), false)
+		if st := f.stagnationOf("sp", "I"); st == nil || st.Count != 2 {
+			t.Fatalf("two corrections read %+v, want count 2", st)
+		}
+		// the corrected result is accepted at generation 3: the corrections before it are the history of a result that was repaired
+		f.insertAcceptance(Acceptance{AcceptanceID: dig("acc-3"), PlanID: "sp", NodeID: "I", ManifestDigest: dig("manifest sp 3"), RelationshipID: rid, ExecutionGeneration: 3,
+			EventID: "evt-rule-" + rid + "-3", RevisionHash: dig("revision acc 3"), CriteriaSetDigest: "criteria", Verdict: "verified", AckTier: "host_read",
+			VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: "t", State: "active"})
+		if st := f.stagnationOf("sp", "I"); st != nil {
+			t.Fatalf("an accepted result reads %+v, want the count cleared", st)
+		}
+	})
+
+	t.Run("a head accepted again carries only its own failed checks", func(t *testing.T) {
+		f := newFixture(t)
+		f.projectParent()
+		stagnatingPlan(f, "sp")
+		a := f.acceptNode("sp", "I", pinnedOpts)
+		failed := failuresJSON([]failure{{Name: "dev-gate", Run: "1", Attempt: 1}})
+		body := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
+		digest := dig("evidence")
+		for seq, round := range []int{1, 2} {
+			f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+				" VALUES (?, ?, ?, ?, ?, 'tip', ?, ?, ?, ?, 'evicted', 'same check failed', 't')", fmt.Sprintf("mc-%d", seq+1), a.Acceptance.AcceptanceID, seq+1, head1, head1, digest, body, failed, round)
+		}
+		if st := f.stagnationOf("sp", "I"); st == nil || st.Count != 2 {
+			t.Fatalf("two failed checks on the accepted head read %+v, want count 2", st)
+		}
+		// a repaired head is accepted: the rows of the old head are that head’s history, and this one has failed nothing yet
+		f.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
+		f.insertAcceptance(Acceptance{AcceptanceID: dig("acc-new"), PlanID: "sp", NodeID: "I", ManifestDigest: a.Manifest, RelationshipID: a.Acceptance.RelationshipID, ExecutionGeneration: 1,
+			EventID: a.Event, RevisionHash: dig("revision acc new"), CriteriaSetDigest: "criteria", Verdict: "verified", HeadSHA: head1, Repository: "owner/repo", PRNumber: 7,
+			AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: "t", State: "active"})
+		if st := f.stagnationOf("sp", "I"); st != nil {
+			t.Fatalf("a head accepted again with no failed check reads %+v, want no object", st)
+		}
+	})
+
 	t.Run("the reading prints the object and counts the rung", func(t *testing.T) {
 		f := newFixture(t)
 		f.projectParent()
