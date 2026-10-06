@@ -146,13 +146,18 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 			return refuse(StaleGeneration, "%s is generation %d and the assignment is on generation %d: a decision answers the receipt the current generation stands on", strconv.Quote(req.EventID), generation, current.I("execution_generation"))
 		}
 		// later is read in the order the relay saw the receipts: when it first saw each one, and for receipts first seen at one
-		// instant the order they were stored in (an event id is a hash of the receipt, not a sequence)
-		later, err := one(ctx, a.Store, "SELECT event_id FROM events WHERE relationship_id = ? AND execution_generation = ? AND stage = 'final' AND suppressed_reason IS NULL AND producer = 'child' AND event_id != ? AND (first_seen_at > ? OR (first_seen_at = ? AND rowid > (SELECT rowid FROM events WHERE event_id = ?))) ORDER BY first_seen_at DESC, rowid DESC LIMIT 1",
+		// instant the order they were stored in (an event id is a hash of the receipt, not a sequence). A later receipt is
+		// the child's own or the relay's own observation of a later end (CRW-668): both are the child's newest word on its
+		// work, so an answer to an end the relay saw is refused once the relay sees a later one.
+		later, err := one(ctx, a.Store, "SELECT event_id, producer FROM events WHERE relationship_id = ? AND execution_generation = ? AND stage = 'final' AND suppressed_reason IS NULL AND producer IN ('child','daemon_observation') AND event_id != ? AND (first_seen_at > ? OR (first_seen_at = ? AND rowid > (SELECT rowid FROM events WHERE event_id = ?))) ORDER BY first_seen_at DESC, rowid DESC LIMIT 1",
 			rid, generation, req.EventID, event.S("first_seen_at"), event.S("first_seen_at"), req.EventID)
 		if err != nil {
 			return err
 		}
 		if later != nil {
+			if later.S("producer") == store.ProducerDaemon {
+				return refuse(SupersededRevision, "the relay observed the end of a later turn in generation %d (%s), so %s is no longer the newest word on that work: answer that receipt", generation, later.S("event_id"), strconv.Quote(req.EventID))
+			}
 			return refuse(SupersededRevision, "the child reported again in generation %d (%s), so %s is no longer its newest word: answer that receipt", generation, later.S("event_id"), strconv.Quote(req.EventID))
 		}
 		child := relationship.Child.TaskID
