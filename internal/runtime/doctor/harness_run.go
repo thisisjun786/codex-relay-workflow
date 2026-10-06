@@ -301,9 +301,13 @@ func harnessRunRoot(options HarnessOptions, env host.LookupEnv) (string, error) 
 
 // harnessRunRootScan lists the version directories under cacheRoot that hold a plugin
 // manifest, the way harnessInstallRootBody scans the same tree (harness_install.go): every
-// marketplace segment, the crw folder, then each version. A path that is simply absent
-// contributes nothing; a directory that exists and cannot be read is an error, because the scan
-// then cannot see the whole cache and no root may be picked from an incomplete count.
+// marketplace segment, the crw folder, then each version. A version counts only when its
+// manifest path stats to a regular file, so a directory, a FIFO, a device or any other
+// non-regular file at that path contributes nothing, exactly as an absent path does; the stat
+// follows links, so a manifest link and a link version directory that resolve to a regular file
+// still count while a dangling link is absent. A path that is simply absent contributes nothing;
+// a directory that exists and cannot be read, and any other stat failure, is an error, because
+// the scan then cannot see the whole cache and no root may be picked from an incomplete count.
 func harnessRunRootScan(cacheRoot string) ([]string, error) {
 	markets, err := os.ReadDir(cacheRoot)
 	if err != nil {
@@ -325,11 +329,15 @@ func harnessRunRootScan(cacheRoot string) ([]string, error) {
 		for _, entry := range versions {
 			root := filepath.Join(dir, harnessInstallNodeName(entry.Name()))
 			manifest := filepath.Join(root, harnessRunManifestRelative)
-			if _, err := os.Stat(manifest); err != nil {
+			info, err := os.Stat(manifest)
+			if err != nil {
 				if harnessRunRootMissing(err) {
 					continue
 				}
 				return nil, harnessRunRootUnreadable(manifest, err)
+			}
+			if !info.Mode().IsRegular() {
+				continue
 			}
 			found = append(found, root)
 		}

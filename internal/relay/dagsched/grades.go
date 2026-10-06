@@ -32,6 +32,11 @@ const (
 	RuleRegeneratePref = "regenerate:"
 )
 
+// BuiltinPluginVersionRule is the rule the base-refresh mechanical checker applies itself, outside
+// the declarations, to the plugin manifest's version line (CRW-732): the line is derived from the
+// payload, so the head's value can be recomputed from the head itself.
+const BuiltinPluginVersionRule = RuleRegeneratePref + "plugin-version"
+
 // MaxRuleBytes bounds the rule of a mechanical region; MaxBasisRows the basis rows a judgement keeps; RecentObservations the conflict observations of a plan that count as recent.
 const (
 	MaxRuleBytes       = 200
