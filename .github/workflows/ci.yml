@@ -116,16 +116,45 @@ jobs:
   skill-scripts-node:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # The mirror reads this repository's runs and jobs with the workflow's own token.
+    permissions:
+      contents: read
+      actions: read
     env:
       # The staged skills root, named once: the changed-path filter and the test run both read it.
       SKILLS_ROOT: port/cxc/skills
     steps:
+      # A body-only edit needs only the mirror script, and the script has to exist before the
+      # mirror decides, so it is fetched sparsely first. Every other run skips this step.
+      - name: Check out scripts/ci for the body-only edit mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      # On a body-only edit, a job this head already ran successfully stands down. Every later
+      # step of this job carries the answer, so no step is skipped at job level, which GitHub
+      # would report as a success and a skipped dev-gate could hide an earlier red run with.
+      - name: Mirror the jobs this head already ran
+        id: mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        run: bash scripts/ci/edit_mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_NAME: skill-scripts-node
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.mirror.outputs.mirrored != 'true'
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Decide from the changed files whether the staged skills changed
         id: paths
+        if: steps.mirror.outputs.mirrored != 'true'
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -151,14 +180,14 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo 'no staged skill path changed; the job ends without installing Node'
           fi
-      - if: steps.paths.outputs.changed == 'true'
+      - if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           # An exact release, not the floating major: the moved tests are timing- and
           # runtime-sensitive, so the same commit must meet the same Node.
           node-version: '24.20.0'
       - name: Run the staged skill-script tests
-        if: steps.paths.outputs.changed == 'true'
+        if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
         run: |
           set -euo pipefail
           shopt -s nullglob
