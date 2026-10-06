@@ -164,3 +164,42 @@ func TestStateReadDefaultedUpdatedAtMirrorsTheReader(t *testing.T) {
 		}
 	}
 }
+
+// The predicate decodes with the reader's own decoder: pyjson accepts bare NaN, which encoding/json
+// refuses, so a source holding one takes the default state in the reader and must read as defaulted
+// here too (generation 3, c8; audit round 2 P2).
+func TestStateReadDefaultedUpdatedAtUsesTheReaderDecoder(t *testing.T) {
+	raw := "{\"phase\": \"P\", \"updatedAt\": NaN}"
+	if !readDefaultedUpdatedAt([]byte(raw)) {
+		t.Fatal("a source encoding/json refuses read as a kept updatedAt")
+	}
+}
+
+// The mask splices only the top-level updatedAt's value. A document whose nested object carries an
+// updatedAt before the top-level one must keep the nested value and every other byte (generation 3,
+// c8; audit round 2 P2: the shim matched the first textual occurrence, which a nested-first document
+// would have cut).
+func TestMaskTopLevelTimestampLeavesANestedUpdatedAt(t *testing.T) {
+	text := "{\n  \"finalGate\": {\n    \"updatedAt\": \"2020-01-01T00:00:00.000Z\"\n  },\n  \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n  \"objective\": \"o\"\n}"
+	want := "{\n  \"finalGate\": {\n    \"updatedAt\": \"2020-01-01T00:00:00.000Z\"\n  },\n  \"updatedAt\": \"" + timestampPlaceholder + "\",\n  \"objective\": \"o\"\n}"
+	if got := maskTopLevelTimestamp(text); got != want {
+		t.Fatalf("the mask changed more than the top-level updatedAt:\n got %q\nwant %q", got, want)
+	}
+}
+
+// A value that only looks like a stamp, a non-string updatedAt, and a document that is not an object
+// are all left as stored.
+func TestMaskTopLevelTimestampLeavesEverythingElse(t *testing.T) {
+	for _, text := range []string{
+		"{\"updatedAt\": \"not a stamp\"}",
+		"{\"updatedAt\": 5}",
+		"[\"updatedAt\"]",
+		"{",
+		"",
+		"{\"other\": \"2026-01-01T00:00:00.000Z\"}",
+	} {
+		if got := maskTopLevelTimestamp(text); got != text {
+			t.Errorf("maskTopLevelTimestamp(%q) = %q, want it unchanged", text, got)
+		}
+	}
+}

@@ -3,7 +3,9 @@
 package cxcfuzz
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -164,25 +166,29 @@ func maskTopLevelTimestamp(text string) string {
 // phase, a non-text updatedAt — returns the default state, whose updatedAt each side stamps from its
 // own clock. Only then can the two sides' read forms hold different instants, so only then is the
 // read form's updatedAt masked; a persisted one is kept by both sides and compared as stored.
+//
+// It decodes with encoding/json, not the harness's pyjson, because the reader does: pyjson accepts
+// the bare NaN and Infinity spellings encoding/json refuses (and a trailing value decodeObject
+// rejects), so a source holding one would leave the predicate and the reader disagreeing.
 func readDefaultedUpdatedAt(raw []byte) bool {
-	value, err := decode(string(raw))
-	if err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var value any
+	if dec.Decode(&value) != nil {
 		return true
 	}
-	object, ok := value.(pyjson.Object)
+	if _, err := dec.Token(); err != io.EOF {
+		return true
+	}
+	object, ok := value.(map[string]any)
 	if !ok {
 		return true
 	}
-	phase, _ := object.Lookup("phase")
-	name, _ := phase.(string)
+	name, _ := object["phase"].(string)
 	if !slices.Contains(state.AllPhases(), state.Phase(name)) {
 		return true
 	}
-	stamp, ok := object.Lookup("updatedAt")
-	if !ok {
-		return true
-	}
-	_, isText := stamp.(string)
+	_, isText := object["updatedAt"].(string)
 	return !isText
 }
 

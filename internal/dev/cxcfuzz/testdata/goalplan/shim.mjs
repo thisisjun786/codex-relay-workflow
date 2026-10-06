@@ -34,6 +34,43 @@ const SLUG = "rec-plan";
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const TIMESTAMP_PLACEHOLDER = "@TS@";
 
+// topLevelUpdatedAtSpan is the [start, end) span of the string value of the plan's top-level
+// "updatedAt", or null when it has none. It walks the text tracking string and container depth, so a
+// nested "updatedAt" (a finalGate's) is never mistaken for the top-level one — the same span the Go
+// side's token walk finds.
+function topLevelUpdatedAtSpan(text) {
+  let depth = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === "\\") j++;
+        j++;
+      }
+      const raw = text.slice(i, j + 1);
+      const colon = /^\s*:\s*/.exec(text.slice(j + 1));
+      if (depth === 1 && colon !== null && JSON.parse(raw) === "updatedAt") {
+        const start = j + 1 + colon[0].length;
+        if (text[start] !== '"') return null;
+        let k = start + 1;
+        while (k < text.length && text[k] !== '"') {
+          if (text[k] === "\\") k++;
+          k++;
+        }
+        return [start, k + 1];
+      }
+      i = j + 1;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    i++;
+  }
+  return null;
+}
+
 // maskUpdatedAt is the plan text with the value of its top-level updatedAt replaced by the
 // placeholder, when that value is a wall-clock stamp. A parsed copy decides whether to mask; the
 // replacement is spliced into the original text so every other byte is unchanged.
@@ -46,12 +83,9 @@ function maskUpdatedAt(text) {
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return text;
   if (typeof parsed.updatedAt !== "string" || !TIMESTAMP.test(parsed.updatedAt)) return text;
-  const key = /"updatedAt"\s*:\s*"/.exec(text);
-  if (key === null) return text;
-  const start = key.index + key[0].length;
-  const end = text.indexOf('"', start);
-  if (end === -1) return text;
-  return text.slice(0, start) + TIMESTAMP_PLACEHOLDER + text.slice(end);
+  const span = topLevelUpdatedAtSpan(text);
+  if (span === null) return text;
+  return text.slice(0, span[0]) + '"' + TIMESTAMP_PLACEHOLDER + '"' + text.slice(span[1]);
 }
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one, then
