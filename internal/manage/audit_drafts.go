@@ -880,6 +880,13 @@ func auditDraftRunMark(e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: %v\n", err)
 		return 1
 	}
+	// A draft already posted as another issue must not have that key replaced: the issue it
+	// was opened as is the record, and a second key would invite a duplicate. The same key
+	// again is the idempotent repeat of the mark that recorded it.
+	if doc.State == auditDraftStatePosted && doc.Posted != "" && doc.Posted != values["posted"] {
+		fmt.Fprintf(e.Stderr, "crw manage audit drafts mark: error: already_posted: the draft was posted as %s\n", doc.Posted)
+		return 1
+	}
 	doc.State = auditDraftStatePosted
 	doc.Posted = values["posted"]
 	if err := auditDraftSave(path, doc); err != nil {

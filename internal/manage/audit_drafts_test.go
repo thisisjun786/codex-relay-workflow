@@ -1005,3 +1005,40 @@ func TestAuditDraftFingerprintDelimitsItsParts(t *testing.T) {
 		t.Errorf("the two defects produced %d drafts, want two", len(report.Created))
 	}
 }
+
+// mark is the record of the one issue a draft was opened as: the same key again is the same
+// mark, and another key on an already-posted draft is refused rather than silently replacing
+// the recorded key and inviting a second issue.
+func TestAuditDraftMarkRefusesADifferentKeyOnAPostedDraft(t *testing.T) {
+	state := auditDraftHome(t)
+	defect := AuditDefect{Severity: "P1", What: "a defect", Where: "a.go:1"}
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r1", gradedAt: "2026-01-01T00:00:00Z", defects: []AuditDefect{defect},
+	})
+	e, out, errOut := auditEnv(t)
+	if code := auditRunDrafts(context.Background(), e, nil); code != 0 {
+		t.Fatalf("drafts: exit %d %q", code, errOut.String())
+	}
+	var report auditDraftReport
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := report.Created[0].Fingerprint
+	if code := auditRunDrafts(context.Background(), e, []string{"mark", "--fingerprint", fingerprint, "--posted", "CRW-1"}); code != 0 {
+		t.Fatalf("the first mark: exit %d %q", code, errOut.String())
+	}
+	if code := auditRunDrafts(context.Background(), e, []string{"mark", "--fingerprint", fingerprint, "--posted", "CRW-1"}); code != 0 {
+		t.Errorf("the same key again: exit %d, want 0", code)
+	}
+	errOut.Reset()
+	if code := auditRunDrafts(context.Background(), e, []string{"mark", "--fingerprint", fingerprint, "--posted", "CRW-2"}); code != 1 {
+		t.Errorf("a second key on a posted draft: exit %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "already_posted") {
+		t.Errorf("the refusal does not name already_posted: %q", errOut.String())
+	}
+	after := auditDraftLoadAt(t, state, fingerprint)
+	if after.Posted != "CRW-1" || after.State != auditDraftStatePosted {
+		t.Errorf("the recorded key was replaced: %+v", after)
+	}
+}
