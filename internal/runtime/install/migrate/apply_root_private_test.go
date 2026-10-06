@@ -1,0 +1,148 @@
+package migrate
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+)
+
+// migrateRootPrivateUmask makes a mkdir's permission bits the ones the defect was found under, where 0777 becomes 0755,
+// and restores the process umask so no other test of this package sees it. The umask is process-wide, and no test here
+// runs in parallel.
+func migrateRootPrivateUmask(t *testing.T) {
+	t.Helper()
+	old := unix.Umask(0o022)
+	t.Cleanup(func() { unix.Umask(old) })
+}
+
+// migrateRootPrivateWorkspace is an isolated workspace with its project pair open, as EnsureProjectRoot's caller has it:
+// the workspace exists and the destination root does not.
+func migrateRootPrivateWorkspace(t *testing.T) (string, *Pair) {
+	t.Helper()
+	ws := isolate(t) + "/ws"
+	mkdirs(t, ws)
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	return ws, r.Project
+}
+
+// migrateRootPrivateFailRootCreation makes the publisher's destination-root creation fail after the mkdir: the root is
+// on disk with the mode the mkdir left it, and the call returns EIO as the parent-directory sync in EnsureChild does, so
+// the mode chmod EnsureProjectRoot runs next never happens. That is the state a run interrupted between the mkdir and
+// the chmod leaves, and the state a rerun then finds as an existing root.
+func migrateRootPrivateFailRootCreation(p *Publisher) {
+	create := p.ensureDest
+	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, error) {
+		if _, err := create(pair, perm); err != nil {
+			return nil, err
+		}
+		return nil, unix.EIO
+	}
+}
+
+// migrateRootPrivateWantPrivate fails when dir grants group or other any access, which is what "never wider than 0700"
+// means: a 0644 file inside such a directory cannot be read by another user.
+func migrateRootPrivateWantPrivate(t *testing.T, dir string) {
+	t.Helper()
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %s: %v", dir, err)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("%s is %v; a root that exists must never be wider than 0700", dir, perm)
+	}
+}
+
+// The reported defect: the root's mkdir used 0777 (0755 under the umask) and the chmod that narrows it to the private
+// marker mode comes after EnsureChild's parent-directory sync, so a failure there leaves a root another user can enter.
+func TestMigrateRootPrivateAfterAFailedRootSync(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	ws, pair := migrateRootPrivateWorkspace(t)
+	p := newPub(t)
+	migrateRootPrivateFailRootCreation(p)
+	if root, err := p.EnsureProjectRoot(pair); root != nil || !errors.Is(err, unix.EIO) {
+		t.Fatalf("EnsureProjectRoot = %v, %v; want no root and the interrupted creation", root, err)
+	}
+	migrateRootPrivateWantPrivate(t, filepath.Join(ws, crwdir.DirName))
+}
+
+// The rerun a person makes after that failure: it finds the root and copies state into it, so the root must still be at
+// most 0700 once the run has finished. The source root here is 0755, so the destination root legitimately ends narrower
+// than the source; the run reports that it kept the root's mode.
+func TestMigrateRootPrivateRerunAfterAFailedRootSync(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	ws, r, plan := apPlan(t, map[string]string{"ledger.jsonl": "{\"v\":1}"}, nil)
+	pub := newPub(t)
+	migrateRootPrivateFailRootCreation(pub)
+	if _, err := applyWith(r, plan, pub); !errors.Is(err, unix.EIO) {
+		t.Fatalf("the interrupted run: %v", err)
+	}
+	if _, err := os.Lstat(apDst(ws, "ledger.jsonl")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the interrupted run must not copy state: %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(ws, ProjectSourceName)); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Fatalf("this case needs a 0755 source root: %v %v", fi, err)
+	}
+	// A rerun is a new process: its own roots and its own publisher.
+	again, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = again.Close() })
+	plan2, err := classify(again)
+	must(t, err)
+	res, err := apply(again, plan2)
+	must(t, err)
+	migrateRootPrivateWantPrivate(t, apDst(ws, ""))
+	if fi, err := os.Stat(apDst(ws, "ledger.jsonl")); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Errorf("the copied file keeps its source mode: %v %v", fi, err)
+	}
+	if note := apItem(t, res, ".").Note; !strings.Contains(note, "kept its mode") {
+		t.Errorf("the rerun must report the root it kept, note = %q", note)
+	}
+}
+
+// The control: without a failure the run's result is what it was. EnsureProjectRoot still finishes the root it made at
+// the private marker mode and publishes the canonical .gitignore, and a run whose source root is private still ends with
+// the destination root at that source mode.
+func TestMigrateRootPrivateControls(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	t.Run("EnsureProjectRoot without a failure", func(t *testing.T) {
+		ws, pair := migrateRootPrivateWorkspace(t)
+		root, err := newPub(t).EnsureProjectRoot(pair)
+		must(t, err)
+		if root == nil {
+			t.Fatal("EnsureProjectRoot returned no root")
+		}
+		fi, err := os.Stat(filepath.Join(ws, crwdir.DirName))
+		if err != nil || fi.Mode().Perm() != applyTempMode || fi.Mode()&fs.ModeSticky == 0 {
+			t.Errorf("the root must still be finished at the private marker mode: %v %v", fi, err)
+		}
+		ignore := filepath.Join(ws, crwdir.DirName, ".gitignore")
+		if got := get(t, ignore); got != crwdir.GitignoreText {
+			t.Errorf(".gitignore = %q", got)
+		}
+		if fi, err := os.Stat(ignore); err != nil || fi.Mode().Perm() != 0o644 {
+			t.Errorf("the published .gitignore keeps its mode: %v %v", fi, err)
+		}
+	})
+	t.Run("a completed run finishes the root at the source mode", func(t *testing.T) {
+		ws, r, plan := apPlan(t, map[string]string{"ledger.jsonl": "{\"v\":1}"}, apPrivateSource(t, ""))
+		if _, err := apply(r, plan); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(apDst(ws, ""))
+		if err != nil || fi.Mode().Perm() != 0o700 || fi.Mode()&fs.ModeSticky != 0 {
+			t.Errorf("the completed run must finish the root at the source mode: %v %v", fi, err)
+		}
+		if fi, err := os.Stat(apDst(ws, "ledger.jsonl")); err != nil || fi.Mode().Perm() != 0o644 {
+			t.Errorf("the copied file keeps its source mode: %v %v", fi, err)
+		}
+	})
+}

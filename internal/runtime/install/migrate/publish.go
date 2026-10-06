@@ -41,12 +41,14 @@ func tempRun(name string) (string, bool) {
 
 // Publisher publishes files into pinned directories and never replaces one; it is not safe for concurrent use. rename and at are test
 // seams: rename is the platform's no-replace rename, and at is called before a named step ("root", "rename", "dirsync") and fails
-// it by returning an error.
+// it by returning an error. ensureDest is the seam for the destination root's creation, so a test can fail the step EnsureChild runs
+// between the mkdir and EnsureProjectRoot's mode chmod.
 type Publisher struct {
-	run    string
-	seq    int
-	rename func(dirfd int, oldName, newName string) error
-	at     func(step string) error
+	run        string
+	seq        int
+	rename     func(dirfd int, oldName, newName string) error
+	at         func(step string) error
+	ensureDest func(pair *Pair, perm uint32) (*Dir, error)
 }
 
 // NewPublisher starts a run. A platform without a no-replace rename is refused here, so nothing is written there.
@@ -54,7 +56,11 @@ func NewPublisher() (*Publisher, error) {
 	if !noReplaceSupported {
 		return nil, refuse(ReasonUnsupported, "", "this platform has no no-replace rename")
 	}
-	return &Publisher{run: rand.Text(), rename: noReplaceRename}, nil
+	return &Publisher{
+		run:        rand.Text(),
+		rename:     noReplaceRename,
+		ensureDest: func(pair *Pair, perm uint32) (*Dir, error) { return pair.EnsureDest(perm) },
+	}, nil
 }
 
 func (p *Publisher) step(name string) error {
@@ -219,7 +225,7 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		}
 	}
 	made := pair.Dest == nil
-	root, err := pair.EnsureDest(0o777)
+	root, err := p.ensureDest(pair, 0o777)
 	if err == nil && made {
 		// EnsureDest creates the root 0777 subject to umask, and only a root this call made may be tightened. Give it the
 		// private marker mode here, before the fallible .gitignore publication, so a failure below cannot leave a widened
