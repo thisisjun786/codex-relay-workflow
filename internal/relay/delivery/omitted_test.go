@@ -34,29 +34,37 @@ func baseOmission() map[string]any {
 // One classifier test per distinct input: OMI-3 and 12 are OMI-1's facts, OMI-10, 11 and 19
 // OMI-2's, OMI-13, 16 and 20 OMI-4's, OMI-9 OMI-5's, and OMI-22's bounds are OMI-14's. Each
 // property's Python test is replayed whole by its *_WholeOutput test (omitted_capture_test.go).
-func Test24_OMI_1_TrueOmission(t *testing.T) { omissionCase(t, baseOmission()) }
+func Test24_OMI_1_TrueOmission(t *testing.T) {
+	t.Parallel()
+	omissionCase(t, baseOmission())
+}
 func Test24_OMI_2_GenerationMismatchIsUnmeasured(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["admission"] = "unadmitted"
 	omissionCase(t, f)
 }
 func Test24_OMI_5_StopAloneIsNotTerminal(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["settlements"] = []any{}
 	omissionCase(t, f)
 }
 func Test24_OMI_6_LaterDeclarationPreservesDiagnosis(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["laterAdmitted"] = true
 	omissionCase(t, f)
 }
 func Test24_OMI_7_StagedReadinessIsReported(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["label"] = "declared_ready_receipted"
 	f["settlements"] = []any{}
 	omissionCase(t, f)
 }
 func Test24_OMI_8_FailedSettlementNeedsDaemonReport(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["settlements"] = []any{map[string]any{"status": "failed", "at": "2026-01-01T00:00:00+00:00"}}
 	omissionCase(t, f)
@@ -64,28 +72,36 @@ func Test24_OMI_8_FailedSettlementNeedsDaemonReport(t *testing.T) {
 	omissionCase(t, f)
 }
 func Test24_OMI_14_MarkerShapeReasonsAreReaderContract(t *testing.T) {
+	t.Parallel()
 	if OmittedMaxBytes != 1048576 || OmittedMaxRecords != 128 || OmittedMaxFacts != 512 {
 		t.Fatal("limits changed")
 	}
 }
 func Test24_OMI_17_TerminalConflict(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["settlements"] = []any{map[string]any{"status": "completed", "at": "2026-01-01T00:00:00+00:00"}, map[string]any{"status": "failed", "at": "2026-01-01T00:00:01+00:00"}}
 	omissionCase(t, f)
 }
 func Test24_OMI_18_BootstrapIsNotBusiness(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["admission"] = "bootstrap"
 	omissionCase(t, f)
 }
 func Test24_OMI_21_InProgressIsNotOmission(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["label"] = "declared_in_progress"
 	omissionCase(t, f)
 }
 
-func Test24_SOS_1_OnePredicateForBothReaders(t *testing.T) { omissionCase(t, baseOmission()) }
+func Test24_SOS_1_OnePredicateForBothReaders(t *testing.T) {
+	t.Parallel()
+	omissionCase(t, baseOmission())
+}
 func Test24_SOS_2_AllDispositions(t *testing.T) {
+	t.Parallel()
 	for _, label := range []string{"declared_in_progress", "declared_ready_receipted", "receipt_missing", "undeclared_turn_end"} {
 		f := baseOmission()
 		f["label"] = label
@@ -93,6 +109,7 @@ func Test24_SOS_2_AllDispositions(t *testing.T) {
 	}
 }
 func Test24_SOS_3_LaterAdmissionAndGrace(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["laterAdmitted"] = true
 	omissionCase(t, f)
@@ -101,16 +118,19 @@ func Test24_SOS_3_LaterAdmissionAndGrace(t *testing.T) {
 	omissionCase(t, f)
 }
 func Test24_SOS_4_IdentityBeforePredicate(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["admission"] = "unadmitted"
 	omissionCase(t, f)
 }
 func Test24_SOS_5_OmissionStoreSource(t *testing.T) {
+	t.Parallel()
 	if OmittedStoreSource != "relay_store" {
 		t.Fatal(OmittedStoreSource)
 	}
 }
 func Test24_SOS_6_InProgressAndLaterClear(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["label"] = "declared_in_progress"
 	omissionCase(t, f)
@@ -119,54 +139,73 @@ func Test24_SOS_6_InProgressAndLaterClear(t *testing.T) {
 	omissionCase(t, f)
 }
 func Test24_SOS_7_StagedOmissionRechecks(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["laterAdmitted"] = true
 	omissionCase(t, f)
 }
 func Test24_SOS_8_UnplaceableTurn(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["admission"] = "unadmitted"
 	omissionCase(t, f)
 }
-func Test24_SOS_9_LogicalOmissionStable(t *testing.T)            { omissionCase(t, baseOmission()) }
-func Test24_SOS_10_ArchivedSupervisorKeepsOmission(t *testing.T) { omissionCase(t, baseOmission()) }
-func Test24_SOS_11_ParentAndAutoStageConverge(t *testing.T)      { omissionCase(t, baseOmission()) }
+func Test24_SOS_9_LogicalOmissionStable(t *testing.T) {
+	t.Parallel()
+	omissionCase(t, baseOmission())
+}
+func Test24_SOS_10_ArchivedSupervisorKeepsOmission(t *testing.T) {
+	t.Parallel()
+	omissionCase(t, baseOmission())
+}
+func Test24_SOS_11_ParentAndAutoStageConverge(t *testing.T) {
+	t.Parallel()
+	omissionCase(t, baseOmission())
+}
 func Test24_SOS_12_LegacyAdmissionNotDerived(t *testing.T) {
+	t.Parallel()
 	if OmittedDeclarationsMissing != "declarations_not_recorded" {
 		t.Fatal(OmittedDeclarationsMissing)
 	}
 }
 func Test24_SOS_13_ParentReadingIsProposal(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["receipted"] = true
 	omissionCase(t, f)
 }
 func Test24_SOS_14_MarkerFirstStoreFailure(t *testing.T) {
+	t.Parallel()
 	if Published != "published" {
 		t.Fatal(Published)
 	}
 }
 func Test24_SOS_15_StoreRecordGapsNamed(t *testing.T) {
+	t.Parallel()
 	if OmittedDeclarationsMissing == "" {
 		t.Fatal("missing")
 	}
 }
 func Test24_SOS_16_CreateOnceDisposition(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["label"] = "declared_in_progress"
 	omissionCase(t, f)
 }
 func Test24_SOS_17_UnreadableMarkerWakesNobody(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["witness"] = nil
 	omissionCase(t, f)
 }
 func Test24_SOS_18_DeclarationRaceSerialized(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["label"] = "declared_in_progress"
 	omissionCase(t, f)
 }
 func Test24_SOS_19_AdmissionOrderedByTime(t *testing.T) {
+	t.Parallel()
 	f := baseOmission()
 	f["laterAdmitted"] = true
 	omissionCase(t, f)

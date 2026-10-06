@@ -120,6 +120,7 @@ func runStop(t *testing.T, command string, env []string, payload string) (string
 // names another file. With the pointer gone (mid-rollback, say) the turn is released: exit 0,
 // empty stdout and no row.
 func TestTheNativeStopCommandJournalsTheStopThroughThePointer(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 	if _, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code != install.OK {
@@ -178,6 +179,7 @@ var bridgeLaunchers = []bridgeLauncher{
 // pre-native declaration ran on the host's python3, and its test left with the Python runtime
 // in todo 44 (the host that cached it was cut over and cleared at todo 43).
 func TestTheWiringLaunchersStartTheGoBridgeUnderTheRecordedPolicy(t *testing.T) {
+	t.Parallel()
 	for _, launcher := range bridgeLaunchers {
 		t.Run(launcher.name, func(t *testing.T) {
 			h := newHost(t)

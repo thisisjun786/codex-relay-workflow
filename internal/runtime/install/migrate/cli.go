@@ -1,0 +1,436 @@
+package migrate
+
+// cli.go is the M4 explicit surface of docs/port-cxc/state-migration.md: `crw install migrate-state`,
+// the one caller of classify, apply and attention. It parses the command line, resolves the selected
+// scope's roots from the environment it was given, preflights the whole scope and writes through
+// apply. Nothing calls it implicitly: no hook, installer, activation or startup path reaches this
+// package, so the copy runs only when an operator names the command (the window is decision J2).
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"io/fs"
+	"os/user"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+// UsageText is this command's own help. The legacy `crw install` usage line is a frozen contract and
+// does not name this command.
+const UsageText = `usage: crw install migrate-state [--scope project|user|codex|all] [--cwd <workspace>]
+                               [--from-home <old-user-root>] [--to-home <new-user-root>]
+                               [--codex-home <codex-root>] [--dry-run] [--json]
+                               [--report <absent-file>]
+
+Copy CXC v0.2.40 state to its CRW locations, byte for byte, and refuse rather than replace.
+The default scope is project (the workspace's .codexclaw to its .crw). --from-home and --to-home
+are read only with user or all; --codex-home only with codex or all. The report destination must
+be absent and outside the source and destination trees.
+
+A dry run performs the same reads, classification and conflict checks and writes nothing at all:
+no root, no report, no temporary, no .gitignore. Its copied count is what a real run would copy.
+
+Exit 0: a verified copy, an already-equal run, or a dry run. Exit 1: a conflict, unsafe input, a
+source that changed, an interruption, or an I/O or unsupported-filesystem failure, with the writes
+this run completed reported. Exit 2: usage. Cancellation follows the install mode's signal
+handling and returns a failed or partial report.
+`
+
+// The command's exit codes: the installer's own numbers, without its JSON envelope.
+const (
+	codeOK      = 0
+	codeRefused = 1
+	codeUsage   = 2
+)
+
+// cli is one parsed command line.
+type cli struct {
+	scope     Scope
+	cwd       string
+	fromHome  string
+	toHome    string
+	codexHome string
+	dryRun    bool
+	jsonOut   bool
+	report    string
+}
+
+// cliCancel is a test seam run before every publication step, so a test can cancel a run mid-copy
+// without a signal; the real path reads ctx, which the install mode cancels on SIGINT/TERM/HUP.
+var cliCancel func() error
+
+// Run is `crw install migrate-state`. env is the environment the roots are read from; this
+// process's own environment is never consulted behind it.
+func Run(ctx context.Context, args []string, env []string, stdout, stderr io.Writer) int {
+	o, help, err := parseCLI(args)
+	if help {
+		fmt.Fprint(stdout, UsageText)
+		return codeOK
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "crw install migrate-state: error: "+err.Error())
+		fmt.Fprint(stderr, UsageText)
+		return codeUsage
+	}
+	opt, err := o.options(env)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw install migrate-state: error: "+err.Error())
+		return codeUsage
+	}
+	roots, err := Open(opt)
+	if err != nil {
+		// Open writes nothing: an unsafe root is refused before any read of the scope.
+		report := &Report{DryRun: o.dryRun, Scope: o.scope, Roots: namedRoots(opt), Error: reportError(err)}
+		report.Result = summarize(report)
+		fmt.Fprintln(stderr, "crw install migrate-state: "+err.Error())
+		return o.emit(stdout, stderr, report)
+	}
+	defer roots.Close()
+
+	target, err := o.target(roots)
+	if err != nil {
+		fmt.Fprintln(stderr, "crw install migrate-state: error: "+err.Error())
+		return codeUsage
+	}
+	if target != nil {
+		defer target.parent.Close()
+	}
+	if err := ctx.Err(); err != nil {
+		return o.emit(stdout, stderr, o.assemble(roots, nil, nil, nil, err))
+	}
+	plan, err := classify(roots)
+	if err != nil {
+		return o.emit(stdout, stderr, o.assemble(roots, plan, nil, nil, err))
+	}
+	atts := attention(roots, plan)
+	if o.dryRun {
+		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, nil))
+	}
+	// A root or directory this run creates is a change no file item reports.
+	structural := structuralWrites(roots, plan)
+	if err := ctx.Err(); err != nil {
+		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
+	}
+	pub, err := NewPublisher()
+	if err != nil {
+		return o.emit(stdout, stderr, o.assemble(roots, plan, atts, nil, err))
+	}
+	// Every publication step checks the context, so a signal after classification stops the copy.
+	pub.at = func(string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if cliCancel != nil {
+			return cliCancel()
+		}
+		return nil
+	}
+	res, err := applyWith(roots, plan, pub)
+	report := o.assemble(roots, plan, atts, res, err)
+	report.structural = structural
+	report.Result = summarize(report)
+	// The report file is published before stdout, so the two never disagree.
+	if err == nil && target != nil {
+		if perr := target.publish(report); perr != nil {
+			report.Error = reportError(perr)
+			report.Result = summarize(report)
+			fmt.Fprintln(stderr, "crw install migrate-state: the report was not published: "+perr.Error())
+		}
+	}
+	return o.emit(stdout, stderr, report)
+}
+
+// structuralWrites reports whether the run will create a root or directory, changes no file item of
+// the plan reports. It reads only; nothing is written.
+func structuralWrites(roots *Roots, plan *Plan) bool {
+	for _, p := range []*Pair{roots.Project, roots.User} {
+		if p != nil && p.Dest == nil {
+			return true
+		}
+	}
+	if plan == nil {
+		return false
+	}
+	for _, it := range plan.Items {
+		if !applyDir(it) {
+			continue
+		}
+		root := rootDir(roots, it.Scope, true)
+		if root == nil {
+			return true
+		}
+		rel := applyRel(it.Destination)
+		if rel == "" {
+			continue
+		}
+		d, opened, err := classifyOpenDest(root, rel)
+		classifyCloseAll(opened)
+		if d != nil {
+			_ = d.Close()
+			continue
+		}
+		if err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCLI reads the command line. A help request is reported as help with no error.
+func parseCLI(args []string) (cli, bool, error) {
+	var o cli
+	var scopeName string
+	var help bool
+	fs := flag.NewFlagSet("crw install migrate-state", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&scopeName, "scope", "", "the stores to copy: project (default), user, codex or all")
+	fs.StringVar(&o.cwd, "cwd", "", "the workspace whose .codexclaw and .crw the project scope reads and writes (default the working directory)")
+	fs.StringVar(&o.fromHome, "from-home", "", "the old user root (default $CODEXCLAW_HOME, else ~/.codexclaw); user or all only")
+	fs.StringVar(&o.toHome, "to-home", "", "the new user root (default $CRW_HOME, else ~/.crw); user or all only")
+	fs.StringVar(&o.codexHome, "codex-home", "", "the Codex home (default $CODEX_HOME, else ~/.codex); codex or all only")
+	fs.BoolVar(&o.dryRun, "dry-run", false, "read, classify and check conflicts, and write nothing")
+	fs.BoolVar(&o.jsonOut, "json", false, "write the report as JSON instead of text")
+	fs.StringVar(&o.report, "report", "", "publish the JSON report to this absent file, outside the source and destination trees")
+	fs.BoolVar(&help, "help", false, "print this help and write nothing")
+	fs.BoolVar(&help, "h", false, "print this help and write nothing")
+	if err := fs.Parse(args); err != nil {
+		return cli{}, false, err
+	}
+	if help {
+		return cli{}, true, nil
+	}
+	if rest := fs.Args(); len(rest) > 0 {
+		if len(rest) == 1 && rest[0] == "help" {
+			return cli{}, true, nil
+		}
+		return cli{}, false, fmt.Errorf("unrecognized arguments: %s", strings.Join(rest, " "))
+	}
+	scope, err := ParseScope(scopeName)
+	if err != nil {
+		return cli{}, false, err
+	}
+	o.scope = scope
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if (given["from-home"] || given["to-home"]) && !scope.Has(ScopeUser) {
+		return cli{}, false, errors.New("--from-home and --to-home are read only with --scope user or --scope all")
+	}
+	if given["codex-home"] && !scope.Has(ScopeCodex) {
+		return cli{}, false, errors.New("--codex-home is read only with --scope codex or --scope all")
+	}
+	// An empty value names no path: an unset variable must not select another root instead.
+	for _, f := range []struct {
+		name  string
+		value string
+	}{{"cwd", o.cwd}, {"from-home", o.fromHome}, {"to-home", o.toHome}, {"codex-home", o.codexHome}, {"report", o.report}} {
+		if given[f.name] && f.value == "" {
+			return cli{}, false, fmt.Errorf("--%s names an empty value; name a path or omit the flag", f.name)
+		}
+	}
+	return o, false, nil
+}
+
+// options resolves the selected scope's roots from env: an explicit flag, else the variable in the
+// caller's environment, else the default under the home. Open would otherwise read this process's
+// environment, which the caller did not give it.
+func (o cli) options(env []string) (Options, error) {
+	opt := Options{Scope: o.scope, Cwd: o.cwd}
+	lookup := envLookup(env)
+	if o.scope.Has(ScopeUser) {
+		var err error
+		if opt.FromHome, err = envRoot(lookup, o.fromHome, "CODEXCLAW_HOME", ".codexclaw"); err != nil {
+			return Options{}, err
+		}
+		if opt.ToHome, err = envRoot(lookup, o.toHome, "CRW_HOME", ".crw"); err != nil {
+			return Options{}, err
+		}
+	}
+	if o.scope.Has(ScopeCodex) {
+		var err error
+		if opt.CodexHome, err = envRoot(lookup, o.codexHome, "CODEX_HOME", ".codex"); err != nil {
+			return Options{}, err
+		}
+	}
+	return opt, nil
+}
+
+// envLookup is os.environ.get with presence over the caller's environment, the last entry winning.
+func envLookup(env []string) func(string) (string, bool) {
+	return func(key string) (string, bool) {
+		for i := len(env) - 1; i >= 0; i-- {
+			if k, v, ok := strings.Cut(env[i], "="); ok && k == key {
+				return v, true
+			}
+		}
+		return "", false
+	}
+}
+
+// envRoot picks the explicit root, else the named variable, else the default under the home.
+func envRoot(lookup func(string) (string, bool), explicit, variable, def string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	if value, set := lookup(variable); set && value != "" {
+		return value, nil
+	}
+	home, err := envHome(lookup)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", variable, err)
+	}
+	return filepath.Join(home, def), nil
+}
+
+// envHome is the home the defaults hang under: HOME from the caller's environment, else the passwd
+// entry, read without consulting the process environment.
+func envHome(lookup func(string) (string, bool)) (string, error) {
+	if home, set := lookup("HOME"); set && home != "" {
+		return home, nil
+	}
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	if u.HomeDir == "" {
+		return "", errors.New("the passwd entry names no home directory")
+	}
+	return u.HomeDir, nil
+}
+
+// target validates --report: an absent leaf outside every selected tree, in an existing directory;
+// nil when no report was asked for. Nothing is written here.
+func (o cli) target(roots *Roots) (*reportTarget, error) {
+	if o.report == "" {
+		return nil, nil
+	}
+	abs, err := filepath.Abs(o.report)
+	if err != nil {
+		return nil, err
+	}
+	for _, root := range reportRoots(roots) {
+		for _, tree := range []string{root.Source, root.Destination} {
+			if within(tree, abs) {
+				return nil, fmt.Errorf("--report %s lies inside %s; the report is written outside the source and destination trees", o.report, tree)
+			}
+		}
+	}
+	dirPart, leaf := filepath.Split(abs)
+	if leaf == "" || leaf == "." || leaf == ".." {
+		return nil, fmt.Errorf("--report %s names no file", o.report)
+	}
+	parent := filepath.Clean(dirPart)
+	dir, _, err := pinDir(parent)
+	if err != nil {
+		return nil, fmt.Errorf("--report: %w", err)
+	}
+	if dir == nil {
+		return nil, fmt.Errorf("--report: the directory %s does not exist", parent)
+	}
+	// The lexical check cannot see two spellings of one directory; identity can. The report parent
+	// must not be a selected root or lie inside one, or the run would write into the state.
+	_, _, chain, err := pinRoot(parent)
+	if err != nil {
+		_ = dir.Close()
+		return nil, fmt.Errorf("--report: %w", err)
+	}
+	for _, tree := range []*Dir{rootDir(roots, ScopeProject, false), rootDir(roots, ScopeProject, true),
+		rootDir(roots, ScopeUser, false), rootDir(roots, ScopeUser, true), roots.Codex} {
+		if tree != nil && slices.Contains(chain, tree.id) {
+			_ = dir.Close()
+			return nil, fmt.Errorf("--report %s is the same directory as, or inside, a selected root; the report is written outside the source and destination trees", o.report)
+		}
+	}
+	if _, _, err := dir.OpenRegular(leaf); err == nil {
+		_ = dir.Close()
+		return nil, fmt.Errorf("--report %s already exists; name an absent file", o.report)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		_ = dir.Close()
+		return nil, fmt.Errorf("--report %s: %w", o.report, err)
+	}
+	return &reportTarget{parent: dir, leaf: leaf}, nil
+}
+
+// assemble builds one run's report: each planned item with its outcome, the attention entries and
+// the whole-scope error.
+func (o cli) assemble(roots *Roots, plan *Plan, atts []Attention, res *ApplyResult, failure error) *Report {
+	rep := &Report{DryRun: o.dryRun, Scope: o.scope, Roots: reportRoots(roots), Attention: atts}
+	switch {
+	case res != nil:
+		rep.Items = res.Items
+		rep.WritesCompleted = res.WritesCompleted
+		rep.SourceVerified = res.SourceVerified
+	case plan != nil:
+		for _, it := range plan.Items {
+			item := ApplyItem{Item: it}
+			if o.dryRun {
+				item.Result = ResultDryRun
+			}
+			rep.Items = append(rep.Items, item)
+		}
+		if o.dryRun {
+			// Only a run that reached the end of the scope examined every source.
+			rep.SourceVerified = failure == nil
+		}
+	}
+	if failure != nil {
+		rep.Error = reportError(failure)
+	}
+	rep.Result = summarize(rep)
+	return rep
+}
+
+// rootDir is a scope's pinned directory on the source or destination side, or nil.
+func rootDir(r *Roots, scope Scope, dest bool) *Dir {
+	if scope == ScopeCodex {
+		return r.Codex
+	}
+	p := r.Project
+	if scope == ScopeUser {
+		p = r.User
+	}
+	if p == nil {
+		return nil
+	}
+	if dest {
+		return p.Dest
+	}
+	return p.Source
+}
+
+// reportRoots is the selected roots' source and destination pairs.
+func reportRoots(r *Roots) []ReportRoot {
+	var out []ReportRoot
+	if r.Project != nil {
+		out = append(out, ReportRoot{ScopeProject, r.Project.SourcePath, r.Project.DestPath})
+	}
+	if r.User != nil {
+		out = append(out, ReportRoot{ScopeUser, r.User.SourcePath, r.User.DestPath})
+	}
+	if r.CodexPath != "" {
+		out = append(out, ReportRoot{ScopeCodex, r.CodexPath, r.CodexPath})
+	}
+	return out
+}
+
+// namedRoots names the roots a refused Open was given, without the default resolution.
+func namedRoots(opt Options) []ReportRoot {
+	scope, err := ParseScope(string(opt.Scope))
+	if err != nil {
+		return nil
+	}
+	var out []ReportRoot
+	if scope.Has(ScopeProject) {
+		out = append(out, ReportRoot{ScopeProject, opt.Cwd, ""})
+	}
+	if scope.Has(ScopeUser) {
+		out = append(out, ReportRoot{ScopeUser, opt.FromHome, opt.ToHome})
+	}
+	if scope.Has(ScopeCodex) {
+		out = append(out, ReportRoot{ScopeCodex, opt.CodexHome, opt.CodexHome})
+	}
+	return out
+}

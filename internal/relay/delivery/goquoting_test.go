@@ -16,6 +16,7 @@ import (
 // quoted as a shell reads it, and it is only returned: the refusal row the intake recorded before
 // the hint was added keeps the stored wording and does not carry the hint.
 func TestContinuationHintIsReturnedAndNotRecorded(t *testing.T) {
+	t.Parallel()
 	work := filepath.Join(parityTree(t), "work")
 	side := newSide(t, work)
 	mustDo(t, os.WriteFile(filepath.Join(work, "out.txt"), []byte("finished later"), 0o644))
@@ -61,6 +62,7 @@ func TestContinuationHintIsReturnedAndNotRecorded(t *testing.T) {
 // turn-check note prints this text; ReconcileAttempt's KeyError, which the reconcile command
 // matches by prefix and the reconcile pass stores, is not this one.
 func TestCheckDispatchedTurnNamesAMissingAttemptWithGoQuotes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	mustDo(t, err)
@@ -78,6 +80,7 @@ func TestCheckDispatchedTurnNamesAMissingAttemptWithGoQuotes(t *testing.T) {
 // superseded relationship is refused earlier by RequireActive, with the stored wording). Its detail
 // is only returned out of a ruling that rolls back.
 func TestCurrencyNamesAnInactiveRelationshipWithGoQuotes(t *testing.T) {
+	t.Parallel()
 	relationship := Row{"relationship_id": "rel-1", "status": "active", "superseded_by": "rel-2", "execution_generation": int64(1)}
 	event := Row{"relationship_id": "rel-1", "execution_generation": int64(1)}
 	state, err := Currency(context.Background(), nil, relationship, event)
@@ -93,6 +96,7 @@ func TestCurrencyNamesAnInactiveRelationshipWithGoQuotes(t *testing.T) {
 // A finding's restoration flag that is not a boolean is refused before any ruling is written, and
 // the refusal names what was given as a message names a kind.
 func TestRestorationFlagRefusalNamesTheKindOfTheValue(t *testing.T) {
+	t.Parallel()
 	_, err := NormaliseFindings([]any{Obj{{Key: "id", Value: "c1"}, {Key: "restoration", Value: "yes"}}})
 	if Reason(err) != DispositionConflict {
 		t.Fatalf("reason %q: %v", Reason(err), err)
