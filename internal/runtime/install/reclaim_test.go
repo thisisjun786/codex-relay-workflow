@@ -89,9 +89,7 @@ func TestReclaimKeepsAStagingThatMayStillBeInUse(t *testing.T) {
 		t.Skip("no sleep binary")
 	}
 	sleeper := filepath.Join(old, "bin", "sleep")
-	if err := os.WriteFile(sleeper, []byte(readFile(t, source)), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, sleeper, []byte(readFile(t, source)), 0o755)
 	process := exec.Command(sleeper, "30")
 	if err := process.Start(); err != nil {
 		t.Fatal(err)

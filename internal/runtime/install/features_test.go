@@ -89,7 +89,7 @@ func newFeatureHome(t *testing.T, content string) featureHome {
 	}
 	quoted := "'" + strings.ReplaceAll(exe, "'", "'\\''") + "'"
 	script := "#!/bin/sh\nexec " + quoted + " -test.run='^TestFeatureCodexHelper$' -- \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0755); err != nil {
+	if err := writeExecutable(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	env := scope.Env(os.Environ()).With("HOME", t.TempDir()).With("CODEX_HOME", home).With("PATH", bin).With("CRW499_FAKE_HOME", home)
