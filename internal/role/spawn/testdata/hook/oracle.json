@@ -4347,7 +4347,7 @@
         "effort": "low"
        }
       },
-      "oracleWarned": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"[CRW-CONFIG-IGNORED] ignored Git-tracked .crw/subagents.json; review it, then run `cxc subagents trust-token` and export the printed project-bound value\\n\\n{{V1}}\\n\\nTASKTEXT\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n"
+      "oracleWarned": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"agent_type\":\"explorer\",\"message\":\"[CRW-CONFIG-IGNORED] ignored Git-tracked .crw/subagents.json; review it, then run `crw role helper trust-token` and export the printed project-bound value\\n\\n{{V1}}\\n\\nTASKTEXT\",\"model\":\"rec/explorer\",\"reasoning_effort\":\"high\"}}}\n"
      }
     },
     {
@@ -4363,7 +4363,7 @@
         "effort": "low"
        }
       },
-      "oracleWarned": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply. ignored Git-tracked .crw/subagents.json; review it, then run `cxc subagents trust-token` and export the printed project-bound value\"}}\n"
+      "oracleWarned": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{\"task_name\":\"t\",\"fork_turns\":\"none\",\"message\":\"gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==\",\"agent_type\":\"architect\",\"model\":\"rec/architect\",\"reasoning_effort\":\"high\"},\"additionalContext\":\"[crw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply. ignored Git-tracked .crw/subagents.json; review it, then run `crw role helper trust-token` and export the printed project-bound value\"}}\n"
      }
     }
    ]
