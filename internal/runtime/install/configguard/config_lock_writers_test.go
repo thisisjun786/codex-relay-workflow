@@ -207,6 +207,45 @@ func TestDeactivateWithNothingToWriteTakesNoLock(t *testing.T) {
 	}
 }
 
+// Every command must release the lock it took: a leaked flock would make each later CRW writer wait
+// out the two-second deadline and then refuse, which is a worse failure than the race the lock
+// exists to close. The check is that a fresh taker succeeds immediately after each command, with a
+// zero wait so a held lock refuses at the first contention instead of sleeping.
+func TestConfigLockWritersReleaseTheirLock(t *testing.T) {
+	home, path := configSetHome(t, configSetOriginal, true)
+	value := true
+	configSetApply(t, home, path, &value)
+	configLockWritersReleased(t, path)
+
+	marker := configLockWritersTempHomes(t)
+	deactivatePath := filepath.Join(marker, "config.toml")
+	activationWrite(t, deactivatePath, deactivationConfig)
+	deactivationManifest(t, marker, map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}, nil)
+	if _, err := Deactivate(deactivationDeps(marker, deactivationRun(t, deactivatePath, map[string]bool{}, &[][]string{}))); err != nil {
+		t.Fatal(err)
+	}
+	configLockWritersReleased(t, deactivatePath)
+
+	multi := configLockWritersTempHomes(t)
+	multiPath := filepath.Join(multi, "config.toml")
+	activationWrite(t, multiPath, "[features.multi_agent_v2]\nenabled = false\nmax = 7\n")
+	var calls [][]string
+	if _, err := SetMultiAgentV2State(MultiAgentV2Deps{CodexHome: multi, Run: multiAgentFake(t, multiPath, &calls)}, MultiAgentV2); err != nil {
+		t.Fatal(err)
+	}
+	configLockWritersReleased(t, multiPath)
+}
+
+// configLockWritersReleased reports that nothing holds the sidecar: a zero-wait taker succeeds.
+func configLockWritersReleased(t *testing.T, path string) {
+	t.Helper()
+	again, err := crwdir.LockConfig(path, 0)
+	if err != nil {
+		t.Fatalf("a command did not release the lock: %v", err)
+	}
+	again.Release()
+}
+
 // An explicitly empty config path names no file: neither writer derives a sidecar in the working
 // directory, and the missing-path no-op behaviour is kept.
 func TestEmptyConfigPathTakesNoLock(t *testing.T) {
