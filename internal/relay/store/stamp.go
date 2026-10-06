@@ -127,12 +127,16 @@ func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string, ha
 
 // refuseWithHanded answers a writable check's failure and closes the handed creation gate when
 // this open owns one. With no handed gate it returns err itself, never a join around it, so a
-// refusal's cause stays reachable through errors.Unwrap exactly as before.
+// refusal's cause stays reachable through errors.Unwrap exactly as before; a close that fails is
+// joined so it is not lost.
 func refuseWithHanded(err error, handed *os.File) error {
 	if handed == nil {
 		return err
 	}
-	return errors.Join(err, handed.Close())
+	if closeErr := handed.Close(); closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	return err
 }
 
 // holdGate takes the write gate beside resolved SH, without waiting, for the store's lifetime:
