@@ -1,9 +1,12 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,23 +65,278 @@ func (c *memlogClock) now() time.Time {
 }
 
 // memlogEnv is the Env a test runs the command with.
-func memlogEnv(now func() time.Time, out, errOut *strings.Builder) *Env {
+func memlogEnv(now func() time.Time, out, errOut io.Writer) *Env {
 	return &Env{Stdin: strings.NewReader(""), Stdout: out, Stderr: errOut, Getenv: os.Getenv, Now: now}
 }
 
-// memlogState points the homes at a temporary tree, so no test reaches a real one.
-func memlogState(t *testing.T) string {
+// memlogFixedClock answers the same instant every time it is asked.
+func memlogFixedClock(at time.Time) func() time.Time { return func() time.Time { return at } }
+
+// memlogState points HOME, CODEX_HOME, CRW_HOME and every XDG directory at a fresh
+// temporary tree, so no test reaches a real home or a real XDG directory an outer
+// environment may have inherited. It returns that home and the configuration the
+// environment resolves to, whose StateDir is where the samples land.
+func memlogState(t *testing.T) (home string, cfg *Config) {
 	t.Helper()
-	home := t.TempDir()
+	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	t.Setenv("CRW_HOME", filepath.Join(home, "crw"))
-	return home
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	return home, coreDefaults(memlogEnv(time.Now, io.Discard, io.Discard))
+}
+
+// memlogSampleDir is where crw manage memlog writes below a state directory.
+func memlogSampleDir(stateDir string) string { return filepath.Join(stateDir, "memlog") }
+
+// memlogRecordFile reads the single dated file of a sample directory and returns its one
+// record and the line it was written as.
+func memlogRecordFile(t *testing.T, dir string) (memlogRecord, string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the sample directory holds %d files, want 1: %v", len(entries), entries)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	var record memlogRecord
+	if len(lines) != 1 || json.Unmarshal([]byte(lines[0]), &record) != nil {
+		t.Fatalf("%s holds %q, want one record line", entries[0].Name(), lines)
+	}
+	return record, lines[0]
+}
+
+// memlogRunOnce runs crw manage memlog --once over a fake tree and returns the record it
+// wrote and the line it wrote.
+func memlogRunOnce(t *testing.T, cfg *Config, root string, at time.Time) (memlogRecord, string) {
+	t.Helper()
+	var out, errOut strings.Builder
+	env := memlogEnv(memlogFixedClock(at), &out, &errOut)
+	if code := memlogRunWith(context.Background(), env, cfg, []string{"--once"}, memlogNewProcSampler(root)); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if out.Len() != 0 || errOut.Len() != 0 {
+		t.Errorf("stdout %q, stderr %q", out.String(), errOut.String())
+	}
+	return memlogRecordFile(t, memlogSampleDir(cfg.StateDir))
+}
+
+// C1: a fake /proc tree pins the counters, the pressure, the group assignment (the App
+// Server's descendants included) and the ten largest processes.
+func TestMemlogPinsTheSampleOfAFakeProcTree(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{
+		{pid: 100, ppid: 1, rss: 300000, cmd: "/usr/bin/codex app-server --socket x"},
+		{pid: 101, ppid: 100, rss: 200000, cmd: "node mcp-helper.js"},
+		{pid: 102, ppid: 101, rss: 100000, cmd: "/bin/sh -c true"},
+		{pid: 110, ppid: 1, rss: 90000, cmd: "/usr/local/go/pkg/tool/linux_amd64/compile -p x"},
+		{pid: 120, ppid: 1, rss: 80000, cmd: "/usr/local/bin/claude --resume"},
+		{pid: 130, ppid: 1, rss: 70000, cmd: "ocx serve"},
+		{pid: 140, ppid: 1, rss: 60000, cmd: "dockerd --host=unix://x"},
+		{pid: 200, ppid: 1, rss: 50000, cmd: "/usr/bin/other-a"},
+		{pid: 201, ppid: 1, rss: 40000, cmd: "/usr/bin/other-b"},
+		{pid: 202, ppid: 1, rss: 30000, cmd: "/usr/bin/other-c"},
+		{pid: 203, ppid: 1, rss: 20000, cmd: "/usr/bin/other-d"},
+		{pid: 204, ppid: 1, rss: 10000, cmd: "/usr/bin/other-e"},
+		{pid: 205, ppid: 1, rss: 9000, cmd: "/usr/bin/other-f"},
+		{pid: 206, ppid: 1, rss: 8000, cmd: "/usr/bin/other-g"},
+	})
+	record, line := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(line), &keys); err != nil {
+		t.Fatalf("the line is not JSON: %v\n%s", err, line)
+	}
+	for _, key := range []string{"at", "mem_available_kb", "swap_used_kb", "psi", "groups", "top"} {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("the line has no %q key: %s", key, line)
+		}
+	}
+	if record.At != "2026-10-06T12:00:00Z" || record.MemAvailableKB != 1000000 || record.SwapUsedKB != 1500 {
+		t.Errorf("at, mem_available_kb, swap_used_kb = %q %d %d", record.At, record.MemAvailableKB, record.SwapUsedKB)
+	}
+	if record.PSI != (memlogPSI{SomeAvg10: 1.5, SomeAvg60: 0.75, FullAvg10: 0.25, FullAvg60: 0.05}) {
+		t.Errorf("psi = %+v", record.PSI)
+	}
+	want := map[string]int64{"app_server": 300000, "mcp_helpers": 300000, "go": 90000,
+		"claude": 80000, "ocx": 70000, "docker": 60000, "other": 167000}
+	if !maps.Equal(record.Groups, want) {
+		t.Errorf("groups = %v, want %v", record.Groups, want)
+	}
+	if len(record.Top) != 10 {
+		t.Fatalf("top holds %d entries, want 10: %v", len(record.Top), record.Top)
+	}
+	for i, pid := range []int{100, 101, 102, 110, 120, 130, 140, 200, 201, 202} {
+		if record.Top[i].PID != pid {
+			t.Errorf("top[%d].pid = %d, want %d", i, record.Top[i].PID, pid)
+		}
+	}
+	for i, group := range []string{"app_server", "mcp_helpers", "mcp_helpers", "go", "claude",
+		"ocx", "docker", "other", "other", "other"} {
+		if record.Top[i].Group != group {
+			t.Errorf("top[%d].group = %q, want %q", i, record.Top[i].Group, group)
+		}
+	}
+	if record.Top[0].Cmd != "/usr/bin/codex app-server --socket x" || record.Top[0].RSSKB != 300000 {
+		t.Errorf("top[0] = %+v", record.Top[0])
+	}
+}
+
+// C2: the memlog section's ordered groups replace the built-in list whole, and the first
+// rule that claims a process wins.
+func TestMemlogTakesTheConfiguredGroups(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{
+		{pid: 5, ppid: 1, rss: 100, cmd: "/usr/bin/mysvc --serve"},
+		{pid: 6, ppid: 1, rss: 200, cmd: "/usr/bin/other"},
+	})
+	cfg.raw = map[string]json.RawMessage{
+		"memlog": json.RawMessage(`{"groups":[{"name":"custom","match":["mysvc"]},{"name":"fallback","match":["mysvc","/usr/bin"]}]}`),
+	}
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	want := map[string]int64{"custom": 100, "fallback": 200}
+	if !maps.Equal(record.Groups, want) {
+		t.Errorf("groups = %v, want %v", record.Groups, want)
+	}
+}
+
+// C4: the go group is matched by the name the process was started with, not by the word
+// go anywhere in the command line, and rule order still puts a go under the App Server in
+// the App Server's descendant group.
+func TestMemlogMatchesTheGoGroupByArgv0(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{
+		{pid: 10, ppid: 1, rss: 100, cmd: "go test ./..."},
+		{pid: 11, ppid: 1, rss: 200, cmd: "/usr/bin/go test ./..."},
+		{pid: 12, ppid: 1, rss: 400, cmd: "mongod --dbpath /data/go"},
+		{pid: 13, ppid: 1, rss: 800, cmd: "echo go"},
+		{pid: 20, ppid: 1, rss: 1000, cmd: "/usr/bin/codex app-server --socket x"},
+		{pid: 21, ppid: 20, rss: 2000, cmd: "go test ./..."},
+	})
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	want := map[string]int64{"go": 300, "other": 1200, "app_server": 1000, "mcp_helpers": 2000}
+	if !maps.Equal(record.Groups, want) {
+		t.Errorf("groups = %v, want %v", record.Groups, want)
+	}
+	if len(record.Top) != 6 {
+		t.Fatalf("top holds %d entries, want 6: %v", len(record.Top), record.Top)
+	}
+	for i, group := range []string{"mcp_helpers", "app_server", "other", "other", "go", "go"} {
+		if record.Top[i].Group != group {
+			t.Errorf("top[%d].group = %q, want %q", i, record.Top[i].Group, group)
+		}
+	}
+}
+
+// C3: the recorded cmd masks a credential-shaped value in each of the three shapes the
+// issue names.
+func TestMemlogRedactsCredentialsInTheRecordedCommand(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{
+		{pid: 7, ppid: 1, rss: 4096, cmd: "/usr/bin/mysvc --api-key sk-x TOKEN=abc --password=hunter2"},
+	})
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	if len(record.Top) != 1 {
+		t.Fatalf("top holds %d entries, want 1", len(record.Top))
+	}
+	cmd := record.Top[0].Cmd
+	for _, secret := range []string{"sk-x", "abc", "hunter2"} {
+		if strings.Contains(cmd, secret) {
+			t.Errorf("the recorded cmd %q still carries %q", cmd, secret)
+		}
+	}
+	for _, masked := range []string{"--api-key ***", "TOKEN=***", "--password=***"} {
+		if !strings.Contains(cmd, masked) {
+			t.Errorf("the recorded cmd %q does not mask %q", cmd, masked)
+		}
+	}
+	if !strings.Contains(cmd, "/usr/bin/mysvc") {
+		t.Errorf("the recorded cmd %q lost its program name", cmd)
+	}
+}
+
+// C3: the group assignment reads the original command line, so a group that matches a
+// value the record masks still claims the process.
+func TestMemlogClassifiesOnTheOriginalCommandLine(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{{pid: 8, ppid: 1, rss: 4096, cmd: "/usr/bin/thing --token hunter2"}})
+	cfg.raw = map[string]json.RawMessage{
+		"memlog": json.RawMessage(`{"groups":[{"name":"secret_holder","match":["hunter2"]}]}`),
+	}
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	if want := (map[string]int64{"secret_holder": 4096}); !maps.Equal(record.Groups, want) {
+		t.Errorf("groups = %v, want %v", record.Groups, want)
+	}
+	if len(record.Top) != 1 || record.Top[0].Cmd != "/usr/bin/thing --token ***" {
+		t.Errorf("top = %+v", record.Top)
+	}
+}
+
+// C5: an XDG_STATE_HOME inherited from outside the test keeps its bytes, and the sample
+// goes to the state path the test pointed the environment at.
+func TestMemlogKeepsAnInheritedXDGStateHomeUntouched(t *testing.T) {
+	external := t.TempDir() // stands in for an XDG_STATE_HOME inherited from the host
+	t.Setenv("XDG_STATE_HOME", external)
+	_, cfg := memlogState(t)
+	externalFile := filepath.Join(external, "crw", "manage", "memlog", "20261006.jsonl")
+	if err := os.MkdirAll(filepath.Dir(externalFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := []byte("seed\n")
+	if err := os.WriteFile(externalFile, seed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{{pid: 9, ppid: 1, rss: 4096, cmd: "/usr/bin/thing"}})
+	memlogRunOnce(t, cfg, root, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	after, err := os.ReadFile(externalFile)
+	if err != nil {
+		t.Fatalf("the file under the inherited state directory: %v", err)
+	}
+	if !bytes.Equal(seed, after) {
+		t.Errorf("the file under the inherited state directory grew from %d to %d bytes", len(seed), len(after))
+	}
+	if _, err := os.Stat(filepath.Join(memlogSampleDir(cfg.StateDir), "20261006.jsonl")); err != nil {
+		t.Errorf("the sample is not under the test state path: %v", err)
+	}
+}
+
+// A memlog section that is present but malformed is refused instead of silently falling
+// back to the built-in groups.
+func TestMemlogRefusesAMalformedSection(t *testing.T) {
+	_, cfg := memlogState(t)
+	cfg.raw = map[string]json.RawMessage{"memlog": json.RawMessage(`{"groups":"nope"}`)}
+	root := t.TempDir()
+	memlogWriteTree(t, root, nil)
+	var out, errOut strings.Builder
+	env := memlogEnv(memlogFixedClock(time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)), &out, &errOut)
+	if code := memlogRunWith(context.Background(), env, cfg, []string{"--once"}, memlogNewProcSampler(root)); code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "memlog section") {
+		t.Errorf("stderr %q does not name the section", errOut.String())
+	}
+	if _, err := os.Stat(memlogSampleDir(cfg.StateDir)); !os.IsNotExist(err) {
+		t.Errorf("the refused run wrote a sample directory: %v", err)
+	}
 }
 
 // C1: when the UTC date changes, the next sample goes to a new file.
 func TestMemlogWritesANewFileWhenTheUTCDateChanges(t *testing.T) {
-	home := memlogState(t)
+	_, cfg := memlogState(t)
 	root := t.TempDir()
 	memlogWriteTree(t, root, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,10 +347,10 @@ func TestMemlogWritesANewFileWhenTheUTCDateChanges(t *testing.T) {
 	}}
 	var out, errOut strings.Builder
 	env := memlogEnv(clock.now, &out, &errOut)
-	if code := memlogRunWith(ctx, env, coreDefaults(env), []string{"--interval", "1ms"}, memlogNewProcSampler(root)); code != 0 {
+	if code := memlogRunWith(ctx, env, cfg, []string{"--interval", "1ms"}, memlogNewProcSampler(root)); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
-	dir := filepath.Join(home, ".local", "state", "crw", "manage", "memlog")
+	dir := memlogSampleDir(cfg.StateDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("the directory holds %v (%v), want the two dated files", entries, err)
@@ -113,23 +371,23 @@ func TestMemlogWritesANewFileWhenTheUTCDateChanges(t *testing.T) {
 	}
 }
 
-// C2: --once writes one line and exits; a second run appends a second line.
+// C1: --once writes one line and exits; a second run appends a second line.
 func TestMemlogOnceWritesOneLineAndExits(t *testing.T) {
-	home := memlogState(t)
+	_, cfg := memlogState(t)
 	root := t.TempDir()
 	memlogWriteTree(t, root, []memlogProcSpec{{pid: 9, ppid: 1, rss: 4096, cmd: "/usr/bin/thing"}})
 	at := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 	for run := 1; run <= 2; run++ {
 		var out, errOut strings.Builder
-		env := memlogEnv(func() time.Time { return at }, &out, &errOut)
-		if code := memlogRunWith(context.Background(), env, coreDefaults(env), []string{"--once"}, memlogNewProcSampler(root)); code != 0 {
+		env := memlogEnv(memlogFixedClock(at), &out, &errOut)
+		if code := memlogRunWith(context.Background(), env, cfg, []string{"--once"}, memlogNewProcSampler(root)); code != 0 {
 			t.Fatalf("run %d: exit %d: %s", run, code, errOut.String())
 		}
 		if out.Len() != 0 || errOut.Len() != 0 {
 			t.Errorf("run %d: stdout %q, stderr %q", run, out.String(), errOut.String())
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".local", "state", "crw", "manage", "memlog", "20261006.jsonl"))
+	data, err := os.ReadFile(filepath.Join(memlogSampleDir(cfg.StateDir), "20261006.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +422,7 @@ func TestMemlogFlagsAndUsage(t *testing.T) {
 			t.Errorf("--interval %s was accepted as %v", value, got)
 		}
 	}
-	home := memlogState(t)
+	_, cfg := memlogState(t)
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -176,8 +434,6 @@ func TestMemlogFlagsAndUsage(t *testing.T) {
 	} {
 		var out, errOut strings.Builder
 		env := memlogEnv(time.Now, &out, &errOut)
-		cfg := coreDefaults(env)
-		cfg.StateDir = filepath.Join(home, "state")
 		if code := memlogRunWith(context.Background(), env, cfg, tc.args, memlogNewProcSampler(t.TempDir())); code != tc.code {
 			t.Errorf("%s: exit %d, want %d", tc.name, code, tc.code)
 		}
