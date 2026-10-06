@@ -195,6 +195,12 @@
           ]
         }
       ]
+    },
+    {
+      "file": "tests/native-execution.test.mjs",
+      "reason": "Move the S-class skill-script test native-execution.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "add": true,
+      "sha256": "57dc983840b1630d2e067d6f9e6fbadaa70cf4bf542c6f43e5fe12b475968ff7"
     }
   ]
 }

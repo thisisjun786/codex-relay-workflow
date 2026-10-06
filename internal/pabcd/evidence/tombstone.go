@@ -19,6 +19,19 @@ type MarkerWriter func(cwd, sessionID, agentID string) error
 // lockFunc is state.WithSessionLock; the tests replace it to stage a failed acquisition.
 type lockFunc func(cwd, sessionID string, fn func() error) error
 
+// publishedWriteFunc is the state write the tombstone writers commit through. It is state.WriteState everywhere but in a
+// test, which passes one that publishes the state and then reports the post-rename failure WriteState returns
+// (*state.PublishedError). It is a function argument, never a package-level variable, so no test state outlives a call.
+type publishedWriteFunc func(cwd string, s state.State) error
+
+// publishedWriteOf is the write a tombstone writer commits through: the one its caller passed, else state.WriteState.
+func publishedWriteOf(writes []publishedWriteFunc) publishedWriteFunc {
+	if len(writes) > 0 && writes[0] != nil {
+		return writes[0]
+	}
+	return state.WriteState
+}
+
 type sentinel string
 
 func (e sentinel) Error() string { return string(e) }
@@ -71,7 +84,8 @@ func RecordTombstone(cwd, sessionID string, p Payload, attempts int, marker Mark
 	return recordTombstone(cwd, sessionID, p, attempts, time.Now(), state.WithSessionLock, marker)
 }
 
-func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Time, lock lockFunc, marker MarkerWriter) bool {
+func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Time, lock lockFunc, marker MarkerWriter, publishedWrite ...publishedWriteFunc) bool {
+	write := publishedWriteOf(publishedWrite)
 	agentID, turnID, resolvable := tombstoneIdentity(p)
 	claimed, _ := ExtractReceiptPath(p.LastAssistantMessage) // the claimed path only, never the child's prose
 	if units := utf16.Encode([]rune(claimed)); len(units) > state.MaxReceiptClaimLen {
@@ -91,9 +105,12 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		s.UnverifiedSubagents = append(slices.DeleteFunc(slices.Clone(s.UnverifiedSubagents), func(e state.UnverifiedSubagent) bool {
 			return sameAgent(e, agentID, turnID)
 		}), entry)
-		return state.WriteState(cwd, s)
+		return write(cwd, s)
 	}
-	if lock(cwd, sessionID, commit) == nil {
+	// A commit whose state reached the final path is committed, even when the write then failed the directory sync: the
+	// tombstone is already in the file every reader sees, so the sentinel tier must not run and stamp unverifiedCorrupt on
+	// a healthy session (the goal-complete gate then refuses it as unreadable).
+	if err := lock(cwd, sessionID, commit); err == nil || state.Published(err) {
 		return true
 	}
 	raiseSentinel := func() error {

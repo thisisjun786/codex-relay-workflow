@@ -58,6 +58,7 @@ func strs(list []string) []any {
 }
 
 func Test21_HLT28_the_bridge_adapter_looks_back_only_to_the_send(t *testing.T) {
+	t.Parallel()
 	const cls = "TheAdapterLooksBackOnlyToTheSend."
 	t.Run("a turn on a later page", func(t *testing.T) {
 		mirror(t, hlt, cls+"test_a_turn_on_a_later_page_is_found", func(h *hl) {
@@ -194,6 +195,7 @@ func itemEntry(turn, kind, text string) Obj {
 }
 
 func Test21_HLT29_the_in_turn_and_thread_reads_tell_the_message_from_agent_output(t *testing.T) {
+	t.Parallel()
 	const cls = "TheAdapterLooksBackOnlyToTheSend."
 	t.Run("the in-turn read asks for that turn's items oldest first", func(t *testing.T) {
 		mirror(t, hlt, cls+"test_the_in_turn_read_asks_for_that_turns_items_oldest_first", func(h *hl) {

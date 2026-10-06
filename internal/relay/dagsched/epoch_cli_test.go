@@ -28,6 +28,7 @@ func reasonOf(t *testing.T, out string) string {
 }
 
 func TestCLIClaimAndTheFence(t *testing.T) {
+	t.Parallel()
 	state := epochCLIState(t)
 
 	out, code := crw(t, state, "dag-coordinator-claim", "--plan", "rp", "--actor", "parent", "--session-nonce", "session-1")
@@ -112,6 +113,7 @@ func TestCLIClaimAndTheFence(t *testing.T) {
 
 // The scheduler page names every command of the epoch and the reason a stale session is refused with, the flag that carries the epoch, and the limits of what it recovers.
 func TestSchedulerPageDescribesTheEpoch(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)

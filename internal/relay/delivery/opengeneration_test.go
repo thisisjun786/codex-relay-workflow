@@ -11,6 +11,7 @@ import (
 // than open another. The three answers and every table row are checked against the golden, which
 // began as registry.open_generation_in's over the same fixture.
 func Test21_OpenGenerationIn_replays_a_dispatch_request_rather_than_opening_another(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "ogi")
 	f := newFixture(t, tree)

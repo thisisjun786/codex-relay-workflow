@@ -15,6 +15,7 @@ func baseAcceptance() Acceptance {
 
 // Contract 4.3: the identity is the digest of the included fields; everything else is recorded and moves nothing.
 func TestAcceptanceDigestSensitivity(t *testing.T) {
+	t.Parallel()
 	base := AcceptanceDigest(baseAcceptance())
 	included := map[string]func(*Acceptance){
 		"plan_id":              func(a *Acceptance) { a.PlanID = "q" },
@@ -65,6 +66,7 @@ func TestAcceptanceDigestSensitivity(t *testing.T) {
 
 // The acceptance's evidence_digest and a merge check's checks_digest are one serialization, and the body stored beside the digest recomputes it.
 func TestEvidenceDigestOneSerialization(t *testing.T) {
+	t.Parallel()
 	pr := PullRequest{HeadSHA: "h1", RequiredDeclared: []string{"test", "lint"}, ReviewDigest: dig("review"), Checks: []Check{
 		{RunID: "2", Name: "test", HeadSHA: "h1", Conclusion: "success", Attempt: 1},
 		{RunID: "1", Name: "lint", HeadSHA: "h1", Conclusion: "success", Attempt: 1},
@@ -95,6 +97,7 @@ func TestEvidenceDigestOneSerialization(t *testing.T) {
 }
 
 func TestReleaseRequestIDShape(t *testing.T) {
+	t.Parallel()
 	node := strings.Repeat("n", 128)
 	id := ReleaseRequestID("plan", node, dig("m"))
 	if len(id) != 44 || !strings.HasPrefix(id, "dag-") {
@@ -117,6 +120,7 @@ func TestReleaseRequestIDShape(t *testing.T) {
 }
 
 func TestReasonsClosed(t *testing.T) {
+	t.Parallel()
 	for _, r := range EmittedReasons() {
 		if !ReasonsClosed(r) {
 			t.Errorf("%s is emitted and not in the closed set", r)
@@ -150,6 +154,7 @@ func pad(n int) string {
 // The identity is pinned against a literal canonical text written here, not against the code that builds it: sorted keys, no spaces, the
 // included fields only (contract 4.3 plus the plan id, which this build adds because node ids are plan-local: docs/relay/dag-scheduler.md).
 func TestAcceptanceDigestIsPinned(t *testing.T) {
+	t.Parallel()
 	canonical := `{"criteria_set_digest":"` + dig("c") + `","event_id":"evt","execution_generation":1,"head_sha":"` + strings.Repeat("a", 40) +
 		`","manifest_digest":"` + dig("m") + `","node_id":"n","plan_id":"p","pr_number":7,"relationship_id":"rel-1","repository":"o/r","revision_hash":"` + dig("r") +
 		`","schema":"dag-acceptance/1","verdict":"verified"}`
