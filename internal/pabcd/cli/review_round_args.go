@@ -236,10 +236,14 @@ func (b *reviewRoundArgsBase) readInside(abs string) (data []byte, below string,
 }
 
 // reviewRoundCwdNames reports whether spelling, resolved against cwd exactly as Recomputed resolves a stored key, reaches the
-// entry at abs: its real path is abs's real path. A spelling that cannot be resolved, or that reaches another file, does not.
+// entry at abs: the kernel resolves it (os.Stat, Recomputed's own gate, so a chain past the kernel's link limit does not) and its
+// real path is abs's real path. A spelling that cannot be resolved, or that reaches another file, does not.
 func reviewRoundCwdNames(cwd, spelling, abs string) bool {
 	reached, err := reviewRoundArgsAbs(cwd, spelling)
 	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(reached); err != nil {
 		return false
 	}
 	got, err := filepath.EvalSymlinks(reached)

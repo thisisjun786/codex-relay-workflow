@@ -4,14 +4,13 @@ package ci
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -21,18 +20,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 )
 
-// The package rules: what a manifest may declare and what the payload may ship.
+// The package rules: what a manifest may declare and what the payload may ship. Where the package is
+// and how its version is derived live in internal/pluginversion, which crw skill base-refresh
+// mechanical reads too.
 const (
-	pluginRelative      = "plugins/crw"
-	marketplacePath     = ".agents/plugins/marketplace.json"
-	manifestPath        = ".codex-plugin/plugin.json"
-	licenseID           = "MIT"
-	hookTimeoutSeconds  = 10
-	payloadSuffixLength = 12
+	pluginRelative     = pluginversion.PluginRelative
+	marketplacePath    = ".agents/plugins/marketplace.json"
+	manifestPath       = pluginversion.ManifestPath
+	licenseID          = "MIT"
+	hookTimeoutSeconds = 10
 )
 
 var (
@@ -130,164 +131,63 @@ func (c *pluginChecker) gitText(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// revisionPayload is a revision's plugin payload, read through the shared payload rules.
 func (c *pluginChecker) revisionPayload(revision string) (payload, []string, error) {
-	listing, err := c.gitText("ls-tree", "-r", "-z", revision, "--", pluginRelative)
+	p, errs, err := pluginversion.RevisionPayload(context.Background(), c.root, revision)
 	if err != nil {
 		return nil, nil, err
 	}
-	result, errs := payload{}, []string{}
-	type request struct{ name, mode, sha string }
-	var requests []request
-	for _, record := range strings.Split(listing, "\x00") {
-		if record == "" {
-			continue
-		}
-		meta, path, _ := strings.Cut(record, "\t")
-		fields := strings.SplitN(meta, " ", 3)
-		mode, kind, sha := fields[0], fields[1], fields[2]
-		name := strings.Join(pathParts(path)[len(pathParts(pluginRelative)):], "/")
-		if kind != "blob" {
-			errs = append(errs, "release "+path+": the package may not contain a "+kind)
-			continue
-		}
-		if mode == "120000" {
-			errs = append(errs, "release "+path+": the installer drops symlinks, so the package may not contain one")
-			continue
-		}
-		requests = append(requests, request{name, mode, sha})
-	}
-	if len(requests) > 0 {
-		shas := make([]string, len(requests))
-		for i, r := range requests {
-			shas[i] = r.sha
-		}
-		cmd := exec.Command("git", "cat-file", "--batch")
-		cmd.Dir = c.root
-		cmd.Stdin = strings.NewReader(strings.Join(shas, "\n"))
-		batch, err := cmd.Output()
-		if err != nil {
-			return nil, nil, fmt.Errorf("git cat-file --batch: %w", err)
-		}
-		offset := 0
-		for _, r := range requests {
-			headerEnd := offset + bytes.IndexByte(batch[offset:], '\n')
-			size, err := strconv.Atoi(string(bytes.Fields(batch[offset:headerEnd])[2]))
-			if err != nil {
-				return nil, nil, fmt.Errorf("git cat-file --batch: %w", err)
-			}
-			start := headerEnd + 1
-			result[r.name] = entry{r.mode, batch[start : start+size]}
-			offset = start + size + 1
-		}
-	}
-	return result, errs, nil
+	return ciPayload(p), errs, nil
 }
 
-// directoryPayload reads an installed or working-tree plugin directory as the installer
-// would copy it, refusing what it cannot copy faithfully.
+// directoryPayload is an installed or working-tree plugin directory, read through the shared payload
+// rules.
 func directoryPayload(pluginRoot string) (payload, []string) {
-	result, errs := payload{}, []string{}
-	filepath.WalkDir(pluginRoot, func(path string, d fs.DirEntry, err error) error {
-		if path == pluginRoot {
-			if err != nil {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		name := filepath.ToSlash(strings.TrimPrefix(path, pluginRoot+string(filepath.Separator)))
-		if d != nil && d.Type()&fs.ModeSymlink != 0 {
-			errs = append(errs, "installed "+name+": the installer drops symlinks, so the package may not contain one")
-			return nil
-		}
-		if d != nil && d.IsDir() {
-			if entries, readErr := os.ReadDir(path); readErr == nil && len(entries) == 0 {
-				errs = append(errs, name+": an empty directory still ships; remove it")
-			}
-			if err != nil {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			return nil
-		}
-		mode := "100644"
-		if info.Mode().Perm()&0o111 != 0 {
-			mode = "100755"
-		}
-		data, readErr := regularBytes(path)
-		if readErr != nil {
-			errs = append(errs, "installed "+name+" could not be read as a regular file ("+readErr.Error()+
-				"); the installer copies files, and this one is not a file it can copy")
-			return nil
-		}
-		result[name] = entry{mode, data}
-		return nil
-	})
-	return result, errs
+	p, errs := pluginversion.DirectoryPayload(pluginRoot)
+	return ciPayload(p), errs
 }
 
-// regularBytes reads a file through one descriptor opened without blocking and judged a
-// regular file, so a pipe cannot hold the check (and a lock its caller holds) open.
-func regularBytes(path string) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
+// sharedPayload is this package's payload as internal/pluginversion reads it, and ciPayload is the
+// shared payload as the rest of these checks read it. The two types carry the same bytes; the checks
+// keep their own so their fixtures and helpers stay as they are.
+func sharedPayload(p payload) pluginversion.Payload {
+	out := make(pluginversion.Payload, len(p))
+	for name, e := range p {
+		out[name] = pluginversion.Entry{Mode: e.mode, Data: e.data}
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s: not a regular file", path)
-	}
-	return io.ReadAll(file)
+	return out
 }
 
-// payloadDigest is sha256 over length-framed "<len>:<name> <mode> <sha256>" lines in name order.
-// Its first 12 hex digits are the version suffix the manifest records, so these bytes are fixed.
+func ciPayload(p pluginversion.Payload) payload {
+	out := make(payload, len(p))
+	for name, e := range p {
+		out[name] = entry{e.Mode, e.Data}
+	}
+	return out
+}
+
+// payloadDigest is the shared framing rule: sha256 over length-framed "<len>:<name> <mode> <sha256>"
+// lines in name order, whose first 12 hex digits are the version suffix the manifest records.
 func payloadDigest(p payload) string {
-	var blocks [][]byte
-	for _, name := range p.names() {
-		sum := sha256.Sum256(p[name].data)
-		blocks = append(blocks, fmt.Appendf(nil, "%d:%s %s %s", len(name), name, p[name].mode, hex.EncodeToString(sum[:])))
-	}
-	sum := sha256.Sum256(bytes.Join(blocks, []byte("\n")))
-	return hex.EncodeToString(sum[:])
+	return pluginversion.Digest(sharedPayload(p))
 }
 
 func splitVersion(version string) (string, string) {
-	release, suffix, _ := strings.Cut(version, "+")
-	return release, suffix
+	return pluginversion.SplitVersion(version)
 }
 
-// versionPayload is the payload with the manifest's recorded suffix elided, so recording the
-// digest does not change it.
+// versionPayload is the payload with the manifest's recorded suffix elided, so recording the digest
+// does not change it.
 func versionPayload(p payload, version string) (payload, error) {
-	release, suffix := splitVersion(version)
-	if suffix == "" || !p.has(manifestPath) {
-		return p, nil
+	elided, err := pluginversion.VersionPayload(sharedPayload(p), version)
+	if err != nil {
+		return nil, err
 	}
-	manifest := p[manifestPath]
-	recorded, plain := []byte(show(version)), []byte(show(release))
-	if count := bytes.Count(manifest.data, recorded); count != 1 {
-		return nil, fmt.Errorf("%s spells %q %d times; the suffix has to be elided exactly once for the digest beneath it to be derived at all",
-			manifestPath, version, count)
-	}
-	out := maps.Clone(p)
-	out[manifestPath] = entry{manifest.mode, bytes.ReplaceAll(manifest.data, recorded, plain)}
-	return out, nil
+	return ciPayload(elided), nil
 }
 
 func payloadVersion(p payload, version string) (string, error) {
-	release, _ := splitVersion(version)
-	elided, err := versionPayload(p, version)
-	if err != nil {
-		return "", err
-	}
-	return release + "+" + payloadDigest(elided)[:payloadSuffixLength], nil
+	return pluginversion.PayloadVersion(sharedPayload(p), version)
 }
 
 // manifestVersion is the manifest's version as text, "" when it has none.
