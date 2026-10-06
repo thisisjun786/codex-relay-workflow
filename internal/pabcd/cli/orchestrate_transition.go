@@ -3,7 +3,6 @@ package cli
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"strings"
 	"time"
 
@@ -166,10 +165,11 @@ func orchestrateTransitionSourceGate(cwd, sessionID string, cur state.State) *Cl
 	return nil
 }
 
-// orchestrateTransitionDClose is the D close (:725-1064), which CRW-756 and CRW-757 port. This issue refuses
-// the edge rather than half-close a cycle.
+// orchestrateTransitionDClose is the D close (:725-1064), ported in orchestrate_dclose.go. This body stays a
+// one-line call so a sibling issue's rewrite of the ordinary edge of this file merges without touching the D
+// place, and the commit-hook seam lives on the inner function the D close tests call directly.
 func orchestrateTransitionDClose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
-	return CliResult{}, errors.New("orchestrate D close is not ported yet")
+	return orchestrateDclose(cwd, sessionID, closePhaseID, cur, att, recovering, orchestrateDcloseSeam{})
 }
 
 // orchestrateTransitionStateWritable is this writer's half of the port's data-loss rule for the session file
