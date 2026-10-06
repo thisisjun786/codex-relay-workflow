@@ -114,7 +114,11 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 		s.Interview = &next
 		return writeState(a.Cwd, s)
 	})
-	if err != nil {
+	// A write that published the state at the final path and then failed the directory sync is a
+	// written round: the round is visible and the ledger row it appended is already there, so a retry
+	// would record the same round twice. The durability failure is carried as a warning instead. A
+	// failure before the rename published nothing and stays the failure it was.
+	if err != nil && !state.Published(err) {
 		return CliResult{Code: 1, Output: "scan record failed: " + cliErrorMessage(err)}
 	}
 	derived := ""
@@ -128,7 +132,11 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 			}
 		}
 	}
-	return CliResult{Output: fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", scanRecordNumberText(round), a.SessionID, scanRecordNumberText(a.ContradictionCount), scanRecordNumberText(a.HighContradictionCount), derived)}
+	recorded := fmt.Sprintf("scan record: round %s recorded for session %s (contradictions=%s, high=%s%s)", scanRecordNumberText(round), a.SessionID, scanRecordNumberText(a.ContradictionCount), scanRecordNumberText(a.HighContradictionCount), derived)
+	if err != nil {
+		return CliResult{Output: recorded + "\n" + cliPublishedStateWarning(err)}
+	}
+	return CliResult{Output: recorded}
 }
 
 // Working values stay raw until write-side normalization, like the oracle.

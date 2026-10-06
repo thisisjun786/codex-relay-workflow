@@ -212,11 +212,25 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 		if inFlight.Kind != review.OK {
 			return reviewRoundRunRefuse(prefix + reviewRoundRunReason(inFlight)), nil
 		}
+		// A plan write that published at the final path and then failed the directory sync is a
+		// written plan: the round is in flight in the plan every reader sees, so the launch goes ahead
+		// and the durability failure is carried as a warning. A failure before the rename published
+		// nothing and stays an error.
+		warning := ""
 		if err := cliPublishedWriteGoalplan(o)(args.Cwd, inFlight.Plan); err != nil {
-			return ReviewRoundCliResult{}, err
+			if !state.Published(err) {
+				return ReviewRoundCliResult{}, err
+			}
+			warning = cliPublishedGoalplanWarning(st.Slug, err)
 		}
 		packet, err := reviewRoundArgsRenderOpenPacket(round, len(files), o.Env)
-		return ReviewRoundCliResult{Output: packet}, err
+		if err != nil {
+			return ReviewRoundCliResult{Output: packet}, err
+		}
+		if warning != "" {
+			packet += "\n" + warning
+		}
+		return ReviewRoundCliResult{Output: packet}, nil
 	})
 }
 
@@ -234,11 +248,28 @@ func reviewRoundRunAbort(args ReviewRoundCliArgs, st state.State, o *ReviewRound
 		if aborted.Kind != review.OK {
 			return reviewRoundRunRefuse("review-round abort: " + reviewRoundRunReason(aborted)), nil
 		}
+		warning := ""
 		if err := cliPublishedWriteGoalplan(o)(args.Cwd, aborted.Plan); err != nil {
-			return ReviewRoundCliResult{}, err
+			if !state.Published(err) {
+				return ReviewRoundCliResult{}, err
+			}
+			warning = cliPublishedGoalplanWarning(st.Slug, err)
 		}
-		return ReviewRoundCliResult{Output: "review-round abort: " + aborted.Round.RoundID + " closed as inconclusive"}, nil
+		out := "review-round abort: " + aborted.Round.RoundID + " closed as inconclusive"
+		if warning != "" {
+			out += "\n" + warning
+		}
+		return ReviewRoundCliResult{Output: out}, nil
 	})
+}
+
+// cliPublishedGoalplanWarning is CRW-823's plan durability warning, the goalplan counterpart of
+// cliPublishedStateWarning and the wording CRW-793 uses in the goalplan package: the plan at the
+// final path is the new one, so the verb stands, but the directory that holds it could not be synced
+// and the publication may not survive a crash. The oracle never syncs that directory, so it has no
+// counterpart; the wording is the issue's own.
+func cliPublishedGoalplanWarning(slug string, err error) string {
+	return "goalplan '" + slug + "' was published but its directory could not be synced: " + cliErrorMessage(err)
 }
 
 // reviewRoundRunShown is the --json answer of show in the oracle's key order; an absent verdict, work-phase or epoch is null.

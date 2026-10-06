@@ -98,10 +98,26 @@ func cliPublishedMemoryAllowWrite(a MemoryAllowWriteArgs, writeState func(string
 		s.MemoryWriteGrant = true
 		return writeState(a.Cwd, s)
 	})
-	if err != nil {
+	// A write that published the state at the final path and then failed the directory sync is a
+	// written grant: the grant is visible to every reader, so a retry would record it twice. The
+	// durability failure is carried as a warning instead. A failure before the rename published
+	// nothing and stays the failure it was.
+	if err != nil && !state.Published(err) {
 		return fmt.Sprintf("memory allow-write: could not record the grant (%s)", cliErrorMessage(err)), 1
 	}
-	return fmt.Sprintf("memory allow-write: session %s may perform ONE memory write; grant recorded for cwd %s; the next write consumes this grant.", a.SessionID, a.Cwd), 0
+	recorded := fmt.Sprintf("memory allow-write: session %s may perform ONE memory write; grant recorded for cwd %s; the next write consumes this grant.", a.SessionID, a.Cwd)
+	if err != nil {
+		return recorded + "\n" + cliPublishedStateWarning(err), 0
+	}
+	return recorded, 0
+}
+
+// cliPublishedStateWarning is CRW-823's state durability warning: the state at the final path is the
+// new one, so the write counts as done, but the directory that holds it could not be synced and the
+// publication may not survive a crash. The oracle never syncs that directory, so it has no
+// counterpart; the wording is the issue's own.
+func cliPublishedStateWarning(err error) string {
+	return "session state was published but its directory could not be synced: " + cliErrorMessage(err)
 }
 
 // cliVerdictsIntact prevents publishing a reconstructed list that discarded or changed
