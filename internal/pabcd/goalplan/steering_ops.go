@@ -262,8 +262,10 @@ func steeringOpsValidateBatch(batch any) (SteerBatch, string) {
 			if !ok || jstext.Trim(title) == "" {
 				return SteerBatch{}, at + " is an add-work-phase without a title"
 			}
+			// The oracle's dependsOn ?? [] falls back on null as well as on undefined, so a
+			// present null is the empty list rather than a refusal.
 			rawDependsOn, present := steeringOpsField(raw, "dependsOn")
-			if !present {
+			if !present || rawDependsOn == nil {
 				rawDependsOn = []any{}
 			}
 			dependsOn, ok := steeringOpsStringList(rawDependsOn)

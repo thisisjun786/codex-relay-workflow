@@ -166,6 +166,16 @@ func TestSteeringOpsAddWorkPhaseFields(t *testing.T) {
 	if batch.Ops[0].DependsOn == nil || len(batch.Ops[0].DependsOn) != 0 {
 		t.Errorf("dependsOn = %#v, want an empty non-nil array", batch.Ops[0].DependsOn)
 	}
+	// The oracle's dependsOn ?? [] also falls back on a present null.
+	nulled, reason := steeringOpsValidateBatch(steeringOpsTestBatch(map[string]any{"ops": []any{
+		map[string]any{"kind": "add-work-phase", "id": "wp-c", "title": "C", "dependsOn": nil},
+	}}))
+	if reason != "" {
+		t.Fatalf("dependsOn null: reason = %q", reason)
+	}
+	if len(nulled.Ops[0].DependsOn) != 0 {
+		t.Errorf("dependsOn null = %#v, want the empty list", nulled.Ops[0].DependsOn)
+	}
 }
 
 // The add-criterion field rules (:105-125): scenario trimmed, surface known and
