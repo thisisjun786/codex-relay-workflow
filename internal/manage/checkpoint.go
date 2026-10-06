@@ -331,13 +331,14 @@ func (s *checkpointStore) checkpointSplitDecisions(ctx context.Context) ([]check
 	return out, nil
 }
 
-// checkpointIntegrationTables are the tables the integration judgement reads: the plan that
-// carries the project, the acceptances it judges, and the executions that say which relationship
-// ran a node. The DAG zone is additive and a store written before it lacks all of them; a store
-// that holds only some (an install interrupted between the ledger's statements) must not read as
-// a measured zero, because dagsched.ExecutionIntegrated answers (false, false, nil) for a store
-// without dag_node_executions.
-var checkpointIntegrationTables = []string{"dag_plans", "dag_acceptances", "dag_node_executions"}
+// checkpointIntegrationTables are the tables the integration judgement and the instant it reads
+// need: the plan that carries the project, the acceptances it judges, the executions that say
+// which relationship ran a node, and the observations the instant comes from. The DAG zone is
+// additive and a store written before it lacks all of them; a store that holds only some (an
+// install interrupted between the ledger's statements) must not read as a measured zero, because
+// dagsched.ExecutionIntegrated answers (false, false, nil) for a store without
+// dag_node_executions, and the instant query would fail on a missing observations table.
+var checkpointIntegrationTables = []string{"dag_plans", "dag_acceptances", "dag_node_executions", "dag_integration_observations"}
 
 // checkpointAcceptance is one active acceptance of the DAG zone: what the integration judgement
 // is asked about, and the project whose reading counts the answer.
@@ -349,6 +350,15 @@ type checkpointAcceptance struct {
 	generation   int64
 	revision     string
 	head         string
+}
+
+// checkpointTargetObservation is one satisfying observation of an acceptance in one target: the
+// target, the sequence it was written in, and the instant it recorded.
+type checkpointTargetObservation struct {
+	repository string
+	baseRef    string
+	seq        int64
+	at         string
 }
 
 // checkpointIntegrations counts the acceptances the relay scheduler itself calls integrated, and
@@ -395,9 +405,15 @@ func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpo
 		if !applicable || !integrated {
 			continue
 		}
-		at, err := s.checkpointIntegrationInstant(ctx, acceptance)
+		at, measured, err := s.checkpointIntegrationInstant(ctx, acceptance)
 		if err != nil {
 			return nil, err
+		}
+		if !measured {
+			// The judgement said integrated, so a satisfying observation exists; one whose instant
+			// this build cannot read leaves the whole signal unmeasured rather than dropping the
+			// acceptance silently.
+			return nil, fmt.Errorf("an integrated acceptance of %s carries no readable observation instant", acceptance.project)
 		}
 		out = append(out, checkpointProjectInstant{project: acceptance.project, at: at})
 	}
@@ -405,12 +421,17 @@ func (s *checkpointStore) checkpointIntegrations(ctx context.Context) ([]checkpo
 }
 
 // checkpointIntegrationInstant is when one integrated acceptance landed everywhere it had to:
-// per target the earliest satisfying observation of the current containment run, and the latest
-// of those across targets (the decided answer's rule). The acceptance is already judged
-// integrated, so this reads the instants of that judgement rather than deciding it again.
-func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acceptance checkpointAcceptance) (string, error) {
+// per target the first satisfying observation of the current containment run, and the latest of
+// those across targets (the decided answer's rule). The acceptance is already judged integrated,
+// so this reads the instants of that judgement rather than deciding it again.
+//
+// "First" is by observed_seq, the order the relay writes observations in, exactly as the
+// reference implementation picks its row (internal/relay/dagsched/edges.go:413). The second
+// result is false when the chosen row's instant is not in a form this build reads, which is an
+// unmeasured reading rather than a zero.
+func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acceptance checkpointAcceptance) (string, bool, error) {
 	rows, err := checkpointRows(ctx, s.checkpointQuerier(ctx),
-		"SELECT o.repository, o.base_ref, MIN(o.observed_at)"+
+		"SELECT o.repository, o.base_ref, o.observed_seq, o.observed_at"+
 			" FROM dag_integration_observations o"+
 			" JOIN assignment_marks k ON k.relationship_id = ? AND k.mark = 'merged'"+
 			"  AND k.event_id = ? AND k.execution_generation = ? AND k.revision_hash = ?"+
@@ -420,28 +441,57 @@ func (s *checkpointStore) checkpointIntegrationInstant(ctx context.Context, acce
 			"  AND NOT EXISTS (SELECT 1 FROM dag_integration_observations o2"+
 			"   WHERE o2.acceptance_id = o.acceptance_id AND o2.repository = o.repository"+
 			"    AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
-			" GROUP BY o.repository, o.base_ref ORDER BY o.repository, o.base_ref",
+			" ORDER BY o.repository, o.base_ref, o.observed_seq",
 		[]any{acceptance.relationship, acceptance.event, acceptance.generation, acceptance.revision,
 			acceptance.acceptanceID, acceptance.head, acceptance.head},
-		func(rows *sql.Rows) (string, error) {
-			var repository, baseRef, at string
-			return at, rows.Scan(&repository, &baseRef, &at)
+		func(rows *sql.Rows) (checkpointTargetObservation, error) {
+			var row checkpointTargetObservation
+			return row, rows.Scan(&row.repository, &row.baseRef, &row.seq, &row.at)
 		})
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	// Rows arrive in observed_seq order, so the first row of each target is that target's first
+	// satisfying observation.
+	first := map[[2]string]checkpointTargetObservation{}
+	for _, row := range rows {
+		key := [2]string{row.repository, row.baseRef}
+		if _, seen := first[key]; !seen {
+			first[key] = row
+		}
 	}
 	latest := ""
 	var latestInstant time.Time
-	for _, at := range rows {
-		instant, ok := checkpointInstant(at)
+	for _, key := range checkpointTargetKeys(first) {
+		row := first[key]
+		instant, ok := checkpointInstant(row.at)
 		if !ok {
-			continue
+			return "", false, nil
 		}
 		if latest == "" || instant.After(latestInstant) {
-			latest, latestInstant = at, instant
+			latest, latestInstant = row.at, instant
 		}
 	}
-	return latest, nil
+	if latest == "" {
+		return "", false, nil
+	}
+	return latest, true, nil
+}
+
+// checkpointTargetKeys is the keys of a per-target map in a stable order, so the latest instant
+// does not depend on Go's map iteration order.
+func checkpointTargetKeys(values map[[2]string]checkpointTargetObservation) [][2]string {
+	keys := make([][2]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i][0] != keys[j][0] {
+			return keys[i][0] < keys[j][0]
+		}
+		return keys[i][1] < keys[j][1]
+	})
+	return keys
 }
 
 // checkpointRecordInstants reads the checkpoint records below the manage state directory: the
@@ -532,11 +582,13 @@ func checkpointReadPairEval(path string) ([]checkpointPairEval, error) {
 		return nil, err
 	}
 	var out []checkpointPairEval
+	content := false
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+		content = true
 		var row checkpointPairEval
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
 			continue
@@ -545,6 +597,9 @@ func checkpointReadPairEval(path string) ([]checkpointPairEval, error) {
 			continue
 		}
 		out = append(out, row)
+	}
+	if content && len(out) == 0 {
+		return nil, fmt.Errorf("%s: no line of the pair evaluation is a finding this build reads", path)
 	}
 	return out, nil
 }

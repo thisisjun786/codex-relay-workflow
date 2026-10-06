@@ -734,6 +734,65 @@ func TestCheckpointIntegrationNeedsEveryTarget(t *testing.T) {
 	}
 }
 
+// The instant is the latest of the per-target first satisfying observations, and "first" is by
+// observed_seq (the order the relay writes them), not by the recorded time. A target whose first
+// observation carries a later timestamp than a subsequent one still contributes its first row.
+func TestCheckpointIntegrationInstantIsTheLatestPerTargetFirst(t *testing.T) {
+	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"}, [2]string{"owner/repo", "main"})
+	// dev: the first observation (seq 1) is at t=3; a later positive one at t=9 must not move it.
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(9), 2, true)
+	// main: the first observation (seq 1) is at t=5, later than dev's, so it decides the instant.
+	f.observation("acceptance-1", "head-1", "owner/repo", "main", checkpointAt(5), 1, true)
+	f.close()
+
+	// A record between dev's instant and main's: the integration is counted only if the instant is
+	// the latest per-target first (t=5), not the earliest observation overall (t=3).
+	f.record("project-1", checkpointAt(4), "a checkpoint between the two targets")
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 1 {
+		t.Fatalf("the instant was not the latest per-target first observation: %+v", report.Counts)
+	}
+}
+
+// A partly installed DAG zone (a store that carries dag_plans but not the observations table) is
+// an unmeasured integration reading, not a measured zero.
+func TestCheckpointPartialDAGZoneIsUnmeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.mergeTurn("turn-1", "project-1", "landed", checkpointAt(2))
+	f.exec("DROP TABLE dag_integration_observations")
+	f.close()
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint != nil {
+		t.Errorf("a partly installed zone read as a measured integration count: %+v", report.Counts)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalIntegrations) {
+		t.Errorf("the integration reading is not unmeasured: %+v", report.Unmeasured)
+	}
+	if report.Counts.MergesSinceCheckpoint != 1 {
+		t.Errorf("the frozen tables were not read: %+v", report.Counts)
+	}
+}
+
+// A pair-eval file that is present but carries no readable finding is an unreadable input, so its
+// reason names the parse failure rather than claiming no evaluation was given.
+func TestCheckpointUnreadablePairEvalNamesItsReason(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	broken := checkpointWriteInput(t, t.TempDir(), "pair-eval.jsonl", "not a finding at all\n")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{PairEval: broken}, nil), "project-1")
+	if !checkpointHasUnmeasured(report, checkpointSignalPairEval) {
+		t.Fatalf("the pair evaluation is not unmeasured: %+v", report.Unmeasured)
+	}
+	if reason := report.UnmeasuredReasons[checkpointSignalPairEval]; !strings.Contains(reason, "could not be read") {
+		t.Errorf("the reason does not name the read failure: %q", reason)
+	}
+}
+
 // An issue created and closed inside the backlog window changes the backlog by nothing, so it
 // neither adds nor subtracts.
 func TestCheckpointBacklogNetCountsCreationAndCompletionOnce(t *testing.T) {
