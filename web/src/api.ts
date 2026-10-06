@@ -169,7 +169,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     const apiError: ApiError = { status: response.status, error: await errorText(response) };
     throw apiError;
   }
-  if (response.status === 204) return undefined as T;
+  // A HEAD request and a 204 carry no body; parsing one would reject a successful call.
+  if (method.toUpperCase() === "HEAD" || response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 

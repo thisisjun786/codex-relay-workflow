@@ -176,6 +176,21 @@ test("a write request carries the token and the JSON content type", async () => 
   }
 });
 
+test("a HEAD response resolves without parsing a body", async () => {
+  const api = await freshApi();
+  const fake = install("", 200, {});
+  try {
+    // isWriteMethod() classifies HEAD as a read, and a HEAD response has no body; parsing
+    // one would reject a successful call with a SyntaxError.
+    const result = await api.request("/api/status", { method: "HEAD" });
+    assert.equal(result, undefined);
+    assert.equal(fake.fetched.length, 1);
+    assert.equal(headersOf(fake)["X-CRW-Token"], undefined);
+  } finally {
+    uninstall();
+  }
+});
+
 test("a non-2xx response throws the status and the server error", async () => {
   const api = await freshApi();
   const fake = install("", 409, { error: "conflict" });

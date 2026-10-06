@@ -23,10 +23,16 @@ export function Card({ title, desc, children }: { title?: string; desc?: string;
 export function Button({
   children,
   variant = "default",
+  className,
   ...rest
 }: { children: ReactNode; variant?: "default" | "primary" | "danger" } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  // Merge rather than replace: a caller's className must not drop the base class or the
+  // variant styling.
+  const classes = ["btn", variant === "default" ? "" : variant, className ?? ""]
+    .filter((name) => name !== "")
+    .join(" ");
   return (
-    <button className={`btn ${variant === "default" ? "" : variant}`} {...rest}>
+    <button className={classes} {...rest}>
       {children}
     </button>
   );
