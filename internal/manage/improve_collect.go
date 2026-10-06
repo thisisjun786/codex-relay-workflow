@@ -61,8 +61,9 @@ const improveStoreTimeout = 5 * time.Second
 // improveSection is the configuration section of this feature: the per-kind sources and
 // the path of the issue list a management session exported.
 type improveSection struct {
-	Sources   map[string]improveSourceConfig `json:"sources"`
-	IssueList string                         `json:"issue_list"`
+	Sources      map[string]improveSourceConfig `json:"sources"`
+	IssueList    string                         `json:"issue_list"`
+	MaxNewDrafts int                            `json:"max_new_drafts"`
 }
 
 // improveSourceConfig is one configured source: a path and, where the source needs it, a
