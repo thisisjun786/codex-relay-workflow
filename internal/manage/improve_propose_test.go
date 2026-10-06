@@ -92,13 +92,97 @@ func improveProposeTestSplit(project, reason, relationship string) improveRecord
 	}
 }
 
-// improveProposeTestEightCases is the fixed 2026-10-06 input: the eight cases of the 721
-// fixture's case list, all of them the same repeated friction (the body size estimate the
-// merged size ran past), so the eight records across three projects are one candidate.
+// improveProposeTestEightCases is the fixed 2026-10-06 input the issue's C6 names: the eight
+// issue and project keys of the 721 fixture's case list, all of them the same repeated
+// friction (the body size estimate the merged size ran past), so the eight records across
+// three projects are one candidate. The parent's addition says the C6 fixed input rewrites the
+// 721 helper, and the issue's own title-key wording makes a candidate one (kind, title) pair.
 func improveProposeTestEightCases() []improveRecord {
 	records := make([]improveRecord, 0, len(improveTestEightCases))
 	for _, c := range improveTestEightCases {
 		records = append(records, improveProposeTestSplit(c.project, improveProposeTestFriction, "rel-"+c.issue))
+	}
+	return records
+}
+
+// TestImproveProposeSuppressedCandidateStillGrowsAnExistingDraft covers the repeated-friction
+// rule: an item already in the issue list creates no draft, but a draft that already exists
+// for that fingerprint still grows its seen list.
+func TestImproveProposeSuppressedCandidateStillGrowsAnExistingDraft(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveProposeTestBundle(t, w, improveProposeTestEightCases())
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+	// The second bundle carries the same friction, now on a new relationship, and the exported
+	// issue list names it, so no new draft may be created.
+	records := append(improveProposeTestEightCases(),
+		improveProposeTestSplit("project-d", improveProposeTestFriction, "rel-new"),
+		improveProposeTestIssue("CRW-739", improveProposeTestFriction))
+	second := improveProposeTestBundle(t, w, records)
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+	if code != 0 {
+		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Created) != 0 {
+		t.Fatalf("created = %+v, want none", report.Created)
+	}
+	if len(report.Suppressed) != 1 {
+		t.Fatalf("suppressed = %+v, want one", report.Suppressed)
+	}
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if len(doc.Seen) != 9 {
+		t.Errorf("the draft carries %d seen entries, want nine: %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// TestImproveProposeKeepsDistinctFrictionsApart pins the literal 721 fixture: the same eight
+// issues and projects, each carrying the reason its receipt held. Two different reasons are
+// two different frictions, so they are two candidates, and each still merges across every
+// project it reached.
+func TestImproveProposeKeepsDistinctFrictionsApart(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, improveProposeTestLiteralCases())
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want two distinct frictions", report.Candidates)
+	}
+	byTitle := map[string]improveProposeCandidate{}
+	for _, candidate := range report.Candidates {
+		byTitle[candidate.Title] = candidate
+	}
+	sized, ok := byTitle["size overrun"]
+	if !ok {
+		t.Fatalf("the size friction is missing: %+v", report.Candidates)
+	}
+	if sized.Count != 5 || len(sized.Projects) != 3 {
+		t.Errorf("the size friction = count %d projects %+v, want 5 across 3", sized.Count, sized.Projects)
+	}
+	named, ok := byTitle["name collision"]
+	if !ok {
+		t.Fatalf("the name-collision friction is missing: %+v", report.Candidates)
+	}
+	if named.Count != 3 || len(named.Projects) != 2 {
+		t.Errorf("the name-collision friction = count %d projects %+v, want 3 across 2", named.Count, named.Projects)
+	}
+}
+
+// improveProposeTestLiteralCases is the 721 fixture's case list verbatim: the same eight
+// issues and projects, each carrying the reason its receipt actually held.
+func improveProposeTestLiteralCases() []improveRecord {
+	records := make([]improveRecord, 0, len(improveTestEightCases))
+	for _, c := range improveTestEightCases {
+		records = append(records, improveProposeTestSplit(c.project, c.reason, "rel-"+c.issue))
 	}
 	return records
 }

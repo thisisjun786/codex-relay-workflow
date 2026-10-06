@@ -122,20 +122,27 @@ func improveProposeReadBundle(path string) (improveBundle, error) {
 	return bundle, nil
 }
 
-// improveProposeFrictionKinds is the record kinds that are a repeated friction. A split
-// (a blocked receipt or a split decision), a refusal, a fault, a needs_changes generation and
-// a management intervention are things that happened and can happen again. The other kinds a
-// bundle carries are references rather than occurrences: a criteria record's count is the size
-// of a criteria set, an audit record's what is a grading outcome, a dag record's count is a
-// sample count, and a draft record is a draft this product already wrote. None of them is a
-// friction to propose a fix for, so none of them becomes a candidate.
-var improveProposeFrictionKinds = map[string]bool{
-	improveKindSplit:        true,
-	improveKindRefusal:      true,
-	improveKindFault:        true,
-	improveKindGeneration:   true,
-	improveKindIntervention: true,
+// improveProposeFriction reports whether a record is a repeated friction: a thing that
+// happened and can happen again, so a fix can be proposed for it. A split (a blocked receipt
+// or a split decision), a refusal, a fault and a management intervention are friction. A
+// generation is friction only when its reason is needs_changes_revision: an initial_assignment
+// or a decision_reply is normal operation. The other kinds a bundle carries are references
+// rather than occurrences: a criteria record's count is the size of a criteria set, an audit
+// record's what is a grading outcome, a dag record's count is a sample count, and a draft
+// record is a draft this product already wrote. None of them becomes a candidate.
+func improveProposeFriction(record improveRecord) bool {
+	switch record.Kind {
+	case improveKindSplit, improveKindRefusal, improveKindFault, improveKindIntervention:
+		return true
+	case improveKindGeneration:
+		return strings.TrimSpace(record.What) == improveProposeNeedsChanges
+	}
+	return false
 }
+
+// improveProposeNeedsChanges is the one generation reason that is friction: a child sent back
+// to correct its work.
+const improveProposeNeedsChanges = "needs_changes_revision"
 
 // improveProposeTitleOf is the title a record's candidate carries: the reason or signature the
 // record holds, or its key when it carries no what.
@@ -150,11 +157,17 @@ func improveProposeTitleOf(record improveRecord) string {
 // owners. A record whose kind carries no project reads as the empty one.
 func improveProposeProjectOf(record improveRecord) string {
 	switch record.Kind {
-	case improveKindSplit, improveKindRefusal:
+	// A split record's key is the project key the issue belongs to (721's improveSplitKey),
+	// falling back to the issue key when the scope is absent; a fault's where is its scope
+	// key, which is a project key.
+	case improveKindSplit:
 		return strings.TrimSpace(record.Key)
-	case improveKindFault, improveKindGeneration:
+	case improveKindFault:
 		return strings.TrimSpace(record.Where)
 	}
+	// A refusal's key is its reason, a generation's where is its relationship id, and an
+	// intervention carries neither, so none of them names a project. Such a candidate stays
+	// owner-unknown rather than claiming another field as an owner.
 	return ""
 }
 
@@ -166,7 +179,7 @@ func improveProposeImpactOf(record improveRecord) int {
 	case improveKindSplit, improveKindRefusal:
 		return improveProposeImpactHigh
 	case improveKindGeneration:
-		if strings.TrimSpace(record.What) == "needs_changes_revision" {
+		if strings.TrimSpace(record.What) == improveProposeNeedsChanges {
 			return improveProposeImpactHigh
 		}
 		return improveProposeImpactMedium
@@ -191,10 +204,9 @@ func improveProposeSighting(record improveRecord) auditDraftSeen {
 
 // improveProposeCandidates groups the bundle's records into candidates. Records that share the
 // audit draft fingerprint of their (kind, title) pair are one candidate, however their project
-// or evidence differ, so the same kind of friction seen many times in several projects is one
-// entry with a count rather than one entry per project. The kind stands in for the where part
-// of the shared fingerprint: an improvement record carries no file path, and keying on the
-// project would split one repeated friction into one candidate per project.
+// or evidence differ, so the same friction seen many times in several projects is one entry
+// with a count rather than one entry per project. The kind stands in for the where part of the
+// shared fingerprint, because an improvement record carries no file path.
 func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 	byKey := map[string]int{}
 	candidates := []improveProposeCandidate{}
@@ -202,7 +214,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 		// Only a friction kind is a candidate: the issue records are the exported issue list,
 		// which suppresses candidates rather than becoming one, and the reference kinds carry
 		// no occurrence to count.
-		if !improveProposeFrictionKinds[record.Kind] {
+		if !improveProposeFriction(record) {
 			continue
 		}
 		title := improveProposeTitleOf(record)
@@ -504,9 +516,14 @@ func improveProposeRun(e *Env, bundlePath string, dryRun bool) (improveProposeRe
 	candidates := improveProposeCandidates(bundle)
 	keys, titles := improveProposeIssueIndex(bundle)
 	kept := make([]improveProposeCandidate, 0, len(candidates))
+	// A candidate the exported issue list already covers creates no new draft, but a draft
+	// that already exists for its fingerprint still grows its seen list: the issue list says
+	// the friction is registered, not that this run did not see it again.
+	suppressedExisting := make([]improveProposeCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if improveProposeSuppressed(candidate, keys, titles) {
 			report.Suppressed = append(report.Suppressed, candidate.Key)
+			suppressedExisting = append(suppressedExisting, candidate)
 			continue
 		}
 		kept = append(kept, candidate)
@@ -528,12 +545,16 @@ func improveProposeRun(e *Env, bundlePath string, dryRun bool) (improveProposeRe
 		return report, err
 	}
 	fresh := 0
-	for _, candidate := range kept {
+	for _, candidate := range append(append([]improveProposeCandidate{}, kept...), suppressedExisting...) {
 		path := filepath.Join(dir, candidate.Key+".json")
 		doc, err := auditDraftLoad(path)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
 				return report, err
+			}
+			// A suppressed candidate never creates a draft; only an existing one grows.
+			if improveProposeSuppressed(candidate, keys, titles) {
+				continue
 			}
 			if fresh >= maxNew {
 				report.Remaining++

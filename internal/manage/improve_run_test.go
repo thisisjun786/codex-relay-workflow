@@ -236,6 +236,12 @@ func TestImproveRoadmapDocumentCarriesAnEvidenceLocationPerCandidate(t *testing.
 		if !strings.Contains(rest, "  - ") {
 			t.Errorf("a candidate carries no evidence location:\n%s", section)
 		}
+		if strings.Contains(rest, "(the bundle recorded no origin location)") {
+			t.Errorf("a candidate carries only the placeholder evidence:\n%s", section)
+		}
+		if !strings.Contains(rest, "events:") {
+			t.Errorf("a candidate carries no receipt location:\n%s", section)
+		}
 	}
 }
 
