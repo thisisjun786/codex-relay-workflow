@@ -33,6 +33,7 @@ type auditDraftFixtureRow struct {
 	round    string
 	gradedAt string
 	status   string
+	bundle   string
 	defects  []AuditDefect
 	criteria []auditGradeCriterion
 }
@@ -56,7 +57,10 @@ func auditDraftFixture(t *testing.T, state string, rows ...auditDraftFixtureRow)
 		}
 	}()
 	for i, row := range rows {
-		bundle := filepath.Join(t.TempDir(), fmt.Sprintf("bundle-%d", i))
+		bundle := row.bundle
+		if bundle == "" {
+			bundle = filepath.Join(t.TempDir(), fmt.Sprintf("bundle-%d", i))
+		}
 		if err := os.MkdirAll(bundle, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -918,5 +922,86 @@ func TestAuditDraftSkipsATornLedgerLine(t *testing.T) {
 	}
 	if report.TornLines != 1 {
 		t.Errorf("the report says %d torn lines, want one", report.TornLines)
+	}
+}
+
+// A bundle graded again holds only the newest audit's grade.json, so only the newest row that
+// named it is drafted from; the older rows are named and skipped rather than given sightings
+// they never made.
+func TestAuditDraftOnlyTheNewestRowOfAReusedBundleCounts(t *testing.T) {
+	state := t.TempDir()
+	bundle := filepath.Join(t.TempDir(), "bundle-reused")
+	auditDraftFixture(t, state,
+		auditDraftFixtureRow{mode: auditModePR, subject: "s", head: "h1", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+			bundle: bundle, defects: []AuditDefect{{Severity: "P1", What: "the old defect", Where: "a.go:1"}}},
+	)
+	// The bundle is graded again: its bundle.json and grade.json now describe the second audit.
+	auditDraftFixture(t, state,
+		auditDraftFixtureRow{mode: auditModePR, subject: "s", head: "h2", round: "r2", gradedAt: "2026-02-01T00:00:00Z",
+			bundle: bundle, defects: []AuditDefect{{Severity: "P1", What: "the new defect", Where: "b.go:1"}}},
+	)
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	report := auditDraftRunOf(t, cfg, auditDraftScope{})
+	if len(report.Created) != 1 {
+		t.Fatalf("the run created %d drafts, want only the newest row's: %+v", len(report.Created), report)
+	}
+	if !strings.Contains(report.Created[0].Title, "the new defect") {
+		t.Errorf("the draft is %+v, want the newest row's defect", report.Created[0])
+	}
+	if len(report.Skipped) != 1 || report.Skipped[0].Head != "h1" {
+		t.Fatalf("the older row is not named: %+v", report.Skipped)
+	}
+	if !strings.Contains(report.Skipped[0].Reason, "graded again") {
+		t.Errorf("the reason reads %q", report.Skipped[0].Reason)
+	}
+}
+
+// A draft that escalates carries the higher severity's evidence, not the lower one's.
+func TestAuditDraftEscalationCarriesTheHigherSeverityEvidence(t *testing.T) {
+	state := t.TempDir()
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s1", head: "h1", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		defects:  []AuditDefect{{Severity: "P1", What: "a crash", Where: "a.go:3", Repro: "the low repro"}},
+		criteria: []auditGradeCriterion{{ID: "C1", Verdict: "PARTIAL", Note: "the low note"}},
+	})
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	first := auditDraftRunOf(t, cfg, auditDraftScope{})
+	fingerprint := first.Created[0].Fingerprint
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s2", head: "h2", round: "r2", gradedAt: "2026-02-01T00:00:00Z",
+		defects:  []AuditDefect{{Severity: "P0", What: "a crash", Where: "a.go:3", Repro: "the high repro"}},
+		criteria: []auditGradeCriterion{{ID: "C1", Verdict: "FAIL", Note: "the high note"}},
+	})
+	if second := auditDraftRunOf(t, cfg, auditDraftScope{}); len(second.Updated) != 1 {
+		t.Fatalf("the escalation was not an update: %+v", second)
+	}
+	after := auditDraftLoadAt(t, state, fingerprint)
+	if !strings.Contains(after.Body, "the high repro") || !strings.Contains(after.Body, "the high note") {
+		t.Errorf("the body does not carry the higher severity's evidence:' + \n + '%s", after.Body)
+	}
+	if strings.Contains(after.Body, "the low repro") || strings.Contains(after.Body, "the low note") {
+		t.Errorf("the body still carries the lower severity's evidence:' + \n + '%s", after.Body)
+	}
+}
+
+// The fingerprint's two parts are delimited, so a pair that would concatenate to another
+// pair's bytes is still a distinct defect.
+func TestAuditDraftFingerprintDelimitsItsParts(t *testing.T) {
+	a := auditDraftFingerprint("a.go", "bug")
+	b := auditDraftFingerprint("a.gob", "ug")
+	if a == b {
+		t.Errorf("the pairs (a.go, bug) and (a.gob, ug) share the fingerprint %q", a)
+	}
+	state := t.TempDir()
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		defects: []AuditDefect{
+			{Severity: "P1", What: "bug", Where: "a.go:1"},
+			{Severity: "P1", What: "ug", Where: "a.gob:1"},
+		},
+	})
+	cfg := auditDraftSectionOfState(t, state, nil, 0)
+	if report := auditDraftRunOf(t, cfg, auditDraftScope{}); len(report.Created) != 2 {
+		t.Errorf("the two defects produced %d drafts, want two", len(report.Created))
 	}
 }

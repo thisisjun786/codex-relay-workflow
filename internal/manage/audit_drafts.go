@@ -263,9 +263,18 @@ func auditDraftNormalizeWhat(what string) string {
 }
 
 // auditDraftFingerprint is the first 16 hex characters of the digest over the where's path
-// and the normalized what, so the same defect two audits report is one draft.
+// and the normalized what, so the same defect two audits report is one draft. The two parts
+// are written as a JSON array rather than joined: a plain concatenation would make the pairs
+// ("a.go", "bug") and ("a.gob", "ug") the same bytes, and one defect would silently take
+// another's draft.
 func auditDraftFingerprint(where, what string) string {
-	sum := sha256.Sum256([]byte(auditDraftWherePath(where) + auditDraftNormalizeWhat(what)))
+	parts, err := json.Marshal([]string{auditDraftWherePath(where), auditDraftNormalizeWhat(what)})
+	if err != nil {
+		// A []string of two strings cannot fail to marshal; the fallback keeps the digest
+		// defined rather than panicking in a command.
+		parts = []byte(auditDraftWherePath(where) + "\x00" + auditDraftNormalizeWhat(what))
+	}
+	sum := sha256.Sum256(parts)
 	return hex.EncodeToString(sum[:])[:auditDraftFingerprintChars]
 }
 
@@ -631,17 +640,33 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	if err != nil {
 		return report, err
 	}
+	// A bundle is a mutable directory: grading into it again replaces its grade.json, and the
+	// ledger keeps every row that ever named it. Only the newest such row can still have its
+	// grade there, so the older rows are named and skipped rather than given the newest
+	// audit's defects as sightings they never made.
+	newest := map[string]int{}
+	for i, row := range rows {
+		if row.Status != auditStatusOK || row.Bundle == "" {
+			continue
+		}
+		newest[row.Bundle] = i
+	}
 	// A torn line is the fragment auditAppendLine leaves on its own line when it separates an
 	// interrupted append from the rows after it, so it is counted rather than treated as a row.
 	report.TornLines = torn
 	candidates := map[string]*auditDraftCandidate{}
 	var order []string
-	for _, row := range rows {
+	for i, row := range rows {
 		matches, err := auditDraftScopeMatches(row, scope)
 		if err != nil {
 			return report, err
 		}
 		if !matches {
+			continue
+		}
+		if owner, ok := newest[row.Bundle]; ok && owner != i {
+			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
+				Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
 			continue
 		}
 		// A ledger is append-only and unscoped runs read every ok row, so one row the product
@@ -674,7 +699,12 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 				order = append(order, fingerprint)
 			}
 			if auditDraftSeverityRank[candidate.severity] > rank {
+				// The higher severity carries its own evidence: the reproduction steps, the
+				// where and the criteria notes are the ones that grade wrote, not the ones the
+				// lower-severity grade wrote about the same defect.
 				candidate.severity = defect.Severity
+				candidate.defect = defect
+				candidate.criteria = doc.Criteria
 			}
 			if !auditDraftSeenHas(candidate.seen, entry) {
 				candidate.seen = append(candidate.seen, entry)
@@ -740,12 +770,17 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 			doc.Body = auditDraftSeenSection(doc.Body, doc.Seen)
 		}
 		// A later audit that reports the same defect at a higher severity escalates the
-		// draft, so the management session prioritizes it as it now stands. The posted state
+		// draft, so the management session prioritizes it as it now stands, and the draft
+		// carries the evidence that raised it rather than the lower grade's. The posted state
 		// and the issue key are kept: the escalation does not open a second issue.
 		if stored, known := auditDraftSeverityRank[doc.Severity]; known && auditDraftSeverityRank[candidate.severity] < stored {
+			promoted := *candidate
+			promoted.seen = doc.Seen
+			promoted.project = doc.Project
 			doc.Severity = candidate.severity
 			doc.Labels = auditDraftLabels(candidate.severity)
 			doc.Title = auditDraftTitle(candidate.severity, candidate.defect.What)
+			doc.Body = auditDraftBody(&promoted)
 			changed = true
 		}
 		if !changed {
