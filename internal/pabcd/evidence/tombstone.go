@@ -19,6 +19,19 @@ type MarkerWriter func(cwd, sessionID, agentID string) error
 // lockFunc is state.WithSessionLock; the tests replace it to stage a failed acquisition.
 type lockFunc func(cwd, sessionID string, fn func() error) error
 
+// publishedWriteFunc is the state write the tombstone writers commit through. It is state.WriteState everywhere but in a
+// test, which passes one that publishes the state and then reports the post-rename failure WriteState returns
+// (*state.PublishedError). It is a function argument, never a package-level variable, so no test state outlives a call.
+type publishedWriteFunc func(cwd string, s state.State) error
+
+// publishedWriteOf is the write a tombstone writer commits through: the one its caller passed, else state.WriteState.
+func publishedWriteOf(writes []publishedWriteFunc) publishedWriteFunc {
+	if len(writes) > 0 && writes[0] != nil {
+		return writes[0]
+	}
+	return state.WriteState
+}
+
 type sentinel string
 
 func (e sentinel) Error() string { return string(e) }
@@ -71,11 +84,8 @@ func RecordTombstone(cwd, sessionID string, p Payload, attempts int, marker Mark
 	return recordTombstone(cwd, sessionID, p, attempts, time.Now(), state.WithSessionLock, marker)
 }
 
-func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Time, lock lockFunc, marker MarkerWriter, publishedWrite ...func(string, state.State) error) bool {
-	write := state.WriteState
-	if len(publishedWrite) > 0 && publishedWrite[0] != nil {
-		write = publishedWrite[0]
-	}
+func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Time, lock lockFunc, marker MarkerWriter, publishedWrite ...publishedWriteFunc) bool {
+	write := publishedWriteOf(publishedWrite)
 	agentID, turnID, resolvable := tombstoneIdentity(p)
 	claimed, _ := ExtractReceiptPath(p.LastAssistantMessage) // the claimed path only, never the child's prose
 	if units := utf16.Encode([]rune(claimed)); len(units) > state.MaxReceiptClaimLen {

@@ -1,6 +1,10 @@
 package evidence
 
 import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -24,9 +28,45 @@ func publishedEvidenceWrite(cwd string, s state.State) error {
 // evidenceLockFree is the session lock without the filesystem, so the case is about the write and not the lock.
 func evidenceLockFree(_, _ string, fn func() error) error { return fn() }
 
+// publishedEvidenceHome pins the real-state roots into temporary directories and returns their listings, so a case can show
+// that the run touched none of them. The caller compares the listings before and after.
+func publishedEvidenceHome(t *testing.T) (codexHome, crwHome string, list func() string) {
+	t.Helper()
+	home := t.TempDir()
+	codexHome, crwHome = filepath.Join(home, "codex"), filepath.Join(home, "crw")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CRW_HOME", crwHome)
+	list = func() string {
+		var names []string
+		for _, root := range []string{codexHome, crwHome} {
+			_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					names = append(names, p)
+				}
+				return nil
+			})
+		}
+		sort.Strings(names)
+		return strings.Join(names, "\n")
+	}
+	return codexHome, crwHome, list
+}
+
+// publishedEvidenceRootsUnchanged fails the case when the temporary roots gained or lost a file, which is how a run that
+// reached a real root would show.
+func publishedEvidenceRootsUnchanged(t *testing.T, before, after string) {
+	t.Helper()
+	if before != after {
+		t.Fatalf("the pinned roots changed: %q -> %q", before, after)
+	}
+}
+
 // A tombstone whose commit published is recorded: the call reports true and the sentinel tier never runs, so a healthy
 // session does not end up marked unverifiedCorrupt and refused by the goal-complete gate as unreadable.
 func TestRecordTombstoneTreatsAPublishedCommitAsWritten(t *testing.T) {
+	_, _, list := publishedEvidenceHome(t)
+	before := list()
 	cwd := t.TempDir()
 	if !recordTombstone(cwd, "s1", agent("a1", "t1"), 3, time.Now(), evidenceLockFree, nil, publishedEvidenceWrite) {
 		t.Error("a commit whose state was published was reported as failed")
@@ -37,10 +77,13 @@ func TestRecordTombstoneTreatsAPublishedCommitAsWritten(t *testing.T) {
 	if !HasTombstone(cwd, "s1", agent("a1", "t1")) {
 		t.Error("the tombstone is not in the published state")
 	}
+	publishedEvidenceRootsUnchanged(t, before, list())
 }
 
 // A removal whose write published is a removal: the resolve reports true and the tombstone is gone from the visible state.
 func TestResolveTombstoneTreatsAPublishedWriteAsRemoved(t *testing.T) {
+	_, _, list := publishedEvidenceHome(t)
+	before := list()
 	cwd := t.TempDir()
 	if !RecordTombstone(cwd, "s1", agent("a1", "t1"), MaxAttempts, nil) {
 		t.Fatal("seed tombstone failed")
@@ -51,11 +94,14 @@ func TestResolveTombstoneTreatsAPublishedWriteAsRemoved(t *testing.T) {
 	if HasTombstone(cwd, "s1", agent("a1", "t1")) {
 		t.Error("the tombstone is still in the published state")
 	}
+	publishedEvidenceRootsUnchanged(t, before, list())
 }
 
 // A failure before publication keeps today's behaviour: nothing was written, so the commit failed, the sentinel tier runs and
 // no tombstone is recorded.
 func TestRecordTombstonePrePublicationFailureKeepsTheSentinel(t *testing.T) {
+	_, _, list := publishedEvidenceHome(t)
+	before := list()
 	cwd := t.TempDir()
 	failing := func(string, state.State) error { return syscall.EIO }
 	if recordTombstone(cwd, "s1", agent("a1", "t1"), 3, time.Now(), evidenceLockFree, nil, failing) {
@@ -67,10 +113,13 @@ func TestRecordTombstonePrePublicationFailureKeepsTheSentinel(t *testing.T) {
 	if HasTombstone(cwd, "s1", agent("a1", "t1")) {
 		t.Error("a pre-publication failure recorded a tombstone")
 	}
+	publishedEvidenceRootsUnchanged(t, before, list())
 }
 
 // The resolve keeps today's behaviour for a failure before publication: the tombstone is still there and the call says so.
 func TestResolveTombstonePrePublicationFailureReportsNothingRemoved(t *testing.T) {
+	_, _, list := publishedEvidenceHome(t)
+	before := list()
 	cwd := t.TempDir()
 	if !RecordTombstone(cwd, "s1", agent("a1", "t1"), MaxAttempts, nil) {
 		t.Fatal("seed tombstone failed")
@@ -82,4 +131,5 @@ func TestResolveTombstonePrePublicationFailureReportsNothingRemoved(t *testing.T
 	if !HasTombstone(cwd, "s1", agent("a1", "t1")) {
 		t.Error("the tombstone was cleared by a pre-publication failure")
 	}
+	publishedEvidenceRootsUnchanged(t, before, list())
 }

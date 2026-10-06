@@ -75,11 +75,8 @@ func ResolveTombstone(cwd, sessionID string, p Payload) bool {
 	return resolveTombstone(cwd, sessionID, p, state.WithSessionLock)
 }
 
-func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc, publishedWrite ...func(string, state.State) error) bool {
-	write := state.WriteState
-	if len(publishedWrite) > 0 && publishedWrite[0] != nil {
-		write = publishedWrite[0]
-	}
+func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc, publishedWrite ...publishedWriteFunc) bool {
+	write := publishedWriteOf(publishedWrite)
 	agentID, turnID, resolvable := tombstoneIdentity(p)
 	if !resolvable {
 		return false

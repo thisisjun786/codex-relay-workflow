@@ -1,6 +1,9 @@
 package hook
 
 import (
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,9 +24,35 @@ func publishedGateWrite(cwd string, s state.State) error {
 	return &state.PublishedError{Err: syscall.EIO}
 }
 
+// publishedGateHome pins the real-state roots into temporary directories and returns their listing, so the case can show
+// that the run touched none of them.
+func publishedGateHome(t *testing.T) (list func() string) {
+	t.Helper()
+	home := t.TempDir()
+	codexHome, crwHome := filepath.Join(home, "codex"), filepath.Join(home, "crw")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CRW_HOME", crwHome)
+	return func() string {
+		var names []string
+		for _, root := range []string{codexHome, crwHome} {
+			_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					names = append(names, p)
+				}
+				return nil
+			})
+		}
+		sort.Strings(names)
+		return strings.Join(names, "\n")
+	}
+}
+
 // A grant whose consumption published is spent: the write it authorized is allowed, the grant is gone from the visible
 // state, and the next call finds nothing to spend.
 func TestMemoryGateAllowsAWriteWhoseGrantConsumptionPublished(t *testing.T) {
+	list := publishedGateHome(t)
+	before := list()
 	cwd, _, env := gateScene(t)
 	gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
 	if out := memoryGateHandle(gatePayload(t, cwd, nil), env, publishedGateWrite); out != "" {
@@ -35,11 +64,16 @@ func TestMemoryGateAllowsAWriteWhoseGrantConsumptionPublished(t *testing.T) {
 	if out := memoryGateHandle(gatePayload(t, cwd, nil), env, publishedGateWrite); out == "" {
 		t.Error("the spent grant allowed a second write")
 	}
+	if after := list(); after != before {
+		t.Fatalf("the pinned roots changed: %q -> %q", before, after)
+	}
 }
 
 // A failure before publication keeps today's behaviour: the authorization was not spent, so the write is denied and the
 // grant stays for the retry.
 func TestMemoryGateRefusesAWriteWhoseGrantWasNotPublished(t *testing.T) {
+	list := publishedGateHome(t)
+	before := list()
 	cwd, _, env := gateScene(t)
 	gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
 	failing := func(string, state.State) error { return syscall.EIO }
@@ -49,5 +83,8 @@ func TestMemoryGateRefusesAWriteWhoseGrantWasNotPublished(t *testing.T) {
 	}
 	if !state.ReadState(cwd, gateSession).MemoryWriteGrant {
 		t.Error("a pre-publication failure spent the grant")
+	}
+	if after := list(); after != before {
+		t.Fatalf("the pinned roots changed: %q -> %q", before, after)
 	}
 }
