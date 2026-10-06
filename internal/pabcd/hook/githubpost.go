@@ -190,15 +190,21 @@ func githubPostControlPrefix(words []githubPostWord) ([]githubPostWord, bool) {
 		case name == "time" || githubPostControlWord(name):
 			words = words[1:]
 		case name == "for" || name == "select" || name == "while" || name == "until":
-			rest, ok := githubPostSkipTo(words[1:], "do")
-			if !ok {
-				return nil, false
+			// A for or select header is a variable and an in-list, so its command starts at the do; a
+			// while or until header is itself the condition command, which is judged here.
+			if name == "for" || name == "select" {
+				rest, ok := githubPostSkipTo(words[1:], "do")
+				if !ok {
+					return nil, true // the do is in a later segment of the same line
+				}
+				words = rest
+			} else {
+				words = words[1:]
 			}
-			words = rest
 		case name == "case":
 			rest, ok := githubPostSkipTo(words[1:], "in")
 			if !ok {
-				return nil, false
+				return nil, true
 			}
 			words = githubPostSkipCasePatterns(rest)
 		case name == "function":

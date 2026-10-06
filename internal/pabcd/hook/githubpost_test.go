@@ -322,10 +322,10 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		// The general rule the operator fixed for generation 3: a command the guard cannot read whole to
 		// the end is refused, and a body file any part of the text writes is not trusted. The controls
 		// below are the harmless shapes that must still pass.
-		{"for loop", "for i in 1 2; do gh pr comment 1 -b \"$BODY\"; done", githubPostRuleUnread, githubPostWhereCommand},
+		{"for loop", "for i in 1 2; do gh pr comment 1 -b \"$BODY\"; done", githubPostRuleExpand, githubPostWhereCommand},
 		{"while loop", "while true; do gh pr comment 1 -b plain; done", githubPostRuleInline, githubPostWhereCommand},
 		{"until loop", "until false; do gh pr comment 1 -b plain; done", githubPostRuleInline, githubPostWhereCommand},
-		{"select loop", "select x in a; do gh pr comment 1 -b plain; done", githubPostRuleUnread, githubPostWhereCommand},
+		{"select loop", "select x in a; do gh pr comment 1 -b plain; done", githubPostRuleInline, githubPostWhereCommand},
 		{"if conditional", "if gh pr comment 1 -b plain; then :; fi", githubPostRuleInline, githubPostWhereCommand},
 		{"then branch", "if true; then gh pr comment 1 -b plain; fi", githubPostRuleInline, githubPostWhereCommand},
 		{"case clause", "case x in a) gh pr comment 1 -b plain;; esac", githubPostRuleInline, githubPostWhereCommand},
@@ -358,6 +358,12 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"another file written by tee before a clean post", "tee other.md <<'EOF'\nnotes\nEOF\ngh pr comment 1 --body-file body.md", "", ""},
 		{"if with nothing to do with gh", "if true; then echo hi; fi", "", ""},
 		{"function with nothing to do with gh", "post() { echo hi; }", "", ""},
+		// The rule judges every command it reaches, not only the first: a post nested one control
+		// structure deeper, and one that follows a control structure that has closed.
+		{"nested control structures", "if true; then for i in 1 2; do gh pr comment 1 -b plain; done; fi", githubPostRuleInline, githubPostWhereCommand},
+		{"post after a loop closes", "for i in 1; do :; done; gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
+		{"nested control structures with nothing to do with gh", "if true; then for i in 1 2; do echo hi; done; fi", "", ""},
+		{"clean post after a loop closes", "for i in 1; do :; done; gh pr comment 1 --body-file body.md", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
