@@ -42,15 +42,16 @@ test-binary:
 # package first. runtime/install (about 175 s) and relay/dagsched (about 155 s) are by far
 # the slowest packages and both run their tests one after another, so each leads a different
 # part with only small packages beside it: install leads part 2 (registry, hook), dagsched
-# leads part 1 (cli). The leg that holds install is the longest, about 260 s, and no split
-# goes under it while install's own tests take about 175 s. Part 3 takes the middle tier and
-# part 4 the next one, which pulls delivery, skill, managed and adapter out of `rest`.
-# The Stop-hook package has wall-clock budgets, so it runs beside install, whose serial
-# tests leave the runner idle.
+# leads part 1 (cli). The other heavy packages are split so that no leg holds two of them
+# and no leg holds one beside a floor: relay/delivery leads part 4 beside the medium
+# packages, and service, contracttest, mergeturn, supervisor, skill, managed and adapter
+# fill part 3. The leg that holds install is the floor, and no split goes under it while
+# install's own tests take about 175 s. The Stop-hook package has wall-clock budgets, so it
+# runs beside install, whose serial tests leave the runner idle.
 TEST_PART_1 := ./internal/relay/dagsched ./internal/relay/cli
 TEST_PART_2 := ./internal/runtime/install ./internal/relay/registry ./internal/relay/hook
-TEST_PART_3 := ./internal/relay/service ./internal/contracttest ./internal/relay/mergeturn ./internal/relay/supervisor ./internal/relay/store ./internal/relay/sync ./internal/relay/dag ./internal/relay/faults
-TEST_PART_4 := ./internal/relay/delivery ./internal/skill ./internal/relay/managed ./internal/relay/adapter ./internal/role ./internal/pyjson ./internal/relay/linkage ./internal/recall ./internal/relay/routing ./internal/relay/childcleanup
+TEST_PART_3 := ./internal/relay/service ./internal/contracttest ./internal/relay/mergeturn ./internal/relay/supervisor ./internal/skill ./internal/relay/managed ./internal/relay/adapter
+TEST_PART_4 := ./internal/relay/delivery ./internal/relay/store ./internal/relay/sync ./internal/relay/faults ./internal/relay/dag ./internal/role ./internal/pyjson ./internal/relay/linkage ./internal/recall ./internal/relay/routing ./internal/relay/childcleanup
 TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4)
 
 test-part: test-binary
