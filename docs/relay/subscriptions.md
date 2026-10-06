@@ -115,6 +115,10 @@ and the checked host observations. The residual race is another client starting
 a turn on that descendant between its final re-read and archive. Archival is
 reversible with `thread/unarchive`, which restores visibility, not an interrupted
 turn. A host API with an atomic idle precondition would be needed to remove that race.
+The managed resend gate's own archive has the same window: another client may archive the child
+between the gate's idle read and its `thread/archive`, and that case is not distinguished from
+this call's reply being lost, so a listing that shows the child archived after an unanswered
+archive continues as if this call had applied it.
 
 The isolated reproduction used a fresh home and socket, a synthetic Responses
 provider, explicit `historyMode: legacy`, one MCP helper per thread, and the configured Go client's normal watch
@@ -178,16 +182,20 @@ business attempt inside the existing successor chain: a replay reconstructs the 
 the retained failure, so the journal row an earlier lowering wrote is what stops the next one. An
 `active` child, one whose history shows a foreign turn and one whose preceding failure is not that
 refusal are never archived and hold as before.
-An archive error answers incomplete `recipient_not_idle` with no unarchive and no send; an
-unarchive that fails twice answers incomplete `lifecycle_unknown`, naming the archived thread for
-an operator in the journal; a child still loaded afterwards answers `recipient_not_idle`. Every
-unload writes one `managed_resend_unloaded` journal row naming the thread, the archive and
-unarchive results and the load state observed afterwards; once the archive has succeeded the row
-is written with a context that survives the caller's cancellation, because an archived child with
-no row would leave an operator nothing to read. Empty, missing-rollout or unreadable
-history stays held as `lifecycle_unknown`; another turn refuses as
-`business_identity_unobserved`. The final business guard repeats the standby-only check after
-the recorded-profile resume.
+An archive error the host answered with its own JSON-RPC error response is a refusal of that call,
+so this invocation did not apply the archive and the answer is incomplete `recipient_not_idle` with
+no archived-listing check, no unarchive and no send. An error with no host answer read asks the same
+complete archived scan the resend guard uses once, and an answer of `recipient_archived` continues
+exactly as after a successful archive, recording `reply_lost` as the archive result in the row;
+any other answer, and a failed check, keeps that hold. An unarchive that fails twice answers incomplete `lifecycle_unknown`,
+naming the archived thread for an operator in the journal; a child still loaded afterwards answers
+`recipient_not_idle`. Every unload writes one `managed_resend_unloaded` journal row naming the
+thread, the archive and unarchive results and the load state observed afterwards; once the archive
+has succeeded the row is written with a context that survives the caller's cancellation, because
+an archived child with no row would leave an operator nothing to read. Empty, missing-rollout or
+unreadable history stays held as `lifecycle_unknown`; another turn refuses as
+`business_identity_unobserved`. The final business guard repeats the standby-only check after the
+recorded-profile resume.
 The recovery guard retains the complete archived scan and positive thread/goal reads,
 and skips the unnecessary unarchived listing, so its history check fits the existing
 ten-request deadline budget (at most seven calls).

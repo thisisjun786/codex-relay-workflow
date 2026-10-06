@@ -134,13 +134,14 @@ func TestRecordMetricsFromTextContextStopsBetweenLines(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// The interrupt lands inside the first record: Now runs there, after the check before the line and before the append. The lock is
-	// free, so that row is written, and the check before the second line ends the run.
+	// free, but the context is read once more after it is taken (CRW-667), so that row is not written either and the run ends with
+	// Canceled.
 	rows, err := RecordMetricsFromTextContext(ctx, cwd, TextInput{SessionID: "s", Text: metricsTwoLines, Source: EvaluateSh, Now: func() string {
 		cancel()
 		return "2026-01-02T00:00:00.000Z"
 	}})
-	if got := ReadObjectiveMetrics(cwd, "s"); !errors.Is(err, context.Canceled) || len(rows) != 1 || rows[0].MetricName != "a" || len(got) != 1 {
-		t.Fatalf("cancelled between lines: error %v, rows %v, ledger %v; want the first row only and Canceled", err, rows, got)
+	if got := ReadObjectiveMetrics(cwd, "s"); !errors.Is(err, context.Canceled) || len(rows) != 0 || len(got) != 0 {
+		t.Fatalf("cancelled between lines: error %v, rows %v, ledger %v; want no rows and Canceled", err, rows, got)
 	}
 }
 
