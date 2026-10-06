@@ -166,6 +166,34 @@ func TestGoalplanAmbiguousCompleteTaskRefusesDuplicateWorkPhaseIDs(t *testing.T)
 	}
 }
 
+// The ambiguity refusal precedes the already-done answer: with the first task of a duplicated id
+// already done, the oracle answered unchanged and this port refuses, because the plan is not
+// repaired here and the second entry is not the one the caller named. (The corpus pins the same
+// ordering for meet in meet_unchanged_duplicate_met_then_open.)
+func TestGoalplanAmbiguousCompleteTaskPrecedesTheAlreadyDoneAnswer(t *testing.T) {
+	plan := BuildGoalplan(NewGoalplanInput{Objective: "Ambiguous ids", Now: func() string { return "2026-01-01T00:00:00.000Z" }})
+	plan.WorkPhases = []GoalplanWorkPhase{{ID: "wp1", Title: "Exporter", Status: WorkPhaseInProgress, Tasks: []GoalplanTask{
+		{ID: "t-1", Title: "A", Status: TaskDone, Outcome: "first-proof"},
+		{ID: "t-1", Title: "B", Status: TaskPending},
+	}, CriteriaIDs: []string{}}}
+	plan.Criteria = []GoalplanCriterion{}
+	before := mustJSON(t, plan)
+	result := CompleteGoalplanTask(plan, "wp1", "t-1", "again")
+	if result.Kind != GoalplanLifecycleRejected {
+		t.Fatalf("complete with a done first duplicate = %#v", result)
+	}
+	want := "task id 'wp1/t-1' is ambiguous (2 entries); repair the plan first"
+	if result.Reason != want {
+		t.Fatalf("reason = %q, want %q", result.Reason, want)
+	}
+	if after := mustJSON(t, plan); after != before {
+		t.Fatalf("refused complete changed the plan:\n%s", after)
+	}
+	if got := plan.WorkPhases[0].Tasks[0].Outcome; got != "first-proof" {
+		t.Fatalf("A outcome = %q, want first-proof", got)
+	}
+}
+
 // The refusals are scoped to the operations that rewrite every entry of an id: complete, meet and
 // decide without duplicates answer exactly as before, and an id that is in no entry still reads
 // "not in this plan" ahead of the ambiguity rule.
