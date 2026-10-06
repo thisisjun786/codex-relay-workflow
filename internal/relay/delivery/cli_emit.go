@@ -66,6 +66,16 @@ func emitConfirmTurn(c *cliRun, thread, turn string) error {
 
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
 func cmdEmit(c *cliRun) (any, error) {
+	// CRW-675: a turn id that is not the thread's Codex id form is refused before anything is
+	// written. The check reads only the arguments, so it runs before the store is opened: a refused
+	// malformed turn id leaves no socket_path recorded (CRW-680). Without --socket, a turn the
+	// store's recorded host answers is absent from an exhausted listing is refused the same way;
+	// that check needs the socket the store recorded, so it stays after the store is opened. Both
+	// refusals are the existing unassigned_turn.
+	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
+	if err := emitRefuseTurnIDForm(thread, turn); err != nil {
+		return nil, err
+	}
 	d, _, err := c.services()
 	if err != nil {
 		return nil, err
@@ -73,13 +83,6 @@ func cmdEmit(c *cliRun) (any, error) {
 	rid := c.s("--relationship")
 	relationship, err := RequireActive(c.ctx, d.Store, rid)
 	if err != nil {
-		return nil, err
-	}
-	// CRW-675: a turn id that is not the thread's Codex id form is refused before anything is
-	// written, and, without --socket, a turn the store's recorded host answers is absent from an
-	// exhausted listing is refused the same way. Both refusals are the existing unassigned_turn.
-	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
-	if err := emitRefuseTurnIDForm(thread, turn); err != nil {
 		return nil, err
 	}
 	if c.socket == "" {
