@@ -1911,7 +1911,8 @@ func worktreeDelUnreadableCuts(command string) []worktreeDelUnreadableCut {
 // the one worktreeDelFlagShellProgram and worktreeDelSuProgram use, so a word the walk reads as a -c program is one
 // here too.
 func worktreeDelUnreadableStdinShell(name string, operands []string) bool {
-	args := worktreeDelQuoteDropRedirects(operands)
+	// A descriptor before a here-document operator is part of that redirection, not a script operand (bash 0<<EOF).
+	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
 	if name == "su" {
 		return worktreeDelSuProgram(args) < 0
 	}
@@ -2334,29 +2335,6 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 		i = next
 	}
 	return worktreeDelUnreadableRefusal{}, false
-}
-
-// worktreeDelUnreadableWithoutDescriptor is a command text with a leading descriptor and the here-document operator it
-// belongs to removed (`0<<EOF bash` is `bash`): the descriptor and its operator are no part of the command word.
-func worktreeDelUnreadableWithoutDescriptor(cut string) string {
-	words := worktreeDelUnreadableWords(cut)
-	plain := worktreeDelUnreadablePlainTexts(words)
-	i := 0
-	for i < len(plain) {
-		if strings.Trim(plain[i], "0123456789") == "" && i+1 < len(plain) && strings.HasPrefix(plain[i+1], "<<") {
-			i += 2
-			continue
-		}
-		if strings.HasPrefix(plain[i], "<<") {
-			i++
-			continue
-		}
-		break
-	}
-	if i == 0 {
-		return cut
-	}
-	return strings.Join(plain[i:], " ")
 }
 
 // worktreeDelUnreadableLineShellAt says whether the command that holds the here-document operator at byte at is a listed
