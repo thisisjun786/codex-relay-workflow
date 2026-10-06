@@ -131,11 +131,14 @@ func resetRmIfExists(root *os.Root, name, display string, result *ResetResult) e
 
 // resetLinkTargetExists is existsSync for the link name in a pinned root.
 // os.Root resolves a target that stays inside the root through the descriptor
-// itself. Any other failure (an absolute target, ".." past the root, more link
-// hops than os.Root follows) is judged by the OS on the root's own path, which
-// is accepted only while that path still names the pinned directory before and
-// after the stat; otherwise the verdict could describe another directory than
-// the one the removal acts on. Callers pass a bare leaf name.
+// itself, except one whose final component is "." or "..": resolving that opens
+// the target directory (O_DIRECTORY, read only), which a reset must not do. Such
+// a target, and any other the descriptor cannot resolve (an absolute target, ".."
+// past the root, more link hops than os.Root follows), is judged by the OS on the
+// root's own path, which is accepted only while that path still names the pinned
+// directory before and after the stat; otherwise the verdict could describe
+// another directory than the one the removal acts on, so the judgement refuses
+// instead of guessing. Callers pass a bare leaf name.
 func resetLinkTargetExists(root *os.Root, name string) (bool, error) {
 	return resetLinkTargetExistsWith(root, name, root.Stat)
 }
