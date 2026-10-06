@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -98,5 +99,36 @@ func TestStoreDeclarerOtherScopesUnchanged(t *testing.T) {
 	}
 	if got := field(field(room, "dimensions").([]any)[0], "ceiling"); got != 9.0 {
 		t.Fatalf("initiative ceiling %v", got)
+	}
+}
+
+// TestStoreDeclarerInitiativeKeyedStoreIsRefused: the added conjunct is scope_kind, not the key.
+// A supervisor whose binding sits on an initiative that happens to be keyed "store" holds a live
+// supervisor binding whose scope_key reads "store", so the old predicate (which never named the
+// kind) admitted it. The store seat is the store *kind*, so it is refused.
+func TestStoreDeclarerInitiativeKeyedStoreIsRefused(t *testing.T) {
+	e := newEnv(t)
+	const keyed = "task-initiative-keyed-store"
+	r := &registry.Registry{Store: e.store, Now: e.clock.iso}
+	if _, err := r.BindScope(ctx(), "supervisor", "store", registry.Endpoint{TaskID: keyed, HostID: "host-s", Cwd: ns("/keyed")}); err != nil {
+		t.Fatalf("binding an initiative keyed %q: %v", "store", err)
+	}
+	answer, err := e.cap.DeclareLimit(ctx(), Limit{ScopeKind: "store", ScopeKey: "store", Dimension: "runs",
+		Unit: "runs", Ceiling: 40, DeclaredBy: keyed, Source: "operator", Enforce: true})
+	if answer != nil {
+		t.Fatalf("an initiative keyed %q declared a store ceiling: %v", "store", answer)
+	}
+	if got := reasonOf(err); got != string(contract.RefusalScopeRoleMismatch) {
+		t.Fatalf("reason %q, want scope_role_mismatch (%v)", got, err)
+	}
+	if detail := storeDeclarerRefusalDetail(t, err); !strings.Contains(detail, storeDeclarerDetail) {
+		t.Fatalf("detail %q does not carry %q", detail, storeDeclarerDetail)
+	}
+	rows, err := e.store.ExecutionLimits(ctx(), "store", "store")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a refused declaration left %d execution_limits rows", len(rows))
 	}
 }
