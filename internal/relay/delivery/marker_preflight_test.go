@@ -242,6 +242,7 @@ func stateListing(root string) string {
 }
 
 func TestCLI_marker_preflight_answers_what_python_answers(t *testing.T) {
+	t.Parallel()
 	for _, c := range markerCases() {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -258,6 +259,7 @@ func outcomeText(o markerOutcome) string {
 // initializes a legacy store (decision 30): where the fence would stamp and adopt it, Go's
 // registration hold refuses it, before the marker root or any fact exists.
 func TestCLI_intent_register_refuses_a_legacy_store_before_any_marker(t *testing.T) {
+	t.Parallel()
 	var legacy markerCase
 	for _, c := range markerCases() {
 		if c.name == "declare/legacy-store" {

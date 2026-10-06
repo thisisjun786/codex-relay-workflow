@@ -16,6 +16,7 @@ import (
 // The manifest records, for every incoming edge, the value that satisfied it, shaped by the edge's kind (contract 4.2): the artifacts with uri, hash, size and scope; the head and the landed
 // commit of an integration; the recorded decision.
 func TestReleaseManifestInputsPerEdgeKind(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("mk", 0, "mk-r1", addRelNode("A", dag.NodeNonPR), addRelNode("B", dag.NodeNonPR), addRelNode("I", dag.NodeImplementation), addRelNode("K", dag.NodeNonPR),
 		addRelNode("D", dag.NodeNonPR), addRelNode("L", dag.NodeNonPR),
@@ -61,6 +62,7 @@ func TestReleaseManifestInputsPerEdgeKind(t *testing.T) {
 
 // A binding that does not belong to the node is refused: the managed engine answered "admitted" for a relationship of another issue, and the release must not record it as the node's child.
 func TestReleaseBindRefusesAForeignRelationship(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.foreignRelationship("CRW-other")
@@ -91,6 +93,7 @@ func TestReleaseBindRefusesAForeignRelationship(t *testing.T) {
 
 // A second caller that finds the request busy waits for the first to bind its child and then reports it; with no one to bind it, the wait ends with the caller's context.
 func TestReleaseAwaitBound(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	rid := k.startNode("rp", "A")
@@ -109,6 +112,7 @@ func TestReleaseAwaitBound(t *testing.T) {
 
 // A frozen copy is named by its own bytes: the same bytes are one file, other bytes are another file, and a file that holds other bytes than its name says is never taken for the manifest.
 func TestFreezeManifest(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path, err := FreezeManifest(root, []byte("one"))
 	if err != nil || filepath.Base(path) != shaOf([]byte("one"))+".json" || filepath.Dir(path) != filepath.Join(root, "dag-input-manifests") {
@@ -135,6 +139,7 @@ func TestFreezeManifest(t *testing.T) {
 // The child owns its artifact root, so what it can plant there must neither take the parent's write outside the root nor hold the parent: a directory or a file that is a link, and a
 // file that is a pipe (opening one blocks), are refused promptly and nothing is written outside.
 func TestFreezeManifestRefusesWhatTheChildCanPlant(t *testing.T) {
+	t.Parallel()
 	canonical := []byte("the manifest")
 	named := shaOf(canonical) + ".json"
 	within := func(t *testing.T, plant func(root, dir, outside string)) error {
@@ -192,6 +197,7 @@ func TestFreezeManifestRefusesWhatTheChildCanPlant(t *testing.T) {
 
 // The store half of a verification touches no file, but it still decides where a volatile snapshot may lie: outside the child's roots is B-05 whether or not the bytes are read.
 func TestVerifyManifestVolatileScopeWithoutReadingFiles(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	snap := k.snapshot("rp")
@@ -220,6 +226,7 @@ func TestVerifyManifestVolatileScopeWithoutReadingFiles(t *testing.T) {
 
 // B-02: a manifest whose digest is not the digest of its content is tampered, whichever side was altered.
 func TestVerifyManifestDetectsTampering(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	a := k.acceptedA()
@@ -276,6 +283,7 @@ func TestVerifyManifestDetectsTampering(t *testing.T) {
 
 // The merge-check history gains a row only when the observation differs from the latest one.
 func TestAppendMergeCheckIsAHistory(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	a := k.pinned()
@@ -310,6 +318,7 @@ func TestAppendMergeCheckIsAHistory(t *testing.T) {
 // H3: an artifact left out of a receipt's list is an omission the remaining files cannot reveal. The list must hash to the revision the parent accepted, in the reading, in a release and in
 // the verification of a manifest, whether or not the files are read.
 func TestReleaseDetectsAnArtifactLeftOutOfTheList(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	a := k.acceptNode("rp", "A", acceptOpts{Artifacts: 2})
@@ -369,6 +378,7 @@ func (f *fixture) receiptOf(a accepted) string {
 
 // A verifier that compared only the number of inputs would accept the same edge twice for an edge that has none.
 func TestVerifyManifestRejectsADuplicatedInput(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	k.putPlan("dup", 0, "dup-r1", addRelNode("A", dag.NodeNonPR), addRelNode("C", dag.NodeNonPR), addRelNode("G", dag.NodeNonPR),
 		addEdge("ag", "A", "G", dag.EdgeArtifactVerified, nil), addEdge("cg", "C", "G", dag.EdgeArtifactVerified, nil))
@@ -397,6 +407,7 @@ func TestVerifyManifestRejectsADuplicatedInput(t *testing.T) {
 
 // The request document is written by hand in snake_case: every field of it must be read.
 func TestDecodeReleaseRequestReadsTheDocumentedFields(t *testing.T) {
+	t.Parallel()
 	req, err := DecodeReleaseRequest([]byte(`{
 	  "schema": "dag-release-request/1",
 	  "base": {"repository": "owner/repo", "ref": "dev"},
