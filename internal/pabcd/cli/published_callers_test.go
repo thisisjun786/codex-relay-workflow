@@ -16,6 +16,7 @@ package cli
 // and after, so a run that reaches them is reported instead of cleaned up.
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,18 @@ func cliPublishedStateWrite() func(string, state.State) error {
 // cliPublishedPlainWrite fails before publication, so nothing was published.
 func cliPublishedPlainWrite() func(string, state.State) error {
 	return func(string, state.State) error { return syscall.EIO }
+}
+
+// cliPublishedWrappedStateWrite publishes through the real writer and returns a PublishedError
+// wrapped in another error, the way a caller that adds context around the write failure would.
+// state.Published uses errors.As, so this must count as written exactly like the bare error.
+func cliPublishedWrappedStateWrite() func(string, state.State) error {
+	return func(cwd string, s state.State) error {
+		if err := state.WriteState(cwd, s); err != nil {
+			return err
+		}
+		return fmt.Errorf("recording the state: %w", &state.PublishedError{Err: syscall.EIO})
+	}
 }
 
 // cliPublishedGoalplanWrite is the goalplan seam: it publishes through the real writer and then
@@ -173,6 +186,20 @@ func TestPublishedCallersScanRecordKeepsPrePublicationFailure(t *testing.T) {
 	}
 	if s := state.ReadState(cwd, "s1"); s.Interview != nil && s.Interview.ScanRounds != 0 {
 		t.Errorf("a pre-publication failure recorded a round: %+v", s.Interview)
+	}
+}
+
+// state.Published reaches the publication through a wrapper: a caller that adds context with
+// fmt.Errorf %w around the PublishedError still counts as written.
+func TestPublishedCallersMemoryCountsAWrappedPublishedError(t *testing.T) {
+	cliPublishedIsolatedHome(t)
+	cwd, _, _ := cliSeed(t)
+	out, code := cliPublishedMemoryAllowWrite(MemoryAllowWriteArgs{Verb: "allow-write", SessionID: "rec-s1", Cwd: cwd}, cliPublishedWrappedStateWrite())
+	if code != 0 || !strings.HasSuffix(out, "\n"+"session state was published but its directory could not be synced: recording the state: "+syscall.EIO.Error()) {
+		t.Fatalf("a wrapped PublishedError was not read as published: %d %q", code, out)
+	}
+	if s := state.ReadState(cwd, "rec-s1"); !s.MemoryWriteGrant {
+		t.Errorf("the published grant is not visible: %+v", s)
 	}
 }
 
