@@ -112,8 +112,11 @@ func auditPkgBlobRun(ctx context.Context, repo, head, path string, w io.Writer) 
 	return nil
 }
 
+// auditPkgGoListRun expands a package pattern. It asks go list for each package's directory
+// rather than its import path, because a package is addressed here the way git addresses it:
+// by its path inside the checkout.
 func auditPkgGoListRun(ctx context.Context, repo, pattern string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "go", "list", pattern)
+	cmd := exec.CommandContext(ctx, "go", "list", "-f", "{{.Dir}}", pattern)
 	cmd.Dir = repo
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
@@ -122,6 +125,24 @@ func auditPkgGoListRun(ctx context.Context, repo, pattern string) ([]byte, error
 		return nil, fmt.Errorf("go list %s: %w: %s", pattern, err, strings.TrimSpace(errOut.String()))
 	}
 	return out.Bytes(), nil
+}
+
+// auditPkgRelative turns the directories go list answered with into paths inside the
+// checkout, which is how the package files are read and how a package_criteria prefix is
+// matched. A directory outside the checkout is refused rather than silently read.
+func auditPkgRelative(co auditPkgCheckout, dirs []string) ([]string, error) {
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		rel, err := filepath.Rel(co.Repository, dir)
+		if err != nil {
+			return nil, fmt.Errorf("package directory %s: %w", dir, err)
+		}
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("package directory %s is outside the checkout %s", dir, co.Repository)
+		}
+		out = append(out, filepath.ToSlash(rel))
+	}
+	return out, nil
 }
 
 // auditPkgRelayCriteriaRun reads one issue key's registered criteria: the assignment that
@@ -196,11 +217,14 @@ func auditPkgBundleRoot(e *Env, cfg *Config, section auditPkgSection) string {
 }
 
 // auditPkgSourceFor is the criteria source of a package: the longest declared path prefix
-// the package path starts with, so a more specific entry wins.
+// the package path starts with at a path-segment boundary, so a more specific entry wins and
+// a prefix that only shares the first characters of a segment does not match. Without the
+// boundary, `internal/manage` would claim `internal/manager` and judge it against another
+// package's criteria, port sources and known defects.
 func auditPkgSourceFor(section auditPkgSection, pkg string) auditPkgSource {
 	best, bestLen := auditPkgSource{}, -1
 	for prefix, source := range section.PackageCriteria {
-		if !strings.HasPrefix(pkg, prefix) || len(prefix) <= bestLen {
+		if !auditPkgPrefixMatches(pkg, prefix) || len(prefix) <= bestLen {
 			continue
 		}
 		best, bestLen = source, len(prefix)
@@ -208,15 +232,29 @@ func auditPkgSourceFor(section auditPkgSection, pkg string) auditPkgSource {
 	return best
 }
 
-// auditPkgBundleName is the bundle directory name: the package path with its slashes
-// written as underscores and the first characters of the head, so two heads of one package
-// do not overwrite each other.
+// auditPkgPrefixMatches reports whether pkg is the prefix itself or starts with it at a
+// segment boundary. A trailing separator on the prefix already marks the boundary.
+func auditPkgPrefixMatches(pkg, prefix string) bool {
+	if prefix == "" || !strings.HasPrefix(pkg, prefix) {
+		return false
+	}
+	if pkg == prefix || strings.HasSuffix(prefix, "/") {
+		return true
+	}
+	return strings.HasPrefix(pkg[len(prefix):], "/")
+}
+
+// auditPkgBundleName is the bundle directory name: the package path with its slashes written
+// as underscores, the first characters of the head, and a short digest of the whole package
+// path. The digest is what keeps two package paths apart when the substitution alone is not
+// injective, so `a/b` and `a_b` at one head never share a directory.
 func auditPkgBundleName(pkg, head string) string {
 	short := head
 	if len(short) > auditPkgHeadChars {
 		short = short[:auditPkgHeadChars]
 	}
-	return auditPkgBundlePrefix + strings.ReplaceAll(pkg, "/", "_") + "-" + short
+	sum := sha256.Sum256([]byte(pkg))
+	return auditPkgBundlePrefix + strings.ReplaceAll(pkg, "/", "_") + "-" + short + "-" + hex.EncodeToString(sum[:4])
 }
 
 // auditPkgResolveHead is the head a bundle is built at: the one given, else the tip of the
@@ -322,20 +360,22 @@ func auditPkgResetDir(root, dir string) error {
 	return os.MkdirAll(dir, 0o700)
 }
 
-// auditPkgTreeEntriesAt lists the package's files at the head with their sizes.
+// auditPkgTreeEntriesAt lists the package's files at the head with their sizes. The listing
+// is NUL-delimited, because the default newline-delimited output quotes a path that carries
+// a tab, a newline or a non-ASCII byte, and a quoted path is not the path git would read.
 func auditPkgTreeEntriesAt(ctx context.Context, co auditPkgCheckout, head, pkg string) ([]auditPkgEntry, error) {
-	out, err := auditPkgGit(ctx, co.Repository, "ls-tree", "-r", "-l", head, "--", pkg)
+	out, err := auditPkgGit(ctx, co.Repository, "ls-tree", "-r", "-l", "-z", head, "--", pkg)
 	if err != nil {
 		return nil, err
 	}
 	return auditPkgTreeEntries(out)
 }
 
-// auditPkgTreeEntries reads git ls-tree -r -l output: mode, type, object, size and a tab
-// before the path.
+// auditPkgTreeEntries reads git ls-tree -r -l -z output: mode, type, object, size and a tab
+// before the path, with each record ended by a NUL byte.
 func auditPkgTreeEntries(out []byte) ([]auditPkgEntry, error) {
 	var entries []auditPkgEntry
-	for _, line := range auditPkgLines(out) {
+	for _, line := range auditPkNulRecords(out) {
 		meta, path, ok := strings.Cut(line, "\t")
 		if !ok {
 			return nil, fmt.Errorf("git ls-tree line %q names no path", line)
@@ -408,11 +448,11 @@ func auditPkgContained(root, target string) bool {
 // brings the whole directory.
 func auditPkgWriteAtHead(ctx context.Context, co auditPkgCheckout, head string, paths []string, dst string) error {
 	for _, path := range paths {
-		out, err := auditPkgGit(ctx, co.Repository, "ls-tree", "-r", "--name-only", head, "--", path)
+		out, err := auditPkgGit(ctx, co.Repository, "ls-tree", "-r", "--name-only", "-z", head, "--", path)
 		if err != nil {
 			return err
 		}
-		for _, name := range auditPkgLines(out) {
+		for _, name := range auditPkNulRecords(out) {
 			target := filepath.Join(dst, filepath.FromSlash(name))
 			if !auditPkgContained(filepath.Dir(dst), target) {
 				return fmt.Errorf("the head names %q, which leaves the bundle", name)
@@ -425,14 +465,30 @@ func auditPkgWriteAtHead(ctx context.Context, co auditPkgCheckout, head string, 
 	return nil
 }
 
+// auditPkNulRecords splits command output on its NUL terminators, dropping the empty record
+// the final terminator leaves.
+func auditPkNulRecords(out []byte) []string {
+	var records []string
+	for _, record := range strings.Split(string(out), "\x00") {
+		if record != "" {
+			records = append(records, record)
+		}
+	}
+	return records
+}
+
 // auditPkgCopySources copies the local read-only port sources into reference/. Two sources
 // with the same base name would collide, so the second is refused rather than silently
-// replacing the first.
+// replacing the first. A symbolic link is refused too: following one would copy whatever it
+// points at, which may be a file outside the configured source entirely.
 func auditPkgCopySources(sources []string, dst string) error {
 	for _, source := range sources {
-		info, err := os.Stat(source)
+		info, err := os.Lstat(source)
 		if err != nil {
 			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("reference source %s is a symbolic link", source)
 		}
 		target := filepath.Join(dst, filepath.Base(source))
 		if _, err := os.Stat(target); err == nil {
@@ -447,6 +503,9 @@ func auditPkgCopySources(sources []string, dst string) error {
 		err = filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("reference source %s is a symbolic link", path)
 			}
 			rel, err := filepath.Rel(source, path)
 			if err != nil {
@@ -603,11 +662,13 @@ func auditPkgParseArgs(args []string, allowed map[string]bool) (map[string]strin
 // packages the round still holds pending or failed, and writes each result back into the
 // round file before releasing the lock.
 func auditPkgRun(ctx context.Context, e *Env, args []string) int {
-	values, help, err := hostReadParse(args, map[string]bool{"round": true, "next": true, "head": true})
-	if help {
-		fmt.Fprintln(e.Stdout, auditPkgUsage)
-		return 0
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" || arg == "help" {
+			fmt.Fprintln(e.Stdout, auditPkgUsage)
+			return 0
+		}
 	}
+	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "next": true, "head": true})
 	round := values["round"]
 	if err == nil && round == "" {
 		err = errors.New("--round is required")
@@ -683,10 +744,13 @@ func auditPkgRunOne(ctx context.Context, e *Env, round string, next int, headArg
 				return 1
 			}
 			auditRoundApply(doc, pkg, head, dir, results[0])
-		}
-		if err := auditRoundSave(path, doc); err != nil {
-			fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
-			return 1
+			// The round is saved after each package rather than once at the end: the grade is
+			// already in the ledger, and a later package failing must not leave this one
+			// pending and ready to be graded and recorded a second time.
+			if err := auditRoundSave(path, doc); err != nil {
+				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
+				return 1
+			}
 		}
 	}
 	return auditRoundWriteStatus(e, doc)

@@ -189,6 +189,76 @@ func TestAuditRoundStartNeedsAPackage(t *testing.T) {
 	}
 }
 
+// Starting a round that already exists is refused, so a repeated start command never erases
+// the results and the history a running round holds.
+func TestAuditRoundStartRefusesAnExistingRound(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	doc, path := auditRoundFixture(t, e, cfg, "r7", "pkg/a")
+	auditRoundApply(doc, "pkg/a", "h1", "/b1", AuditResult{Status: auditStatusOK, Score: 9, GradedAt: "t"})
+	if err := auditRoundSave(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auditRoundStart(e, cfg, "r7", []string{"pkg/a"}); err == nil {
+		t.Fatal("an existing round was replaced")
+	} else if !strings.Contains(err.Error(), "round_exists") {
+		t.Errorf("the refusal is %q, want it to name round_exists", err)
+	}
+	reloaded, err := auditRoundLoad(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Packages[0].State != auditRoundAudited {
+		t.Errorf("the saved round was changed: %+v", reloaded.Packages[0])
+	}
+}
+
+// A package name that is repeated is kept once, so the round can still become clean.
+func TestAuditRoundStartDeduplicatesPackages(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	doc, _ := auditRoundFixture(t, e, cfg, "r8", "pkg/a", "pkg/b", "pkg/a")
+	if len(doc.Packages) != 2 {
+		t.Fatalf("the round holds %+v, want each package once", doc.Packages)
+	}
+	auditRoundApply(doc, "pkg/a", "h1", "/b1", AuditResult{Status: auditStatusOK, Score: 9, GradedAt: "t"})
+	auditRoundApply(doc, "pkg/b", "h1", "/b2", AuditResult{Status: auditStatusOK, Score: 9, GradedAt: "t"})
+	if status := auditRoundStatusOf(doc); !status.Clean || status.Total != 2 {
+		t.Errorf("the round reads %+v, want it clean with two packages", status)
+	}
+}
+
+// C6: a package whose last audit reported a P0 or a P1 is selected again, so a fixed defect
+// can make the round clean, and the replaced result is kept in the history.
+func TestAuditRoundReauditsAPackageWithABlockingDefect(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	doc, _ := auditRoundFixture(t, e, cfg, "r9", "pkg/a")
+	auditRoundApply(doc, "pkg/a", "h1", "/b1", AuditResult{Status: auditStatusOK, Score: 4, GradedAt: "t1",
+		Defects: []AuditDefect{{Severity: "P1", What: "wrong", Where: "a.go:1"}}})
+	if outstanding := auditRoundOutstanding(doc); len(outstanding) != 1 || outstanding[0] != "pkg/a" {
+		t.Fatalf("the round owes %v, want the package with the blocking defect", outstanding)
+	}
+	auditRoundApply(doc, "pkg/a", "h2", "/b2", AuditResult{Status: auditStatusOK, Score: 9, GradedAt: "t2"})
+	if outstanding := auditRoundOutstanding(doc); len(outstanding) != 0 {
+		t.Errorf("the round still owes %v after a clean re-audit", outstanding)
+	}
+	if status := auditRoundStatusOf(doc); !status.Clean {
+		t.Errorf("the round reads %+v, want clean", status)
+	}
+	if len(doc.Packages[0].History) != 1 || doc.Packages[0].History[0].P1 != 1 {
+		t.Errorf("the blocking result is not in the history: %+v", doc.Packages[0].History)
+	}
+	// A package whose last audit is clean is not selected again.
+	auditRoundApply(doc, "pkg/a", "h3", "/b3", AuditResult{Status: auditStatusOK, Score: 9, GradedAt: "t3"})
+	if outstanding := auditRoundOutstanding(doc); len(outstanding) != 0 {
+		t.Errorf("a clean package is still selected: %v", outstanding)
+	}
+}
+
 // The round subcommands print their usage: exit 0 for the help flags and exit 2 for a bad
 // line, and status of a round that does not exist fails.
 func TestAuditRoundCommandsUsage(t *testing.T) {

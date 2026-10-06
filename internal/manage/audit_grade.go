@@ -38,6 +38,39 @@ const (
 // RFC 3339, so a ledger row and a round file are read the same way anywhere.
 const auditTimeFormat = time.RFC3339
 
+// auditLogLimit is how much of one grader's output is kept: the first bytes, so a grader
+// that writes without end cannot grow the audit's memory, and the diagnostic line the
+// operator reads still comes from the head of what it said.
+const auditLogLimit = 8192
+
+// auditLog keeps the first auditLogLimit bytes written to it and discards the rest, so a
+// noisy grader neither fills memory nor blocks on a full pipe.
+type auditLog struct{ buf bytes.Buffer }
+
+func (l *auditLog) Write(p []byte) (int, error) {
+	if room := auditLogLimit - l.buf.Len(); room > 0 {
+		l.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (l *auditLog) String() string { return l.buf.String() }
+
+// auditWriteNewFile writes a fresh file at path, refusing to follow anything already there.
+// A bundle can come from another process, so a symbolic link left in place of one of the
+// files this product writes is never followed into the file it points at.
+func auditWriteNewFile(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // auditConfigOf reads the audit section, filling the defaults.
 func auditConfigOf(cfg *Config) (auditSection, error) {
 	section := auditSection{GraderTimeoutSeconds: auditDefaultTimeoutSeconds, Workers: auditDefaultWorkers}
@@ -71,15 +104,23 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		return nil, auditErrGraderUnconfigured
 	}
 	bundles := make([]*auditBundle, len(jobs))
+	seen := make(map[string]int, len(jobs))
 	for i, job := range jobs {
 		bundle, err := auditReadBundle(job.Bundle)
 		if err != nil {
 			return nil, err
 		}
+		// Two jobs naming one bundle would race over the same grade.json and the same
+		// prompt, so the second is refused rather than silently sharing the directory.
+		key := filepath.Clean(job.Bundle)
+		if first, ok := seen[key]; ok {
+			return nil, fmt.Errorf("jobs %d and %d name the same bundle %s", first, i, job.Bundle)
+		}
+		seen[key] = i
 		bundles[i] = bundle
 	}
 	results := make([]AuditResult, len(jobs))
-	logs := make([]bytes.Buffer, len(jobs))
+	logs := make([]auditLog, len(jobs))
 	sem := make(chan struct{}, section.Workers)
 	var wg sync.WaitGroup
 	for i := range jobs {
@@ -105,29 +146,43 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 
 // auditGradeOne writes the prompt into the bundle, runs the grader there under the time
 // limit, and reads what it wrote.
-func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *auditBundle, job AuditJob, log *bytes.Buffer) AuditResult {
+func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *auditBundle, job AuditJob, log *auditLog) AuditResult {
 	result := AuditResult{
 		Mode: bundle.Mode, Subject: bundle.Subject, Head: bundle.Head, Issue: bundle.Issue,
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
 		Bundle: job.Bundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
 	}
-	grade := filepath.Join(job.Bundle, auditGradeFile)
+	// The grader's own paths are absolute, because the grader runs with the bundle as its
+	// working directory and a relative argument would be resolved against it twice.
+	absBundle, err := filepath.Abs(job.Bundle)
+	if err != nil {
+		result.Status = auditStatusInvalid
+		return result
+	}
+	grade := filepath.Join(absBundle, auditGradeFile)
 	// The grader is told to write this file, so a file an earlier run left is not this
 	// run's result and must not be read as one.
 	if err := os.Remove(grade); err != nil && !errors.Is(err, os.ErrNotExist) {
 		result.Status = auditStatusInvalid
 		return result
 	}
-	prompt := filepath.Join(job.Bundle, auditPromptFile)
-	if err := os.WriteFile(prompt, []byte(auditPrompt(bundle)), 0o644); err != nil {
+	prompt := filepath.Join(absBundle, auditPromptFile)
+	// A bundle can come from another process, so an existing prompt.md is removed first and
+	// the new one is created exclusively: a symlink left there is never followed into
+	// whatever file it points at.
+	if err := os.Remove(prompt); err != nil && !errors.Is(err, os.ErrNotExist) {
+		result.Status = auditStatusInvalid
+		return result
+	}
+	if err := auditWriteNewFile(prompt, []byte(auditPrompt(bundle)), 0o644); err != nil {
 		result.Status = auditStatusInvalid
 		return result
 	}
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(section.GraderTimeoutSeconds)*time.Second)
 	defer cancel()
-	argv := auditGraderArgv(section.Grader, prompt, job.Bundle)
+	argv := auditGraderArgv(section.Grader, prompt, absBundle)
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
-	cmd.Dir = job.Bundle
+	cmd.Dir = absBundle
 	cmd.Stdout = log
 	cmd.Stderr = log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -136,16 +191,23 @@ func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *au
 	// The outcome comes from grade.json and the time limit, not from the exit status: a
 	// grader that failed leaves no usable file, and one that reports is done.
 	_ = cmd.Run()
-	result.Status = auditStatusInvalid
+	// The time limit wins over the file: a grader that wrote a usable document and then hung
+	// did not finish inside its limit, and recording it as ok would score an unfinished run.
 	if runCtx.Err() != nil {
 		result.Status = auditStatusTimeout
+		return result
 	}
+	result.Status = auditStatusInvalid
 	doc, ok := auditParseResult(grade)
 	if !ok {
 		return result
 	}
 	result.Status = auditStatusOK
 	result.Score = *doc.Score
+	result.Criteria = make([]AuditCriterion, 0, len(doc.Criteria))
+	for _, criterion := range doc.Criteria {
+		result.Criteria = append(result.Criteria, AuditCriterion{ID: criterion.ID, Verdict: criterion.Verdict, Note: criterion.Note})
+	}
 	result.Defects = doc.Defects
 	return result
 }

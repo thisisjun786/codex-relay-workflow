@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -291,7 +292,9 @@ func TestAuditGradeWritesThePromptIntoTheBundle(t *testing.T) {
 	if len(lines) < 2 || lines[0] != bundle {
 		t.Errorf("the grader ran in %v, want the bundle %q", lines, bundle)
 	}
-	if !strings.Contains(string(data), "candidate/tree/") || !strings.Contains(string(data), auditResultSchema) {
+	// The prompt is the mode's own: a package bundle is described by the package layout, not
+	// by the pull request layout.
+	if !strings.Contains(string(data), auditPkgSrcDir+"/") || !strings.Contains(string(data), auditResultSchema) {
 		t.Error("the grader did not read the assembled prompt")
 	}
 	if _, err := os.Stat(filepath.Join(bundle, auditPromptFile)); err != nil {
@@ -417,5 +420,102 @@ func TestAuditGradeHonorsTheConfiguredTimeLimit(t *testing.T) {
 	}
 	if results[0].Status != auditStatusTimeout {
 		t.Errorf("status = %s, want timeout", results[0].Status)
+	}
+}
+
+// C3: a grader that leaves a usable result and then hangs is still a timeout, because it did
+// not finish inside its limit and the limit outranks the file it wrote.
+func TestAuditGradeKeepsATimeoutDespiteAUsableFile(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := t.TempDir()
+	script := filepath.Join(t.TempDir(), "grader.sh")
+	body := "#!/bin/sh\n" +
+		"dir=$(dirname $1)\n" +
+		"printf '%s' \"$AUDIT_JSON\" > $dir/grade.json\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": []string{script, "{prompt_file}"}, "grader_timeout_seconds": 1})
+	results, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: auditGoodBundle(t, auditModePR)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Status != auditStatusTimeout {
+		t.Errorf("status = %s, want timeout: the time limit must outrank a file left before the hang", results[0].Status)
+	}
+	if got := auditLedgerStatuses(t, state); len(got) != 1 || got[0] != auditStatusTimeout {
+		t.Errorf("the ledger says %v, want one timeout", got)
+	}
+}
+
+// Two jobs naming one bundle are refused, because they would race over the same grade.json
+// and the same prompt rather than each grading their own directory.
+func TestAuditGradeRefusesTwoJobsForOneBundle(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditFake(t, "json", auditJSONClean)})
+	bundle := auditGoodBundle(t, auditModePR)
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}, {Bundle: bundle + "/"}}); err == nil {
+		t.Fatal("two jobs naming one bundle were accepted")
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", auditLedgerFile)); !os.IsNotExist(err) {
+		t.Errorf("a ledger was written for a refused batch: %v", err)
+	}
+}
+
+// A prompt.md that is a symbolic link is never followed: the link is removed and the prompt
+// is written fresh, so a bundle from another process cannot make the audit truncate a file
+// outside it.
+func TestAuditGradeRefusesASymlinkedPrompt(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	state := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target.txt")
+	if err := os.WriteFile(target, []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := auditGoodBundle(t, auditModePR)
+	if err := os.Symlink(target, filepath.Join(bundle, auditPromptFile)); err != nil {
+		t.Skipf("symlinks are unavailable here: %v", err)
+	}
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditFake(t, "json", auditJSONClean)})
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep me\n" {
+		t.Errorf("the link's target was written through: %q", data)
+	}
+	info, err := os.Lstat(filepath.Join(bundle, auditPromptFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Error("the prompt is still a symbolic link")
+	}
+}
+
+// A noisy grader is bounded: only the head of its output is kept, so it cannot grow the
+// audit's memory without end, and the diagnostic line still comes from that head.
+func TestAuditGradeBoundsTheCapturedOutput(t *testing.T) {
+	log := &auditLog{}
+	chunk := bytes.Repeat([]byte("noise\n"), 4096)
+	for i := 0; i < 64; i++ {
+		if _, err := log.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if log.buf.Len() != auditLogLimit {
+		t.Errorf("the log kept %d bytes, want the %d byte limit", log.buf.Len(), auditLogLimit)
+	}
+	if !strings.HasPrefix(log.String(), "noise\n") {
+		t.Errorf("the log did not keep the head of the output: %q", log.String()[:32])
+	}
+	if first := auditFirstLine(log.String()); first != "noise" {
+		t.Errorf("the diagnostic line is %q, want the head of the output", first)
 	}
 }

@@ -217,14 +217,14 @@ func auditPrompt(b *auditBundle) string {
 	if b.Mode == auditModePR {
 		out.WriteString("This is a pull request audit. `candidate/diff.patch` is the change that was merged, `candidate/pr.md` is the description its author wrote, and `candidate/tree/` is the whole source tree as it stands after the merge, for reading the code around the change.")
 	} else {
-		out.WriteString("This is a package audit. There is no single change to review: `candidate/tree/` is the whole source tree, and the criteria and the issue text name what it is judged against. Read the tree as it stands and judge the package.")
+		out.WriteString("This is a package audit. There is no single change to review: `src/` is the whole package at the head, tests and testdata included, `criteria.json` is the criteria it is judged against, `task.md` names the package and those criteria, `reference/` holds the port source it came from, and `known-defects/` holds the defects this repository already records. A file too large to copy is listed in `src/large-files.txt` with its size and sha256 instead. Read the package as it stands and judge it.")
 	}
 	if b.CriteriaUnavailable {
 		out.WriteString("\n\nThis bundle declares `criteria_unavailable`. ")
 		if b.Mode == auditModePR {
 			out.WriteString("Judge against the issue text under `inputs/` and the description in `candidate/pr.md`, and say in each note which of the two you used.")
 		} else {
-			out.WriteString("There is no criteria file and no description to fall back on: judge the package against the issue text under `inputs/` and what the tree itself shows, and say in each note which file or symbol you used.")
+			out.WriteString("There are no criteria to read and no description to fall back on: judge the package against `task.md`, the source under `src/` and what the package itself shows, and say in each note which file or symbol you used.")
 		}
 	}
 	return out.String()

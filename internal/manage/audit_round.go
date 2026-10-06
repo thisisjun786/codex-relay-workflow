@@ -172,7 +172,9 @@ func auditRoundSave(path string, doc *auditRoundFile) error {
 	return nil
 }
 
-// auditRoundStart writes a new round with every package pending.
+// auditRoundStart writes a new round with every package pending. A round file that already
+// exists is refused rather than replaced: it holds the results and the history of a round
+// that may still be running, and a repeated start command must not erase them.
 func auditRoundStart(e *Env, cfg *Config, name string, packages []string) (*auditRoundFile, error) {
 	path, err := auditRoundPath(e, cfg, name)
 	if err != nil {
@@ -181,14 +183,35 @@ func auditRoundStart(e *Env, cfg *Config, name string, packages []string) (*audi
 	if len(packages) == 0 {
 		return nil, errors.New("the round names no package")
 	}
+	if _, err := os.Stat(path); err == nil {
+		return nil, fmt.Errorf("round_exists: %s already holds a round; use round status, or start a new name", filepath.Base(path))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	doc := &auditRoundFile{Round: name, StartedAt: e.Now().UTC().Format(auditTimeFormat)}
-	for _, pkg := range packages {
+	for _, pkg := range auditRoundUnique(packages) {
 		doc.Packages = append(doc.Packages, auditRoundPackage{Package: pkg, State: auditRoundPending})
 	}
 	if err := auditRoundSave(path, doc); err != nil {
 		return nil, err
 	}
 	return doc, nil
+}
+
+// auditRoundUnique removes repeated package names, keeping the first occurrence's order.
+// A repeated name would leave a second entry that auditRoundApply never touches, so the
+// round could never become clean.
+func auditRoundUnique(packages []string) []string {
+	seen := make(map[string]bool, len(packages))
+	out := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		if seen[pkg] {
+			continue
+		}
+		seen[pkg] = true
+		out = append(out, pkg)
+	}
+	return out
 }
 
 // auditRoundApply writes one graded result into a round. The previous result, when there
@@ -226,11 +249,14 @@ func auditRoundApply(doc *auditRoundFile, pkg, head, bundle string, result Audit
 	}
 }
 
-// auditRoundOutstanding is the packages a round still owes a result for, in file order.
+// auditRoundOutstanding is the packages a round still owes a result for, in file order: the
+// ones never audited, the ones whose audit failed, and the ones whose last audit reported a
+// P0 or a P1. That last group is what makes the round reach clean: a defect that was fixed
+// is re-audited, and its replaced result moves into the package's history.
 func auditRoundOutstanding(doc *auditRoundFile) []string {
 	var out []string
 	for _, entry := range doc.Packages {
-		if entry.State == auditRoundPending || entry.State == auditRoundFailed {
+		if entry.State == auditRoundPending || entry.State == auditRoundFailed || entry.P0+entry.P1 > 0 {
 			out = append(out, entry.Package)
 		}
 	}
@@ -325,7 +351,12 @@ func auditRoundRunStart(ctx context.Context, e *Env, args []string) int {
 			fmt.Fprintf(e.Stderr, "crw manage audit round start: error: %v\n", err)
 			return 1
 		}
-		packages = append(packages, auditPkgLines(out)...)
+		expanded, err := auditPkgRelative(co, auditPkgLines(out))
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage audit round start: error: %v\n", err)
+			return 1
+		}
+		packages = append(packages, expanded...)
 	}
 	sort.Strings(packages)
 	path, err := auditRoundPath(e, cfg, values["name"])

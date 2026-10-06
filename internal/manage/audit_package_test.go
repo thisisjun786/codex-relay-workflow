@@ -42,14 +42,14 @@ func auditPkgFakeGit(t *testing.T, head string, tree map[string][]string, files 
 		case "ls-tree":
 			path := args[len(args)-1]
 			if auditPkgContains(args, "--name-only") {
-				return []byte(strings.Join(tree[path], "\n") + "\n"), nil
+				return auditPkNul(tree[path]), nil
 			}
 			var lines []string
 			for _, name := range tree[path] {
 				body := files[name]
 				lines = append(lines, fmt.Sprintf("100644 blob %s %d\t%s", auditPkgBlobID(body), len(body), name))
 			}
-			return []byte(strings.Join(lines, "\n") + "\n"), nil
+			return auditPkNul(lines), nil
 		case "show":
 			spec := args[1]
 			path := spec[strings.IndexByte(spec, ':')+1:]
@@ -71,6 +71,17 @@ func auditPkgContains(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// auditPkNul joins records the way git ls-tree -z does: NUL-delimited, with the terminator
+// after every record including the last.
+func auditPkNul(records []string) []byte {
+	out := []byte{}
+	for _, record := range records {
+		out = append(out, record...)
+		out = append(out, 0)
+	}
+	return out
 }
 
 // auditPkgBlobID is a stable object name for the fake, so the ls-tree line looks like the
@@ -216,8 +227,24 @@ func TestAuditPackageBuildsTheBundle(t *testing.T) {
 	if !strings.Contains(string(criteria), "C1") || !strings.Contains(string(criteria), "CRW-764") {
 		t.Errorf("criteria.json does not carry the merged criteria: %s", criteria)
 	}
-	if name := filepath.Base(dir); name != auditPkgBundlePrefix+"internal_manage-"+auditPkgHead[:12] {
+	if name := filepath.Base(dir); !strings.HasPrefix(name, auditPkgBundlePrefix+"internal_manage-"+auditPkgHead[:12]+"-") {
 		t.Errorf("the bundle directory is %q", name)
+	}
+}
+
+// Two package paths that differ only where the directory-name substitution is not injective
+// still get different bundles, so one never replaces the other's evidence.
+func TestAuditPackageBundleNameKeepsPathsApart(t *testing.T) {
+	slash := auditPkgBundleName("a/b", auditPkgHead)
+	underscore := auditPkgBundleName("a_b", auditPkgHead)
+	if slash == underscore {
+		t.Errorf("both package paths name the bundle %q", slash)
+	}
+	if same := auditPkgBundleName("a/b", auditPkgHead); same != slash {
+		t.Errorf("the bundle name is not stable: %q then %q", slash, same)
+	}
+	if other := auditPkgBundleName("a/b", "ffffffffffffffffffffffffffffffffffffffff"); other == slash {
+		t.Errorf("two heads share the bundle name %q", slash)
 	}
 }
 
@@ -317,6 +344,11 @@ func TestAuditPackageSourcePrefixIsTheLongestMatch(t *testing.T) {
 	if got := auditPkgSourceFor(section, "cmd/crw"); len(got.Issues) != 0 {
 		t.Errorf("an undeclared package got %+v", got)
 	}
+	// A prefix that only shares the first characters of a path segment does not match, so a
+	// package is never judged against an unrelated package's criteria.
+	if got := auditPkgSourceFor(section, "internal/manager"); len(got.Issues) != 1 || got.Issues[0] != "wide" {
+		t.Errorf("a segment-prefix package got %+v, want the segment-boundary match", got)
+	}
 }
 
 // A package path can never make the builder remove anything outside the bundle root.
@@ -385,6 +417,45 @@ func TestAuditPackageRefusesAPathThatLeavesTheBundle(t *testing.T) {
 	}
 }
 
+// A reference source that is a symbolic link is refused rather than followed, so a link
+// cannot pull an unrelated host file into the bundle.
+func TestAuditPackageRefusesASymlinkedReference(t *testing.T) {
+	state := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("do not copy me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceDir := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(sourceDir, "linked.txt")); err != nil {
+		t.Skipf("symlinks are unavailable here: %v", err)
+	}
+	auditPkgFakeGit(t, auditPkgHead, map[string][]string{"pkg": {"pkg/a.go"}}, map[string]string{"pkg/a.go": "package pkg\n"})
+	auditPkgFakeCriteria(t, map[string]string{})
+	e, _, _ := auditTestEnv(t)
+	cfg := auditPkgConfig(t, state, map[string]any{"pkg": map[string]any{"source": []string{sourceDir}}})
+	section, err := auditPkgSectionOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, err := auditPkgCheckoutOf(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := auditPkgBuild(context.Background(), e, cfg, section, co, "pkg", auditPkgHead)
+	if err == nil {
+		if _, statErr := os.Stat(filepath.Join(dir, auditPkgReferenceDir, filepath.Base(sourceDir), "linked.txt")); statErr == nil {
+			t.Fatal("a symbolic link was followed into the bundle")
+		}
+	}
+	// A source that is itself a link is refused as well.
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(secret, link); err == nil {
+		if err := auditPkgCopySources([]string{link}, t.TempDir()); err == nil {
+			t.Error("a symbolic reference source was accepted")
+		}
+	}
+}
+
 // The containment helper is strict about the boundary itself and about a sibling that only
 // shares a name prefix.
 func TestAuditPkgContained(t *testing.T) {
@@ -401,5 +472,26 @@ func TestAuditPkgContained(t *testing.T) {
 		if auditPkgContained(root, target) {
 			t.Errorf("%q was accepted as inside %q", target, root)
 		}
+	}
+}
+
+// The directories go list answers with become paths inside the checkout, and a directory
+// outside it is refused rather than read.
+func TestAuditPkgRelative(t *testing.T) {
+	co := auditPkgCheckout{Repository: "/checkout"}
+	got, err := auditPkgRelative(co, []string{"/checkout/internal/manage", "/checkout"})
+	if err == nil {
+		t.Errorf("the checkout root itself was accepted: %v", got)
+	}
+	got, err = auditPkgRelative(co, []string{"/checkout/internal/manage", "/elsewhere/pkg"})
+	if err == nil {
+		t.Errorf("a directory outside the checkout was accepted: %v", got)
+	}
+	got, err = auditPkgRelative(co, []string{"/checkout/internal/manage"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "internal/manage" {
+		t.Errorf("the expansion is %v, want the path inside the checkout", got)
 	}
 }
