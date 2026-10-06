@@ -32,6 +32,7 @@ func interruptedWhileHeld(t *testing.T, release func(), command func(context.Con
 // A rollback interrupted while it waits for the promotion lock refuses, and when the holder lets
 // go nothing has moved: the pointer, the selection and outgoing are as they were.
 func TestAnInterruptedRollbackMovesNothing(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	updated := runtimeDir(h, "0.9.1", second, t)
@@ -53,6 +54,7 @@ func TestAnInterruptedRollbackMovesNothing(t *testing.T) {
 // register-mcp and hook interrupted while another run holds the lock they wait on write nothing:
 // the bridge record and the Stop settings are still absent once that run lets go.
 func TestInterruptedRegistrationsWriteNothing(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	for label, c := range map[string]struct {
 		lock, written string
@@ -80,6 +82,7 @@ func TestInterruptedRegistrationsWriteNothing(t *testing.T) {
 // the promotion lock, on the registrations as they stand now: a second owner of the bridge
 // registered since the interrupted run is refused, and the pointer stays where it was.
 func TestAResumedPromotionAsksForSecondOwners(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, next := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
@@ -100,6 +103,7 @@ func TestAResumedPromotionAsksForSecondOwners(t *testing.T) {
 // cannot be reached whole through it once placed (here its bin/crw is left unexecutable), the
 // pointer, the selection and the settings are put back.
 func TestARollbackProvesThePointerItPlaced(t *testing.T) {
+	// sequential: replaces the pointer-placement seam.
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old, updated := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)

@@ -27,7 +27,8 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
 integrated commit, the evidence a release needs) and a manual dispatch (which is not release
-evidence). There is no path selection. The Go product legs always ran whatever changed, so
+evidence). There is no path selection, except [the temporary light mode](#the-temporary-light-mode)
+below. The Go product legs always ran whatever changed, so
 selecting the rest by changed paths saved little and put a job before every other one.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
@@ -107,8 +108,54 @@ Mirroring is safe because it repeats a result this head already has. `dev` is st
 candidate contains dev's tip, and the same `head_sha` is the same tree: the run being mirrored is a
 run of the same pull request's own head, never another tree's.
 
-## The test legs
+## The temporary light mode
 
+Until the porting and improvement projects finish, the repository variable `CRW_CI_MODE` can be
+set to `light` by the repository owners alone. While it is, a pull request run that does not
+carry the `crw-lane` label skips the work of the five `go-product` test legs. Child pull request
+pushes are most of the concurrent Actions jobs and the merge lane waits for runners behind them;
+the lane's local `make test` was measured too slow to stand in for a runner, so the full run is
+moved to the one event that needs it. Reverting the mode is deleting the variable, and Jun
+decides when it ends.
+
+The condition is one job-level `env` on `go-product`, `CRW_LIGHT_LEG`, holding
+`github.event_name == 'pull_request' && vars.CRW_CI_MODE == 'light' &&
+!contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-')`.
+A dev push and a manual dispatch fail the first term, a labeled pull request fails the third, and
+`lint` and `dist` fail the fourth, so only the five test legs of an unlabeled pull request can
+be light. `validate`, `secrets`, `lint` and `dist` always run in full, and so does every
+event other than an unlabeled pull request, whatever the variable says.
+
+A light leg keeps its own name and its own success. Its first step writes
+`light mode: this leg's tests run in full when the merge lane labels the pull request crw-lane`
+to the step summary, and every other step carries `env.CRW_LIGHT_LEG != 'true'` joined with the
+condition it already had, the mirror steps included. The guard is a step condition and never a
+job-level `if`, because GitHub reports a skipped job's check as success and a skipped
+`dev-gate` could hide an earlier red run; no check name moves and no job opts out of its result.
+
+`pull_request.types` gains `labeled` after its five earlier types, so when the merge lane
+labels the pull request the labeled event starts a full run on that head, and every later push
+while the label stays runs in full too. The concurrency expression is unchanged: a labeled run is
+not a body-only edit, so it joins the pull request's main group with `cancel-in-progress: true`
+and cancels the light run still in progress. Adding any other label also starts a run; this
+repository uses no other label.
+
+[The body-only edit mirror](#the-body-only-edit-mirror) refuses to carry a light leg forward. A
+`go-product` test leg is mirrored only when the chosen run's same-named job concluded `success`
+and that job's step `Test and replay the contract corpus (<part>)` also concluded `success`.
+A skipped or missing test step answers `mirrored=false` and the leg runs in full, so a body edit
+right after the label, or after the variable is cleared, cannot replace a full run with an
+untested one. `validate`, `secrets` and the `lint` and `dist` legs keep mirroring on the
+job's conclusion alone, as they did before.
+
+The merge evidence is still the hosted `dev-gate`, and the lane's local `make test` is not
+evidence. While the variable is `light`, a green `dev-gate` of a run without the `crw-lane`
+label is not merge evidence, because that run's test legs did not run their tests: the evidence
+is a run of the same head, started after the label was added, that finished in success. The lane
+adds `crw-lane` when it takes its turn, before it refreshes the base, and removes it when it
+returns the turn without merging.
+
+## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
 pull request waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
 package plus the `dev`-tagged tests, so a package runs in exactly one leg. `internal/dev/ci` holds
@@ -116,25 +163,28 @@ that: it refuses a package named by two parts, a part missing from `TEST_PARTS` 
 subtracts, so its packages would run again in `rest`), a named path with no tests, a pattern, and a
 package of the `dev`-tagged set, which only `rest` runs, with the tag.
 
-A runner spends about 50 s before its tests (checkout, toolchain, the one `crw` build). It then
-runs a few packages at a time on four CPUs, in the order a part lists them, so a leg takes about that
-plus its slowest package, or its packages' total over four CPUs if that is longer; list a slow
-package first. The legs as balanced after the slow packages' tests ran in parallel (CRW-424), with the
-hosted job time before and after (median of four runs before and six after):
+A runner spends about 55 s before its tests (checkout, toolchain, the one `crw` build), and the leg
+compiles its own test binaries before it starts. It then runs a few packages at a time on four CPUs,
+in the order a part lists them, so a leg takes about that plus its slowest package, or its packages'
+total over four CPUs if that is longer; list a slow package first. The legs as rebalanced after the
+slow packages' tests ran in parallel, with the hosted job time before (median of six dev push runs on
+2026-10-06) and after (median of three runs of the change that moved packages between the parts):
 
 | Leg | Packages | Before | After |
 | --- | --- | --- | --- |
-| `test-1` | `relay/dagsched`, `relay/delivery`, `relay/cli` | 159 s | 204.5 s |
-| `test-2` | `runtime/install`, `relay/supervisor`, `relay/registry` | 118.5 s | 214 s |
-| `test-3` | `contracttest`, `relay/store`, `relay/mergeturn`, `relay/service`, `relay/sync`, `relay/faults` | 170.5 s | 169 s |
-| `test-4` | `relay/hook`, `relay/linkage`, `relay/evidence`, `relay/managed` | 95 s | 84 s |
-| `test-rest` | the other 58 packages and the `dev`-tagged tests | 285.5 s | 172.5 s |
+| `test-1` | `relay/dagsched`, `relay/cli` | 245 s | 229 s |
+| `test-2` | `runtime/install`, `relay/registry`, `relay/hook` | 261 s | 259 s |
+| `test-3` | `relay/service`, `contracttest`, `relay/mergeturn`, `relay/supervisor`, `skill`, `relay/managed`, `relay/adapter` | 188.5 s | 246 s |
+| `test-4` | `relay/delivery`, `relay/store`, `relay/sync`, `relay/faults`, `relay/dag`, `role`, `pyjson`, `relay/linkage`, `recall`, `relay/routing`, `relay/childcleanup` | 131.5 s | 184 s |
+| `test-rest` | the other 77 packages and the `dev`-tagged tests | 246 s | 145 s |
 
-`runtime/install` is the floor of the longest leg: its tests run one after another for about 140 s, so
-the leg that holds it takes about 215 s however the others are split, and a sixth leg would not
-shorten the longest one. To rebalance again, read the `ok <package> <seconds>` lines and the job
-times of several hosted runs of one commit (they differ by 20 s or more from run to run), move
-packages, and compare medians.
+`runtime/install` is the floor of the longest leg: its tests run one after another for about 175 s, so
+the leg that holds it takes about 260 s however the others are split, and a sixth leg would not
+shorten the longest one. The packages that do not parallelize well are kept apart for the same
+reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`, `relay/managed` and
+`relay/adapter` sit in `test-3` with the middle tier, so no leg holds two of them. To rebalance
+again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit
+(they differ by 20 s or more from run to run), move packages, and compare medians.
 
 ## Leftover isolation trees
 
