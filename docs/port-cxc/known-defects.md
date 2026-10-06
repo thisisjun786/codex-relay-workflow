@@ -10,7 +10,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 ## Seeded from the corpus recording
 
 - `cxc reset --help` is not help: the scope parser defaults to state, so it deletes session state exactly like `reset --state` and exits 0 (fixture `cli__reset__help_is_not_help_and_resets_state`); port: fixed, the one exception.
-- `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: pending.
+- `cxc doctor --help` is not help: the hooks option parser rejects it with `cxc-ops error: unknown hooks option: --help` and exit 1 (fixture `cli__doctor__help_is_an_unknown_option`); port: kept (the CRW-618 section carries it as `crw-ops error: unknown hooks option: --help`, the R29-renamed text).
 - `cxc provider` ignores every argument, even `--help`, and runs the same probe (fixture `cli__provider__detect_line_and_ignored_args`); port: pending.
 - `cxc metric parse-line` does not read stdin as its help says: v0.2.40 joins the argv after the verb (the `--session` token included), so the stdin form and the ordinary argv form exit 1 with `null`, and only a form whose session value itself completes the METRIC line, such as `parse-line METRIC --session =1`, succeeds (fixture `cli__metric__record_show_kind_parse_line`; source `plugins/codexclaw/components/pabcd-state/src/metric-cli.ts:145`); port: kept.
 - `cxc plan init` ignores `--date` whatever its value: the parser reads only `--phases` and `--cwd`, skips every other `--` token and takes the first bare argument as the slug, so the unit date is a YYMMDD prefix of that argument or else the day's date, although the verb's help says `--date` is for callers that carry their own prefix (fixture `cli__plan__init_normalises_slug_and_date`, whose `--date 2026-01-01` coincides with the recorded clock's day; source `plugins/codexclaw/components/pabcd-state/src/plan-cli.ts:92`, `:95` and `:177`); port: pending.
@@ -1254,3 +1254,29 @@ Source: `plugins/codexclaw/scripts/hook-observation.mjs` (`readHookObservations`
 - The trust check reads the manifest name with `readFileSync` of whatever the path leads to; the port reads it through the containment the hook listing has (`hookTrustEntriesReadContained`), so a manifest link that leaves the plugin root is refused, and the differences recorded for that read in the CRW-631 section (an absolute link, a chain of more than 8, a pipe blocking the open, a root of `/`) hold here too (source `doctor.ts:471`; the test `TestHarnessHookTrustCheckRefusesAManifestLinkedOutOfThePlugin`); port: kept as in that section.
 - The catch branch of `runHookTrustCheck` reports `error.message`, which is an engine's text (`ENOENT: no such file or directory, open '<path>'`, a `SyntaxError`); the port reports the error of the step in Go's words, with the same severity (FAIL), so the recorded cases `manifest_missing`, `manifest_is_not_json` and `hook_file_missing` hold only the severity; the null manifest's TypeError text is kept (source `doctor.ts:541`); port: kept as a runtime diagnostic difference.
 - `options.pluginKey ?? ...` and `options.codexHome ?? ...` keep an explicit empty string where `HarnessOptions` (CRW-346) has a plain string, so the port reads an empty `PluginKey` or `CodexHome` as unset, and a Codex home that cannot be resolved (`HOME` unset and no account entry, which `homedir()` does not report) makes the execution check WARN with "invocation store unreadable" and the trust check FAIL with the error; `now` and `maxAgeMs` are numbers in the oracle and `int64` here, so a non-finite value (`NaN`, `Infinity`), which the oracle refuses as "invalid freshness filter", cannot be passed (source `doctor.ts:469`, `:479`, `hook-observation.mjs:93`); port: kept as a platform difference.
+
+## Found by the doctor harness assembly and command port (CRW-618)
+
+Source: `plugins/codexclaw/components/cxc-ops/src/doctor.ts` (`runDoctor` :261-360, the inline
+manifest, skills and agents checks :263-323, the metadata :362-378) and
+`plugins/codexclaw/components/cxc-ops/src/cli.ts` (the doctor case :80-93, `parseHookOptions`
+:46-66) at v0.2.40, through the port in `internal/runtime/doctor/harness_run.go`. The whole doctor
+command is exercised by the corpus fixtures `cli__doctor__*`; the assembly and the inline checks
+are pinned by the recorded oracle in `internal/runtime/doctor/testdata/harness/run`.
+
+- The oracle derives its plugin root from its own module path (`pluginRootFrom(metaUrl)`,
+  `plugins/codexclaw/components/cxc-ops/src/cli.ts:27-31`), which a Go binary installed through the
+  runtime pointer (`$HOME/.local/share/crw-runtime/current/bin/`) has no relation to;
+  `crw doctor harness` reads the host-provided `PLUGIN_ROOT` instead (the port's convention,
+  `internal/harness/observation.go:131`, `internal/role/spawn/hook.go:249`), and an unset
+  `PLUGIN_ROOT` is a usage error rather than a report over a guessed root; port: kept (a decision
+  of the port, not an oracle defect).
+- The oracle lists a directory's entries in the filesystem's own order (`readdirSync`), so the
+  `skills` and `agents` evidence can name the entries in any order; the port reads them with
+  `os.ReadDir`, which sorts, so a payload whose directory order differs from sorted order prints a
+  different list (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:301,315`); port: kept as a
+  platform difference.
+- The `manifest` check prints the engine's `SyntaxError` text for an unparseable `plugin.json`
+  (`plugins/codexclaw/components/cxc-ops/src/doctor.ts:277`); the port prints `encoding/json`'s
+  message with the same FAIL severity (asserted by severity and a non-empty evidence in
+  `harness_run_test.go`); port: kept as a runtime diagnostic difference.
