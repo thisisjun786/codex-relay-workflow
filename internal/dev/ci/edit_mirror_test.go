@@ -670,14 +670,15 @@ func TestEditMirror_reads_every_page_of_the_runs_of_this_workflow_on_this_head(t
 // The workflow mirrors a body-only edit without cancelling a running run, and every step
 // behind the mirror stands down only when the mirror answered. No job is skipped at job
 // level, dev-gate keeps its place and its script, and the eleven check names stay. The fifth
-// job is skill-scripts-node (CRW-353), which joined the mirror when CRW-779's rule met it.
+// job is skill-scripts-node (CRW-353), which joined the mirror when CRW-779's rule met it, and
+// the sixth is gui (CRW-831), which joined it on the same shape.
 func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 	const (
 		bodyEdit = "${{ github.event.action == 'edited' && !github.event.changes.base }}"
 		guard    = "steps.mirror.outputs.mirrored != 'true'"
 	)
 	jobs, order := editMirrorJobs(t)
-	editMirrorExpectEqual(t, "the job names", editMirrorSorted(order), []string{"dev-gate", "go-product", "secrets", "skill-scripts-node", "validate"})
+	editMirrorExpectEqual(t, "the job names", editMirrorSorted(order), []string{"dev-gate", "go-product", "gui", "secrets", "skill-scripts-node", "validate"})
 	editMirrorExpectEqual(t, "the go-product legs", editMirrorSorted(editMirrorMatrixValues(t, jobs["go-product"], "part")),
 		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-rest"})
 
@@ -712,7 +713,7 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 		t.Error("cancel-in-progress does not keep a body-only edit from cancelling a running run")
 	}
 
-	for _, job := range []string{"validate", "secrets", "skill-scripts-node", "go-product"} {
+	for _, job := range []string{"validate", "secrets", "skill-scripts-node", "gui", "go-product"} {
 		body := jobs[job]
 		if regexp.MustCompile(`(?m)^    if:`).MatchString(body) {
 			t.Errorf("%s carries a job-level if, which could skip it", job)
@@ -760,6 +761,7 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 		"validate":           "          JOB_NAME: validate\n",
 		"secrets":            "          JOB_NAME: secrets\n",
 		"skill-scripts-node": "          JOB_NAME: skill-scripts-node\n",
+		"gui":                "          JOB_NAME: gui\n",
 		"go-product":         "          JOB_NAME: go-product (${{ matrix.part }})\n",
 	} {
 		if !strings.Contains(jobs[job], name) {
@@ -775,7 +777,7 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^    if: always\(\)$`).MatchString(gate) {
 		t.Error("dev-gate no longer runs always")
 	}
-	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, skill-scripts-node, go-product\]$`).MatchString(gate) {
+	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, skill-scripts-node, gui, go-product\]$`).MatchString(gate) {
 		t.Error("dev-gate's prerequisites changed")
 	}
 	if strings.Contains(gate, guard) {

@@ -54,7 +54,6 @@ func ReadOnlyRows(ctx context.Context, selection StateSelection, query string, a
 	if file == nil {
 		return RowsRead{Detail: refused}
 	}
-	defer file.Close()
 	opened, ok := measureHeld(ctx, file)
 	if !ok {
 		return RowsRead{Detail: "the database could not be identified while it was being read"}
@@ -113,7 +112,6 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 	if file == nil {
 		return unreadable(refused)
 	}
-	defer file.Close()
 	opened, ok := measureHeld(ctx, file)
 	if !ok {
 		return unreadable("the database could not be identified while the nonce was being read")
