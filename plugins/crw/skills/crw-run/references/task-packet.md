@@ -161,14 +161,15 @@ Workspace ownership:
 - Capacity and large artifacts: [the destination volume to check before a large clone,
   install, build or download, and the permitted shared read-only originals, per-task
   temporary paths and other volumes to use instead of copying a large original in here.
-  A temporary directory the packet names for a tool, such as `TMPDIR`, is a short path (for
-  example `/var/tmp/crw-<n>`, on a volume with free space), and the packet states why: a Unix
-  socket's whole path must stay under 104 bytes, since Linux refuses a path of 108 bytes or
-  more and macOS one of 104 or more, and a test that binds a socket under `TMPDIR` adds its own
-  directory and file names to it, so a per-task scratch path used as `TMPDIR` can be too
-  long, and even a short one is no proof that a test's socket binds. A test that fails with
-  `bind: invalid argument` under a short `TMPDIR` is reported with its path length, not worked
-  around. Large disposable output goes under a scratch path the packet names separately]
+  A temporary directory the packet names for a tool, such as `TMPDIR`, is a short path under the
+  configured temp root (the `temp_root` root `crw config paths` prints, on a volume with free
+  space), and the packet states why: a Unix socket's whole path must stay under 104 bytes, since
+  Linux refuses a path of 108 bytes or more and macOS one of 104 or more, and a test that binds a
+  socket under `TMPDIR` adds its own directory and file names to it, so a per-task temp path used
+  as `TMPDIR` can be too long, and even a short one is no proof that a test's socket binds. A test
+  that fails with `bind: invalid argument` under a short `TMPDIR` is reported with its path length,
+  not worked around. Large disposable output goes under the configured scratch root (the
+  `scratch_root` root `crw config paths` prints), named separately by the packet]
 - Go build resources: [for a task that builds or tests Go code: the build cache, the parallelism and
   the memory limit it works under, each with its reason. Tasks share a host, so whatever one of
   them leaves unbounded, all of them multiply, and a child told only to be careful has no number
