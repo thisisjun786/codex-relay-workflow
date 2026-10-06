@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,10 +24,10 @@ func TestRunBindsAnEmptyPortAndPrintsOneLine(t *testing.T) {
 	t.Setenv("HOME", home)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var out strings.Builder
+	out := &lineWriter{}
 	done := make(chan int, 1)
-	go func() { done <- Run(ctx, []string{"--port", "0"}, &out, io.Discard) }()
-	line := waitForLine(t, &out)
+	go func() { done <- Run(ctx, []string{"--port", "0"}, out, io.Discard) }()
+	line := waitForLine(t, out)
 	const prefix = "crw gui: serving http://127.0.0.1:"
 	if !strings.HasPrefix(line, prefix) || !strings.Contains(line, "/#token=") {
 		t.Fatalf("the line is %q", line)
@@ -90,10 +91,10 @@ func TestRunBindsAnEmptyPortAndPrintsOneLine(t *testing.T) {
 // A cancelled context closes the listener and lets Run return promptly.
 func TestRunStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	var out strings.Builder
+	out := &lineWriter{}
 	done := make(chan int, 1)
-	go func() { done <- Run(ctx, []string{"--port", "0"}, &out, io.Discard) }()
-	line := waitForLine(t, &out)
+	go func() { done <- Run(ctx, []string{"--port", "0"}, out, io.Discard) }()
+	line := waitForLine(t, out)
 	address := strings.TrimPrefix(strings.SplitN(line, "/#token=", 2)[0], "crw gui: serving http://")
 	cancel()
 	select {
@@ -211,8 +212,97 @@ func TestRunUsageErrors(t *testing.T) {
 	}
 }
 
+// --help writes the help page to stdout and exits 0, as every other crw mode does; a usage
+// error writes the usage to stderr and exits 2.
+func TestRunHelpGoesToStdout(t *testing.T) {
+	var out, errOut strings.Builder
+	if code := Run(context.Background(), []string{"--help"}, &out, &errOut); code != 0 {
+		t.Fatalf("--help: code %d (stderr %q)", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "usage: crw gui") {
+		t.Fatalf("--help wrote %q to stdout, want the usage line", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("--help wrote %q to stderr", errOut.String())
+	}
+	var out2, errOut2 strings.Builder
+	if code := Run(context.Background(), []string{"--port", "70000"}, &out2, &errOut2); code != usageExit || out2.Len() != 0 || errOut2.Len() == 0 {
+		t.Fatalf("a usage error: code %d stdout %q stderr %q", code, out2.String(), errOut2.String())
+	}
+}
+
+// Serve derives every request context from the run context, so a write handler observes the
+// cancellation that ends the server: a durable effect can check it right before it commits,
+// and a handler waiting on cancellation lets the graceful shutdown finish instead of timing
+// out. The request is made over the real listener, because that is where net/http derives the
+// context from the server's base context.
+func TestRequestContextFollowsTheRunContext(t *testing.T) {
+	seen := make(chan error, 1)
+	token := "a-token-for-this-test"
+	routes := []Route{{Method: http.MethodPost, Path: "/api/wait", Handler: func(_ *Env, r *http.Request) (Response, error) {
+		<-r.Context().Done()
+		seen <- r.Context().Err()
+		return Response{Status: http.StatusOK, Body: map[string]any{"ok": true}}, nil
+	}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := &lineWriter{}
+	served := make(chan error, 1)
+	go func() { served <- Serve(ctx, Options{Port: 0, Token: token, Version: "v", Routes: routes}, out) }()
+	line := waitForLine(t, out)
+	address := strings.TrimPrefix(strings.SplitN(line, "/#token=", 2)[0], "crw gui: serving http://")
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/api/wait", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(tokenHeader, token)
+	clientDone := make(chan struct{})
+	go func() {
+		_, _ = (&http.Client{Timeout: 15 * time.Second}).Do(request)
+		close(clientDone)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-seen:
+		if err == nil {
+			t.Fatal("the handler saw a live context after the run context was cancelled")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handler did not observe the cancellation")
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve returned %v after the run context was cancelled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return after the run context was cancelled")
+	}
+	<-clientDone
+}
+
+// lineWriter is the writer the tests hand a run that prints from its own goroutine. A plain
+// strings.Builder is not safe for a concurrent read, so the test polls this under its mutex.
+type lineWriter struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.text.Write(p)
+}
+
+func (w *lineWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.text.String()
+}
+
 // waitForLine waits for the run to print its one line and returns it trimmed.
-func waitForLine(t *testing.T, out *strings.Builder) string {
+func waitForLine(t *testing.T, out *lineWriter) string {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for {

@@ -158,6 +158,9 @@ func TestGuardTraversal(t *testing.T) {
 		{http.MethodGet, "/..%2f..%2fetc"},
 		{http.MethodGet, "/%2e%2e/etc/passwd"},
 		{http.MethodGet, "/assets/%2E%2E/%2E%2E/etc"},
+		{http.MethodGet, "/a%3F.."},
+		{http.MethodGet, "/a%23.."},
+		{http.MethodGet, "/%3f/../index.html"},
 		{http.MethodPost, "/api/../../etc"},
 	} {
 		t.Run(test.method+" "+test.target, func(t *testing.T) {

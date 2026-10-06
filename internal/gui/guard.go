@@ -73,25 +73,23 @@ func setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 }
 
 // traversalSegment reports whether a request path holds a segment with two consecutive dots.
-// Both the parsed path and the raw request target are inspected: the raw target keeps percent
-// escapes that the parser decodes into Path, so a segment spelled "%2e%2e" is refused as well
-// as a literal "..". The check runs for every request, not only a static one, so an API route
-// is not reachable through a traversal path either.
+// It inspects the parsed path and every segment of the escaped path unescaped, so a segment
+// spelled "%2e%2e" is refused as well as a literal "..". It never truncates at a "?" or "#":
+// an encoded delimiter is part of the path (the parser only splits on a real one), so cutting
+// there would hide the dots that follow it. The check runs for every request, not only a static
+// one, so an API route is not reachable through a traversal path either.
 func traversalSegment(r *http.Request) bool {
-	candidates := []string{r.URL.Path}
-	if raw := r.RequestURI; raw != "" {
-		if decoded, err := url.PathUnescape(raw); err == nil {
-			candidates = append(candidates, decoded)
+	segments := strings.Split(r.URL.Path, "/")
+	for _, escaped := range strings.Split(r.URL.EscapedPath(), "/") {
+		if decoded, err := url.PathUnescape(escaped); err == nil {
+			segments = append(segments, decoded)
+		} else {
+			segments = append(segments, escaped)
 		}
 	}
-	for _, candidate := range candidates {
-		if query := strings.IndexAny(candidate, "?#"); query >= 0 {
-			candidate = candidate[:query]
-		}
-		for _, segment := range strings.Split(candidate, "/") {
-			if strings.Contains(segment, "..") {
-				return true
-			}
+	for _, segment := range segments {
+		if strings.Contains(segment, "..") {
+			return true
 		}
 	}
 	return false
@@ -145,10 +143,6 @@ func tokenMatches(presented, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(token)) == 1
 }
 
-// maxBytesError is the target http.MaxBytesReader's error is matched against, so a read past
-// the limit is told apart from another read failure.
-var maxBytesError = &http.MaxBytesError{}
-
 // readBody reads a write body up to the 1 MiB limit and leaves the bytes on the request for
 // the handler. A declared Content-Length over the limit is refused at once (CXC's own
 // pre-check, local-http.ts:44-49); the read itself is bounded, so a chunked body that lies
@@ -163,7 +157,10 @@ func readBody(w http.ResponseWriter, r *http.Request) bool {
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
-		if errors.As(err, &maxBytesError) {
+		// The target is request-local: a package-level one is written by every concurrent
+		// request that reads past the limit, which is a data race.
+		var limitErr *http.MaxBytesError
+		if errors.As(err, &limitErr) {
 			writeError(w, r, http.StatusRequestEntityTooLarge, codeTooLarge)
 			return false
 		}

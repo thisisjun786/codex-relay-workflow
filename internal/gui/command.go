@@ -23,18 +23,30 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("crw gui", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	port := flags.Int("port", 0, "the loopback port to bind (0 chooses a free one)")
-	flags.Usage = func() {
-		fmt.Fprintln(stderr, "usage: crw gui [-h] [--port PORT]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "serve the local dashboard on loopback")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "options:")
+	// usage writes the help page to w. The flag package calls Usage for -h/--help and for a
+	// parse error alike; help goes to stdout and exits 0, an error goes to stderr and exits 2,
+	// as every other crw mode does.
+	usage := func(w io.Writer) {
+		fmt.Fprintln(w, "usage: crw gui [-h] [--port PORT]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "serve the local dashboard on loopback")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "options:")
+		flags.SetOutput(w)
 		flags.PrintDefaults()
+		flags.SetOutput(stderr)
 	}
+	// The flag package would print the help itself, to stderr; this mode prints it to stdout on
+	// -h/--help (exit 0) and to stderr on a parse error (exit 2), so the package's own usage
+	// hook is silenced and this file decides the stream.
+	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			usage(stdout)
 			return 0
 		}
+		// The flag package already wrote the error line to stderr; the usage follows it there.
+		usage(stderr)
 		return usageExit
 	}
 	if flags.NArg() > 0 {
@@ -71,7 +83,15 @@ func Serve(ctx context.Context, opts Options, stdout io.Writer) error {
 	}
 	server.port = port
 	fmt.Fprintln(stdout, "crw gui: serving "+server.URL())
-	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	// Every request context is derived from the run context, so a write handler observes the
+	// cancellation that ends the server and can check it right before a durable effect; a
+	// handler waiting on cancellation also lets the graceful shutdown finish instead of
+	// outliving it.
+	httpServer := &http.Server{
+		Handler:           server.Handler(),
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	served := make(chan error, 1)
 	go func() { served <- httpServer.Serve(listener) }()
 	select {
@@ -79,6 +99,9 @@ func Serve(ctx context.Context, opts Options, stdout io.Writer) error {
 		shutdown, cancel := context.WithTimeout(context.Background(), server.shutdown)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdown); err != nil {
+			// A handler that outlasted the grace period is ended rather than left running: the
+			// listener is already closed, so nothing new starts, and Close ends what remains.
+			_ = httpServer.Close()
 			return fmt.Errorf("gui: the shutdown did not finish: %w", err)
 		}
 		return nil
