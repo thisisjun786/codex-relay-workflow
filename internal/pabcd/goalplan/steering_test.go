@@ -412,12 +412,45 @@ func TestSteeringApplyLockReleasedAfterAppliedAndRejected(t *testing.T) {
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
 		t.Errorf("the lock survived an applied batch: %v", err)
 	}
-	steeringApply(t, cwd, slug, steeringApplyBatch(map[string]any{
-		"idempotencyKey": "k2",
-		"ops":            []any{map[string]any{"kind": "nope"}},
-	}), nil, SteerResultRejected)
-	if _, err := os.Stat(lock); !os.IsNotExist(err) {
-		t.Errorf("the lock survived a rejected batch: %v", err)
+	// Two rejections, because they are answered on different sides of the lock: an unknown op
+	// kind is refused by the validator before the lock is ever taken, and a duplicate work-phase
+	// id is refused by the fold while the lock is held. Both must leave the lock directory gone.
+	for _, test := range []struct {
+		name  string
+		batch map[string]any
+	}{
+		{
+			name: "the validator refuses before the lock",
+			batch: steeringApplyBatch(map[string]any{
+				"idempotencyKey": "k2",
+				"ops":            []any{map[string]any{"kind": "nope"}},
+			}),
+		},
+		{
+			name: "the fold refuses inside the lock",
+			batch: steeringApplyBatch(map[string]any{
+				"idempotencyKey": "k3",
+				"ops": []any{map[string]any{
+					"kind": "add-work-phase", "id": "wp99-new", "title": "Duplicate",
+				}},
+			}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.name == "the fold refuses inside the lock" {
+				// The refusal needs the phase to exist already, so the first batch registers it.
+				steeringApply(t, cwd, slug, steeringApplyBatch(map[string]any{
+					"idempotencyKey": "k-add-wp",
+					"ops": []any{map[string]any{
+						"kind": "add-work-phase", "id": "wp99-new", "title": "Newly scoped work",
+					}},
+				}), nil, SteerResultApplied)
+			}
+			steeringApply(t, cwd, slug, test.batch, nil, SteerResultRejected)
+			if _, err := os.Stat(lock); !os.IsNotExist(err) {
+				t.Errorf("the lock survived a rejected batch: %v", err)
+			}
+		})
 	}
 }
 
