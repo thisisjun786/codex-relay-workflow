@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -51,6 +52,9 @@ func TestMigrateApplyReviewRefusesASourceThatMovedAfterItsPublish(t *testing.T) 
 	}
 	if ai := apItem(t, res, "sessions/a.json"); ai.Result != ResultRefused {
 		t.Errorf("the moved source must fail its own file: %q", ai.Result)
+	}
+	if res.WritesCompleted != 1 {
+		t.Errorf("the file that landed must still be counted: %d", res.WritesCompleted)
 	}
 	if got := get(t, apDst(ws, "sessions/a.json")); got != "abc" {
 		t.Errorf("the plan's bytes must still land: %q", got)
@@ -95,6 +99,9 @@ func TestMigrateApplyReviewRefusesAnIgnoreRaceInANewRoot(t *testing.T) {
 	if got := get(t, apDst(ws, ".gitignore")); got != "mine" {
 		t.Errorf("the racer's .gitignore changed: %q", got)
 	}
+	if fi, err := os.Stat(apDst(ws, "")); err != nil || fi.Mode().Perm() != applyTempMode || fi.Mode()&fs.ModeSticky == 0 {
+		t.Errorf("the root this run made must be left at the private marker mode, not widened: %v %v", fi, err)
+	}
 }
 
 // F2: an owner .gitignore that was there when Open ran is retained, so the run still succeeds.
@@ -114,22 +121,97 @@ func TestMigrateApplyReviewKeepsAnOwnersIgnore(t *testing.T) {
 
 // F3: the artifact files an evidence manifest names publish before the receipt that names them.
 func TestMigrateApplyReviewPublishesEvidenceDependenciesFirst(t *testing.T) {
-	receipt := "{\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}," +
-		"{\"path\":\"artifact-identity.json\",\"kind\":\"artifact-identity\"}]}"
-	_, r, p := apPlan(t, map[string]string{
-		"evidence/s/qa-receipt.json":        receipt,
-		"evidence/s/verdict.json":           "v",
-		"evidence/s/artifact-identity.json": "i",
-	}, nil)
+	for name, receipt := range map[string]string{
+		"plain paths": "{\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}," +
+			"{\"path\":\"artifact-identity.json\",\"kind\":\"artifact-identity\"}]}",
+		// A receipt consumer resolves these against the receipt's own directory, so a leading "./" or a doubled
+		// separator names the same artifact and must order the same way.
+		"redundant components": "{\"artifactManifest\":[{\"path\":\"./verdict.json\",\"kind\":\"verdict\"}," +
+			"{\"path\":\"s//artifact-identity.json\",\"kind\":\"artifact-identity\"}]}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, r, p := apPlan(t, map[string]string{
+				"evidence/s/qa-receipt.json":        receipt,
+				"evidence/s/verdict.json":           "v",
+				"evidence/s/artifact-identity.json": "i",
+			}, nil)
+			pub, leaves := migrateApplyReviewRenames(t)
+			if _, err := applyWith(r, p, pub); err != nil {
+				t.Fatal(err)
+			}
+			got := leaves()
+			for _, artifact := range []string{"verdict.json", "artifact-identity.json"} {
+				if a, i := slices.Index(got, artifact), slices.Index(got, "qa-receipt.json"); a < 0 || i < 0 || a > i {
+					t.Errorf("%s must publish before the receipt that names it: %v", artifact, got)
+				}
+			}
+		})
+	}
+}
+
+// F3: a receipt whose manifest this run cannot read still publishes after its artifacts, so an unread graph keeps the
+// dependencies-first order rather than falling back to plan order.
+func TestMigrateApplyReviewKeepsDependenciesFirstWhenTheManifestIsUnreadable(t *testing.T) {
+	for name, receipt := range map[string]string{
+		"manifest of the wrong type": "{\"artifactManifest\":\"verdict.json\"}",
+		"manifest too large to read": "{\"note\":\"" + strings.Repeat("x", attentionReadCap) +
+			"\",\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}]}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, r, p := apPlan(t, map[string]string{
+				"evidence/s/qa-receipt.json": receipt,
+				"evidence/s/verdict.json":    "v",
+			}, nil)
+			pub, leaves := migrateApplyReviewRenames(t)
+			if _, err := applyWith(r, p, pub); err != nil {
+				t.Fatal(err)
+			}
+			got := leaves()
+			if a, i := slices.Index(got, "verdict.json"), slices.Index(got, "qa-receipt.json"); a < 0 || i < 0 || a > i {
+				t.Errorf("the artifact must still publish before the receipt: %v", got)
+			}
+		})
+	}
+}
+
+// F3: the install record publishes after the config backup even when no manifest names anything.
+func TestMigrateApplyReviewPublishesTheInstallRecordLast(t *testing.T) {
+	base := isolate(t)
+	home := filepath.Join(base, "codex")
+	mkdirs(t, home)
+	put(t, filepath.Join(home, installSource), "{\"version\":2}", 0o644)
+	put(t, filepath.Join(home, backupSource+"2026"+backupSuffix), "{\"config\":true}", 0o644)
+	r, err := Open(Options{Scope: ScopeCodex, CodexHome: home})
+	must(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	p, err := classify(r)
+	must(t, err)
 	pub, leaves := migrateApplyReviewRenames(t)
 	if _, err := applyWith(r, p, pub); err != nil {
 		t.Fatal(err)
 	}
 	got := leaves()
-	for _, artifact := range []string{"verdict.json", "artifact-identity.json"} {
-		if a, i := slices.Index(got, artifact), slices.Index(got, "qa-receipt.json"); a < 0 || i < 0 || a > i {
-			t.Errorf("%s must publish before the receipt that names it: %v", artifact, got)
+	if i, last := slices.Index(got, installDest), len(got)-1; i < 0 || i != last {
+		t.Errorf("the install record must publish last: %v", got)
+	}
+}
+
+// F4: a copied file is counted even when its own source recheck fails, so a moved source never erases a completed write.
+func TestMigrateApplyReviewCountsAWriteWhoseSourceThenMoved(t *testing.T) {
+	ws, r, p := apPlan(t, map[string]string{"sessions/a.json": "abc", "sessions/b.json": "xyz"}, nil)
+	src := filepath.Join(ws, ProjectSourceName, "sessions", "a.json")
+	pub := newPub(t)
+	real := pub.rename
+	pub.rename = func(dirfd int, oldName, newName string) error {
+		if newName == "a.json" {
+			put(t, src, "abcd", 0o644)
 		}
+		return real(dirfd, oldName, newName)
+	}
+	res, err := applyWith(r, p, pub)
+	wantRefusal(t, err, applyReasonChanged)
+	if res.WritesCompleted != 1 {
+		t.Errorf("the one file that landed must be counted: %d", res.WritesCompleted)
 	}
 }
 

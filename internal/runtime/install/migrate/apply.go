@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"path"
 	"slices"
 	"strings"
 
@@ -252,20 +253,16 @@ func (a *applyRun) ensureRoots() error {
 			}
 		}
 		made := pair.Dest == nil
-		var root *Dir
 		var err error
 		if scope == ScopeProject {
-			root, err = a.pub.EnsureProjectRoot(pair)
+			// EnsureProjectRoot creates the root itself and gives it the private marker mode before its .gitignore
+			// publication, so the initialization judgement runs against a root this run created.
+			_, err = a.pub.EnsureProjectRoot(pair)
 		} else {
-			root, err = pair.EnsureDest(applyTempRaw)
+			_, err = pair.EnsureDest(applyTempRaw)
 		}
 		if err != nil {
 			return err
-		}
-		if made {
-			if err = applyChmodRaw(root, applyTempRaw); err != nil {
-				return err
-			}
 		}
 		a.made[applyKey(scope, "")] = made
 	}
@@ -395,24 +392,34 @@ func (a *applyRun) migrateApplyReviewReferences() map[string]bool {
 			if e.Kind != "verdict" && e.Kind != "artifact-identity" {
 				continue
 			}
-			p := e.Path
+			rel := path.Clean(e.Path)
 			if dir != "" {
-				p = dir + "/" + p
+				rel = path.Clean(dir + "/" + rel)
 			}
-			refs[p] = true
+			refs[rel] = true
 		}
 	}
 	return refs
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
-// Codex config backups, so they publish before the receipt or the install record that refers to them, and 1 for the rest.
+// Codex config backups, 2 for the records that refer to them (a QA receipt and the Codex install record), and 1 for the
+// rest. A receipt whose manifest this run could not read still takes the referrer's place, so its dependencies keep the
+// dependencies-first order even when the graph is unknown.
 func migrateApplyReviewSubRank(it Item, refs map[string]bool) int {
-	if it.Scope == ScopeCodex && strings.HasPrefix(it.Source, backupSource) && strings.HasSuffix(it.Source, backupSuffix) {
-		return 0
+	if it.Scope == ScopeCodex {
+		switch {
+		case strings.HasPrefix(it.Source, backupSource) && strings.HasSuffix(it.Source, backupSuffix):
+			return 0
+		case it.Source == installSource:
+			return 2
+		}
 	}
 	if refs[it.Source] {
 		return 0
+	}
+	if strings.HasSuffix(it.Source, "qa-receipt.json") {
+		return 2
 	}
 	return 1
 }
@@ -445,6 +452,11 @@ func (a *applyRun) publishFile(i int, it Item) error {
 	_, leaf := applySplit(it.Destination)
 	res, err := a.pub.Publish(parent, leaf, f, it.Size, it.Mode.Perm())
 	a.result.Items[i].Result = res
+	if res == ResultCopied {
+		// The rename and the directory sync completed, so this file is this run's write whatever the source recheck below
+		// finds: a moved source must not erase a completed write from the report.
+		a.result.WritesCompleted++
+	}
 	if err != nil {
 		switch {
 		case res == ResultAlreadyEqual:
@@ -464,11 +476,10 @@ func (a *applyRun) publishFile(i int, it Item) error {
 	if err := a.migrateApplyReviewRecheckSource(i, it); err != nil {
 		return err
 	}
-	switch res {
-	case ResultCopied:
-		a.result.WritesCompleted++
+	if res == ResultCopied {
 		return a.checkDest(parent, leaf, it)
-	case ResultAlreadyEqual:
+	}
+	if res == ResultAlreadyEqual {
 		// Nothing was written, and equality never changes a destination's mode or times, so a difference is reported.
 		if got, err := a.destMode(parent, leaf); err == nil && got != it.Mode.Perm() {
 			a.result.Items[i].Note = "destination kept its mode " + got.String()

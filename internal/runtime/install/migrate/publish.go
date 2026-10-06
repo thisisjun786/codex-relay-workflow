@@ -218,7 +218,14 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 			return nil, err
 		}
 	}
+	made := pair.Dest == nil
 	root, err := pair.EnsureDest(0o777)
+	if err == nil && made {
+		// EnsureDest creates the root 0777 subject to umask, and only a root this call made may be tightened. Give it the
+		// private marker mode here, before the fallible .gitignore publication, so a failure below cannot leave a widened
+		// root that a retry would then find as an existing one.
+		err = applyChmodRaw(root, applyTempRaw)
+	}
 	if err == nil {
 		err = p.step("root")
 	}
