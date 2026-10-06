@@ -736,22 +736,49 @@ func TestCheckpointIntegrationNeedsEveryTarget(t *testing.T) {
 
 // The instant is the latest of the per-target first satisfying observations, and "first" is by
 // observed_seq (the order the relay writes them), not by the recorded time. A target whose first
-// observation carries a later timestamp than a subsequent one still contributes its first row.
+// observation carries a LATER timestamp than a subsequent one still contributes its first row, so
+// a query that took the minimum observed_at would pick the wrong instant.
 func TestCheckpointIntegrationInstantIsTheLatestPerTargetFirst(t *testing.T) {
 	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"}, [2]string{"owner/repo", "main"})
-	// dev: the first observation (seq 1) is at t=3; a later positive one at t=9 must not move it.
-	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
-	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(9), 2, true)
-	// main: the first observation (seq 1) is at t=5, later than dev's, so it decides the instant.
+	// dev: the first observation (seq 1) is at t=9; a later positive one at t=3 must not move it.
+	// A minimum-observed_at query would wrongly pick t=3.
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(9), 1, true)
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 2, true)
+	// main: the first observation (seq 1) is at t=5, earlier than dev's first, so dev decides.
 	f.observation("acceptance-1", "head-1", "owner/repo", "main", checkpointAt(5), 1, true)
 	f.close()
 
-	// A record between dev's instant and main's: the integration is counted only if the instant is
-	// the latest per-target first (t=5), not the earliest observation overall (t=3).
-	f.record("project-1", checkpointAt(4), "a checkpoint between the two targets")
+	// A record at t=7: the integration is counted only if the instant is the latest per-target
+	// first (dev's t=9), not the minimum observed_at anywhere (t=3) nor main's t=5.
+	f.record("project-1", checkpointAt(7), "a checkpoint before the latest per-target first")
 	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
 	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 1 {
 		t.Fatalf("the instant was not the latest per-target first observation: %+v", report.Counts)
+	}
+}
+
+// An integrated acceptance whose satisfying observation carries an instant this build cannot read
+// leaves only the integration signal unmeasured, with a reason, and the rest of the reading is
+// still computed. It does not fail the whole reading.
+func TestCheckpointUnreadableIntegrationInstantLeavesOnlyItsSignalUnmeasured(t *testing.T) {
+	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"})
+	f.mergeTurn("turn-1", "project-1", "landed", checkpointAt(2))
+	// A satisfying observation whose instant is in no form this build reads.
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES ('observation-broken','acceptance-1','owner/repo','dev','head-1','tip',1,'ancestry',1,'not an instant')")
+	f.close()
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint != nil {
+		t.Errorf("an unreadable instant was measured: %+v", report.Counts.IntegrationsSinceCheckpoint)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalIntegrations) || report.UnmeasuredReasons[checkpointSignalIntegrations] == "" {
+		t.Errorf("the integration signal is not unmeasured with a reason: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if report.Counts.MergesSinceCheckpoint != 1 {
+		t.Errorf("the rest of the reading was not computed: %+v", report.Counts)
+	}
+	if _, _, code := checkpointRunCommand(t, f.dir, nil); code == checkpointStoreExit {
+		t.Errorf("an unreadable instant was reported as an unreadable store")
 	}
 }
 
