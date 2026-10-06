@@ -231,14 +231,14 @@ func harnessInstallManifestString(manifest any, key string) (string, error) {
 	return value, nil
 }
 
-// harnessInstallCodexHome is doctor.ts:402's option ?? CODEX_HOME ?? join(homedir(), ".codex"):
-// only the option and CODEX_HOME are used verbatim, the home results always get the `.codex`
-// suffix, and a variable that is present but empty is present (so an empty HOME gives the
-// relative ".codex"). The Go options cannot express an explicitly empty codexHome, which the
-// oracle would use verbatim; the PR body states that limitation.
-func harnessInstallCodexHome(codexHome string, lookup record.Environ, passwdHome func() (string, error)) (string, error) {
-	if codexHome != "" {
-		return codexHome, nil
+// harnessInstallCodexHome is doctor.ts:402's option ?? CODEX_HOME ?? join(homedir(), ".codex"): a
+// nil option is absent and falls through, a non-nil option -- the empty string included -- is used
+// verbatim, and CODEX_HOME is used verbatim as well. The home results always get the .codex
+// suffix, and a variable that is present but empty is present (so an empty HOME gives the relative
+// ".codex").
+func harnessInstallCodexHome(codexHome *string, lookup record.Environ, passwdHome func() (string, error)) (string, error) {
+	if codexHome != nil {
+		return *codexHome, nil
 	}
 	if value, ok := lookup("CODEX_HOME"); ok {
 		return value, nil

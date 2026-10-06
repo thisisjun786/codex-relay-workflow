@@ -117,13 +117,15 @@ type HarnessReport struct {
 }
 
 // HarnessOptions is DoctorOptions (doctor.ts:47-62), minus wslDeps (WSL is out of scope).
-// SessionID and AgentID keep the three states the oracle reads: nil is an absent option, a
-// pointer is the explicit value, and a pointer to the empty string is the oracle explicit
-// null -- both are falsy there, which requests an unverified report. The observation fields
-// are the oracle numbers: epoch milliseconds, nil unset.
+// CodexHome, PluginKey, SessionID and AgentID keep the three states the oracle reads: nil is an
+// absent option, a pointer is the explicit value, and a pointer to the empty string is the value
+// the oracle's ?? keeps verbatim (doctor.ts:402, :469 and :476 read an explicitly empty codexHome
+// or pluginKey as a value, not as absence). For SessionID and AgentID the empty value is also the
+// oracle's explicit null -- both are falsy there, which requests an unverified report. The
+// observation fields are the oracle numbers: epoch milliseconds, nil unset.
 type HarnessOptions struct {
-	CodexHome           string
-	PluginKey           string
+	CodexHome           *string
+	PluginKey           *string
 	SessionID           *string
 	AgentID             *string
 	ObservationNow      *int64

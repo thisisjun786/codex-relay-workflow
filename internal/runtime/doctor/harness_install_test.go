@@ -360,7 +360,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 			manifest := harnessInstallValue(map[string]any{"name": "crw", "version": "0.4.0"})
 			payload := func(body string) string { return harnessInstallPayloadAt(t, root, name, body) }
 			home := func(cache string, entries [][]string) HarnessOptions {
-				return HarnessOptions{CodexHome: harnessInstallHomeAt(t, root, cache, entries)}
+				return HarnessOptions{CodexHome: harnessOptionsPtr(harnessInstallHomeAt(t, root, cache, entries))}
 			}
 			var check HarnessCheck
 			switch name {
@@ -373,7 +373,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 			case "two_stale":
 				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"mkt1", "crw", "0.1.0"}, {"mkt2", "crw", "0.2.0"}}))
 			case "no_cache":
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: filepath.Join(root, "empty-home")})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "empty-home"))})
 			case "not_installed":
 				check = HarnessInstalledRootCheck(payload(manifest), home(name, [][]string{{"mkt", "other", "1.0.0"}}))
 			case "no_name_version":
@@ -388,7 +388,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				if err := os.MkdirAll(elsewhere, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				entry := filepath.Join(options.CodexHome, "plugins", "cache", "mkt", "crw", "0.4.0")
+				entry := filepath.Join(*options.CodexHome, "plugins", "cache", "mkt", "crw", "0.4.0")
 				if err := os.Remove(entry); err != nil {
 					t.Fatal(err)
 				}
@@ -398,10 +398,10 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				check = HarnessInstalledRootCheck(payload(manifest), options)
 			case "entry_is_file":
 				options := home(name, nil)
-				if err := os.MkdirAll(filepath.Join(options.CodexHome, "plugins", "cache", "mkt2"), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Join(*options.CodexHome, "plugins", "cache", "mkt2"), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(options.CodexHome, "plugins", "cache", "mkt2", "crw"), []byte("not a dir"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(*options.CodexHome, "plugins", "cache", "mkt2", "crw"), []byte("not a dir"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 				check = HarnessInstalledRootCheck(payload(manifest), options)
@@ -414,7 +414,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{})
 			case "option_wins":
 				t.Setenv("CODEX_HOME", harnessInstallHomeAt(t, root, name+"_env", [][]string{{"mkt", "crw", "0.4.0"}}))
-				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: filepath.Join(root, "option-empty-home")})
+				check = HarnessInstalledRootCheck(payload(manifest), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "option-empty-home"))})
 			case "env_wins_over_home":
 				t.Setenv("CODEX_HOME", harnessInstallHomeAt(t, root, name, [][]string{{"mkt", "crw", "0.4.0"}}))
 				t.Setenv("HOME", filepath.Join(root, "home-no-cache"))
@@ -434,7 +434,7 @@ func TestHarnessInstallRootRecorded(t *testing.T) {
 				// One ill-formed byte in the market segment: the oracle decodes it to U+FFFD and then
 				// misses the directory, so the plugin reads as not installed.
 				options := home(name, nil)
-				if err := os.MkdirAll(filepath.Join(options.CodexHome, "plugins", "cache", string([]byte{'m', 0xff}), "crw", "0.1.0"), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Join(*options.CodexHome, "plugins", "cache", string([]byte{'m', 0xff}), "crw", "0.1.0"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 				check = HarnessInstalledRootCheck(payload(manifest), options)
@@ -465,19 +465,20 @@ func TestHarnessInstallCodexHomePort(t *testing.T) {
 	passwdFail := func() (string, error) { return "", errors.New("home not set and passwd unreadable") }
 	for _, test := range []struct {
 		name      string
-		codexHome string
+		codexHome *string
 		values    map[string]string
 		passwd    func() (string, error)
 		want      string
 		wantErr   bool
 	}{
-		{"option wins verbatim", "/option", map[string]string{"CODEX_HOME": "/env", "HOME": "/home"}, passwdHome, "/option", false},
-		{"env wins verbatim", "", map[string]string{"CODEX_HOME": "/env", "HOME": "/home"}, passwdHome, "/env", false},
-		{"empty env is used", "", map[string]string{"CODEX_HOME": "", "HOME": "/home"}, passwdHome, "", false},
-		{"home gets the codex suffix", "", map[string]string{"HOME": "/home"}, passwdHome, "/home/.codex", false},
-		{"empty home stays relative", "", map[string]string{"HOME": ""}, passwdHome, ".codex", false},
-		{"passwd gets the codex suffix", "", map[string]string{}, passwdHome, "/synthetic/.codex", false},
-		{"passwd failure is the error", "", map[string]string{}, passwdFail, "", true},
+		{"option wins verbatim", harnessOptionsPtr("/option"), map[string]string{"CODEX_HOME": "/env", "HOME": "/home"}, passwdHome, "/option", false},
+		{"an explicitly empty option is used verbatim", harnessOptionsPtr(""), map[string]string{"CODEX_HOME": "/env", "HOME": "/home"}, passwdHome, "", false},
+		{"an absent option falls through to the env", nil, map[string]string{"CODEX_HOME": "/env", "HOME": "/home"}, passwdHome, "/env", false},
+		{"empty env is used", nil, map[string]string{"CODEX_HOME": "", "HOME": "/home"}, passwdHome, "", false},
+		{"home gets the codex suffix", nil, map[string]string{"HOME": "/home"}, passwdHome, "/home/.codex", false},
+		{"empty home stays relative", nil, map[string]string{"HOME": ""}, passwdHome, ".codex", false},
+		{"passwd gets the codex suffix", nil, map[string]string{}, passwdHome, "/synthetic/.codex", false},
+		{"passwd failure is the error", nil, map[string]string{}, passwdFail, "", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := harnessInstallCodexHome(test.codexHome, lookup(test.values), test.passwd)
@@ -529,7 +530,7 @@ func TestHarnessInstallResolverPanicsBeforeManifest(t *testing.T) {
 func TestHarnessInstallMalformedManifestPort(t *testing.T) {
 	recorded := harnessInstallOracleRecorded(t).MalformedManifest
 	root := t.TempDir()
-	check := HarnessInstalledRootCheck(harnessInstallPayloadAt(t, root, "malformed_manifest", "not json"), HarnessOptions{CodexHome: filepath.Join(root, "home")})
+	check := HarnessInstalledRootCheck(harnessInstallPayloadAt(t, root, "malformed_manifest", "not json"), HarnessOptions{CodexHome: harnessOptionsPtr(filepath.Join(root, "home"))})
 	if string(check.Severity) != recorded.Severity || check.Name != "install-root" || check.Evidence == "" {
 		t.Fatalf("malformed manifest check = %+v, want the recorded %s install-root check", check, recorded.Severity)
 	}

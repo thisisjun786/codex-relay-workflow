@@ -279,20 +279,11 @@ func harnessRunDoctorRecovered(pluginRoot string, runner HarnessRunner, options 
 }
 
 // harnessRunParseOptions is parseHookOptions (cli.ts:46-66): --bootstrap-ok, --key <value> and
-// --codex-home <value>, and anything else is the "unknown hooks option" the catch prints. The
-// default Codex home is CODEX_HOME when set (the oracle's ?? keeps an empty string), else the
-// account's ~/.codex.
+// --codex-home <value>, and anything else is the "unknown hooks option" the catch prints. An option
+// is filled only when its flag was given -- the checks resolve CODEX_HOME and the home themselves
+// -- and an empty flag value is refused, as the oracle's `if (!value) throw` refuses it (cli.ts:49).
 func harnessRunParseOptions(args []string, env host.LookupEnv) (HarnessOptions, error) {
 	options := HarnessOptions{}
-	if value, set := env("CODEX_HOME"); set {
-		options.CodexHome = value
-	} else {
-		home, err := host.Home(env)
-		if err != nil {
-			return options, err
-		}
-		options.CodexHome = filepath.Join(home, ".codex")
-	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch arg {
@@ -303,12 +294,17 @@ func harnessRunParseOptions(args []string, env host.LookupEnv) (HarnessOptions, 
 				return options, errors.New(arg + " requires a value")
 			}
 			value := args[index+1]
+			if value == "" {
+				// The oracle refuses an empty value too (`if (!value) throw`, cli.ts:49), so an
+				// explicitly empty option is expressible through the Go API only.
+				return options, errors.New(arg + " requires a value")
+			}
 			if arg == "--key" {
-				options.PluginKey = value
+				options.PluginKey = harnessRunString(value)
 			} else if resolved, err := filepath.Abs(value); err == nil {
-				options.CodexHome = resolved
+				options.CodexHome = harnessRunString(resolved)
 			} else {
-				options.CodexHome = value
+				options.CodexHome = harnessRunString(value)
 			}
 			index++
 		default:
