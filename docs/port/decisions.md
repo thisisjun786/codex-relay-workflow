@@ -5783,12 +5783,16 @@ correction generation is made; an unrelated sibling's valid result and cost reco
 The route is derived from the stale reading and is never stored (`Scheduler.routeStale`,
 `internal/relay/dagsched/revalidation.go:294`; `routeOf`, `:300`; `StaleActions`, `:41`): a
 criteria-only change is `revalidate`, and `dag-accept` records a revalidation of the same acceptance
-in `dag_acceptance_revalidations` with no second acceptance, generation or child; anything else on a
-live relationship is `correct`, and `dag-correct` binds the manifest the child was told
+in `dag_acceptance_revalidations` with no second acceptance, generation or child; a node whose own
+output must be reworked on an active relationship is `correct`, and `dag-correct` binds the manifest the child was told
 (`CorrectionInstruction`, `internal/relay/dagsched/correction.go:28`; `PrepareCorrection`, `:47`;
 `RecordCorrection`, `:183`) as the next generation of the same relationship. What a node's siblings
 keep is whatever neither route touches: a revalidation writes one revalidation row and a correction one
-execution row, both for the node asked about.
+execution row, both for the node asked about. The same reading derives two further routes and this
+decision leaves them as they are: `hold` when the node rests on a stale predecessor, an input is not
+there, the node or the plan is paused or a correction of it is already open, and `redefine` when the
+relationship has ended, so there is no child to correct. They change nothing here and no node is
+released by them.
 
 Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidation_test.go:208`),
 `TestRevalidationIsRefusedWhenTheOutputMustBeReworked` (`:261`),
@@ -5801,7 +5805,11 @@ Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidat
 "Handling a stale node", "Three ways to open the generation".
 
 **C-5. Pause, cancel and archive stop new assignment and automatic wake and reconcile the in-flight
-state; a cancel is never shown as a completed rollback — met.**
+state; a cancel is never shown as a completed rollback — met.** The two holds are separate and each
+stops what it owns: a node's or the plan's hold stops the scheduler's work on the node, and the
+*relationship's* pause is what withholds automatic wake in the delivery layer. A plan-level hold is
+not a delivery fact and withholds no wake; it stops the release, the acceptance, the correction and
+the merge-lane call for every node of the plan.
 
 A node's or the plan's hold is a plan revision and is read by the scheduler before the edges, so a held
 node is never a candidate (`internal/relay/dag/lifecycle.go:41`, `:75`, `:107`;
@@ -5955,38 +5963,63 @@ it writes first and its region, and it is not implemented here.
 
 *Signatures.*
 `func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stagnation, error)`,
-with `type Stagnation struct { NodeID string; Count int; Cause string; Rung string; Next string; LastEventID string; RecordedAt string }`
-and a closed `Cause` set `repeated_finding | repeated_check_failure | quiet_progress_window` and a
-closed `Rung` set `retry_same_packet | edit_packet | split_node | neighbour_repair | full_replan`,
-mirroring the ladder the research report names. The counter is read from rows the store already keeps
-and adds no writer for them: a node's correction generations (`dag_node_executions`, kind
-`correction`), its merge-check history (`dag_merge_checks`, `round` and the failed required check
-names), its revalidations (`dag_acceptance_revalidations`) and the recorded passes (`dag_passes`).
-The reading carries an optional `stagnation` object beside `release` and `merge_order` on a node
-whose count is not zero, and `pass.stagnation` counts the nodes at each rung, so the object is absent
-from a reading of a plan nobody has corrected twice, exactly as `lifecycle` and `plan_state` are.
+with `type Stagnation struct { NodeID string; Count int; Cause string; Rung string; Next string; FindingDigest string; LastEventID string }`
+and a closed `Cause` set `repeated_finding | repeated_check_failure` and a closed `Rung` set
+`retry_same_packet | edit_packet | split_node | neighbour_repair | full_replan`, mirroring the ladder
+the research report names. The counter is read from rows the store already keeps and adds no writer
+for them: a node's correction generations (`dag_node_executions`, kind `correction`) with the finding
+each ruling carried, its merge-check history (`dag_merge_checks`, `round` and the failed required
+check names) and its revalidations (`dag_acceptance_revalidations`). The reading carries an optional
+`stagnation` object beside `release` and `merge_order` on a node whose count is not zero, and
+`pass.stagnation` counts the nodes at each rung, so the object is absent from a reading of a plan
+nobody has corrected twice, exactly as `lifecycle` and `plan_state` are.
 
-*Appended zone statement.* One table, appended and never an edit:
-`CREATE TABLE IF NOT EXISTS dag_node_stagnation (plan_id TEXT NOT NULL, node_id TEXT NOT NULL, count INTEGER NOT NULL CHECK (count >= 0), last_cause TEXT NOT NULL, last_rung TEXT NOT NULL, last_event_id TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY (plan_id, node_id))`,
-with the column names the existing node-keyed tables use. It reaches the swap gate as
-`EXTENDS_ZONE` with `--backup-state-to`, like the region grades and the other side tables
+*Where the finding identity comes from.* A correction generation's finding is the ruling that opened
+it: `RecordCorrection` reads `verdict_context.findings` of the `needs_changes` verdict whose
+`next_generation` is this generation (`internal/relay/dagsched/correction.go:264-275`), the same join
+`restorationDigest` parses (`:381`). The slice digests the finding entries that are not the
+restoration block — the entries carry an `id` and a `note` — with the relay's canonical-JSON sha256,
+and takes that as the generation's finding identity, so two corrections of one node share an identity
+exactly when the ruling carried the same findings. The restoration entry is excluded because its note
+carries this generation's manifest digest, which differs every round; that is why the identity is
+taken over the remaining entries rather than over the whole text. A generation the coordinator opened
+by hand has no ruling and no findings at all (`recordHandOpened`,
+`internal/relay/dagsched/revalidation.go:103`; [the scheduler](../relay/dag-scheduler.md) "Three ways
+to open the generation"), so it raises no `repeated_finding` count and is counted only as a correction
+generation; a correction whose ruling carried no findings reads the same way.
+
+*Zone.* No statement is appended: the counter is a reading of rows the zone already holds
+(`dag_node_executions`, `dag_merge_checks`, `dag_acceptance_revalidations`, `verdict_context`), so it
+is derived like every other node state and clears by itself when the cause is repaired, exactly as
+invalidation does. If a later issue needs a rung to survive the rows it was read from, its table would
+be appended as a new `CREATE ... IF NOT EXISTS` and would reach the swap gate as `EXTENDS_ZONE` with
+`--backup-state-to`, like the region grades and the other side tables
 ([decision 74](#74-the-dag-zone-is-created-after-the-frozen-schema-is-validated-crw-183-contract-decision-d-01));
-no shipped statement is edited.
+no shipped statement is edited either way.
 
-*Reasons.* No new refusal or reading reason: the ladder's rungs are actions the parent already has —
-`dag-correct` for `edit_packet`, a plan revision with `replace_node` for `split_node` and
-`neighbour_repair`, and a plan revision for `full_replan` — and a rung raised past `full_replan`
-is refused with the existing `disposition_conflict` carrying the rung and the count in the detail,
-which is how the stale routes and the merge lane already refuse. A counter that is not met never
-blocks anything: the reading is advisory, as the merge-order constraint is.
+*No clock.* The reading reads no clock — it is a function of the store, and `Ready`'s own comment says
+so (`internal/relay/dagsched/ready.go:42-43`) — so a cause that needs an elapsed-time boundary is not
+in this slice. `dag-ready` and `dag-release` read the host once per command for the memory bound and
+record that they did; a quiet-window cause would need the same explicit measured instant rather than a
+clock inside the reading. The two causes above are derived from stored rows alone.
+
+*Reasons.* No new refusal or reading reason, and no writer. The ladder's rungs are actions the parent
+already has — `dag-correct` for `edit_packet`, a plan revision with `replace_node` for `split_node`
+and `neighbour_repair`, and a plan revision for `full_replan` — so the reading names a rung and stops
+naming one past `full_replan`; nothing is refused and nothing is written, because a reading that
+mutated the ladder would make two `dag-ready` calls differ, and the object is advisory like the
+merge-order constraint. If a later issue needs a rung to be refused rather than merely named, that
+refusal would reuse the existing `disposition_conflict` with the rung and the count in the detail, as
+the stale routes and the merge lane already refuse.
 
 *Red first.* `TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung` in a new
 `internal/relay/dagsched/stagnation_test.go`: correct one node twice for the same finding digest and
 assert the reading raises `count` to 2 and names `edit_packet`, then a third time and assert it names
 `split_node`; green controls where the second correction carries a different finding and the count
-resets, where a node that landed reads no stagnation object, and where the ladder stops at
-`full_replan` and the next raise is refused `disposition_conflict` with nothing written. A second
-red test covers the cap: `TestTheStagnationLadderStopsAtFullReplan`.
+resets, where a generation the coordinator opened by hand raises no repeated-finding count, where a
+node that landed reads no stagnation object, and where the ladder stops at `full_replan` and the next
+raise is refused `disposition_conflict` with nothing written. A second red test covers the cap:
+`TestTheStagnationLadderStopsAtFullReplan`.
 
 *Not in this slice.* The transport caps of R-8 (`internal/relay/delivery/policy.go`) are unchanged,
 the progress view that CRW-186 owns is not extended here (the scheduler's own reading carries the
