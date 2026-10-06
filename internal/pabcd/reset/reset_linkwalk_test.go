@@ -392,3 +392,132 @@ func TestResetLinkWalkChainThroughRunReset(t *testing.T) {
 		t.Errorf("the target directory must survive: %v", err)
 	}
 }
+
+// TestResetLinkWalkKeepsADotEndingLinkWhenSearchIsDenied: the kernel resolves a final "." or
+// ".." by traversing into the directory the walk reached, which needs search permission on it.
+// The walk reaches that directory with Lstat, which needs none, so without asking the kernel it
+// would call the target present where the oracle's existsSync answers false and rmIfExists keeps
+// the link. The link must stay absent, and reset must continue with the remaining candidates.
+func TestResetLinkWalkKeepsADotEndingLinkWhenSearchIsDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("mode bits do not deny search to root")
+	}
+	for _, tc := range []struct {
+		name, target, dir string
+		mode              os.FileMode
+	}{
+		{"keep_dot_search_denied", "keep/.", "keep", 0o000},
+		{"keep_dotdot_search_denied", "keep/..", "keep", 0o000},
+		{"keep_sub_dot_search_denied", "keep/sub/.", filepath.Join("keep", "sub"), 0o000},
+		{"keep_sub_dotdot_search_denied", "keep/sub/..", filepath.Join("keep", "sub"), 0o000},
+		{"keep_dot_search_only_still_removed", "keep/.", "keep", 0o311},
+		{"keep_dotdot_search_only_still_removed", "keep/..", "keep", 0o311},
+		{"keep_dot_writable_still_removed", "keep/.", "keep", 0o755},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "keep", "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, filepath.Join(dir, "a.json")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(dir, tc.dir), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = os.Chmod(filepath.Join(dir, "keep", "sub"), 0o755)
+				_ = os.Chmod(filepath.Join(dir, "keep"), 0o755)
+			})
+			// The oracle's verdict: an OS stat of the link, which the kernel resolves by traversing
+			// into the directory the target names. Concatenated, not joined, so the "." survives.
+			_, oracleErr := os.Stat(dir + "/a.json")
+			wantExists := oracleErr == nil
+			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v", err)
+			}
+			if got != wantExists {
+				t.Errorf("exists = %v, but the oracle's stat answers %v", got, oracleErr)
+			}
+			// The removal itself, through the entry point, must follow the same verdict.
+			crw := filepath.Join(dir, ".crw")
+			if err := os.MkdirAll(filepath.Join(crw, "sessions"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, filepath.Join(crw, "sessions", "b.json")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RunReset(dir, State); err != nil {
+				t.Fatalf("RunReset: %v", err)
+			}
+			_, linkErr := os.Lstat(filepath.Join(crw, "sessions", "b.json"))
+			if wantExists && linkErr != nil {
+				t.Errorf("the link must be removed: %v", linkErr)
+			}
+			if !wantExists && linkErr != nil {
+				t.Errorf("the link must be kept, and reset must continue: %v", linkErr)
+			}
+		})
+	}
+}
+
+// TestResetLinkWalkKeepsASearchDeniedCandidateAtTheCRWRoot: the candidates judged directly under
+// .crw (the ledger, interviews and the recovery markers) take the same judgement, so a link there
+// whose target ends in a dot component and names a directory that cannot be searched is kept and
+// the reset continues with the candidates after it.
+func TestResetLinkWalkKeepsASearchDeniedCandidateAtTheCRWRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("mode bits do not deny search to root")
+	}
+	for _, tc := range []struct {
+		name, target string
+		mode         os.FileMode
+		wantRemoved  bool
+	}{
+		{"interviews_dot_search_denied", "keep/.", 0o000, false},
+		{"interviews_dotdot_search_denied", "keep/..", 0o000, false},
+		{"interviews_dot_search_only", "keep/.", 0o311, true},
+		{"interviews_dot_writable", "keep/.", 0o755, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			crw := filepath.Join(root, ".crw")
+			if err := os.MkdirAll(filepath.Join(crw, "keep"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(crw, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(crw, "ledger.jsonl"), []byte("ledger"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, filepath.Join(crw, "interviews")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(crw, "keep"), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(filepath.Join(crw, "keep"), 0o755) })
+			got, err := RunReset(root, State)
+			if err != nil {
+				t.Fatalf("RunReset: %v", err)
+			}
+			link := filepath.Join(crw, "interviews")
+			_, linkErr := os.Lstat(link)
+			if tc.wantRemoved && !errors.Is(linkErr, os.ErrNotExist) {
+				t.Errorf("the link must be removed: %v (removed %v)", linkErr, got.Removed)
+			}
+			if !tc.wantRemoved && linkErr != nil {
+				t.Errorf("the link must be kept: %v (removed %v)", linkErr, got.Removed)
+			}
+			// The reset must reach the candidates after interviews whatever the verdict was.
+			if _, err := os.Lstat(filepath.Join(crw, "ledger.jsonl")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the reset must continue past the candidate: %v", err)
+			}
+		})
+	}
+}

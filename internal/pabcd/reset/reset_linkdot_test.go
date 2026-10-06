@@ -165,10 +165,10 @@ func TestResetLinkDotTargetFailsClosedWhenThePinnedPathMoved(t *testing.T) {
 }
 
 // TestResetLinkDotTargetFromACwdOutsideTheProcessDirectory: RunReset takes its workspace as an argument,
-// which need not be the process working directory. The dot-ending branch stats the root's own path, so
-// that path must stay absolute and name the pinned directory: os.OpenRoot keeps the name it was given and
-// Root.OpenRoot joins the parent's name with the child's, so the check concerns the supplied cwd, not the
-// process directory. The dot-ending link is removed and its target survives.
+// which need not be the process working directory. The judgement walks the target through the pinned
+// descriptor and never uses the root's path name, so it concerns the supplied cwd alone: the walk is
+// anchored at the descriptor os.OpenRoot opened for that cwd, and Root.Name keeps the name it was given
+// only for the out-of-root fallback. The dot-ending link is removed and its target survives.
 func TestResetLinkDotTargetFromACwdOutsideTheProcessDirectory(t *testing.T) {
 	process, err := os.Getwd()
 	if err != nil {

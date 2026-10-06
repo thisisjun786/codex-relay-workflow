@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"golang.org/x/sys/unix"
 )
 
 type ResetScope string
@@ -211,13 +212,23 @@ func resetLinkWalkTarget(root *os.Root, target string) (exists, dotEnding, insid
 		component := remaining[0]
 		remaining = remaining[1:]
 		switch component {
-		case "", ".":
+		case "":
 			continue
-		case "..":
-			if len(walked) == 0 {
+		case ".", "..":
+			if component == ".." && len(walked) == 0 {
 				return false, dotEnding, false // above the root
 			}
-			walked = walked[:len(walked)-1]
+			if len(remaining) == 0 && !resetLinkWalkSearchable(root, walked) {
+				// The kernel resolves a final "." or ".." by traversing into the directory the walk
+				// reached, which needs search permission on it; the OS stat the oracle uses answers
+				// EACCES without that permission and the link is kept. The walk reached the
+				// directory with Lstat, which needs none, so ask the kernel here and answer absent
+				// when it cannot search: the oracle answer and the data-preserving direction.
+				return false, dotEnding, true
+			}
+			if component == ".." {
+				walked = walked[:len(walked)-1]
+			}
 			continue
 		}
 		path := resetLinkWalkPath(walked, component)
@@ -260,6 +271,33 @@ func resetLinkWalkTarget(root *os.Root, target string) (exists, dotEnding, insid
 }
 
 // resetLinkWalkDotEnding reports whether the last component still to walk is "." or "..", ignoring
+// resetLinkWalkSearchable reports whether the kernel could look a name up inside the directory the
+// walked components name, which is what resolving a final "." or ".." relative to that directory
+// needs. It asks through the pinned root's own descriptor, where a name inside the directory
+// answers ENOENT when the directory may be searched and EACCES when it may not, and it opens no
+// directory for reading (CRW-554) and creates nothing. A directory the kernel cannot search, and a
+// question it cannot answer at all, are both reported as not searchable.
+func resetLinkWalkSearchable(root *os.Root, walked []string) bool {
+	name := resetLinkWalkSearchProbe
+	if len(walked) > 0 {
+		name = strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + name
+	}
+	dir, err := root.Open(".")
+	if err != nil {
+		return false
+	}
+	defer dir.Close()
+	var st unix.Stat_t
+	// The name is concatenated by hand, never filepath.Join, which would clean away the "." and
+	// ".." components this judgement exists for.
+	err = unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW)
+	return err == nil || errors.Is(err, unix.ENOENT)
+}
+
+// resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point
+// is only whether the kernel may look it up, which it answers with ENOENT or EACCES.
+const resetLinkWalkSearchProbe = ".crw822searchprobe"
+
 // trailing separators. It is read at the top of each step so it survives both a spliced link target
 // and an early exit.
 func resetLinkWalkDotEnding(remaining []string) bool {
