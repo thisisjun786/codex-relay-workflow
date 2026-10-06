@@ -272,7 +272,15 @@ func (s *githubPostScan) api(args []githubPostWord) (githubPostSite, bool) {
 				continue
 			}
 			file := o.name == "-F" || o.name == "--field"
-			for _, field := range githubPostFieldKeys(key) {
+			// A nested key is read by its top-level and its terminal field, the two GitHub reads.
+			fields := []string{key}
+			if i := strings.IndexByte(key, '['); i >= 0 {
+				fields = append(fields, key[:i])
+			}
+			if i := strings.LastIndexByte(key, '['); i >= 0 {
+				fields = append(fields, strings.TrimSuffix(key[i+1:], "]"))
+			}
+			for _, field := range fields {
 				switch {
 				case field == "body" && file && strings.HasPrefix(value, "@"):
 					site, no = s.file(githubPostWord{text: strings.TrimPrefix(value, "@")})
@@ -744,11 +752,7 @@ func githubPostMentions(text string) bool {
 			if text[i:i+len(word)] != word {
 				continue
 			}
-			before, after := "", text[i+len(word):]
-			if i > 0 {
-				before = text[i-1 : i]
-			}
-			if !githubPostWordByte(before) && !githubPostWordByte(after) {
+			if !githubPostWordByte(text, i-1) && !githubPostWordByte(text, i+len(word)) {
 				return true
 			}
 		}
@@ -757,12 +761,17 @@ func githubPostMentions(text string) bool {
 	return present("gh") && (present("pr") || present("issue") || present("api"))
 }
 
-// githubPostWordByte is whether the text begins with a byte that continues a shell word.
-func githubPostWordByte(rest string) bool {
-	if rest == "" {
+// githubPostWordByte is whether the byte of text at i continues a shell word; an index off either end is
+// a boundary, so a word that starts or ends the text counts.
+func githubPostWordByte(text string, i int) bool {
+	if i < 0 || i >= len(text) {
 		return false
 	}
-	c := rest[0]
-	return c == '_' || c == '-' || c == '.' || c == '/' ||
-		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c >= 0x80
+	switch c := text[i]; {
+	case c == '_' || c == '-' || c == '.' || c == '/' || c >= 0x80:
+		return true
+	case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9':
+		return true
+	}
+	return false
 }
