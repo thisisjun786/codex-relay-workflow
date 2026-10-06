@@ -50,6 +50,7 @@ type attentionField struct {
 // attentionFields is the design's path-field table, by record kind. An arbitrary string stays opaque and is never scanned.
 var attentionFields = map[string][]attentionField{
 	"session": {{path: []string{"planUnit"}}, {path: []string{"boundSourceRoot"}}, {path: []string{"phaseEntrySource", "sourceRoot"}},
+		{path: []string{"unverifiedSubagents", "*", "receiptClaimed"}},
 		{path: []string{"phase"}, kind: AttentionFreshness}},
 	"attest": {{path: []string{"planUnit"}}, {path: []string{"planPaths", "*"}}, {path: []string{"testReceiptPath"}}},
 	"goalplan": {{path: []string{"finalGate", "testReceiptPath"}}, {path: []string{"finalGate", "qaReceiptPath"}},
