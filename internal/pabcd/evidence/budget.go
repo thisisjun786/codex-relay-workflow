@@ -94,7 +94,9 @@ func resolveTombstone(cwd, sessionID string, p Payload, lock lockFunc, published
 			return nil
 		}
 		s.SessionID, s.UnverifiedSubagents = sessionID, next
-		if err := write(cwd, s); err != nil {
+		// The removal was published when the write reports state.Published, so it counts as removed although the
+		// directory sync failed afterwards.
+		if err := write(cwd, s); err != nil && !state.Published(err) {
 			return err
 		}
 		removed = true

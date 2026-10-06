@@ -97,7 +97,10 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		}), entry)
 		return write(cwd, s)
 	}
-	if lock(cwd, sessionID, commit) == nil {
+	// A commit whose state reached the final path is committed, even when the write then failed the directory sync: the
+	// tombstone is already in the file every reader sees, so the sentinel tier must not run and stamp unverifiedCorrupt on
+	// a healthy session (the goal-complete gate then refuses it as unreadable).
+	if err := lock(cwd, sessionID, commit); err == nil || state.Published(err) {
 		return true
 	}
 	raiseSentinel := func() error {
