@@ -952,13 +952,22 @@ that replaces that one field:
 
 It takes the file from the same `--execution-policy` flag the create path spells, reads and writes
 under the ownership lock beside the record, and replaces `executionPolicy` alone: `path` and
-`digest` become the new file's values and every other field keeps its bytes and its order. The new
-file goes through the bridge's own parser first, exactly as the create path checks it, so a policy
-the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is written.
-Before the replacement the record is copied, byte for byte, to `<record>.crw-<timestamp>.bak` beside
-it; the new record is then published atomically (a temporary file, fsync, rename, and a directory
-fsync) and read back. The answer is `record_updated` and names the replaced field, the new policy's
-mode and role pairs, and the backup path.
+`digest` become the new file's values and every other field keeps its bytes and its order. That
+promise holds for a record this installer wrote: a record in another spelling is refused as
+`record_not_canonical`, because publishing it would reserialize the fields this path leaves alone.
+The new file goes through the bridge's own parser first, exactly as the create path checks it, so a
+policy the bridge would refuse to start under answers `execution_policy_unreadable` and nothing is
+written. The bridge's second owner is refused here too: a `config.toml` entry that also starts this
+bridge answers `CONFLICT`, as it does on the create path.
+
+Before the replacement the record is copied, byte for byte as this run read it, to
+`<record>.crw-<timestamp>.bak` beside it; the new record is then published durably (a temporary file
+in the same directory, fsync of its contents, rename, and a directory fsync), read back, and the
+policy file hashed once more. The answer is `record_updated` and names the replaced field, the new
+policy's mode and role pairs, and the backup path. A read-back that does not match answers
+`record_applied_unverified` (exit 1, the record is in place and must not be relied on); a policy
+file that changed while the record was being published answers `record_policy_changed` with
+`applied` true, because the record was written and the launcher will refuse its digest.
 
 The other answers are the create path's own: a record that already names this policy is left as it is
 and answered `record_unchanged`, a host with no record at all is answered `record_absent` (register

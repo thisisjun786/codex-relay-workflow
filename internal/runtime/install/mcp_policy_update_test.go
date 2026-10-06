@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,21 @@ const policyTextChanged = `{"allowed": [{"model": "gpt-5", "efforts": ["high"]},
 // so no path a run can read or write leaves the test's own temporary tree.
 func (h *host) reRegisterEnv() scope.Env {
 	return append(append(scope.Env{}, h.env...), "CRW_HOME="+filepath.Join(h.home, "crw-home"))
+}
+
+// handEditedRecord is the record a person would write by hand: the same fields as
+// install.BridgeDocument, in another spelling (one line per field, a different key order), so a test
+// can pin what the re-registration path does with a record this installer did not write.
+func handEditedRecord(executable, policy, digest string) string {
+	return "{" + "\n" +
+		"  " + strconv.Quote("recordVersion") + ": 2," + "\n" +
+		"  " + strconv.Quote("owner") + ": " + strconv.Quote("plugin") + "," + "\n" +
+		"  " + strconv.Quote("serverName") + ": " + strconv.Quote("bridge") + "," + "\n" +
+		"  " + strconv.Quote("bridgeExecutable") + ": " + strconv.Quote(executable) + "," + "\n" +
+		"  " + strconv.Quote("args") + ": []," + "\n" +
+		"  " + strconv.Quote("installedBy") + ": " + strconv.Quote("CRW-158") + "," + "\n" +
+		"  " + strconv.Quote("executionPolicy") + ": {" + strconv.Quote("path") + ": " + strconv.Quote(policy) + ", " + strconv.Quote("digest") + ": " + strconv.Quote(digest) + "}" + "\n" +
+		"}" + "\n"
 }
 
 // realHomeListings is the listing of the real home's Codex and CRW directories. A test compares it
@@ -269,17 +285,54 @@ func TestReRegisterPolicyRefusesAndWritesNothing(t *testing.T) {
 	if result, code, _ := h.updatePolicy(t, "--execution-policy", policy, "--dry-run"); code != install.OK || at(result, "outcome") != install.RecordWouldUpdate || at(result, "wrote") != false {
 		t.Fatalf("a dry run: exit %d\n%s", code, golden.Canon(result))
 	}
-	// Another writer replaces the record between the decision and the lock: the write lands only on
-	// the document the decision was made from, so this is refused rather than overwriting it.
-	restore := install.ReplaceBeforeWriteLock(func(path string) {
-		write(t, path, string(record.Encode(install.BridgeDocument(filepath.Join(h.dest, "current", "bin", "codex-thread-bridge"), nil, install.ServerName, "CRW-158", record.Object{{Key: "path", Value: policy}, {Key: "digest", Value: digestOf(policyTextChanged)}}))))
-	})
+	// Another writer replaces the record after the backup and before the replacement: the
+	// replacement is refused rather than overwriting it, and the backup holds the document this
+	// decision read.
+	edited := string(record.Encode(install.BridgeDocument(filepath.Join(h.dest, "current", "bin", "codex-thread-bridge"), nil, install.ServerName, "CRW-158", record.Object{{Key: "path", Value: policy}, {Key: "digest", Value: digestOf(policyTextChanged)}})))
+	restore := install.ReplaceBeforeWriteLock(func(path string) { write(t, path, edited) })
 	changed, code, _ := h.updatePolicy(t, "--execution-policy", policy)
 	restore()
-	if code != install.Refused || at(changed, "outcome") != install.RecordChangedUnderneath {
+	if code != install.Refused || at(changed, "outcome") != install.RecordChangedUnderneath || readFile(t, recordPath) != edited {
 		t.Fatalf("a record replaced underneath: exit %d\n%s", code, golden.Canon(changed))
 	}
-	// Put the record back for the assertions below.
+	if backup := text(at(changed, "backup")); backup == "" || readFile(t, backup) != before {
+		t.Fatalf("the backup is not the document the decision read: %q", backup)
+	} else if err := os.Remove(backup); err != nil {
+		t.Fatal(err)
+	}
+	write(t, recordPath, before)
+	// A record in a spelling this installer does not write: the fields this path does not replace
+	// would be reserialized, so it is refused rather than rewritten.
+	handEdited := handEditedRecord(filepath.Join(h.dest, "current", "bin", "codex-thread-bridge"), policy, digestOf(policyTextChanged))
+	write(t, recordPath, handEdited)
+	nonCanonical, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+	if code != install.Refused || at(nonCanonical, "outcome") != install.RecordNotCanonical || readFile(t, recordPath) != handEdited {
+		t.Fatalf("a record this installer did not write: exit %d\n%s", code, golden.Canon(nonCanonical))
+	}
+	write(t, recordPath, before)
+	// A Codex configuration that also starts the bridge: the second owner the create path refuses.
+	write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.bridge-by-hand]\ncommand = "+strconv.Quote("/opt/env/bin/codex-thread-bridge")+"\nargs = []\n")
+	second, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+	if code != install.Refused || at(second, "outcome") != install.Conflict || !strings.Contains(text(at(second, "detail")), "bridge-by-hand") || readFile(t, recordPath) != before {
+		t.Fatalf("a second owner: exit %d\n%s", code, golden.Canon(second))
+	}
+	os.Remove(filepath.Join(h.codex, "config.toml"))
+	// An editor rewrites the policy file while the record is being published: the record keeps the
+	// digest this run read, and the answer says the policy has moved since rather than reporting a
+	// clean update.
+	restorePolicy := install.ReplaceBeforeWriteLock(func(path string) {
+		write(t, policy, policyTextChanged+" ")
+	})
+	moved, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+	restorePolicy()
+	if code != install.Refused || at(moved, "outcome") != install.RecordPolicyChanged || at(moved, "applied") != true || at(moved, "wrote") != true {
+		t.Fatalf("a policy rewritten during publication: exit %d\n%s", code, golden.Canon(moved))
+	}
+	if err := os.Remove(text(at(moved, "backup"))); err != nil {
+		t.Fatal(err)
+	}
+	write(t, policy, policyTextChanged)
+	os.Chmod(policy, 0o644)
 	write(t, recordPath, before)
 	if readFile(t, recordPath) != before || entries() != beforeEntries {
 		t.Fatalf("a refusal changed CODEX_HOME: %s", entries())
