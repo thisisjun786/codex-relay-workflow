@@ -19,6 +19,7 @@ import (
 // The fake reexecutes this Go test binary; no Node or real Codex is involved.
 // Its target survives TestMain's nested isolation through this explicit test-only env.
 func TestFeatureCodexHelper(t *testing.T) {
+	t.Parallel()
 	home := os.Getenv("CRW499_FAKE_HOME")
 	if home == "" {
 		return
@@ -125,6 +126,7 @@ func (h featureHome) success(args ...string) string {
 
 // Command cases of auto-enable.test.ts:85-185, driven through the public CLI.
 func TestFeaturesManagedKeyRoundTrips(t *testing.T) {
+	t.Parallel()
 	for _, prior := range []string{"", "false", "true", `"oops`} {
 		t.Run(prior, func(t *testing.T) {
 			content := "[memories]\ngenerate_memories = true\n"
@@ -181,6 +183,7 @@ func TestFeaturesManagedKeyRoundTrips(t *testing.T) {
 }
 
 func TestFeaturesSoftAndHardFailures(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"goals", "default_mode_request_user_input"} {
 		t.Run(key, func(t *testing.T) {
 			h := newFeatureHome(t, "[features]\n")
@@ -223,6 +226,7 @@ func TestFeaturesSoftAndHardFailures(t *testing.T) {
 }
 
 func TestFeaturesHelpUsageAndStatus(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"enable", "disable", "status", "unknown"} {
 		for _, help := range []string{"--help", "-h", "help"} {
 			h := newFeatureHome(t, "unchanged\n")
@@ -258,6 +262,7 @@ func TestFeaturesHelpUsageAndStatus(t *testing.T) {
 }
 
 func TestFeaturesDisableBranches(t *testing.T) {
+	t.Parallel()
 	h := newFeatureHome(t, "[features]\nhooks = true\n[memories]\ngenerate_memories = true\n")
 	if out := h.success("disable"); out != "crw: no install manifest; nothing to revert\n" {
 		t.Fatal(out)
@@ -289,6 +294,7 @@ func TestFeaturesDisableBranches(t *testing.T) {
 }
 
 func TestFeaturesUnreadableSettingsAndManifest(t *testing.T) {
+	t.Parallel()
 	for _, file := range []string{"config.toml", configguard.InstallManifestName, configguard.SelfHealMarkerName} {
 		t.Run(file, func(t *testing.T) {
 			h := newFeatureHome(t, "[features]\n")
@@ -317,6 +323,7 @@ func TestFeaturesUnreadableSettingsAndManifest(t *testing.T) {
 }
 
 func TestFeaturesHomeTrimAndFallback(t *testing.T) {
+	t.Parallel()
 	h := newFeatureHome(t, "[features]\n")
 	h.env = h.env.With("CODEX_HOME", "\ufeff \t"+h.home+"\n\u00a0")
 	h.success("enable")
@@ -331,6 +338,7 @@ func TestFeaturesHomeTrimAndFallback(t *testing.T) {
 }
 
 func TestFeaturesWarningFallback(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"default_mode_request_user_input", "some_future_flag"} {
 		out := featureWarning(key, nil)
 		if !strings.Contains(out, "경고") || strings.Contains(out, "exit") || !strings.Contains(out, "codex features enable "+key) {
@@ -343,6 +351,7 @@ func TestFeaturesWarningFallback(t *testing.T) {
 }
 
 func TestFeaturesRunnerBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"utf8", "overflow", "missing", "denied", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
 			h := newFeatureHome(t, "")
@@ -379,6 +388,7 @@ func TestFeaturesRunnerBoundaries(t *testing.T) {
 }
 
 func TestFeaturesExternalOwnership(t *testing.T) {
+	t.Parallel()
 	for _, reason := range []string{"missing", "changed", "unverifiable"} {
 		t.Run(reason, func(t *testing.T) {
 			h := newFeatureHome(t, "[memories]\ngenerate_memories = true\n")
@@ -415,6 +425,7 @@ func TestFeaturesExternalOwnership(t *testing.T) {
 }
 
 func TestFeaturesBackupAndEmptySuccess(t *testing.T) {
+	t.Parallel()
 	original := "# keep\n[features]\nmulti_agent = true\ngoals = true\nhooks = true\ndefault_mode_request_user_input = true\n[memories]\ndedicated_tools = true\n"
 	h := newFeatureHome(t, original)
 	if out := h.success("enable"); !strings.HasPrefix(out, "crw: enabled [none]\nbackup: ") {
@@ -434,6 +445,7 @@ func TestFeaturesBackupAndEmptySuccess(t *testing.T) {
 }
 
 func TestFeaturesEmptyHomeStaysAtWorkingDirectory(t *testing.T) {
+	t.Parallel()
 	// Assert the resolver alone: even the broken account-home fallback must never
 	// reach a mutating command in this regression's RED state.
 	home, err := resolveFeatureHome(scope.Env{"HOME=", "CODEX_HOME= \ufeff\t"})
@@ -443,6 +455,7 @@ func TestFeaturesEmptyHomeStaysAtWorkingDirectory(t *testing.T) {
 }
 
 func TestFeaturesKeepsInstallerHelp(t *testing.T) {
+	t.Parallel()
 	var out, err bytes.Buffer
 	code := Main(context.Background(), []string{"help"}, nil, &out, &err)
 	want := "usage: crw install {install,update,rollback,remove,status,register-mcp,hook,register-service} ...\n"

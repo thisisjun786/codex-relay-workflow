@@ -19,7 +19,7 @@ const LeafGuardBlock = `[CRW-LEAF-GUARD] You are a LEAF agent with a single boun
 CONSTRAINTS from your dispatcher: (1) Do NOT spawn
 sub-agents (no spawn_agent calls, no delegation chains). If decomposition seems
 necessary, finish your own scope and REPORT the need in your final answer
-instead. (2) Do NOT run crw orchestrate, crw loop, or goal commands - the
+instead. (2) Do NOT run crw pabcd orchestrate, crw pabcd loop, or goal commands - the
 parent session owns all FSM/goal state. (3) Stay inside the task's stated
 file/write scope. These dispatcher constraints are enforced by a spawn hook (a
 recursive spawn without a grant is DENIED at the tool boundary, regardless of
@@ -35,7 +35,7 @@ may be working in the same tree right now.`
 // LeafGuardBlockCoordinator is the oracle guidance with CRW names; this library activates no guard.
 const LeafGuardBlockCoordinator = `[CRW-LEAF-GUARD] You are a COORDINATOR agent with a single bounded task. HARD
 CONSTRAINTS from your dispatcher:
-(1) Recursion is authorized for this task. (2) Do NOT run crw orchestrate, crw loop, or goal commands - the
+(1) Recursion is authorized for this task. (2) Do NOT run crw pabcd orchestrate, crw pabcd loop, or goal commands - the
 parent session owns all FSM/goal state. (3) Stay inside the task's stated
 file/write scope. All remaining constraints still apply.
 (4) You share the parent's working directory, branch and HEAD - this is not a
