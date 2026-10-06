@@ -60,6 +60,8 @@ func TestOwnReceipt01_ATurnThatAlreadyReportedIsNotObservedAgain(t *testing.T) {
 		{"the observed turn reported ready_for_review and is owed a queued delivery", "business", "interrupted", "ready_for_review", "final", "", owedQueued, true},
 		{"the observed turn reported ready_for_review and is owed a withheld delivery", "business", "interrupted", "ready_for_review", "final", "", "withheld_pre_send", true},
 		{"the observed turn reported ready_for_review and its enqueue will be retried", "business", "failed", "ready_for_review", "final", "", owedIntent, true},
+		{"the observed turn's receipt was already sent to the parent", "business", "interrupted", "ready_for_review", "final", "", "dispatched", true},
+		{"the observed turn's receipt is in the recipient's inbox", "business", "interrupted", "ready_for_review", "final", "", "inbox_only", true},
 		{"the observed turn asked a question and is owed a queued delivery", "business", "interrupted", "blocked_needs_input", "final", "", owedQueued, true},
 		{"the anchor turn reported and is owed a queued delivery", "anchor", "failed", "ready_for_review", "final", "", owedQueued, true},
 		{"control: the observed turn reported and is owed no delivery", "business", "interrupted", "ready_for_review", "final", "", "", false},
