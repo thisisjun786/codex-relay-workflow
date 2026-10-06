@@ -95,6 +95,17 @@ func TestCRW681ShapeRefusesNotRunOnAnotherConclusion(t *testing.T) {
 			t.Fatalf("notRun true on %s must be malformed, got %v", conclusion, problems)
 		}
 	}
+
+	// The comparison is exact: the collector emits the forge's canonical spelling, so a restated
+	// record that spells a step-less conclusion another way is refused rather than read as one of
+	// them, and cannot steer the lane toward a rerun.
+	for _, conclusion := range []string{"FAILURE", "Failure", " failure ", "CANCELLED", "timed-out"} {
+		entry := crw681Entry("workflow-run:504:dev-gate#0", "dev-gate", conclusion, 1, true)
+		problems := ShapeProblems(cleanReview(), []any{entry}, nil, nil)
+		if len(problems) != 1 || problems[0].Code != Malformed {
+			t.Fatalf("notRun true on %q must be malformed, got %v", conclusion, problems)
+		}
+	}
 }
 
 // The predicate counts a step-less job of the three conclusions as one that never ran, so a

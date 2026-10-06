@@ -230,24 +230,20 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 	return problems
 }
 
-// stepLessConclusion reports whether a conclusion is one a job that began no step can carry:
-// cancelled, failure or timed_out. It is the one place the collector's mark and the shape check
-// agree on, so a restated record and the collector cannot drift apart (CRW-681).
+// stepLessConclusion reports whether a conclusion is exactly one a job that began no step can
+// carry: cancelled, failure or timed_out. The comparison is exact rather than normalized, because
+// the collector emits the forge's canonical spelling and a restated record that spells one of these
+// another way must be refused rather than read as one of them (CRW-681).
 func stepLessConclusion(conclusion any) bool {
-	switch textOfConclusion(conclusion) {
+	s, ok := conclusion.(string)
+	if !ok {
+		return false
+	}
+	switch s {
 	case "cancelled", "failure", "timed_out":
 		return true
 	}
 	return false
-}
-
-// textOfConclusion reads a conclusion field as the lower-cased string the shape check compares.
-func textOfConclusion(value any) string {
-	s, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // workflowRun is the workflow run a check entry belongs to, read from the collector's
@@ -329,11 +325,16 @@ func beganFailureBeside(checks []any, run string, at *big.Int, requiredRunId str
 	return false
 }
 
-// failureConclusion reports whether a sibling conclusion is a real failure: failure or timed_out.
-// A cancelled, skipped or neutral job is not a failure standing beside the required check, and a
-// restated record that says one is cannot make the lane treat the run as tested (CRW-681).
+// failureConclusion reports whether a sibling conclusion is exactly a real failure: failure or
+// timed_out. A cancelled, skipped or neutral job is not a failure standing beside the required
+// check, and a restated record that spells a real failure another way cannot make the lane treat
+// the run as tested (CRW-681).
 func failureConclusion(conclusion any) bool {
-	switch textOfConclusion(conclusion) {
+	s, ok := conclusion.(string)
+	if !ok {
+		return false
+	}
+	switch s {
 	case "failure", "timed_out":
 		return true
 	}
