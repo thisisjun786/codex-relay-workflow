@@ -446,8 +446,11 @@ func (r *startRun) scan(ctx context.Context, base reconciliation) (decision, err
 			th := pyjson.Map(read["thread"])
 			created, ok := epoch(th["createdAt"])
 			name, model, effort := pyjson.Text(th["name"]), pyjson.Text(th["model"]), pyjson.Text(th["reasoningEffort"])
+			// The creation set the host name to childTitle's answer, so a thread this engine named carries the
+			// normalized title; the raw title stays accepted so a thread an older build named is still adopted.
+			title := pyjson.Text(child["title"])
 			if cwds[pyjson.Text(th["cwd"])] && ok && created >= math.Floor(started)-2 && created <= ended+r.m.grace().Seconds() && th["ephemeral"] != true && pyjson.Text(th["parentThreadId"]) == "" &&
-				strings.TrimSpace(pyjson.Text(th["preview"])) == "" && (name == "" || name == pyjson.Text(child["title"])) &&
+				strings.TrimSpace(pyjson.Text(th["preview"])) == "" && (name == "" || name == title || name == childTitle(r.identity.IssueKey, title)) &&
 				(model == "" || model == pyjson.Text(settings["model"])) && (effort == "" || effort == pyjson.Text(settings["reasoningEffort"])) {
 				matches = append(matches, id)
 			}

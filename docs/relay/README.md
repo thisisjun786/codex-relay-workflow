@@ -338,6 +338,14 @@ described under [authorized execution settings](#authorized-execution-settings).
 pair is the exact model and reasoning effort declared for that role by the execution policy;
 both the caller and live worker must report the same policy digest.
 
+The name the engine gives the child is `child.title` normalized with the request's `issueKey`:
+a title that already starts with the key, followed by the end of the title or a character that
+is neither a letter nor a digit, is sent as it is; any other nonempty title is sent as
+`<issueKey> · <title>` (middle dot U+00B7, one space each side); an empty title sends no name.
+The rule applies to the name the host is given on `thread/start` and again when the engine
+renames the thread after an adopted standby. It never rewrites the stored request or its
+fingerprint, so a repeat of the same request is still the same replay.
+
 The entry reserves the issue before asking the bridge to create a standby task. It then binds
 the returned task and turn to the marker, registry, criteria and settings before sending the
 business prompt. The standby prompt does no implementation work. A missing or mismatching live
