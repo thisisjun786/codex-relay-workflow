@@ -5701,10 +5701,16 @@ with `SQLITE_IOERR_SHORT_READ (522)` and "malformed", recorded the failure as a 
 kept writing (the incident's `audit-tail-fault_occurrences.json`, summarised in
 `db-hardening/design-evidence.md` section 3). The surviving journal shows the split: seq
 18029 was followed by 18030 with the writes between them gone, and the later writer did not
-see them. The result codes that matter are `SQLITE_CORRUPT` (11), `SQLITE_NOTADB` (26) and
-`SQLITE_IOERR_SHORT_READ` (522); the runtime already classifies the first two when it words a
-stored SQLite failure (`internal/relay/store/pyerr.go:142-150`, which maps 26 and 11 to
-Python's `DatabaseError`), so the codes are readable today and only the reaction is missing.
+see them. The trigger is a result code **class**, not three literals: the primary code 11
+(`SQLITE_CORRUPT`) with every extended result under it, plus `SQLITE_NOTADB` (26) and
+`SQLITE_IOERR_SHORT_READ` (522). The corruption class is why the trigger is written as the
+masked primary code and not as a list of the values seen on 2026-10-06: the runtime already
+classifies a stored SQLite failure that way (`internal/relay/store/pyerr.go:142-150` masks
+`Code() & 0xff` and maps 26 and 11 to Python's `DatabaseError`), and an extended
+corruption such as `SQLITE_CORRUPT_VTAB` (267), `SQLITE_CORRUPT_SEQUENCE` (523) or
+`SQLITE_CORRUPT_INDEX` (779) would otherwise let the daemon go on writing, which is exactly
+the fail-closed gap this item closes. The codes are readable today and only the reaction is
+missing.
 
 | Option | What it means | How it scores against the criteria |
 | --- | --- | --- |
@@ -5775,12 +5781,25 @@ the first criterion rather than left as an alternative. What the command must pr
 writes is the incident script's precondition list, which is the de-facto specification: the
 candidate's sha256 matches its provenance record; the candidate passes `integrity_check` and
 `foreign_key_check`; the candidate's `schema_meta` ownership keys equal the live
-`takeover.json` values; the write gate is held exclusively; no other process holds the store
-files open; the pre-restore state is copied byte for byte with a manifest; and after the copy
-the device:inode and the `takeover.json` hash are unchanged and the file and its directory
-are fsynced. The post-restore proof is the reading that already exists:
+`takeover.json` values; the write gate is held exclusively; the pre-restore state is copied
+byte for byte with a manifest; and after the copy the device:inode and the
+`takeover.json` hash are unchanged and the file and its directory are fsynced. The
+exclusive write gate is not on its own enough to establish that nothing else holds the files
+open: a read-only opener takes neither admission nor the write gate
+(`internal/relay/store/hold.go:285-302`, `OpenReadOnlyStore`), so a `doctor` or a
+reconciliation process can open the database after any handle scan and during the copy. The
+command therefore needs a barrier a read-only open also observes; the process-handle scan the
+incident script ran is not that barrier, and saying the write gate gives it would be false.
+That barrier is a requirement of S2.
+
+The post-restore proof is the reading that already exists:
 `doctor --expect-store --expect-inode` (`internal/relay/cli/doctor.go:100-101`,
-`internal/relay/store/compare.go:51-106`, which grades `proven`/`unproven`/`mismatch`). The
+`internal/relay/store/compare.go:51-106`). Those two flags alone answer `unproven`, not
+`proven`: `CompareStore` requires a found, attributed nonce and an agreeing log location as
+well (`internal/relay/store/compare.go:51-105`), so the procedure is `doctor` with
+`--expect-store`, `--expect-inode` and `--expect-log`, plus the nonce the restore wrote before
+it stopped the store. The section states the whole proof rather than the two flags, so the
+slice cannot ship a restore whose own acceptance check refuses. The
 issue body and the recovery answer spell the first flag `--expect-store-id`; the real flag is
 `--expect-store` (`internal/relay/argparse/specs.json:528`), and this section uses the real
 name. One sub-question is not answered by the body and is left to management: whether the
@@ -5817,11 +5836,19 @@ left to elimination: (a) is refused by the first criterion, and (c) is left open
 method this issue ships is the read-only one. The first criterion settles the part this
 section can settle - the write gate is not weakened, and (a) is refused on that ground alone -
 and the body's own split ("migration and operating choices are decided by management, then
-Lina, then Jun") reserves the migration question that (c) turns on. blocked_needs_input:
-management, Lina and Jun must decide whether an isolated validation copy ever carries
-re-stamped managed fingerprints, and if so what marks them. Until that is answered the
-isolated validation that ships is (b): the reconciliation command of item 5 and the identity
-recomputation of item 7 both run read-only on a copy and need no new ownership.
+Lina, then Jun") reserves the migration question that (c) turns on.
+
+What (b) reads is decided too, because a copy is not the store it came from: the simulation
+recomputes a request's identity against the identity the *copy* records for itself, or
+against the original identity the operator names, and never against the copy's own device and
+inode as though they were the store's. Item 5 says which identity the reconciliation compares
+and why a recomputation against the copy's physical identity would fail on every healthy row.
+That is the same reading rule, applied to the same inputs.
+
+blocked_needs_input: management, Lina and Jun must decide whether an isolated validation copy
+ever carries re-stamped managed fingerprints, and if so what marks them. Until that is
+answered the isolated validation that ships is (b): the reconciliation command of item 5 and
+the identity recomputation of item 7 both run read-only on a copy and need no new ownership.
 
 Evidence: `internal/relay/store/ownership.go:96-131` (the fence),
 `756-offline-request-replay.json` and `RECOVERY-STATUS.json` `candidate_do_not_use`,
@@ -5851,20 +5878,31 @@ the frozen snapshot with an empty log.
 | (c) The online snapshot, taken only when an operator asks, as an addition | The same artifact with no always-on machinery | Still needs a destination and a retention answer, but it is the safe way to add the online form if one is wanted |
 
 Decision: the mechanism is decided here, and so is the default. A consistent backup is either
-the stopped byte copy CRW-805 and CRW-837 already own, reused unchanged, or an online
-`sqlite3_backup` image, and either one must pass `integrity_check` before it may be named as
-a restore candidate - which is what the incident's own restore required of its candidate. The
-default stays the stopped byte copy, option (a): it is the artifact the product already ships
-and the one the 2026-10-06 restore consumed, so the backup route and the restore route agree
-by construction, and criterion 4 ("the hand recovery becomes a product command that can be
-run again") is satisfied without new always-on machinery. The policy around an online
-snapshot is left open: blocked_needs_input: Jun must decide whether an online snapshot runs
-on a schedule, where it is written, and how long it is kept, because the body's criteria do
-not answer those. The clarification the design evidence already makes is carried here:
-CRW-805's "the last connection removed them" reading is right for an install backup, and
-2026-10-06 showed a sidecar can also vanish while the daemon runs; that second mechanism is
-the separate cause fix, not a defect in the backup decision, and CRW-805 and CRW-837 are
-otherwise reused unchanged.
+the stopped byte copy CRW-805 and CRW-837 already own, or an online `sqlite3_backup` image,
+and either one must pass `integrity_check` before it may be named as a restore candidate -
+which is what the incident's own restore required of its candidate. The default stays the
+stopped byte copy, option (a): it is the artifact the 2026-10-06 restore consumed, so the
+backup route and the restore route agree by construction, and criterion 4 ("the hand recovery
+becomes a product command that can be run again") is satisfied without new always-on
+machinery.
+
+"Reused unchanged" is narrower than it sounds, and S7 says what it leaves to be added. The
+byte-copy routine itself stays as it is: it copies every regular file while hashing it,
+re-reads the source and refuses every entry that appeared, changed or went between the two
+readings (`internal/runtime/install/zone.go:110-115,473-500`, `listingDiff`), and names the
+sidecars as SQLite resolves them. What is not reusable is its *route*: `backupState` runs only
+inside an install that is introducing the additive zone or an ordinary index
+(`internal/runtime/install/zone.go:71-78`, `swapgate.AdditiveArrivalOnly`), and an install
+that is not gets no backup even when `--backup-state-to` was given. An operator therefore
+cannot take the default artifact on demand today, which is exactly the gap criterion 4 names,
+so S7 adds a standalone route to the same routine. The online form is left to Jun:
+blocked_needs_input: Jun must decide whether an online snapshot runs on a schedule, where it
+is written, and how long it is kept, because the body's criteria do not answer those. The
+clarification the design evidence already makes is carried here: CRW-805's "the last
+connection removed them" reading is right for an install backup, and 2026-10-06 showed a
+sidecar can also vanish while the daemon runs; that second mechanism is the separate cause
+fix, not a defect in the backup decision, and CRW-805 and CRW-837 are otherwise reused
+unchanged.
 
 Evidence: `internal/runtime/install/zone.go:110-115` (`backupState`) and `:374-375` (the
 sidecar naming), `internal/runtime/install/cli.go:112-114` (`--backup-state-to`),
@@ -5902,6 +5940,18 @@ event/delivery pairing and the staged-event accounting; I5 the managed fingerpri
 recomputation. No refusal reason is added: the command answers a report, and a report that
 finds a broken invariant exits as a reading, not as a refusal.
 
+What the command compares against is decided here, because running it on a copy is the
+normal case and the naive reading is wrong on every healthy copy. A managed request's
+fingerprint is taken over the *selected* store's observed `storeId`, device, inode and real
+path (`internal/relay/managed/identity.go:18-57`, `RequestIdentity`), so copying a store
+changes those inputs and a recomputation against the copy's own identity reports a mismatch
+for every row that is in fact fine. I0 and I5 therefore compare against the identity the
+store records for itself in `takeover.json` and in `schema_meta` - the same values the
+restore's own precondition reads - and separately assert that the copy is deliberately *not*
+the live inode, so a check that silently passed because it was reading the live store cannot
+happen. The live-store case and the copy case differ only in which identity is the expected
+one, and the command says which it used.
+
 Evidence: `index-identity-comparison.json`, `candidate-audit.json`,
 `candidate-review-p64-20261006.md` sections 1-3, `RECOVERY-STATUS.json` (`regressions`,
 `remaining`), `internal/relay/mergeturn/mergeturn.go:72-73,112-121,243-248`,
@@ -5929,15 +5979,29 @@ raw evidence in `historical-journal-evidence.json` and were not reinserted.
 | (b) Reinsert the recovered rows at their original numbers | A complete-looking history | Reuses numbers the issue body forbids reusing, and writes rows with fabricated old timestamps, which the restore record already declined to do |
 | (c) A separate loss table | A clean separation | A new shipped table changes the frozen SQL, which criterion 2 turns into a decision; a journal row is data and needs no schema change |
 
-Decision: (a). Two rules come with it. First, a marker row kind (a value, not a refusal
-reason, so it needs no exit-code registration) records the known loss span and the path of
-the evidence that describes it, and its own sequence and timestamp are the ones it is written
-with - never a historical pair. Second, a reader that depends on a per-kind sequence maximum
-must treat a declared loss span over that kind as unknown rather than as nothing having
-happened; that is the lost-close-row failure stated as a rule, and the enumeration of those
-readers is part of the slice, not of this document. Today that set is `latestLanding`
+Decision: (a). Three rules come with it. First, the restore captures the pre-restore
+high-water mark of the journal sequence and advances the restored store's sequence past it
+before anything is appended. This is the part that makes the no-reuse rule true rather than
+merely intended: the backup API restores the candidate's own `sqlite_sequence` row as well as
+its rows (`internal/relay/store/relay-sqlite.sql:477-483`), so a candidate older than the
+damaged store would otherwise hand back numbers that were already issued and observed - the
+incident itself reserved the observed values exactly this way, by advancing to 18035 before
+appending its preparation record (`candidate-final-pre-reconcile-provenance.json`), and
+occurrence keys such as `refused:<journal seq>` depend on the number meaning one event.
+Second, a marker row kind (a value, not a refusal reason, so it needs no exit-code
+registration) records the known loss span and the path of the evidence that describes it, and
+its own sequence and timestamp are the ones it is written with - never a historical pair.
+Third, a reader that depends on a per-kind sequence maximum must treat a declared loss span
+over that kind as unknown rather than as nothing having happened. That is the lost-close-row
+failure stated as a rule, and the inventory of those readers is part of the slice, not of
+this document. The set this section has confirmed is not complete: `latestLanding`
 (`internal/relay/mergeturn/refusals.go:149-155`) and the fault sweep's sequence paging over
-the journal's refusal rows (`internal/relay/store/relay-sqlite.sql:484-489`).
+the journal's refusal rows (`internal/relay/store/relay-sqlite.sql:484-489`) are two, and
+there are at least two more - the reconciliation read that orders `host_lost_turn` records by
+sequence to recover redelivery state (`internal/relay/delivery/reconcile.go:146`) and the
+managed-start read that takes the newest creation answer by sequence
+(`internal/relay/faults/managed_start.go:9`) - so S5 owes a full inventory and a test for each
+reader whose result changes when a row inside the span is absent.
 
 Evidence: `internal/relay/store/relay-sqlite.sql:477-483,484-489`,
 `internal/relay/store/registry.go:36-38`, `internal/relay/mergeturn/refusals.go:149-155`,
@@ -6000,12 +6064,12 @@ the others are the follow-ups this section proposes.
 | Slice | Scope | Predecessors | Edit regions | Red-first test |
 | --- | --- | --- | --- | --- |
 | S1 write-stop on corruption (CRW-848) | Detect 11, 26 and 522 on the write paths and the daemon observation, write the marker in S, refuse a writable open and a daemon pass while it is there, and journal the set and the clear | This section | `internal/relay/store/` beside `StartPreflight` and `CheckStartLikeFence`; the daemon observation path; `contract/schema/relay-exit-codes.json` and the generated code for the new reason; `docs/relay/` operator page | A store with the marker present refuses a writable open with the new reason and still answers `doctor`; a synthetic corruption makes the daemon write the marker and stop writing; the clear refuses before a reconciliation reading exists |
-| S2 official restore | The item-2 command: prove the candidate's hash, integrity and ownership keys, hold the gate exclusively, refuse while a handle is open, preserve the pre-restore state with a manifest, copy through the backup API onto the same inode, prove it with `doctor --expect-store --expect-inode`, and journal it | S1 for the marker's release path; not CRW-846 | `internal/relay/store/` (a new restore path; `ownership.CopySnapshot` is not it, its own comment bars that at `internal/relay/store/ownership/record.go:497`), `internal/relay/cli/`, `docs/relay/` | A restore whose candidate fails `integrity_check`, whose ownership keys disagree with `takeover.json`, or whose store has an open handle, refuses and writes nothing; a successful restore leaves device:inode and the `takeover.json` hash unchanged and `doctor` proves it |
+| S2 official restore | The item-2 command: prove the candidate's hash, integrity and ownership keys, hold the gate exclusively, take the read-only-open barrier item 2 requires, preserve the pre-restore state with a manifest, copy through the backup API onto the same inode, advance the journal sequence past the pre-restore high-water mark, prove the result with `doctor` using `--expect-store`, `--expect-inode`, `--expect-log` and the nonce, and journal it | S1 for the marker's release path; not CRW-846 | `internal/relay/store/` (a new restore path; `ownership.CopySnapshot` is not it, its own comment bars that at `internal/relay/store/ownership/record.go:497`), `internal/relay/cli/`, `docs/relay/` | A restore whose candidate fails `integrity_check`, whose ownership keys disagree with `takeover.json`, or that runs while a read-only opener holds the store, refuses and writes nothing; a successful restore leaves device:inode and the `takeover.json` hash unchanged, appends nothing at or below the pre-restore journal high-water mark, and `doctor` with the log expectation and the nonce answers `proven` |
 | S3 isolated validation | The item-3 decision: read-only simulation helpers, and, only if management answers the open question, the clone with re-stamped fingerprints | Item 3's answer | The reconciliation command's read paths; a clone path only if the answer needs one | The simulation recomputes a turn id, a grant id and a wake event id from a copy and reports them; it writes nothing (the doctor-76 rule) |
 | S4 reconciliation command | The item-5 read-only report over I0 to I5 | This section | `internal/relay/store/` (reads), `internal/relay/cli/`, goldens in the command's own test file | A fixture with a planted missing turn row, a grant-count skew and an orphan delivery reports each one by name; a healthy store reports clean; the command writes nothing |
-| S5 journal loss markers | The item-6 marker kind, its writer in the restore flow, and the rule that a sequence-dependent reader treats a declared span as unknown | S2 (the restore emits the marker) | `internal/relay/store/registry.go` (the journal path), `internal/relay/mergeturn/refusals.go` (`latestLanding`), the fault sweep's paging, and the contract page that names the kind | A restored fixture with a declared span makes `latestLanding` treat the span as unknown instead of silently ranking across it; the marker row gets a fresh sequence and the replay's own timestamp |
-| S6 replay de-duplication tests | The four rules of item 7, pinned as tests, with no new machinery | S5 for span visibility | `internal/relay/mergeturn/`, `internal/relay/store/receipt_intake_test.go`, `internal/relay/delivery/` | A replayed merge-turn request on an occupied target converges to the original turn id and adds no event or delivery; a replayed emit answers duplicate and journals `event_reobserved`; a replayed intent claim answers `unchanged`; a replay whose recomputed id differs is refused before it writes |
-| S7 the backup artifact | The item-4 mechanism half: one definition of a consistent backup, whichever of the two forms it takes, and its `integrity_check` gate | Item 4's policy answer for anything scheduled | `internal/runtime/install/zone.go` (`backupState` stays as it is), plus a new snapshot path only if Jun approves one | A backup artifact that fails `integrity_check` is refused as a restore candidate; a sidecar appearing during a stopped copy is not a failure (805), and a sidecar vanishing under a running daemon is the separate cause fix's, not this slice's |
+| S5 journal loss markers | The item-6 marker kind, its writer in the restore flow, the sequence advance past the pre-restore high-water mark, and the rule that a sequence-dependent reader treats a declared span as unknown. The slice owns the full reader inventory: the two this section names (`latestLanding` and the fault sweep's refusal paging) plus at least the `host_lost_turn` reconciliation read and the managed-start creation-answer read | S2 (the restore emits the marker) | `internal/relay/store/registry.go` (the journal path), `internal/relay/mergeturn/refusals.go` (`latestLanding`), `internal/relay/delivery/reconcile.go`, `internal/relay/faults/managed_start.go`, the fault sweep's paging, and the contract page that names the kind | A restored fixture whose candidate is older than the damaged store appends its first row above the pre-restore high-water mark; a declared span makes each inventoried reader report unknown instead of silently selecting an older or no row; the marker row gets a fresh sequence and the replay's own timestamp |
+| S6 replay de-duplication | The four rules of item 7 pinned as tests, with no new machinery, and the same rules written into the normative relay documentation so a future runtime change reads them where the relay's contract lives rather than in this port record | S5 for span visibility | `internal/relay/mergeturn/`, `internal/relay/store/receipt_intake_test.go`, `internal/relay/delivery/`, and the applicable page under `docs/relay/` | A replayed merge-turn request on an occupied target converges to the original turn id and adds no event or delivery; a replayed emit answers duplicate and journals `event_reobserved`; a replayed intent claim answers `unchanged`; a replay whose recomputed id differs is refused before it writes |
+| S7 the backup artifact | The item-4 mechanism half: one definition of a consistent backup, whichever of the two forms it takes, its `integrity_check` gate, and an operator-invokable route to take the default artifact. `backupState` is reachable today only from the install route, and only when the swap actually introduces the additive zone or an ordinary index (`internal/runtime/install/zone.go:71-78`, `swapgate.AdditiveArrivalOnly`), so an operator cannot take the default backup on demand - which is the body's fourth criterion. This slice adds the standalone stopped-backup command (or extends that route) and the policy answer for anything scheduled | Item 4's policy answer for anything scheduled | `internal/runtime/install/zone.go` (`backupState` itself stays as it is), the install CLI, plus a new snapshot path only if Jun approves one | A backup artifact that fails `integrity_check` is refused as a restore candidate; the operator command takes the same byte-copy artifact outside an install; a sidecar that appears or vanishes during a stopped copy is not a failure (the 805 rule, which `listingDiff` already enforces by refusing every newly appearing or changed entry: `internal/runtime/install/zone.go:473-500`), and a sidecar vanishing under a running daemon is the separate cause fix's, not this slice's |
 
 Two cross-cutting requirements the slices carry, because the incident showed they are not
 automatic. A restore or a backup that is interrupted must leave a state a retry can read: the
