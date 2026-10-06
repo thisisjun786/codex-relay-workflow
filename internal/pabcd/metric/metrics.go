@@ -16,6 +16,11 @@
 // non-blocking attempt takes a free lock without the context being read again. A caller without a context, or with one that can
 // never end, waits as it always did.
 //
+// CRW-632 gives the other two writers of this file the same end. RecordObjectiveMetricContext and WriteObjectiveKindContext take the
+// invocation's context: the wait for the kind-directory lock ends with it (metricLockWait) and the context is read once more after the
+// lock is taken, before anything is written, so a cancelled run leaves the kind file as its holder had it and returns the context's
+// own error. The plain forms keep the blocking wait every existing caller has.
+//
 // Not literal: a string with a lone surrogate (an escape such as \ud800 in a ledger row) can not exist in Go and reads as U+FFFD, and
 // the oracle's RangeError for a plateau window of more than about 1.2e5 rows is not reproduced. Rows are spelled as JSON.stringify
 // spells them: HTML is not escaped, U+2028 and U+2029 are written literally, NaN and the infinities are null.
@@ -218,7 +223,14 @@ func ReadObjectiveMetrics(cwd, sessionID string) []Record {
 // session and metric, else the value; Best is the larger of the last accepted row's best and the value. The value is not checked: NaN
 // and the infinities are written as null, the reader then drops the row, and the caller is told it was recorded.
 func RecordObjectiveMetric(cwd string, in RecordInput) (Record, error) {
-	return recordObjectiveMetric(context.Background(), cwd, in)
+	return RecordObjectiveMetricContext(context.Background(), cwd, in)
+}
+
+// RecordObjectiveMetricContext is RecordObjectiveMetric for a caller that can be interrupted: the wait for the ledger lock ends with
+// ctx and the row is not written when the context has ended (appendRow). The caller gets the context's own error, so
+// errors.Is(err, context.Canceled) recognises a cancelled run. A context that can never end waits as RecordObjectiveMetric does.
+func RecordObjectiveMetricContext(ctx context.Context, cwd string, in RecordInput) (Record, error) {
+	return recordObjectiveMetric(ctx, cwd, in)
 }
 
 // recordObjectiveMetric is RecordObjectiveMetric whose wait for the ledger lock ends with ctx (appendRow).
@@ -356,12 +368,18 @@ func rowNumber(f float64) string {
 // session id, so two ids can share one. The write is refused, and the file kept, when the file holds another session's id, holds an id
 // with U+FFFD (not told from a lone surrogate), can not be read for any reason but its absence, or is not a regular file (the data-loss
 // fix); a file read without a string sessionId is replaced. A lock on the kind directory, held from the read to the rename, excludes
-// other writers.
+// other writers; WriteObjectiveKindContext ends that lock's wait with its context (CRW-632).
 func WriteObjectiveKind(cwd, sessionID string, kind ObjectiveKind) error {
-	return writeObjectiveKind(cwd, sessionID, kind, time.Now(), crwdir.Rename)
+	return WriteObjectiveKindContext(context.Background(), cwd, sessionID, kind)
 }
 
-func writeObjectiveKind(cwd, sessionID string, kind ObjectiveKind, now time.Time, rename func(tmp, finalPath string) error) error {
+// WriteObjectiveKindContext is WriteObjectiveKind for a caller that can be interrupted: the wait for the kind-directory lock ends with
+// ctx, and the file is neither read for its owner nor replaced once the context has ended. The caller gets the context's own error.
+func WriteObjectiveKindContext(ctx context.Context, cwd, sessionID string, kind ObjectiveKind) error {
+	return writeObjectiveKind(ctx, cwd, sessionID, kind, time.Now(), crwdir.Rename)
+}
+
+func writeObjectiveKind(ctx context.Context, cwd, sessionID string, kind ObjectiveKind, now time.Time, rename func(tmp, finalPath string) error) error {
 	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return err
 	}
@@ -372,9 +390,12 @@ func writeObjectiveKind(cwd, sessionID string, kind ObjectiveKind, now time.Time
 	if err != nil {
 		return err
 	}
-	defer dir.Close() // drops the lock
-	if err = unix.Flock(int(dir.Fd()), unix.LOCK_EX); err != nil {
+	defer dir.Close()                               // drops the lock
+	if err = metricLockWait(ctx, dir); err != nil { // dropped by the close
 		return err
+	}
+	if cerr := ctx.Err(); cerr != nil { // a lock taken while ctx was ending replaces nothing, waited or not (CRW-632)
+		return cerr
 	}
 	finalPath := objectiveKindPath(cwd, sessionID)
 	if info, err := os.Stat(finalPath); err == nil && !info.Mode().IsRegular() { // a FIFO would block the read below

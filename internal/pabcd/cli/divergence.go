@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -199,6 +201,15 @@ func divergenceCliQuote(s string) string {
 // (cli.ts:530) reports it as "codexclaw cli failed: <message>" on stderr, exit 1 ("crw cli failed:"
 // once the wiring calls it). Every other refusal is a result value, exactly as the oracle returns.
 func RunDivergenceCli(argv []string, cwd string) (DivergenceCliResult, error) {
+	return RunDivergenceCliContext(context.Background(), argv, cwd)
+}
+
+// RunDivergenceCliContext is RunDivergenceCli for a caller that can be interrupted. Since CRW-632 the mode write and the candidate
+// append take ctx, so their wait for the divergence-directory or archive lock ends with it and a cancelled run writes nothing; the
+// error the caller gets then is the context's own, so errors.Is(err, context.Canceled) recognises it and the harness answers
+// Interrupted with nothing printed, as the oracle's process dies at the interrupt without printing. The reading paths (mode with no
+// on/off, candidate list) and the help token do not look at ctx.
+func RunDivergenceCliContext(ctx context.Context, argv []string, cwd string) (DivergenceCliResult, error) {
 	cwdOut := cwd
 	if value := divergenceCliFlag(argv, "--cwd"); value != nil {
 		cwdOut = *value
@@ -221,9 +232,9 @@ func RunDivergenceCli(argv []string, cwd string) (DivergenceCliResult, error) {
 	}
 	switch {
 	case topic == "mode":
-		return divergenceCliMode(cwdOut, *session, verb, argv, asJSON)
+		return divergenceCliMode(ctx, cwdOut, *session, verb, argv, asJSON)
 	case topic == "candidate" && verb == "add":
-		return divergenceCliCandidateAdd(cwdOut, *session, argv, asJSON), nil
+		return divergenceCliCandidateAdd(ctx, cwdOut, *session, argv, asJSON)
 	case topic == "candidate" && verb == "list":
 		return divergenceCliCandidateList(cwdOut, *session, asJSON), nil
 	}
@@ -231,7 +242,7 @@ func RunDivergenceCli(argv []string, cwd string) (DivergenceCliResult, error) {
 }
 
 // divergenceCliMode ports the mode branch (:106-124): on/off writes, anything else reads.
-func divergenceCliMode(cwdOut, sessionID, verb string, argv []string, asJSON bool) (DivergenceCliResult, error) {
+func divergenceCliMode(ctx context.Context, cwdOut, sessionID, verb string, argv []string, asJSON bool) (DivergenceCliResult, error) {
 	var state *bool
 	switch verb {
 	case "on":
@@ -266,7 +277,7 @@ func divergenceCliMode(cwdOut, sessionID, verb string, argv []string, asJSON boo
 	if value := divergenceCliFlag(argv, "--reason"); value != nil {
 		reason = *value
 	}
-	mode, err := metric.WriteDivergenceMode(cwdOut, metric.ModeInput{SessionID: sessionID, Active: *state, CollapsePoint: collapsePoint, Reason: reason})
+	mode, err := metric.WriteDivergenceModeContext(ctx, cwdOut, metric.ModeInput{SessionID: sessionID, Active: *state, CollapsePoint: collapsePoint, Reason: reason})
 	if err != nil {
 		return DivergenceCliResult{}, err
 	}
@@ -288,7 +299,10 @@ func divergenceCliModeText(mode metric.DivergenceMode) string {
 // divergenceCliCandidateAdd ports the candidate add branch (:120-155): the oracle's validation order
 // (kind, change-class, killed-at-phase, title, rationale, source), then the archive write. An empty
 // --change-class or --killed-at-phase is absent, not an error (:131, :134 test the raw value first).
-func divergenceCliCandidateAdd(cwdOut, sessionID string, argv []string, asJSON bool) DivergenceCliResult {
+// The archive write takes ctx (CRW-632): its wait for the lock ends with the context, and that end is returned as an error rather than
+// as the oracle's "divergence candidate add: <message>" refusal with code 1, because the oracle has no such message -- its process
+// dies at the interrupt and prints nothing, which the harness answers as Interrupted.
+func divergenceCliCandidateAdd(ctx context.Context, cwdOut, sessionID string, argv []string, asJSON bool) (DivergenceCliResult, error) {
 	kind := divergenceCliParseKind(divergenceCliFlag(argv, "--kind"))
 	// An invalid --status becomes "proposed" (parseStatus(...) ?? "proposed", :122).
 	status := metric.StatusProposed
@@ -303,38 +317,41 @@ func divergenceCliCandidateAdd(cwdOut, sessionID string, argv []string, asJSON b
 	rationale := divergenceCliFlag(argv, "--rationale")
 	sourceURLs := divergenceCliFlags(argv, "--source")
 	if kind == nil {
-		return DivergenceCliResult{Output: "divergence candidate add: --kind strong-1|add-1|alternative is required", Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: --kind strong-1|add-1|alternative is required", Code: 1}, nil
 	}
 	if changeClassRaw != nil && *changeClassRaw != "" && changeClass == nil {
-		return DivergenceCliResult{Output: "divergence candidate add: --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change is required", Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change is required", Code: 1}, nil
 	}
 	if killedAtPhaseRaw != nil && *killedAtPhaseRaw != "" && killedAtPhase == nil {
-		return DivergenceCliResult{Output: "divergence candidate add: --killed-at-phase P|A|B|C|D is required", Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: --killed-at-phase P|A|B|C|D is required", Code: 1}, nil
 	}
 	if title == nil || *title == "" {
-		return DivergenceCliResult{Output: "divergence candidate add: --title <text> is required", Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: --title <text> is required", Code: 1}, nil
 	}
 	if rationale == nil || *rationale == "" {
-		return DivergenceCliResult{Output: "divergence candidate add: --rationale <text> is required", Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: --rationale <text> is required", Code: 1}, nil
 	}
 	if len(sourceURLs) == 0 {
-		return DivergenceCliResult{Output: "divergence candidate add: at least one --source <url> is required", Code: 1}
+		return DivergenceCliResult{Output: "divergence candidate add: at least one --source <url> is required", Code: 1}, nil
 	}
 	worktree := ""
 	if value := divergenceCliFlag(argv, "--worktree"); value != nil {
 		worktree = *value
 	}
-	candidate, err := metric.RecordDivergenceCandidate(cwdOut, metric.CandidateInput{
+	candidate, err := metric.RecordDivergenceCandidateContext(ctx, cwdOut, metric.CandidateInput{
 		SessionID: sessionID, Kind: *kind, Title: *title, Rationale: *rationale, SourceURLs: sourceURLs,
 		Status: &status, Worktree: worktree, ChangeClass: changeClass, KilledAtPhase: killedAtPhase,
 	})
 	if err != nil {
-		return DivergenceCliResult{Output: "divergence candidate add: " + nodeErrorMessage(err), Code: 1}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return DivergenceCliResult{}, err // the invocation's context ended: nothing is printed (CRW-632)
+		}
+		return DivergenceCliResult{Output: "divergence candidate add: " + nodeErrorMessage(err), Code: 1}, nil
 	}
 	if asJSON {
-		return DivergenceCliResult{Output: metric.EncodeCandidate(candidate), Code: 0}
+		return DivergenceCliResult{Output: metric.EncodeCandidate(candidate), Code: 0}, nil
 	}
-	return DivergenceCliResult{Output: fmt.Sprintf("divergence candidate: %s (%s) sources=%d", candidate.ID, candidate.Kind, len(candidate.SourceURLs)), Code: 0}
+	return DivergenceCliResult{Output: fmt.Sprintf("divergence candidate: %s (%s) sources=%d", candidate.ID, candidate.Kind, len(candidate.SourceURLs)), Code: 0}, nil
 }
 
 // divergenceCliCandidateList ports the candidate list branch (:157-162).

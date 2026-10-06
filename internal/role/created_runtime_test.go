@@ -94,24 +94,41 @@ const (
 	createdRuntimeNote   = "runtime not confirmed"
 )
 
-// A child whose newest turn is still in progress is not closed, whatever status the thread reports, and the refusal writes and keeps nothing.
+// A child whose newest turn is still in progress is not closed, whatever status the thread reports and whatever the
+// thread/read answer carries, and the refusal writes and keeps nothing.
 func TestCreatedRuntimeRefusesANewestTurnInProgress(t *testing.T) {
+	refuse := func(t *testing.T, h *createdRuntimeHost) {
+		t.Helper()
+		ws, env, attempt, file := createdRuntimeStart(t, false)
+		before := must(os.ReadFile(file))
+		_, err := CheckedDispatch(context.Background(), ws, createdRuntimeStop(attempt), env, h)
+		if err == nil || err.Error() != "recorded child has a turn in progress; stop it before closing" {
+			t.Fatalf("close of a child with a turn in progress: %v", err)
+		}
+		if h.listArgs["threadId"] != "child-a" || h.listArgs["limit"] != 1 || string(before) != string(must(os.ReadFile(file))) {
+			t.Fatalf("turn list %v, or the record changed", h.listArgs)
+		}
+		if left := must(filepath.Glob(filepath.Join(filepath.Dir(file), ".session.lock*"))); len(left) != 0 || must(filepath.Glob(file+".*")) != nil {
+			t.Fatalf("a lock or temporary file stayed: %v", left)
+		}
+	}
 	for _, status := range []string{"idle", "notLoaded"} {
 		t.Run(status, func(t *testing.T) {
-			ws, env, attempt, file := createdRuntimeStart(t, false)
-			before := must(os.ReadFile(file))
 			h := createdRuntimeNewest("inProgress")
 			h.status = status
-			_, err := CheckedDispatch(context.Background(), ws, createdRuntimeStop(attempt), env, h)
-			if err == nil || err.Error() != "recorded child has a turn in progress; stop it before closing" {
-				t.Fatalf("close of a child with a turn in progress: %v", err)
-			}
-			if h.listArgs["threadId"] != "child-a" || h.listArgs["limit"] != 1 || string(before) != string(must(os.ReadFile(file))) {
-				t.Fatalf("turn list %v, or the record changed", h.listArgs)
-			}
-			if left := must(filepath.Glob(filepath.Join(filepath.Dir(file), ".session.lock*"))); len(left) != 0 || must(filepath.Glob(file+".*")) != nil {
-				t.Fatalf("a lock or temporary file stayed: %v", left)
-			}
+			refuse(t, h)
+		})
+	}
+	// The turns field of the thread/read answer decides nothing: a host that omits it, or sends null, still gets the read.
+	for _, tc := range []struct {
+		name string
+		h    *createdRuntimeHost
+	}{
+		{"no turns field", &createdRuntimeHost{turnsField: "absent", turns: createdRuntimeNewest("inProgress").turns}},
+		{"turns null", &createdRuntimeHost{turnsField: "null", turns: createdRuntimeNewest("inProgress").turns}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			refuse(t, tc.h)
 		})
 	}
 }
@@ -131,8 +148,6 @@ func TestCreatedRuntimeClosesAndSaysWhetherTheRuntimeWasConfirmed(t *testing.T) 
 		{"no turns", &createdRuntimeHost{turns: json.RawMessage(`{"data":[]}`)}, 2, true},
 		{"undecodable list", &createdRuntimeHost{turns: json.RawMessage("{")}, 2, true},
 		{"list error", &createdRuntimeHost{turnErr: errors.New("host unavailable")}, 2, true},
-		{"no turns field", &createdRuntimeHost{turnsField: "absent", turns: createdRuntimeNewest("inProgress").turns}, 1, true},
-		{"turns null", &createdRuntimeHost{turnsField: "null", turns: createdRuntimeNewest("inProgress").turns}, 1, true},
 		{"foreign thread", &createdRuntimeHost{parent: "other", turns: createdRuntimeNewest("inProgress").turns}, 1, true},
 		{"not a subagent", &createdRuntimeHost{source: "cli", turns: createdRuntimeNewest("inProgress").turns}, 1, true},
 	} {

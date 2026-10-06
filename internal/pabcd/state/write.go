@@ -25,12 +25,13 @@ func (e sentinel) Error() string { return string(e) }
 const timestampLayout = "2006-01-02T15:04:05.000Z"
 
 // EnsureState creates the session's file as a fresh IDLE state and reports whether it did, without resetting a resumed session
-// (ensureState). The default is written beside the final path and published with an exclusive hard link, which is atomic at the
+// (ensureState). The default is written and fsynced beside the final path and published with an exclusive hard link, which is atomic at the
 // destination, so concurrent SessionStart hooks race safely and an existing file, valid or corrupt, is never touched. Where
 // hard links are unavailable (EPERM, ENOTSUP or EXDEV: FAT32, some shares) the default is written and fsynced to a second temp
 // file and published by a rename that refuses to replace (publishWithoutLink), so a failed write leaves nothing at the final
 // path. The oracle creates the final path and then writes into it, which leaves an empty or truncated state file when the write
-// fails (a known defect, fixed here by decision).
+// fails (a known defect, fixed here by decision). After a successful hard link the sessions directory is fsynced; a directory
+// sync error is returned with created true and the published file retained, unless the temp cleanup overrides the result.
 func EnsureState(cwd, sessionID string) (bool, error) {
 	return ensureState(cwd, sessionID, time.Now, os.Link)
 }
@@ -70,8 +71,12 @@ func failAt(fail func(ensureStep, string) error, step ensureStep, path string) e
 	return fail(step, path)
 }
 
-// ensureStateWith is ensureState with a hook that is called just before each fallback step and fails it by returning an error.
-func ensureStateWith(cwd, sessionID string, now func() time.Time, link func(existing, created string) error, fail func(ensureStep, string) error) (created bool, err error) {
+// ensureStateWith has a fallback-step hook and an optional sync operation for the primary file and directory.
+func ensureStateWith(cwd, sessionID string, now func() time.Time, link func(existing, created string) error, fail func(ensureStep, string) error, syncFile ...func(*os.File) error) (created bool, err error) {
+	sync := (*os.File).Sync
+	if len(syncFile) > 0 {
+		sync = syncFile[0]
+	}
 	if !IsCanonicalSessionID(sessionID) {
 		return false, ErrNonCanonicalSessionID
 	}
@@ -89,12 +94,23 @@ func ensureStateWith(cwd, sessionID string, now func() time.Time, link func(exis
 			created, err = false, rmErr
 		}
 	}()
-	if err = createExclusive(tmp, string(body)); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil {
+		return false, err
+	}
+	if _, err = f.Write(body); err == nil {
+		err = sync(f)
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
 		return false, err
 	}
 	switch err = link(tmp, finalPath); {
 	case err == nil:
-		return true, nil
+		dir, err := os.Open(filepath.Dir(finalPath))
+		if err != nil {
+			return true, err
+		}
+		return true, errors.Join(sync(dir), dir.Close())
 	case errors.Is(err, fs.ErrExist):
 		return false, nil
 	case !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EXDEV):
@@ -149,14 +165,38 @@ func publishWithoutLink(finalPath string, data []byte, fail func(ensureStep, str
 	return false, err
 }
 
+// PublishedError reports that a state write published the new state at the final path and then failed a step that runs after the
+// rename: opening or fsyncing the directory that holds it. The state is visible to every reader, so the error is not a reason to
+// roll it back, and a caller that has a reconciling step after a failed write (clearing an attempt counter, for example) must run
+// it anyway. Err is the underlying failure and Unwrap exposes it, so errors.Is keeps answering for the cause.
+type PublishedError struct{ Err error }
+
+func (e *PublishedError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the failure the publication wrapped, so errors.Is and errors.As reach it.
+func (e *PublishedError) Unwrap() error { return e.Err }
+
+// Published reports whether err is, or wraps, a PublishedError: the state at the final path was published before the write failed.
+// It is false for an error a write returned before the rename, where nothing was published.
+func Published(err error) bool {
+	var target *PublishedError
+	return errors.As(err, &target)
+}
+
 // WriteState publishes next as the session's state file: written to a temp file beside it and renamed over it, so a reader sees
-// the old file or the new one whole (writeState). That is atomic publication, not a serialised read-modify-write: a caller that
-// must not lose a concurrent update re-reads inside WithSessionLock. The tracker is capped on the way out and updatedAt stamped.
+// the old file or the new one whole (writeState). The temp file is fsynced before the rename, and the directory afterward;
+// a directory sync error is returned as a PublishedError after publication, without removing the new state. This is not a
+// serialised read-modify-write: a caller that must not lose a concurrent update re-reads inside WithSessionLock. The tracker is
+// capped on the way out and updatedAt stamped.
 func WriteState(cwd string, next State) error {
 	return writeState(cwd, next, time.Now(), crwdir.Rename)
 }
 
-func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPath string) error) (err error) {
+func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPath string) error, syncFile ...func(*os.File) error) (err error) {
+	sync := (*os.File).Sync
+	if len(syncFile) > 0 {
+		sync = syncFile[0]
+	}
 	if err = makeSessionsDir(cwd); err != nil {
 		return err
 	}
@@ -172,10 +212,27 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(tmp, body, 0o666); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	if err != nil {
 		return err
 	}
-	return rename(tmp, finalPath)
+	if _, err = f.Write(body); err == nil {
+		err = sync(f)
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
+		return err
+	}
+	if err = rename(tmp, finalPath); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(finalPath))
+	if err != nil {
+		return &PublishedError{Err: err}
+	}
+	if err := errors.Join(sync(dir), dir.Close()); err != nil {
+		return &PublishedError{Err: err}
+	}
+	return nil
 }
 
 // makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order.
