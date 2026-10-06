@@ -134,11 +134,12 @@ func withoutSidecars(tree map[string]string) map[string]string {
 }
 
 // atCopy records the state directory at the moment the backup has copied it (before its verification): the source the
-// copy must equal, read independently of the manifest.
+// copy must equal, read independently of the manifest. SQLite's shared-memory index is left out, as the backup leaves
+// it out: it is an index SQLite rebuilds from the log on open, so it is neither listed nor copied (CRW-805).
 func atCopy(t *testing.T, h *host) (seen *map[string]string, restore func()) {
 	t.Helper()
 	var snapshot map[string]string
-	restore = install.ReplaceStateBackupStep(func(string) error { snapshot = digestTree(t, h.relayState); return nil })
+	restore = install.ReplaceStateBackupStep(func(string) error { snapshot = withoutShm(digestTree(t, h.relayState)); return nil })
 	return &snapshot, restore
 }
 
@@ -778,9 +779,8 @@ func TestTheBackupOfALinkedStoreCarriesItsLog(t *testing.T) {
 			t.Errorf("%s of the backup is not what the store holds", name)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(backup, "relay.sqlite3-shm")); err != nil {
-		t.Errorf("the index of the log is not in the backup: %v", err)
-	}
+	// the shared-memory index is not copied: SQLite rebuilds it from the log when the restore is opened
+	nothingAt(t, filepath.Join(backup, "relay.sqlite3-shm"))
 	if info, err := os.Lstat(filepath.Join(backup, "relay.sqlite3")); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("the link is copied as the file it names: %v %v", info, err)
 	}
@@ -789,7 +789,7 @@ func TestTheBackupOfALinkedStoreCarriesItsLog(t *testing.T) {
 	if err := os.MkdirAll(copied, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm"} {
+	for _, name := range []string{"relay.sqlite3", "relay.sqlite3-wal"} {
 		if err := os.WriteFile(filepath.Join(copied, name), mustRead(t, filepath.Join(backup, name)), 0o600); err != nil {
 			t.Fatal(err)
 		}
