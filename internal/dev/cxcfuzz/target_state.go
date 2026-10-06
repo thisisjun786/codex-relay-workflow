@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -156,10 +157,13 @@ func maskTopLevelTimestamp(text string) string {
 	return text
 }
 
-// readDefaultedUpdatedAt reports whether the reader created the document's updatedAt from the wall
-// clock, which it does when raw, the source file, carries no updatedAt string. Then the two sides'
-// read forms hold two different instants and the value is masked; a persisted updatedAt is kept by
-// both sides and compared as stored.
+// readDefaultedUpdatedAt reports whether readStateStrict created the document's updatedAt from the
+// wall clock rather than keeping a persisted one. The reader keeps the stored value only when raw is
+// a JSON object with a valid phase and an updatedAt string (state.js:509-520, port
+// state/restore.go:38-52); every other input — unreadable bytes, broken JSON, a missing or invalid
+// phase, a non-text updatedAt — returns the default state, whose updatedAt each side stamps from its
+// own clock. Only then can the two sides' read forms hold different instants, so only then is the
+// read form's updatedAt masked; a persisted one is kept by both sides and compared as stored.
 func readDefaultedUpdatedAt(raw []byte) bool {
 	value, err := decode(string(raw))
 	if err != nil {
@@ -167,6 +171,11 @@ func readDefaultedUpdatedAt(raw []byte) bool {
 	}
 	object, ok := value.(pyjson.Object)
 	if !ok {
+		return true
+	}
+	phase, _ := object.Lookup("phase")
+	name, _ := phase.(string)
+	if !slices.Contains(state.AllPhases(), state.Phase(name)) {
 		return true
 	}
 	stamp, ok := object.Lookup("updatedAt")

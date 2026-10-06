@@ -139,3 +139,28 @@ func TestStateCompareIgnoresTheDefaultedReadUpdatedAt(t *testing.T) {
 		t.Fatalf("two defaulted read updatedAt stamps compared %v (%s), want Same", verdict.Kind, verdict.Detail)
 	}
 }
+
+// The reader defaults updatedAt whenever it does not keep the file's value, which is not only when the
+// key is absent: an unreadable file, broken JSON, an invalid phase and a non-text updatedAt all take
+// the default state, whose updatedAt each side stamps from its own clock. readDefaultedUpdatedAt
+// mirrors that rule, so a file that holds a persisted updatedAt but no valid phase still masks the
+// read form and the two sides' wall-clock defaults compare Same.
+func TestStateReadDefaultedUpdatedAtMirrorsTheReader(t *testing.T) {
+	kept := "{\"phase\": \"P\", \"updatedAt\": \"2026-01-01T00:00:00.000Z\"}"
+	if readDefaultedUpdatedAt([]byte(kept)) {
+		t.Fatal("a readable state with a persisted updatedAt read as defaulted")
+	}
+	for _, raw := range []string{
+		"{\"updatedAt\": \"2026-01-01T00:00:00.000Z\"}",
+		"{\"phase\": \"NOPE\", \"updatedAt\": \"2026-01-01T00:00:00.000Z\"}",
+		"{\"phase\": 5, \"updatedAt\": \"2026-01-01T00:00:00.000Z\"}",
+		"{\"phase\": \"P\", \"updatedAt\": 5}",
+		"{\"phase\": \"P\"}",
+		"{",
+		"",
+	} {
+		if !readDefaultedUpdatedAt([]byte(raw)) {
+			t.Errorf("%q did not read as a defaulted updatedAt", raw)
+		}
+	}
+}

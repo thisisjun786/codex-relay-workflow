@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 // The harness always sets ORACLE_ROOT to the target's Oracle.Root; no host path is committed here.
 const oracleRoot = process.env.ORACLE_ROOT;
 if (!oracleRoot) throw new Error("ORACLE_ROOT is not set");
-const { readStateStrict, writeState, statePath } = await import(oracleRoot + "/pabcd-state/dist/state.js");
+const { readStateStrict, writeState, statePath, ALL_PHASES } = await import(oracleRoot + "/pabcd-state/dist/state.js");
 
 const SESSION_ID = "s";
 
@@ -52,9 +52,10 @@ function maskUpdatedAt(text) {
   return text.slice(0, start) + TIMESTAMP_PLACEHOLDER + text.slice(end);
 }
 
-// readDefaultedUpdatedAt is whether readStateStrict will create the document's updatedAt from the
-// clock, which it does when the source file holds no updatedAt string (an absent, unreadable or
-// non-object file included).
+// readDefaultedUpdatedAt is whether readStateStrict creates the document's updatedAt from the clock
+// rather than keeping a persisted one. The reader keeps the stored value only when the source file is
+// a JSON object with a valid phase and an updatedAt string (state.js:509-520); every other input
+// returns the default state, whose updatedAt each side stamps from its own clock.
 function readDefaultedUpdatedAt(text) {
   let parsed;
   try {
@@ -63,6 +64,7 @@ function readDefaultedUpdatedAt(text) {
     return true;
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return true;
+  if (typeof parsed.phase !== "string" || !ALL_PHASES.includes(parsed.phase)) return true;
   return typeof parsed.updatedAt !== "string";
 }
 
