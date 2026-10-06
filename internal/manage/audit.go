@@ -222,7 +222,7 @@ func auditPrompt(b *auditBundle) string {
 	if b.CriteriaUnavailable {
 		out.WriteString("\n\nThis bundle declares `criteria_unavailable`. ")
 		if b.Mode == auditModePR {
-			out.WriteString("Judge against the issue text and the description in `" + auditPRTaskFile + "`, and say in each note which of the two you used.")
+			out.WriteString("Judge against the description in `" + auditPRTaskFile + "` and the change in `" + auditPRDiffFile + "` and `" + auditPRFilesDir + "/`, and say in each note which of the two you used.")
 		} else {
 			out.WriteString("There are no criteria to read and no description to fall back on: judge the package against `task.md`, the source under `src/` and what the package itself shows, and say in each note which file or symbol you used.")
 		}

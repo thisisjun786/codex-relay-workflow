@@ -506,6 +506,60 @@ func TestAuditPRDiffPathsReadsThePatchHeaders(t *testing.T) {
 	if paths := auditPRDiffPaths([]byte(auditPRPatch)); strings.Join(paths, ",") != "internal/a.go,docs/b.md" {
 		t.Errorf("the two-file patch gave %v", paths)
 	}
+	// A hunk's content is data. A patch that adds a line whose own text begins with "++ "
+	// renders it as "+++ ...", and reading that as a path would send the bundle to a file
+	// that does not exist.
+	withHunk := "diff --git a/internal/a.go b/internal/a.go\n--- a/internal/a.go\n+++ b/internal/a.go\n@@ -1,2 +1,3 @@\n context\n+++ this line is content, not a header\n"
+	if paths := auditPRDiffPaths([]byte(withHunk)); strings.Join(paths, ",") != "internal/a.go" {
+		t.Errorf("a hunk whose content starts with pluses gave %v, want the real path only", paths)
+	}
+}
+
+// The fetch brings the branch target discovery queries, not the checkout section's
+// configurable base_ref, so a checkout configured for another branch still has the dev merge
+// objects the bundle builder reads.
+func TestAuditPRFetchUsesTheIntegrationBranch(t *testing.T) {
+	var calls [][]string
+	previous := auditPkgGit
+	auditPkgGit = func(_ context.Context, repo string, args ...string) ([]byte, error) {
+		if repo != "/checkout" {
+			t.Errorf("git ran in %q", repo)
+		}
+		calls = append(calls, args)
+		return nil, nil
+	}
+	t.Cleanup(func() { auditPkgGit = previous })
+	if err := auditPRFetch(context.Background(), auditPkgCheckout{Repository: "/checkout", BaseRef: "origin/release"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || strings.Join(calls[0], " ") != "fetch origin dev" {
+		t.Errorf("the fetch was %v, want the integration branch", calls)
+	}
+	if err := auditPRFetch(context.Background(), auditPkgCheckout{Repository: "/checkout"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || strings.Join(calls[1], " ") != "fetch origin dev" {
+		t.Errorf("a checkout with no base_ref fetched %v", calls[1:])
+	}
+}
+
+// The prompt the pr mode writes names the files its bundle actually holds, and the shared
+// template no longer names a layout neither mode has.
+func TestAuditPRPromptNamesTheBundleItWrites(t *testing.T) {
+	prompt := auditPrompt(&auditBundle{Mode: auditModePR})
+	for _, needle := range []string{auditPRDiffFile, auditPRTaskFile, auditPRFilesDir} {
+		if !strings.Contains(prompt, needle) {
+			t.Errorf("the pr prompt does not name %q", needle)
+		}
+	}
+	for _, stale := range []string{"candidate/", "criteria.md", "`inputs/`"} {
+		if strings.Contains(prompt, stale) {
+			t.Errorf("the pr prompt names %q, which the bundle does not hold:\n%s", stale, prompt)
+		}
+	}
+	if unavailable := auditPrompt(&auditBundle{Mode: auditModePR, CriteriaUnavailable: true}); strings.Contains(unavailable, "issue text") {
+		t.Errorf("a criteria_unavailable pr bundle is sent to an issue text it does not hold:\n%s", unavailable)
+	}
 }
 
 // A path that would leave the bundle is refused before anything is written, and a file the

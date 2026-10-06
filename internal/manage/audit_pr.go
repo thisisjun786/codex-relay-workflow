@@ -424,6 +424,10 @@ func auditPRScrub(data []byte, scrubs []string) []byte {
 // deletion is left out, because a deleted path has no content at the merge commit; a rename
 // is the target it became; a block with neither a `+++` line nor a rename is a binary hunk,
 // whose path only the `diff --git` header names.
+//
+// Only the block's header is read: once a hunk begins, a line that looks like a header is a
+// content line. A patch that adds a line whose own text starts with `++ ` renders it as
+// `+++ ...`, and reading that as a path would send the bundle to a file that does not exist.
 func auditPRDiffPaths(patch []byte) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -436,6 +440,7 @@ func auditPRDiffPaths(patch []byte) []string {
 	}
 	var header, newPath, renameTo string
 	deleted := false
+	inHunk := false
 	flush := func() {
 		if deleted {
 			return
@@ -454,7 +459,12 @@ func auditPRDiffPaths(patch []byte) []string {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			flush()
-			header, newPath, renameTo, deleted = auditPRGitHeader(strings.TrimPrefix(line, "diff --git ")), "", "", false
+			header, newPath, renameTo, deleted, inHunk = auditPRGitHeader(strings.TrimPrefix(line, "diff --git ")), "", "", false, false
+		case strings.HasPrefix(line, "@@"):
+			// The hunk's content follows; nothing after this is a header until the next block.
+			inHunk = true
+		case inHunk:
+			// A hunk's content is data, never a path.
 		case strings.HasPrefix(line, "rename to "):
 			renameTo = auditPRUnquote(strings.TrimPrefix(line, "rename to "))
 		case strings.HasPrefix(line, "+++ "):
@@ -558,13 +568,18 @@ func auditPRUnquote(token string) string {
 }
 
 // auditPRFetch brings the integration branch's commits into the configured checkout, so the
-// merge commit of every target can be read from it.
+// merge commit of every target can be read from it. The ref is the branch target discovery
+// itself queries, not the checkout section's base_ref: a checkout configured for another
+// branch would otherwise leave the dev merge objects missing and fail every `git show`.
 func auditPRFetch(ctx context.Context, co auditPkgCheckout) error {
 	if co.Repository == "" {
 		return errors.New("checkout_unconfigured: the checkout section names no repository")
 	}
-	remote, ref := auditPkgSplitRef(co.BaseRef)
-	_, err := auditPkgGit(ctx, co.Repository, "fetch", remote, ref)
+	remote := "origin"
+	if co.BaseRef != "" {
+		remote, _ = auditPkgSplitRef(co.BaseRef)
+	}
+	_, err := auditPkgGit(ctx, co.Repository, "fetch", remote, auditPRBaseRef)
 	return err
 }
 
@@ -585,7 +600,7 @@ func auditPRTask(source auditPRSource) string {
 	}
 	out.WriteString("\n## Criteria\n\n")
 	if len(source.Criteria) == 0 {
-		out.WriteString("No criterion could be read. Judge against the issue text and the description above, and say in each note which of the two you used.\n")
+		out.WriteString("No criterion could be read. Judge against the description above and the change in `" + auditPRDiffFile + "` and `" + auditPRFilesDir + "/`, and say in each note which of the two you used.\n")
 	} else {
 		for _, criterion := range source.Criteria {
 			id, _ := criterion["id"].(string)
