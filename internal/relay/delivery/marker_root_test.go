@@ -12,6 +12,7 @@ import (
 // answers): Path.home() (an empty HOME is the root), exactly two leading slashes kept as pathlib
 // keeps them, and a relative flag read against the working directory the kernel names rather than
 // $PWD's spelling through a link.
+// sequential: t.Setenv("PWD") is process-wide.
 func TestAMarkerRootIsTheDirectoryPythonNames(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
