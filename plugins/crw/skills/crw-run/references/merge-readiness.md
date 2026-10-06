@@ -1177,7 +1177,8 @@ among its commands, the parent does not settle a conflict either.
      check runs it there.
      For the generated case sections of `plugins/crw/skills/crw-run/references/dispatch-verification.md` it is
      `go run -tags dev ./cmd/crw-dev ci dispatch-cases --write`, which rebuilds that document from the row and
-     block files under `docs/crw-run/dispatch-cases/`.
+     block files under `docs/crw-run/dispatch-cases/`. A case is authored in those files, never in the
+     generated document: a change made only in the document drifts from its inputs and `crw-dev ci validate` refuses it.
 
 The one file no declaration has to settle with one agreed rule is the plugin manifest's version line. When the
 file is in play (a conflict in `plugins/crw/.codex-plugin/plugin.json`, or a clean merge whose head re-recorded it), no
