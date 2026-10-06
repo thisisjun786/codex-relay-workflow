@@ -1,0 +1,8 @@
+{
+  "issue": "CRW-678",
+  "pending": [
+    "hook__pre-tool-use-guarding-memory-write__shell_destinations_classified",
+    "hook__pre-tool-use-guarding-memory-write__shell_clobber_and_inplace_interpreters"
+  ],
+  "identical": []
+}
