@@ -337,21 +337,23 @@ func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
 	}
 }
 
-// TestResetLinkWalkDotEndingTargetOpensNoDirectory: the directory a dot-ending target names is not
-// opened by the judgement. CRW-554 requires that, and it is what the walk replaced: os.Root.Stat on
-// the link resolves it to that directory and opens it. The target directory is made search-only, so
-// opening it for reading fails, and a walk that opened it would report the target absent.
+// TestResetLinkWalkDotEndingTargetNeverUsesTheDescriptorStat: for every dot-ending target the
+// judgement takes the walk, so it never calls the descriptor stat, which is what opens the target
+// directory (O_DIRECTORY, read only) — the opening CRW-554 forbids. The seam counts those calls, and
+// the verdict is checked in the same pass so a judgement that simply gave up would not pass.
 //
-// A deeper target such as "keep/sub/.." is decided here too, but it does not distinguish the two
-// mechanisms: resolving it traverses keep and sub either way, so the search-only mode is not applied
-// to those rows. The intermediate traversal is what the OS-path fallback did as well.
-func TestResetLinkWalkDotEndingTargetOpensNoDirectory(t *testing.T) {
+// The walk still has os.Root traverse a multi-component target's intermediate directories, the way
+// any path resolution does, so "keep/sub/.." opens keep as an intermediate before the ".." pops back
+// to it. That is recorded in this issue's known-defects file; the final component is what the walk
+// reads with lstat, and that is what these rows pin.
+func TestResetLinkWalkDotEndingTargetNeverUsesTheDescriptorStat(t *testing.T) {
 	for _, tc := range []struct {
 		name, target string
-		dirs         []string
 	}{
-		{"keep_dot", "keep/.", nil},
-		{"keep_sub_dotdot", "keep/sub/..", []string{"keep", "sub"}},
+		{"keep_dot", "keep/."},
+		{"keep_dotdot", "keep/.."},
+		{"keep_sub_dot", "keep/sub/."},
+		{"keep_sub_dotdot", "keep/sub/.."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -361,30 +363,24 @@ func TestResetLinkWalkDotEndingTargetOpensNoDirectory(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			link := filepath.Join(dir, "a.json")
-			if err := os.Symlink(tc.target, link); err != nil {
+			if err := os.Symlink(tc.target, filepath.Join(dir, "a.json")); err != nil {
 				t.Fatal(err)
 			}
-			_, wantStat := os.Stat(link)
-			// keep is search-only from here on, so opening it for reading fails. The deeper row keeps
-			// keep traversable so that the case still tests what its name claims.
-			mode := os.FileMode(0o311)
-			if tc.dirs != nil {
-				mode = 0o711
+			root := resetLinkWalkRoot(t, dir)
+			calls := 0
+			stat := func(name string) (os.FileInfo, error) {
+				calls++
+				return root.Stat(name)
 			}
-			if err := os.Chmod(filepath.Join(dir, "keep"), mode); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "keep"), 0o755) })
-			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			got, err := resetLinkTargetExistsWith(root, "a.json", stat)
 			if err != nil {
-				t.Fatalf("resetLinkTargetExists: %v", err)
-			}
-			if wantStat != nil {
-				t.Fatalf("the case must resolve for the OS too: %v", wantStat)
+				t.Fatalf("resetLinkTargetExistsWith: %v", err)
 			}
 			if !got {
-				t.Error("exists = false: the judgement opened the target directory, which CRW-554 forbids")
+				t.Errorf("exists = false, want true for the target %q", tc.target)
+			}
+			if calls != 0 {
+				t.Errorf("descriptor stat calls = %d, want 0: the walk must judge the dot-ending target", calls)
 			}
 		})
 	}
