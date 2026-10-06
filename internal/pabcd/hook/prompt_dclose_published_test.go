@@ -170,7 +170,12 @@ func TestPromptDclosePublishedMarkerWriteCompletesTheClose(t *testing.T) {
 	promptDcloseTwoPhases(t, cwd, slug)
 	promptDcloseSeedState(t, cwd, "s1", slug, "c-published-marker")
 	receipt := promptDcloseReceipt(t, cwd, "s1", "c-published-marker")
-	seams := &promptDcloseSeams{writeMarker: func(string, state.State, string, *string) error {
+	seams := &promptDcloseSeams{writeMarker: func(markerCwd string, markerHeld state.State, markerClose string, markerNext *string) error {
+		// Perform the real write first, so the artifact is genuinely on disk, then report the
+		// post-rename failure a directory sync would: the close must count that as landed.
+		if err := promptDcloseWriteMarker(markerCwd, markerHeld, markerClose, markerNext); err != nil {
+			return err
+		}
 		return &state.PublishedError{Err: syscall.EIO}
 	}}
 	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
@@ -189,6 +194,15 @@ func TestPromptDclosePublishedMarkerWriteCompletesTheClose(t *testing.T) {
 	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseIdle {
 		t.Errorf("a published marker write did not rest the session at IDLE: %+v", s)
 	}
+	// The real write ran before the reported failure, so the close must have committed the plan
+	// and finished the finalization against the published marker.
+	saved := promptDcloseReadPlan(t, cwd, slug)
+	if saved.WorkPhases[0].Status != goalplan.WorkPhaseDone || saved.WorkPhases[1].Status != goalplan.WorkPhaseInProgress {
+		t.Errorf("the plan after a published marker write: %+v", saved.WorkPhases)
+	}
+	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 1 {
+		t.Errorf("the close rows after a published marker write: %+v", rows)
+	}
 }
 
 // TestPromptDclosePublishedPlanWriteCompletesTheClose is finding 2b: the same failure on the plan
@@ -199,7 +213,12 @@ func TestPromptDclosePublishedPlanWriteCompletesTheClose(t *testing.T) {
 	promptDcloseTwoPhases(t, cwd, slug)
 	promptDcloseSeedState(t, cwd, "s1", slug, "c-published-plan")
 	receipt := promptDcloseReceipt(t, cwd, "s1", "c-published-plan")
-	seams := &promptDcloseSeams{writePlan: func(string, *goalplan.Goalplan) error {
+	seams := &promptDcloseSeams{writePlan: func(planCwd string, plan *goalplan.Goalplan) error {
+		// Perform the real write first, so the plan is genuinely on disk, then report the
+		// post-rename failure a directory sync would: the close must count that as landed.
+		if err := goalplan.WriteGoalplan(planCwd, plan); err != nil {
+			return err
+		}
 		return &state.PublishedError{Err: syscall.EIO}
 	}}
 	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
@@ -214,6 +233,50 @@ func TestPromptDclosePublishedPlanWriteCompletesTheClose(t *testing.T) {
 	}
 	if !strings.Contains(answer, "published but its directory could not be synced") {
 		t.Errorf("a published plan write carried no durability warning: %q", answer)
+	}
+	// The real write ran before the reported failure, so the plan on disk is the closed one.
+	saved := promptDcloseReadPlan(t, cwd, slug)
+	if saved.WorkPhases[0].Status != goalplan.WorkPhaseDone || saved.WorkPhases[1].Status != goalplan.WorkPhaseInProgress {
+		t.Errorf("the plan after a published plan write: %+v", saved.WorkPhases)
+	}
+}
+
+// TestPromptDclosePartialRefusalNamesThePublishedMarker is the review finding on the mixed-failure
+// path: the marker really published (its rename landed, only the directory sync failed) and the
+// plan write then failed before its own rename. The close refuses, but it must not claim that
+// nothing was written - the marker is on disk and the operator needs to know.
+func TestPromptDclosePartialRefusalNamesThePublishedMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-partial-marker"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-partial")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-partial")
+	seams := &promptDcloseSeams{
+		writeMarker: func(markerCwd string, markerHeld state.State, markerClose string, markerNext *string) error {
+			if err := promptDcloseWriteMarker(markerCwd, markerHeld, markerClose, markerNext); err != nil {
+				return err
+			}
+			return &state.PublishedError{Err: syscall.EIO}
+		},
+		writePlan: func(string, *goalplan.Goalplan) error {
+			return errors.New("the goalplan could not be written before the rename")
+		},
+	}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "refused") {
+		t.Errorf("the mixed failure did not refuse: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written") {
+		t.Errorf("the mixed failure denied the published marker: %q", answer)
+	}
+	if !strings.Contains(answer, "published but its directory could not be synced") {
+		t.Errorf("the mixed failure did not name the published marker: %q", answer)
+	}
+	if s := state.ReadState(cwd, "s1"); s.DcloseRecovery == nil {
+		t.Errorf("the mixed failure lost the published marker: %+v", s)
 	}
 }
 

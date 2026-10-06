@@ -314,7 +314,10 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 	}
 	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
 	if !landed {
-		return promptDcloseOutcome{refusal: promptDcloseStateRefusal()}
+		// An earlier write of this close may already have published its artifact (the marker or the
+		// plan), so the refusal must name it rather than deny that anything was written (CRW-869,
+		// the review finding on the mixed-failure path).
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(promptDcloseStateRefusal(), warnings)}
 	}
 	if stateWarning != "" {
 		warnings = append(warnings, stateWarning)
@@ -529,7 +532,11 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 			// durability is in question while keeping the sentence shape of the state warning.
 			warnings = append(warnings, promptDcloseGoalplanPublishedWarning(planErr))
 		default:
-			return promptDclosePlanOutcome{output: promptOrchestrateRefusal("the goalplan could not be written: " + planErr.Error() + " Nothing was written.")}, nil
+			// The plan write did not land, but the marker write before it may have published its own
+			// artifact; the refusal then names that partial commit instead of denying it (CRW-869,
+			// the review finding on the mixed-failure path).
+			return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
+				promptOrchestrateRefusal("the goalplan could not be written: "+planErr.Error()+" Nothing was written."), warnings)}, nil
 		}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterGoalplanCommit })
 	}
@@ -569,6 +576,18 @@ func promptDcloseWriteLanded(err error) (bool, string) {
 // state, so the operator's verification target is right (CRW-869, finding 2).
 func promptDcloseGoalplanPublishedWarning(err error) string {
 	return "the goalplan was published but its directory could not be synced: " + err.Error()
+}
+
+// promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced
+// when an earlier write of the same close already published its artifact (CRW-869, the review
+// finding on the mixed-failure path). The close still did not apply, but an answer that denied the
+// published marker or plan would hide a partial commit the operator has to know about. With no such
+// warning the refusal is returned exactly as it was.
+func promptDclosePartialRefusal(refusal string, warnings []string) string {
+	if len(warnings) == 0 {
+		return refusal
+	}
+	return strings.Replace(refusal, "Nothing was written.", strings.Join(warnings, " ")+" Nothing else was written.", 1)
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any
