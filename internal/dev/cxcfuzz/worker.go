@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -57,7 +60,9 @@ func NewPool(oracle Oracle, workers int, timeout time.Duration, env []string) (*
 		return nil, NoCommand{Command: oracle.Command, Err: err}
 	}
 	for _, required := range oracle.Requires {
-		if _, err := exec.LookPath(required); err != nil {
+		// Resolve against the environment the worker is launched with, not this process's own PATH: a
+		// caller that hands the worker a different PATH must have its requirements judged there.
+		if _, err := lookPathIn(env, required); err != nil {
 			return nil, NoCommand{Command: required, Err: err}
 		}
 	}
@@ -179,6 +184,34 @@ func (p *Pool) exchange(w *worker, input, root string) (string, error) {
 }
 
 // Close stops every idle worker.
+// lookPathIn resolves a command against an explicit environment's PATH, the way exec.LookPath does
+// against this process's own. An environment with no PATH falls back to the process PATH, as a
+// child would inherit.
+func lookPathIn(env []string, command string) (string, error) {
+	path := ""
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
+			path = value
+		}
+	}
+	if path == "" {
+		return exec.LookPath(command)
+	}
+	if strings.ContainsRune(command, filepath.Separator) {
+		return command, nil
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, command)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
 func (p *Pool) Close() error {
 	for i := 0; i < cap(p.slots); i++ {
 		if w := <-p.slots; w != nil {

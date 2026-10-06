@@ -10,7 +10,7 @@
 // root's .codexclaw/goalplans/rec-plan/goalplan.json by the harness's fs scenario; the shim reads it,
 // rewrites it, and answers the read kind, field and plan text, and the rewritten bytes.
 import { createInterface } from "node:readline";
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The harness always sets ORACLE_ROOT to the target's Oracle.Root; no host path is committed here.
@@ -43,6 +43,15 @@ function run(request) {
     process.env.CRW_HOME = root + "/crw-home";
     process.env.CODEXCLAW_HOME = root + "/codexclaw-home";
     process.env.TMPDIR = root + "/tmp";
+  }
+  // The case stores the plan once, at the port's own path. The oracle reads .codexclaw/goalplans, so
+  // the shim mirrors the file there first: the document is one value in the input, and the shrinker
+  // can never leave the two sides reading different documents.
+  const source = join(root, ".crw", "goalplans", SLUG, "goalplan.json");
+  const target = join(root, ".codexclaw", "goalplans", SLUG, "goalplan.json");
+  if (existsSync(source)) {
+    mkdirSync(join(root, ".codexclaw", "goalplans", SLUG), { recursive: true });
+    copyFileSync(source, target);
   }
   const read = readGoalplanDetailed(root, SLUG);
   const answer = { kind: "ok" };

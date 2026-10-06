@@ -10,7 +10,8 @@
 // root's .codexclaw/sessions/s.json by the harness's fs scenario; the shim reads it, rewrites it,
 // and answers the unreadable verdict, the rebuilt state and the rewritten bytes, or the refusal.
 import { createInterface } from "node:readline";
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 // The harness always sets ORACLE_ROOT to the target's Oracle.Root; no host path is committed here.
 const oracleRoot = process.env.ORACLE_ROOT;
@@ -40,6 +41,15 @@ function run(request) {
     process.env.CRW_HOME = root + "/crw-home";
     process.env.CODEXCLAW_HOME = root + "/codexclaw-home";
     process.env.TMPDIR = root + "/tmp";
+  }
+  // The case stores the session document once, at the port's own path. The oracle reads
+  // .codexclaw/sessions, so the shim mirrors the file there first: the document is one value in the
+  // input, and the shrinker can never leave the two sides reading different documents.
+  const source = join(root, ".crw", "sessions", SESSION_ID + ".json");
+  const target = join(root, ".codexclaw", "sessions", SESSION_ID + ".json");
+  if (existsSync(source)) {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
   }
   const { state, unreadable } = readStateStrict(root, SESSION_ID);
   // The state travels as its text form, JSON.stringify(state, null, 2), the shape the port's

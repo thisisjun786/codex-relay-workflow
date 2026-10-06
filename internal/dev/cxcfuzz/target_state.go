@@ -277,11 +277,12 @@ func stateLoneSurrogate(rng *rand.Rand) string {
 	return `{"phase": "P", "slug": ` + values[rng.Intn(len(values))] + `, "supersededBy": ` + values[rng.Intn(len(values))] + `}`
 }
 
-// stateGenerate builds one case: the session bytes written under both roots.
+// stateGenerate builds one case: the session bytes at the Go side's own path, .crw/sessions/s.json.
+// The document is stored once: the shim mirrors it to the oracle's .codexclaw path, so the shrinker
+// cannot drop one copy and leave the two sides reading different documents.
 func stateGenerate(rng *rand.Rand, size int) any {
 	text := stateTexts(rng)
 	return pyjson.Object{{Key: "fs", Value: []any{
 		pyjson.Object{{Key: "path", Value: filepath.Join(".crw", "sessions", stateSessionID+".json")}, {Key: "kind", Value: "file"}, {Key: "content", Value: text}},
-		pyjson.Object{{Key: "path", Value: filepath.Join(".codexclaw", "sessions", stateSessionID+".json")}, {Key: "kind", Value: "file"}, {Key: "content", Value: text}},
 	}}}
 }

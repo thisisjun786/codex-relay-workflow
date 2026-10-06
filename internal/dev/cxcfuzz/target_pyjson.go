@@ -85,12 +85,37 @@ func pyjsonGo(input any, env Env) (any, error) {
 	return pyjson.Object{{Key: "exit", Value: 0}, {Key: "stdout", Value: pyjson.Dumps(value, opts)}, {Key: "stderr", Value: ""}}, nil
 }
 
-// pyjsonCompare compares exit, stdout and stderr, which is the oracle whole answer.
+// pyjsonCompare compares exit, stdout and stderr, which is the oracle whole answer. An acceptance
+// mismatch is a miss or an extra, as the harness defines them: the oracle refusing an input the Go
+// side accepts is a miss (the security direction), and the reverse is an extra.
 func pyjsonCompare(goOut, oracleOut any) Verdict {
 	if canonical(goOut) == canonical(oracleOut) {
 		return Verdict{Kind: Same}
 	}
+	goExit, goOK := pyjsonExit(goOut)
+	oracleExit, oracleOK := pyjsonExit(oracleOut)
+	if goOK && oracleOK {
+		switch {
+		case goExit == 0 && oracleExit != 0:
+			return Verdict{Kind: Miss, Detail: "the oracle refuses the document the Go side accepts"}
+		case goExit != 0 && oracleExit == 0:
+			return Verdict{Kind: Extra, Detail: "the Go side refuses the document the oracle accepts"}
+		}
+	}
 	return Verdict{Kind: Differ, Detail: "exit, stdout or stderr differs"}
+}
+
+// pyjsonExit reads an answer's exit status.
+func pyjsonExit(out any) (int, bool) {
+	value, found := field(out, "exit")
+	if !found {
+		return 0, false
+	}
+	exit, err := integer(value)
+	if err != nil {
+		return 0, false
+	}
+	return exit, true
 }
 
 // pyjsonDocuments are the boundary documents the issue body names: a lone surrogate escape, a

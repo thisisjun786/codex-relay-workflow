@@ -167,29 +167,37 @@ func goalplanLostKeys(goText, oracleText string) []string {
 // duplicate ids, null and unknown fields, a task without a title, an empty planFiles sha256,
 // reviewRounds and their planFiles, a roundId near 2^53, a lone surrogate and a deep dependsOn.
 func goalplanPlans(rng *rand.Rand) string {
-	switch rng.Intn(12) {
+	switch rng.Intn(16) {
 	case 0:
 		return `{`
 	case 1:
 		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 1}`
 	case 2:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 4.5}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 1.0}`
 	case 3:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 1e21}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 2}`
 	case 4:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "id": "wp2"}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 3}`
 	case 5:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1"}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 4}`
 	case 6:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "tasks": [{"id": "t1"}]}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 4.5}`
 	case 7:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "reviewRounds": [{"roundId": "r1", "purpose": "plan_audit", "planPath": "a", "planSha256": "", "status": "pending", "lane": {"launchId": "r1-20260101000000"}, "openedAt": "2026-01-01T00:00:00.000Z", "planFiles": [{"path": "a", "sha256": ""}]}]}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "schemaVersion": 1e21}`
 	case 8:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "reviewRounds": [{"roundId": 9007199254740993, "purpose": "plan_audit", "planPath": "a", "planSha256": "b", "status": "pending", "lane": {"launchId": "l"}, "openedAt": "2026-01-01T00:00:00.000Z"}]}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "id": "wp2"}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
 	case 9:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "dependsOn": ["wp2"]}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1"}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
 	case 10:
-		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "unknownKey": 1, "activeWorkPhaseId": null}`
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "tasks": [{"id": "t1"}]}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+	case 11:
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "reviewRounds": [{"roundId": "r1", "purpose": "plan_audit", "planPath": "a", "planSha256": "", "status": "pending", "lane": {"launchId": "r1-20260101000000"}, "openedAt": "2026-01-01T00:00:00.000Z", "planFiles": [{"path": "a", "sha256": ""}]}]}`
+	case 12:
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}, "reviewRounds": [{"roundId": 9007199254740993, "purpose": "plan_audit", "planPath": "a", "planSha256": "b", "status": "pending", "lane": {"launchId": "l"}, "openedAt": "2026-01-01T00:00:00.000Z"}]}`
+	case 13:
+		return `{"objective": "o", "slug": "rec-plan", "workPhases": [{"id": "wp1", "title": "t", "dependsOn": ["wp2"]}], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
+	case 14:
+		return `{"objective": "o\ud800", "slug": "rec-plan", "workPhases": [], "criteria": [], "host": {"armed": false, "armedAt": null, "source": "none"}}`
 	default:
 		return goalplanPlan(rng)
 	}
@@ -213,11 +221,13 @@ func goalplanPlan(rng *rand.Rand) string {
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-// goalplanGenerate builds one case: the plan bytes written under both roots.
+// goalplanGenerate builds one case: the plan bytes at the Go side's own path,
+// .crw/goalplans/rec-plan/goalplan.json. The document is stored once: the shim mirrors it to the
+// oracle's .codexclaw path, so the shrinker cannot drop one copy and leave the two sides reading
+// different documents.
 func goalplanGenerate(rng *rand.Rand, size int) any {
 	text := goalplanPlans(rng)
 	return pyjson.Object{{Key: "fs", Value: []any{
 		pyjson.Object{{Key: "path", Value: filepath.Join(".crw", "goalplans", goalplanSlug, "goalplan.json")}, {Key: "kind", Value: "file"}, {Key: "content", Value: text}},
-		pyjson.Object{{Key: "path", Value: filepath.Join(".codexclaw", "goalplans", goalplanSlug, "goalplan.json")}, {Key: "kind", Value: "file"}, {Key: "content", Value: text}},
 	}}}
 }
