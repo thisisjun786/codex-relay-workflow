@@ -73,11 +73,15 @@ func resumeRelayCommands(t *testing.T, calls [][]string) []string {
 	t.Helper()
 	var out []string
 	for _, call := range calls {
-		for i, arg := range call {
-			if arg == "--socket" && i+2 < len(call) {
-				out = append(out, call[i+2])
-				break
+		// The relay subcommand is the first token after the leading "relay" and the helper's own
+		// flags with their values.
+		for i := 1; i < len(call); i++ {
+			if strings.HasPrefix(call[i], "--") {
+				i++
+				continue
 			}
+			out = append(out, call[i])
+			break
 		}
 	}
 	return out
@@ -400,6 +404,40 @@ func TestResumeCommandLineAndRefusals(t *testing.T) {
 		t.Fatal("a socket nobody listens on was accepted")
 	} else if failure, ok := err.(*resumeFailure); !ok || failure.Reason != "host_unreachable" || resumeExit(failure) != 3 {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// --dry-run on a thread whose reported settings disagree with the record reports the mismatch and
+// starts nothing.
+func TestResumeDryRunReportsASettingsMismatch(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"model": "other", "reasoningEffort": "xhigh", "status": map[string]any{"type": "notLoaded"}}}})
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m", dryRun: true})
+	failure, ok := err.(*resumeFailure)
+	if !ok || failure.Reason != resumeSettingsMismatch || resumeExit(failure) != 4 {
+		t.Fatalf("err = %v", err)
+	}
+	if methods := resumeHostMethods(host); !slices.Equal(methods, []string{"thread/read"}) {
+		t.Fatalf("the dry run sent %q", methods)
+	}
+}
+
+// An assignment that names no parent is refused: the admit-turn line it would print could not be
+// run by anybody.
+func TestResumeRefusesAnAssignmentWithoutAParent(t *testing.T) {
+	host := resumeHost(t, "idle")
+	exe, _ := resumeRelayScript(t, `{"childTaskId":"01child","executionGeneration":3}`, resumeTestSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	_, err := resumeRun(context.Background(), e, resumeConfig(host, "alpha"), resumeOptions{relationship: "rel-1", message: "m"})
+	failure, ok := err.(*resumeFailure)
+	if !ok || failure.Reason != resumeAssignmentUnavailable || resumeExit(failure) != 3 {
+		t.Fatalf("err = %v", err)
+	}
+	if n := host.Count("thread/read"); n != 0 {
+		t.Errorf("the host was contacted %d times before the assignment was refused", n)
 	}
 }
 

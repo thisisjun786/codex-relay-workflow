@@ -115,8 +115,8 @@ func resumeAssignment(ctx context.Context, e *Env, cfg *Config, relationship str
 	if err := json.Unmarshal(stdout, &answer); err != nil {
 		return "", "", 0, &resumeFailure{Reason: resumeAssignmentUnavailable, Detail: "the relay answer: " + err.Error()}
 	}
-	if answer.ChildTaskID == "" || answer.ExecutionGeneration < 1 {
-		return "", "", 0, &resumeFailure{Reason: resumeAssignmentUnavailable, Detail: "the relay named no child task and no generation for this relationship"}
+	if answer.ChildTaskID == "" || answer.ParentTaskID == "" || answer.ExecutionGeneration < 1 {
+		return "", "", 0, &resumeFailure{Reason: resumeAssignmentUnavailable, Detail: "the relay named no child task, no parent task or no generation for this relationship, so the turn it would start could not be admitted"}
 	}
 	return answer.ChildTaskID, answer.ParentTaskID, answer.ExecutionGeneration, nil
 }
@@ -334,10 +334,7 @@ func resumeAdmitTurn(cfg *Config, relationship string, generation int64, turn, a
 	if cfg.Relay.Socket != "" {
 		argv = append(argv, "--socket", cfg.Relay.Socket)
 	}
-	argv = append(argv, "admit-turn", "--relationship", relationship, "--generation", fmt.Sprint(generation), "--turn", turn)
-	if actor != "" {
-		argv = append(argv, "--actor", actor)
-	}
+	argv = append(argv, "admit-turn", "--relationship", relationship, "--generation", fmt.Sprint(generation), "--turn", turn, "--actor", actor)
 	quoted := make([]string, len(argv))
 	for i, one := range argv {
 		quoted[i] = quote.Shell(one)
