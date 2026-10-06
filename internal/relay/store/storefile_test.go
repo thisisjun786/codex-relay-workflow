@@ -1,8 +1,10 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -47,6 +49,65 @@ func TestStoreFileRegistry_reusesTheHandleForASecondNameOfOneInode(t *testing.T)
 	if first != second {
 		t.Fatalf("a second name for one inode got its own descriptor: %p != %p", first, second)
 	}
+}
+
+// TestStoreFileRegistry_doesNotOpenASecondDescriptorForAKnownInode is the review finding this
+// change fixed: a second name for an inode the process already holds must not open a descriptor
+// that nothing keeps, because os.File's finalizer would close it at the next collection and drop
+// this process's POSIX locks on the file.
+func TestStoreFileRegistry_doesNotOpenASecondDescriptorForAKnownInode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias.sqlite3")
+	if err := os.Link(path, alias); err != nil {
+		t.Skipf("hard links unavailable here: %v", err)
+	}
+	if _, err := holdStoreFile(path); err != nil {
+		t.Fatal(err)
+	}
+	before := openDescriptorCount(t)
+	second, err := holdStoreFile(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after := openDescriptorCount(t); after != before {
+		t.Fatalf("a second name for a held inode opened a descriptor that nothing keeps: %d -> %d", before, after)
+	}
+	// The handle the second name got is the held one, and it is still usable.
+	if _, err := second.Stat(); err != nil {
+		t.Fatalf("the reused handle is not usable: %v", err)
+	}
+}
+
+// TestStoreFileRegistry_refusesANonRegularFile pins the review's second finding: a directory (or
+// any non-regular file) at a store-file path is refused with the EISDIR refusal CopySnapshot
+// documents, and no descriptor is held for it.
+func TestStoreFileRegistry_refusesANonRegularFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "relay.sqlite3")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := openDescriptorCount(t)
+	_, err := holdStoreFile(dir)
+	if !errors.Is(err, syscall.EISDIR) {
+		t.Fatalf("a directory at a store-file path: err = %v, want EISDIR", err)
+	}
+	if after := openDescriptorCount(t); after != before {
+		t.Fatalf("a refused non-regular file left a descriptor open: %d -> %d", before, after)
+	}
+}
+
+// openDescriptorCount is the number of descriptors this process holds.
+func openDescriptorCount(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("/proc/self/fd is unavailable: %v", err)
+	}
+	return len(entries)
 }
 
 func TestStoreFileRegistry_doesNotGrowWithRepeatedReads(t *testing.T) {
