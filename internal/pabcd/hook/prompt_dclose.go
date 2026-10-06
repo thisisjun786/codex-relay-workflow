@@ -310,6 +310,9 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		next.DcloseRecovery = promptDcloseMarker(held, closePhaseID, plan.markerNext)
 	}
 	if refusal := guard(); refusal != "" {
+		// No warning can be outstanding here: this guard evaluates the same state the identical
+		// guard accepted before the marker write, and the marker write preserves every record class
+		// the guard checks, so the bare refusal is exact (CRW-869).
 		return promptDcloseOutcome{refusal: refusal}
 	}
 	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
