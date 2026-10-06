@@ -1382,7 +1382,7 @@ leg this issue wires; none is fixed here, because each belongs to the unit that 
   through the cli table (`cxc orchestrate` to `crw pabcd orchestrate`, `cxc loop` to `crw pabcd loop`), reads
   `crw pabcd orchestrate` and `crw pabcd loop`. `crw orchestrate` is not a crw command, so the guidance names a
   verb that does not exist (source `subagent-config/src/spawn-attach-hook.ts:292` and `:310`, against the `cli`
-  rows of `contract/schema/cxc/name-substitution.json`; the corpus fixtures hold the renamed text); port: kept.
+  rows of `contract/schema/cxc/name-substitution.json`; the corpus fixtures hold the renamed text); port: pending (follow-up CRW-735).
 - The skills catalog and the mention inlining both take the skills directory from `CRW_SKILLS_DIR` or
   `<PLUGIN_ROOT>/skills` and both filter by the oracle leaf-safe allowlist, so a replay against this
   repository plugins/crw/skills (crw-check, crw-define, crw-plan, ...) yields neither the recorded
@@ -1393,4 +1393,4 @@ leg this issue wires; none is fixed here, because each belongs to the unit that 
   `managed dispatch: lstat <path>: no such file or directory` stands for
   `managed dispatch: ENOENT: no such file or directory, lstat "<path>"` (source `:892-907`, the
   `catch (error) { return denyEnvelope(...) }` arm; the fixture
-  `hook__pre-tool-use-attaching-skills__managed_dispatch_refusals` holds the oracle text); port: kept.
+  `hook__pre-tool-use-attaching-skills__managed_dispatch_refusals` holds the oracle text); port: pending (follow-up CRW-735).
