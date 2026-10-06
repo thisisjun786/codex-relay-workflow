@@ -12,6 +12,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
+| `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed; a run that skips them is success |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
 | `CGO_ENABLED=0 make dist` per target | `go-product` leg `dist`: static `crw` for linux/amd64, linux/arm64 and darwin/arm64, uploaded with `SHA256SUMS` |
@@ -26,8 +27,10 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 Every job runs on every event: a pull request (GitHub's merge candidate), a push to `dev` (the
 integrated commit, the evidence a release needs) and a manual dispatch (which is not release
-evidence). There is no path selection. The Go product legs always ran whatever changed, so
-selecting the rest by changed paths saved little and put a job before every other one.
+evidence). There is no path selection, except the one `skill-scripts-node` makes for itself:
+it runs the staged skills' Node tests only when a staged skill path changed, and a run that
+skips them is success. The Go product legs always ran whatever changed, so selecting the rest
+by changed paths saved little and put a job before every other one.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
 `make test` builds one `crw` for the run (`dist/test/crw`, release-shaped with `-trimpath`) and
