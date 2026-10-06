@@ -15,6 +15,13 @@ import (
 // coreConfigUsage is what crw manage config prints for -h.
 const coreConfigUsage = "usage: crw manage config [--config <path>]"
 
+// Where a value came from: the manage object of the configuration file, or the built-in
+// default the install layout fixes.
+const (
+	coreSourceDefault = "default"
+	coreSourceConfig  = "config"
+)
+
 // coreSettings is one settings block: the model and the reasoning effort.
 type coreSettings struct {
 	Model           string `json:"model"`
@@ -55,6 +62,10 @@ type Config struct {
 	path   string                     // the configuration file's path
 	source crwconfig.Source           // where that path came from: flag, env or default
 	raw    map[string]json.RawMessage // the manage object verbatim, for Section
+
+	// sources names, per reported value, whether the manage object carried it or the
+	// install layout's default supplied it.
+	sources map[string]string
 }
 
 // Section decodes the top-level key name of the manage object into v. A key the document
@@ -168,13 +179,40 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 		}
 	}
 	// A key that is there but empty is not a value: the install layout's defaults stand.
-	if cfg.StateDir == "" {
+	if cfg.StateDir == "" || !coreKeyPresent(manage["state_dir"]) {
 		cfg.StateDir = coreManageStateRoot(e, file)
+	} else {
+		cfg.sources["state_dir"] = coreSourceConfig
 	}
 	if cfg.Relay.Socket == "" {
 		cfg.Relay.Socket = coreSocketPath(e)
+	} else if raw, ok := manage["relay"]; ok && coreFieldPresent(raw, "socket") {
+		cfg.sources["relay.socket"] = coreSourceConfig
+	}
+	if cfg.Bridge.Binary != "" && coreFieldPresent(manage["bridge"], "binary") {
+		cfg.sources["bridge.binary"] = coreSourceConfig
 	}
 	return coreConfigState{cfg: cfg}
+}
+
+// coreKeyPresent reports whether a manage key carries a value: a key that is absent,
+// null or the empty string supplied nothing, so the install layout's default stands.
+func coreKeyPresent(raw json.RawMessage) bool {
+	trimmed := string(bytes.TrimSpace(raw))
+	return trimmed != "" && trimmed != "null" && trimmed != "\"\""
+}
+
+// coreFieldPresent reports whether one raw object carries a key with a value, so an
+// object that is absent, not an object, or missing the key supplied nothing.
+func coreFieldPresent(raw json.RawMessage, key string) bool {
+	if !coreKeyPresent(raw) {
+		return false
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return false
+	}
+	return coreKeyPresent(fields[key])
 }
 
 // coreLoadFile is coreLoad as a caller that wants the configuration and the refusal apart.
@@ -214,6 +252,11 @@ func coreDefaultConfig(e *Env, file *crwconfig.File) *Config {
 		Relay:    coreRelay{Socket: coreSocketPath(e)},
 		StateDir: coreManageStateRoot(e, file),
 		raw:      map[string]json.RawMessage{},
+		sources: map[string]string{
+			"relay.socket":  coreSourceDefault,
+			"state_dir":     coreSourceDefault,
+			"bridge.binary": coreSourceDefault,
+		},
 	}
 }
 
@@ -260,6 +303,7 @@ func coreConfigReport(c *Config) map[string]any {
 			"path":   c.path,
 			"source": string(c.source),
 		},
+		"sources": c.sources,
 	}
 }
 

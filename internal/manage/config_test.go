@@ -150,6 +150,14 @@ func TestConfigReadsTheManageSectionOfTheCrwConfigFile(t *testing.T) {
 	if parent := coreBlock(t, settings, "parent"); parent["model"] != "m2" {
 		t.Errorf("settings.parent = %v", parent)
 	}
+	// Each value the report names says where it came from: the manage object carried
+	// these three, so they are the file's, not the install layout's.
+	sources := coreBlock(t, report, "sources")
+	for _, key := range []string{"relay.socket", "state_dir", "bridge.binary"} {
+		if sources[key] != coreSourceConfig {
+			t.Errorf("sources[%q] = %v, want %q", key, sources[key], coreSourceConfig)
+		}
+	}
 	if source := coreConfigSourceOf(t, report); source["path"] != path || source["source"] != "env" {
 		t.Errorf("config = %v, want path %q from env", source, path)
 	}
@@ -186,6 +194,12 @@ func TestConfigDefaultsWithoutAFileAndTheManageStateRoot(t *testing.T) {
 	}
 	if bridge := coreBlock(t, report, "bridge"); bridge["binary"] != "" || bridge["execution_policy"] != "" {
 		t.Errorf("bridge = %v, want empty", report["bridge"])
+	}
+	sources := coreBlock(t, report, "sources")
+	for _, key := range []string{"relay.socket", "state_dir", "bridge.binary"} {
+		if sources[key] != coreSourceDefault {
+			t.Errorf("sources[%q] = %v, want %q", key, sources[key], coreSourceDefault)
+		}
 	}
 	if report["management_thread"] != "" || report["repository"] != "" {
 		t.Errorf("a value with no default is not empty: %v %v", report["management_thread"], report["repository"])
