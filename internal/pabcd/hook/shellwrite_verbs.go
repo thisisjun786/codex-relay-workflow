@@ -388,9 +388,9 @@ func shellVerbPythonNode(verb string, args []string, hard bool) []string {
 	if script == "" {
 		return []string{}
 	}
-	out := shellVerbScriptWrites(script, hard)
+	out := shellVerbScriptWritesIn(script, hard, isPy)
 	if un := shellVerbUnescape(script); hard && un != script {
-		out = append(out, shellVerbScriptWrites(un, true)...)
+		out = append(out, shellVerbScriptWritesIn(un, true, isPy)...)
 	}
 	return out
 }
@@ -655,6 +655,14 @@ func shellVerbCpMvWrites(args []string) []string {
 // lazy matching and each pattern matches what the backtracking original does. hard adds template literal paths, the open() and
 // Path reader and the decoded value of a JavaScript literal, after the oracle's raw text.
 func shellVerbScriptWrites(script string, hard bool) []string {
+	return shellVerbScriptWritesIn(script, hard, true)
+}
+
+// shellVerbScriptWritesIn is shellVerbScriptWrites with the program's language: python selects the Python readers, whose
+// triple-quoted region rule belongs to Python source alone. A JavaScript program is not Python source, so three quotes inside a
+// template literal must not open a triple-quoted region and swallow the rest of the program, which would lose the destination
+// of a later write; a Node program keeps the single-quote walk the reader always had.
+func shellVerbScriptWritesIn(script string, hard, python bool) []string {
 	s, dot, pre := lintSpace, lintDot, "[rRuUbBfF]*"
 	quoted := func(body string) string { return "(?:'(" + body + ")'|\"(" + body + ")\")" }
 	callQuote, callGroups := quoted(dot+"*?"), 2
@@ -678,7 +686,7 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 	}
 	if hard {
 		out = append(out, shellWriteEscapeJSWrites(script, out)...)
-		out = append(out, shellVerbOpenWrites(script)...)
+		out = append(out, shellVerbOpenWritesIn(script, python)...)
 	}
 	return out
 }
@@ -689,25 +697,24 @@ func shellVerbScriptWrites(script string, hard bool) []string {
 // bracket and arguments are spans of the text, so unclosed and nested calls cost no more than their own characters. A
 // Path(...).write_text or .write_bytes call names the join of its arguments (shellWriteEscapePath).
 func shellVerbOpenWrites(script string) []string {
+	return shellVerbOpenWritesIn(script, true)
+}
+
+// shellVerbOpenWritesIn is shellVerbOpenWrites with the program's language: python enables the triple-quoted region rule, so a
+// Node program is scanned exactly as it was before that rule existed (shellVerbScriptWritesIn).
+func shellVerbOpenWritesIn(script string, python bool) []string {
 	type frame struct {
 		kind  byte // 'o' for open(, 'p' for Path(, else 0
 		start int
 		args  [][2]int
 	}
-	rs := shellVerbWithoutComments(script)
+	rs := shellVerbWithoutComments(script, python)
 	var stack []frame
-	var quote rune
 	out := []string{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
-		case quote != 0:
-			if c == '\\' {
-				i++
-			} else if c == quote {
-				quote = 0
-			}
 		case c == '\'' || c == '"':
-			quote = c
+			i = shellWriteTripleScanRegion(rs, i, python) - 1
 		case c == '(' || c == '[' || c == '{':
 			stack = append(stack, frame{kind: shellVerbCallKind(rs, i, c), start: i + 1})
 		case c == ',' && len(stack) > 0:
@@ -730,27 +737,23 @@ func shellVerbOpenWrites(script string) []string {
 
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
 // quote in a comment opens no string and a comment inside a call is no argument.
-func shellVerbWithoutComments(script string) []rune {
+func shellVerbWithoutComments(script string, python bool) []rune {
 	rs, out := []rune(script), []rune{}
-	var quote rune
-	for i := 0; i < len(rs); i++ {
+	for i := 0; i < len(rs); {
 		switch c := rs[i]; {
-		case quote != 0:
-			if c == '\\' && i+1 < len(rs) {
-				out = append(out, c)
-				i++
-			} else if c == quote {
-				quote = 0
-			}
 		case c == '\'' || c == '"':
-			quote = c
+			end := shellWriteTripleScanRegion(rs, i, python)
+			out = append(out, rs[i:end]...)
+			i = end
 		case c == '#':
-			for i+1 < len(rs) && rs[i+1] != '\n' {
+			i++
+			for i < len(rs) && rs[i] != '\n' {
 				i++
 			}
-			continue
+		default:
+			out = append(out, c)
+			i++
 		}
-		out = append(out, rs[i])
 	}
 	return out
 }
@@ -875,40 +878,142 @@ func shellVerbKeywordArg(arg []rune) (string, []rune, bool) {
 func shellVerbLiteral(arg []rune) (string, bool) { return shellWriteEscapeLiteral(arg, false) }
 
 // shellWriteEscapeLiteral reads a Python string literal; earlier selects the reading before escapes were decoded, which drops a
-// backslash only before the literal's own quote or another backslash and keeps every other escape as written.
+// backslash only before the literal's own quote or another backslash and keeps every other escape as written. The decoded reading
+// also reads a literal that opens with three of its quote as Python reads a triple-quoted one (shellWriteTripleBody) and folds the
+// doubled braces of a field-free f-string (shellWriteTripleFold); the earlier reading keeps the single-quote walk it always had.
 func shellWriteEscapeLiteral(arg []rune, earlier bool) (string, bool) {
-	i, raw, isBytes := 0, false, false
+	i, raw, isBytes, isF := 0, false, false, false
 	for i < len(arg) && shellVerbSpaceRune(arg[i]) {
 		i++
 	}
 	for ; i < len(arg) && strings.ContainsRune("rRuUbBfF", arg[i]); i++ {
 		raw = raw || arg[i] == 'r' || arg[i] == 'R'
 		isBytes = isBytes || arg[i] == 'b' || arg[i] == 'B'
+		isF = isF || arg[i] == 'f' || arg[i] == 'F'
 	}
 	if i >= len(arg) || arg[i] != '\'' && arg[i] != '"' {
 		return "", false
 	}
 	quote := arg[i]
-	for k := i + 1; k < len(arg); k++ {
+	body, ok := shellWriteTripleBody(arg, i, quote, !earlier && i+2 < len(arg) && arg[i+1] == quote && arg[i+2] == quote)
+	if !ok {
+		return "", false
+	}
+	if raw {
+		return string(shellWriteTripleFold(body, arg, isF && !earlier)), true
+	}
+	if earlier {
+		return shellWriteEscapeUnquote(body, quote), true
+	}
+	return shellWriteEscapePython(shellWriteTripleFold(body, arg, isF), isBytes)
+}
+
+// shellWriteTripleBody is the body of the string literal whose opening quote is arg[i] and whether it closes with spaces alone
+// after it: with triple false the body runs to the first unescaped arg[i], with triple true to the first unescaped run of three
+// arg[i], and a character after a backslash never closes it. A single-quoted body is a slice of arg, so it is not copied; a
+// triple-quoted body is copied only when its physical line breaks need normalising (shellWriteTripleScanNewlines).
+func shellWriteTripleBody(arg []rune, i int, quote rune, triple bool) ([]rune, bool) {
+	open := i + 1
+	if triple {
+		open = i + 3
+	}
+	for k := open; k < len(arg); k++ {
 		switch c := arg[k]; {
 		case c == '\\':
 			k++ // the character after a backslash never closes the literal
-		case c == quote:
-			for _, rest := range arg[k+1:] {
+		case c == quote && (!triple || k+2 < len(arg) && arg[k+1] == quote && arg[k+2] == quote):
+			after := k + 1
+			if triple {
+				after = k + 3
+			}
+			for _, rest := range arg[after:] {
 				if !shellVerbSpaceRune(rest) {
-					return "", false
+					return nil, false
 				}
 			}
-			if raw {
-				return string(arg[i+1 : k]), true
+			if triple {
+				return shellWriteTripleScanNewlines(arg[open:k]), true
 			}
-			if earlier {
-				return shellWriteEscapeUnquote(arg[i+1:k], quote), true
-			}
-			return shellWriteEscapePython(arg[i+1:k], isBytes)
+			return arg[open:k], true
 		}
 	}
-	return "", false
+	return nil, false
+}
+
+// shellWriteTripleScanNewlines is a triple-quoted body with the physical line breaks Python's source decoding gives it: a CRLF
+// and a lone CR both read as LF before the literal is evaluated, so a destination written with either names the path Python
+// writes. A body with no CR is returned as it is; otherwise the copy is one pass.
+func shellWriteTripleScanNewlines(body []rune) []rune {
+	at := slices.Index(body, '\r')
+	if at < 0 {
+		return body
+	}
+	out := append(make([]rune, 0, len(body)), body[:at]...)
+	for ; at < len(body); at++ {
+		switch {
+		case body[at] != '\r':
+			out = append(out, body[at])
+		case at+1 < len(body) && body[at+1] == '\n':
+			out = append(out, '\n')
+			at++
+		default:
+			out = append(out, '\n')
+		}
+	}
+	return out
+}
+
+// shellWriteTripleScanRegion is the index just past the string region that opens at the quote rs[i], as Python reads it: a
+// triple-quoted literal (the quote repeated three times) runs to the first unescaped run of three of the same quote, and a
+// single-quoted region to the first unescaped quote; a character after a backslash closes neither. An unterminated region ends
+// at len(rs). The scanners shellVerbOpenWritesIn and shellVerbWithoutComments use it so a triple-quoted literal is one region
+// instead of a run of single-quoted ones. python selects the triple-quoted rule; with python false the region is one quote
+// wide, which is what a JavaScript program needs (its three quotes are three empty strings, not a Python triple quote).
+func shellWriteTripleScanRegion(rs []rune, i int, python bool) int {
+	quote := rs[i]
+	triple := python && i+2 < len(rs) && rs[i+1] == quote && rs[i+2] == quote
+	k := i + 1
+	if triple {
+		k = i + 3
+	}
+	for ; k < len(rs); k++ {
+		switch c := rs[k]; {
+		case c == '\\':
+			k++
+		case c == quote && (!triple || k+2 < len(rs) && rs[k+1] == quote && rs[k+2] == quote):
+			if triple {
+				return k + 3
+			}
+			return k + 1
+		}
+	}
+	return len(rs)
+}
+
+// shellWriteTripleFold is the body of a field-free f-string literal with its doubled braces folded to single ones, as Python folds
+// them before it decodes escapes; any other body is returned unchanged. shellWriteEscapeField decides whether a replacement field
+// is present, so the fold never fires on a body the Path join already treats as dynamic.
+func shellWriteTripleFold(body, arg []rune, f bool) []rune {
+	if !f || shellWriteEscapeField(arg) {
+		return body
+	}
+	i := 0
+	for i+1 < len(body) && !(body[i] == body[i+1] && (body[i] == '{' || body[i] == '}')) {
+		i++
+	}
+	if i+1 >= len(body) {
+		return body
+	}
+	out := append([]rune(nil), body[:i]...)
+	for ; i < len(body); i++ {
+		if i+1 < len(body) && body[i] == body[i+1] && (body[i] == '{' || body[i] == '}') {
+			out = append(out, body[i])
+			i++
+			continue
+		}
+		out = append(out, body[i])
+	}
+	return out
 }
 
 // shellWriteEscapeUnquote is the earlier reading of a non-raw literal's body.

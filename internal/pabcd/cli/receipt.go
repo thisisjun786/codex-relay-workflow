@@ -164,6 +164,12 @@ var receiptLateCancelHook func()
 // that does not exclude other runs would remove that run's receipt.
 var receiptLockAfterCompareHook func()
 
+// receiptLockWaitParkedHook, when non-nil, runs once by the lock wait after its first refused attempt, when
+// the run is parked on a lock another holder has. It is nil in production (an uninitialized variable, no
+// package-level work at start); receipt_withdraw_race_test.go uses it to end the context only once the run
+// is really waiting, instead of from a timer that can fire before the wait begins.
+var receiptLockWaitParkedHook func()
+
 // RunReceiptCLI ports receipt-cli.ts:75-185: guard, unlink stale receipt, capture, execute argv without a shell, capture again
 // and publish only a successful unchanged-tree result. The receipt stays native while a bound command runs in its source.
 // A cancellation seen anywhere before the rename refuses the receipt, and one that lands after the publication check
@@ -312,10 +318,17 @@ func receiptLockWait(ctx context.Context, dir *os.File) error {
 	}
 	tick := time.NewTicker(receiptLockRetry)
 	defer tick.Stop()
+	refused := false
 	for {
 		err := unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if !errors.Is(err, unix.EWOULDBLOCK) {
 			return err
+		}
+		if !refused {
+			refused = true
+			if receiptLockWaitParkedHook != nil {
+				receiptLockWaitParkedHook()
+			}
 		}
 		select {
 		case <-ctx.Done():

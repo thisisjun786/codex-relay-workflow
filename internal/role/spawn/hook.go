@@ -16,9 +16,9 @@ import (
 )
 
 // This file ports the first half of CXC v0.2.40's runSpawnAttachHook (subagent-config/src/spawn-attach-hook.ts:849-987: reading the
-// payload, the recursion deny and the message assembly) and runtimeSkillsDir (:54-73), with the CRW names of
-// contract/schema/cxc/name-substitution.json. It stops where the oracle starts to apply role routing (:987), and it leaves out the
-// managed dispatch loop (:889-907, a later issue), so "managed" is always absent. Nothing here registers, or is, a hook:
+// payload, the recursion deny, the managed dispatch loop :892-907 and the message assembly) and runtimeSkillsDir (:54-73), with the
+// CRW names of contract/schema/cxc/name-substitution.json. It stops where the oracle starts to apply role routing (:987). The
+// managed dispatch sources, the loop and the key filter live in hook_managed.go. Nothing here registers, or is, a hook:
 // RunSpawnAttachHook (hook_route.go) finishes the answer (promptOverride, trust prefix, ciphertext restore, item re-assembly, the
 // output envelope) from the assembly. Differences from the oracle, each recorded in docs/port-cxc/known-defects.md:
 //   - the skills directory: CRW_SKILLS_DIR, then <PLUGIN_ROOT>/skills where the oracle has the module-relative plugin directory;
@@ -30,22 +30,26 @@ import (
 // JSON key order is kept (pyjson.Object): the oracle answers {...toolInput, items: updatedItems}, which keeps each key where the
 // caller wrote it, and a Go map would not.
 type spawnHookAssembly struct {
-	v2Spawn            bool                 // v2Spawn: a collaboration hook name or v2 payload markers (:863)
-	toolInput          pyjson.Object        // toolInput: obj.tool_input (:859)
-	itemInput          []any                // itemInput: tool_input.items of a v1 spawn without message, nil for the oracle's null (:874); records once valid
-	validItems         bool                 // validItems: non-empty, every item an object with a string type and, for text, a string text (:876)
-	textItems          []pyjson.Object      // textItems: the text items (:878)
-	mappedItems        []pyjson.Object      // mappedItems: itemInput with each text item stripped of control markers and normalized, nil for null (:913)
-	firstText          int                  // firstText: index of the first text item in mappedItems, -1 without one (:920)
-	itemBlocks         []string             // itemBlocks: the skill bodies to append after the text items (:919)
-	message            string               // message: the caller's text, the text items joined for items (:885)
-	encryptedV2Message bool                 // encryptedV2Message: a v2 message of Fernet shape; RunSpawnAttachHook keeps its bytes (:887)
-	cwd                string               // cwd: obj.cwd, else the process working directory, unresolved (:888)
-	role               role.RoleName        // role: InferRole over the item scan or the normalized message (:925)
-	resolution         role.SpawnResolution // resolution: ResolveSpawnConfig for role (:926)
-	trustPrefix        string               // trustPrefix: always empty, the trust warning went with the project layer (:927)
-	guard              string               // guard: the surface's guard block and the grant instruction (:979)
-	updatedMessage     string               // updatedMessage: the start value of the oracle's evidenceExemptMessage (:984, :987)
+	v2Spawn            bool                        // v2Spawn: a collaboration hook name or v2 payload markers (:863)
+	toolInput          pyjson.Object               // toolInput: obj.tool_input (:859)
+	itemInput          []any                       // itemInput: tool_input.items of a v1 spawn without message, nil for the oracle's null (:874); records once valid
+	validItems         bool                        // validItems: non-empty, every item an object with a string type and, for text, a string text (:876)
+	textItems          []pyjson.Object             // textItems: the text items (:878)
+	mappedItems        []pyjson.Object             // mappedItems: itemInput with each text item stripped of control markers and normalized, nil for null (:913)
+	firstText          int                         // firstText: index of the first text item in mappedItems, -1 without one (:920)
+	itemBlocks         []string                    // itemBlocks: the skill bodies to append after the text items (:919)
+	message            string                      // message: the caller's text, the text items joined for items (:885)
+	encryptedV2Message bool                        // encryptedV2Message: a v2 message of Fernet shape; RunSpawnAttachHook keeps its bytes (:887)
+	cwd                string                      // cwd: obj.cwd, else the process working directory, unresolved (:888)
+	role               role.RoleName               // role: InferRole over the item scan or the normalized message (:925)
+	resolution         role.SpawnResolution        // resolution: ResolveSpawnConfig for role (:926)
+	trustPrefix        string                      // trustPrefix: always empty, the trust warning went with the project layer (:927)
+	guard              string                      // guard: the surface's guard block and the grant instruction (:979)
+	updatedMessage     string                      // updatedMessage: the start value of the oracle's evidenceExemptMessage (:984, :987)
+	managed            *role.ManagedSpawnSelection // managed: the managed dispatch resolution, nil for a direct spawn (:892)
+	dispatchSource     string                      // dispatchSource: the source line that resolved (:893)
+	sessionID          string                      // sessionID: obj.session_id when it is a string, else "" (:899)
+	toolUseID          *string                     // toolUseID: obj.tool_use_id when it is a string, else nil (:1096)
 }
 
 // spawnHookAssemble reads one PreToolUse payload in the oracle's order. The third result is true when the answer is already known:
@@ -66,6 +70,12 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	}
 	a := spawnHookAssembly{toolInput: toolInput, firstText: -1}
 	a.v2Spawn = IsCollaborationToolName(obj["tool_name"]) || IsV2SpawnInput(spawnHookView(toolInput))
+	if session, ok := obj["session_id"].(string); ok {
+		a.sessionID = session
+	}
+	if id, ok := obj["tool_use_id"].(string); ok {
+		a.toolUseID = &id
+	}
 
 	// Project only the caller's text, never attachment metadata (:870-880). A null message is present, so items are then unread.
 	if _, hasMessage := toolInput.Lookup("message"); !a.v2Spawn && !hasMessage {
@@ -130,6 +140,23 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 
 	// A root spawn that asks for recursion mints a one-time grant (:908-909). The oracle resolves the scope first (:377), and it
 	// creates a missing temp root with mode 0700 (recursive mkdir), which the port does too, only for a scope that resolves.
+	//
+	// The managed dispatch loop (:892-907) runs before the mint, as the oracle's deny does. Its source text is the first raw text
+	// item, or the message for a single-message spawn; a deny here returns before any grant is minted.
+	dispatchText := message
+	if a.validItems {
+		dispatchText = ""
+		if len(a.textItems) > 0 {
+			dispatchText = a.textItems[0].Get("text").(string)
+		}
+	}
+	sources, err := spawnDispatchSources(dispatchText, env)
+	if err != nil {
+		return stop("") // the oracle's readSettings throw, caught by its outer catch
+	}
+	if deny, stopped := spawnHookManaged(&a, sources); stopped {
+		return stop(deny)
+	}
 	var minted string
 	if _, _, resolved := spawnGrantScope(obj); resolved && !spawnedBySubagent && strings.Contains(message, SubspawnToken) {
 		_ = os.MkdirAll(tmpRoot, 0o700)
@@ -167,7 +194,11 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 	if a.validItems {
 		roleSource = dispatchScan
 	}
-	a.role = InferRole(toolInput.Get("agent_type"), roleSource)
+	if a.managed != nil {
+		a.role = a.managed.Role // the managed resolution decides the role (:925)
+	} else {
+		a.role = InferRole(toolInput.Get("agent_type"), roleSource)
+	}
 	resolution, err := role.ResolveSpawnConfig(env, a.role)
 	if err != nil {
 		return stop("") // the oracle's throw, caught by its outer catch
@@ -200,7 +231,7 @@ func spawnHookAssemble(obj map[string]any, env host.LookupEnv) (spawnHookAssembl
 		a.guard = V1ScopeBlock
 	}
 	if minted != "" {
-		a.guard += "\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CRW-SUBSPAWN-GRANT:" + minted + "]"
+		a.guard += spawnGrantInstruction + "[CRW-SUBSPAWN-GRANT:" + minted + "]"
 	}
 	if a.trustPrefix != "" {
 		affordance = strings.TrimPrefix(affordance, a.trustPrefix)
