@@ -38,8 +38,12 @@ func TestHookControlPeerDoesNotReadTheClearedListener(t *testing.T) {
 	hookPeerStep = func(step string) {
 		switch step {
 		case "accept":
-			acceptedOnce.Do(func() { close(accepted) })
-			<-released
+			// Only the first acceptance is held: the fixture makes exactly one control call, and a
+			// later connection must not block on a release the teardown has already sent.
+			acceptedOnce.Do(func() {
+				close(accepted)
+				<-released
+			})
 		case "clear":
 			releasedOnce.Do(func() { close(released) })
 		}
