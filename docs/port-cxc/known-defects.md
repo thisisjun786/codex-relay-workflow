@@ -1272,6 +1272,29 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
 - The reader let three things through or stopped them wrongly: it read su's attached `-c` program (`su -c'rm -rf ../repo'`, `su -lc'...'`) as one option word whose first word is `-crm`, so the deletion was allowed; at the reading depth of 8 program strings it dropped the program it had not read and allowed it, so `eval` or `sh -c` nested nine deep around `rm -rf ../repo` passed; and it read every operand that holds a blank after a shell word as a program, so `bash -c 'echo OK' 'rm -rf ../repo'`, which runs only echo, was denied (source `internal/pabcd/hook/worktreedel.go` before this change; a security finding, which the parity rule revision of 2026-10-03 fixes during the port); port: fixed by CRW-639 (a program that su takes with `-c`, attached or in the next word and wherever the options stand, is judged as the program it is; a program still unread at the depth limit is denied with the reason that names a shell program nested past the reading depth, which also denies a harmless nest that deep; only the first operand after `-c` of sh, bash, dash, ash, zsh and su is the program, and the operands after it are still read when the program can name them (a dollar sign, `BASH_ARGV` or `argv`: `bash -c 'eval "$0"' 'rm -rf ../repo'` runs rm), when a redirection word stands among the operands (`bash -c 'source /dev/stdin' <<< 'rm -rf ../repo'` runs rm, and a quoted `'>'` looks like one) or when an option-like word stands after the program (su would run a later `-c`); other shells and any option shape the reader cannot place keep the reading of every blank-holding operand; only su and fish, whose getopt gives the rest of a cluster to `-c`, read an attached `-cPROGRAM` word).
 - A here-string that is written without a blank before its quoted target, `bash -c 'source /dev/stdin' <<<'rm -rf ../repo'`, reaches the reader as the one word `<<<rm -rf ../repo`, which reads as a command named `<<<rm`, so the deletion it feeds to the shell is allowed; the same command with a blank (`<<< 'rm -rf ../repo'`) is denied. The behavior is the reader's before this change (checked against the base commit); port: fixed by CRW-657 (the bash-reading tokenizer ends the word at the third `<` of a plain `<<<` whose next byte begins the target, so the operator is a word of its own and the target is read as the next word, exactly as when a blank stands between them: `worktreeDelHereStringTarget` and the flush in `worktreeDelQuoteTokenize`, `internal/pabcd/hook/worktreedel.go`; the oracle's first walk, the here-document operator and every other redirection are unchanged, so a here-string whose target names the worktree is now denied and the blank-less form answers exactly as the spaced form, and the reading only ever adds denies).
 
+- The reader judged only the program a shell word hands to `-c` and never the body of a command substitution that the outer
+  shell performs before that shell starts, so `bash -c 'echo OK' "$(rm -rf ../repo)"`, the same command with the substitution
+  in backticks, and `sh -c 'true' x "$(rm -rf ../repo)"` were allowed while the unquoted `echo $(rm -rf ../repo)` was denied
+  (the tokenizer drops the double quotes, so the substitution reached the walk as one operand after the program and was never
+  judged; source `internal/pabcd/hook/worktreedel.go` before this change; a security finding, which the parity rule revision
+  of 2026-10-03 fixes during the port); port: fixed by CRW-670 (`worktreeDelSubstitutions` reads every command substitution,
+  `$(...)` and backtick, and every process substitution, `<(...)` and `>(...)`, that stands in plain text or inside double
+  quotes in a segment, and its body is judged as a program of the outer shell at the next depth; a substitution inside single
+  quotes, `$'...'` or a comment stays data, so `bash -c 'echo OK' '$(rm -rf ../repo)'` is still allowed). This fixes the
+  command-substitution part of the follow-up line in the CRW-611 section above, whose here-document-body part is still kept.
+- The reader read every operand that holds a blank after a shell word as a program whenever an option-like word stood after
+  the program, a rule CRW-639 kept for `su`, whose last `-c` is its program, so `bash -c 'echo OK' -c 'rm -rf ../repo'`, which
+  runs only echo because the two words are the shell's `$0` and `$1`, was denied (source `internal/pabcd/hook/worktreedel.go`
+  before this change); port: fixed by CRW-670 for sh, bash, dash and ash (`worktreeDelShellDataOperands`: the operands after
+  their `-c` program are data, option-like ones included, so a later `-c` is not read for them; a redirection word among the
+  operands and a program that can name its operands still read them all, and `su`, zsh and every other shell keep the reading
+  of every later option-like word, so no other row or fixture changes).
+- At the reading depth of 8 program strings the reader denied only a program that held a blank, so a nest of nine `sh -c`
+  wrappers around `true` was allowed although the innermost program string was still unread, while the same nest around
+  `rm -rf ../repo` was denied (source `internal/pabcd/hook/worktreedel.go` before this change); port: fixed by CRW-670 (a
+  program string still unread at the depth limit is denied whether or not it holds a blank; eight levels are still read and
+  an innermost command that is no program still passes).
+
 ## CRW-649 — the review-round working-directory boundary and the plan key
 
 Source: `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts` at v0.2.40 (commit 3c1459ac), through
