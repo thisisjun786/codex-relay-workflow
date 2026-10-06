@@ -163,6 +163,12 @@ func TestGitHubPostGuardDeniesInlineBodies(t *testing.T) {
 		{"review", "gh pr review 7 -b plain", githubPostRuleInline},
 		{"api raw field", "gh api repos/o/r/pulls/1/reviews -f body=plain", githubPostRuleInline},
 		{"api field", "gh api repos/o/r/pulls/1/reviews -F body=plain", githubPostRuleInline},
+		{"api attached short value", "gh api repos/o/r/pulls/1/reviews -fbody=plain", githubPostRuleInline},
+		{"runner prefix timeout", "timeout 30 gh pr comment 1 -b plain", githubPostRuleInline},
+		{"assignment prefix", "X=1 gh pr comment 1 -b plain", githubPostRuleInline},
+		{"runner prefix nice", "nice gh pr comment 1 -b plain", githubPostRuleInline},
+		{"runner prefix nohup", "nohup gh pr comment 1 -b plain", githubPostRuleInline},
+		{"incident behind a runner prefix", "timeout 30 gh pr comment 1 -b \"shows `env` here\"", githubPostRuleExpand},
 		{"api field with a variable", "gh api repos/o/r/pulls/1/reviews -F body=\"$X\"", githubPostRuleExpand},
 		{"env prefix", "env GH_TOKEN=x gh pr comment 1 -b plain", githubPostRuleInline},
 		{"sudo prefix", "sudo gh pr comment 1 -b plain", githubPostRuleInline},
@@ -170,6 +176,9 @@ func TestGitHubPostGuardDeniesInlineBodies(t *testing.T) {
 		{"after a semicolon", "echo x; gh pr comment 1 -b plain", githubPostRuleInline},
 		{"after and", "true && gh pr comment 1 -b plain", githubPostRuleInline},
 		{"after a newline", "echo x\ngh pr comment 1 -b plain", githubPostRuleInline},
+		{"attached short value", "gh pr comment 1 -bplain", githubPostRuleInline},
+		{"attached after a boolean bundle", "gh pr create -dbplain", githubPostRuleInline},
+		{"line continuation", "gh pr comment 1 \\\n-b plain", githubPostRuleInline},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, githubPostWhereCommand)
@@ -183,11 +192,16 @@ func TestGitHubPostGuardTitles(t *testing.T) {
 	githubPostWrite(t, cwd, "body.md", "a clean body\n")
 	for _, c := range []struct{ name, command, rule string }{
 		{"single quoted", "gh pr create -t 'Plain title' --body-file body.md", ""},
+		{"single quoted with a dollar", "gh pr create -t 'v$X' --body-file body.md", ""},
+		{"single quoted with a backtick", "gh pr create -t 'Fix `make test`' --body-file body.md", ""},
 		{"bare", "gh pr create --title Plain --body-file body.md", ""},
 		{"backtick", "gh pr create -t \"Release `date`\" --body-file body.md", githubPostRuleExpand},
 		{"variable", "gh pr create -t \"Release $X\" --body-file body.md", githubPostRuleExpand},
 		{"secret", "gh pr create -t \"" + githubPostFake("sk-", 16) + "\" --body-file body.md", githubPostRuleSecret},
 		{"api variable", "gh api repos/o/r/pulls/1 -F title=\"$X\" -F body=@body.md", githubPostRuleExpand},
+		{"title after a clean file", "gh pr create -F body.md -t \"Release $X\"", githubPostRuleExpand},
+		{"secret title after a clean file", "gh pr create -F body.md -t \"" + githubPostFake("sk-", 16) + "\"", githubPostRuleSecret},
+		{"api title after a clean file", "gh api repos/o/r -F body=@body.md -f title=\"see $X\"", githubPostRuleExpand},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			place := githubPostWhereCommand
@@ -220,6 +234,8 @@ func TestGitHubPostGuardFiles(t *testing.T) {
 		{"credential", "gh pr comment 1 --body-file credential.md", githubPostRuleSecret, "credential.md:1"},
 		{"later line", "gh pr comment 1 --body-file later.md", githubPostRuleSecret, "later.md:3"},
 		{"api file field", "gh api repos/o/r/pulls/1/reviews -F body=@credential.md", githubPostRuleSecret, "credential.md:1"},
+		{"api attached file field", "gh api repos/o/r/pulls/1/reviews -Fbody=@credential.md", githubPostRuleSecret, "credential.md:1"},
+		{"attached body file", "gh pr comment 1 -Fcredential.md", githubPostRuleSecret, "credential.md:1"},
 		{"api clean file field", "gh api repos/o/r/pulls/1/reviews -F body=@clean.md", "", ""},
 		{"api input", "gh api repos/o/r/pulls/1/reviews --input input.json", githubPostRuleSecret, "input.json:1"},
 		{"api input equals", "gh api repos/o/r/pulls/1/reviews --input=clean.md", "", ""},
@@ -278,6 +294,54 @@ func TestGitHubPostGuardNestedPrograms(t *testing.T) {
 			githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, c.rule, c.place)
 		})
 	}
+}
+
+// TestGitHubPostGuardDeniesACommandSubstitution is the fail-closed rule over the outer text: a gh post
+// inside a command substitution is a text the guard cannot read, so it is denied rather than passed.
+func TestGitHubPostGuardDeniesACommandSubstitution(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	for _, command := range []string{
+		"X=$(gh pr comment 1 -b \"$TOKEN\")",
+		"echo \"posted: $(gh pr comment 1 -b plain)\"",
+		"echo \"`gh pr comment 1 -b plain`\"",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, githubPostWhereCommand)
+	}
+	for _, command := range []string{"X=$(date)", "echo \"$(uname -a)\""} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardBindsAHeredocToItsOwnLine: the quoted heredoc that feeds --body-file - must sit in
+// the same command line, or the guard would scan a body nobody posts.
+func TestGitHubPostGuardBindsAHeredocToItsOwnLine(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	githubPostWrite(t, cwd, "secret.md", "GH_TOKEN="+strings.Repeat("a", 20)+"\n")
+	command := "echo x <<'EOF'\nclean\nEOF\ncat secret.md | gh pr comment 1 --body-file -"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, githubPostWhereCommand)
+}
+
+// TestGitHubPostGuardHonoursTheOptionSeparator: everything after -- is an operand, so a word that looks
+// like a body flag there is not one.
+func TestGitHubPostGuardHonoursTheOptionSeparator(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	command := "gh pr comment 1 -- -b plain"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+}
+
+// TestGitHubPostGuardReadsAHomeRelativeFile: a name the shell expands from the home directory is a file
+// the guard can read, so a clean one passes.
+func TestGitHubPostGuardReadsAHomeRelativeFile(t *testing.T) {
+	githubPostTempHome(t)
+	home := os.Getenv("HOME")
+	if err := os.WriteFile(filepath.Join(home, "notes.md"), []byte("a clean body\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := "gh pr comment 1 --body-file ~/notes.md"
+	githubPostWant(t, githubPostShell(t, t.TempDir(), command), command, "", "")
 }
 
 func TestGitHubPostGuardLeavesOtherToolsAndEvents(t *testing.T) {

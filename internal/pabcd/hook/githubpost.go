@@ -140,23 +140,27 @@ func githubPostInput(input map[string]any) ([]githubPostWord, string, bool) {
 	return nil, "", false
 }
 
-// text reads one shell text: every simple command it holds. Text the guard cannot split, or a program it
-// cannot read that mentions a GitHub post, is denied as unreadable.
+// text reads one shell text: every simple command it holds, each with the quoted heredoc body of its own
+// line. Text the guard cannot split, or a program it cannot read that mentions a GitHub post, is denied
+// as unreadable.
 func (s *githubPostScan) text(command string) (githubPostSite, bool) {
-	stripped, balanced := githubPostStripped(command)
-	if !balanced {
+	if _, balanced := githubPostStripped(command); !balanced {
 		if githubPostMentions(command) {
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 		}
 		return githubPostSite{}, false
 	}
-	// The body is read from the text as written: the stripped form has already dropped it.
-	if body, ok := githubPostHeredocBody(command); ok {
-		s.body, s.hasBody = body, true
-	}
-	for _, segment := range githubPostSegments(stripped) {
-		if site, denied := s.command(githubPostWords(segment), segment); denied {
-			return site, true
+	for _, line := range githubPostCommands(command) {
+		s.body, s.hasBody = line.body, line.hasBody
+		for _, segment := range githubPostSegments(line.text) {
+			if site, denied := s.command(githubPostWords(segment), segment); denied {
+				return site, true
+			}
+			// A gh post inside a command substitution is a text the guard cannot read, so a segment that
+			// holds one and names a post is denied rather than passed unjudged.
+			if githubPostExpands(segment, false, true) && githubPostMentions(segment) {
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			}
 		}
 	}
 	return githubPostSite{}, false
@@ -169,18 +173,17 @@ func (s *githubPostScan) command(words []githubPostWord, segment string) (github
 	for i, w := range words {
 		spelled[i] = w.text
 	}
-	rest := shellVerbStripPrefixes(spelled)
-	head := len(spelled) - len(rest)
-	if len(rest) == 0 {
+	head := githubPostStripPrefixes(words)
+	if head >= len(words) {
 		return githubPostSite{}, false
 	}
-	if shellVerbName(rest[0]) == "gh" {
+	if shellVerbName(words[head].text) == "gh" {
 		return s.gh(words[head+1:])
 	}
 	if s.depth <= 0 {
 		return githubPostSite{}, false
 	}
-	program, ok := githubPostProgram(shellVerbName(rest[0]), rest)
+	program, ok := githubPostProgram(shellVerbName(words[head].text), spelled[head:])
 	if !ok {
 		return githubPostSite{}, false
 	}
@@ -243,58 +246,108 @@ func (s *githubPostScan) gh(args []githubPostWord) (githubPostSite, bool) {
 // --body-file and -F name a file, and -t and --title may stay inside the command unless they hold an
 // outer-shell expansion or a secret.
 func (s *githubPostScan) flags(args []githubPostWord) (githubPostSite, bool) {
-	for i := 0; i < len(args); i++ {
-		w := args[i]
-		switch {
-		case w.text == "-b" || w.text == "--body":
-			return s.inline(githubPostNext(args, i), true)
-		case strings.HasPrefix(w.text, "--body="):
-			return s.inline(githubPostValue(w, "--body="), true)
-		case w.text == "-t" || w.text == "--title":
-			if site, denied := s.inline(githubPostNext(args, i), false); denied {
-				return site, true
-			}
-		case strings.HasPrefix(w.text, "--title="):
-			if site, denied := s.inline(githubPostValue(w, "--title="), false); denied {
-				return site, true
-			}
-		case w.text == "--body-file" || w.text == "-F":
-			return s.file(githubPostNext(args, i).text)
-		case strings.HasPrefix(w.text, "--body-file="):
-			return s.file(strings.TrimPrefix(w.text, "--body-file="))
+	var first githubPostSite
+	denied := false
+	record := func(site githubPostSite, no bool) {
+		if no && !denied {
+			first, denied = site, true
 		}
 	}
-	return githubPostSite{}, false
+	for _, o := range githubPostOptions(args, "btF") {
+		switch o.name {
+		case "-b", "--body":
+			record(s.inline(o.value, true))
+		case "-t", "--title":
+			record(s.inline(o.value, false))
+		case "-F", "--body-file":
+			record(s.file(o.value.text))
+		}
+	}
+	return first, denied
 }
 
 // api judges gh api, which is a target only through a body or title field: -f and --raw-field carry
 // text, -F and --field carry text or @file, and --input names a file.
 func (s *githubPostScan) api(args []githubPostWord) (githubPostSite, bool) {
-	for i := 0; i < len(args); i++ {
-		w := args[i]
-		if value, ok := strings.CutPrefix(w.text, "--input="); ok {
-			return s.file(value)
+	var first githubPostSite
+	denied := false
+	record := func(site githubPostSite, no bool) {
+		if no && !denied {
+			first, denied = site, true
 		}
-		switch w.text {
-		case "--input":
-			return s.file(githubPostNext(args, i).text)
-		case "-f", "--raw-field", "-F", "--field":
-			field := githubPostNext(args, i)
-			key, value, ok := strings.Cut(field.text, "=")
+	}
+	for _, o := range githubPostOptions(args, "fF") {
+		switch {
+		case o.name == "--input":
+			record(s.file(o.value.text))
+		case o.name == "-f" || o.name == "--raw-field" || o.name == "-F" || o.name == "--field":
+			key, value, ok := strings.Cut(o.value.text, "=")
+			if !ok {
+				continue
+			}
 			switch {
-			case !ok:
-			case key == "body" && strings.HasPrefix(value, "@"):
-				return s.file(strings.TrimPrefix(value, "@"))
+			case key == "body" && (o.name == "-F" || o.name == "--field") && strings.HasPrefix(value, "@"):
+				record(s.file(strings.TrimPrefix(value, "@")))
 			case key == "body":
-				return s.inline(field, true)
+				record(s.inline(o.value, true))
 			case key == "title":
-				if site, denied := s.inline(field, false); denied {
-					return site, true
-				}
+				record(s.inline(o.value, false))
 			}
 		}
 	}
-	return githubPostSite{}, false
+	return first, denied
+}
+
+// githubPostOption is one option of a gh command: the name as written and the word carrying its value,
+// which is the empty word when the option ends the command.
+type githubPostOption struct {
+	name  string
+	value githubPostWord
+}
+
+// githubPostOptions reads a gh command's options: a long option with its value after an equals sign or
+// in the next word, and a short option in the same two forms. A value-taking shorthand ends its bundle,
+// as pflag reads it (-bplain is -b with "plain", -dbplain is -d then -b "plain"), and a leading equals
+// sign of an attached value is dropped. short names the value-taking shorthands to read.
+func githubPostOptions(args []githubPostWord, short string) []githubPostOption {
+	out := []githubPostOption{}
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		switch {
+		case w.text == "--":
+			// Everything after the separator is an operand, which gh reads as a positional argument.
+			return out
+		case strings.HasPrefix(w.text, "--"):
+			name, value, attached := strings.Cut(w.text, "=")
+			if !attached {
+				out = append(out, githubPostOption{name, githubPostNext(args, i)})
+				continue
+			}
+			out = append(out, githubPostOption{name, githubPostWord{text: value, raw: w.raw}})
+		case len(w.text) > 1 && w.text[0] == '-':
+			letter, value, ok := githubPostShortFlag(w, short)
+			if !ok {
+				continue
+			}
+			if value == "" {
+				out = append(out, githubPostOption{"-" + letter, githubPostNext(args, i)})
+				continue
+			}
+			out = append(out, githubPostOption{"-" + letter, githubPostWord{text: strings.TrimPrefix(value, "="), raw: w.raw}})
+		}
+	}
+	return out
+}
+
+// githubPostShortFlag is the letter and the attached value of a short option: the first letter of the
+// bundle that takes a value, with everything after it as its value (empty when the option stands alone).
+func githubPostShortFlag(w githubPostWord, short string) (string, string, bool) {
+	for i := 1; i < len(w.text); i++ {
+		if c := w.text[i]; strings.IndexByte(short, c) >= 0 {
+			return string(c), w.text[i+1:], true
+		}
+	}
+	return "", "", false
 }
 
 // githubPostNext is the word after the option at i, or an empty word when the option ends the command.
@@ -303,12 +356,6 @@ func githubPostNext(args []githubPostWord, i int) githubPostWord {
 		return args[i+1]
 	}
 	return githubPostWord{}
-}
-
-// githubPostValue is the value of a --flag=value word: its text is what follows the equals sign and its
-// written form stays the whole word, so the expansion rule still reads the value's own quoting.
-func githubPostValue(w githubPostWord, prefix string) githubPostWord {
-	return githubPostWord{text: strings.TrimPrefix(w.text, prefix), raw: w.raw}
 }
 
 // inline judges text bound for GitHub that sits inside the command: an outer-shell expansion is denied
@@ -356,6 +403,12 @@ func (s *githubPostScan) file(name string) (githubPostSite, bool) {
 // githubPostReadFile reads the text a post names: a regular file of at most githubPostMaxFileBytes.
 func githubPostReadFile(name, cwd string) (string, bool) {
 	path := name
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		// A home-relative name is a name the guard can read, so it is expanded before it is refused.
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
 	if !filepath.IsAbs(path) {
 		base := cwd
 		if base == "" {
@@ -381,18 +434,26 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 
 // githubPostSegments is the simple commands of one shell text: the shellwrite reader's split of pipes, ;
 // and && within a line, and a newline ends a command too. Heredoc bodies are already gone, so their text
-// is never read as one.
+// is never read as one. A backslash before a newline joins the two lines before the shell splits words,
+// so it is removed here too (the shell keeps it only inside single quotes).
 func githubPostSegments(command string) []string {
+	command = githubPostUncontinued(command)
 	out := []string{}
-	rs, cur := []rune(command), strings.Builder{}
-	flush := func() {
-		for _, segment := range splitShellSegments(utf16.Encode([]rune(cur.String()))) {
+	for _, line := range githubPostLines(command) {
+		for _, segment := range splitShellSegments(utf16.Encode([]rune(line))) {
 			if s := shellString(segment); text.Trim(s) != "" {
 				out = append(out, s)
 			}
 		}
-		cur.Reset()
 	}
+	return out
+}
+
+// githubPostLines cuts a shell text at its newlines outside quotes: one line is one command line, whose
+// own heredoc body belongs to it alone.
+func githubPostLines(command string) []string {
+	rs := []rune(command)
+	out, cur := []string{}, strings.Builder{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
 		case c == '\'' || c == '"':
@@ -400,13 +461,60 @@ func githubPostSegments(command string) []string {
 			cur.WriteString(string(rs[i:end]))
 			i = end - 1
 		case c == '\n':
-			flush()
+			out = append(out, cur.String())
+			cur.Reset()
 		default:
 			cur.WriteRune(c)
 		}
 	}
-	flush()
+	return append(out, cur.String())
+}
+
+// githubPostCommand is one command line with the quoted heredoc body of that same line.
+type githubPostCommand struct {
+	text    string
+	body    string
+	hasBody bool
+}
+
+// githubPostCommands is a shell text as its command lines: a heredoc body belongs to the line that
+// introduces it, and the body lines that follow are not commands of their own.
+func githubPostCommands(command string) []githubPostCommand {
+	lines, out := githubPostLines(githubPostUncontinued(command)), []githubPostCommand{}
+	for i := 0; i < len(lines); i++ {
+		c := githubPostCommand{text: lines[i]}
+		if body, after, ok := githubPostHeredocBody(lines[i], lines, i); ok {
+			c.body, c.hasBody = body, true
+			i = after
+		}
+		out = append(out, c)
+	}
 	return out
+}
+
+// githubPostUncontinued removes the backslash-newline sequences the shell drops before word splitting.
+func githubPostUncontinued(text string) string {
+	if !strings.Contains(text, "\\\n") {
+		return text
+	}
+	rs, out, mode := []rune(text), strings.Builder{}, rune(0)
+	for i := 0; i < len(rs); i++ {
+		switch c := rs[i]; {
+		case mode == '\'':
+			if c == '\'' {
+				mode = 0
+			}
+			out.WriteRune(c)
+		case c == '\\' && i+1 < len(rs) && rs[i+1] == '\n':
+			i++
+		case c == '\'' && mode == 0:
+			mode = '\''
+			out.WriteRune(c)
+		default:
+			out.WriteRune(c)
+		}
+	}
+	return out.String()
 }
 
 // githubPostStripped is the shell text with its heredoc bodies replaced, as the shellwrite reader reads
@@ -515,22 +623,27 @@ func githubPostExpands(raw string, newline, substitution bool) bool {
 	rs, mode := []rune(raw), rune(0)
 	for i := 0; i < len(rs); i++ {
 		c := rs[i]
-		if mode == '\'' {
+		switch {
+		case mode == '\'':
+			// A single-quoted region is literal to the shell: nothing inside it expands.
 			if c == '\'' {
 				mode = 0
 			}
-			continue
-		}
-		if c == '\\' {
+		case c == '\\':
 			if mode != '"' || i+1 < len(rs) && githubPostEscapable(rs[i+1]) {
 				i++
-				continue
 			}
-		}
-		if c == 0x60 {
+		case c == '\'':
+			mode = '\''
+		case c == '"':
+			if mode == '"' {
+				mode = 0
+			} else {
+				mode = '"'
+			}
+		case c == 0x60:
 			return true
-		}
-		if c == '$' && i+1 < len(rs) {
+		case c == '$' && i+1 < len(rs):
 			next := rs[i+1]
 			if next == '(' {
 				return true
@@ -538,23 +651,99 @@ func githubPostExpands(raw string, newline, substitution bool) bool {
 			if !substitution && (next == '{' || next == '_' || next >= 'a' && next <= 'z' || next >= 'A' && next <= 'Z') {
 				return true
 			}
-		}
-		if c == '"' {
-			if mode == '"' {
-				mode = 0
-			} else {
-				mode = '"'
-			}
-			continue
-		}
-		if c == '<' && !substitution && i+1 < len(rs) && rs[i+1] == '(' {
+		case c == '<' && !substitution && i+1 < len(rs) && rs[i+1] == '(':
 			return true
-		}
-		if c == '\n' && newline {
+		case c == '\n' && newline:
 			return true
 		}
 	}
 	return false
+}
+
+// githubPostStripPrefixes is the index of the command a simple command starts with: the wrappers and
+// assignments a shell drops before it, so a post behind a runner prefix is still read. The shellwrite
+// reader's own list is kept, and a wrapper that runs the rest of the line is added, together with the
+// NAME=value assignments a command may carry. A wrapper's own option word is skipped with it.
+func githubPostStripPrefixes(words []githubPostWord) int {
+	head := 0
+	for head < len(words) {
+		name := shellVerbName(words[head].text)
+		switch {
+		case name == "env":
+			head++
+			for head < len(words) && shellVerbAssignment(words[head].text) {
+				head++
+			}
+		case name == "sudo" || name == "doas" || name == "command" || name == "builtin" ||
+			name == "nohup" || name == "setsid" || name == "time" || name == "nice" || name == "ionice" ||
+			name == "stdbuf" || name == "timeout" || name == "chrt" || name == "taskset":
+			head = githubPostSkipWrapper(words, head, name)
+		case shellVerbAssignment(words[head].text):
+			head++
+		default:
+			return head
+		}
+	}
+	return head
+}
+
+// githubPostSkipWrapper is the index just past a wrapper and its own arguments: the options of the
+// wrapper, and the word that carries an option's value where the wrapper takes one.
+func githubPostSkipWrapper(words []githubPostWord, head int, name string) int {
+	value := func(word string) bool {
+		switch name {
+		case "timeout", "nice", "ionice", "chrt", "stdbuf":
+			return word == ""
+		}
+		return false
+	}
+	i := head + 1
+	for ; i < len(words); i++ {
+		w := words[i].text
+		if shellVerbAssignment(w) {
+			continue
+		}
+		if w == "--" {
+			return i + 1
+		}
+		if w == "" || w[0] != '-' {
+			// The first operand of a wrapper that takes one is its argument; the command follows.
+			switch {
+			case name == "timeout":
+				return i + 1
+			case githubPostWrapperAdjustment(name) && githubPostNumeric(w):
+				return i + 1
+			}
+			return i
+		}
+		if value(w) && i+1 < len(words) {
+			return i + 2
+		}
+	}
+	return i
+}
+
+// githubPostWrapperAdjustment is a wrapper whose operand is an adjustment it may also go without, so
+// that the operand is skipped only when it is the adjustment and not the command itself.
+func githubPostWrapperAdjustment(name string) bool {
+	switch name {
+	case "nice", "ionice", "chrt", "taskset":
+		return true
+	}
+	return false
+}
+
+// githubPostNumeric is whether the word is a number or a range: an adjustment, not a command name.
+func githubPostNumeric(word string) bool {
+	if word == "" {
+		return false
+	}
+	for _, c := range word {
+		if c != '+' && c != '-' && c != '.' && c != ',' && c != 'x' && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // githubPostMentions is whether the text names gh with pr, issue or api: the words the fail-closed rule
@@ -587,9 +776,10 @@ func githubPostWordByte(c byte) bool {
 
 // githubPostHeredocBody is the body of the first heredoc of the text whose delimiter is quoted, the form
 // the shell does not expand, and whether there is one. A heredoc whose delimiter is not quoted is not
-// read: the shell expands its body, so the guard cannot know what would be posted.
-func githubPostHeredocBody(command string) (string, bool) {
-	rs := []rune(command)
+// read: the shell expands its body, so the guard cannot know what would be posted. It answers with the
+// index of the last line the body took, so the caller can continue after it.
+func githubPostHeredocBody(line string, lines []string, at int) (string, int, bool) {
+	rs := []rune(line)
 	for i := 0; i < len(rs); i++ {
 		switch rs[i] {
 		case '\\':
@@ -599,18 +789,18 @@ func githubPostHeredocBody(command string) (string, bool) {
 			i = end - 1
 		case '<':
 			if i+1 < len(rs) && rs[i+1] == '<' && (i+2 >= len(rs) || rs[i+2] != '<') {
-				if body, ok := githubPostHeredocAt(rs, i); ok {
-					return body, true
+				if delim, ok := githubPostHeredocDelimiter(rs, i); ok {
+					return githubPostHeredocBodyLines(lines, at+1, delim)
 				}
 			}
 		}
 	}
-	return "", false
+	return "", at, false
 }
 
-// githubPostHeredocAt reads the heredoc introduced by the << at index i when its delimiter is quoted, and
-// returns its body: the lines after the operator's own line, up to the line that is the delimiter.
-func githubPostHeredocAt(rs []rune, i int) (string, bool) {
+// githubPostHeredocDelimiter is the delimiter of the heredoc introduced by the << at index i, when that
+// delimiter is quoted, the form the shell does not expand.
+func githubPostHeredocDelimiter(rs []rune, i int) (string, bool) {
 	j := i + 2
 	if j < len(rs) && rs[j] == '-' {
 		j++
@@ -627,26 +817,19 @@ func githubPostHeredocAt(rs []rune, i int) (string, bool) {
 	if j >= len(rs) || j == start {
 		return "", false
 	}
-	delim := string(rs[start:j])
-	for j < len(rs) && rs[j] != '\n' {
-		j++
-	}
+	return string(rs[start:j]), true
+}
+
+// githubPostHeredocBodyLines is the body of the heredoc whose quoted delimiter is delim: the lines after
+// the introducing line, up to the line that is the delimiter, and the index of that line.
+func githubPostHeredocBodyLines(lines []string, from int, delim string) (string, int, bool) {
 	body := strings.Builder{}
-	for j++; j <= len(rs); {
-		end := j
-		for end < len(rs) && rs[end] != '\n' {
-			end++
+	for i := from; i < len(lines); i++ {
+		if strings.TrimLeft(lines[i], "\t") == delim {
+			return body.String(), i, true
 		}
-		line := string(rs[j:end])
-		if strings.TrimLeft(line, "\t") == delim {
-			return body.String(), true
-		}
-		body.WriteString(line)
+		body.WriteString(lines[i])
 		body.WriteString("\n")
-		if end >= len(rs) {
-			return body.String(), true
-		}
-		j = end + 1
 	}
-	return "", false
+	return body.String(), len(lines), true
 }
