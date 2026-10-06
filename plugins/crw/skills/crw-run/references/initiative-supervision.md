@@ -8,12 +8,28 @@ which also fixes what each level is called in a report to Jun,
 and the project-level procedures [crw-run](../SKILL.md) already owns are not repeated here one
 level up.
 
-Nothing here is a transport. It establishes no automatic resume, no supervisor host goal, no
-registration a runtime performs and no wake-up.
-[OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity) records that the bundled
-relay holds no supervisor relationship, so every sentence below about a recorded relationship is
-conditional on an installation that has one, and an instruction a reader follows is not a store
-that enforces it.
+Nothing here is a transport. It establishes no automatic resume, no supervisor host goal and no
+wake-up.
+
+What the relay does now RECORD is the relationship itself, not a channel that carries it.
+[OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity) and
+[Three-level linkage](../../../../../docs/relay/linkage.md) describe the store's linkage module: `linkage-bind` claims one
+scope for one task at one level, `linkage-supervise` records an initiative supervisor over a project parent (by execution or
+by reference), and `linkage-up` / `linkage-down` walk the hierarchy either way and report its gaps and contention. One task
+holds one live role and one scope, a project has at most one live `execution` edge whichever initiative names it, and a
+refused supervision leaves no state behind: the decision and the write share one transaction, so a contest that loses writes
+only its conflict row. A supervisor whose own level is not an initiative can hold the store-scope seat
+(`linkage-bind --role supervisor --scope-kind store --scope store`), which is what a session that manages the store holds
+rather than one tied to a single initiative's execution.
+
+Keep four facts apart, because they are separate. This repository's source implements those commands and its tests pin them; an
+installed runtime may be older than that source; a task may or may not be currently registered for a scope; and an actual
+delivery or readback either happened or it did not. A green suite here says the source behaves as its tests describe and says
+nothing about any host, so read the commands a given installation actually offers from its live help (`crw linkage-bind -h`
+and its siblings, whose help text the binary carries) and the current contract from this checkout's
+[linkage document](../../../../../docs/relay/linkage.md). Registration is a record: it is not an automatic wake, and it is not a
+guarantee that a message was delivered or read back. Every sentence below about a recorded relationship therefore reads that
+record where an installation has it, and an instruction a reader follows is still not a store that enforces it.
 
 ## Four requests name an initiative, and one starts a supervision
 
@@ -114,9 +130,11 @@ already holds is refused, because several ready projects mean several parents ra
 parent holding two. A task that already holds one role and asks to be bound in another is refused
 too, which is what stops a parent from also supervising somebody. Either refusal leaves the first
 binding standing rather than silently replacing it. Where
-nothing records them, and the bundled relay records none, the reuse below is a read and not a lock:
-two designations issued at once can both find no supervisor, and the initiative's own record is
-what reconciles that afterwards rather than what prevents it.
+the store records them, that refusal is the first line of defence and it is atomic: the competition, role, scope and cycle
+reads and the mutations share one transaction, so a refused second binding commits only its conflict row. The reuse below is
+then the second line, for the case where the store is not reachable from this process: two designations issued at once can
+both find no supervisor there, and the initiative's own record is what reconciles that afterwards rather than what prevents
+it.
 
 ### Where the record lives
 
@@ -163,10 +181,10 @@ handoff. If another supervisor recorded itself for the same initiative, the earl
 binding stands, and the later one stops there: it sends nothing, preserves its own record and hands
 over the briefs it has not sent.
 
-That reread narrows the window without closing it. Two tasks can still interleave a write, a read
-and a first handoff so that each sees only itself, because none of this is an atomic claim: an
-atomic one needs a store that records the relationship and refuses the second, which the bundled
-relay does not have and which belongs to the work that owns registration. So the parent is the
+That reread narrows the window without closing it. Where the store is not reachable from this process, two tasks can still
+interleave a write, a read and a first handoff so that each sees only itself. Where it is reachable, the store's own refusal
+(`duplicate_scope_owner`, `role_already_bound`) closes that window because the record and the write are one atomic claim. So
+the parent is the
 second place a split is caught rather than the supervisor being the only one. A parent already
 holding an accepted handoff for this project from a different supervisor treats a second one as a
 conflict to raise, not as a newer instruction to follow, and neither supervisor settles that by
@@ -443,8 +461,8 @@ their only statement.
 <!-- Do not re-summarise the transfer outcomes here: a summary in this case drifted from the rule
 twice while the rule was being sharpened. -->
 Preserved: one owner per initiative once it is found, the work already started by either side, and
-an honest account of the window, which closes properly only when a store records the relationship
-and refuses the second.
+an honest account of the window. Where a store records the relationship and refuses the second, that refusal closes the
+window; where the process cannot reach that store, the rereads above bound it instead.
 
 ### C9 Part of the set is already finished
 

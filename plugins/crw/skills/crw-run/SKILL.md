@@ -151,6 +151,43 @@ Explicit pause/no-goal limits still win, and existing
 CXC parent state must be reconciled through its supported lifecycle, never reset to
 avoid a guard. A parent holding its own goal does not alter child CXC defaults.
 
+### Long-run midpoint check
+
+A run that goes on for a long time drifts: a plan's boundaries stop matching what the work turned out to be, review keeps sending
+work back, and the backlog grows faster than it drains. A midpoint check is the periodic look that catches that while the run is
+still authorized, and it is separate from a user's status question, which reads and wakes nothing.
+
+**When one is due.** Any one of these signals is enough:
+
+- every node of one milestone is integrated;
+- twenty merges, or eight continuous hours of execution, since the last check;
+- three or more needs-changes rulings or split decisions in the last two hours;
+- two or more P0 or P1 findings from post-merge evaluation of this project's merges since the last check;
+- the backlog's net increase exceeds fifteen issues in the last four hours.
+
+Where `crw manage checkpoint` exists, read its verdict for these signals. Where the command is not installed, or a signal it
+reports is `unmeasured`, the parent judges the same signals from its own records rather than treating the missing tool as a
+reason to skip the check.
+
+**When to run it.** On a turn that is only waiting: no merge-lane turn is held, no child needs a decision now, and the next
+action would otherwise be idle observation. A midpoint check never interrupts a lane it does not own, and it is not a reason to
+stop one.
+
+**What it looks at.** Three things, in this order:
+
+1. A midpoint review of the goal against its criteria, using `crw-check` and `crw-status`, so a plan that has quietly stopped
+   matching its goal is found before the run finishes against the wrong target.
+2. A midpoint refactor pass with `crw-refactor`, producing zero to three candidate improvements, judged on dead code,
+   duplication and pointless tests. Code the plan has not yet reached is not dead code: a connector or helper that a planned
+   node will use is left where it is.
+3. A midpoint optimization pass over the packet, the rules, the bundling and the test speed, changing only what the current
+   approval covers.
+
+**What it records.** Write the outcome into the coordination record, and where `crw manage checkpoint record` exists, record the
+baseline time there so the next check measures from it. Work worth fixing becomes an issue under the concept bundle rules above;
+anything not worth doing now goes to the sweep label Backlog. The release schedule and the lanes do not stop: a midpoint check
+records and proposes, it never pauses a lane or holds a release.
+
 ## Independent implementation tasks
 
 In this managed execution workflow, implementation belongs to a responsible
@@ -294,8 +331,7 @@ it. The set keeps apart what recovers differently: no capacity from capacity nob
 owner that could not be proved from two the store reports, and a disposition that could not be
 read from one the store holds as contested. It carries no escalation value, because a review
 round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
-increase concurrency; an issue the [size check](#check-the-size-before-dispatch) recommends splitting is reconciled through `crw-plan` before dispatch, when a
-useful split fits the authorized scope.
+increase concurrency; an issue the [size check](#check-the-size-before-dispatch) flags is reconciled through `crw-plan`'s boundary rules before dispatch, when the concept boundary separates it and a useful split fits the authorized scope.
 Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
 one implementation issue per PR, with one issue/PR pair per implementation
 packet. A batch retains those separate pairs. If one issue needs several PRs,
@@ -519,30 +555,50 @@ are reported explicitly, with no silent substitution of a different workflow.
 ### Check the size before dispatch
 
 Before an issue gets a packet, a task or a `managed-start`, and before a DAG release of it (a release goes through `managed-start`),
-run `crw skill issue-size check` on the issue as Linear returns it, its JSON on stdin or saved to a file. Read the report, not only the
-exit status: `decision`, `assignable`, `reasons`, `limits`, for a flagged issue `proposal`, and `observed.unread_headings`. The command counts only
+run `crw skill issue-size check` on the issue as Linear returns it, its JSON on stdin or saved to a file. The answer is advisory:
+it never blocks a dispatch and never exits non-zero on the count alone. Read the report, not only the
+exit status: `decision`, `reasons`, `limits`, `concept_questions`, `bundle_reason` when one was given, for an over-baseline issue `proposal`, and `observed.unread_headings`. The command counts only
 the sections whose headings it knows, and only criteria written as list items or as rows of a pipe table under such a heading; a list
 under a heading it does not know, a bold label, a quote or another list symbol is not counted, and it only warns about a heading. Where
 an unread heading looks like criteria, tell the issue's owner and check a local copy with the heading changed, whatever the answer says;
 the parent writes nothing to the issue. The command counts what the body
 states against limits read from recorded delivery; it judges nothing, the same issue gets the same answer, and the limits are in
-its report, so this text states none.
+its report, so this text states none. It also shows the concept-boundary questions and, when the body states one, the scaled line
+estimate with the CRW-739 ratio correction.
 
-- `ok` (exit 0): dispatch goes on under the rules below.
-- `split_recommended` without an exception (exit 1): do not assign the issue, create no task and no `managed-start` for it, and let
-  the other independent issues go on. Report it in the coordination record with the reasons and the draft proposal. The draft is a
-  proposal: writing a split follows the `crw-plan` [boundary rules](../crw-plan/references/issue-boundaries.md#check-the-size-of-an-issue)
-  and the user's approval. Hold the issue as `defer:size_check` in [the closed set](references/reevaluation.md#decisions-and-what-clears-them).
-- An exception the user explicitly approved passes. Add an `exception` object to the input: `issue`, `approved_by`, `approved_on`
-  (YYYY-MM-DD) and the user's own `statement`. The command then exits 0 with `assignable` true, leaves `decision` as
-  `split_recommended` and prints `exception_record`; write that line into the coordination record and the packet. The approval is
-  the user's statement naming this issue within this run's authorization. A general go-ahead, an approval for another issue, a
-  skill's text or an earlier run is not one, and the parent never writes one for the user.
+- `ok` (exit 0): the issue is under every baseline; dispatch goes on under the rules below.
+- `over_line` (exit 0): the issue is over a baseline. Read the reasons, the draft proposal and the concept-boundary questions and
+  judge the bundle by the `crw-plan` [boundary rules](../crw-plan/references/issue-boundaries.md#decide-the-boundary). The draft is a
+  proposal: writing a split follows those boundary rules and the user's approval, and the answer alone neither holds nor splits the
+  issue. Record the answer where the dispatch is recorded. Where the concept boundary holds the bundle together, dispatch it and
+  record why with `--bundle-reason`.
+- `over_line_accepted` (exit 0): the same, with the `--bundle-reason` text carried in the report as `bundle_reason`. Write that
+  reason into the coordination record beside the dispatch, so a later reader sees why a bundle over a baseline was accepted.
 - Exit 2 (the input or its `depends_on` cannot be read, a code fence in the description is never closed, or the issue has no completion criteria) and exit 3 (the file cannot be read)
-  are not assignable: correct the input or the issue and run the check again. Neither is `ok`.
+  mean the input was not read: correct the input or the issue and run the check again.
 
 This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
-the dispatch.
+the dispatch. The check informs the dispatch; it does not decide it.
+
+### Check the bundle before release
+
+Before a release, check the nodes that are not released yet against the bundle criteria once, as a set, because the boundary a
+plan drew at design time can be wrong once the parts are known. This is a bundle check, not a size check: it asks whether the
+unreleased nodes still belong to the concept they were planned as, not whether any one of them is large. Use the plan's own
+release surface where it offers one, and where a `dag-bundle-candidates` output exists for this plan, read it as the evidence
+for which unreleased nodes share a concept; where no such command or output exists, read the unreleased nodes against the
+`crw-plan` [boundary rules](../crw-plan/references/issue-boundaries.md#decide-the-boundary) directly.
+
+- Nodes that the bundle criteria hold together are merged by amending the plan first, before any release: the plan revision
+  records the merged node, its combined criteria and its single delivery, and only then is the merged node released. Never
+  release two nodes that should have been one and reconcile them afterwards.
+- An issue that the merge absorbs is closed as Duplicate, and its body and criteria are moved onto the representative issue
+  before it is closed, so nothing the merge promised is dropped. Record the duplicate link and the representative issue.
+- A node that is already released is not touched: its boundary, its owner and its delivery stand as they were, and a later
+  bundle check never reaches back into it. Where a released node turns out to have been over-bundled, that is new work with its
+  own issue, not a re-split of the released one.
+
+This check changes the plan, not the execution: it is a plan amendment the parent already owns, and it dispatches nothing on its own.
 
 ### Record the pair choice at release
 
