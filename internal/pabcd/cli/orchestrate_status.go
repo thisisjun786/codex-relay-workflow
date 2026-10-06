@@ -208,6 +208,14 @@ func RunOrchestrateRead(parsed OrchestrateCliParsed, env ReadEnv) (OrchestrateRe
 	if !nonemptySession(sessionID) {
 		return readAnswer(1, "orchestrate "+VerbText(a.Verb)+": no active session — pass --session <id> (the codex session id, or an explicit terminal session like 'cli')"), nil
 	}
+	// CRW-871: an explicit id that is not canonical is refused here, before SessionFileExists, so the
+	// existence check, the read, the lock and the write all use one key. SessionFileExists checks the raw
+	// id while ReadState, the lock and the write sanitise it, so a raw id used to make this command judge
+	// and then rewrite a DIFFERENT session's file (data loss, the evaluation's P0). An id that passes is
+	// its own sanitised key, so every path below keeps the oracle's behaviour.
+	if !state.IsCanonicalSessionID(*sessionID) {
+		return readAnswer(1, sessionAliasRefusalOutput(a.Verb)), nil
+	}
 	if !SessionFileExists(a.Cwd, *sessionID) && !IsReservedSessionKey(*sessionID) {
 		return readAnswer(1, fmt.Sprintf("orchestrate %s: unknown session '%s' — no .crw/sessions/%s.json exists. Run crw relay session current and crw relay session bind in the native session cwd; use 'cli' only for a standalone terminal.", VerbText(a.Verb), *sessionID, *sessionID)), nil
 	}
