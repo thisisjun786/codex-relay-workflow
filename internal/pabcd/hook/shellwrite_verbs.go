@@ -2108,14 +2108,21 @@ func shellWriteHeredocDestinations(command string, depth int) []string {
 // that the reader cannot finish: an unquoted body with a shell expansion, a program past the depth limit, or a Python
 // body the f-string and exec walks cannot read. It returns the what the deny reason names (CRW-765, criterion c1).
 func shellWriteHeredocUnreadable(command string) (string, bool) {
-	return shellWriteHeredocUnreadableIn(command, 0)
+	budget := 32*len(command) + 65536
+	return shellWriteHeredocUnreadableIn(command, 0, &budget)
 }
 
 // shellWriteHeredocUnreadableIn scans one command at one nesting depth, the way shellWriteHeredocDestinations reads it:
 // its here-documents, and again within the command string a nested shell -c or eval runs (a quoted token, so the
 // here-document inside it is not visible from the outer command). A shell body is scanned one level deeper, so the
-// depth limit holds across alternating -c and here-document levels (CRW-765 review).
-func shellWriteHeredocUnreadableIn(command string, depth int) (string, bool) {
+// depth limit holds across alternating -c and here-document levels (CRW-765 review). It reads every reading the
+// destination walk reads - the token and its shell-unescaped form - and spends the same budget, so it stops where the
+// destination walk stops instead of walking a program the destination walk never finishes (CRW-765 correction 2).
+func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (string, bool) {
+	*budget -= len(command)
+	if *budget < 0 {
+		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
+	}
 	for _, h := range shellWriteHeredocs(utf16.Encode([]rune(command))) {
 		kind, ok := shellWriteHeredocKindOf(shellVerbSkipWrappers(shellWriteHeredocHeaderWords(h.command)))
 		if !ok {
@@ -2134,25 +2141,39 @@ func shellWriteHeredocUnreadableIn(command string, depth int) (string, bool) {
 				return what, true
 			}
 		case shellWriteHeredocShell:
-			if what, bad := shellWriteHeredocUnreadableIn(shellString(h.body), depth+1); bad {
+			if what, bad := shellWriteHeredocUnreadableIn(shellString(h.body), depth+1, budget); bad {
 				return what, true
 			}
 		}
 	}
-	return shellWriteHeredocUnreadableNested(command, depth)
+	return shellWriteHeredocUnreadableNested(command, depth, budget)
 }
 
-// shellWriteHeredocUnreadableNested reads each command of the command string the way shellVerbRun does and scans the
-// program a nested shell -c or eval runs, so a here-document inside that program is not missed.
-func shellWriteHeredocUnreadableNested(command string, depth int) (string, bool) {
-	for _, sub := range shellVerbSubsegments(command) {
+// shellWriteHeredocUnreadableNested reads each command of the command line the way shellVerbRun does and scans the
+// program a nested shell -c or eval runs, so a here-document inside that program is not missed. The here-document bodies
+// are removed first, so a non-interpreter body whose text documents a command is not scanned as one (CRW-765
+// correction 2). Each nested program is read as the token holds it and again with its shell escapes removed, matching
+// the destination walk's shellVerbNestedBoth, so a reason from either reading denies.
+func shellWriteHeredocUnreadableNested(command string, depth int, budget *int) (string, bool) {
+	header := shellString(stripHeredocBodies(utf16.Encode([]rune(command))))
+	for _, sub := range shellVerbSubsegments(header) {
 		tokens := shellVerbSkipWrappers(shellTokenize(sub))
 		nested, ok := shellWriteFStringNestedScript(tokens)
 		if !ok {
 			continue
 		}
-		if what, bad := shellWriteHeredocUnreadableIn(nested, depth+1); bad {
+		// A program nested past the depth limit is one the reader will not follow, so it fails closed: a chain of
+		// nested -c programs stops here even when none of them holds a here-document of its own.
+		if depth+1 > shellWriteHeredocMaxDepth {
+			return shellWriteHeredocUnreadableWhat, true
+		}
+		if what, bad := shellWriteHeredocUnreadableIn(nested, depth+1, budget); bad {
 			return what, true
+		}
+		if un := shellVerbUnescape(nested); un != nested {
+			if what, bad := shellWriteHeredocUnreadableIn(un, depth+1, budget); bad {
+				return what, true
+			}
 		}
 	}
 	return "", false

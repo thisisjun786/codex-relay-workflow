@@ -206,22 +206,35 @@ func shellWriteHeredocTrimTabs(line []uint16) []uint16 {
 	return line[i:]
 }
 
-// shellWriteHeredocHeaderWords is the command words of a header with every << operator and delimiter word removed, so
-// the interpreter predicate reads the command and its operands and not the redirection. The oracle's tokenizer already
-// skips a plain delimiter word; this also removes a delimiter the tokenizer would keep, such as the backslash-escaped
-// <<\EOF, whose delimiter word a shell reads as EOF.
+// shellWriteHeredocHeaderWords is the words of the simple command that owns the here-document, read the way the shell
+// reads it (CRW-765 correction 2): the header is cut at pipes and control operators, so only the command the
+// here-document is attached to is judged, and every redirection (with its target word) is dropped wherever it stands,
+// before or after the verb. A redirection is not a command word, so a redirect before the verb reads as the interpreter
+// and a redirect after the operator leaves the command word alone; a here-string operator and its word are dropped the
+// same way.
 func shellWriteHeredocHeaderWords(header []uint16) []string {
+	seg := shellWriteHeredocOwningSegment(header)
 	out := []uint16{}
-	for i := 0; i < len(header); {
-		ch := header[i]
+	for i := 0; i < len(seg); {
+		ch := seg[i]
 		if ch == '\'' || ch == '"' {
-			next := skipQuoted(header, i)
-			out = append(out, header[i:next]...)
+			next := skipQuoted(seg, i)
+			out = append(out, seg[i:next]...)
 			i = next
 			continue
 		}
-		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) != '<' {
-			i = shellWriteHeredocSkipDelimiter(header, i)
+		if ch == '<' && shellAt(seg, i+1) == '<' {
+			if shellAt(seg, i+2) == '<' {
+				i = readToken(seg, i+3).next // a here-string: the operator and its word
+			} else {
+				i = shellWriteHeredocSkipDelimiter(seg, i) // << / <<- and its delimiter word
+			}
+			out = append(out, ' ')
+			continue
+		}
+		if ch == '<' || ch == '>' || ch == '&' && shellAt(seg, i+1) == '>' {
+			out = shellWriteHeredocDropFd(out)
+			i = shellWriteHeredocSkipRedirect(seg, i)
 			out = append(out, ' ')
 			continue
 		}
@@ -229,6 +242,119 @@ func shellWriteHeredocHeaderWords(header []uint16) []string {
 		i++
 	}
 	return shellTokenize(shellString(out))
+}
+
+// shellWriteHeredocOwningSegment is the part of a header between the last control operator before the here-document
+// operator and the first one after it: the simple command the here-document is attached to.
+func shellWriteHeredocOwningSegment(header []uint16) []uint16 {
+	at := -1
+	for i := 0; i < len(header); {
+		ch := header[i]
+		if ch == '\'' || ch == '"' {
+			i = skipQuoted(header, i)
+			continue
+		}
+		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) != '<' {
+			at = i
+			break
+		}
+		i++
+	}
+	if at < 0 {
+		return header
+	}
+	start, end := 0, len(header)
+	for i := 0; i < at; {
+		ch := header[i]
+		if ch == '\'' || ch == '"' {
+			i = skipQuoted(header, i)
+			continue
+		}
+		if shellWriteHeredocSeparator(header, i) {
+			start = i + 1
+		}
+		i++
+	}
+	for i := at; i < len(header); {
+		ch := header[i]
+		if ch == '\'' || ch == '"' {
+			i = skipQuoted(header, i)
+			continue
+		}
+		if shellWriteHeredocSeparator(header, i) {
+			end = i
+			break
+		}
+		i++
+	}
+	return header[start:end]
+}
+
+// shellWriteHeredocSeparator reports whether a byte is a shell control operator that ends a simple command: ;, | and &,
+// with &> and &< kept as redirections and a >| (the clobber operator) left alone.
+func shellWriteHeredocSeparator(s []uint16, i int) bool {
+	switch shellAt(s, i) {
+	case ';':
+		return true
+	case '|':
+		return shellAt(s, i-1) != '>'
+	case '&':
+		// & is a control operator unless it is part of a redirection: &>f, &>>f, n>&m, n<&m.
+		return shellAt(s, i-1) != '>' && shellAt(s, i-1) != '<' && shellAt(s, i+1) != '>' && shellAt(s, i+1) != '<'
+	}
+	return false
+}
+
+// shellWriteHeredocDropFd removes a file-descriptor digit word (the 2 of 2>) from the words read so far, when the digits
+// stand as their own word; a digit inside a word (cmd2>) stays.
+func shellWriteHeredocDropFd(out []uint16) []uint16 {
+	k := len(out)
+	for k > 0 && out[k-1] >= '0' && out[k-1] <= '9' {
+		k--
+	}
+	if k == len(out) {
+		return out
+	}
+	if k > 0 && !shellSpace(out[k-1]) {
+		return out
+	}
+	return out[:k]
+}
+
+// shellWriteHeredocSkipRedirect is the offset after a redirection operator and its target: <, >, >>, <>, >|, &>, &>>,
+// n>&m, n<&m, n>&- and the file target that follows.
+func shellWriteHeredocSkipRedirect(s []uint16, i int) int {
+	i++
+	if shellAt(s, i) == '>' || shellAt(s, i) == '<' {
+		i++ // >> or <>
+	}
+	if shellAt(s, i) == '&' {
+		i++
+		if shellAt(s, i) == '-' {
+			return i + 1
+		}
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		return i
+	}
+	for i < len(s) && shellSpace(s[i]) {
+		i++
+	}
+	if i >= len(s) {
+		return i
+	}
+	if s[i] == '\'' || s[i] == '"' {
+		return skipQuoted(s, i)
+	}
+	for i < len(s) {
+		c := s[i]
+		if shellSpace(c) || c == ';' || c == '|' || c == '&' || c == '<' || c == '>' || c == '(' || c == ')' {
+			break
+		}
+		i++
+	}
+	return i
 }
 
 // shellWriteHeredocSkipDelimiter is the offset after a << operator and its delimiter word, reading the word as the
