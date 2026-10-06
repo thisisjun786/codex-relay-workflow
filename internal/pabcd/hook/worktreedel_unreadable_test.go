@@ -267,3 +267,13 @@ func TestWorktreeDelReviewFindingsSecondRound(t *testing.T) {
 	r.allowed(t, "cat <<EOF\nbash -c \"$X\"\nEOF")
 	r.intact(t)
 }
+
+// TestWorktreeDelStdinDescriptor is the descriptor rule: only descriptor 0 replaces a shell's standard input, so a
+// pipe is still its program when another descriptor is redirected.
+func TestWorktreeDelStdinDescriptor(t *testing.T) {
+	r := newDelRig(t)
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash 2</dev/null", "a shell program read from a pipe")
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash 3</dev/null", "a shell program read from a pipe")
+	r.allowed(t, "printf 'rm -rf ../repo' | bash </dev/null", "printf 'rm -rf ../repo' | bash 0</dev/null")
+	r.intact(t)
+}

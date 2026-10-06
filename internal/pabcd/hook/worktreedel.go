@@ -1934,7 +1934,11 @@ func worktreeDelUnreadableStdinRedirected(operands []string) bool {
 	for i := 0; i < len(operands); i++ {
 		word := operands[i]
 		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) {
-			word = operands[i+1] // a descriptor before the operator belongs to it
+			if word != "0" { // only descriptor 0 replaces the standard input: 2</dev/null leaves the pipe on stdin
+				i++
+				continue
+			}
+			word = operands[i+1]
 			i++
 		}
 		if !strings.HasPrefix(word, "<") || strings.HasPrefix(word, "<<") {
