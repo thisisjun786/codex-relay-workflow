@@ -398,7 +398,7 @@ func (r HarnessReport) MarshalJSON() ([]byte, error) {
 	b.WriteString(`,"overall":`)
 	b.WriteString(harnessReportJSONString(string(r.Overall)))
 	b.WriteString(`,"checks":`)
-	checks, err := json.Marshal(r.Checks)
+	checks, err := harnessReportChecksJSON(r.Checks)
 	if err != nil {
 		return nil, err
 	}
@@ -417,6 +417,21 @@ func (r HarnessReport) MarshalJSON() ([]byte, error) {
 	}
 	b.WriteByte('}')
 	return b.Bytes(), nil
+}
+
+// harnessReportChecksJSON is JSON.stringify of the checks array (cli.ts:84): encoding/json with HTML
+// escaping off, so an evidence or repair string holding <, > or & keeps the character JSON.stringify
+// writes instead of encoding/json's \u003c, \u003e and \u0026. Each element is still written by
+// HarnessCheck.MarshalJSON, so the lone-surrogate representation is kept; the encoder's own newline
+// is trimmed, since the array sits inside this object.
+func harnessReportChecksJSON(checks []HarnessCheck) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(checks); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }
 
 // HarnessOptions is DoctorOptions (doctor.ts:47-62), minus wslDeps (WSL is out of scope).

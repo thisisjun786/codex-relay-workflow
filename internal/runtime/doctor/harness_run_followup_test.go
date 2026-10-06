@@ -171,3 +171,87 @@ func TestHarnessFollowupFeaturesKilledIsNullStatus(t *testing.T) {
 		t.Fatalf("evidence = %q, want the exit phrase for a real exit", real.Evidence)
 	}
 }
+
+// TestHarnessFollowupChecksKeepMarkupCharacters: the checks array is written with HTML escaping
+// off, so an evidence or repair string holding <, > or & keeps the character JSON.stringify writes
+// instead of encoding/json's escape (the stale-install repair is the oracle's own text).
+func TestHarnessFollowupChecksKeepMarkupCharacters(t *testing.T) {
+	report := HarnessReport{
+		SchemaVersion: HarnessSchemaVersion,
+		Overall:       HarnessFail,
+		Checks: []HarnessCheck{{
+			Name:     "install-root",
+			Severity: HarnessFail,
+			Evidence: "mcpServers -> <plugin> & <marketplace>",
+			Repair:   harnessReportRepair("codex plugin add <plugin>@<marketplace>"),
+		}},
+	}
+	var buf bytes.Buffer
+	if err := harnessRunWriteJSON(&buf, report); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	for _, want := range []string{"mcpServers -> <plugin> & <marketplace>", "codex plugin add <plugin>@<marketplace>"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("--json output does not carry %q literally:\n%s", want, got)
+		}
+	}
+	for _, escaped := range []string{"\\u003c", "\\u003e", "\\u0026"} {
+		if strings.Contains(got, escaped) {
+			t.Fatalf("--json output HTML-escapes the checks:\n%s", got)
+		}
+	}
+}
+
+// TestHarnessFollowupEnvironmentBytesDecodeLikeNode: an environment value is bytes Node's UTF-8
+// decoder already read, so the raw ED A0 80 of a CODEX_SURFACE becomes three U+FFFD in both the
+// JSON and the text report -- never the \ud800 escape a stored lone surrogate gets.
+func TestHarnessFollowupEnvironmentBytesDecodeLikeNode(t *testing.T) {
+	raw := string([]byte{0xED, 0xA0, 0x80})
+	env := harnessRunEnv(map[string]string{"CODEX_SURFACE": "s" + raw + "t"})
+	surface := harnessRunActiveSurface(env)
+	if surface == nil {
+		t.Fatal("activeSurface is nil, want the decoded value")
+	}
+	if *surface != "s\uFFFD\uFFFD\uFFFDt" {
+		t.Fatalf("activeSurface = %q, want the three U+FFFD Node's decoder writes", *surface)
+	}
+	report := HarnessReport{SchemaVersion: HarnessSchemaVersion, Overall: HarnessWarn, Checks: []HarnessCheck{}, ActiveSurface: surface}
+	var buf bytes.Buffer
+	if err := harnessRunWriteJSON(&buf, report); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "\\ud800") {
+		t.Fatalf("--json output spells the raw bytes as a lone surrogate:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "s\uFFFD\uFFFD\uFFFDt") {
+		t.Fatalf("--json output does not carry the three U+FFFD:\n%s", buf.String())
+	}
+}
+
+// TestHarnessFollowupUnreadableCacheIsNotGuessed: a cache directory the scan cannot read may hold
+// another installed root, so the command refuses instead of diagnosing the ones it can see.
+func TestHarnessFollowupUnreadableCacheIsNotGuessed(t *testing.T) {
+	codexHome := harnessFollowupCache(t, "public", "0.4.0+x")
+	hidden := filepath.Join(codexHome, "plugins", "cache", "local", "crw")
+	if err := os.MkdirAll(hidden, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(hidden, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o755) })
+	if _, err := os.ReadDir(hidden); err == nil {
+		t.Skip("the cache directory stays readable despite mode 000 (privileged user)")
+	}
+	code, stdout, stderr := harnessFollowupRun(t, nil, map[string]string{"CODEX_HOME": codexHome})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stdout %q stderr %q", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "cannot read") || !strings.Contains(stderr, "PLUGIN_ROOT") {
+		t.Fatalf("stderr = %q, want the unreadable-cache refusal naming PLUGIN_ROOT", stderr)
+	}
+}
