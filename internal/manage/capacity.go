@@ -22,7 +22,6 @@ const (
 	capacityStateFile = "capacity-state.json"
 )
 
-// CapacityLimits is the thresholds the judgement applied, printed with it.
 type CapacityLimits struct {
 	MinWaiting          int     `json:"min_waiting"`
 	PersistMinutes      float64 `json:"persist_minutes"`
@@ -32,7 +31,6 @@ type CapacityLimits struct {
 	MaxParentsPerFamily int     `json:"max_parents_per_family"`
 }
 
-// CapacityReport is the whole judgement: thresholds, shared signals, one entry per plan.
 type CapacityReport struct {
 	At       time.Time        `json:"at"`
 	Limits   CapacityLimits   `json:"limits"`
@@ -56,13 +54,11 @@ type CapacityChild429 struct {
 	Count *int   `json:"count"`
 }
 
-// CapacityReceiptWait is the parent's acknowledgement delay.
 type CapacityReceiptWait struct {
 	MedianMinutes *float64 `json:"median_minutes"`
 	Count         int      `json:"count"`
 }
 
-// CapacityPlan is one configured plan's judgement and the evidence it was made from.
 type CapacityPlan struct {
 	Plan            string              `json:"plan"`
 	Project         string              `json:"project"`
@@ -120,7 +116,6 @@ func capacityPick[T any](value *T, fallback T) T {
 	return *value
 }
 
-// capacityLimitsFrom is the defaults with every key the section carries applied.
 func capacityLimitsFrom(s capacitySettings) CapacityLimits {
 	limits := CapacityLimits{MinWaiting: 2, PersistMinutes: 30, ReceiptMaxMinutes: 15,
 		RealertHours: 3, LaneMax: 9, MaxParentsPerFamily: 3}
@@ -133,7 +128,6 @@ func capacityLimitsFrom(s capacitySettings) CapacityLimits {
 	return limits
 }
 
-// capacityFamilyOf is the family a plan belongs to: what the document says, else its project.
 func capacityFamilyOf(ref capacityPlanRef) string {
 	if ref.Family != "" {
 		return ref.Family
@@ -254,7 +248,6 @@ func capacityPersist(next *capacityState, before capacityPlanState, plan Capacit
 	return waitingMinutes, alert
 }
 
-// capacityJudge records every reason that applies, in the issue's order; none means expand.
 func capacityJudge(plan CapacityPlan, limits CapacityLimits, lane *int, incident *string, child429 *int) (string, []string) {
 	reasons := []string{}
 	for _, check := range []struct {
@@ -280,7 +273,6 @@ func capacityJudge(plan CapacityPlan, limits CapacityLimits, lane *int, incident
 	return capacityExpand, []string{}
 }
 
-// capacityReadState is the state file, or an empty state when there is none to read.
 func capacityReadState(path string) capacityState {
 	state := capacityState{Plans: map[string]capacityPlanState{}}
 	data, err := os.ReadFile(path)
@@ -294,7 +286,6 @@ func capacityReadState(path string) capacityState {
 	return stored
 }
 
-// capacityWriteState writes the state file atomically: a temp file, then a rename.
 func capacityWriteState(path string, state capacityState) error {
 	if state.Plans == nil {
 		state.Plans = map[string]capacityPlanState{}
@@ -336,7 +327,6 @@ var capacityConfig = func(e *Env) *Config { return coreDefaults(e) }
 
 const capacityUsage = "usage: crw manage capacity [--text] [--dry-run]"
 
-// capacityRun is crw manage capacity: JSON, or one English line per plan with --text.
 func capacityRun(ctx context.Context, e *Env, args []string) int {
 	asText, dry := false, false
 	for _, arg := range args {
@@ -374,7 +364,6 @@ func capacityRun(ctx context.Context, e *Env, args []string) int {
 	return 0
 }
 
-// capacityLines is the judgement as one English line per plan.
 func capacityLines(report CapacityReport) []string {
 	lines := make([]string, 0, len(report.Plans))
 	for _, plan := range report.Plans {
