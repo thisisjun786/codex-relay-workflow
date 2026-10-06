@@ -174,11 +174,12 @@ func HarnessHookTrustCheck(pluginRoot string, options HarnessOptions, env host.L
 			"The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. %s",
 			len(untrusted), len(results), key, neverTrusted, len(untrusted)-neverTrusted, strings.Join(detail, "; "))
 		// A fresh install has no [hooks.state.*] section: only the host writes them, and nothing here forges them.
-		check.Repair = fmt.Sprintf("crw doctor retrust --key %s --codex-home %s", key, codexHome)
+		repair := fmt.Sprintf("crw doctor retrust --key %s --codex-home %s", key, codexHome)
 		if neverTrusted == len(untrusted) {
-			check.Repair = fmt.Sprintf("%d hook(s) have no trust entry in %s; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: %s --bootstrap-ok",
-				len(untrusted), filepath.Join(codexHome, "config.toml"), check.Repair)
+			repair = fmt.Sprintf("%d hook(s) have no trust entry in %s; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: %s --bootstrap-ok",
+				len(untrusted), filepath.Join(codexHome, "config.toml"), repair)
 		}
+		check.Repair = harnessReportRepair(repair)
 	}
 	return check
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
 )
 
 // componentHook is an ingress outside the PABCD stage table. Each component owns
@@ -61,6 +62,10 @@ func componentHooks() []componentHook {
 				harness.RecordInvocation(raw, "subagent-config", "session-start", os.LookupEnv)
 				return raw
 			})
+		}},
+		// Spawn attach hook: the recursion and final-gate leg, with its own stdin policy and answer.
+		{"pre-tool-use-attaching-skills", "pre-tool-use", func(c invocation, in io.Reader) int {
+			return spawn.RunHook(c.ctx, in, c.stdout, os.LookupEnv)
 		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.
 		{"session-start-ensuring-provider-bridge", "session-start", func(c invocation, in io.Reader) int {
