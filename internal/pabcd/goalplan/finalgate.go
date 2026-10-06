@@ -167,7 +167,7 @@ func finalGateIdentityReasons(plan *Goalplan, g *FinalGateState, ctx *GoalplanVa
 			out = append(out, slot.label+" path is missing")
 			continue
 		}
-		evidence, err, panicked, panicText := finalGateReadReceipt(ctx, *slot.path, slot.kind)
+		evidence, panicked, panicText, err := finalGateReadReceipt(ctx, *slot.path, slot.kind)
 		if panicked {
 			out = append(out, fmt.Sprintf("%s could not be read: %s", slot.label, panicText))
 			continue
@@ -219,7 +219,7 @@ func finalGateCaptureCurrent(ctx *GoalplanValidationCtx) (id SourceIdentity, rea
 }
 
 // finalGateReadReceipt runs the ctx reader, separating a thrown exception (panicked) from the oracle's {error} alternative.
-func finalGateReadReceipt(ctx *GoalplanValidationCtx, path string, kind gate.ReceiptKind) (evidence GoalplanReceiptEvidence, err error, panicked bool, panicText string) {
+func finalGateReadReceipt(ctx *GoalplanValidationCtx, path string, kind gate.ReceiptKind) (evidence GoalplanReceiptEvidence, panicked bool, panicText string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			panicked = true
