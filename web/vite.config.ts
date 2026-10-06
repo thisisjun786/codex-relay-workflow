@@ -7,5 +7,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "dist" },
+  // The built screens are committed under internal/gui/assets and embedded in the crw binary
+  // with `//go:embed all:assets`, so a Node-free source checkout still serves a screen. emptyOutDir
+  // removes a stale hashed asset a previous build left behind; the drift check compares the whole
+  // tree, so a leftover would be refused rather than served.
+  build: { outDir: "../internal/gui/assets", emptyOutDir: true },
 });
