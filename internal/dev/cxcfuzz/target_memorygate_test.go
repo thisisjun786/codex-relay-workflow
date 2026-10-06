@@ -46,6 +46,8 @@ func TestMemorygateCompareJudgesDecisionAndReason(t *testing.T) {
 		{"oracle denies, port allows", "", deny(oracleReason), Miss},
 		{"port denies, oracle allows", deny(portReason), "", Extra},
 		{"both deny, reasons differ", deny("one"), deny("two"), Differ},
+		{"a branded destination is not a rename", deny("[crw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (/w/codexclaw.md): this session has no explicit user request"), deny("[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (/w/codexclaw.md): this session has no explicit user request"), Same},
+		{"a real destination difference still differs", deny("[crw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (/w/a.md)"), deny("[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (/w/b.md)"), Differ},
 		{"a worker failure is not an allow", pyjson.Object{{Key: "error", Value: "boom"}}, deny(oracleReason), Differ},
 	} {
 		t.Run(c.name, func(t *testing.T) {

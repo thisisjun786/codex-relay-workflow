@@ -5,7 +5,6 @@ package cxcfuzz
 import (
 	"encoding/json"
 	"math/rand"
-	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
@@ -62,7 +61,7 @@ func memoryGateCompare(goOut, oracleOut any) Verdict {
 		return Verdict{Kind: Extra, Detail: "the port denies a write the oracle allows: " + memoryGateClip(goReason)}
 	case goDecision != oracleDecision:
 		return Verdict{Kind: Differ, Detail: "the oracle answers " + oracleDecision + ", the port " + goDecision}
-	case memoryGateNormalise(oracleReason) != goReason:
+	case memoryGateNormalise(oracleReason) != memoryGateNormalise(goReason):
 		return Verdict{Kind: Differ, Detail: "the deny reasons differ"}
 	default:
 		return Verdict{Kind: Same}
@@ -101,12 +100,20 @@ func memoryGateClip(reason string) string {
 
 // memoryGateNormalise is the name substitution the corpus replayer applies to an oracle answer
 // (contract/schema/cxc/name-substitution.json): the port renames CXC's brand text and its CLI
-// verbs, so the oracle's deny reason keeps the old spelling. Only the brand tokens and the one CLI
-// phrase this reason holds are rewritten; a decision, a path and every other byte stay as they are.
+// verbs, so the oracle's deny reason keeps the old spelling. Only the fixed template phrases are
+// rewritten, never a whole-word brand token: the reason also interpolates the destination, the
+// session id and the cwd, and a destination may legitimately hold the token (a case tree can), so a
+// global replacement would rewrite a path and could mask a real difference between the two answers.
+// A decision, a path and every other byte stay as they are.
 func memoryGateNormalise(text string) string {
-	text = regexp.MustCompile(`\[codexclaw([\]: —])`).ReplaceAllString(text, "[crw${1}")
-	text = regexp.MustCompile(`\bcodexclaw\b`).ReplaceAllString(text, "crw")
-	return strings.ReplaceAll(text, "cxc memory allow-write", "crw pabcd memory allow-write")
+	for _, phrase := range [][2]string{
+		{"[codexclaw MEMORY-WRITE-GATE]", "[crw MEMORY-WRITE-GATE]"},
+		{"Memory notes outlive codexclaw and reach", "Memory notes outlive crw and reach"},
+		{"`cxc memory allow-write", "`crw pabcd memory allow-write"},
+	} {
+		text = strings.ReplaceAll(text, phrase[0], phrase[1])
+	}
+	return text
 }
 
 // memoryGateGenerateToolNames are the hook-facing names of the memory write tool, and the edit and
@@ -121,9 +128,11 @@ func memoryGateGenerateToolNames() []string {
 
 // memoryGateGenerate builds one PreToolUse payload over a scenario whose tree holds the memories
 // root, a sibling memories-backup, and links into the root: aliases whose names carry a line break, a
-// carriage return, a space or a quote, link chains one to forty-five deep, and relative and absolute
-// targets. Destinations mix the root itself, a path inside it, a sibling, a link, a home form and a
-// relative form, and the command grammar is the shellwrite generator's own.
+// carriage return, a space or a quote, and link chains one to forty-five deep. Every link target is
+// relative: the harness's scenario builder refuses an absolute link target before it writes anything
+// (internal/dev/cxcfuzz/scenario.go, confine), so an absolute target is a limitation of this target,
+// recorded in the handoff. Destinations mix the root itself, a path inside it, a sibling, a link, a
+// home form and a relative form, and the command grammar is the shellwrite generator's own.
 func memoryGateGenerate(rng *rand.Rand, size int) any {
 	memories := rootPlaceholder + "/codex-home/memories"
 	backup := rootPlaceholder + "/codex-home/memories-backup"
