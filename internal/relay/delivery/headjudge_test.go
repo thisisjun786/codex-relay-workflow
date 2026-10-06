@@ -443,6 +443,7 @@ func TestSupersessionReasonOfAMergeTurnGrantMatchesTheOldJudgment(t *testing.T) 
 }
 
 func TestJudgeHeadMatchesTheOldJudgmentOnRandomGraphs(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewPCG(416, 2026))
 	seen := map[string]int{}
 	for i := 0; i < 40000; i++ {

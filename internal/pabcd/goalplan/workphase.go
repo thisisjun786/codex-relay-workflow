@@ -375,16 +375,21 @@ func workPhaseAdvance(plan *Goalplan) WorkPhaseAdvanceResult {
 	return WorkPhaseAdvanceResult{Kind: WorkPhaseAdvanceOK, ClosedID: closed.ClosedID, Plan: closed.Plan}
 }
 
-// AdvanceWorkPhase, CloseFixedWorkPhase and ResumeAbsentTarget are the exported wrappers of the
-// three unexported transforms above. The chat D-close (internal/pabcd/hook/prompt_dclose.go) and
-// the CLI D-close are separate surfaces in the oracle and share these helpers there, so the port
-// shares them here through one exported name each. Nothing else in this file changes.
+// AdvanceWorkPhase is the exported one-line door to workPhaseAdvance (:2207-2248), for the
+// callers outside this package: the D close reads the variant set, which the unexported
+// transform already returns, so the wrapper adds nothing but the name.
 func AdvanceWorkPhase(plan *Goalplan) WorkPhaseAdvanceResult { return workPhaseAdvance(plan) }
 
+// CloseFixedWorkPhase is the exported door to workPhaseCloseFixed (:1989-2133): close exactly
+// workPhaseID and move the cursor the way a normal advance does. The recovery branch of the D
+// close calls this rather than re-deriving the gates, so a retry and a first close cannot
+// disagree about the resulting plan.
 func CloseFixedWorkPhase(plan *Goalplan, workPhaseID string, recordedNext WorkPhaseRecordedNext) WorkPhaseCloseFixedResult {
 	return workPhaseCloseFixed(plan, workPhaseID, recordedNext)
 }
 
+// ResumeAbsentTarget is the exported door to workPhaseResumeAbsentTarget (:2149-2192): what a
+// resume owes when the fixed target is gone from the plan but the marker still names a successor.
 func ResumeAbsentTarget(plan *Goalplan, recordedNext string) WorkPhaseResumeAbsentTargetResult {
 	return workPhaseResumeAbsentTarget(plan, recordedNext)
 }

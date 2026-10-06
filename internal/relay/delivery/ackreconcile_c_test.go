@@ -13,6 +13,7 @@ import (
 // test_ack_reconcile.py ACR-21..ACR-23 (see ackreconcile_a_test.go).
 
 func Test21_ACR21_recovery_reports_awaiting_acks_and_never_a_correction(t *testing.T) {
+	t.Parallel()
 	t.Run("dispatched completion", func(t *testing.T) {
 		mirror(t, acr, "RestartRecovery.test_a_dispatched_delivery_awaiting_acknowledgement_is_reported_not_resent", func(h *hl) {
 			event := h.queuedEvent(regOpts{})
@@ -104,6 +105,7 @@ func (h *hl) mustFail(_ any, err error) {
 }
 
 func Test21_ACR22_a_needs_changes_verdict_is_atomic(t *testing.T) {
+	t.Parallel()
 	t.Run("normal path", func(t *testing.T) {
 		mirror(t, acr, "VerdictAtomicity.test_the_normal_path_produces_a_generation_a_verdict_and_a_revision", func(h *hl) {
 			event := h.verdictAcknowledged([]string{parent, child})
@@ -158,6 +160,7 @@ func contractOnly(record Obj) Obj {
 }
 
 func Test21_ACR23_a_replayed_verdict_allocates_nothing_further(t *testing.T) {
+	t.Parallel()
 	t.Run("sequential replay", func(t *testing.T) {
 		mirror(t, acr, "VerdictAtomicity.test_a_replayed_verdict_allocates_nothing_further", func(h *hl) {
 			event := h.verdictAcknowledged([]string{parent, child})
