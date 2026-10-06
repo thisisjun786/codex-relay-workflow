@@ -559,6 +559,7 @@ func openedByThisBuild(t *testing.T, h *host) {
 func TestAStoreThatOnlyHoldsTheZoneDoesNotRefuseARuntimeThatDoesNotDeclareIt(t *testing.T) {
 	t.Parallel()
 	t.Run("an update", func(t *testing.T) {
+		t.Parallel()
 		h, _, second, _, next := zoneInstalled(t)
 		openedByThisBuild(t, h)
 		o := h.options()
@@ -569,6 +570,7 @@ func TestAStoreThatOnlyHoldsTheZoneDoesNotRefuseARuntimeThatDoesNotDeclareIt(t *
 		}
 	})
 	t.Run("an interrupted promotion finished by a rerun", func(t *testing.T) {
+		t.Parallel()
 		h, _, second, old, next := zoneInstalled(t)
 		h.mustInstall(t, "update", second)
 		if err := pointer.Place(pointer.Path(h.dest), old); err != nil {
@@ -584,6 +586,7 @@ func TestAStoreThatOnlyHoldsTheZoneDoesNotRefuseARuntimeThatDoesNotDeclareIt(t *
 		}
 	})
 	t.Run("a rollback", func(t *testing.T) {
+		t.Parallel()
 		h, _, second, old, _ := zoneInstalled(t)
 		h.mustInstall(t, "update", second)
 		openedByThisBuild(t, h)
