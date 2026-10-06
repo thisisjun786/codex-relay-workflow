@@ -23,6 +23,23 @@ Measured on 2026-10-03. Each row is one identity, with the number of regular fil
 
 None of the compared trees holds a symbolic link. The file-mode listing of the second row has the digest `0172d277aca871be9bb582006336d7cef427758ea164e412d0aacf21fa99cd9a`.
 
+## The GUI copy
+
+The screen sources under `web/` are ported from the same upstream revision, from its
+`plugins/codexclaw/gui` directory. The copy they were read from is the pinned v0.2.40
+snapshot of that directory, taken together with `plugins/codexclaw/components` and the
+`LICENSE` and `NOTICE.md` files, with `node_modules/` and `dist/` excluded.
+
+| | |
+| --- | --- |
+| Snapshot | a tar of `plugins/codexclaw/gui`, `plugins/codexclaw/components`, `LICENSE` and `NOTICE.md` at tag `v0.2.40` |
+| Snapshot digest | `80cdb75ed168bbc0e5e79d953e4e9674e2fbc498ddceacc5594bfae7fbd94bda` (sha256 of the tar) |
+| `plugins/codexclaw/gui` | 41 regular files, listing digest `5dba5a818415149f219fa242c12159fed9674e132daab270239868a7b695ccf9` |
+
+Each file under `web/` ported from that directory carries a first-line comment naming
+the upstream file and the line range it came from. The defects the GUI port records are
+in [known-defects/CRW-830.md](known-defects/CRW-830.md).
+
 ## Method
 
 `<tree>` is a directory of extracted files. Every command reads; none writes outside `<scratch>`.

@@ -1276,6 +1276,61 @@ The managed-worktree deletion guard reads the program a shell word hands to `-c`
 - The reader let three things through or stopped them wrongly: it read su's attached `-c` program (`su -c'rm -rf ../repo'`, `su -lc'...'`) as one option word whose first word is `-crm`, so the deletion was allowed; at the reading depth of 8 program strings it dropped the program it had not read and allowed it, so `eval` or `sh -c` nested nine deep around `rm -rf ../repo` passed; and it read every operand that holds a blank after a shell word as a program, so `bash -c 'echo OK' 'rm -rf ../repo'`, which runs only echo, was denied (source `internal/pabcd/hook/worktreedel.go` before this change; a security finding, which the parity rule revision of 2026-10-03 fixes during the port); port: fixed by CRW-639 (a program that su takes with `-c`, attached or in the next word and wherever the options stand, is judged as the program it is; a program still unread at the depth limit is denied with the reason that names a shell program nested past the reading depth, which also denies a harmless nest that deep; only the first operand after `-c` of sh, bash, dash, ash, zsh and su is the program, and the operands after it are still read when the program can name them (a dollar sign, `BASH_ARGV` or `argv`: `bash -c 'eval "$0"' 'rm -rf ../repo'` runs rm), when a redirection word stands among the operands (`bash -c 'source /dev/stdin' <<< 'rm -rf ../repo'` runs rm, and a quoted `'>'` looks like one) or when an option-like word stands after the program (su would run a later `-c`); other shells and any option shape the reader cannot place keep the reading of every blank-holding operand; only su and fish, whose getopt gives the rest of a cluster to `-c`, read an attached `-cPROGRAM` word).
 - A here-string that is written without a blank before its quoted target, `bash -c 'source /dev/stdin' <<<'rm -rf ../repo'`, reaches the reader as the one word `<<<rm -rf ../repo`, which reads as a command named `<<<rm`, so the deletion it feeds to the shell is allowed; the same command with a blank (`<<< 'rm -rf ../repo'`) is denied. The behavior is the reader's before this change (checked against the base commit); port: fixed by CRW-657 (the bash-reading tokenizer ends the word at the third `<` of a plain `<<<` whose next byte begins the target, so the operator is a word of its own and the target is read as the next word, exactly as when a blank stands between them: `worktreeDelHereStringTarget` and the flush in `worktreeDelQuoteTokenize`, `internal/pabcd/hook/worktreedel.go`; the oracle's first walk, the here-document operator and every other redirection are unchanged, so a here-string whose target names the worktree is now denied and the blank-less form answers exactly as the spaced form, and the reading only ever adds denies).
 
+- The reader judged only the program a shell word hands to `-c` and never the body of a command substitution that the outer
+  shell performs before that shell starts, so `bash -c 'echo OK' "$(rm -rf ../repo)"`, the same command with the substitution
+  in backticks, and `sh -c 'true' x "$(rm -rf ../repo)"` were allowed while the unquoted `echo $(rm -rf ../repo)` was denied
+  (the tokenizer drops the double quotes, so the substitution reached the walk as one operand after the program and was never
+  judged; source `internal/pabcd/hook/worktreedel.go` before this change; a security finding, which the parity rule revision
+  of 2026-10-03 fixes during the port); port: fixed by CRW-670 (`worktreeDelSubstitutions` reads every command substitution,
+  `$(...)` and backtick, and every process substitution, `<(...)` and `>(...)`, that stands in plain text or inside double
+  quotes in a segment, and its body is judged as a program of the outer shell at the next depth; a substitution inside single
+  quotes, `$'...'` or a comment stays data, so `bash -c 'echo OK' '$(rm -rf ../repo)'` is still allowed). This fixes the
+  command-substitution part of the follow-up line in the CRW-611 section above, whose here-document-body part is still kept. The
+  body reader follows the whole body, not up to the first parenthesis it meets: a substitution in a `cd` argument is judged
+  before the `cd` moves the directory, a `#` after a backtick substitution does not open a comment, a `${...}` parameter
+  expansion does not close the substitution, and a quote inside the body does not end the outer double quote (all four found
+  by the pull request's reviews).
+- The reader read every operand that holds a blank after a shell word as a program whenever an option-like word stood after
+  the program, a rule CRW-639 kept for `su`, whose last `-c` is its program, so `bash -c 'echo OK' -c 'rm -rf ../repo'`, which
+  runs only echo because the two words are the shell's `$0` and `$1`, was denied (source `internal/pabcd/hook/worktreedel.go`
+  before this change); port: fixed by CRW-670 for sh, bash, dash and ash (`worktreeDelShellDataOperands`: the operands after
+  their `-c` program are data, option-like ones included, so a later `-c` is not read for them; a redirection word among the
+  operands and a program that is not certain still read them all (`worktreeDelCertainProgram`: a program that holds a
+  substitution, a separator, a pipe, a redirection or a parenthesis, or that names its arguments through a dollar sign, a
+  backtick, ARGV, ARGC, argv or the `BASH_AR*` variables, is uncertain, so an obfuscated name such as a grep pattern that
+  spells `BASH_AR.V` still reads them, found by an internal review of this change), and `su`, zsh and every other shell keep the reading
+  of every later option-like word, so no other row or fixture changes). A program that holds a backtick can synthesize a
+  positional reference it then evaluates, so such a program is not certain either and the operands after it are read too
+  (found by the pull request's reviews).
+- At the reading depth of 8 program strings the reader denied only a program that held a blank, so a nest of nine `sh -c`
+  wrappers around `true` was allowed although the innermost program string was still unread, while the same nest around
+  `rm -rf ../repo` was denied (source `internal/pabcd/hook/worktreedel.go` before this change); port: fixed by CRW-670 (a
+  program string still unread at the depth limit is denied whether or not it holds a blank; eight levels are still read and
+  an innermost command that is no program still passes).
+
+- A process substitution that stands inside double quotes is read although bash treats it as literal text, so a harmless
+  `echo "<(rm -rf ../repo)"` is denied. The answer this issue carries names a process substitution inside double quotes among
+  what the outer shell runs, so the reading keeps it and the deny is accepted as a false positive in the over-denying
+  direction (found by the pull request's reviews); port: kept (a false positive; follow-up proposal: read `<(...)` and `>(...)`
+  only in plain text, where bash performs them).
+
+- The body reader does not model two constructs bash allows inside a substitution, so a removal after either of them inside
+  a double-quoted substitution is not read: a nested substitution whose own quotes confuse the outer double quote's state
+  (`echo "$(printf '%s' "$(echo ")")"; rm -rf ../repo)"`) and a `#` that stands after a blank inside a `${...}` parameter
+  expansion, which the segmenter reads as a comment (`echo "$(echo ${x:- #}; echo `rm -rf ../repo`)"`). Both commands were
+  allowed on the base commit as well (checked against 8a8a466a), so neither is a regression of this change; both need the
+  segmenter to parse nested substitutions and parameter expansions, which is a larger change than this issue carries; port:
+  kept (follow-up proposal).
+
+- A substitution the reader judges makes the rest of the segment after it live again from the plain quote state, so data
+  that follows in single quotes is read as a command: `echo "$(true)" '$(rm -rf ../repo)'` and
+  `git log --format="$(echo x)" -- '$(rm -rf ../repo)'` are denied, while the same commands without the earlier
+  substitution are allowed. The base commit allowed both; the generation-2 change judges the rest of the segment at the
+  segment's own depth and memoizes, which keeps the reading but not the exponential cost. This is accepted as a false
+  positive in the over-denying direction, like the process-substitution one above, and is not fixed in this issue; port:
+  kept (a false positive; follow-up proposal: re-read the rest of the segment from the state the reader was in, not from
+  the plain state).
+
 ## CRW-649 — the review-round working-directory boundary and the plan key
 
 Source: `plugins/codexclaw/components/pabcd-state/src/review-round-cli.ts` at v0.2.40 (commit 3c1459ac), through
@@ -1492,3 +1547,9 @@ Source: `plugins/codexclaw/components/pabcd-state/src/steering.ts` at v0.2.40 (c
   Consequence of the fix, disclosed: a `.tmp` or `.probe-` name of a producer row 105 does not name (the `dispatches/`,
   `objective-kind/` and `divergence/` writers) now reports `not in the inventory` instead of `producer intermediate`; the
   disposition is unchanged (skip, never copied).
+
+## Found by the goalplan work-phase close, resume-absent-target and advance port (CRW-642)
+
+Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedWorkPhase` :1989-2133, `resumeAbsentTarget` :2149-2192, `samePlanShape` :2193-2206, `advanceWorkPhase` :2207-2248) at v0.2.40 (commit 3c1459ac), through `internal/pabcd/goalplan/workphase.go`. No fixture in `contract/fixtures/cxc` drives these units alone — the `crw orchestrate` D-close and `crw loop` callers that reach them are later issues — so no recorded case changes.
+
+- No behavioural defect was found in these four units, so there is no `port: fixed` or `port: kept` divergence line. The one fidelity decision is the cursor comparison in `samePlanShape` (source `goalplan.ts:2195`): the oracle tests `left.activeWorkPhaseId !== right.activeWorkPhaseId`, a JavaScript identity test in which `undefined` and `null` are different values, while the Go port's `*string` cannot tell them apart and reads both nils as equal. The distinction is unreachable rather than dropped: `buildGoalplan` (`goalplan.ts:1021`) and the plan reader both materialise the key as `null`, so no plan these transforms can be handed carries `undefined` for it. The port therefore compares nil to nil, and the recorded case `an already settled close answers already_done` covers the state where both sides are `null`.

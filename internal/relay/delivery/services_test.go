@@ -15,6 +15,7 @@ import (
 
 // VCU-13: closing the CLI's services releases what they opened and builds nothing just to
 // close it. The Go CLI owns one store per invocation and no host adapter until one is needed.
+// sequential: t.Setenv("HOME") is process-wide.
 func TestVCU13_the_cli_closes_what_it_opened_and_builds_nothing_to_close(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

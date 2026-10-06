@@ -36,6 +36,7 @@ func gradedFixture(t *testing.T, regions map[string][]Region, nodes ...string) (
 
 // Criteria c1 and c2: what two nodes whose regions overlap are released as, by the grade of the overlap. Each row is one pair of declarations; p is released first and q is judged against it.
 func TestReleaseByGrade(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		p, q      Region
@@ -97,6 +98,7 @@ func TestReleaseByGrade(t *testing.T) {
 
 // Several holders and several regions: the worst overlap with a holder is the one that counts, and it counts once per holder.
 func TestOverlapCountsHoldersByTheirWorstGrade(t *testing.T) {
+	t.Parallel()
 	_, reading := gradedFixture(t, map[string][]Region{
 		"p": {gr("a.go", "mechanical", "union"), gr("b.go", "local", "")},
 		"q": {gr("c.go", "local", "")},
@@ -125,6 +127,7 @@ func TestOverlapCountsHoldersByTheirWorstGrade(t *testing.T) {
 
 // A node released earlier in the pass holds its regions for the nodes after it, so three nodes on one place are released together or cut in order.
 func TestHoldersAddedDuringThePassAreJudgedToo(t *testing.T) {
+	t.Parallel()
 	_, reading := gradedFixture(t, map[string][]Region{
 		"p": {gr("a.go", "mechanical", "union")}, "q": {gr("a.go", "mechanical", "union")}, "r": {gr("a.go", "exclusive", "")},
 	}, "p", "q", "r")
@@ -141,6 +144,7 @@ func TestHoldersAddedDuringThePassAreJudgedToo(t *testing.T) {
 
 // An undeclared node is unknown, and the unknown overlaps everything: that stays an exclusive overlap, and the row says which side is undeclared.
 func TestUndeclaredNodesStayExclusive(t *testing.T) {
+	t.Parallel()
 	_, reading := gradedFixture(t, map[string][]Region{"q": {gr("a.go", "local", "")}}, "p", "q")
 	q := reading.node("q")
 	if got := strings.Join(reading.readyIDs(), ","); got != "p" || q.Release.Rule != RuleDefer || q.Release.Overlaps != (OverlapCounts{Exclusive: 1}) {
@@ -158,6 +162,7 @@ func TestUndeclaredNodesStayExclusive(t *testing.T) {
 
 // Criterion c3 (declaration): a mechanical grade is declared with the rule that settles it, and a declaration that cannot say so is refused with the reason the relay already has for a region that is not valid.
 func TestGradeDeclarationRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	ctx := context.Background()
@@ -201,6 +206,7 @@ func TestGradeDeclarationRefusals(t *testing.T) {
 
 // The grade and the rule are part of the declaration: they come back as declared, and the same regions declared again are a replay.
 func TestGradeIsPartOfTheDeclaration(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	ctx := context.Background()
@@ -236,6 +242,7 @@ func TestGradeIsPartOfTheDeclaration(t *testing.T) {
 
 // What the classifier forces: a rename, a delete and the hotspots are stored as the exclusive grade whatever was declared, at their own place (CRW-431: no whole-repository hold, which only the declarer states).
 func TestClassifierFoldsIntoTheGrade(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.putPlan("d", 0, "d-r1", addNode("impl", dag.NodeImplementation))
 	declared, err := f.sched.DeclareRegions(context.Background(), "d", "impl", "parent", []Region{
@@ -261,6 +268,7 @@ func TestClassifierFoldsIntoTheGrade(t *testing.T) {
 
 // Criterion c3 (exclusive list): the shared contract surfaces are exclusive whatever grade is declared. The hold is on the place, so the same node's unrelated work is not held back, unlike a hotspot.
 func TestSharedContractSurfacesAreExclusive(t *testing.T) {
+	t.Parallel()
 	surfaces := []string{
 		"internal/relay/argparse/specs.json",
 		"contract/golden/ack-proof.json",
@@ -307,6 +315,7 @@ func TestSharedContractSurfacesAreExclusive(t *testing.T) {
 
 // The list is applied again when a declaration is read, so a row stored below it (an older declaration, or a row written by other means) cannot sit under it.
 func TestSharedContractSurfaceHoldsAnOlderRow(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("g", 0, "g-r1", addNode("p", dag.NodeImplementation), addNode("q", dag.NodeImplementation))
@@ -322,6 +331,7 @@ func TestSharedContractSurfaceHoldsAnOlderRow(t *testing.T) {
 
 // Declarations made before grades existed have no grade row. They read as independent (which is exactly how they were judged, except that a hotspot or a delete holds its own place and no longer the repository: CRW-431), and a running node's identical redeclaration is still a replay.
 func TestDeclarationsWithoutAGradeRowAreIndependent(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("g", 0, "g-r1", addNode("p", dag.NodeImplementation), addNode("q", dag.NodeImplementation))

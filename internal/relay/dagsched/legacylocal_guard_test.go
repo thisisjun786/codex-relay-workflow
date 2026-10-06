@@ -73,6 +73,7 @@ func legacyLocalFakeGH(t *testing.T) (log string) {
 }
 
 // Criterion c1/c2: the legacy local kit's tip reader refuses an owner/name repository without reaching gh, and answers for the local path the kit exists for.
+// sequential: t.Setenv("LEGACY_LOCAL_FAKE_GH_LOG") is process-wide.
 func TestLegacyLocalKitRefusesAnOwnerNameTarget(t *testing.T) {
 	k := newLegacyLocalIntegrationKit(t)
 	reader, ok := k.sched.Tips.(*legacyLocalTipReader)
@@ -130,6 +131,7 @@ func (b *legacyLocalProvokedTB) Errorf(format string, args ...any) {
 
 // Criterion c1: the guard fails a test that returns its refusal to nobody: the check runs when the test ends, not when the read happens, so a caller that swallows the error (a sweep skips a tip
 // it cannot read) cannot leave the test green.
+// sequential: t.Setenv("LEGACY_LOCAL_FAKE_GH_LOG") is process-wide.
 func TestLegacyLocalGuardFailsATestThatSwallowsTheRefusal(t *testing.T) {
 	tb := &legacyLocalProvokedTB{}
 	reader := newLegacyLocalTipReader(tb)

@@ -30,6 +30,7 @@ func (f *fixture) reserveAgain(plan, node string) {
 
 // A slot that was returned and reserved again has two tenures, and a release that does not name one is refused: the acceptance and the integration must return the newest by name.
 func TestSlotWithSeveralTenuresIsReturnedByName(t *testing.T) {
+	t.Parallel()
 	t.Run("accept", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -70,6 +71,7 @@ func TestSlotWithSeveralTenuresIsReturnedByName(t *testing.T) {
 // The targets an acceptance is judged against are the plan's as it stands when the transaction commits: an outgoing edge that changes while the pull request or the tips are being read
 // counts, because the verification and the readings describe the plan they were made under.
 func TestTargetsAreJudgedAgainstThePlanNow(t *testing.T) {
+	t.Parallel()
 	t.Run("accept", func(t *testing.T) {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -121,6 +123,7 @@ func TestTargetsAreJudgedAgainstThePlanNow(t *testing.T) {
 // A repeated acceptance is a replay only when it reads the same pull request at the same head: a head that moved on the forge, or another pull request, is refused whether the call would
 // replay or revalidate, and a pull request that has since been merged at the accepted head is still the same output.
 func TestAcceptReplayComparesTheForge(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) *releaseKit {
 		k := newReleaseKit(t)
 		releasePlan(k.fixture, "rp")
@@ -182,6 +185,7 @@ func TestAcceptReplayComparesTheForge(t *testing.T) {
 
 // A relationship the registry replaced is nobody's to accept or correct, whatever its status says.
 func TestSupersededRelationshipAcceptsAndCorrectsNothing(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	rid := k.correctionKit()
 	k.exec("UPDATE relationships SET superseded_by = NULL")
@@ -237,6 +241,7 @@ func restoration(note string) delivery.Obj {
 // Criterion c6 through the relay's own writers: the manifest the parent prepared reaches the child as a file it can read, named in the revision request the child receives, and the
 // generation the ruling opened is bound to exactly that manifest.
 func TestCorrectionReachesTheChildThroughTheRealVerdictWriter(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	rid := k.correctionKit()
 	prepared := k.prepare()
@@ -281,6 +286,7 @@ func TestCorrectionReachesTheChildThroughTheRealVerdictWriter(t *testing.T) {
 // What the child is told must be unambiguous and must be about this node: two manifests in the restoration block, a manifest prepared for the same node id of another plan, a manifest
 // prepared before the plan changed the node, and a copy the child cannot read are all refused, and nothing is bound.
 func TestCorrectionRefusesWhatTheChildCouldNotUse(t *testing.T) {
+	t.Parallel()
 	bound := func(k *releaseKit) int {
 		return k.count("SELECT COUNT(*) FROM dag_node_executions WHERE execution_generation = 2")
 	}
@@ -359,6 +365,7 @@ func TestCorrectionRefusesWhatTheChildCouldNotUse(t *testing.T) {
 // Preparing a correction twice from the same inputs is the same manifest: the copy the child reads is the body the store holds, so the line the ruling carries and the file always agree,
 // whatever time the second preparation was built at.
 func TestPreparingACorrectionTwiceAgrees(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	rid := k.correctionKit()
 	first := k.prepare()
@@ -377,6 +384,7 @@ func TestPreparingACorrectionTwiceAgrees(t *testing.T) {
 // The relay renders a finding onto one line, joining the lines of a note, so a path with a character the renderer splits lines on would reach the child as another path. Such a root is
 // refused when the copy is prepared, before anything is stored or written, and a ruling that carries one is not bound.
 func TestCorrectionRefusesAPathTheMessageWouldChange(t *testing.T) {
+	t.Parallel()
 	for name, r := range map[string]rune{"LF": 0x0a, "CR": 0x0d, "VT": 0x0b, "FF": 0x0c, "FS": 0x1c, "RS": 0x1e, "NEL": 0x85, "LS": 0x2028, "PS": 0x2029, "DEL": 0x7f} {
 		ch := string(r)
 		t.Run(name, func(t *testing.T) {
