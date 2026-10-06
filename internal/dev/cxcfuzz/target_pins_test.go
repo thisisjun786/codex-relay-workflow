@@ -85,7 +85,7 @@ func TestPinnedOracleAnswersMatchTheOracle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pool, err := NewPool(target.Oracle, 1, DefaultTimeout, os.Environ())
+		pool, err := NewPool(target.Oracle, 1, DefaultTimeout, DefaultStartupTimeout, os.Environ())
 		if err != nil {
 			t.Fatal(err)
 		}
