@@ -56,6 +56,11 @@ func NewPool(oracle Oracle, workers int, timeout time.Duration, env []string) (*
 	if err != nil {
 		return nil, NoCommand{Command: oracle.Command, Err: err}
 	}
+	for _, required := range oracle.Requires {
+		if _, err := exec.LookPath(required); err != nil {
+			return nil, NoCommand{Command: required, Err: err}
+		}
+	}
 	argv := []string{command}
 	if oracle.Shim != "" {
 		argv = append(argv, oracle.Shim)

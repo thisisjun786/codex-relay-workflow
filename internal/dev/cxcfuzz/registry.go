@@ -44,6 +44,10 @@ type Oracle struct {
 	Command string
 	Shim    string
 	Root    string
+	// Requires names further commands the worker program needs on PATH besides Command: the pyjson
+	// target's Node shim drives python3's json.tool, so a missing python3 must stop the campaign
+	// before any case runs, exactly as a missing Command does.
+	Requires []string
 }
 
 // Target is one differential-fuzz subject: how to generate an input, the Go function under test,
@@ -62,6 +66,9 @@ type Target struct {
 func registry() []Target {
 	return []Target{
 		echoTarget(),
+		pyjsonTarget(),
+		stateTarget(),
+		goalplanTarget(),
 	}
 }
 

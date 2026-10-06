@@ -1,0 +1,122 @@
+[
+  {
+    "name": "lone-surrogate-escape",
+    "input": "{\"text\": \"{\\\"a\\\": \\\"\\\\ud800\\\"}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\\\ud800\\\"\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\\\ud800\\\"\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "surrogate-pair",
+    "input": "{\"text\": \"{\\\"a\\\": \\\"\\\\ud83d\\\\ude00\\\"}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\\\ud83d\\\\ude00\\\"\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\\\ud83d\\\\ude00\\\"\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "big-integer",
+    "input": "{\"text\": \"{\\\"a\\\": 123456789012345678901234567890}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 123456789012345678901234567890\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 123456789012345678901234567890\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "exponent-past-float-range",
+    "input": "{\"text\": \"{\\\"a\\\": 1e400}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": Infinity\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": Infinity\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "negative-zero",
+    "input": "{\"text\": \"{\\\"a\\\": -0}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 0\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 0\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "constants",
+    "input": "{\"text\": \"{\\\"a\\\": NaN, \\\"b\\\": Infinity, \\\"c\\\": -Infinity}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": NaN,\\n    \\\"b\\\": Infinity,\\n    \\\"c\\\": -Infinity\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": NaN,\\n    \\\"b\\\": Infinity,\\n    \\\"c\\\": -Infinity\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "duplicate-key",
+    "input": "{\"text\": \"{\\\"a\\\": 1, \\\"a\\\": 2}\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 2\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": 2\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "bom-prefix",
+    "input": "{\"text\": \"\\uFEFF{\\\"a\\\": 1}\"}",
+    "oracle": "{\"exit\": 1, \"stderr\": \"Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)\", \"stdout\": \"\"}",
+    "go": "{\"exit\": 1, \"stderr\": \"Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)\", \"stdout\": \"\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "trailing-data",
+    "input": "{\"text\": \"{\\\"a\\\": 1} x\"}",
+    "oracle": "{\"exit\": 1, \"stderr\": \"Extra data: line 1 column 10 (char 9)\", \"stdout\": \"\"}",
+    "go": "{\"exit\": 1, \"stderr\": \"Extra data: line 1 column 10 (char 9)\", \"stdout\": \"\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "broken-object",
+    "input": "{\"text\": \"{\"}",
+    "oracle": "{\"exit\": 1, \"stderr\": \"Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\", \"stdout\": \"\"}",
+    "go": "{\"exit\": 1, \"stderr\": \"Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\", \"stdout\": \"\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "sorted-compact",
+    "input": "{\"text\": \"{\\\"b\\\": 1, \\\"a\\\": [1, 2]}\", \"compact\": true, \"sortKeys\": true}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\\"a\\\":[1,2],\\\"b\\\":1}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\\"a\\\":[1,2],\\\"b\\\":1}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "indent-two",
+    "input": "{\"text\": \"{\\\"b\\\": 1, \\\"a\\\": 2}\", \"sortKeys\": true, \"indent\": 2}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n  \\\"a\\\": 2,\\n  \\\"b\\\": 1\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n  \\\"a\\\": 2,\\n  \\\"b\\\": 1\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "no-ensure-ascii",
+    "input": "{\"text\": \"{\\\"a\\\": \\\"\\\\u00e9\\\"}\", \"ensureAscii\": false}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\u00e9\\\"\\n}\"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\u00e9\\\"\\n}\"}",
+    "tag": "identical",
+    "record": ""
+  },
+  {
+    "name": "open-empty-document",
+    "input": "{\"text\": \"\"}",
+    "oracle": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"\"}",
+    "go": "{\"exit\": 1, \"stderr\": \"Expecting value: line 1 column 1 (char 0)\", \"stdout\": \"\"}",
+    "tag": "open",
+    "record": "follow-up: json.tool --json-lines reads zero lines from an empty document and succeeds, where pyjson.Loads refuses it as json.loads does"
+  },
+  {
+    "name": "open-lone-surrogate-no-ensure-ascii",
+    "input": "{\"text\": \"{\\\"a\\\": \\\"\\\\ud800\\\"}\", \"ensureAscii\": false}",
+    "oracle": "{\"exit\": 1, \"stderr\": \"'utf-8' codec can't encode character '\\\\ud800' in position 1: surrogates not allowed\", \"stdout\": \"{\\n    \\\"a\\\": \"}",
+    "go": "{\"exit\": 0, \"stderr\": \"\", \"stdout\": \"{\\n    \\\"a\\\": \\\"\\\\ud800\\\"\\n}\"}",
+    "tag": "open",
+    "record": "follow-up: json.dumps(ensure_ascii=False) cannot encode a lone surrogate and json.tool exits 1, where pyjson.Dumps writes its \\ud800 escape"
+  }
+]
