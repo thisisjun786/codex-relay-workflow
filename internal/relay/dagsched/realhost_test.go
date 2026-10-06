@@ -129,6 +129,7 @@ func (k *realKit) request() ReleaseRequest {
 }
 
 // Criterion c3, c11 over the real transport: one release creates one thread and starts the standby and the business turn; five more wakes create nothing and end on the same child.
+// sequential: t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR") is process-wide.
 func TestReleaseRealSocketHappyPathAndDuplicateWakes(t *testing.T) {
 	k := newRealKit(t)
 	releasePlan(k.fixture, "rp")
@@ -162,6 +163,7 @@ func TestReleaseRealSocketHappyPathAndDuplicateWakes(t *testing.T) {
 
 // A permission mismatch over the real transport: the host reports the thread it created with another model than the request asked for. Nothing is registered and no turn is started, the
 // release binds nothing and keeps its intent and slot, and the same call can be repeated.
+// sequential: t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR") is process-wide.
 func TestReleaseRealSocketRefusesPermissionMismatch(t *testing.T) {
 	k := newRealKit(t)
 	releasePlan(k.fixture, "rp")
@@ -200,6 +202,7 @@ func countRows(f *fixture) rowCounts {
 
 // A forged completed: the child's turn is completed on the host, a daemon wrote a failed event, a receipt is only staged. None of these is a verified result, so the node is never accepted and its
 // successor is never released: a child's completion, a transport answer and a statement in a report open no edge by themselves (contract 2.0).
+// sequential: t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR") is process-wide.
 func TestForgedCompletedOpensNothing(t *testing.T) {
 	k := newRealKit(t)
 	releasePlan(k.fixture, "rp")

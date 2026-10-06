@@ -41,6 +41,7 @@ func readFile(t *testing.T, path string) string {
 // refuses the retired user owner, a second owner in config.toml and a policy the bridge's own
 // parser refuses - writing nothing in every refusal.
 func TestRegisterMCPWritesTheRecordAndRefusesASecondOwner(t *testing.T) {
+	// sequential: shortens record.LockTimeout for the whole process.
 	h := newHost(t)
 	policy, digest := h.policy(t)
 	o := h.options()
@@ -108,6 +109,7 @@ func (h *host) hookOptions() install.HookOptions {
 // and no adapter (decision 66); it refuses a user-owned registration in the hook file, an
 // over-long budget and the retired user owner.
 func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	result, code := install.Hook(context.Background(), h.options(), h.hookOptions())
 	if code != install.OK || at(result, "settings", "outcome") != install.ConfigCreated {
@@ -151,6 +153,7 @@ func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
 // (config_replaced), a dry run saying so and writing nothing; a document differing by anything
 // else (another marker root) still answers config_differs.
 func TestHookRewritesSettingsThatDifferOnlyByTheRetiredKeys(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	path := filepath.Join(h.codex, install.SettingsName)
 	written := h.goEraSettings(t)
@@ -208,6 +211,7 @@ func (h *host) goEraSettings(t *testing.T) string {
 // starts the bridge from a path the pointer does not name, and settings owned by the plugin
 // beside a user hook-file registration. The candidate is released and nothing moved.
 func TestInstallRefusesASecondOwner(t *testing.T) {
+	t.Parallel()
 	for name, seed := range map[string]func(h *host){
 		"config.toml": func(h *host) {
 			write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.codex-thread-bridge]\ncommand = \"/opt/elsewhere/bin/codex-thread-bridge\"\n")

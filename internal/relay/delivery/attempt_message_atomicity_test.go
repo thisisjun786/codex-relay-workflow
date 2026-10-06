@@ -53,6 +53,7 @@ func amaSent(h *hl, request string) any {
 }
 
 func Test21_AMA1_interleaved_earlier_caller_cannot_shift_the_token(t *testing.T) {
+	t.Parallel()
 	mirror(t, ama, amaClass+"test_interleaved_earlier_caller_cannot_shift_the_token", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		earlier := NewService(h.store, h.clock)
@@ -77,6 +78,7 @@ func Test21_AMA1_interleaved_earlier_caller_cannot_shift_the_token(t *testing.T)
 }
 
 func Test21_AMA2_inspection_after_send_reports_the_sent_attempt_not_the_next_one(t *testing.T) {
+	t.Parallel()
 	mirror(t, ama, amaClass+"test_inspection_after_send_reports_the_sent_attempt_not_the_next_one", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		record := h.mustAttempt(event, nil)
@@ -94,6 +96,7 @@ func Test21_AMA2_inspection_after_send_reports_the_sent_attempt_not_the_next_one
 }
 
 func Test21_AMA3_lost_response_reconciliation_searches_the_token_that_was_sent(t *testing.T) {
+	t.Parallel()
 	mirror(t, ama, amaClass+"test_lost_response_reconciliation_searches_the_token_that_was_sent", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"transport_unknown"}
@@ -112,6 +115,7 @@ func Test21_AMA3_lost_response_reconciliation_searches_the_token_that_was_sent(t
 }
 
 func Test21_AMA4_show_message_returns_the_sent_attempt_after_a_send(t *testing.T) {
+	t.Parallel()
 	mirror(t, ama, amaClass+"test_show_message_returns_the_sent_attempt_after_a_send", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		record := h.mustAttempt(event, nil)
@@ -126,6 +130,7 @@ func Test21_AMA4_show_message_returns_the_sent_attempt_after_a_send(t *testing.T
 }
 
 func Test21_AMA5_show_message_offers_a_preview_only_before_anything_is_prepared(t *testing.T) {
+	t.Parallel()
 	mirror(t, ama, amaClass+"test_show_message_offers_a_preview_only_before_anything_is_prepared", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		rows := amaMessages(h, event)
@@ -143,6 +148,7 @@ func Test21_AMA5_show_message_offers_a_preview_only_before_anything_is_prepared(
 }
 
 func Test21_AMA6_show_message_after_a_retry_lists_both_attempts_distinctly(t *testing.T) {
+	t.Parallel()
 	mirror(t, ama, amaClass+"test_show_message_after_a_retry_lists_both_attempts_distinctly", func(h *hl) {
 		event := h.queuedEvent(regOpts{})
 		h.host.script = []string{"busy"}

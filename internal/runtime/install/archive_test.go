@@ -49,6 +49,7 @@ func forged(t *testing.T, name string, entries []*tar.Header, bodies [][]byte) s
 // archive and releases the directory; an archive named for another target is refused before
 // anything is created.
 func TestUnpackRefusesAnythingButTheReleaseLayout(t *testing.T) {
+	t.Parallel()
 	name := "crw_0.9.9_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 	crw := []byte("\x7fELF not really")
 	cases := map[string]struct {
@@ -92,6 +93,7 @@ func TestUnpackRefusesAnythingButTheReleaseLayout(t *testing.T) {
 // --release fetches the release's SHA256SUMS and this target's archive and installs through
 // the same verified path as --from.
 func TestReleaseAssetsAreFetchedAndVerified(t *testing.T) {
+	t.Parallel()
 	path := archive(t, "0.9.0", "")
 	server := httptest.NewServer(http.StripPrefix("/v0.9.0/", http.FileServer(http.Dir(filepath.Dir(path)))))
 	defer server.Close()
@@ -110,6 +112,7 @@ func TestReleaseAssetsAreFetchedAndVerified(t *testing.T) {
 // behind a run that does not exist) or a staging lock is refused at the unpack: nothing is
 // promoted, the directory is released and the host record lists no install of it.
 func TestAnArchiveCarryingControlDataIsNotInstalled(t *testing.T) {
+	t.Parallel()
 	raw, err := binary()
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +149,7 @@ func TestAnArchiveCarryingControlDataIsNotInstalled(t *testing.T) {
 // grammar is refused with no request sent, no scratch directory made, and no file outside the
 // run's scratch directory written - a tag once chose the local file a fetched asset replaced.
 func TestAReleaseTagIsCheckedBeforeAnythingIsFetched(t *testing.T) {
+	// sequential: t.Setenv("TMPDIR") is process-wide.
 	base := t.TempDir()
 	scratch := filepath.Join(base, "tmp")
 	if err := os.MkdirAll(scratch, 0o700); err != nil {
@@ -185,6 +189,7 @@ func TestAReleaseTagIsCheckedBeforeAnythingIsFetched(t *testing.T) {
 // the size its header declares, is refused at the unpack with the destination as it was: no
 // runtime directory is left, no pointer placed, no install recorded. Nothing is truncated to fit.
 func TestAnOversizedOrShortEntryIsNotInstalled(t *testing.T) {
+	t.Parallel()
 	raw, err := binary()
 	if err != nil {
 		t.Fatal(err)

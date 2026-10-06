@@ -164,6 +164,7 @@ func (w *drWorld) refused(actor, reason, text string) {
 // Criterion c1: after a blocked_needs_input receipt the parent's split approval is delivered and recorded through the relay, the child continues on the same node under the reduced criteria, and the DAG
 // accepts the node's result in the generation the decision opened: it is recorded as an execution of the node, never refused as stale, and no new child is made.
 func TestSplitApprovalGenerationIsRecordedAndItsResultAccepted(t *testing.T) {
+	t.Parallel()
 	w := newDRWorld(t)
 	k := w.k
 	previous := w.previous()
@@ -239,6 +240,7 @@ func TestSplitApprovalGenerationIsRecordedAndItsResultAccepted(t *testing.T) {
 
 // A scope change opens a generation the same way, and a decision that keeps its generation (answer, stop) opens none: there is nothing for dag-correct to bind.
 func TestDecisionKindsFixWhatTheDAGRecords(t *testing.T) {
+	t.Parallel()
 	t.Run("scope_change", func(t *testing.T) {
 		w := newDRWorld(t)
 		w.revise("dp-r2")
@@ -269,6 +271,7 @@ func TestDecisionKindsFixWhatTheDAGRecords(t *testing.T) {
 // What dag-correct refuses for a generation a decision opened. Each refusal writes nothing and the existing reasons are reused (no reason is added): the child must have been told, the node must be what
 // the child was dispatched as but for its criteria, those criteria must be the plan's, and what the child consumed must still be there.
 func TestDecisionGenerationIsNotRecordedUnlessTheChildWasToldAndThePlanHoldsWhatItWasToldOn(t *testing.T) {
+	t.Parallel()
 	t.Run("the decision is queued", func(t *testing.T) {
 		w := newDRWorld(t)
 		w.revise("dp-r2")
@@ -331,6 +334,7 @@ func TestDecisionGenerationIsNotRecordedUnlessTheChildWasToldAndThePlanHoldsWhat
 // A decision that leaves the node as the plan held it (the criteria the plan names are the registered ones, which the child continues under) changes no manifest: the one the child was dispatched with is
 // bound as it is and nothing is stored. It is verified all the same: a predecessor superseded since is refused.
 func TestDecisionReplyWithUnchangedCriteriaCarriesTheManifestOver(t *testing.T) {
+	t.Parallel()
 	t.Run("the plan is as it was", func(t *testing.T) {
 		w := newDRWorld(t)
 		previous, manifests := w.previous(), w.k.count("SELECT COUNT(*) FROM dag_input_manifests")
@@ -362,6 +366,7 @@ func TestDecisionReplyWithUnchangedCriteriaCarriesTheManifestOver(t *testing.T) 
 // The generation a base refresh was recorded for has no execution of its own and carries the manifest of the one before it, so a decision that answers the child in that generation binds the manifest the child
 // was dispatched with (the newest one recorded before the generation), exactly as a ruling's correction does.
 func TestDecisionAfterABaseRefreshBindsTheManifestTheChildWasDispatchedWith(t *testing.T) {
+	t.Parallel()
 	s := newRefreshScenario(t)
 	s.openGeneration()
 	s.refreshBase()
