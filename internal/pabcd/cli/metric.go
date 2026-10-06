@@ -205,8 +205,9 @@ func RunMetricCLI(argv []string, cwd, stdin string) (CliResult, error) {
 
 // RunMetricCLIContext is RunMetricCLI for a caller that can be interrupted. The ingest records under ctx, so its lock wait and its
 // loop over the METRIC lines end with it, and the error it returns then is ctx's own (errors.Is(err, context.Canceled) holds for a
-// cancelled context); the rows recorded before that stay. No other verb looks at ctx. The oracle has no handler: its process dies at
-// the first interrupt and keeps the lines it had appended.
+// cancelled context); the rows recorded before that stay. Since CRW-632 the record and kind writers take ctx too, so their wait for
+// the ledger or kind-directory lock ends with it and a cancelled run writes nothing; show and parse-line read only and do not look at
+// ctx. The oracle has no handler: its process dies at the first interrupt and keeps the lines it had appended.
 func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) (CliResult, error) {
 	verb := ""
 	if len(argv) > 0 {
@@ -242,7 +243,7 @@ func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) 
 		if !haveValue || rawValue == "" || math.IsNaN(value) || math.IsInf(value, 0) {
 			return CliResult{Code: 1, Output: "metric record: --value <number> is required"}, nil
 		}
-		record, err := metric.RecordObjectiveMetric(cwd, metric.RecordInput{
+		record, err := metric.RecordObjectiveMetricContext(ctx, cwd, metric.RecordInput{
 			SessionID: sessionID, MetricName: name, Value: value, Source: source, WorkPhaseID: metricCliWorkPhase(argv),
 		})
 		if err != nil {
@@ -291,7 +292,7 @@ func RunMetricCLIContext(ctx context.Context, argv []string, cwd, stdin string) 
 			requested = metricCliKind(positionals[0])
 		}
 		if requested != nil {
-			if err := metric.WriteObjectiveKind(cwd, sessionID, *requested); err != nil {
+			if err := metric.WriteObjectiveKindContext(ctx, cwd, sessionID, *requested); err != nil {
 				return CliResult{}, err
 			}
 		}
