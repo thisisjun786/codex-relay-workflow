@@ -577,11 +577,11 @@ func (l *resumeHostLog) count(method string) int {
 	return n
 }
 
-// resumeDroppingHost is a fake App Server that answers the handshake, thread/read and
-// thread/resume and then drops the connection immediately after the thread/resume answer. A
-// later step on that socket fails; a client that reconnects is answered again on a second
-// connection, which is exactly what the one-connection fence must prevent.
-func resumeDroppingHost(t *testing.T) (string, *resumeHostLog) {
+// resumeDroppingHost is a fake App Server that answers the handshake and the steps up to and
+// including dropAfter, then drops the connection immediately after that step's answer. A later
+// step on that socket fails; a client that reconnects is answered again on a second connection,
+// which is exactly what the one-connection fence must prevent.
+func resumeDroppingHost(t *testing.T, dropAfter string) (string, *resumeHostLog) {
 	t.Helper()
 	log := &resumeHostLog{}
 	socket := fakehost.SocketPath(t, "app.sock")
@@ -618,9 +618,14 @@ func resumeDroppingHost(t *testing.T) (string, *resumeHostLog) {
 			case "initialized":
 			case "thread/read":
 				answer(map[string]any{"thread": map[string]any{"model": "m", "reasoningEffort": "xhigh", "status": map[string]any{"type": "idle"}}})
+				if dropAfter == "thread/read" {
+					return
+				}
 			case "thread/resume":
 				answer(map[string]any{"model": "m", "reasoningEffort": "xhigh"})
-				return // the peer drops the connection after the resume answer
+				if dropAfter == "thread/resume" {
+					return
+				}
 			case "mcpServerStatus/list":
 				answer(map[string]any{"data": []any{map[string]any{"name": "alpha", "runtimeStatus": "disabled"}}, "nextCursor": nil})
 			case "turn/start":
@@ -640,29 +645,44 @@ func resumeDroppingHost(t *testing.T) (string, *resumeHostLog) {
 // the step it failed at, sends no turn/start on any connection and initializes once. Before the
 // fence the client silently dialed a second connection and started the turn there.
 func TestResumeFailsWhenTheConnectionDropsAfterResume(t *testing.T) {
-	socket, log := resumeDroppingHost(t)
-	exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
-	e, _, _ := resumeEnv(t, exe)
-	cfg := hostReadConfig(socket)
-	cfg.Relay.State = "/tmp/relay-store"
-	list, err := json.Marshal(map[string]any{"disabled_servers": []string{"alpha"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.raw["child_check"] = list
-	_, err = resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
-	failure, ok := err.(*resumeFailure)
-	if !ok || failure.Reason != string(hostReadHostError) {
-		t.Fatalf("err = %v, want host_error", err)
-	}
-	if !strings.Contains(failure.Detail, "mcpServerStatus/list") {
-		t.Errorf("the refusal does not name the step it failed at: %q", failure.Detail)
-	}
-	if n := log.count("initialize"); n != 1 {
-		t.Errorf("initialize ran %d times, want 1", n)
-	}
-	if n := log.count("turn/start"); n != 0 {
-		t.Errorf("turn/start was sent %d times, want 0", n)
+	for _, test := range []struct {
+		name      string
+		dropAfter string
+		step      string
+	}{
+		// A drop after the resume answer is the reported defect: the next step must fail on that
+		// socket rather than run on a second one.
+		{"after thread/resume", "thread/resume", "mcpServerStatus/list"},
+		// A drop after the first read is the same fence at the earliest step, before anything is
+		// resumed: it must fail as host_error naming thread/resume and never reach the host again.
+		{"after thread/read", "thread/read", "thread/resume"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			socket, log := resumeDroppingHost(t, test.dropAfter)
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, resumeTestSettings, 0)
+			e, _, _ := resumeEnv(t, exe)
+			cfg := hostReadConfig(socket)
+			cfg.Relay.State = "/tmp/relay-store"
+			list, err := json.Marshal(map[string]any{"disabled_servers": []string{"alpha"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.raw["child_check"] = list
+			_, err = resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
+			failure, ok := err.(*resumeFailure)
+			if !ok || failure.Reason != string(hostReadHostError) {
+				t.Fatalf("err = %v, want host_error", err)
+			}
+			if !strings.Contains(failure.Detail, test.step) {
+				t.Errorf("the refusal does not name the step it failed at: %q", failure.Detail)
+			}
+			if n := log.count("initialize"); n != 1 {
+				t.Errorf("initialize ran %d times, want 1", n)
+			}
+			if n := log.count("turn/start"); n != 0 {
+				t.Errorf("turn/start was sent %d times, want 0", n)
+			}
+		})
 	}
 }
 
