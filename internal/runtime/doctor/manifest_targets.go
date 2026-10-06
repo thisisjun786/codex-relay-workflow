@@ -139,13 +139,15 @@ func manifestTargetsRealpath(path string) (string, error) {
 
 // manifestTargetsFollow is one walk of manifestTargetsRealpath: the components before the first symlink
 // keep their spelling, that symlink is replaced by its target resolved against the directory reached so
-// far, and the walk restarts there with the components still left. The target is joined to those
-// components as it is, without a lexical Clean (CRW-840): the kernel resolves the components in order, so
-// a component that does not exist is ENOENT where it occurs and '..' drops one component only once the
-// component before it resolved to an existing directory. Cleaning first would drop the missing component
-// and answer a resolved path where the kernel answers ENOENT. A component that cannot be read, and a link
-// chain past the depth a realpath follows, answer an error, which sends both paths to the caller's lexical
-// fallback as the oracle's throw does.
+// far, and the walk restarts there with the components still left.
+//
+// A symlink component is stat'ed before its target is read, exactly as Node's realpathSync calls
+// binding.stat(base) before binding.readlink (CRW-840): the stat follows the link, so a link whose target
+// cannot be reached answers that error instead of a resolved path, and targetEscapesRoot then takes its
+// paired lexical fallback. The target itself is resolved lexically, as pathModule.resolve(previous,
+// linkTarget) does, so a '..' inside the target is dropped by Clean rather than walked physically. A
+// component that cannot be read, and a link chain past the depth a realpath follows, answer an error,
+// which sends both paths to the caller's lexical fallback as the oracle's throw does.
 func manifestTargetsFollow(path string, depth int) (string, error) {
 	if depth > 40 {
 		return "", errors.New("ELOOP: too many levels of symbolic links")
@@ -167,17 +169,23 @@ func manifestTargetsFollow(path string, depth int) (string, error) {
 			dir = next
 			continue
 		}
+		// Node's realpathSync stats the link before reading it, so a target it cannot reach is the
+		// error the oracle's escapesRoot catches. Without this stat the walk resolved a target whose
+		// path passed through a missing component (CRW-840).
+		if _, err := os.Stat(targetNodeText(next)); err != nil {
+			return "", err
+		}
 		target, err := os.Readlink(targetNodeText(next))
 		if err != nil {
 			return "", err
 		}
 		if !filepath.IsAbs(target) {
-			target = dir + sep + target
+			target = filepath.Join(dir+sep, target)
 		}
 		if rest := strings.Join(parts[i+1:], sep); rest != "" {
-			target = target + sep + rest
+			target = filepath.Join(target, rest)
 		}
-		return manifestTargetsFollow(target, depth+1)
+		return manifestTargetsFollow(filepath.Clean(target), depth+1)
 	}
 	if dir == "" {
 		return sep, nil

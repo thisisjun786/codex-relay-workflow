@@ -1,9 +1,11 @@
 package doctor
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -63,46 +65,103 @@ func TestManifestTargetsRealpathSymlinkStillEscapes(t *testing.T) {
 	}
 }
 
-// targetKernelRealpath is the oracle's answer for one path, and the judgement the CRW-840 cases are
-// compared against. Node's realpathSync resolves the argument with path.resolve first, then walks the
-// components in order, and filepath.EvalSymlinks is that same walk in Go: each link is resolved where it
-// occurs, an ordinary component that does not exist is ENOENT there, and '..' drops one component only
-// after the component before it resolved. filepath.Abs is path.resolve's lexical resolve here.
-func targetKernelRealpath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+// targetOracleRealpath is an independent model of the oracle for one path: Node's fs.realpathSync, which
+// escapesRoot calls and which the port has to match. It is written from that function's algorithm rather
+// than from the port's walk:
+//
+//  1. resolve the argument lexically (path.resolve).
+//  2. walk the components left to right. An ordinary component is lstated. A symlink component is
+//     stat'ed first -- following the link, so a target that cannot be reached is that error -- and then
+//     its target is resolved LEXICALLY against the directory reached so far
+//     (path.resolve(previous, linkTarget)).
+//  3. restart the walk at path.resolve(resolvedLink, remaining).
+//
+// The lexical step is what separates the oracle from the kernel's physical walk: the kernel walks a '..'
+// inside a link target physically, so it leaves the directory the link reached, while Node's path.resolve
+// drops that '..' against the lexical prefix.
+func targetOracleRealpath(path string) (string, error) {
+	p, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
-	return filepath.EvalSymlinks(abs)
+	sep := string(filepath.Separator)
+	links := 0
+	for {
+		volume := filepath.VolumeName(p)
+		parts := strings.Split(strings.TrimPrefix(p[len(volume):], sep), sep)
+		dir := volume
+		followed := false
+		for i, part := range parts {
+			if part == "" {
+				continue
+			}
+			next := dir + sep + part
+			info, err := os.Lstat(next)
+			if err != nil {
+				return "", err
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				dir = next
+				continue
+			}
+			if _, err := os.Stat(next); err != nil {
+				return "", err
+			}
+			target, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			resolved := target
+			if !filepath.IsAbs(target) {
+				resolved = filepath.Join(dir, target)
+			}
+			if rest := strings.Join(parts[i+1:], sep); rest != "" {
+				resolved = filepath.Join(resolved, rest)
+			}
+			p = filepath.Clean(resolved)
+			links++
+			if links > 255 {
+				return "", errors.New("ELOOP: too many levels of symbolic links")
+			}
+			followed = true
+			break
+		}
+		if !followed {
+			if dir == "" {
+				return sep, nil
+			}
+			return dir, nil
+		}
+	}
 }
 
-// targetRealpathMatchesKernel runs both walks over path and fails unless they agree on whether the path
-// resolves and, when it does, on the resolved location. The port answers the caller's spelling for the
-// components before the first link (CRW-652) and leaves the '..' components it walked in place, while the
-// kernel answers a normalized path, so the resolved locations are compared after filepath.Clean -- which
-// is what targetEscapesRoot itself does with both strings. The comparison is sound for a path whose
-// components are plain names, which is why these cases spell no lone surrogate.
-func targetRealpathMatchesKernel(t *testing.T, path string) {
+// targetRealpathMatchesOracle runs both the port's walk and the oracle model over path and fails unless
+// they agree on whether the path resolves and on the resolved location. The port answers the caller's
+// spelling for the components before the first link (CRW-652) and leaves the '..' components it walked in
+// place, so the locations are compared after filepath.Clean -- which is what targetEscapesRoot does with
+// both strings. The comparison is sound for a path whose components are plain names, which is why these
+// cases spell no lone surrogate.
+func targetRealpathMatchesOracle(t *testing.T, path string) {
 	t.Helper()
-	want, wantErr := targetKernelRealpath(path)
+	want, wantErr := targetOracleRealpath(path)
 	got, gotErr := manifestTargetsRealpath(path)
 	if (wantErr == nil) != (gotErr == nil) {
-		t.Fatalf("manifestTargetsRealpath(%q) = %q, %v; the kernel answers %q, %v", path, got, gotErr, want, wantErr)
+		t.Fatalf("manifestTargetsRealpath(%q) = %q, %v; the oracle answers %q, %v", path, got, gotErr, want, wantErr)
 	}
 	if wantErr == nil && filepath.Clean(got) != filepath.Clean(want) {
-		t.Fatalf("manifestTargetsRealpath(%q) = %q; the kernel answers %q", path, got, want)
+		t.Fatalf("manifestTargetsRealpath(%q) = %q; the oracle answers %q", path, got, want)
 	}
 }
 
-// targetRealpathFixture builds the tree the kernel-order cases walk: root, root/sub, an outside
-// directory and a hook.json in root and in outside. The paths handed to the walk are built by hand, never
-// with filepath.Join, because Join would clean away the very '..' components under test.
+// targetRealpathFixture builds the tree the walk cases use: root, root/sub, an outside directory with a
+// deep child, and a hook.json in root and in outside. A path handed to the walk is built by hand where it
+// must keep a '..', because filepath.Join would clean it away.
 func targetRealpathFixture(t *testing.T) (string, string) {
 	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "root")
 	outside := filepath.Join(base, "outside")
-	for _, dir := range []string{root, filepath.Join(root, "sub"), outside} {
+	for _, dir := range []string{root, filepath.Join(root, "sub"), outside, filepath.Join(outside, "deep")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -115,21 +174,20 @@ func targetRealpathFixture(t *testing.T) (string, string) {
 	return root, outside
 }
 
-// TestManifestTargetsRealpathKernelOrder is the CRW-840 case: the walk answers what the kernel answers,
-// because a link target is joined to the components still left without being cleaned first. A component
-// that does not exist is ENOENT where it occurs, and '..' drops one component only after the component
-// before it resolved to an existing directory, which is the kernel's order.
-func TestManifestTargetsRealpathKernelOrder(t *testing.T) {
+// TestManifestTargetsRealpathOracleAgreement drives the walk over every shape the issue names and requires
+// the oracle's own answer: a normal hook file, '..' after an existing component, '..' after a missing
+// component, a link chain, a link loop, a link leaving the root, and a '..' inside a link target.
+func TestManifestTargetsRealpathOracleAgreement(t *testing.T) {
 	root, outside := targetRealpathFixture(t)
 	sep := string(filepath.Separator)
 	t.Run("a_normal_hook_file", func(t *testing.T) {
-		targetRealpathMatchesKernel(t, root+sep+"hook.json")
+		targetRealpathMatchesOracle(t, filepath.Join(root, "hook.json"))
 	})
 	t.Run("dotdot_after_an_existing_component", func(t *testing.T) {
-		targetRealpathMatchesKernel(t, root+sep+"sub"+sep+".."+sep+"hook.json")
+		targetRealpathMatchesOracle(t, root+sep+"sub"+sep+".."+sep+"hook.json")
 	})
 	t.Run("dotdot_after_a_missing_component", func(t *testing.T) {
-		targetRealpathMatchesKernel(t, root+sep+"missing"+sep+".."+sep+"hook.json")
+		targetRealpathMatchesOracle(t, root+sep+"missing"+sep+".."+sep+"hook.json")
 	})
 	t.Run("a_link_chain", func(t *testing.T) {
 		if err := os.Symlink("hook.json", filepath.Join(root, "chain-1")); err != nil {
@@ -138,28 +196,47 @@ func TestManifestTargetsRealpathKernelOrder(t *testing.T) {
 		if err := os.Symlink("chain-1", filepath.Join(root, "chain-2")); err != nil {
 			t.Fatal(err)
 		}
-		targetRealpathMatchesKernel(t, root+sep+"chain-2")
+		targetRealpathMatchesOracle(t, filepath.Join(root, "chain-2"))
 	})
 	t.Run("a_link_loop", func(t *testing.T) {
 		if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
 			t.Fatal(err)
 		}
-		targetRealpathMatchesKernel(t, root+sep+"loop")
+		targetRealpathMatchesOracle(t, filepath.Join(root, "loop"))
 	})
 	t.Run("a_link_leaving_the_root", func(t *testing.T) {
 		if err := os.Symlink(outside, filepath.Join(root, "out")); err != nil {
 			t.Fatal(err)
 		}
-		targetRealpathMatchesKernel(t, root+sep+"out"+sep+"hook.json")
+		targetRealpathMatchesOracle(t, filepath.Join(root, "out", "hook.json"))
+	})
+	t.Run("dotdot_inside_a_link_target", func(t *testing.T) {
+		// root/sublink -> ../outside/deep and root/bad.json -> sublink/../hook.json. The oracle stat's
+		// bad.json (which reaches outside/hook.json), then resolves sublink's target lexically, so the
+		// '..' drops 'deep' from the lexical prefix and the answer is root/hook.json -- not the
+		// outside/hook.json the kernel's physical walk answers.
+		if err := os.Symlink(filepath.Join("..", "outside", "deep"), filepath.Join(root, "sublink")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("sublink/../hook.json", filepath.Join(root, "bad.json")); err != nil {
+			t.Fatal(err)
+		}
+		targetRealpathMatchesOracle(t, filepath.Join(root, "bad.json"))
+		got, err := manifestTargetsRealpath(filepath.Join(root, "bad.json"))
+		if err != nil || filepath.Clean(got) != filepath.Join(root, "hook.json") {
+			t.Fatalf("manifestTargetsRealpath(bad.json) = %q, %v; want the lexical %q", got, err, filepath.Join(root, "hook.json"))
+		}
+		if targetEscapesRoot(root, filepath.Join(root, "bad.json")) {
+			t.Fatalf("the lexical answer inside the root was reported as escaped")
+		}
 	})
 }
 
-// TestManifestTargetsRealpathKernelOrderBelowALink is the evaluation's own shape: the link target names a
-// component that does not exist before a '..'. The kernel stops at that component with ENOENT, so the
-// port must stop there too. Both link targets below keep a hook.json reachable after the lexical Clean
-// the port used to apply, which is exactly why cleaning answered a resolved path where the kernel answers
-// ENOENT and targetEscapesRoot skipped its paired lexical fallback.
-func TestManifestTargetsRealpathKernelOrderBelowALink(t *testing.T) {
+// TestManifestTargetsRealpathOracleAgreementMissingLeafBelowALink is the evaluation's own case: the link
+// target names a component that does not exist before a '..'. Node's realpathSync stat's the link before
+// reading it, so that stat is ENOENT and the walk answers an error; both paths then take the lexical
+// fallback and the manifest verdict is "missing", not "escapes plugin root".
+func TestManifestTargetsRealpathOracleAgreementMissingLeafBelowALink(t *testing.T) {
 	root, _ := targetRealpathFixture(t)
 	sep := string(filepath.Separator)
 	for _, tc := range []struct {
@@ -174,7 +251,7 @@ func TestManifestTargetsRealpathKernelOrderBelowALink(t *testing.T) {
 			if err := os.Symlink(tc.target, link); err != nil {
 				t.Fatal(err)
 			}
-			targetRealpathMatchesKernel(t, link)
+			targetRealpathMatchesOracle(t, link)
 			if _, err := manifestTargetsRealpath(link); err == nil {
 				t.Fatalf("the walk answered a path for a link target with a missing component")
 			}
@@ -182,11 +259,11 @@ func TestManifestTargetsRealpathKernelOrderBelowALink(t *testing.T) {
 	}
 }
 
-// TestManifestTargetsRealpathKernelOrderVerdict is the user-visible answer of the evaluation's case: the
-// manifest names a link whose target walks through a component that does not exist, so the file the
-// manifest names is missing. dev answered "escapes plugin root" here because the walk cleaned the missing
-// component away and resolved to a file outside the root.
-func TestManifestTargetsRealpathKernelOrderVerdict(t *testing.T) {
+// TestManifestTargetsRealpathOracleAgreementVerdict is the user-visible answer of the evaluation's case:
+// the manifest names a link whose target walks through a component that does not exist, so the file the
+// manifest names is missing. dev answered "escapes plugin root" here because the walk resolved the target
+// without first stat'ing the link.
+func TestManifestTargetsRealpathOracleAgreementVerdict(t *testing.T) {
 	root, _ := targetRealpathFixture(t)
 	// The link target is spelled out, never built with filepath.Join: Join cleans the missing component
 	// and the '..' away, which is the very pair this case is about.
@@ -202,10 +279,61 @@ func TestManifestTargetsRealpathKernelOrderVerdict(t *testing.T) {
 	}
 }
 
-// TestManifestTargetsRealpathKernelOrderKeepsContainment: the same walk still answers the escape when a
-// link really reaches outside the root through an existing component, so removing the Clean did not cost
-// the containment property.
-func TestManifestTargetsRealpathKernelOrderKeepsContainment(t *testing.T) {
+// TestManifestTargetsRealpathOracleRecorded compares the walk with answers recorded from the oracle itself,
+// so the oracle model above is not the only witness. Each expectation was produced by running Node 24's
+// fs.realpathSync on this same fixture, with the fixture root substituted for this test's root.
+func TestManifestTargetsRealpathOracleRecorded(t *testing.T) {
+	root, outside := targetRealpathFixture(t)
+	sep := string(filepath.Separator)
+	if err := os.Symlink(filepath.Join("..", "outside", "deep"), filepath.Join(root, "sublink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sublink/../hook.json", filepath.Join(root, "bad.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".."+sep+"outside"+sep+"missing"+sep+".."+sep+"hook.json", filepath.Join(root, "missing-component.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("hook.json", filepath.Join(root, "chain-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("chain-1", filepath.Join(root, "chain-2")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		path   string
+		want   string
+		absent bool
+	}{
+		{"a_normal_hook_file", filepath.Join(root, "hook.json"), filepath.Join(root, "hook.json"), false},
+		{"dotdot_after_an_existing_component", root + sep + "sub" + sep + ".." + sep + "hook.json", filepath.Join(root, "hook.json"), false},
+		{"a_link_chain", filepath.Join(root, "chain-2"), filepath.Join(root, "hook.json"), false},
+		{"dotdot_inside_a_link_target", filepath.Join(root, "bad.json"), filepath.Join(root, "hook.json"), false},
+		{"a_link_leaving_the_root", filepath.Join(root, "out", "hook.json"), filepath.Join(outside, "hook.json"), false},
+		{"a_missing_component_below_a_link", filepath.Join(root, "missing-component.json"), "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := manifestTargetsRealpath(tc.path)
+			if tc.absent {
+				if err == nil {
+					t.Fatalf("manifestTargetsRealpath(%q) = %q; the oracle answers ENOENT", tc.path, got)
+				}
+				return
+			}
+			if err != nil || filepath.Clean(got) != tc.want {
+				t.Fatalf("manifestTargetsRealpath(%q) = %q, %v; the oracle answers %q", tc.path, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestManifestTargetsRealpathOracleAgreementKeepsContainment: the walk still answers the escape when a link
+// really reaches outside the root through an existing component.
+func TestManifestTargetsRealpathOracleAgreementKeepsContainment(t *testing.T) {
 	root, outside := targetRealpathFixture(t)
 	sep := string(filepath.Separator)
 	if err := os.Symlink(".."+sep+"outside", filepath.Join(root, "out")); err != nil {
