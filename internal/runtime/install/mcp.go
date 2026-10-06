@@ -711,18 +711,13 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 		return refused(append(base, field("outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong))),
 			"nothing was written: the record this run would write is not one the launcher reads")
 	}
-	// This path keeps every field it does not replace, and it publishes the document through the same
-	// encoder the create path writes with. That is the record's bytes only when the record on disk is
-	// already in that form: a record written by hand, or by another tool, would have its other fields
-	// reserialized, so it is refused instead.
-	if !bytes.Equal(before.raw, record.Encode(found)) {
-		return refused(append(base, field("outcome", RecordNotCanonical),
-			field("detail", "the record at "+recordPath+" is not in the form this installer writes, so replacing one field would reserialize the others; this path keeps every field it does not replace"),
-			field("repair", "move "+recordPath+" aside and run crw install register-mcp --owner plugin --execution-policy <file>, then use this path for later policy edits")),
-			"nothing was written")
+	// The look and the read are two syscalls: a record replaced between them is not the document the
+	// look saw, and the answer says so rather than deciding on a record it never read.
+	if again := lookAt(recordPath); !again.same(before) {
+		return refused(append(base, field("outcome", RecordChangedUnderneath),
+			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
 	}
-	// One owner registers this surface. A Codex configuration that also starts this bridge is the
-	// other registration, and replacing the plugin record beside it would leave two bridges running.
 	// The bytes of the fields this path keeps are the bytes on disk only when the record is written in
 	// the installer's own canonical form. A record in any other spelling - hand-edited, or written by
 	// another tool - is refused rather than rewritten, because publishing it would reserialize the
@@ -734,7 +729,7 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			"nothing was written")
 	}
 	// One owner registers this surface: a Codex configuration that also starts the bridge is the other
-	// registration, and replacing this record beside it would leave two bridges running.
+	// registration, and replacing the plugin record beside it would leave two bridges running.
 	if conflict := competingRegistration(o.CodexHome, wanted); conflict != "" {
 		return refused(append(base, field("outcome", Conflict), field("detail", conflict)),
 			"nothing was written. One owner registers this server; the other is reported with its evidence rather than joined.")
@@ -784,10 +779,19 @@ func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOption
 			field("detail", "the record at "+recordPath+" changed while this run was backing it up (another file, size, modification time or bytes), so it was not replaced"),
 			field("backup", backup), field("repair", "rerun to decide against the file as it now stands")), "the record was not replaced; the backup beside it holds the bytes this run read")
 	}
-	if err := publishRecord(recordPath, record.Encode(wanted)); err != nil {
-		return refused(append(base, field("outcome", RecordUpdateFailed),
-			field("detail", "the record could not be written: "+err.Error()), field("backup", backup)),
-			"the record was left as it was; the backup beside it holds the bytes it had")
+	if renamed, err := publishRecord(recordPath, record.Encode(wanted)); err != nil {
+		if !renamed {
+			return refused(append(base, field("outcome", RecordUpdateFailed),
+				field("detail", "the record could not be written: "+err.Error()), field("backup", backup)),
+				"the record was left as it was; the backup beside it holds the bytes it had")
+		}
+		// The rename happened and its durability could not be established: the record at that path is
+		// the new one, so this is not reported as nothing written.
+		return append(base, field("outcome", RecordAppliedUnverified),
+			field("detail", "the record was replaced and the directory could not be fsynced ("+err.Error()+"); a host that loses power now may find the previous record"),
+			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),
+			field("restartRequired", policyRestartRequired), field("applied", true), field("wrote", true),
+			field("note", "the record names the new policy; its durability was not established")), Refused
 	}
 	// Read back: the answer names the record this run wrote, not the one it meant to write.
 	readBack, readOutcome, _ := readBridgeRecord(recordPath)
@@ -861,24 +865,27 @@ func competingRegistration(codexHome string, wanted Object) string {
 // the existing record's mode, its contents are fsynced, the file is closed, renamed over the record,
 // and the directory is fsynced so the rename itself survives a power loss. record.AtomicWrite stops
 // at the rename, which is not enough for an answer that promises the new record is the one on disk.
-func publishRecord(recordPath string, data []byte) error {
+// renamed reports whether the record at that path is the new one: a failure after the rename is a
+// record that was replaced whose durability was not established, which a caller must not report as
+// nothing written.
+func publishRecord(recordPath string, data []byte) (renamed bool, err error) {
 	info, err := os.Stat(recordPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	dir := filepath.Dir(recordPath)
 	if err := os.MkdirAll(dir, 0o777); err != nil {
-		return err
+		return false, err
 	}
 	file, err := os.CreateTemp(dir, ".crw-write-")
 	if err != nil {
-		return err
+		return false, err
 	}
 	temporary := file.Name()
-	fail := func(err error) error {
+	fail := func(err error) (bool, error) {
 		_ = file.Close()
 		_ = os.Remove(temporary)
-		return err
+		return false, err
 	}
 	if err := os.Chmod(temporary, info.Mode().Perm()); err != nil {
 		return fail(err)
@@ -891,13 +898,13 @@ func publishRecord(recordPath string, data []byte) error {
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(temporary)
-		return err
+		return false, err
 	}
 	if err := os.Rename(temporary, recordPath); err != nil {
 		_ = os.Remove(temporary)
-		return err
+		return false, err
 	}
-	return syncDirectory(dir)
+	return true, syncDirectory(dir)
 }
 
 // backupBridgeRecord copies the record as it stood when the decision was made to a stamped .bak

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -333,6 +334,23 @@ func TestReRegisterPolicyRefusesAndWritesNothing(t *testing.T) {
 	}
 	write(t, policy, policyTextChanged)
 	os.Chmod(policy, 0o644)
+	write(t, recordPath, before)
+	// The directory sync after the rename fails: the record at that path is the new one, so the answer
+	// is not "nothing was written".
+	restoreSync := install.ReplaceDirectorySync(func(path string, real func(string) error) error {
+		if filepath.Dir(recordPath) == path {
+			return errors.New("injected directory sync failure")
+		}
+		return real(path)
+	})
+	unsynced, code, _ := h.updatePolicy(t, "--execution-policy", policy)
+	restoreSync()
+	if code != install.Refused || at(unsynced, "outcome") != install.RecordAppliedUnverified || at(unsynced, "applied") != true || at(unsynced, "wrote") != true {
+		t.Fatalf("a directory sync failure: exit %d\n%s", code, golden.Canon(unsynced))
+	}
+	if err := os.Remove(text(at(unsynced, "backup"))); err != nil {
+		t.Fatal(err)
+	}
 	write(t, recordPath, before)
 	if readFile(t, recordPath) != before || entries() != beforeEntries {
 		t.Fatalf("a refusal changed CODEX_HOME: %s", entries())
