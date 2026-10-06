@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,205 @@ func auditEnv(t *testing.T) (*Env, *strings.Builder, *strings.Builder) {
 	return e, out, errOut
 }
 
+// auditLines decodes a JSONL file into one map per line, keyed by the raw JSON of each
+// field, so a test can compare the exact key set a writer produced.
+func auditLines(t *testing.T, path string) []map[string]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]json.RawMessage
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var row map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("line %q: %v", line, err)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// auditSectionConfig is a configuration whose audit section carries the given keys, and
+// whose state directory is the given temporary tree.
+func auditSectionConfig(t *testing.T, stateDir string, section map[string]any) *Config {
+	t.Helper()
+	cfg := &Config{StateDir: stateDir, raw: map[string]json.RawMessage{}}
+	if section != nil {
+		data, err := json.Marshal(section)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.raw["audit"] = data
+	}
+	return cfg
+}
+
+// C1: the ledger row carries exactly the keys the issue fixes, no more and no fewer, with
+// the severity counts and the score taken from the result.
+func TestAuditLedgerRowCarriesTheFixedKeys(t *testing.T) {
+	e, _, _ := auditEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	results := []AuditResult{{
+		Mode: auditModePR, Subject: "s", Head: "h", Issue: "CRW-1", Pair: "p", Phase: "live", Round: "r2",
+		Status: auditStatusOK, Score: 6, GradedAt: "2026-01-01T00:00:00Z", Bundle: "b",
+		Defects: []AuditDefect{{Severity: "P2", What: "w", Where: "f.go:1"}},
+	}}
+	if err := auditRecord(e, cfg, results); err != nil {
+		t.Fatal(err)
+	}
+	rows := auditLines(t, filepath.Join(state, "audit", auditLedgerFile))
+	if len(rows) != 1 {
+		t.Fatalf("the ledger has %d lines, want 1", len(rows))
+	}
+	got := make([]string, 0, len(rows[0]))
+	for key := range rows[0] {
+		got = append(got, key)
+	}
+	want := strings.Split("mode subject head issue pair phase round status score p0 p1 p2 p3 graded_at bundle", " ")
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("the ledger row keys are %v, want %v", got, want)
+	}
+	if string(rows[0]["p2"]) != "1" || string(rows[0]["score"]) != "6" {
+		t.Errorf("the counts or the score are wrong: %v", rows[0])
+	}
+}
+
+// C1: a result that left no usable grade carries a null score and zero counts, so a reader
+// can tell an ungraded run from one that scored zero.
+func TestAuditLedgerRowForAnUngradedRunHasNullScore(t *testing.T) {
+	e, _, _ := auditEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	results := []AuditResult{{Mode: auditModePR, Status: auditStatusInvalid, GradedAt: "2026-01-01T00:00:00Z"}}
+	if err := auditRecord(e, cfg, results); err != nil {
+		t.Fatal(err)
+	}
+	rows := auditLines(t, filepath.Join(state, "audit", auditLedgerFile))
+	if len(rows) != 1 {
+		t.Fatalf("the ledger has %d lines, want 1", len(rows))
+	}
+	if string(rows[0]["score"]) != "null" {
+		t.Errorf("score = %s, want null", rows[0]["score"])
+	}
+	for _, key := range []string{"p0", "p1", "p2", "p3"} {
+		if string(rows[0][key]) != "0" {
+			t.Errorf("%s = %s, want 0", key, rows[0][key])
+		}
+	}
+}
+
+// C2: only a result that carries a P0 or a P1 leaves an alert, and the alert carries just
+// those defects, without the reproduction steps.
+func TestAuditAlertsOnlyForP0AndP1(t *testing.T) {
+	e, _, _ := auditEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	results := []AuditResult{
+		{Mode: auditModePR, Subject: "a", Issue: "CRW-1", Status: auditStatusOK, Score: 4, GradedAt: "t",
+			Defects: []AuditDefect{
+				{Severity: "P1", What: "wrong", Where: "a.go:2", Repro: "run it"},
+				{Severity: "P2", What: "weak test", Where: "a_test.go:3"},
+			}},
+		{Mode: auditModePR, Subject: "b", Issue: "CRW-2", Status: auditStatusOK, Score: 8, GradedAt: "t",
+			Defects: []AuditDefect{{Severity: "P3", What: "nit", Where: "b.go:1"}}},
+		{Mode: auditModePR, Subject: "c", Issue: "CRW-3", Status: auditStatusTimeout, GradedAt: "t"},
+	}
+	if err := auditRecord(e, cfg, results); err != nil {
+		t.Fatal(err)
+	}
+	if rows := auditLines(t, filepath.Join(state, "audit", auditLedgerFile)); len(rows) != 3 {
+		t.Errorf("the ledger has %d lines, want 3", len(rows))
+	}
+	alerts := auditLines(t, filepath.Join(state, "audit", auditAlertFile))
+	if len(alerts) != 1 {
+		t.Fatalf("the alert queue has %d lines, want 1", len(alerts))
+	}
+	var subject string
+	if err := json.Unmarshal(alerts[0]["subject"], &subject); err != nil {
+		t.Fatal(err)
+	}
+	if subject != "a" {
+		t.Errorf("the alert is for %q, want the result that carries a P1", subject)
+	}
+	var defects []map[string]json.RawMessage
+	if err := json.Unmarshal(alerts[0]["defects"], &defects); err != nil {
+		t.Fatal(err)
+	}
+	if len(defects) != 1 {
+		t.Fatalf("the alert carries %d defects, want the one P1", len(defects))
+	}
+	keys := make([]string, 0, len(defects[0]))
+	for key := range defects[0] {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if strings.Join(keys, ",") != "severity,what,where" {
+		t.Errorf("the alert defect keys are %v, want severity,what,where", keys)
+	}
+	if string(alerts[0]["score"]) != "4" {
+		t.Errorf("the alert score is %s, want 4", alerts[0]["score"])
+	}
+}
+
+// C2: no alert file is left at all when nothing reached P0 or P1.
+func TestAuditWritesNoAlertFileWhenNothingReachedP0OrP1(t *testing.T) {
+	e, _, _ := auditEnv(t)
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, nil)
+	results := []AuditResult{
+		{Mode: auditModePR, Status: auditStatusOK, Score: 9, GradedAt: "t",
+			Defects: []AuditDefect{{Severity: "P2", What: "w", Where: "f.go:1"}}},
+		{Mode: auditModePR, Status: auditStatusInvalid, GradedAt: "t"},
+	}
+	if err := auditRecord(e, cfg, results); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", auditAlertFile)); !os.IsNotExist(err) {
+		t.Errorf("an alert file was written: %v", err)
+	}
+}
+
+// A file an earlier torn write left without a final line feed gets one before the new row,
+// so the fragment and the new row are never joined into one unreadable line (CRW-474's guard).
+func TestAuditRecordSeparatesATornTail(t *testing.T) {
+	e, _, _ := auditEnv(t)
+	state := t.TempDir()
+	dir := filepath.Join(state, "audit")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fragment := `{"mode":"pr","subject":"old"`
+	if err := os.WriteFile(filepath.Join(dir, auditLedgerFile), []byte(fragment), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := auditSectionConfig(t, state, nil)
+	results := []AuditResult{{Mode: auditModePR, Subject: "new", Status: auditStatusOK, Score: 7, GradedAt: "t"}}
+	if err := auditRecord(e, cfg, results); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, auditLedgerFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	last := lines[len(lines)-1]
+	var row map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(last), &row); err != nil {
+		t.Fatalf("the new row is not on its own line: %q: %v", last, err)
+	}
+	var subject string
+	if err := json.Unmarshal(row["subject"], &subject); err != nil || subject != "new" {
+		t.Errorf("the last line carries %q/%v, want the new row", subject, err)
+	}
+}
+
 // C1: the built-in prompt names no private root and no model, in either mode and with the
 // criteria flagged missing: the grader is blind, and the repository is public.
 func TestAuditPromptNamesNoPrivateRootAndNoModel(t *testing.T) {
@@ -73,7 +273,7 @@ func TestAuditPromptAsksForTheResultFormatAndTheModeFiles(t *testing.T) {
 		}
 	}
 	pkg := auditPrompt(&auditBundle{Mode: auditModePackage})
-	if !strings.Contains(pkg, "candidate/tree/") || strings.Contains(pkg, "candidate/diff.patch") {
+	if !strings.Contains(pkg, "src/") || !strings.Contains(pkg, auditPkgCriteriaFile) || strings.Contains(pkg, "candidate/diff.patch") {
 		t.Errorf("the package prompt does not describe a package audit: %q", pkg)
 	}
 	prNoCriteria := auditPrompt(&auditBundle{Mode: auditModePR, CriteriaUnavailable: true})
@@ -81,7 +281,7 @@ func TestAuditPromptAsksForTheResultFormatAndTheModeFiles(t *testing.T) {
 		t.Errorf("a pull request bundle without criteria is not told how to judge: %q", prNoCriteria)
 	}
 	pkgNoCriteria := auditPrompt(&auditBundle{Mode: auditModePackage, CriteriaUnavailable: true})
-	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, "the tree itself") {
+	if !strings.Contains(pkgNoCriteria, "criteria_unavailable") || !strings.Contains(pkgNoCriteria, auditPkgTaskFile) {
 		t.Errorf("a package bundle without criteria is not told how to judge: %q", pkgNoCriteria)
 	}
 	if strings.Contains(pkgNoCriteria, "candidate/pr.md") {
@@ -231,5 +431,73 @@ func TestAuditCommandPrintsItsUsage(t *testing.T) {
 		if !strings.Contains(errOut.String(), auditUsage) {
 			t.Errorf("%v: the usage is missing: %q", args, errOut.String())
 		}
+	}
+}
+
+// auditGradeUsageText is the grade subcommand's usage line, pinned as text so a change to
+// the command surface is visible here rather than only in the constant it prints.
+const auditGradeUsageText = "usage: crw manage audit grade --bundle DIR"
+
+// C3: the help flags print the grade usage to stdout and exit 0; a missing or unknown
+// subcommand, a missing --bundle, an unknown flag and a stray positional are usage errors
+// at exit 2 with the grade usage on stderr.
+func TestAuditCommandGradeUsageAndArgumentErrors(t *testing.T) {
+	e, out, errOut := auditEnv(t)
+	if !strings.Contains(auditUsage, auditGradeUsageText) {
+		t.Errorf("the command's usage line is %q, want it to carry %q", auditUsage, auditGradeUsageText)
+	}
+	for _, arg := range []string{"-h", "--help", "help"} {
+		out.Reset()
+		errOut.Reset()
+		if code := auditRun(context.Background(), e, []string{arg}); code != 0 || errOut.Len() != 0 {
+			t.Errorf("%s: exit %d %q %q", arg, code, out.String(), errOut.String())
+		}
+		if !strings.Contains(out.String(), auditGradeUsageText) {
+			t.Errorf("%s: the grade usage is missing: %q", arg, out.String())
+		}
+	}
+	for _, args := range [][]string{nil, {"nope"}, {"grade"}, {"grade", "--bundle"}, {"grade", "--nope", "x"}, {"grade", "x"}} {
+		out.Reset()
+		errOut.Reset()
+		if code := auditRun(context.Background(), e, args); code != usageExit {
+			t.Errorf("%v: exit %d, want %d", args, code, usageExit)
+		}
+		if !strings.Contains(errOut.String(), auditGradeUsageText) {
+			t.Errorf("%v: the grade usage is missing: %q", args, errOut.String())
+		}
+	}
+	// An option token where a value is expected is a missing value, not the value, so a
+	// separated form cannot smuggle the next option in as a bundle path.
+	for _, args := range [][]string{{"grade", "--bundle", "--pair=p"}, {"grade", "--bundle", "--pair", "p"}} {
+		out.Reset()
+		errOut.Reset()
+		if code := auditRun(context.Background(), e, args); code != usageExit {
+			t.Errorf("%v: exit %d, want %d", args, code, usageExit)
+		}
+		if !strings.Contains(errOut.String(), "needs a value") {
+			t.Errorf("%v: the error does not name the missing value: %q", args, errOut.String())
+		}
+	}
+	// The --name=value form still takes a value that starts with --, so the missing-value
+	// rule does not remove the only way to pass such a string.
+	job, err := auditParseGradeArgs([]string{"--bundle=--weird", "--pair=p", "--phase=live", "--round=1"})
+	if err != nil {
+		t.Fatalf("the = form was refused: %v", err)
+	}
+	if job.Bundle != "--weird" || job.Pair != "p" || job.Phase != "live" || job.Round != "1" {
+		t.Errorf("the = form parsed to %+v", job)
+	}
+}
+
+// C3: with no grader named by the configuration, grade refuses by name at exit 2. At this
+// baseline no command reads a configuration file, so a grader is never configured.
+func TestAuditCommandRefusesAnUnconfiguredGrader(t *testing.T) {
+	e, _, errOut := auditEnv(t)
+	bundle := auditGoodBundle(t, auditModePR)
+	if code := auditRun(context.Background(), e, []string{"grade", "--bundle", bundle}); code != usageExit {
+		t.Fatalf("exit %d, want %d: %q", code, usageExit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "grader_unconfigured") {
+		t.Errorf("the error does not name grader_unconfigured: %q", errOut.String())
 	}
 }
