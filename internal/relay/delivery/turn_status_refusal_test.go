@@ -112,6 +112,7 @@ func TestCRW505_the_other_outcomes_keep_their_behaviour(t *testing.T) {
 // Under --socket the relay reads the turn status from the host and --turn-status is not read, so
 // the instruction that works from there is to emit without --socket. Not parallel: it replaces
 // the package's ObserveTurn.
+// sequential: assigns the package variable ObserveTurn.
 func TestCRW505_under_a_socket_the_refusal_says_to_emit_without_it(t *testing.T) {
 	side, rid := turnStatusSide(t)
 	previous := ObserveTurn

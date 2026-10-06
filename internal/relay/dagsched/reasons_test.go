@@ -58,6 +58,7 @@ func (f *fixture) mergeTurn(id, repository, ref, state, head string) {
 // Every reason a reading gives is a member of the closed set, and each situation below yields its own reason: a reading that said only "waiting" would
 // leave the parent guessing. The table is the activation scenario of criterion c1 for the wait reasons that need no release machinery.
 func TestReadyReasonsAreClosed(t *testing.T) {
+	t.Parallel()
 	type tc struct {
 		name   string
 		setup  func(f *fixture)
@@ -209,6 +210,7 @@ func TestReadyReasonsAreClosed(t *testing.T) {
 // satisfied: G waits on eg with blocked:stale_predecessor, naming the edge and the version, before the closure of B-14 is asked. The closure still finds the mix where the judgement does not
 // see it, behind a landed node (TestMixedAcceptancesBehindALandedNodeAreStillInconsistentInputs).
 func TestReadyFrankenbuildClosure(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("fk", 0, "fk-r1", addNode("A", dag.NodeNonPR), addNode("B", dag.NodeNonPR), addNode("E", dag.NodeNonPR), addNode("C", dag.NodeNonPR), addNode("G", dag.NodeNonPR),
@@ -245,6 +247,7 @@ func TestReadyFrankenbuildClosure(t *testing.T) {
 
 // The store half of the input checks does not read files: it is what the release path re-judges under its lock.
 func TestReadySkipArtifactBytes(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	f.projectParent()
@@ -267,6 +270,7 @@ func TestReadySkipArtifactBytes(t *testing.T) {
 
 // The states of nodes somebody already owns (contract 3.1).
 func TestReadyOwnedNodeStates(t *testing.T) {
+	t.Parallel()
 	type tc struct {
 		name   string
 		setup  func(f *fixture)

@@ -139,6 +139,60 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	return judgeHead(readThroughSuppressed(revisions, suppressed, anchors), anchors), nil
 }
 
+// RefuseNewFork is emit's judgment inside the intake transaction (CRW-826): a ready_for_review
+// receipt that would leave its generation with no single head is refused the existing
+// revision_ambiguous, and nothing is written. The reading is the head judgment's own
+// (reviewableRevisions, readThroughSuppressed, judgeHead), run once over the revisions the store
+// holds and once over those revisions with this receipt's revision added, so what the generation
+// reads WITHOUT the receipt decides whether the receipt may be refused at all:
+//
+//   - a generation that holds no revision is the first receipt's: there is no head to fork from;
+//   - a generation that already reads no single head (fork, cycle, unknown predecessor,
+//     disconnected) is left as it is: this judgment never makes an ambiguous generation worse,
+//     and the recovery route (a generation opened by hand) is what repairs it;
+//   - a revision that declares itself (--supersedes-revision naming its own revision) is left to
+//     the lineage check, which refuses it precisely (revision_lineage_invalid).
+//
+// Otherwise a receipt whose addition turns the one head into an ambiguous reading is refused,
+// and the detail names the revision the generation reads now: the child knows whether it named a
+// predecessor, so nothing here refuses what it could not have known (CRW-470).
+func RefuseNewFork(ctx context.Context, q store.Querier, rid string, generation int64, eventID, revisionHash string, supersedes *string) error {
+	declared := ""
+	if supersedes != nil {
+		declared = strings.TrimSpace(*supersedes)
+	}
+	if declared != "" && declared == revisionHash {
+		// the lineage check refuses a self-supersede with its own reason, after this judgment
+		return nil
+	}
+	revisions, suppressed, err := reviewableRevisions(ctx, q, rid, generation)
+	if err != nil {
+		return err
+	}
+	if len(revisions) == 0 {
+		return nil
+	}
+	anchors, err := requestedPredecessors(ctx, q, rid, generation)
+	if err != nil {
+		return err
+	}
+	without := judgeHead(readThroughSuppressed(revisions, suppressed, anchors), anchors)
+	if slices.Contains(ambiguousEvidence, pyjson.Text(without.Get("evidence"))) {
+		return nil
+	}
+	// the revisions the judgment read are not written to: append to a copy, so the without-reading
+	// stays what it was (readThroughSuppressed returns its input when no receipt is suppressed).
+	candidate := revision{id: eventID, hash: revisionHash, declared: declared}
+	with := judgeHead(readThroughSuppressed(append(slices.Clone(revisions), candidate), suppressed, anchors), anchors)
+	if !slices.Contains(ambiguousEvidence, pyjson.Text(with.Get("evidence"))) {
+		return nil
+	}
+	head := pyjson.Text(without.Get("revisionHash"))
+	return &store.RefusedError{Reason: RevisionAmbiguous, Detail: fmt.Sprintf(
+		"this receipt would leave generation %d of %s with no single head (%s): the revision the generation reads now is %s, so name it with --supersedes-revision %s",
+		generation, rid, pyjson.Text(with.Get("evidence")), head, head)}
+}
+
 // readThroughSuppressed returns the revisions with each declared predecessor that names a
 // suppressed receipt of the generation read as naming what that receipt replaced (CRW-470; the
 // rule is registry.ReadThrough's). A suppressed receipt is not a revision, and a child that

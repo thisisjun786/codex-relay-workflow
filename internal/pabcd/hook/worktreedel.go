@@ -367,6 +367,23 @@ func worktreeDelQuoteSegments(command string) []string {
 			r.pair()
 			continue
 		}
+		if r.state == worktreeDelQuoteDouble && (c == '`' || c == '$' && i+1 < len(command) && command[i+1] == '(') {
+			// an outer double quote keeps a substitution together: a quote, a separator or a parenthesis inside it is not this shell's
+			skip := 0
+			if c == '`' {
+				if _, n, closed := worktreeDelSubstitutionBody(command[i+1:], true); closed {
+					skip = 1 + n
+				}
+			} else if _, n, closed := worktreeDelSubstitutionBody(command[i+2:], false); closed {
+				skip = 2 + n
+			}
+			if skip > 0 {
+				cur = append(cur, command[i:i+skip]...)
+				i += skip - 1
+				r.prev = 'x'
+				continue
+			} // an unclosed body is read plainly below, so the ordinary grammar still cuts at a separator inside it
+		}
 		if r.state == worktreeDelQuoteComment && opened && c == '`' && worktreeDelQuoteBackslashes(command[:i])%2 == 0 {
 			r.state, r.prev, opened = worktreeDelQuotePlain, '`', false // a comment in a backtick body ends at the closing backtick
 			cur = append(cur, c)
@@ -671,8 +688,10 @@ const (
 // &>f, >'a b'): the shell's own reading of its options picks one of them, and reading one that was an argument can only deny too
 // much. After eval the program is its operands joined by blanks, as given and after the options up to --. The inner shell reads
 // a program as a command of its own, so the walk judges it as one: this shell's single quotes keep a backslash-newline pair that
-// the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm).
-func worktreeDelQuoteProgram(words []string) []string {
+// the inner shell removes (sh -c 'r<backslash><newline>m -rf ...' runs rm). atDepth also returns a program that holds no
+// blank, which the walk judges only to deny it at the reading depth limit: a program string still unread there is denied
+// whether or not it holds a blank (CRW-670).
+func worktreeDelQuoteProgram(words []string, atDepth bool) []string {
 	for i, word := range words {
 		name := basename(word)
 		var programs []string
@@ -696,7 +715,7 @@ func worktreeDelQuoteProgram(words []string) []string {
 					}
 				}
 				for _, candidate := range candidates {
-					if strings.ContainsAny(candidate, " \t\r\n;&|()") {
+					if atDepth || strings.ContainsAny(candidate, " \t\r\n;&|()") { // a blank-less program is read only at the depth limit
 						programs = append(programs, candidate)
 					}
 				}
@@ -732,13 +751,27 @@ func worktreeDelOptionWord(word string) bool {
 	return word != "" && (word[0] == '-' || word[0] == '+')
 }
 
+// worktreeDelCertainProgram says whether a shell program is a plain command that cannot reach the operands the shell hands it as
+// $0, $1 and so on. A program that holds a substitution, a separator, a pipe, a redirection or a parenthesis, or that names the
+// arguments (a dollar sign, a backtick, or ARGV, ARGC, argv or the BASH_AR* variables), is not certain, so the walk reads every
+// operand after it as a program. A name check alone would miss an obfuscation (a grep pattern that spells BASH_ARGV around a
+// wildcard), so any construct that could run a second command makes the program uncertain too.
+func worktreeDelCertainProgram(word string) bool {
+	if strings.ContainsAny(word, "$\x60|;&()<>\n") {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(word), "arg")
+}
+
 // worktreeDelShellProgramEnd is how many of a shell's operands the walk reads as programs: the words from there on are $0, $1
 // and so on, which the shell does not read (bash -c 'echo OK' 'rm -rf x' runs echo). It is every operand, the reading that
 // CRW-611 left, unless the program is certain, and it holds back wherever the option parse could be wrong or the words after the
-// program could matter: a redirection word anywhere (a quoted > looks like one), a program that is a bare option or can name its
-// operands (a dollar sign, BASH_ARGV, argv: bash -c 'eval "$0"' 'rm -rf x' runs rm), and any option-like word after the program.
-// A later program needs a -c or --command of its own, which is such a word, so without one no later operand is a program,
-// however the options before it were read.
+// program could matter: a redirection word anywhere (a quoted > looks like one) and a program that is a bare option or can name
+// its operands (a dollar sign, BASH_ARGV, argv: bash -c 'eval "$0"' 'rm -rf x' runs rm). For sh, bash, dash and ash the operands
+// after the program are the inner shell's $0, $1 and so on whatever they look like, so a later option-like word is not a program
+// (bash -c 'echo OK' -c 'rm -rf x' runs echo, CRW-670); su, whose last -c is its program, and every other shell keep the reading
+// of every later option-like word, because the walk does not tell those shells apart. The program is certain only when it is a
+// plain command that cannot reach its operands (worktreeDelCertainProgram).
 func worktreeDelShellProgramEnd(name string, operands []string) int {
 	program := -1
 	switch name {
@@ -756,16 +789,29 @@ func worktreeDelShellProgramEnd(name string, operands []string) int {
 		}
 	}
 	word := operands[program]
-	if strings.Contains(word, "$") || strings.Contains(word, "BASH_ARG") || strings.Contains(word, "argv") ||
+	if !worktreeDelCertainProgram(word) ||
 		worktreeDelOptionWord(word) && !strings.ContainsAny(word, " \t\r\n;&|()") {
 		return len(operands)
 	}
-	for _, later := range operands[program+1:] {
-		if worktreeDelOptionWord(later) {
-			return len(operands)
+	if !worktreeDelShellDataOperands(name) {
+		for _, later := range operands[program+1:] {
+			if worktreeDelOptionWord(later) {
+				return len(operands)
+			}
 		}
 	}
 	return program + 1
+}
+
+// worktreeDelShellDataOperands says whether a shell reads the operands after its -c program as data, its $0, $1 and so on,
+// whatever they look like: sh, bash, dash and ash do, so a later option-like word is not a program for them. su, whose last
+// -c is its program, and every other shell do not, so the walk keeps reading every later option-like word for them.
+func worktreeDelShellDataOperands(name string) bool {
+	switch name {
+	case "sh", "bash", "dash", "ash":
+		return true
+	}
+	return false
 }
 
 // worktreeDelSuProgram is the index of the operand that holds su's -c program, -1 when it finds none. su reads its options with
@@ -881,29 +927,202 @@ func worktreeDelQuoteDropRedirects(words []string) []string {
 	return out
 }
 
-// walk judges a command: the oracle's walk reads it as it is, the extended walk reads each of its readings, where the
-// shell has removed the backslash-newline pairs it removes, and denies when any reading denies. It judges every reading twice,
-// over the grammar the extended walk had and over bash's own quoting, comments and backslashes (worktreeDelQuoteSegments), the
-// first grammar first, so nothing it denied is allowed and each earlier deny keeps its reason. A here-document body is shell
-// text to both, and each reads a quote in it its own way.
-func walk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
-	if !extended {
-		return worktreeDelWalk(command, cwd, id, false)
+// worktreeDelSubstitutionBody is the text inside the substitution whose opener the caller has read: the body of $(...),
+// <(...) or >(...) (backtick false) or of a backtick pair (backtick true), and how many bytes it spans up to and including
+// the closing ) or backtick. It tracks the quotes, backslashes and comments inside the way the reader does, so a ) inside a
+// quote or a comment does not close the substitution and a nested ( counts. An unterminated substitution runs to the end.
+// closed says whether the closing byte was found, so a caller can fall back to the ordinary reading when it was not.
+func worktreeDelSubstitutionBody(rest string, backtick bool) (string, int, bool) {
+	var out []byte
+	depth := 1
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if r.escapes(rest, i) {
+			out = append(out, c, rest[i+1])
+			i++
+			r.pair()
+			continue
+		}
+		if !backtick && c == '$' && i+1 < len(rest) && rest[i+1] == '{' && r.state == worktreeDelQuotePlain {
+			end := worktreeDelBraceEnd(rest[i+2:]) // a parameter expansion: its own ) does not close the substitution
+			out = append(out, rest[i:i+2+end]...)
+			i += 1 + end
+			r.prev = 'x' // the expansion is part of the word it stands in: a # right after it does not open a comment
+			continue
+		}
+		if backtick {
+			if c == '`' {
+				// the first unescaped backtick ends the substitution whatever the state inside it: bash ends it there even in a comment
+				// or an unterminated quote (echo "`# '`" and echo "`'`" both close at the backtick)
+				return string(out), i + 1, true
+			}
+		} else {
+			switch {
+			case c == '(' && r.state == worktreeDelQuotePlain:
+				depth++
+			case c == ')' && r.state == worktreeDelQuotePlain:
+				if depth--; depth == 0 {
+					return string(out), i + 1, true
+				}
+			}
+		}
+		out = append(out, c)
+		r.step(c)
 	}
-	return worktreeDelQuoteJudge(command, cwd, id, 0)
+	return string(out), len(rest), false
+}
+
+// worktreeDelBraceEnd is the length of the text up to and including the } that closes a ${...} parameter expansion, whose
+// body may hold nested braces, quotes and backslashes; an unterminated one runs to the end.
+func worktreeDelBraceEnd(rest string) int {
+	depth := 1
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if r.escapes(rest, i) {
+			i++
+			r.pair()
+			continue
+		}
+		if r.state == worktreeDelQuotePlain {
+			switch c {
+			case '{':
+				depth++
+			case '}':
+				if depth--; depth == 0 {
+					return i + 1
+				}
+			}
+		}
+		r.step(c)
+	}
+	return len(rest)
+}
+
+// worktreeDelSubstitutions is the programs a segment runs before it runs: the body of every command substitution, $(...) and
+// backtick, and of every process substitution, <(...) and >(...), that stands in plain text or inside double quotes, because
+// the outer shell reads and runs each of them first (CRW-670). A substitution inside single quotes, inside $'...' or inside a
+// comment is data, and so is a $, < or backtick that a backslash escapes. The rest of the segment from an opener is returned
+// apart from the body: the body reader cannot model every construct bash allows inside a substitution (a case pattern's )
+// closes it early, a nested substitution under an outer double quote confuses its quote state), and a body it cut short would
+// otherwise hide the rest of the substitution. Reading past the body can only deny too much, never too little. The body is a
+// program of its own, one depth deeper; the rest is the same text, not a nested program, and the caller judges it at the
+// segment's own depth, which also keeps the walk bounded (CRW-670).
+func worktreeDelSubstitutions(segment string) (bodies, tails []string) {
+	r := worktreeDelQuoteReader{prev: ' '}
+	for i := 0; i < len(segment); i++ {
+		c := segment[i]
+		if r.escapes(segment, i) {
+			r.pair()
+			i++
+			continue
+		}
+		if r.state == worktreeDelQuoteSingle || r.state == worktreeDelQuoteANSIC || r.state == worktreeDelQuoteComment {
+			r.step(c)
+			continue
+		}
+		var body string
+		var n int
+		var start int // the byte after the opener: the whole rest of the segment is judged with the body
+		switch {
+		case c == '$' && i+1 < len(segment) && segment[i+1] == '(':
+			start = i + 2
+			body, n, _ = worktreeDelSubstitutionBody(segment[i+2:], false)
+			n += 2
+		case c == '`':
+			start = i + 1
+			body, n, _ = worktreeDelSubstitutionBody(segment[i+1:], true)
+			n++
+		case (c == '<' || c == '>') && i+1 < len(segment) && segment[i+1] == '(':
+			start = i + 2
+			body, n, _ = worktreeDelSubstitutionBody(segment[i+2:], false)
+			n += 2
+		default:
+			r.step(c)
+			continue
+		}
+		if strings.TrimSpace(body) != "" {
+			bodies = append(bodies, body)
+		}
+		if tail := strings.TrimSpace(segment[start:]); tail != strings.TrimSpace(body) { // the rest of the substitution the reader did not delimit
+			tails = append(tails, tail)
+		}
+		i += n - 1
+		r.prev = 'x' // the substitution is part of the word it stands in: a # after it does not open a comment
+	}
+	return bodies, tails
 }
 
 // worktreeDelQuoteDepth is how many program strings deep the walk follows a shell's program (sh -c 'sh -c ...'). A program
-// that is still unread there is denied: the walk cannot tell what it runs.
+// that is still unread there is denied, whether or not it holds a blank: the walk cannot tell what it runs.
 const worktreeDelQuoteDepth = 8
 
-// worktreeDelQuoteJudge is the extended walk of one text, depth program strings down: every reading over the old grammar and
-// then over the quote-aware one.
-func worktreeDelQuoteJudge(command, cwd string, id WorktreeIdentity, depth int) GuardVerdict {
+// worktreeDelWalkBudget is how many distinct texts one evaluation may judge. Past it the walk denies with a reason of its
+// own, fail-closed like the depth limit, so a long command line with many substitutions cannot make the guard take longer
+// than the hook timeout (CRW-670). The state holds it in a field, so a test can lower it.
+const worktreeDelWalkBudget = 4096
+
+// worktreeDelWalkKey identifies one text the walk judges. The same text can answer differently in another directory or at
+// another depth, so both are part of the key.
+type worktreeDelWalkKey struct {
+	text  string
+	cwd   string
+	depth int
+}
+
+// worktreeDelWalkState is one evaluation's memory: the verdict of every text already judged, keyed by text, directory and
+// depth, and the budget of distinct texts it may judge. worktreeDelEvaluate creates it and passes it down the walk; it is
+// never shared between evaluations and no package-level variable holds it.
+type worktreeDelWalkState struct {
+	verdicts map[worktreeDelWalkKey]GuardVerdict
+	budget   int
+	judged   int // the texts this evaluation has judged, against budget
+}
+
+// newWorktreeDelWalkState is the state one evaluation starts with, at the default budget.
+func newWorktreeDelWalkState() *worktreeDelWalkState {
+	return &worktreeDelWalkState{verdicts: map[worktreeDelWalkKey]GuardVerdict{}, budget: worktreeDelWalkBudget}
+}
+
+// judge is the extended walk of one text, depth program strings down, with the state's memory and budget: a text already
+// judged returns its verdict instead of being walked again, and a text that would push the state past its budget is denied.
+func (s *worktreeDelWalkState) judge(command, cwd string, id WorktreeIdentity, depth int) GuardVerdict {
+	key := worktreeDelWalkKey{text: command, cwd: cwd, depth: depth}
+	if verdict, ok := s.verdicts[key]; ok {
+		return verdict
+	}
+	s.judged++
+	if s.judged > s.budget {
+		return GuardVerdict{Deny: true, Reason: denyReason("a command too complex for the guard to read", id)}
+	}
+	verdict := s.judgeReadings(command, cwd, id, depth)
+	s.verdicts[key] = verdict
+	return verdict
+}
+
+// judgeReadings is the walk of one text: every reading over the old grammar and then over the quote-aware one, the first
+// grammar first, so nothing it denied is allowed and each earlier deny keeps its reason. The substitutions of the text are
+// then judged too: a text that segmentation cuts at a parenthesis (echo $(true) is three segments) still holds a
+// substitution the outer shell runs, and the state counts it.
+func (s *worktreeDelWalkState) judgeReadings(command, cwd string, id WorktreeIdentity, depth int) GuardVerdict {
 	readings := worktreeDelReadings(command)
 	for _, quoting := range []bool{false, true} {
 		for _, reading := range readings {
-			if verdict := worktreeDelQuoteWalk(reading, cwd, id, true, quoting, depth); verdict.Deny {
+			if verdict := s.walk(reading, cwd, id, true, quoting, depth); verdict.Deny {
+				return verdict
+			}
+		}
+	}
+	for _, reading := range readings {
+		bodies, tails := worktreeDelSubstitutions(reading)
+		for _, body := range bodies { // a substitution body is a program of its own, one depth deeper
+			if verdict := s.judge(body, cwd, id, depth+1); verdict.Deny {
+				return verdict
+			}
+		}
+		for _, tail := range tails { // the rest of the text after an opener is the same text, not a nested program
+			if verdict := s.judge(tail, cwd, id, depth); verdict.Deny {
 				return verdict
 			}
 		}
@@ -911,16 +1130,19 @@ func worktreeDelQuoteJudge(command, cwd string, id WorktreeIdentity, depth int) 
 	return GuardVerdict{}
 }
 
-// worktreeDelWalk is walk's loop over one text in the grammar of the oracle (and of the extended walk before CRW-611).
+// worktreeDelWalk is the single-use form of walk's loop over one text in the grammar of the oracle (and of the extended
+// walk before CRW-611), for a caller that does not carry a state (the tests).
 func worktreeDelWalk(command, cwd string, id WorktreeIdentity, extended bool) GuardVerdict {
-	return worktreeDelQuoteWalk(command, cwd, id, extended, false, 0)
+	return newWorktreeDelWalkState().walk(command, cwd, id, extended, false, 0)
 }
 
-// worktreeDelQuoteWalk is the loop over one text: the segments in order, a cd moving the directory later segments run in, and
-// the conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
+// walk is the loop over one text: the segments in order, a cd moving the directory later segments run in, and the
+// conservative fallback when a destructive verb was seen and the command mentions the worktree but no target resolved.
 // quoting reads the text over bash's own quotes, backslashes and comments instead, and judges the program string that a shell
-// word hands to -c (depth says how many programs deep this text is).
-func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
+// word hands to -c and the program a substitution runs, before the cd branch, because the outer shell runs a substitution
+// before it runs cd (depth says how many programs deep this text is). It is a method so that every text it judges shares the
+// state's memory and budget.
+func (s *worktreeDelWalkState) walk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
 	hint := destructiveHint(extended)
 	segCwd, destructiveSeen := cwd, false
 	var scopes []string // the directories a subshell restores, extended walk only
@@ -938,20 +1160,31 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 			continue
 		}
 		tokens := worktreeDelQuoteTokens(segment, quoting)
-		if len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
-			segCwd = resolveFrom(segCwd, tokens[1])
-			continue
-		}
 		if quoting {
-			programs := worktreeDelQuoteProgram(tokens)
+			programs := worktreeDelQuoteProgram(tokens, depth >= worktreeDelQuoteDepth)
 			if depth >= worktreeDelQuoteDepth && len(programs) > 0 {
 				return GuardVerdict{Deny: true, Reason: denyReason("a shell program nested past the reading depth", id)}
 			}
 			for _, program := range programs {
-				if verdict := worktreeDelQuoteJudge(program, segCwd, id, depth+1); verdict.Deny {
+				if verdict := s.judge(program, segCwd, id, depth+1); verdict.Deny {
 					return verdict
 				}
 			}
+			bodies, tails := worktreeDelSubstitutions(segment) // the outer shell runs a substitution before it runs cd
+			for _, body := range bodies {                      // a substitution body is a program of its own, one depth deeper
+				if verdict := s.judge(body, segCwd, id, depth+1); verdict.Deny {
+					return verdict
+				}
+			}
+			for _, tail := range tails { // the rest of the segment after an opener is the same text, not a nested program
+				if verdict := s.judge(tail, segCwd, id, depth); verdict.Deny {
+					return verdict
+				}
+			}
+		}
+		if len(tokens) > 1 && tokens[0] == "cd" && tokens[1] != "" {
+			segCwd = resolveFrom(segCwd, tokens[1])
+			continue
 		}
 		if hint.MatchString(foldASCII(segment)) {
 			destructiveSeen = true
@@ -967,16 +1200,30 @@ func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, qu
 	return GuardVerdict{}
 }
 
+// worktreeDelQuoteWalk is the single-use form of the walk over one text, for a caller that does not carry a state (the
+// tests).
+func worktreeDelQuoteWalk(command, cwd string, id WorktreeIdentity, extended, quoting bool, depth int) GuardVerdict {
+	return newWorktreeDelWalkState().walk(command, cwd, id, extended, quoting, depth)
+}
+
 // evaluateCommand allows anything outside a managed worktree. Inside one it walks the command as the oracle does and,
-// when that allows, walks it again over the extended grammar.
+// when that allows, walks it again over the extended grammar, at the default budget.
 func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
+	return worktreeDelEvaluate(command, cwd, id, worktreeDelWalkBudget)
+}
+
+// worktreeDelEvaluate is evaluateCommand with an explicit budget: it creates the one walk state of this evaluation and
+// judges the command over the oracle's grammar first, then over the extended one, so every text either walk judges shares
+// the state's memory and budget.
+func worktreeDelEvaluate(command, cwd string, id WorktreeIdentity, budget int) GuardVerdict {
 	if !id.Managed || text.Trim(command) == "" {
 		return GuardVerdict{}
 	}
-	if verdict := walk(command, cwd, id, false); verdict.Deny {
+	state := &worktreeDelWalkState{verdicts: map[worktreeDelWalkKey]GuardVerdict{}, budget: budget}
+	if verdict := state.walk(command, cwd, id, false, false, 0); verdict.Deny {
 		return verdict
 	}
-	return walk(command, cwd, id, true)
+	return state.judge(command, cwd, id, 0)
 }
 
 func denyReason(what string, id WorktreeIdentity) string {

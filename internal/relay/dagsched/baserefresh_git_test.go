@@ -7,6 +7,7 @@ import (
 
 // The conflict marker scan reads a file of any size and any line length to the end: a start line and an end line of seven or more marker characters make a file unresolved, and nothing short of that does.
 func TestScanConflictMarkers(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("<", 70000)
 	cases := []struct {
 		name           string
@@ -35,6 +36,7 @@ func TestScanConflictMarkers(t *testing.T) {
 
 // The width of a marker is the conflict-marker-size attribute's: three characters are a marker where the attribute says three, and not where it says seven.
 func TestScanConflictMarkersFollowTheWidth(t *testing.T) {
+	t.Parallel()
 	body := "<<< a\nx\n=== \n>>> b\n"
 	if started, ended := scanConflictMarkers(strings.NewReader(body), 3); !started || !ended {
 		t.Errorf("width 3: started=%v ended=%v, want both", started, ended)

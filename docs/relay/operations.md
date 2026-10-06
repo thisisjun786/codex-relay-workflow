@@ -1050,7 +1050,12 @@ reader has finished, so each can also cost `unix_connect` and `initialize`.
 
 **One transfer is three phases, and each has its own bound.** `establish` covers the wait on
 `AppServer._connect_lock` and the handshake behind it, `transmit` covers the request frame
-draining into the socket, and `ack` covers the response coming back. They used to share one
+draining into the socket, and `ack` covers the response coming back. The bound is the client's
+(`DefaultBounds`: 20 s for each phase) unless the caller's context names its own ack bound: the
+managed create path sets 60 s once on its context, so `thread/start`, `thread/name/set`,
+`turn/start`, the profile reads (`config/read`, `plugin/installed`, `mcpServerStatus/list`) and
+its trailing `thread/read` all use it, while every call outside that path keeps 20 s. A
+`PhaseTimeout` names the bound it used, so the two are told apart from the error. They used to share one
 budget, which is how a slow establishment for one recipient spent the budget a different
 recipient needed for its own write and response — `_connect_lock` serialises establishment, so
 part of every connect is other recipients rebuilding. Queueing behind them now costs a caller

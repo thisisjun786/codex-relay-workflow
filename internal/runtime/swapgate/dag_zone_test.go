@@ -2,6 +2,7 @@ package swapgate_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,11 +19,14 @@ import (
 func declaredParts(t *testing.T) (v1, zone record.Object) {
 	t.Helper()
 	declared := swapgate.DeclaredSchema(context.Background())
+	zoneKeys := zoneDeclaredKeys(t)
 	tables := 0
 	for _, field := range golden.Obj(record.Get(declared, "objects")) {
-		if strings.Contains(field.Key, " dag_") {
+		// Zone membership is derived from the zone's own statements, not from a name prefix
+		// (swapgate.zoneObjects): the merge-lane tables the zone appends carry no dag_ prefix.
+		if zoneKeys[field.Key] {
 			zone = append(zone, field)
-			if strings.HasPrefix(field.Key, "table dag_") {
+			if strings.HasPrefix(field.Key, "table ") {
 				tables++
 			}
 			continue
@@ -41,6 +45,42 @@ func declaredParts(t *testing.T) (v1, zone record.Object) {
 		t.Fatalf("the declared schema holds %d zone objects, %d of them tables", len(zone), tables)
 	}
 	return v1, zone
+}
+
+// zoneDeclaredKeys are the "type name" keys of every schema object the additive DAG zone creates:
+// store.DAGZoneStatements applied alone to an empty in-memory database and asked the catalog, the
+// same derivation swapgate.zoneObjects uses. Membership is the statement's, not a name prefix.
+func zoneDeclaredKeys(t *testing.T) map[string]bool {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	for _, statement := range store.DAGZoneStatements() {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := db.Query(swapgate.SchemaObjectsQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	keys := map[string]bool{}
+	for rows.Next() {
+		var key string
+		var text sql.NullString
+		if err := rows.Scan(&key, &text); err != nil {
+			t.Fatal(err)
+		}
+		keys[key] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return keys
 }
 
 func join(parts ...record.Object) record.Object {

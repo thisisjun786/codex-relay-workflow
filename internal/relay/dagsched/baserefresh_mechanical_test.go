@@ -132,6 +132,7 @@ func refreshRuleRecord(t *testing.T, s *refreshScenario, path, rule string) {
 }
 
 func TestBaseRefreshMechanicalUnion(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, false)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", false)
 	got, err := s.record()
@@ -150,6 +151,7 @@ func TestBaseRefreshMechanicalUnion(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalAgainstRule(t *testing.T) {
+	t.Parallel()
 	for _, rule := range []string{RuleUnion} {
 		t.Run(rule, func(t *testing.T) {
 			s := mechanicalRefresh(t, rule, false)
@@ -165,6 +167,7 @@ func TestBaseRefreshMechanicalAgainstRule(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalRegenerateRequiresGeneratedParents(t *testing.T) {
+	t.Parallel()
 	rule := "regenerate:printf 'generated\\n' > shared.json"
 	s := mechanicalRefresh(t, rule, false)
 	mechanicalMerge(t, s, "generated\n", false)
@@ -179,6 +182,7 @@ func TestBaseRefreshMechanicalRegenerateRequiresGeneratedParents(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalMixedNeedsExactManualNames(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, true)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", true)
 	for _, names := range [][]string{nil, {"shared.json"}, {"manual.txt", "shared.json"}, {"manual.txt", "manual.txt"}, {"other.txt"}} {
@@ -196,6 +200,7 @@ func TestBaseRefreshMechanicalMixedNeedsExactManualNames(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalUnevaluableRefused(t *testing.T) {
+	t.Parallel()
 	for _, rule := range []string{RuleRenumber, "regenerate:command-that-does-not-exist", "regenerate:printf 'generated\\n' > shared.json; printf 'changed' > feature.txt"} {
 		t.Run(rule, func(t *testing.T) {
 			s := mechanicalRefresh(t, rule, false)
@@ -215,6 +220,7 @@ func TestBaseRefreshMechanicalUnevaluableRefused(t *testing.T) {
 	}
 }
 
+// sequential: assigns the package variable refreshMechanical.
 func TestBaseRefreshMechanicalLegacyReplayAndUnavailableChecker(t *testing.T) {
 	s := mechanicalRefresh(t, RuleUnion, false)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", false)
@@ -244,6 +250,7 @@ func TestBaseRefreshMechanicalLegacyReplayAndUnavailableChecker(t *testing.T) {
 	}
 }
 
+// sequential: assigns the package variable refreshMechanical.
 func TestBaseRefreshMechanicalStaleEpochNeverEvaluates(t *testing.T) {
 	s := mechanicalRefresh(t, "regenerate:printf 'generated\\n' > shared.json", false)
 	mechanicalMerge(t, s, "generated\n", false)
@@ -264,6 +271,7 @@ func TestBaseRefreshMechanicalStaleEpochNeverEvaluates(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalCoverageKeepsManualNames(t *testing.T) {
+	t.Parallel()
 	symbol := gr("shared.json", GradeMechanical, RuleUnion)
 	symbol.Kind, symbol.Key = "symbol", "part"
 	other := gr("shared.json", GradeMechanical, RuleUnion)
@@ -288,6 +296,7 @@ func TestBaseRefreshMechanicalCoverageKeepsManualNames(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalPathsAggregateManualHops(t *testing.T) {
+	t.Parallel()
 	proof := refreshProof{Steps: []RefreshStep{{Resolved: []RefreshResolved{{Path: "a", Rule: RuleUnion}, {Path: "b"}}}, {Resolved: []RefreshResolved{{Path: "a"}, {Path: "b", Rule: RuleUnion}}}}}
 	if got := strings.Join(proof.resolvedPaths(), ","); got != "a,b" {
 		t.Fatalf("manual union across hops=%s", got)
@@ -295,6 +304,7 @@ func TestBaseRefreshMechanicalPathsAggregateManualHops(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalMultiHop(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, false)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", false)
 	s.repo.commit("later.txt", "later base")
@@ -308,6 +318,7 @@ func TestBaseRefreshMechanicalMultiHop(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalSerialization(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, true)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", true)
 	res, err := s.record("manual.txt")
@@ -340,6 +351,7 @@ func TestBaseRefreshMechanicalSerialization(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalDeclarationChangeRefused(t *testing.T) {
+	t.Parallel()
 	s := mechanicalRefresh(t, RuleUnion, false)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", false)
 	// Append a synthetic competing declaration during the unlocked proof.
@@ -352,6 +364,7 @@ func TestBaseRefreshMechanicalDeclarationChangeRefused(t *testing.T) {
 	}
 }
 
+// sequential: assigns the package variable refreshMechanical.
 func TestBaseRefreshMechanicalEvaluationErrorIsUnreadable(t *testing.T) {
 	s := mechanicalRefresh(t, RuleUnion, false)
 	mechanicalMerge(t, s, "base\nchild\ndev\n", false)
@@ -369,6 +382,7 @@ func TestBaseRefreshMechanicalEvaluationErrorIsUnreadable(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalRegenerateManualEachHop(t *testing.T) {
+	t.Parallel()
 	rule := "regenerate:cat recipe.txt > shared.json"
 	s := mechanicalRefresh(t, rule, false)
 	s.repo.commit("recipe.txt", "generated one\n")
@@ -393,6 +407,7 @@ func TestBaseRefreshMechanicalRegenerateManualEachHop(t *testing.T) {
 }
 
 func TestBaseRefreshMechanicalCanonicalLocalAlias(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"symlink", "noncanonical"} {
 		t.Run(name, func(t *testing.T) {
 			s := mechanicalRefreshAt(t, RuleUnion, false, func(r *gitRepo) string {
