@@ -72,11 +72,19 @@ func ParseEvidenceCLIArgs(argv []string, cwd string) (EvidenceResolveArgs, error
 // RunEvidenceCLI resolves exactly one resolvable verdict against a valid receipt.
 // The ledger is written before the atomic state publication; counters clear only
 // after that publication succeeds. Dispatching, streams and newlines belong to the caller.
+//
+// A publication that reports state.Published is a success with a warning: the new state is already at the
+// final path, so the tombstone is gone and the attempt record is cleared to match it. A failure before the
+// rename is still an error and leaves the attempts alone.
 func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	if !evidence.HasValidReceipt(a.Cwd, a.Receipt) {
 		return fmt.Sprintf("evidence resolve: receipt failed the evidence-root guard (must be a real, non-empty, non-symlink file inside .crw/evidence): %s", a.Receipt), 1
 	}
-	removed, ambiguous := false, false
+	writeState := a.writeState
+	if writeState == nil {
+		writeState = state.WriteState
+	}
+	removed, ambiguous, warning := false, false, error(nil)
 	err := state.WithSessionLock(a.Cwd, a.SessionID, func() error {
 		s := state.ReadState(a.Cwd, a.SessionID)
 		index := -1
@@ -111,8 +119,16 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 		}
 		s.UnverifiedSubagents = append(s.UnverifiedSubagents[:index], s.UnverifiedSubagents[index+1:]...)
 		s.SessionID = a.SessionID
-		if err := state.WriteState(a.Cwd, s); err != nil {
-			return err
+		if err := writeState(a.Cwd, s); err != nil {
+			if !state.Published(err) {
+				return err // nothing was published: the tombstone is still there and the resolve failed
+			}
+			// The state reached the final path and only the directory sync failed, so the tombstone is
+			// already gone. Clear the attempt record to match the published state; otherwise the counter
+			// stays at the cap and HasSpentBudget stays true for good.
+			evidence.ClearAttempts(a.Cwd, a.SessionID, a.AgentID, target.TurnID)
+			removed, warning = true, err
+			return nil
 		}
 		evidence.ClearAttempts(a.Cwd, a.SessionID, a.AgentID, target.TurnID)
 		removed = true
@@ -127,7 +143,11 @@ func RunEvidenceCLI(a EvidenceResolveArgs) (string, int) {
 	if !removed {
 		return fmt.Sprintf("evidence resolve: no resolvable unverified record for agent '%s' in session %s", a.AgentID, a.SessionID), 1
 	}
-	return fmt.Sprintf("evidence resolve: agent %s resolved against %s", a.AgentID, a.Receipt), 0
+	line := fmt.Sprintf("evidence resolve: agent %s resolved against %s", a.AgentID, a.Receipt)
+	if warning != nil {
+		return line + "\n" + fmt.Sprintf("evidence resolve: warning: the session state was published but its directory sync failed: %s", warning), 0
+	}
+	return line, 0
 }
 
 // The stale-lock diagnostic is observable in the corpus. Other filesystem errors

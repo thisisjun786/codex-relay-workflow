@@ -165,11 +165,7 @@ func publishWithoutLink(finalPath string, data []byte, fail func(ensureStep, str
 	return false, err
 }
 
-// WriteState publishes next as the session's state file: written to a temp file beside it and renamed over it, so a reader sees
-// the old file or the new one whole (writeState). The temp file is fsynced before the rename, and the directory afterward;
-// a directory sync error is returned after publication without removing the new state. This is not a serialised read-modify-write: a caller that
-// must not lose a concurrent update re-reads inside WithSessionLock. The tracker is capped on the way out and updatedAt stamped.
-// PublishedError reports that WriteState published the new state at the final path and then failed a step that runs after the
+// PublishedError reports that a state write published the new state at the final path and then failed a step that runs after the
 // rename: opening or fsyncing the directory that holds it. The state is visible to every reader, so the error is not a reason to
 // roll it back, and a caller that has a reconciling step after a failed write (clearing an attempt counter, for example) must run
 // it anyway. Err is the underlying failure and Unwrap exposes it, so errors.Is keeps answering for the cause.
@@ -187,6 +183,11 @@ func Published(err error) bool {
 	return errors.As(err, &target)
 }
 
+// WriteState publishes next as the session's state file: written to a temp file beside it and renamed over it, so a reader sees
+// the old file or the new one whole (writeState). The temp file is fsynced before the rename, and the directory afterward;
+// a directory sync error is returned as a PublishedError after publication, without removing the new state. This is not a
+// serialised read-modify-write: a caller that must not lose a concurrent update re-reads inside WithSessionLock. The tracker is
+// capped on the way out and updatedAt stamped.
 func WriteState(cwd string, next State) error {
 	return writeState(cwd, next, time.Now(), crwdir.Rename)
 }
@@ -226,9 +227,12 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	}
 	dir, err := os.Open(filepath.Dir(finalPath))
 	if err != nil {
-		return err
+		return &PublishedError{Err: err}
 	}
-	return errors.Join(sync(dir), dir.Close())
+	if err := errors.Join(sync(dir), dir.Close()); err != nil {
+		return &PublishedError{Err: err}
+	}
+	return nil
 }
 
 // makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order.
