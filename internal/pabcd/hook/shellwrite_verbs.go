@@ -706,34 +706,103 @@ func shellVerbOpenWritesIn(script string, python bool) []string {
 	return shellWriteFStringOpenWritesRunes(shellVerbWithoutComments(script, python), python)
 }
 
-// shellWriteFStringOpenWritesRunes is shellVerbOpenWritesIn over an already comment-stripped program. A string literal whose
-// prefix holds an f is walked rather than skipped as one region (shellWriteFStringRegion), and each replacement field's
-// expression is read as program text by this same walk, so an open() or Path() call inside a field names its path
-// (CRW-741). Every other literal keeps the one-region rule of shellWriteTripleScanRegion.
+// shellWriteExecMaxDepth bounds the program nesting the exec walk reads: a program nested deeper is unreadable, so the memory
+// gate fails closed rather than reading a program it cannot finish (CRW-754, criterion c1).
+const shellWriteExecMaxDepth = 32
+
+// shellWriteExecUnreadableWhat is the what the walk reports for a program it cannot read (the deny reason names it as
+// "(a program the gate cannot read: " + what + ")"; CRW-754, criterion c1).
+const shellWriteExecUnreadableWhat = "a Python program passed to exec, eval or compile"
+
+// shellWriteExecCallee reports whether the bracket c at i opens a call to exec, eval or compile, called directly or through
+// builtins. or __builtins.: the word before the bracket is one of the three and is not the tail of a longer identifier. What
+// stands in front of that word decides the rest: another dot makes it an attribute of whatever precedes the module name, so
+// only those two module names count, and any other character (a newline, a semicolon, a comma, an opening bracket, the start
+// of the program) leaves a plain call. Any other attribute chain is a different callee and is left to the dynamic routes this
+// issue records as out of scope.
+func shellWriteExecCallee(rs []rune, i int, c rune) bool {
+	if c != '(' {
+		return false
+	}
+	for i > 0 && shellVerbSpaceRune(rs[i-1]) {
+		i--
+	}
+	ident := func(j int) bool {
+		return j >= 0 && (rs[j] >= 128 || rs[j] == '_' || shellVerbLetter(byte(rs[j]), true))
+	}
+	for _, name := range []string{"exec", "eval", "compile"} {
+		n := len(name)
+		if i < n || string(rs[i-n:i]) != name || ident(i-n-1) {
+			continue
+		}
+		j := i - n - 1
+		if j < 0 || rs[j] != '.' {
+			return true // a plain call: nothing, or a character that is no identifier, stands before the name
+		}
+		for _, module := range []string{"builtins", "__builtins__"} {
+			m := len(module)
+			if j < m || string(rs[j-m:j]) != module || ident(j-m-1) || j-m-1 >= 0 && rs[j-m-1] == '.' {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// shellWriteFStringOpenWritesRunes is shellVerbOpenWritesIn over an already comment-stripped program: the destinations the
+// walk reads (shellWriteExecScan), without its fail-closed reason.
 func shellWriteFStringOpenWritesRunes(rs []rune, python bool) []string {
+	dests, _ := shellWriteExecScan(rs, python, 0)
+	return dests
+}
+
+// shellWriteExecScan is the program walk: the writes of each open() and Path(...).write_text/bytes call, of a string literal
+// whose prefix holds an f read as Python reads it - each replacement field's expression is read as program text by this same
+// walk, so an open() call inside a field names its path (CRW-741) - and of the program text a string literal passed to exec,
+// eval or compile names (CRW-754). what is the fail-closed reason when the walk cannot read a program it was given: an
+// f-string replacement field it cannot finish (shellWriteFStringUnreadableWhat), or a program passed to exec, eval or compile
+// whose first argument is no string literal, or one nested deeper than shellWriteExecMaxDepth
+// (shellWriteExecUnreadableWhat). The walk keeps going after recording what, so a destination it did read is still named.
+// Every other literal keeps the one-region rule of shellWriteTripleScanRegion.
+func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what string) {
+	if depth > shellWriteExecMaxDepth {
+		return []string{}, shellWriteExecUnreadableWhat
+	}
 	type frame struct {
-		kind  byte // 'o' for open(, 'p' for Path(, else 0
+		kind  byte // 'o' for open(, 'p' for Path(, 'e' for exec/eval/compile(, else 0
 		start int
 		args  [][2]int
 	}
 	var stack []frame
-	out := []string{}
+	dests = []string{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
 		case c == '\'' || c == '"':
 			if python && shellWriteFStringPrefix(rs, i) {
-				end, fields, _ := shellWriteFStringRegion(rs, i, 0)
+				end, fields, bad := shellWriteFStringRegion(rs, i, 0)
 				for _, f := range fields {
 					// The expression is read as program text: its comments are cut first, so a quote or brace in one
 					// is no syntax (a Python 3.12+ multi-line field allows a comment).
-					out = append(out, shellVerbOpenWritesIn(string(rs[f[0]:f[1]]), python)...)
+					more, inner := shellWriteExecScan(shellVerbWithoutComments(string(rs[f[0]:f[1]]), python), python, depth)
+					dests = append(dests, more...)
+					if inner != "" && what == "" {
+						what = inner
+					}
+				}
+				if bad && what == "" {
+					what = shellWriteFStringUnreadableWhat
 				}
 				i = end - 1
 				continue
 			}
 			i = shellWriteTripleScanRegion(rs, i, python) - 1
 		case c == '(' || c == '[' || c == '{':
-			stack = append(stack, frame{kind: shellVerbCallKind(rs, i, c), start: i + 1})
+			kind := shellVerbCallKind(rs, i, c)
+			if kind == 0 && python && shellWriteExecCallee(rs, i, c) {
+				kind = 'e'
+			}
+			stack = append(stack, frame{kind: kind, start: i + 1})
 		case c == ',' && len(stack) > 0:
 			if top := &stack[len(stack)-1]; top.kind != 0 {
 				top.args = append(top.args, [2]int{top.start, i})
@@ -743,13 +812,41 @@ func shellWriteFStringOpenWritesRunes(rs []rune, python bool) []string {
 			top := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			if spans := append(top.args, [2]int{top.start, i}); top.kind == 'o' && c == ')' {
-				out = append(out, shellVerbOpenCall(rs, spans)...)
+				dests = append(dests, shellVerbOpenCall(rs, spans)...)
 			} else if top.kind == 'p' && c == ')' && shellVerbWriteMethod(rs, i+1) {
-				out = append(out, shellWriteEscapePath(rs, spans)...)
+				dests = append(dests, shellWriteEscapePath(rs, spans)...)
+			} else if top.kind == 'e' && c == ')' {
+				more, inner := shellWriteExecProgram(rs, spans, depth)
+				dests = append(dests, more...)
+				if inner != "" && what == "" {
+					what = inner
+				}
 			}
 		}
 	}
-	return out
+	return dests, what
+}
+
+// shellWriteExecProgram reads the first argument of an exec, eval or compile call as program text when it is a string literal
+// Python can decode, and reports the fail-closed reason when it is not (CRW-754). The literal's value, as Python decodes it,
+// is read by the same walk one level deeper. An f-string with a replacement field has no value here, so it is unreadable too;
+// the writes inside its fields were already named by the walk above (CRW-741).
+func shellWriteExecProgram(rs []rune, spans [][2]int, depth int) ([]string, string) {
+	for _, span := range spans {
+		arg := rs[span[0]:span[1]]
+		if shellVerbBlank(arg) {
+			continue // the empty argument after a trailing comma
+		}
+		if shellWriteEscapeField(arg) {
+			return nil, shellWriteExecUnreadableWhat
+		}
+		program, ok := shellVerbLiteral(arg)
+		if !ok {
+			return nil, shellWriteExecUnreadableWhat
+		}
+		return shellWriteExecScan(shellVerbWithoutComments(program, true), true, depth+1)
+	}
+	return nil, shellWriteExecUnreadableWhat
 }
 
 // shellVerbWithoutComments is the program with its # comments (outside string literals) cut off at the end of the line, so a
@@ -1296,7 +1393,11 @@ func shellWriteFStringPythonScript(tokens []string) (string, bool) {
 	return "", false
 }
 
-// shellWriteFStringProgramUnreadable scans one Python program for an f-string the walk cannot read.
+// shellWriteFStringProgramUnreadable reports the what of one Python program the reader cannot finish: an f-string
+// replacement field it cannot read (CRW-741), or a program passed to exec, eval or compile whose first argument is no
+// string literal, or one nested deeper than shellWriteExecMaxDepth (CRW-754). The f-string scan keeps CRW-741's own rule -
+// every quote position of the program is examined - and the exec walk (shellWriteExecScan) adds the programs a literal
+// passed to exec, eval or compile names.
 func shellWriteFStringProgramUnreadable(program string) (string, bool) {
 	rs := shellVerbWithoutComments(program, true)
 	for i := 0; i < len(rs); i++ {
@@ -1307,6 +1408,9 @@ func shellWriteFStringProgramUnreadable(program string) (string, bool) {
 			}
 			i = end - 1
 		}
+	}
+	if _, what := shellWriteExecScan(rs, true, 0); what != "" {
+		return what, true
 	}
 	return "", false
 }
