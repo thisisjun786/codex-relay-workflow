@@ -260,8 +260,14 @@ func (f *dagReviewFixture) relayReadPutPlan(planID, project string, nodes ...str
 func (f *dagReviewFixture) relayReadMarkerRows() {
 	f.exec("INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)",
 		"parent-1", `{"marker":"`+relayReadSettingsMarker+`"}`, "test", dagReviewAt(0))
-	f.exec("INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, created_at, updated_at)"+
-		" VALUES (?,?,'completion','parent-1','thread-1','queued',?,?)", "evt-1", "rel-1", dagReviewAt(0), dagReviewAt(0))
+	// The delivery marker goes in the columns a delivery body actually fills (dispatch_evidence,
+	// hold_reason and provenance), so the assertion that it never reaches the projection is not
+	// vacuous: the assignment view reads these columns into its delivery record, which the
+	// projection drops.
+	f.exec("INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state,"+
+		" dispatch_evidence, hold_reason, provenance, created_at, updated_at)"+
+		" VALUES (?,?,'completion','parent-1','thread-1','queued',?,?,?,?,?)",
+		"evt-1", "rel-1", relayReadDeliveryMarker, relayReadDeliveryMarker, relayReadDeliveryMarker, dagReviewAt(0), dagReviewAt(0))
 	f.exec("INSERT INTO attempt_messages (request_id, event_id, attempt_no, kind, message, rendered_at)"+
 		" VALUES (?,?,1,'completion',?,?)", "request-1", "evt-1", relayReadConversationMark, dagReviewAt(0))
 }
@@ -632,6 +638,9 @@ func relayReadTwoProjects(t *testing.T) *dagReviewFixture {
 		f.relayReadPutPlan("plan-"+project, project, "A")
 		f.relayReadTurn("turn-"+project, project, "holder-"+project, "waiting", rid)
 	}
+	// A closed turn and a superseded binding, which a default read leaves out and --all keeps.
+	f.relayReadTurn("turn-closed", "project-1", "holder-closed", "landed", "rel-project-1")
+	f.relayReadBinding("bnd-superseded", "parent", "project", "project-1", "parent-old", "host-1", "/tmp/old", "superseded", 1)
 	f.relayReadRelationship("rel-closed", "CRW-closed", "cancelled", "parent-1", "child-closed", 1)
 	f.relayReadScope("rel-closed", "project-1")
 	return f
@@ -745,6 +754,12 @@ func TestRelayReadOptionsChooseTheTargets(t *testing.T) {
 	if !found {
 		t.Errorf("--all left the closed relationship out: %+v", closed.Relationships)
 	}
+	if len(closed.MergeTurns) != 3 {
+		t.Errorf("--all did not keep the closed merge turn: %+v", closed.MergeTurns)
+	}
+	if len(closed.Bindings) != 3 {
+		t.Errorf("--all did not keep the superseded binding: %+v", closed.Bindings)
+	}
 }
 
 // A plan the caller named but the store does not carry is an item whose source could not be read:
@@ -811,6 +826,41 @@ func TestRelayReadReadsWithTheWorkingDirectoryRemoved(t *testing.T) {
 	}
 	if item.State == nil {
 		t.Errorf("the relationship state is missing: %+v", item)
+	}
+}
+
+// An item whose own source cannot be read carries an unknown read mark and keeps its place in the
+// section, rather than being dropped: a relationship that points at a generation the store no
+// longer retains is exactly that case.
+func TestRelayReadUnreadableItemKeepsItsPlace(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	f.relayReadRelationship("rel-ok", "CRW-OK", "active", "parent-1", "child-1", 1)
+	f.relayReadScope("rel-ok", "project-1")
+	// A relationship whose generation row is absent: the assignment view refuses it.
+	f.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id,"+
+		" child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at)"+
+		" VALUES ('rel-broken','CRW-BROKEN','active','parent-1','host-1','child-2','host-1',1,'[]','[]',?,?)",
+		dagReviewAt(1), dagReviewAt(1))
+	f.relayReadScope("rel-broken", "project-1")
+	f.close()
+
+	projection, err := RelayReadState(context.Background(), f.dir, RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState: %v", err)
+	}
+	if len(projection.Relationships) != 2 {
+		t.Fatalf("the projection carries %d relationships, want both kept: %+v", len(projection.Relationships), projection.Relationships)
+	}
+	broken := relayReadRelationshipByID(t, projection, "rel-broken")
+	if broken.Read.State != relayReadReadUnknown || broken.Read.Reason == "" {
+		t.Errorf("rel-broken = %+v, want an unknown mark with a reason", broken.Read)
+	}
+	if ok := relayReadRelationshipByID(t, projection, "rel-ok"); ok.Read.State != relayReadReadOK || ok.State == nil {
+		t.Errorf("rel-ok = %+v, want it read beside the broken one", ok)
+	}
+	code, _, stderr := relayReadRunCommand(t, f.dir)
+	if code != relayReadUnknownExit {
+		t.Errorf("exit = %d, want %d (stderr: %s)", code, relayReadUnknownExit, stderr)
 	}
 }
 
