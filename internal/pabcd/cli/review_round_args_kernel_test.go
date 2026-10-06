@@ -54,3 +54,20 @@ func TestReviewRoundKernelCandidateWithinTheKernelLinkLimitStoresTheKey(t *testi
 		t.Errorf("Recomputed read %v, want the stored hash", got)
 	}
 }
+
+// The gate refuses only what the kernel cannot resolve: the oracle's own spelling (a) of a 40-link chain
+// against the physical working directory is exactly at the kernel's limit, the kernel resolves it, so the
+// key is stored and Recomputed returns the same hash. This pins the boundary from the accepting side
+// against an over-strict gate (CRW-673).
+func TestReviewRoundKernelCandidateAtTheKernelLinkLimitIsStored(t *testing.T) {
+	root := reviewRoundKernelLinkChain(t, 40)
+	cwd, unit := filepath.Join(root, "ws"), filepath.Join(root, "ws", "l39")
+	files, refusal, err := reviewRoundArgsCollectPlanFiles(cwd, unit, []string{filepath.Join(unit, "000_plan.md")})
+	want := []goalplan.PlanFileHash{{Path: "l39/000_plan.md", Sha256: reviewRoundArgsHex("# plan\n")}}
+	if err != nil || refusal != "" || !slices.Equal(files, want) {
+		t.Fatalf("%v %q %v, want %v", files, refusal, err, want)
+	}
+	if got := Recomputed(cwd, files); !slices.Equal(got, files) {
+		t.Errorf("Recomputed read %v, want the stored hash", got)
+	}
+}
