@@ -724,7 +724,9 @@ func shellWriteFStringOpenWritesRunes(rs []rune, python bool) []string {
 			if python && shellWriteFStringPrefix(rs, i) {
 				end, fields, _ := shellWriteFStringRegion(rs, i, 0)
 				for _, f := range fields {
-					out = append(out, shellWriteFStringOpenWritesRunes(rs[f[0]:f[1]], python)...)
+					// The expression is read as program text: its comments are cut first, so a quote or brace in one
+					// is no syntax (a Python 3.12+ multi-line field allows a comment).
+					out = append(out, shellVerbOpenWritesIn(string(rs[f[0]:f[1]]), python)...)
 				}
 				i = end - 1
 				continue
@@ -1059,7 +1061,14 @@ func shellWriteFStringRegion(rs []rune, i, depth int) (end int, fields [][2]int,
 	for k < len(rs) {
 		switch c := rs[k]; {
 		case c == '\\':
-			k += 2
+			// A backslash escapes the next character for the string's own escapes, but it never escapes a brace:
+			// {{ and }} are the only brace escapes in an f-string, so a brace after a backslash still opens or
+			// closes a field (rf'\{x}' holds a field, not a literal brace).
+			if k+1 < len(rs) && rs[k+1] != '{' && rs[k+1] != '}' {
+				k += 2
+			} else {
+				k++
+			}
 		case c == '{':
 			if k+1 < len(rs) && rs[k+1] == '{' {
 				k += 2
@@ -1104,7 +1113,19 @@ func shellWriteFStringField(rs []rune, from, depth int) (next int, fields [][2]i
 	for k < len(rs) {
 		switch c := rs[k]; {
 		case c == '\\':
-			k += 2
+			// In a replacement field a backslash is a line continuation (or part of a string literal, read by the
+			// quote case below); it never hides a delimiter.
+			if k+1 < len(rs) && (rs[k+1] == '\n' || rs[k+1] == '\r') {
+				k += 2
+			} else {
+				k++
+			}
+		case c == '#':
+			// Python 3.12+ allows a comment inside a multi-line replacement field: it runs to the end of the line and
+			// is no part of the expression, so a quote or brace inside it is not live syntax.
+			for k < len(rs) && rs[k] != '\n' {
+				k++
+			}
 		case c == '\'' || c == '"':
 			if shellWriteFStringPrefix(rs, k) {
 				end, _, innerBad := shellWriteFStringRegion(rs, k, depth+1)
@@ -1151,7 +1172,8 @@ func shellWriteFStringSpec(rs []rune, from, depth int, fields [][2]int) (next in
 	for k < len(rs) {
 		switch c := rs[k]; {
 		case c == '\\':
-			k += 2
+			// In a format spec a backslash is literal text, so a brace after it still opens a nested field.
+			k++
 		case c == '}':
 			return k + 1, fields, false
 		case c == '{':
@@ -1170,31 +1192,75 @@ func shellWriteFStringSpec(rs []rune, from, depth int, fields [][2]int) (next in
 
 // shellWriteFStringUnreadable reports whether a command holds a Python program with an f-string replacement field the walk
 // cannot read (shellWriteFStringRegion). It looks at the same programs ShellWriteDestinations reads as Python - the
-// python -c and --command programs of a segment - and returns what the deny reason names (CRW-741, criterion c2).
+// python -c and --command programs of a segment, including the ones a nested shell -c or eval runs - and returns what the
+// deny reason names (CRW-741, criterion c2).
 func shellWriteFStringUnreadable(command string) (string, bool) {
+	budget := 32*len(command) + 65536
 	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
-		if what, ok := shellWriteFStringUnreadableIn(shellString(segment)); ok {
+		if what, ok := shellWriteFStringUnreadableIn(shellString(segment), &budget); ok {
 			return what, true
 		}
 	}
 	return "", false
 }
 
-// shellWriteFStringUnreadableIn scans one segment's commands for a python -c/--command program and reports the first
-// unreadable f-string, over both the program and its shell-unescaped reading, as shellVerbPythonNode reads them.
-func shellWriteFStringUnreadableIn(segment string) (string, bool) {
+// shellWriteFStringUnreadableIn scans one segment's commands for a Python program and reports the first unreadable
+// f-string, over both the program and its shell-unescaped reading, as shellVerbPythonNode reads them. A command a nested
+// shell -c or eval runs is read again within the shared budget, the way shellVerbNested reads it for the destinations.
+func shellWriteFStringUnreadableIn(segment string, budget *int) (string, bool) {
 	for _, command := range shellVerbSubsegments(segment) {
-		script, ok := shellWriteFStringPythonScript(shellVerbSkipWrappers(shellTokenize(command)))
+		tokens := shellVerbSkipWrappers(shellTokenize(command))
+		if script, ok := shellWriteFStringPythonScript(tokens); ok {
+			if what, bad := shellWriteFStringUnreadableProgram(script); bad {
+				return what, true
+			}
+			continue
+		}
+		nested, ok := shellWriteFStringNestedScript(tokens)
 		if !ok {
 			continue
 		}
-		if what, bad := shellWriteFStringProgramUnreadable(script); bad {
+		if *budget -= len(nested); *budget < 0 {
+			continue
+		}
+		if what, bad := shellWriteFStringUnreadableIn(nested, budget); bad {
 			return what, true
 		}
-		if un := shellVerbUnescape(script); un != script {
-			if what, bad := shellWriteFStringProgramUnreadable(un); bad {
-				return what, true
-			}
+	}
+	return "", false
+}
+
+// shellWriteFStringNestedScript is the command string a shell -c or eval runs, as shellVerbRun reads it, so the fail-closed
+// scan reaches a Python program one level down the way the destination walk does.
+func shellWriteFStringNestedScript(tokens []string) (string, bool) {
+	if len(tokens) == 0 {
+		return "", false
+	}
+	verb, args := shellVerbName(tokens[0]), tokens[1:]
+	if shellVerbIsShell(verb) {
+		return shellVerbShellScript(args)
+	}
+	if verb != "eval" {
+		return "", false
+	}
+	for { // eval builtin eval X runs X: a chain is peeled here, not read level by level
+		next := shellVerbSkipWrappers(args)
+		if len(next) == 0 || shellVerbName(next[0]) != "eval" {
+			break
+		}
+		args = next[1:]
+	}
+	return strings.Join(args, " "), true
+}
+
+// shellWriteFStringUnreadableProgram scans a Python program and its shell-unescaped reading for an unreadable f-string.
+func shellWriteFStringUnreadableProgram(script string) (string, bool) {
+	if what, bad := shellWriteFStringProgramUnreadable(script); bad {
+		return what, true
+	}
+	if un := shellVerbUnescape(script); un != script {
+		if what, bad := shellWriteFStringProgramUnreadable(un); bad {
+			return what, true
 		}
 	}
 	return "", false

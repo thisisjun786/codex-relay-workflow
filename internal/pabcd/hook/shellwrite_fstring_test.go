@@ -186,3 +186,32 @@ func TestShellWriteFStringGateDeniesAndSpends(t *testing.T) {
 		})
 	}
 }
+
+// TestShellWriteFStringReviewCases pins the three findings of this pull request's reviews.
+func TestShellWriteFStringReviewCases(t *testing.T) {
+	// A comment inside a multi-line replacement field is not syntax: a quote or a } in it must not end the field
+	// early, or the open() call after it goes unread (a security finding).
+	commented := "python3 -c 'f\"\"\"{( # \"\nopen(file=\"/m/a\", mode=\"w\"),\n# \"\n\"x\")}\"\"\"'"
+	if got := ShellWriteDestinations(commented); !slices.Contains(got, "/m/a") {
+		t.Errorf("a comment in a field: %q named %q, want /m/a", commented, got)
+	}
+	if got, ok := shellWriteFStringUnreadable(commented); ok {
+		t.Errorf("a comment in a field reported unreadable %q", got)
+	}
+	// A backslash never escapes a brace in an f-string, so a valid raw f-string is not an unpaired brace (a
+	// false-positive finding).
+	for _, command := range []string{
+		`python3 -c "x=1; print(rf'\{x}')"`,
+		`python3 -c "x=1; print(rf'\{{{x}\}}')"`,
+	} {
+		if got, ok := shellWriteFStringUnreadable(command); ok {
+			t.Errorf("%q reported unreadable %q", command, got)
+		}
+	}
+	// A Python program one level down a nested shell -c is read too (a P1 finding).
+	inner := `python3 -c "f'{x"`
+	outer := "bash -c \"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(inner) + "\""
+	if got, ok := shellWriteFStringUnreadable(outer); !ok || got != shellWriteFStringUnreadableWhat {
+		t.Errorf("a nested shell: %q reported %q, %v; want %q, true", outer, got, ok, shellWriteFStringUnreadableWhat)
+	}
+}
