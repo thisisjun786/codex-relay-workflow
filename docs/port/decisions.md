@@ -5692,7 +5692,7 @@ git log --first-parent origin/dev --since=2026-10-05T23:00:00Z --until=2026-10-0
 
 | What | Measured | Source |
 | --- | --- | --- |
-| Runs | 350 | the runs list above |
+| Runs | 350, run ids 37386271268 to 37421344052 | the runs list above |
 | Runs by event | `pull_request` 264, `push` 45, `workflow_dispatch` 41 | the runs list above |
 | Runs by conclusion | success 310, cancelled 31, failure 8, one still running | the runs list above |
 | Cancelled by event | `pull_request` 27, `workflow_dispatch` 3, `push` 1 | the runs list above |
