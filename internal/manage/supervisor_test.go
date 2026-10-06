@@ -270,6 +270,29 @@ func TestSupervisorRegisterHelpDoesNotBind(t *testing.T) {
 	}
 }
 
+// C2: the note names the rule for every spelling of a removed option, not only the bare form.
+// --cwd=DIR is still a host value on the command line, so it is refused with the same note rather
+// than the generic unexpected-argument message.
+func TestSupervisorRegisterRejectsTheAssignedHostValueOptions(t *testing.T) {
+	for _, arg := range []string{"--cwd=/override", "--settings-file=/override/settings.json"} {
+		t.Run(arg, func(t *testing.T) {
+			record := supervisorFakeProcess(t, 0)
+			section := supervisorTestSection()
+			supervisorUseConfig(t, supervisorTestConfig(&section))
+			code, _, errOut := supervisorRunLine(t, "supervisor", "register", arg)
+			if code != usageExit {
+				t.Fatalf("exit %d, want %d (stderr %q)", code, usageExit, errOut)
+			}
+			if !strings.Contains(errOut, supervisorHostValuesMessage) {
+				t.Errorf("stderr %q does not name %q", errOut, supervisorHostValuesMessage)
+			}
+			if calls := supervisorRecordedCalls(t, record); len(calls) != 0 {
+				t.Errorf("the relay was called %q", calls)
+			}
+		})
+	}
+}
+
 // The configuration's cwd reaches the relay as one argv element even when it carries a space, so
 // the argument boundary is preserved rather than the value being split or re-quoted.
 func TestSupervisorRegisterPassesASpacedCwdAsOneArgument(t *testing.T) {

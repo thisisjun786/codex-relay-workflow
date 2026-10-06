@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
@@ -142,6 +143,21 @@ func supervisorConfigured(e *Env, section supervisorSection) bool {
 // before the relay is called rather than silently overriding the configuration.
 var supervisorHostValueOption = map[string]bool{"--cwd": true, "--settings-file": true}
 
+// supervisorHostValueOptionNamed reports the removed option an argument carries, in either the
+// separate form ("--cwd" with its value in the next argument) or the assigned form ("--cwd=DIR").
+// Both are the same host value on the command line, so both get the same refusal and the same note
+// rather than the assigned form falling through to the generic unexpected-argument message.
+func supervisorHostValueOptionNamed(arg string) (string, bool) {
+	name := arg
+	if i := strings.IndexByte(arg, '='); i >= 0 {
+		name = arg[:i]
+	}
+	if supervisorHostValueOption[name] {
+		return name, true
+	}
+	return "", false
+}
+
 // supervisorRegisterArgs reads register's own arguments: no option at all is the accepted command
 // line, -h and --help report the usage and stop the run there, and an option that names a host value
 // is refused with the note that says where host values come from. The refusal happens here, before
@@ -156,7 +172,7 @@ func supervisorRegisterArgs(e *Env, args []string) (help bool, code int) {
 		}
 	}
 	for _, arg := range args {
-		if supervisorHostValueOption[arg] {
+		if _, removed := supervisorHostValueOptionNamed(arg); removed {
 			fmt.Fprintln(e.Stderr, supervisorRegisterUsage)
 			fmt.Fprintf(e.Stderr, "crw manage supervisor: error: %s\n", supervisorHostValuesNote)
 			return false, usageExit
