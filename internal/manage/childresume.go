@@ -281,15 +281,24 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "watch: " + err.Error()}
 	}
+	// subscribed records whether the run reached thread/resume. That call is what subscribes this
+	// connection: "thread/start and thread/resume subscribe the calling connection. Reads and
+	// turn/start do not" (docs/relay/subscriptions.md). A run that ends before it -- the dry run, or
+	// a refusal after thread/read -- subscribed nothing, so its watch must not release a
+	// subscription that does not exist: the deferred Finish below retains the root on this
+	// connection for those runs rather than queueing a thread/unsubscribe, which would be a host
+	// mutation a read-only run must not send.
+	subscribed := false
 	started := false
 	defer func() {
 		// A run that started a turn hands the turn id to Finish so the subscription manager can
-		// follow it; every other ending finishes with no turn and no retention.
+		// follow it. Every other ending finishes with no turn, retaining the root only when this
+		// connection never subscribed it.
 		turn := ""
 		if started {
 			turn = report.TurnID
 		}
-		watch.Finish(turn, false)
+		watch.Finish(turn, !subscribed)
 	}()
 	fenced := watch.Context(ctx)
 	call := func(method string, params map[string]any) (json.RawMessage, error) {
@@ -330,6 +339,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return report, nil
 	}
 	// 2. thread/resume with the recorded settings and the servers switched off.
+	subscribed = true
 	resumed, err := call("thread/resume", map[string]any{
 		"threadId": child, "excludeTurns": true, "model": settings.Model, "cwd": settings.CWD,
 		"sandbox": mode, "approvalPolicy": settings.ApprovalPolicy,

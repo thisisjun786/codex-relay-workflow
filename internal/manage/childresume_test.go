@@ -351,6 +351,13 @@ func TestResumeDryRunSendsNothing(t *testing.T) {
 	if calls := resumeRelayCommands(t, resumeCalls(t, record)); !slices.Equal(calls, []string{"assignment-show", "settings-show"}) {
 		t.Errorf("dry-run asked the relay for %q", calls)
 	}
+	// A read-only run must not mutate the host. thread/read never subscribed this connection, so the
+	// finished watch must retain the root rather than queue a thread/unsubscribe. Before the fix the
+	// watch was finished with retain=false, making it eligible for release: the subscription
+	// worker raced client.Close and occasionally sent the unsubscribe anyway.
+	if n := host.Count("thread/unsubscribe"); n != 0 {
+		t.Errorf("the dry run sent thread/unsubscribe %d times; a read-only run changes nothing on the host", n)
+	}
 }
 
 // The command line: a missing option and an unreadable message file are usage errors, -h prints
@@ -661,10 +668,10 @@ func TestResumeFailsWhenTheConnectionDropsAfterResume(t *testing.T) {
 
 // C2: the normal path runs the four steps on one connection, in order, and returns with the turn
 // the watch followed, so the run finishes the watch it admitted instead of leaving it holding the
-// root. The thread/unsubscribe a finished watch asks for is not observable from here: the run
-// closes its client on the way out and a client close cancels an in-flight release by design
-// (internal/bridge/appserver, "shutdown reconnects or restarts release"); the release contract is
-// the bridge's own test, and the turn/completed notification below is what the watch would follow.
+// root. The thread/unsubscribe a finished watch asks for is not asserted here: the run closes its
+// client on the way out, and that close cancels an in-flight release before it can be observed
+// (internal/bridge/appserver/subscription.go, the release worker and Close). The release contract
+// is the bridge's own test; the turn/completed notification below is what the watch would follow.
 func TestResumeRunsTheFourStepsOnOneConnection(t *testing.T) {
 	host := resumeHost(t, "idle")
 	started := make(chan struct{})
