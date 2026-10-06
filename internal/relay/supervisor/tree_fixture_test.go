@@ -393,7 +393,13 @@ func openRaw(path string) (*sql.DB, error) {
 // rows they dump do not depend on an index, so the template, which has the indexes, is held to the digest
 // of the schema the fixtures were taken from by leaving them out.
 func schemaDigest(ctx context.Context, db *sql.DB, without map[string]bool) (string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\'")
+	// The v1 schema is the frozen script's tables, not the dag_ ones: the additive DAG zone also
+	// holds the merge-lane tables, which carry no dag_ prefix (testsupport.V1ObjectPredicate).
+	v1, err := testsupport.V1ObjectPredicate()
+	if err != nil {
+		return "", err
+	}
+	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master WHERE "+v1)
 	if err != nil {
 		return "", err
 	}
@@ -418,7 +424,11 @@ func schemaDigest(ctx context.Context, db *sql.DB, without map[string]bool) (str
 }
 
 func tableNames(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
+	v1, err := testsupport.V1ObjectPredicate()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND "+v1+" ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +555,11 @@ func loadRows(path string, dump *storeDump) (err error) {
 		return err
 	}
 	var triggers []string
-	rows, err := db.QueryContext(ctx, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY rowid")
+	v1, err := testsupport.V1ObjectPredicate()
+	if err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND "+v1+" ORDER BY rowid")
 	if err != nil {
 		return err
 	}

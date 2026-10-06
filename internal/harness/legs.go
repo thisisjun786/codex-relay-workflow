@@ -64,7 +64,26 @@ func Legs() []Leg {
 		{"session-start-advising-agent-thread-permissions", "session-start", "session-start-permission-advisory", Permission, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAgentThreadSessionStartAdvisory(c.Raw, os.LookupEnv)
 		}},
-		{"user-prompt-submit-checking-pabcd-trigger", "user-prompt-submit", "user-prompt-submit", Generic, false, false, false, nil},
+		{"user-prompt-submit-checking-pabcd-trigger", "user-prompt-submit", "user-prompt-submit", Generic, false, false, false, func(c Call) string {
+			p, ok := ParseUserPromptSubmit(c.Raw)
+			if !ok {
+				return ""
+			}
+			turn := ""
+			if p.TurnID != nil {
+				turn = *p.TurnID
+			}
+			transcript := ""
+			if p.TranscriptPath != nil {
+				transcript = *p.TranscriptPath
+			}
+			// The platform argument stays empty: LoopArmDirective resolves this host's platform when
+			// it is not given, which is the oracle's default (process.platform). The handler answers
+			// the context, and ContextOutput is the port of buildContextOutput that wraps it.
+			return ContextOutput("UserPromptSubmit", pabcdhook.PromptSubmitHandle(pabcdhook.PromptSubmitPayload{
+				Cwd: p.Cwd, SessionID: p.SessionID, Prompt: p.Prompt, TurnID: turn, TranscriptPath: transcript,
+				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
+		}},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
 		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
 			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)

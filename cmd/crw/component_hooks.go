@@ -12,6 +12,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 )
 
 // componentHook is an ingress outside the PABCD stage table. Each component owns
@@ -62,9 +64,18 @@ func componentHooks() []componentHook {
 				return raw
 			})
 		}},
+		// Spawn attach hook: the recursion and final-gate leg, with its own stdin policy and answer.
+		{"pre-tool-use-attaching-skills", "pre-tool-use", func(c invocation, in io.Reader) int {
+			return spawn.RunHook(c.ctx, in, c.stdout, os.LookupEnv)
+		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.
 		{"session-start-ensuring-provider-bridge", "session-start", func(c invocation, in io.Reader) int {
 			return provider.RunHook(c.ctx, in, c.stdout, os.LookupEnv)
+		}},
+		// Self-heal of the declared soft codex flags, report only: it diagnoses and warns, and
+		// writes nothing (the J4 decision). Activation is owned by the cutover.
+		{"session-start-healing-declared-features", "session-start", func(c invocation, in io.Reader) int {
+			return configguard.RunSelfHealReportHook(c.ctx, in, c.stdout, os.LookupEnv)
 		}},
 
 		{"stop-waking-on-background-completion", "stop", bg("stop")},
