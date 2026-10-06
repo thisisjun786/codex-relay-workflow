@@ -71,6 +71,11 @@ type RefreshStep struct {
 	Resolved                         []RefreshResolved
 }
 
+// versionOnly is whether the step is the version-only re-record a chain accepts (CRW-808) rather than a
+// merge: it has no base parent, because nothing was merged, and its resolution is the built-in
+// plugin-version rule the proof already proved from the commit's own payload.
+func (s RefreshStep) versionOnly() bool { return s.BaseParent == "" }
+
 // refreshRefusal is an answer of the proof and not a failure: the head is something other than the accepted head plus merges of the base.
 type refreshRefusal struct{ Code, Detail string }
 
@@ -101,6 +106,11 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 	}
 	for i := range p.Steps {
 		st := &p.Steps[i]
+		if st.versionOnly() {
+			// A version-only step merged nothing, so there is no base parent to read contributor
+			// regions from: the proof already settled its one path by the built-in rule.
+			continue
+		}
 		sets, err := g.contributingRegions(ctx, *st, contributors)
 		if err != nil {
 			return nil, err
@@ -372,19 +382,125 @@ func (g *refreshRepo) differing(ctx context.Context, a, b string) ([]string, err
 
 // blobAt is the blob id a commit holds for a path, empty when the commit has no such file.
 func (g *refreshRepo) blobAt(ctx context.Context, commit, path string) (string, error) {
-	_, out, err := g.run(ctx, nil, "ls-tree", "-z", commit, "--", path)
+	entry, err := g.entryAt(ctx, commit, path)
 	if err != nil {
 		return "", err
+	}
+	return entry.oid, nil
+}
+
+// repoEntry is one path of a commit: its mode, kind and blob id.
+type repoEntry struct{ mode, kind, oid string }
+
+// blob is the bytes of a blob the repository holds.
+func (g *refreshRepo) blob(ctx context.Context, oid string) (string, error) {
+	_, out, err := g.run(ctx, nil, "cat-file", "blob", oid)
+	return out, err
+}
+
+// runner is the proof's own git view as a pluginversion.GitRunner: the reads of a version go through
+// the same throwaway repository the rest of the proof reads, so a replace ref or an inherited GIT_*
+// variable cannot make the payload a different tree's.
+func (g *refreshRepo) runner() pluginversion.GitRunner {
+	return func(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir=" + g.gitdir}, args...)...)
+		cmd.Env = g.env
+		if stdin != nil {
+			cmd.Stdin = bytes.NewReader(stdin)
+		}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				return nil, fmt.Errorf("git %s: exit %d: %s", strings.Join(args, " "), exit.ExitCode(), strings.TrimSpace(stderr.String()))
+			}
+			return nil, err
+		}
+		return stdout.Bytes(), nil
+	}
+}
+
+// versionOnlyResolution decides whether a single-parent commit C is the version-only re-record a chain
+// accepts (CRW-808). It answers the rule and true when all of these hold, and false with the reason
+// otherwise; an empty reason means C changes something other than the manifest, which is work of the
+// child's own and keeps not_a_merge. The caller has already proved that parent is a merge in this
+// chain.
+//
+//   - the only path C changes against parent is the plugin manifest, with the same file mode;
+//   - the manifest equals parent's byte for byte apart from the version line, with the same release;
+//   - the version is the one C's own payload derives.
+func (g *refreshRepo) versionOnlyResolution(ctx context.Context, parent, commit string) (rule string, settled bool, why string, err error) {
+	differing, err := g.differing(ctx, parent, commit)
+	if err != nil {
+		return "", false, "", err
+	}
+	if len(differing) != 1 || differing[0] != pluginversion.ManifestRepoPath {
+		return "", false, "", nil
+	}
+	before, err := g.entryAt(ctx, parent, pluginversion.ManifestRepoPath)
+	if err != nil {
+		return "", false, "", err
+	}
+	after, err := g.entryAt(ctx, commit, pluginversion.ManifestRepoPath)
+	if err != nil {
+		return "", false, "", err
+	}
+	if before.kind != "blob" || after.kind != "blob" || before.mode != after.mode || (after.mode != "100644" && after.mode != "100755") {
+		return "", false, fmt.Sprintf("it is not the same regular file of one mode in both commits (%s and %s)", before.mode, after.mode), nil
+	}
+	parentContent, err := g.blob(ctx, before.oid)
+	if err != nil {
+		return "", false, "", err
+	}
+	commitContent, err := g.blob(ctx, after.oid)
+	if err != nil {
+		return "", false, "", err
+	}
+	elidedParent, parentVersion, err := pluginversion.ManifestVersionElided([]byte(parentContent))
+	if err != nil {
+		return "", false, "its parent's manifest cannot be read apart from its version: " + err.Error(), nil
+	}
+	elidedCommit, commitVersion, err := pluginversion.ManifestVersionElided([]byte(commitContent))
+	if err != nil {
+		return "", false, "its manifest cannot be read apart from its version: " + err.Error(), nil
+	}
+	if !bytes.Equal(elidedParent, elidedCommit) {
+		return "", false, "its manifest differs from its parent's outside the version line", nil
+	}
+	parentRelease, _ := pluginversion.SplitVersion(parentVersion)
+	commitRelease, _ := pluginversion.SplitVersion(commitVersion)
+	if parentRelease != commitRelease {
+		return "", false, fmt.Sprintf("its version %q does not keep the release %q its parent records", commitVersion, parentRelease), nil
+	}
+	want, reason, err := pluginversion.TreeVersion(ctx, g.runner(), commit)
+	if err != nil {
+		return "", false, "", err
+	}
+	if reason != "" {
+		return "", false, "the payload of " + commit + " cannot name a version: " + reason, nil
+	}
+	if commitVersion != want {
+		return "", false, fmt.Sprintf("its version %q is not the %q its own payload derives", commitVersion, want), nil
+	}
+	return BuiltinPluginVersionRule, true, "", nil
+}
+
+// entryAt is the entry a commit holds for a path; a commit without that path answers an empty entry.
+func (g *refreshRepo) entryAt(ctx context.Context, commit, path string) (repoEntry, error) {
+	_, out, err := g.run(ctx, nil, "ls-tree", "-z", commit, "--", path)
+	if err != nil {
+		return repoEntry{}, err
 	}
 	entry, _, _ := strings.Cut(out, "\x00")
 	meta, name, ok := strings.Cut(entry, "\t")
 	if !ok || name != path {
-		return "", nil
+		return repoEntry{}, nil
 	}
 	if fields := strings.Fields(meta); len(fields) == 3 {
-		return fields[2], nil
+		return repoEntry{mode: fields[0], kind: fields[1], oid: fields[2]}, nil
 	}
-	return "", nil
+	return repoEntry{}, nil
 }
 
 // scanConflictMarkers reads a file and says whether it holds the start line and the end line of a conflict: a line that begins with width or more of the same marker character (< or >) and then ends or goes
@@ -499,6 +615,38 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 		if err != nil {
 			return nil, nil, err
 		}
+		if len(parents) == 1 {
+			// A single-parent commit is the version-only re-record a chain accepts (CRW-808), and only
+			// when its parent is a base merge this chain proved; the walk proves that parent next, so
+			// the condition is checked after it (below). Everything else keeps not_a_merge.
+			parent := parents[0]
+			rule, settled, why, err := g.versionOnlyResolution(ctx, parent, cur)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !settled {
+				if why == "" {
+					names, err := g.differing(ctx, parent, cur)
+					if err != nil {
+						return nil, nil, err
+					}
+					return refuse(RefreshNotAMerge, "%s has 1 parent(s) and changes %s: a single-parent commit is work of the child's own unless it only re-records the plugin manifest's version line", cur, refreshPathsText(names))
+				}
+				return refuse(RefreshTreeDiffers, "%s re-records %s but is not the version-only refresh this proof accepts: %s", cur, pluginversion.ManifestRepoPath, why)
+			}
+			headTree, err := g.treeOf(ctx, cur)
+			if err != nil {
+				return nil, nil, err
+			}
+			blob, err := g.blobAt(ctx, cur, pluginversion.ManifestRepoPath)
+			if err != nil {
+				return nil, nil, err
+			}
+			steps = append(steps, RefreshStep{Previous: parent, Head: cur, Tree: headTree,
+				Resolved: []RefreshResolved{{Path: pluginversion.ManifestRepoPath, Blob: blob, Rule: rule}}})
+			cur = parent
+			continue
+		}
 		if len(parents) != 2 {
 			return refuse(RefreshNotAMerge, "%s has %d parent(s): a refresh is a chain of merges of exactly two parents, and this commit is work of the child's own", cur, len(parents))
 		}
@@ -587,6 +735,16 @@ func proveBaseRefresh(ctx context.Context, g *refreshRepo, accepted, head, baseT
 	}
 	for i, j := 0, len(steps)-1; i < j; i, j = i+1, j-1 {
 		steps[i], steps[j] = steps[j], steps[i]
+	}
+	// A version-only step is accepted only on a base merge this chain proved: the chain's first commit
+	// and a version-only commit after another single-parent commit are refused (CRW-808).
+	for i := range steps {
+		if steps[i].BaseParent != "" {
+			continue
+		}
+		if i == 0 || steps[i-1].BaseParent == "" || steps[i-1].Head != steps[i].Previous {
+			return refuse(RefreshNotAMerge, "%s re-records only %s but sits on %s, which this chain did not prove as a base merge: a version-only commit is accepted only on top of a merge the chain already proved", steps[i].Head, pluginversion.ManifestRepoPath, steps[i].Previous)
+		}
 	}
 	return &refreshProof{Steps: steps}, nil, nil
 }
