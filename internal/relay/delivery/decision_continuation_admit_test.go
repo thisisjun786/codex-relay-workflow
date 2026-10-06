@@ -32,6 +32,7 @@ func (d *decWorld) admittedTurn(turn string) Row {
 // relay and the decision named, one turn_admitted journal row, and no parent intervention. The
 // receipt the child then emits from that turn with the claim the message prints is accepted.
 func TestDCA01_AKeepingDecisionAdmitsTheTurnItDispatched(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "continue from where you stopped", ""))
 	d.mustAttempt(event, nil)
@@ -73,6 +74,7 @@ func TestDCA01_AKeepingDecisionAdmitsTheTurnItDispatched(t *testing.T) {
 // c1: the admission is ON CONFLICT DO NOTHING. A row that is already there (an earlier claim of
 // the same turn) keeps its evidence, actor and detail, and no second row is written.
 func TestDCA02_AnAdmissionThatAlreadyExistsIsLeftAsItIs(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	// The continuation turn is one the host already holds, so its id is known before the send.
@@ -97,6 +99,7 @@ func TestDCA02_AnAdmissionThatAlreadyExistsIsLeftAsItIs(t *testing.T) {
 // new generation the scheduler binds separately, and a completion delivery to the parent is no
 // decision at all: neither admits the turn it was dispatched into.
 func TestDCA03_OnlyAKeepingDecisionAdmitsItsTurn(t *testing.T) {
+	t.Parallel()
 	t.Run("split_approval", func(t *testing.T) {
 		d := newDecWorld(t)
 		event := decEvent(d.mustReply(DecisionSplitApproval, "keep the endpoint half", pyjson.Text(d.setDigest())))
@@ -138,6 +141,7 @@ func TestDCA03_OnlyAKeepingDecisionAdmitsItsTurn(t *testing.T) {
 // withheld before the send, or left in the recipient's inbox started no turn, so there is nothing
 // to admit.
 func TestDCA04_OnlyADispatchedSettleAdmits(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, script, state string }{
 		{"deferred_busy", "busy", DeferredBusy},
 		{"withheld_pre_send", "read_fail", WithheldPreSend},
@@ -164,6 +168,7 @@ func TestDCA04_OnlyADispatchedSettleAdmits(t *testing.T) {
 // c1: the admission is bound to the generation's own dispatch turn. A generation that has none
 // admits nothing, so no row can name an anchor that does not exist.
 func TestDCA05_AGenerationWithoutADispatchTurnAdmitsNothing(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	d.exec("UPDATE generations SET dispatch_turn_id = NULL WHERE relationship_id = ? AND execution_generation = 1", d.rid)
@@ -185,6 +190,7 @@ func TestDCA05_AGenerationWithoutADispatchTurnAdmitsNothing(t *testing.T) {
 // settle as a send, so it admits the continuation turn too: whether the first transport response
 // arrived does not decide whether the parent can see that turn's end.
 func TestDCA07_ARecoveredDecisionAdmitsItsContinuationTurn(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	// the send's response is lost: the attempt is left held_uncertain, with no turn id
@@ -228,6 +234,7 @@ func TestDCA07_ARecoveredDecisionAdmitsItsContinuationTurn(t *testing.T) {
 
 // c1: a recovered turn the child then reports from needs no claim either, exactly as the sent one.
 func TestDCA08_ARecoveredTurnIsAcceptedWithoutAClaim(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	d.host.script = []string{"in_progress"}
@@ -248,6 +255,7 @@ func TestDCA08_ARecoveredTurnIsAcceptedWithoutAClaim(t *testing.T) {
 // it, the delivery row and the admission roll back together: there is no dispatched delivery whose
 // turn nothing admitted, and no admission for a send that did not settle.
 func TestDCA09_TheAdmissionRollsBackWithTheSettleThatFailed(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	// The journal row settle writes after the admission is refused, so the whole transaction aborts.
@@ -271,6 +279,7 @@ func TestDCA09_TheAdmissionRollsBackWithTheSettleThatFailed(t *testing.T) {
 // generation before the send is attempted never reaches the settle: the delivery is superseded as a
 // stale generation, so the turn is admitted into no generation at all.
 func TestDCA10_ADecisionOnAStaleGenerationAdmitsNothing(t *testing.T) {
+	t.Parallel()
 	d := newObsWorld(t, "interrupted")
 	event := decEvent(d.mustReply(DecisionAnswer, "go on", ""))
 	mustDo(t, d.store.Transaction(d.ctx, func(ctx context.Context, _ *sql.Conn) error {

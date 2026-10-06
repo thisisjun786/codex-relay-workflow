@@ -14,6 +14,7 @@ import (
 // copy: the blob reads it ended come back as problems, and reading them as B-17 would block a
 // successor node on a copy that is fine. The answer is the context's error, as it is for the files.
 func TestFrozenFindingTakesAStopForAStop(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	artifact := filepath.Join(root, "design.md")
 	if err := os.WriteFile(artifact, []byte("the delivered design\n"), 0o600); err != nil {

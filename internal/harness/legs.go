@@ -85,12 +85,18 @@ func Legs() []Leg {
 				PabcdEnabled: c.PabcdEnabled}, "", os.LookupEnv))
 		}},
 		{"stop-checking-pabcd-continuation", "stop", "stop", Generic, false, false, true, nil},
-		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
+		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
+			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		}},
 		{"permission-request-allowing-agent-thread", "permission-request", "permission-request", Permission, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAgentThreadPermissionRequest(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
-		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, nil},
+		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
+			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		}},
+		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, false, false, false, func(c Call) string {
+			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		}},
 		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, false, false, true, func(c Call) string {
 			p, ok := ParsePostToolUse(c.Raw)
 			if !ok {
@@ -152,7 +158,9 @@ func Legs() []Leg {
 		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, true, false, false, func(c Call) string {
 			return pabcdhook.HandleMemoryWriteGate(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, nil},
+		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, false, false, false, func(c Call) string {
+			return pabcdhook.HandleAutomationOwnershipGate(c.Raw, os.LookupEnv)
+		}},
 	}
 }
 
