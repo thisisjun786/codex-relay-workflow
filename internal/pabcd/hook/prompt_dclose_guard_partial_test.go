@@ -149,6 +149,60 @@ func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
 	}
 }
 
+// TestPromptDcloseRecoveryEarlyRefusalNamesTheInheritedMarker is the d1 case: a retry whose plan
+// cannot be read or fails its integrity check refuses before the recovery arm runs, but the marker
+// the first attempt published is still on the session, so the refusal must name it.
+func TestPromptDcloseRecoveryEarlyRefusalNamesTheInheritedMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-early-refusal"
+	// A marker-matched retry whose bound plan is empty: the integrity/empty-plan refusal fires before
+	// the recovery arm, and the inherited marker is the artifact this close already published.
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, nil)
+	promptDcloseRecoveryPlan(t, cwd, slug, []goalplan.GoalplanWorkPhase{}, nil)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "has no active work-phase to close") {
+		t.Fatalf("the recovery did not refuse at the empty-plan check: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the early refusal did not name the inherited marker: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the early refusal denied the marker on the session: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryRefusalWithoutASuccessorNamesOnlyTheMarker is the d3 case: a retry whose
+// marker recorded no successor answers the absent-target cleanup, but that answer is not proof the
+// first attempt's plan commit landed. A later refusal must name the marker alone, never claim the
+// goalplan was published.
+func TestPromptDcloseRecoveryRefusalWithoutASuccessorNamesOnlyTheMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-no-successor"
+	// wp-1 is gone and the marker recorded no successor, so the resume answers cleanup; a plan left
+	// looking finished is not evidence of this close's commit.
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "no successor " + slug})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-2")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptDcloseWrite(t, cwd, filepath.Join(".crw", "sessions", "s1.json"),
+		promptDcloseCommittedRecoveryStateNext(slug, "c-recovery", "null"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", ""))
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Fatalf("the retry did not refuse at the IDLE-write guard: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal claimed a goalplan this close never proved it published: %q", answer)
+	}
+}
+
 // TestPromptDcloseRecoveryRefusalNamesTheCommittedMarkerAndPlan is the recovery-refusal case: the
 // first attempt of this close wrote the marker and committed the plan (the target is closed on
 // disk), and the operator then left an open task under it, so the retry refuses. The refusal must
@@ -220,10 +274,16 @@ func TestPromptDcloseRecoveryCleanupNamesTheCommittedPlan(t *testing.T) {
 // reader would truncate, so the IDLE-write guard refuses the resting state while the file stays
 // readable.
 func promptDcloseCommittedRecoveryState(slug, epoch string) string {
+	return promptDcloseCommittedRecoveryStateNext(slug, epoch, "\"wp-2\"")
+}
+
+// promptDcloseCommittedRecoveryStateNext is the same with the marker's recorded successor spelled by
+// the caller: "null" for a marker that recorded none.
+func promptDcloseCommittedRecoveryStateNext(slug, epoch, next string) string {
 	claim := strings.Repeat("x", state.MaxReceiptClaimLen+1)
 	return "{\"phase\":\"C\",\"sessionId\":\"s1\",\"slug\":\"" + slug + "\",\"orchestrationActive\":true,\"checkEpoch\":\"" + epoch +
 		"\",\"flags\":{\"auditPassed\":true,\"checkPassed\":true}," +
-		"\"dcloseRecovery\":{\"sessionId\":\"s1\",\"checkEpoch\":\"" + epoch + "\",\"closedWorkPhaseId\":\"wp-1\",\"nextWorkPhaseId\":\"wp-2\"}," +
+		"\"dcloseRecovery\":{\"sessionId\":\"s1\",\"checkEpoch\":\"" + epoch + "\",\"closedWorkPhaseId\":\"wp-1\",\"nextWorkPhaseId\":" + next + "}," +
 		"\"unverifiedSubagents\":[{\"agentId\":\"a1\",\"turnId\":\"t1\",\"agentType\":\"worker\",\"attempts\":1,\"receiptClaimed\":\"" + claim +
 		"\",\"recordedAt\":\"2026-01-01T00:00:00.000Z\",\"resolvable\":false}]}"
 }
