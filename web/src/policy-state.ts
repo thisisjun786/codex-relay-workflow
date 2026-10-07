@@ -199,6 +199,19 @@ export interface PolicyNotice {
   reread: boolean;
   /** True when a person must repair the host before another write can be attempted. */
   blockEditing: boolean;
+  /** Set on a lost write response: its starting digest and what the re-read found. */
+  lost: LostWrite | null;
+}
+
+/**
+ * A lost write response: the digest the change started from, and what the re-read found. The outcome
+ * is "unknown" until a registered reading lands; then it is "stored" (the file moved off the starting
+ * digest) or "not_stored" (the file still holds it). A failed re-read leaves it "unknown".
+ */
+export interface LostWrite {
+  fromDigest: string;
+  outcome: "unknown" | "stored" | "not_stored";
+  storedDigest: string;
 }
 
 /** One selectable model, and whether the catalog still lists it. */
@@ -782,7 +795,7 @@ function isWriteError(body: unknown): body is PolicyWriteError {
 }
 
 function emptyNotice(tone: PolicyNotice["tone"], text: string): PolicyNotice {
-  return { tone, text, stored: null, registered: null, applied: null, actions: [], errors: [], warnings: [], restored: null, keepInputs: false, reread: false, blockEditing: false };
+  return { tone, text, stored: null, registered: null, applied: null, actions: [], errors: [], warnings: [], restored: null, keepInputs: false, reread: false, blockEditing: false, lost: null };
 }
 
 /**
@@ -902,11 +915,43 @@ export function checkNotice(result: PolicyCheckResult): PolicyNotice {
  * has replaced the file, so a dropped connection can leave a write that completed with no answer.
  * The only honest reading is that the result is unknown, and the screen re-reads to find out.
  */
-export function lostWriteNotice(): PolicyNotice {
+export function lostWriteNotice(fromDigest = ""): PolicyNotice {
   const notice = emptyNotice("err", "The connection was lost before the server answered, so whether this change was written is unknown. The policy is being read again to find out; check the digest before retrying.");
   notice.keepInputs = true;
   notice.reread = true;
+  notice.lost = { fromDigest, outcome: "unknown", storedDigest: "" };
   return notice;
+}
+
+/**
+ * saveHeading is the headline the screen shows for a save notice. A lost write is headed by its own
+ * result, never by the error tone: an indeterminate write is "Result unknown" until a re-read settles
+ * it, so the screen never says "Not saved" for a change the server may have stored.
+ */
+export function saveHeading(notice: PolicyNotice | null): string {
+  if (notice === null) return "";
+  if (notice.lost !== null) {
+    if (notice.lost.outcome === "stored") return "Saved";
+    if (notice.lost.outcome === "not_stored") return "Not saved";
+    return "Result unknown";
+  }
+  return notice.tone === "ok" ? "Saved" : "Not saved";
+}
+
+/**
+ * resolveLostNotice settles a lost write from the first registered reading that lands after it. The
+ * file moved off the digest the change started from: the change was stored. The file still holds that
+ * digest: it was not. Anything else (no reading, or a reading that is not registered) stays unknown.
+ */
+function resolveLostNotice(notice: PolicyNotice | null, reading: PolicyReading): PolicyNotice | null {
+  if (notice === null || notice.lost === null || notice.lost.outcome !== "unknown") return notice;
+  if (reading.state !== "registered") return notice;
+  const from = notice.lost.fromDigest;
+  const now = reading.digest ?? "";
+  if (now === from) {
+    return { ...notice, lost: { ...notice.lost, outcome: "not_stored" }, text: `The policy file still has digest ${digest12(from)}, the digest this change started from, so the change was not stored. Your inputs are kept.` };
+  }
+  return { ...notice, lost: { ...notice.lost, outcome: "stored", storedDigest: now }, text: `The policy file now has digest ${digest12(now)}, not the ${digest12(from)} this change started from, so the change was stored. Check the values before saving again.` };
 }
 
 /** unreachableNotice is the sentence a request that could not be answered at all becomes. */
@@ -1086,7 +1131,7 @@ export async function runSave(state: PolicyScreenState, transports: PolicyWriteT
   } catch {
     // A lost response is not a lost write: the server finishes registration after it has replaced the
     // file, so the screen re-reads rather than claiming nothing changed.
-    notice = lostWriteNotice();
+    notice = lostWriteNotice(reading.digest ?? "");
   }
   return { state: screenSaveFinished(started, change, notice), reread: notice.tone === "ok" || notice.reread, rereadKeepsInputs: notice.tone === "ok" || notice.keepInputs, saved: notice.tone === "ok" };
 }
@@ -1118,6 +1163,7 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
     return {
       ...state,
       reading,
+      notice: resolveLostNotice(state.notice, reading),
       error: null,
       busy: false,
       repair,
@@ -1139,6 +1185,7 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
   return {
     ...state,
     reading,
+    notice: resolveLostNotice(state.notice, reading),
     error: null,
     busy: false,
     repair,

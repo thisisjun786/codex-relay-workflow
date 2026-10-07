@@ -25,6 +25,7 @@ import {
   draftForNewException,
   exceptionRoleOptions,
   lostWriteNotice,
+  saveHeading,
   modelLadder,
   modelOptions,
   noticeForWrite,
@@ -534,6 +535,53 @@ test("a save refused while a repair is outstanding names the repair, not a read 
   assert.ok(outcome.state.notice?.text.includes("restore the backup"), "the notice carries the repair sentence");
   assert.ok(!outcome.state.notice?.text.includes("could not be read"), "it does not blame the read");
 });
+
+test("a lost write is headed Result unknown, never Not saved, before any re-read lands", async () => {
+  // d1 (eval pr868-2dbb7267): the heading was derived from the tone alone, so an indeterminate write
+  // rendered "Not saved". The heading must come from the notice's own result kind.
+  const state = await afterLostWrite();
+  assert.equal(saveHeading(state.notice), "Result unknown");
+});
+
+test("a lost write re-read that finds a new digest is headed Saved and says what was found", async () => {
+  const state = screenLoaded(await afterLostWrite(), reading({ digest: "b".repeat(64), registeredDigest: "b".repeat(64) }), true);
+  assert.equal(saveHeading(state.notice), "Saved");
+  assert.ok(state.notice?.text.includes("now has digest"), "the notice says what the re-read found");
+  assert.equal(state.notice?.lost?.outcome, "stored");
+});
+
+test("a lost write re-read that still finds the starting digest is headed Not saved", async () => {
+  const state = screenLoaded(await afterLostWrite(), reading(), true);
+  assert.equal(saveHeading(state.notice), "Not saved");
+  assert.ok(state.notice?.text.includes("was not stored"), "the notice says the change was not stored");
+  assert.equal(state.notice?.lost?.outcome, "not_stored");
+});
+
+test("a lost write whose re-read fails stays Result unknown", async () => {
+  const state = screenLoadFailed(await afterLostWrite(), "the policy could not be read");
+  assert.equal(state.reading, null);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+});
+
+test("a re-read that is not a registered reading leaves a lost write Result unknown", async () => {
+  const state = screenLoaded(await afterLostWrite(), reading({ state: "unreadable", reason: "the file could not be read", digest: "" }), true);
+  assert.equal(saveHeading(state.notice), "Result unknown");
+});
+
+test("a refused write is still headed Not saved and a stored one Saved", () => {
+  assert.equal(saveHeading(noticeForWrite(422, { error: "invalid_policy", errors: ["x"] })), "Not saved");
+  assert.equal(saveHeading(noticeForWrite(200, { stored: { digest: "c".repeat(64) }, registered: { digest: "c".repeat(64) }, applied: "applied", actions: [] })), "Saved");
+});
+
+async function afterLostWrite(): Promise<PolicyScreenState> {
+  let state = screenLoaded(initialScreen(), reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  return out.state;
+}
 
 test("a successful save leaves the file's values behind it and no draft of its own", () => {
   // The success path drops the draft the write spent, so a later read shows the file rather than a

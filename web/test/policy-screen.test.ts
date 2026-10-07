@@ -401,6 +401,21 @@ test("the screen shows the applied state and the server's action, never a guesse
   assert.ok(!markup.includes("still holds the old bytes"), "the running state is never asserted");
 });
 
+test("the screen headlines a lost write Result unknown, never Not saved", async () => {
+  // d1 observed on the rendered screen: a lost response must not be headed as a refused save.
+  const pure = await import("../src/policy-state.ts");
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const out = await pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  const { markup } = await mount(out.state as unknown as Record<string, unknown>);
+  assert.ok(markup.includes("Result unknown"), "the lost write is headed Result unknown");
+  assert.ok(!markup.includes("Not saved"), "it is never headed Not saved");
+});
+
 test("a save in flight disables the screen's other edit controls", async () => {
   const pure = await import("../src/policy-state.ts");
   let state = pure.initialScreen();

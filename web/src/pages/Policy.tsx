@@ -55,6 +55,7 @@ import {
   initialScreen,
   isBlankText,
   screenBusy,
+  saveHeading,
   type ExceptionDraft,
   type PolicyChange,
   type PolicyExceptionView,
@@ -443,7 +444,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
 
             {state.notice ? (
               <div className="card" role="status" style={{ marginTop: 12 }}>
-                <h2 className="card-title">{state.notice.tone === "ok" ? "Saved" : "Not saved"}</h2>
+                <h2 className="card-title">{saveHeading(state.notice)}</h2>
                 <p className="sub">{state.notice.text}</p>
                 {state.notice.stored ? <p className="sub mono">stored {state.notice.stored}</p> : null}
                 {state.notice.registered ? <p className="sub mono">registered {state.notice.registered}</p> : null}
