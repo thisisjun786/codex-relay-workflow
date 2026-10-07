@@ -250,53 +250,37 @@ func parentLocation(component string) string {
 // an object this call never made.
 //
 // When the spelled path cannot be read, the directory the mkdir made is still reached through the
-// parent this call recorded, if that parent is still provably this call's: its recorded location is
-// read and compared with os.SameFile against the identity taken when the parent was made, and only a
-// match licenses the child's location. That is what keeps a directory this call made from being
-// dropped from the record when a segment above the parent vanishes between the mkdir and this read.
-// Nothing is recorded when the parent cannot be verified, because a location that might name another
-// install's directory must never be removed.
-func componentIdentity(component, parent string, created []createRootRecord) (string, os.FileInfo, error) {
+// parent the mkdir ran under: parent is that parent's resolved location, read immediately before the
+// mkdir, and childAbsent says the component was not there when it was read at that same location.
+// Together they say a directory standing at parent plus the component's name now is the one the
+// mkdir made, even though a segment above the parent has since vanished. Without that observation
+// the parent could have been repointed between the read and the mkdir, so the location might name
+// another install's directory; nothing is recorded then, and the directory is left alone rather than
+// removed on a guess.
+func componentIdentity(component, parent string, childAbsent bool) (string, os.FileInfo, error) {
 	spelled, spelledErr := os.Lstat(component)
 	if spelledErr == nil {
 		if parent != "" {
-			location := crwconfig.JoinRoot(parent, filepath.Base(strings.TrimRight(component, string(os.PathSeparator))))
+			location := childLocation(component, parent)
 			if info, err := os.Lstat(location); err == nil && os.SameFile(spelled, info) {
 				return location, info, nil
 			}
 		}
 		return component, spelled, nil
 	}
-	// The spelling cannot be read. When the parent this call made is still the directory standing
-	// at its own recorded location, the child's location inside it is this call's too.
-	if parent := recordedParentLocation(created, component); parent != "" {
-		location := crwconfig.JoinRoot(parent, filepath.Base(strings.TrimRight(component, string(os.PathSeparator))))
-		if info, err := os.Lstat(location); err == nil && info.IsDir() {
-			return location, info, nil
-		}
+	if parent == "" || !childAbsent {
+		return "", nil, spelledErr
+	}
+	location := childLocation(component, parent)
+	if info, err := os.Lstat(location); err == nil && info.IsDir() {
+		return location, info, nil
 	}
 	return "", nil, spelledErr
 }
 
-// recordedParentLocation answers the location of the directory this call recorded as component's
-// parent, or "" when that parent is not in the record or is no longer the directory this call made.
-// The comparison is against the identity taken when the parent was made, so a parent another install
-// has since replaced does not license anything.
-func recordedParentLocation(created []createRootRecord, component string) string {
-	parent := componentParent(component)
-	if parent == "" {
-		return ""
-	}
-	for _, made := range created {
-		if made.path != parent || made.resolved == "" {
-			continue
-		}
-		info, err := os.Lstat(made.resolved)
-		if err == nil && os.SameFile(made.info, info) {
-			return made.resolved
-		}
-	}
-	return ""
+// childLocation answers where a component's directory stands under its parent's resolved location.
+func childLocation(component, parent string) string {
+	return crwconfig.JoinRoot(parent, filepath.Base(strings.TrimRight(component, string(os.PathSeparator))))
 }
 
 // dropGone drops the record of a component the scan found missing when the component is really
@@ -361,14 +345,23 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				createRootBeforeMkdir(component)
 			}
 			parent := parentLocation(component)
+			childAbsent := false
+			if parent != "" {
+				if _, err := os.Lstat(childLocation(component, parent)); errors.Is(err, fs.ErrNotExist) {
+					childAbsent = true
+				}
+			}
 			err := os.Mkdir(component, 0o755)
+			if err == nil && createRootAfterMkdir != nil {
+				createRootAfterMkdir(component)
+			}
 			switch {
 			case err == nil:
 				// The component is this call's, wherever in the walk it was made, so its identity
 				// is read now and recorded with it. An identity that cannot be read is a component
 				// that vanished under this call, which the recompute below handles rather than a
 				// record that would let removeCreated remove whatever is there next.
-				location, info, statErr := componentIdentity(component, parent, created)
+				location, info, statErr := componentIdentity(component, parent, childAbsent)
 				if statErr != nil {
 					absent = statErr
 					break
@@ -381,7 +374,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// as missing and this call made it again below the re-made ancestor. Otherwise
 				// another install removed this call's directory and made its own, which is not
 				// this call's to remove.
-				location, info, statErr := componentIdentity(component, parent, created)
+				location, info, statErr := componentIdentity(component, parent, childAbsent)
 				if statErr == nil && sameRecordedDirectory(created, component, info) {
 					// The directory is still the one this call made, and the walk resolved it
 					// again, so the location it resolves to now is the better one to keep.
@@ -459,6 +452,11 @@ func dropCreated(created []createRootRecord, path string) []createRootRecord {
 // so a test can remove an ancestor at exactly the moment a concurrent install would instead of
 // relying on timing. nil is the production value.
 var createRootBeforeMkdir func(path string)
+
+// createRootAfterMkdir is a test seam called immediately after an os.Mkdir that succeeded and
+// before the identity of what it made is read, so a test can make an ancestor vanish in exactly that
+// window instead of relying on timing. nil is the production value.
+var createRootAfterMkdir func(path string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
