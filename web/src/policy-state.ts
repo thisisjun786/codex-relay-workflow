@@ -309,6 +309,41 @@ function pairText(pair: PolicyPair): string {
   return `${pair.model} ${pair.reasoningEffort}`.trim();
 }
 
+/**
+ * The accessible name of a control on the screen. They live here rather than in the .tsx so the
+ * label a control carries is pinned by a pure test, which is the only kind node:test can run
+ * without a DOM: the screen imports these and every control it renders is named from them, so a
+ * control cannot appear unlabelled.
+ */
+export function roleControlsLabel(role: string): string {
+  return `${role} pair controls`;
+}
+
+export function pairModelLabel(role: string, index: number): string {
+  return `${role} pair ${index + 1} model`;
+}
+
+export function pairEffortLabel(role: string, index: number): string {
+  return `${role} pair ${index + 1} effort`;
+}
+
+export function allowedEffortsLabel(model: string): string {
+  return `${model} allowed efforts`;
+}
+
+export function removeExceptionLabel(id: string): string {
+  return `Remove exception ${id}`;
+}
+
+/**
+ * Every control the screen renders is one of these native elements, which the browser makes
+ * keyboard operable and focusable by itself. The screen adds no custom widget, no tabindex of its
+ * own and no key handler, so keyboard operability is a property of the element kind rather than of
+ * code this screen writes. A test pins the list so a later edit that introduces a non-native
+ * control has to change it deliberately.
+ */
+export const POLICY_CONTROL_ELEMENTS = ["select", "input", "button", "fieldset"] as const;
+
 /** pairsText is a pair list as a row reads it, or a word for the empty list. */
 function pairsText(pairs: readonly PolicyPair[]): string {
   return pairs.length === 0 ? "none" : pairs.map(pairText).join(", ");

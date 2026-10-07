@@ -14,6 +14,11 @@ import {
   policyEfforts,
   policyView,
   previewChange,
+  allowedEffortsLabel,
+  pairEffortLabel,
+  pairModelLabel,
+  removeExceptionLabel,
+  roleControlsLabel,
   type ModelCatalog,
   type PolicyChange,
   type PolicyExceptionView,
@@ -211,13 +216,13 @@ export function PolicyPage() {
                     {role.expectation ? <span className="row-sub">expectation: {role.expectation}</span> : null}
                   </div>
                   {role.editable && editable ? (
-                    <fieldset className="role-controls" disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={`${role.name} pair controls`}>
+                    <fieldset className="role-controls" disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={roleControlsLabel(role.name)}>
                       {role.pairs.map((pair, index) => (
                         <div className="role-selects" key={index}>
                           <select
                             className="select"
                             style={{ maxWidth: "220px" }}
-                            aria-label={`${role.name} pair ${index + 1} model`}
+                            aria-label={pairModelLabel(role.name, index)}
                             value={pair.model}
                             onChange={(e) => {
                               const pairs = role.pairs.map((current, at) => (at === index ? { ...current, model: e.target.value } : current));
@@ -234,7 +239,7 @@ export function PolicyPage() {
                           <select
                             className="select"
                             style={{ maxWidth: "160px" }}
-                            aria-label={`${role.name} pair ${index + 1} effort`}
+                            aria-label={pairEffortLabel(role.name, index)}
                             value={pair.reasoningEffort}
                             onChange={(e) => {
                               const pairs = role.pairs.map((current, at) => (at === index ? { ...current, reasoningEffort: e.target.value } : current));
@@ -284,7 +289,7 @@ export function PolicyPage() {
                         id={`allowed-${entry.model}`}
                         className="input"
                         style={{ maxWidth: "220px" }}
-                        aria-label={`${entry.model} allowed efforts`}
+                        aria-label={allowedEffortsLabel(entry.model)}
                         defaultValue={entry.efforts.join(", ")}
                         onBlur={(e) => {
                           const next = e.target.value.split(",").map((name) => name.trim()).filter((name) => name !== "");
@@ -314,7 +319,7 @@ export function PolicyPage() {
                       <button
                         className="btn danger"
                         onClick={() => propose({ kind: "removeException", id: exception.id })}
-                        aria-label={`Remove exception ${exception.id}`}
+                        aria-label={removeExceptionLabel(exception.id)}
                       >
                         Remove
                       </button>

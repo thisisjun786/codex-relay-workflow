@@ -12,14 +12,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   POLICY_BLAST_RADIUS,
+  POLICY_CONTROL_ELEMENTS,
   SUPERVISOR_LABEL,
+  allowedEffortsLabel,
   catalogNotice,
   decodePolicy,
   modelOptions,
   noticeForWrite,
+  pairEffortLabel,
+  pairModelLabel,
   policyEfforts,
   policyView,
   previewChange,
+  removeExceptionLabel,
+  roleControlsLabel,
   type ModelCatalog,
   type PolicyChange,
   type PolicyReading,
@@ -121,6 +127,46 @@ test("the allowed-list preview shows the efforts before and after", () => {
   const item = preview.items.find((entry) => entry.label.includes("gpt-6.1-sol"));
   assert.equal(item?.before, "xhigh");
   assert.equal(item?.after, "max");
+});
+
+test("removing an allowed model previews the row leaving the list", () => {
+  // The trigger a reviewer would try: remove the row, not edit its efforts. The backend refuses
+  // removing the last entry (check.go:309-313), so the preview names which row leaves.
+  const preview = previewChange(reading(), { kind: "removeAllowed", model: "gpt-6.1-sol" });
+  const item = preview.items.find((entry) => entry.label.includes("gpt-6.1-sol"));
+  assert.ok(item, "the preview names the allowed row");
+  assert.equal(item?.before, "xhigh");
+  assert.equal(item?.after, "removed");
+  assert.equal(preview.blastRadius, POLICY_BLAST_RADIUS);
+});
+
+test("setting an exception previews the exception before and after", () => {
+  const preview = previewChange(reading(), {
+    kind: "setException",
+    id: "legacy",
+    role: "child",
+    model: "anthropic/opus",
+    effort: "max",
+    cwd: ["/srv/other"],
+  });
+  const item = preview.items.find((entry) => entry.label.includes("legacy"));
+  assert.ok(item, "the preview names the exception");
+  assert.equal(item?.before, "parent devin/swe-2 max (/srv/project)");
+  assert.equal(item?.after, "child anthropic/opus max (/srv/other)");
+});
+
+test("setting an exception that is not declared previews it as new", () => {
+  const preview = previewChange(reading(), {
+    kind: "setException",
+    id: "fresh",
+    role: "parent",
+    model: "gpt-6.1-sol",
+    effort: "xhigh",
+    cwd: [],
+  });
+  const item = preview.items.find((entry) => entry.label.includes("fresh"));
+  assert.equal(item?.before, "not declared");
+  assert.equal(item?.after, "parent gpt-6.1-sol xhigh (no cwd scope)");
 });
 
 /* ---- C3: the catalog states, and never swapping a saved value ---- */
@@ -275,4 +321,21 @@ test("deriving the view twice from one reading gives the same values and sources
   const first = policyView(decodePolicy(reading()));
   const second = policyView(decodePolicy(reading()));
   assert.deepEqual(first, second);
+});
+
+// C6's other half. node:test cannot load the .tsx, so the label a control carries is built by a
+// pure function here and the screen renders every control's aria-label from it: a control cannot be
+// added without a label, and the label text is pinned where a test can read it.
+test("every control on the screen has a label, and the screen uses native controls only", () => {
+  assert.equal(roleControlsLabel("parent"), "parent pair controls");
+  assert.equal(pairModelLabel("child", 0), "child pair 1 model");
+  assert.equal(pairEffortLabel("child", 0), "child pair 1 effort");
+  assert.equal(allowedEffortsLabel("anthropic/opus"), "anthropic/opus allowed efforts");
+  assert.equal(removeExceptionLabel("legacy"), "Remove exception legacy");
+  for (const label of [roleControlsLabel("parent"), pairModelLabel("parent", 1), pairEffortLabel("parent", 1), allowedEffortsLabel("m"), removeExceptionLabel("x")]) {
+    assert.ok(label.length > 0, "a control label is never empty");
+  }
+  // The screen composes only native, focusable elements: the browser gives them keyboard operability
+  // and a tab order, and the screen adds no custom widget and no key handler of its own.
+  assert.deepEqual([...POLICY_CONTROL_ELEMENTS], ["select", "input", "button", "fieldset"]);
 });
