@@ -334,11 +334,9 @@ const auditListUsage = "usage: crw manage audit list [--round R] [--issue K] [--
 // document and exits 1; a failed output write is exit 3, because a truncated document must
 // not read as a whole one.
 func auditListRun(ctx context.Context, e *Env, args []string) int {
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" || arg == "help" {
-			fmt.Fprintln(e.Stdout, auditListUsage)
-			return 0
-		}
+	if auditListHelpRequested(args) {
+		fmt.Fprintln(e.Stdout, auditListUsage)
+		return 0
 	}
 	opts, err := auditListParseArgs(args)
 	if err != nil {
@@ -366,6 +364,25 @@ func auditListRun(ctx context.Context, e *Env, args []string) int {
 		}
 	}
 	return 0
+}
+
+// auditListHelpRequested reports whether the arguments ask for the usage. Help is the first
+// argument being "help", or -h or --help standing where an option is expected. The token an
+// option consumes is a value whatever it is, so --round help names the round help and
+// --round --help is a missing value rather than a help request.
+func auditListHelpRequested(args []string) bool {
+	if len(args) > 0 && args[0] == "help" {
+		return true
+	}
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "-h" || arg == "--help":
+			return true
+		case strings.HasPrefix(arg, "--") && !strings.ContainsRune(arg, '='):
+			i++ // this option takes the next token as its value
+		}
+	}
+	return false
 }
 
 // auditListParseArgs reads the three filter flags. A flag that is present with an empty

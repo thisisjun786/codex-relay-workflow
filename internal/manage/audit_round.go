@@ -121,15 +121,28 @@ func auditRoundLock(path string) (func(), error) {
 	}, nil
 }
 
-// auditRoundLoad reads a round file.
+// auditRoundLoad reads a round file. A document that is not a JSON object, and a round that
+// names no round, are refused. Decoding straight into the struct is not enough: JSON null
+// unmarshals into it without an error and leaves the zero value, which would read as a whole
+// round with no name, no start and no package, and be reported as a round that was read.
 func auditRoundLoad(path string) (*auditRoundFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	var probe any
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("round %s: %w", path, err)
+	}
+	if _, ok := probe.(map[string]any); !ok {
+		return nil, fmt.Errorf("round %s: not a round document", path)
+	}
 	var doc auditRoundFile
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("round %s: %w", path, err)
+	}
+	if doc.Round == "" {
+		return nil, fmt.Errorf("round %s: not a round document", path)
 	}
 	return &doc, nil
 }

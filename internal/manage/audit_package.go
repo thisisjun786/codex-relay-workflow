@@ -653,6 +653,9 @@ func auditPkgParseArgs(args []string, allowed map[string]bool) (map[string]strin
 		if !allowed[key] {
 			return nil, fmt.Errorf("unknown option %s", name)
 		}
+		if _, twice := values[key]; twice {
+			return nil, fmt.Errorf("the option --%s is given twice", key)
+		}
 		values[key] = value
 	}
 	return values, nil
