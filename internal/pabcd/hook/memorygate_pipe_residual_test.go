@@ -20,6 +20,13 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf 'echo x > " + root + "/a' | bash -c 'bash'",
 		"printf 'echo x > " + root + "/a' | busybox sh",
 		"printf 'echo x > " + root + "/a' | python3",
+		// CRW-894 c9(a): a descriptor that holds the pipe and is put back on descriptor 0.
+		"printf 'echo x > " + root + "/a' | bash 3</dev/fd/0 </dev/null <&3",
+		"printf 'echo x > " + root + "/a' | bash 3</dev/stdin </dev/null <&3",
+		"printf 'echo x > " + root + "/a' | python3 3</dev/fd/0 </dev/null <&3",
+		// CRW-894 c9(b), zsh MULTIOS: a descriptor-0 file does not replace the pipe.
+		"printf 'echo x > " + root + "/a' | bash </dev/null",
+		"printf 'echo x > " + root + "/a' | python3 </dev/null",
 	} {
 		got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
 		if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {
@@ -40,7 +47,6 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf x | python3 -c 'print(1)'",
 		"printf x | bash -c 'cat'",
 		"printf x | cat",
-		"printf x | bash </dev/null",
 	} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
 			t.Errorf("%q: %+v, want no write attempt", command, got)

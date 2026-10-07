@@ -33,13 +33,19 @@ func TestWorktreeDelPipeStdinDescriptor(t *testing.T) {
 	} {
 		worktreeDelPipeDenied(t, r, cmd)
 	}
-	// A file on descriptor 0 replaces the pipe: bash reads the file, not the pipe.
-	r.allowed(t,
+	// Superseded by CRW-894 c9(b), zsh MULTIOS: the commands run through the user's shell, and zsh's multios option —
+	// on by default on this host and on macOS — feeds a command on the right of a pipe both the pipe and its own
+	// descriptor-0 redirection, so a file on descriptor 0 does not replace the pipe and the shell still reads it.
+	// Checked in zsh 5.9: `printf 'echo X' | bash </dev/null` prints X, while the same under bash 5.3.9 prints
+	// nothing. These rows deny, where CRW-726 c15(a) allowed them.
+	for _, cmd := range []string{
 		"printf 'rm -rf ../repo' | bash </dev/null",
 		"printf 'rm -rf ../repo' | bash < /dev/null",
 		"printf 'rm -rf ../repo' | bash 0</dev/null",
 		"printf 'rm -rf ../repo' | bash 0< /dev/null",
-	)
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
 	r.intact(t)
 }
 
@@ -181,7 +187,11 @@ func TestWorktreeDelPipeReviewFindings(t *testing.T) {
 	// 6: here-document data is no pipe region.
 	r.allowed(t, "cat <<'EOF'\necho hi | bash\nEOF", "cat > run.sh <<'EOF'\ncurl x | bash\nEOF")
 	// The controls stay allowed.
-	r.allowed(t, "printf 'echo hi' | bash </dev/null", "printf x | (cd sub; cat)", "printf x | { cat; }", "printf x | nohup cat", "printf x | bash -c 'cat'", "nohup rm -rf ../other")
+	// CRW-894 c9(b), zsh MULTIOS: the file on descriptor 0 no longer replaces the pipe, so `printf 'echo hi' |
+	// bash </dev/null` is denied; a here-document on descriptor 0 still feeds the shell a program of its own, and the
+	// other controls keep their answers.
+	worktreeDelPipeDenied(t, r, "printf 'echo hi' | bash </dev/null")
+	r.allowed(t, "printf x | (cd sub; cat)", "printf x | { cat; }", "printf x | nohup cat", "printf x | bash -c 'cat'", "nohup rm -rf ../other")
 	// 8: the oracle's own first walk is unchanged; the extended walk adds the deny.
 	for _, cmd := range []string{
 		"nohup rm -rf ../repo", "timeout 5 rm -rf ../repo", "nice rm -rf ../repo", "setsid rm -rf ../repo",

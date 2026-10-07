@@ -40,15 +40,19 @@ func TestWorktreeDelPipeStdinAliasDenied(t *testing.T) {
 	} {
 		worktreeDelPipeDenied(t, r, cmd)
 	}
-	// A file on descriptor 0 that is no alias still replaces the pipe, in any order: an alias reopens the descriptor as
-	// it already stands, so `bash </dev/null </dev/stdin` still reads /dev/null (checked in bash 5.3.9).
-	r.allowed(t,
-		"printf 'echo hi' | bash </dev/null",
-		"printf 'echo hi' | bash 0</dev/null",
-		"printf 'echo hi' | bash < /dev/null",
-		"printf 'echo hi' | bash </dev/stdin </dev/null",
-		"printf 'echo hi' | bash </dev/null </dev/stdin",
-	)
+	// Superseded by CRW-894 c9(b), zsh MULTIOS: the commands run through the user's shell, and zsh's multios option
+	// is on by default on this host and on macOS, so a command on the right of a pipe is fed both the pipe and its
+	// own descriptor-0 redirection and reads the pipe whatever that redirection says (zsh 5.9 runs
+	// `printf 'echo X' | bash </dev/null`; bash 5.3.9 runs nothing). CRW-726 c15(a) allowed these rows; they deny now.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash </dev/null",
+		"printf 'rm -rf ../repo' | bash 0</dev/null",
+		"printf 'rm -rf ../repo' | bash < /dev/null",
+		"printf 'rm -rf ../repo' | bash </dev/stdin </dev/null",
+		"printf 'rm -rf ../repo' | bash </dev/null </dev/stdin",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
 	r.intact(t)
 }
 
@@ -185,9 +189,11 @@ func TestWorktreeDelPipeInterpreterDenied(t *testing.T) {
 		"printf x | node -e 'console.log(1)'",
 		"printf x | node --eval 'console.log(1)'",
 		"printf x | php -r 'echo 1;'",
-		"printf x | python3 </dev/null",
 		"printf x | python3 -c 'print(1)' -",
 	)
+	// CRW-894 c9(b), zsh MULTIOS: an interpreter with no program argument reads the pipe whatever its own
+	// descriptor-0 redirection says.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 </dev/null")
 	r.intact(t)
 }
 
@@ -246,7 +252,6 @@ func TestWorktreeDelHeredocInterpreterDenied(t *testing.T) {
 func TestWorktreeDelPipeResidualControls(t *testing.T) {
 	r := newDelRig(t)
 	r.allowed(t,
-		"printf 'echo hi' | bash </dev/null",
 		"printf x | (cd sub; cat)",
 		"printf x | { cat; }",
 		"printf x | nohup cat",
@@ -307,11 +312,116 @@ func TestWorktreeDelPipeResidualReviewFindings(t *testing.T) {
 	// A -c program that can name its operands runs them as a command line of its own, and that line inherits the pipe:
 	// bash -c 'exec \"$@\"' _ bash runs bash with the pipe on its standard input.
 	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'exec \"$@\"' _ bash")
-	// A redirection written before the command word counts too: 0</dev/null python3 reads /dev/null and no program runs.
+	// CRW-894 c9(b), zsh MULTIOS: a descriptor-0 redirection, wherever it is written and however it is spelled,
+	// does not replace the pipe for a command on the right of one.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | 0</dev/null python3")
+	worktreeDelPipeDenied(t, r, "printf x | bash </dev/null <&0")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 </dev/null <&0")
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeResidualC9 is CRW-894 c9, the generation-2 criterion, red first on head 46bcccf. Three parts:
+// (a) the descriptor bookkeeping follows every descriptor, so a descriptor that holds the pipe and is put back on
+// descriptor 0 is a program the guard cannot read; (b) zsh MULTIOS, on by default on this host and on macOS, feeds a
+// command on the right of a pipe both the pipe and its own descriptor-0 redirection, so a descriptor-0 file does not
+// replace the pipe; (c) ksh and mksh are listed shells for the -c, exec "$@" and stdin readings. Every row was
+// checked in zsh 5.9 with a harmless stand-in for rm; the commands run through the user's shell, and zsh is that
+// shell here, so these are the answers a real run gives.
+func TestWorktreeDelPipeResidualC9(t *testing.T) {
+	r := newDelRig(t)
+	// (a) a descriptor that holds the pipe, put back on descriptor 0.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash 3</dev/fd/0 </dev/null <&3",
+		"printf 'rm -rf ../repo' | bash 3</dev/stdin </dev/null <&3",
+		"printf 'rm -rf ../repo' | bash 3</proc/self/fd/0 </dev/null <&3",
+		"printf 'rm -rf ../repo' | bash 3<&0 </dev/null <&3",
+		"printf 'rm -rf ../repo' | bash 4</dev/fd/0 3<&4 </dev/null <&3",
+		"printf 'rm -rf ../repo' | bash 9</dev/fd/0 </dev/null <&9",
+		"printf 'rm -rf ../repo' | bash </dev/null 3</dev/fd/0 <&3",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	worktreeDelPipeInterpreterDenied(t, r, "printf 'rm -rf ../repo' | python3 3</dev/fd/0 </dev/null <&3")
+	worktreeDelPipeInterpreterDenied(t, r, "printf 'rm -rf ../repo' | python3 3</dev/stdin </dev/null <&3")
+	worktreeDelPipeInterpreterDenied(t, r, "printf 'rm -rf ../repo' | python3 3<&0 </dev/null <&3")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | ksh 3</dev/fd/0 </dev/null <&3")
+	// (b) zsh MULTIOS: a descriptor-0 file does not replace the pipe.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash </dev/null",
+		"printf 'rm -rf ../repo' | bash 0</dev/null",
+		"printf 'rm -rf ../repo' | 0</dev/null bash",
+		"printf 'rm -rf ../repo' | bash - 0</dev/null",
+		"printf 'rm -rf ../repo' | bash < /dev/null",
+		"printf 'rm -rf ../repo' | bash 2</dev/null 0</dev/null",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	worktreeDelPipeInterpreterDenied(t, r, "printf 'rm -rf ../repo' | python3 </dev/null")
+	// (c) ksh and mksh join the listed shells for the -c, exec "$@" and stdin readings.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | ksh",
+		"printf 'rm -rf ../repo' | mksh",
+		"printf 'rm -rf ../repo' | ksh -c 'bash'",
+		"printf 'rm -rf ../repo' | mksh -c 'bash'",
+		"printf 'rm -rf ../repo' | ksh /dev/stdin",
+		"printf 'rm -rf ../repo' | mksh /dev/stdin",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | ksh -c 'exec \"$@\"' _ bash",
+		"printf 'rm -rf ../repo' | mksh -c 'exec \"$@\"' _ bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// A command with no pipe in front keeps its answers: MULTIOS is the pipe's rule, not the redirection's.
 	r.allowed(t,
-		"printf x | 0</dev/null python3",
-		"printf x | bash </dev/null <&0", // <&0 duplicates descriptor 0, which already holds the file
-		"printf x | python3 </dev/null <&0",
+		"bash </dev/null",
+		"bash <<< x",
+		"bash 3</dev/null",
+		"python3 </dev/null",
+		"python3 -c 'print(1)' </dev/null",
+		"ksh -c 'echo ok'",
+		"mksh -c 'echo ok'",
+	)
+	// The controls the criterion names keep their answers.
+	r.allowed(t,
+		"printf x | (cd sub; cat)",
+		"printf x | nohup cat",
+		"printf x | python3 -c 'print(1)'",
+		"printf x | bash -c 'cat'",
 	)
 	r.intact(t)
+}
+
+// TestWorktreeDelUnreadableStdinHoldings pins the descriptor walk CRW-894 c9(a) asks for: a redirection that opens a
+// descriptor from an alias of the current standard input makes that descriptor hold the pipe, a duplication copies the
+// descriptor it names, a plain file opens a file, and a descriptor the guard cannot follow is unknown.
+func TestWorktreeDelUnreadableStdinHoldings(t *testing.T) {
+	pipe, file, unknown := worktreeDelStdinPipe, worktreeDelStdinFile, worktreeDelStdinUnknown
+	for _, c := range []struct {
+		cmd  string
+		want map[int]int
+	}{
+		{"bash 3</dev/fd/0 </dev/null <&3", map[int]int{0: pipe, 3: pipe}},
+		{"bash 3</dev/stdin", map[int]int{0: pipe, 3: pipe}},
+		{"bash 3</proc/self/fd/0", map[int]int{0: pipe, 3: pipe}},
+		{"bash 3<&0", map[int]int{0: pipe, 3: pipe}},
+		{"bash 4</dev/fd/0 3<&4", map[int]int{0: pipe, 3: pipe, 4: pipe}},
+		{"bash 3</dev/null", map[int]int{0: pipe, 3: file}},
+		{"bash 3<&2", map[int]int{0: pipe, 3: unknown}},
+		{"bash 3<&-", map[int]int{0: pipe, 3: unknown}},
+		{"bash 2</dev/null", map[int]int{0: pipe, 2: file}},
+	} {
+		got := worktreeDelUnreadableStdinHoldings(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(c.cmd)))
+		if len(got) != len(c.want) {
+			t.Errorf("%q: %v, want %v", c.cmd, got, c.want)
+			continue
+		}
+		for k, v := range c.want {
+			if got[k] != v {
+				t.Errorf("%q: descriptor %d = %d, want %d (%v)", c.cmd, k, got[k], v, got)
+			}
+		}
+	}
 }

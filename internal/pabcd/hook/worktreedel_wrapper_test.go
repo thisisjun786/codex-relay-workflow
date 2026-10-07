@@ -86,6 +86,11 @@ func TestWorktreeDelWrapperDataOperandsAllowed(t *testing.T) {
 		"bash -c 'echo OK' 'rm -rf ../repo'",
 		"sh -c 'echo OK' x 'rm -rf ../repo'",
 		"zsh -c 'echo OK' 'rm -rf ../repo'",
+		// CRW-894 c9(c): ksh and mksh are listed shells for the -c reading too, and like sh, bash, dash and
+		// ash they read the operands after the -c program as their $0, $1 and so on, so a later word is no
+		// program.
+		"ksh -c 'echo OK' 'rm -rf ../repo'",
+		"mksh -c 'echo OK' 'rm -rf ../repo'",
 		"su -c 'echo ok'",
 		"su -c 'echo ok' root 'rm -rf ../repo'",
 		"su root -c 'echo ok' 'rm -rf ../repo'",
@@ -103,7 +108,6 @@ func TestWorktreeDelWrapperDataOperandsAllowed(t *testing.T) {
 func TestWorktreeDelWrapperUncertainStaysRead(t *testing.T) {
 	r := newDelRig(t)
 	for _, cmd := range []string{
-		"ksh -c 'echo OK' 'rm -rf ../repo'",
 		"csh -c 'echo OK' 'rm -rf ../repo'",
 		"fish -c 'echo OK' 'rm -rf ../repo'",
 		"bash -c - 'rm -rf ../repo'",

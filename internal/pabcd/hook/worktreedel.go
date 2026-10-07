@@ -909,7 +909,7 @@ func worktreeDelUnreadableProgramIndex(name string, operands []string) int {
 	switch name {
 	case "su":
 		return worktreeDelSuProgram(worktreeDelQuoteDropRedirects(operands))
-	case "sh", "bash", "dash", "ash", "zsh", "ksh":
+	case "sh", "bash", "dash", "ash", "zsh", "ksh", "mksh":
 		return worktreeDelFlagShellProgram(worktreeDelQuoteDropRedirects(operands))
 	}
 	return -1
@@ -924,7 +924,7 @@ func worktreeDelShellOperandsJoin(name string, operands []string) string {
 	switch name {
 	case "su":
 		program = worktreeDelSuProgram(operands)
-	case "sh", "bash", "dash", "ash", "zsh":
+	case "sh", "bash", "dash", "ash", "zsh", "ksh", "mksh":
 		program = worktreeDelFlagShellProgram(operands)
 	}
 	if program < 0 || program+1 >= len(operands) {
@@ -985,7 +985,7 @@ func worktreeDelShellProgramEnd(name string, operands []string) int {
 	switch name {
 	case "su":
 		program = worktreeDelSuProgram(operands)
-	case "sh", "bash", "dash", "ash", "zsh":
+	case "sh", "bash", "dash", "ash", "zsh", "ksh", "mksh":
 		program = worktreeDelFlagShellProgram(operands)
 	}
 	if program < 0 {
@@ -1596,8 +1596,8 @@ func HandleWorktreeGuardPreTool(raw string, env host.LookupEnv) string {
 // and the program each of them reads from standard input. worktreeDelUnreadableHereShells are the ones that also read a
 // here-document as a program (su reads its standard input through the shell it starts, so it is not among them).
 const (
-	worktreeDelUnreadableShells     = " sh bash dash ash zsh ksh su "
-	worktreeDelUnreadableHereShells = " sh bash dash ash zsh ksh "
+	worktreeDelUnreadableShells     = " sh bash dash ash zsh ksh mksh su "
+	worktreeDelUnreadableHereShells = " sh bash dash ash zsh ksh mksh "
 
 	// worktreeDelUnreadableInterpreters are the interpreters that read their program from standard input when they are
 	// called with no program argument (CRW-894, c5).
@@ -2174,50 +2174,66 @@ func worktreeDelUnreadableStdinShell(name string, operands []string) bool {
 	return worktreeDelUnreadableScriptOperand(args) < 0
 }
 
-// What one redirection leaves on a shell's standard input: nothing (it redirects another descriptor, or a
-// here-document or here-string), a file, descriptor 0's own file (a path that names it, or a duplication of 0
-// itself), or a descriptor the guard cannot follow (a duplication of another descriptor, or a close).
+// What a descriptor holds: the pipe the command came from, a file, a program the shell reads from the descriptor
+// itself (a here-document or a here-string), or a descriptor the guard cannot follow.
 const (
-	worktreeDelStdinNone = iota // the word redirects no descriptor 0
+	worktreeDelStdinPipe = iota
 	worktreeDelStdinFile
-	worktreeDelStdinSelf  // descriptor 0 keeps what it already holds
-	worktreeDelStdinOther // a descriptor the guard cannot follow
+	worktreeDelStdinProgram
+	worktreeDelStdinUnknown
+
+	// worktreeDelStdinCopies is the from value of a redirection that copies no descriptor, so that a descriptor
+	// number (>= 0) and a content never collide.
+	worktreeDelStdinCopies = -1
 )
 
-// worktreeDelUnreadableStdinStep is what one redirection word (with the next word when the operator stands alone)
-// leaves on a shell's standard input. A here-document and a here-string feed the shell a program of their own and
-// are not this case (CRW-726, c15(a)).
-func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) int {
+// worktreeDelUnreadableStdinRedirect is the redirection one word (with the next word when the operator stands alone)
+// writes: the descriptor it names and where that descriptor's content comes from. from >= 0 copies that descriptor
+// (N<&M, N</dev/fd/M, N</dev/stdin, N</proc/<pid>/fd/M); from is worktreeDelStdinCopies and content names the file or
+// the descriptor the guard cannot follow.
+type worktreeDelUnreadableStdinRedirect struct {
+	descriptor int
+	from       int // the descriptor copied, or worktreeDelStdinCopies
+	content    int // worktreeDelStdinFile or worktreeDelStdinUnknown, read when from is worktreeDelStdinCopies
+}
+
+// worktreeDelUnreadableStdinStep is the redirection one word writes, and false when the word redirects nothing. The
+// descriptor is read from the word — 3</dev/null names descriptor 3 — and never assumed to be 0, so the bookkeeping
+// follows every descriptor and not only descriptor 0 (CRW-894 c9(a)). A here-document and a here-string feed the
+// descriptor a program of their own and are not the pipe (CRW-726, c15(a)).
+func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) (worktreeDelUnreadableStdinRedirect, bool) {
 	i := strings.IndexByte(word, '<')
 	if i < 0 {
-		return worktreeDelStdinNone
+		return worktreeDelUnreadableStdinRedirect{}, false
 	}
-	if descriptor := word[:i]; descriptor != "" && descriptor != "0" { // a descriptor other than 0 is not stdin
-		return worktreeDelStdinNone
+	descriptor := 0
+	if digits := word[:i]; digits != "" {
+		n, ok := worktreeDelUnreadableDescriptor(digits)
+		if !ok {
+			return worktreeDelUnreadableStdinRedirect{}, false
+		}
+		descriptor = n
 	}
-	if strings.HasPrefix(word[i:], "<<") { // a here-document or a here-string feeds the shell a program of its own
-		return worktreeDelStdinNone
+	if strings.HasPrefix(word[i:], "<<") { // a here-document or a here-string feeds the descriptor a program
+		return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: worktreeDelStdinCopies, content: worktreeDelStdinProgram}, true
 	}
 	rest := word[i+1:]
 	if rest == "" { // the operator is a word of its own: its target is the next word
 		if !hasNext {
-			return worktreeDelStdinNone
+			return worktreeDelUnreadableStdinRedirect{}, false
 		}
 		rest = next
 	}
-	if strings.HasPrefix(rest, "&") { // <&N, <&-: the shell duplicates or closes descriptor 0
-		if rest == "&0" { // <&0 duplicates descriptor 0 itself, which keeps what it already holds
-			return worktreeDelStdinSelf
+	if strings.HasPrefix(rest, "&") { // N<&M duplicates descriptor M, N<&- closes descriptor N
+		if n, ok := worktreeDelUnreadableDescriptor(rest[1:]); ok {
+			return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: n}, true
 		}
-		return worktreeDelStdinOther // another descriptor, or a close: the guard cannot follow it
+		return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: worktreeDelStdinCopies, content: worktreeDelStdinUnknown}, true
 	}
-	if descriptor, alias := worktreeDelUnreadableStdinAlias(rest); alias {
-		if descriptor == 0 { // the path names descriptor 0's own file, so the redirection changes nothing
-			return worktreeDelStdinSelf
-		}
-		return worktreeDelStdinOther // another descriptor's file: the guard cannot follow it
+	if n, ok := worktreeDelUnreadableStdinAlias(rest); ok { // N</dev/fd/M, N</dev/stdin, N</proc/<pid>/fd/M
+		return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: n}, true
 	}
-	return worktreeDelStdinFile
+	return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: worktreeDelStdinCopies, content: worktreeDelStdinFile}, true
 }
 
 // worktreeDelUnreadableStdinAlias is the descriptor a path names when it is one of a process's own descriptor files:
@@ -2266,32 +2282,68 @@ func worktreeDelUnreadableDescriptor(s string) (int, bool) {
 	return n, true
 }
 
-// worktreeDelUnreadableStdinRedirected says whether a shell's operands leave a FILE on descriptor 0, so that a pipe on
-// the command's left is not its program. The redirections run in order and the last one that names descriptor 0 decides
-// what it holds: `bash </dev/stdin` reopens the pipe and reads it, `bash </dev/null </dev/stdin` still reads /dev/null
-// (the alias reopens the descriptor as it already stands), and `bash 3<&0 </dev/null <&3` points descriptor 0 back at
-// the pipe through a descriptor the guard cannot follow, so the refusal stays (fail closed). The order was checked in
-// bash 5.3.9 (CRW-894, c1 and its review).
-func worktreeDelUnreadableStdinRedirected(operands []string) bool {
-	file := false
+// worktreeDelUnreadableStdinHoldings is what each descriptor holds after a command's redirections, in order,
+// starting from the pipe on descriptor 0. Every descriptor is followed, not only descriptor 0: a redirection that
+// opens descriptor N from an alias of the current standard input (N</dev/fd/0, N</dev/stdin, N</proc/self/fd/0) or
+// duplicates it (N<&0, N<&M) makes N hold whatever that descriptor holds, and a later 0<&N or <&N puts that
+// content back on descriptor 0. A descriptor the guard cannot follow is worktreeDelStdinUnknown, and a
+// descriptor the walk never saw holds nothing (CRW-894 c9(a)).
+//
+// MULTIOS (CRW-894 c9(b)): a redirection written on descriptor 0 of a command that stands on the right of a pipe
+// does not replace the pipe. The commands run through the user's shell, and zsh's multios option — on by default
+// on this host and on macOS — feeds the command both the pipe and the redirection, so descriptor 0 keeps the pipe
+// whatever is written on it (checked in zsh 5.9: `printf 'echo X' | bash </dev/null` and the same with
+// `3</dev/fd/0 </dev/null <&3` both run the piped program, while the same commands under bash 5.3.9 run nothing).
+func worktreeDelUnreadableStdinHoldings(operands []string) map[int]int {
+	holds := map[int]int{0: worktreeDelStdinPipe}
 	for i := 0; i < len(operands); i++ {
 		word := operands[i]
 		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) && strings.HasPrefix(operands[i+1], "<") {
-			word, i = word+operands[i+1], i+1 // a descriptor before the operator belongs to it
+			word, i = word+operands[i+1], i+1 // a descriptor word before the operator belongs to it
 		}
 		hasNext := i+1 < len(operands)
 		next := ""
 		if hasNext {
 			next = operands[i+1]
 		}
-		switch worktreeDelUnreadableStdinStep(word, next, hasNext) {
-		case worktreeDelStdinFile:
-			file = true
-		case worktreeDelStdinOther:
-			file = false // the guard cannot follow it: keep the refusal (fail closed)
+		redirect, ok := worktreeDelUnreadableStdinStep(word, next, hasNext)
+		if !ok {
+			continue
 		}
+		// MULTIOS (CRW-894 c9(b)): the commands run through the user's shell, and zsh's multios option — on by
+		// default on this host and on macOS — feeds a command on the right of a pipe both the pipe and its own
+		// descriptor-0 redirections, so descriptor 0 keeps the pipe whatever is written on it. That holds for
+		// every form: zsh 5.9 runs `printf 'echo X' | bash </dev/null`, `| bash 3</dev/null <&3` and
+		// `| bash <<'EOF'` and prints X for each, while bash 5.3.9 prints nothing for all three. The walk still
+		// follows every other descriptor, so a redirection that moves one is recorded (CRW-894 c9(a)).
+		if redirect.descriptor == 0 {
+			continue
+		}
+		if redirect.from != worktreeDelStdinCopies {
+			if copied, seen := holds[redirect.from]; seen {
+				holds[redirect.descriptor] = copied
+			} else {
+				holds[redirect.descriptor] = worktreeDelStdinUnknown // a descriptor the walk never saw: fail closed
+			}
+			continue
+		}
+		holds[redirect.descriptor] = redirect.content
 	}
-	return file
+	return holds
+}
+
+// worktreeDelUnreadablePipeStdin says whether a command on the right of a pipe reads that pipe on its standard input.
+// MULTIOS (CRW-894 c9(b)): the commands run through the user's shell, and zsh's multios option — on by default on
+// this host and on macOS — feeds a command on the right of a pipe both the pipe and its own descriptor-0
+// redirections, so descriptor 0 keeps the pipe whatever is written on it. That holds for every form: zsh 5.9
+// prints X for each of `printf 'echo X' | bash </dev/null`, `| bash 3</dev/null <&3` and `| bash <<'EOF'`,
+// while the same commands under bash 5.3.9 print nothing, and a close of descriptor 0 makes the shell fail before
+// it runs anything. The answer is therefore the pipe for every command on the right of one; the descriptor walk
+// below is what keeps it right for the descriptors a redirection does move (CRW-894 c9(a)), and it would keep
+// it right for descriptor 0 as well if the option were ever off.
+func worktreeDelUnreadablePipeStdin(operands []string) bool {
+	holds := worktreeDelUnreadableStdinHoldings(operands)
+	return holds[0] != worktreeDelStdinFile
 }
 
 // worktreeDelUnreadableHereArgs is operands without the here-document and here-string operators and the target words
@@ -2826,6 +2878,7 @@ func worktreeDelUnreadablePipePieces(region string) []string {
 	}
 	for i := 0; i < len(region); i++ {
 		c := region[i]
+		prev := r.prev
 		state := r.state
 		next := worktreeDelUnreadablePipeAdvance(region, i, &r)
 		if state != worktreeDelQuotePlain || r.state != worktreeDelQuotePlain {
@@ -2834,6 +2887,9 @@ func worktreeDelUnreadablePipePieces(region string) []string {
 		}
 		switch {
 		case c == ';' || c == '&' || c == '\n' || c == '|':
+			if c == '&' && worktreeDelUnreadableRedirectionAmp(region, i, prev) {
+				break // part of a redirection (<&3, 2>&1, &>f), not the end of a command
+			}
 			cut(i)
 		case (c == '(' || c == '{' || c == ')' || c == '}') && worktreeDelUnreadableDelimiterEdge(region, i):
 			cut(i)
@@ -2844,6 +2900,17 @@ func worktreeDelUnreadablePipePieces(region string) []string {
 		pieces = append(pieces, piece)
 	}
 	return pieces
+}
+
+// worktreeDelUnreadableRedirectionAmp says whether the & at i belongs to a redirection rather than ending a command:
+// <&3 and 2>&1 duplicate a descriptor and &>f redirects both streams, so the byte before it is the operator it
+// follows or the byte after it opens one. Without this a piece was cut in the middle of <&3, and the redirection
+// that puts the pipe back on descriptor 0 (CRW-894 c9(a)) was never read.
+func worktreeDelUnreadableRedirectionAmp(region string, i int, prev byte) bool {
+	if prev == '<' || prev == '>' {
+		return true
+	}
+	return i+1 < len(region) && region[i+1] == '>'
 }
 
 // worktreeDelUnreadableDelimiterEdge says whether the delimiter at i opens or closes a word, the way a subshell or a
@@ -2865,29 +2932,29 @@ func worktreeDelUnreadableDelimiterEdge(text string, i int) bool {
 // reads its program from standard input, or a program a -c program or eval hands on to a shell inside it (CRW-894).
 func worktreeDelUnreadablePipePiece(piece string, depth int) (string, bool) {
 	name, operands, ok := worktreeDelUnreadablePieceCommand(piece)
-	// A redirection that opens a file on descriptor 0 replaces the pipe before the command runs, so nothing inside this
-	// piece reads it: printf x | python3 </dev/null, | bash -c 'bash' </dev/null, printf x | 0</dev/null python3
-	// (CRW-894, review). The whole piece is read, so a redirection written before the command word counts too.
-	redirected := worktreeDelUnreadableStdinRedirected(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(piece)))
+	// MULTIOS (CRW-894 c9(b)): the commands run through the user's shell, and zsh's multios option — on by default on
+	// this host and on macOS — feeds a command on the right of a pipe both the pipe and its own descriptor-0
+	// redirections, so a listed shell or interpreter with no program argument reads the pipe whatever is written on
+	// descriptor 0. worktreeDelUnreadablePipeStdin still follows every descriptor, so the answer stays right where a
+	// redirection does decide (a here-document feeds the command a program of its own). The whole piece is read, so a
+	// redirection written before the command word counts too.
+	pipeStdin := worktreeDelUnreadablePipeStdin(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(piece)))
 	if ok {
-		if strings.Contains(worktreeDelUnreadableShells, " "+name+" ") {
-			if worktreeDelUnreadableStdinShell(name, operands) {
-				if !redirected {
-					return "a shell program read from a pipe", true
-				}
-			} else if worktreeDelUnreadableScriptAlias(name, operands) {
+		switch {
+		case strings.Contains(worktreeDelUnreadableShells, " "+name+" "):
+			if worktreeDelUnreadableStdinShell(name, operands) && pipeStdin {
 				return "a shell program read from a pipe", true
 			}
-		} else if name == "source" || name == "." {
+			if worktreeDelUnreadableScriptAlias(name, operands) {
+				return "a shell program read from a pipe", true
+			}
+		case name == "source" || name == ".":
 			if j := worktreeDelUnreadableSourceIndex(operands); j >= 0 && worktreeDelUnreadableStdinAliasPath(operands[j]) {
 				return "a shell program read from a pipe", true
 			}
-		} else if !redirected && worktreeDelUnreadableInterpreterStdin(name, operands) {
+		case pipeStdin && worktreeDelUnreadableInterpreterStdin(name, operands):
 			return "an interpreter program read from a pipe", true
 		}
-	}
-	if redirected {
-		return "", false // descriptor 0 is a file: the pipe reaches no program in this piece
 	}
 	programs := worktreeDelUnreadablePipePrograms(name, operands, ok)
 	if len(programs) == 0 {

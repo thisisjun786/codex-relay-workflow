@@ -255,8 +255,10 @@ func TestWorktreeDelReviewFindingsSecondRound(t *testing.T) {
 	worktreeDelUnreadableDenied(t, r, "eval > '$X' \"$X\"", "an eval operand")
 	// A program that runs $0 as well as $@ is read as the command line it builds.
 	r.denied(t, "bash -c '\"$0\" \"$@\"' rm -rf ../repo", "rm -r ../repo")
-	// A here-document belongs to the command that holds its operator, and a redirection replaces a pipe on stdin.
-	r.allowed(t, "cat <<EOF; bash </dev/null\n$X\nEOF", "printf 'rm -rf ../repo' | bash </dev/null")
+	// A here-document belongs to the command that holds its operator, and a here-document on descriptor 0 feeds the
+	// shell a program of its own, so the pipe is not what it reads.
+	r.allowed(t, "cat <<EOF; bash </dev/null\n$X\nEOF")
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash </dev/null", "a shell program read from a pipe")
 	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash", "a shell program read from a pipe")
 	// A script operand and an option argument stay no program position.
 	r.allowed(t, "bash script.sh \"$ARG\"", "bash \"$SCRIPT\"", "bash --rcfile \"$X\" script.sh")
@@ -268,12 +270,14 @@ func TestWorktreeDelReviewFindingsSecondRound(t *testing.T) {
 	r.intact(t)
 }
 
-// TestWorktreeDelStdinDescriptor is the descriptor rule: only descriptor 0 replaces a shell's standard input, so a
-// pipe is still its program when another descriptor is redirected.
+// TestWorktreeDelStdinDescriptor is the descriptor rule: only descriptor 0 is the shell's standard input, so a pipe
+// is still its program when another descriptor is redirected. CRW-894 c9(b) (zsh MULTIOS) adds that a file on
+// descriptor 0 does not replace the pipe either, so those rows deny.
 func TestWorktreeDelStdinDescriptor(t *testing.T) {
 	r := newDelRig(t)
 	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash 2</dev/null", "a shell program read from a pipe")
 	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash 3</dev/null", "a shell program read from a pipe")
-	r.allowed(t, "printf 'rm -rf ../repo' | bash </dev/null", "printf 'rm -rf ../repo' | bash 0</dev/null")
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash </dev/null", "a shell program read from a pipe")
+	worktreeDelUnreadableDenied(t, r, "printf 'rm -rf ../repo' | bash 0</dev/null", "a shell program read from a pipe")
 	r.intact(t)
 }
