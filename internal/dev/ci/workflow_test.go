@@ -272,15 +272,11 @@ var (
 	// one lets another job run the staged tests with no finding (CRW-939, the generation-2
 	// evaluations). `npm test` is not this pattern: it runs the gui job's own suite, not the staged
 	// skills'.
-	// A quoted executable is the same run: "node" --test and "/usr/bin/node" --test launch the same
-	// binary, so the word is read through either quote as well as bare (CRW-939, the generation-2
-	// evaluation of d1). The gap between the word and --test stops at an unquoted newline, separator
-	// or pipeline, because a literal block scalar keeps its lines apart: a node in one line and a
-	// --test in another are two commands, not one run (the same evaluation's d2). A separator inside
-	// a quoted argument is not a separator to the shell, so the gap carries a whole quoted string
-	// over: --test-name-pattern='V1|V17' --test is one run (CRW-939, the twelfth generation-2
-	// evaluation of d1).
-	nodeTest = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_./-])(?:"[^"\n]*node[^"\n]*"|'[^'\n]*node[^'\n]*'|[^ \t]*node)[ \t](?:[^;|&\n"']|"[^"\n]*"|'[^'\n]*')*--test(?:$|[^A-Za-z0-9_-])`)
+	// nodeTest matches a Node test run in the command that shellWords reads: a word ending in node,
+	// then --test later on the same command. The quotes are gone by then, so a quoted node word, a
+	// quoted flag and a separator inside quotes are all read the way the shell reads them (CRW-939,
+	// the generation-3 evaluation of d1).
+	nodeTest = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_./-])[^ \t;|&\n]*node[ \t][^;|&\n]*--test(?:$|[^A-Za-z0-9_-])`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -315,6 +311,56 @@ func alternation(words []string) string {
 	return strings.Join(quoted, "|")
 }
 
+// shellWords is the command the shell reads from s once its quotes are taken off: a quoted or escaped
+// character is that character, so '--test', "--test", --te”st and -'-test' are all the flag --test.
+// A separator inside quotes is not a separator to the shell, so it becomes shellQuotedSeparator and
+// does not end the command (CRW-939, the generation-3 evaluation of d1).
+func shellWords(s string) string {
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+				continue
+			}
+			b.WriteByte(quotedByte(c))
+		case quote == '"':
+			if c == '"' {
+				quote = 0
+				continue
+			}
+			if c == '\\' && i+1 < len(s) {
+				i++
+				c = s[i]
+			}
+			b.WriteByte(quotedByte(c))
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '\\' && i+1 < len(s):
+			i++
+			b.WriteByte(s[i])
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// shellQuotedSeparator stands in for a separator character that sits inside quotes.
+const shellQuotedSeparator byte = 1
+
+// quotedByte keeps a quoted character, except that a separator inside quotes is no separator.
+func quotedByte(c byte) byte {
+	switch c {
+	case ';', '|', '&', '\n':
+		return shellQuotedSeparator
+	}
+	return c
+}
+
 // commandWindow is the command a shell would run from the line at i: the line itself, plus the
 // lines it continues into. A line ending in a backslash continues on the next one, and a `run:`
 // block scalar (`|`, `|-`, `>`, `>-`, ...) carries its whole command in the body below it. Reading
@@ -331,17 +377,11 @@ func commandWindow(physical []string, i int) string {
 		// with a blank instead would read a node in one command and a --test in another as one run and
 		// refuse a workflow that only runs them apart (CRW-939, the generation-2 evaluation of d2).
 		literal := blockScalarLiteral(physical[i])
+		base, prevMore, blanks := -1, false, 0
 		for j := i + 1; j < len(physical); j++ {
 			body := physical[j]
 			if strings.TrimSpace(body) == "" {
-				// A folded scalar joins its lines with a blank, but a blank line of its own is a
-				// paragraph break: YAML keeps it as a newline, so the two commands either side are
-				// separate to the shell. Joining across it would read a node in one and a --test in
-				// the other as one run and refuse a workflow that only runs them apart (CRW-939, the
-				// twelfth generation-2 evaluation of d2).
-				if !literal {
-					joined += "\n"
-				}
+				blanks++
 				continue
 			}
 			if indentOf(body) <= key {
@@ -361,7 +401,27 @@ func commandWindow(physical []string, i int) string {
 				joined += "\n" + strings.TrimSpace(body)
 				continue
 			}
-			joined += " " + strings.TrimSpace(body)
+			// A folded scalar joins two lines at its own indentation with a blank, but keeps the break
+			// beside a line indented further, and keeps each blank line as a break (YAML). The shell ends
+			// a command at a kept break, so the two sides are read apart (CRW-939, the generation-3
+			// evaluation of d2). A backslash at the end of a line still continues the command.
+			more := base >= 0 && indentOf(body) > base
+			if base < 0 {
+				base = indentOf(body)
+			}
+			if strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\") {
+				joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), "\\") + " " + strings.TrimSpace(body)
+			} else {
+				sep := " "
+				switch {
+				case prevMore || more:
+					sep = strings.Repeat("\n", blanks+1)
+				case blanks > 0:
+					sep = strings.Repeat("\n", blanks)
+				}
+				joined += sep + strings.TrimSpace(body)
+			}
+			prevMore, blanks = more, 0
 		}
 		return joined
 	}
@@ -449,7 +509,7 @@ func pythonInWorkflow(file, text string) []string {
 		// The token checks read the whole command the shell would run from this line, so a run split
 		// across a continuation or a block scalar is not read as two harmless fragments.
 		command := commandWindow(physical, number)
-		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTest.MatchString(command)
+		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTest.MatchString(shellWords(command))
 		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || (skillPath && !inSkillScriptsNode)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
@@ -874,6 +934,27 @@ func TestWorkflow_a_paragraph_break_in_a_folded_scalar_separates_commands(t *tes
 	}
 }
 
+// A more-indented line in a folded scalar keeps the newline on each side of it: YAML does not fold a
+// break next to a line that starts with extra blanks, so the shell gets two commands, not one
+// (CRW-939, the generation-3 evaluation of d2).
+func TestWorkflow_a_more_indented_line_in_a_folded_scalar_keeps_its_newlines(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]string{
+		"two printf commands":        "name: extra\n\njobs:\n  other:\n    steps:\n      - run: >-\n          printf '%s\\n' node\n            printf '%s\\n' --test\n",
+		"node then an indented flag": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: >-\n          node\n            --test\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(run), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) != 0 {
+			t.Errorf("%s: a more-indented line was joined into one node run: %v", name, findings)
+		}
+	}
+}
+
 // The detector refuses what installs or runs Python in a workflow, and a step that names a skill
 // asset script, and lets comments, other words that contain pip or python, and ordinary skill
 // paths through.
@@ -949,6 +1030,12 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: node --test-name-pattern='V1|V17' --test", true},                        // a separator inside a quoted argument is no boundary
 		{"      - run: node --test-name-pattern=\"V1|V17\" --test", true},                      // in either quote
 		{"      - run: node \"a;b\" --test", true},                                             // nor is a semicolon one
+		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
+		{"      - run: node '--test'", true},   // a quoted --test is still the flag (CRW-939, the generation-3 evaluation of d1)
+		{"      - run: node \"--test\"", true}, // in either quote
+		{"      - run: node --te''st", true},   // a flag split by empty quotes is the same flag
+		{"      - run: node -'-test'", true},   // a quote in the middle of a flag too
+		{"      - run: echo '--test'", false},  // no node word, no run
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
 		if got := pythonInWorkflow("release.yml", row.line+"\n"); (len(got) > 0) != row.found {

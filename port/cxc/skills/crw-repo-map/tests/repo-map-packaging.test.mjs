@@ -182,21 +182,36 @@ function fstringCode(body) {
   return fields.join(" ; ");
 }
 
+/**
+ * The code of a string's replacement fields with the quote's prefix letters dropped. The prefix
+ * letters were copied into the code before the quote was reached, and they are not code; left
+ * there they would sit against the first field body and hide it from a word-boundary test. The
+ * body is the text inside the quotes (CRW-939, the generation-3 evaluation of d3).
+ */
+function withFieldsOf(code, line, at, body) {
+  let prefixAt = at - 1;
+  while (prefixAt >= 0 && /[A-Za-z]/.test(line[prefixAt])) prefixAt -= 1;
+  return code.slice(0, code.length - (at - 1 - prefixAt)) + fstringCode(body) + " ";
+}
+
 function codeLines(source) {
   const out = [];
   let open = null; // the triple-quote delimiter a string is still open with
+  let openF = false; // whether that string is an f-string, whose replacement fields run
   for (const raw of source.replace(/\r\n/g, "\n").split("\n")) {
     let line = raw;
+    let code = "";
     if (open !== null) {
       const end = line.indexOf(open);
       if (end < 0) {
-        out.push("");
+        out.push(openF ? fstringCode(line) : "");
         continue;
       }
+      if (openF) code += fstringCode(line.slice(0, end)) + " ";
       line = line.slice(end + open.length);
       open = null;
+      openF = false;
     }
-    let code = "";
     let at = 0;
     while (at < line.length) {
       const ch = line[at];
@@ -204,11 +219,15 @@ function codeLines(source) {
       if (ch === '"' || ch === "'") {
         const triple = ch.repeat(3);
         if (line.slice(at, at + 3) === triple) {
+          const fstring = fstringAt(line, at);
           const end = line.indexOf(triple, at + 3);
           if (end < 0) {
             open = triple;
+            openF = fstring;
+            if (fstring) code = withFieldsOf(code, line, at, line.slice(at + 3));
             break;
           }
+          if (fstring) code = withFieldsOf(code, line, at, line.slice(at + 3, end));
           at = end + 3;
           continue;
         }
@@ -579,6 +598,21 @@ test("the parser-import check reads module-level imports placed after the parse"
   const plainString = 'marker = "__import__(\'networkx\')"\n';
   assert.deepEqual(parserImportsBeforeParsing(plainString + parse).offenders, [],
     "a plain string evaluates nothing");
+  // A triple-quoted f-string evaluates its replacement fields too, on one line or across several
+  // (CRW-939, the generation-3 evaluation of d3).
+  for (const line of [
+    'marker = f"""{__import__(\'networkx\')}"""\n',
+    'marker = f"""\n{__import__(\'networkx\')}\n"""\n',
+    'marker = rf\'\'\'{__import__("networkx")}\'\'\'\n',
+  ]) {
+    assert.ok(parserImportsBeforeParsing(line + parse).offenders.length > 0,
+      `${JSON.stringify(line)}: a triple-quoted f-string field runs before --help`);
+  }
+  // The controls: doubled braces are literal text, and a plain triple-quoted string evaluates nothing.
+  assert.deepEqual(parserImportsBeforeParsing('marker = f"""{{__import__(\'networkx\')}}"""\n' + parse).offenders, [],
+    "doubled braces are literal text in a triple-quoted f-string");
+  assert.deepEqual(parserImportsBeforeParsing('marker = """__import__(\'networkx\')"""\n' + parse).offenders, [],
+    "a plain triple-quoted string evaluates nothing");
   // The control: the same call inside the function after the parse is deferred like an import.
   const dynamicInFunction = 'def main():\n    args = parser.parse_args()\n    importlib.import_module("networkx")\n';
   assert.deepEqual(parserImportsBeforeParsing(dynamicInFunction).offenders, [], "a deferred dynamic import stays clean");
