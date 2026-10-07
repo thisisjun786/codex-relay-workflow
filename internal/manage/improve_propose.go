@@ -438,17 +438,32 @@ func improveProposeIssueIndex(bundle improveBundle) (keys, titles, fingerprints 
 	return keys, titles, fingerprints
 }
 
+// improveProposeBodySection is the text of one section of a stored improve body: from the last
+// occurrence of its heading to the last occurrence of the next one. The renderer writes the reason
+// into What first and the four sections in order after it, so a heading inside the reason is always
+// earlier than the section this feature wrote, and the last occurrence is the real one. Reading the
+// first occurrence would let a reason that quotes a heading be parsed as a project list or an
+// evidence list of its own.
+func improveProposeBodySection(body, heading, next string) (string, bool) {
+	start := strings.LastIndex(body, heading)
+	if start < 0 {
+		return "", false
+	}
+	rest := body[start+len(heading):]
+	if next != "" {
+		if end := strings.LastIndex(rest, next); end >= 0 {
+			rest = rest[:end]
+		}
+	}
+	return rest, true
+}
+
 // improveProposeParseProjects reads the projects a stored improve body names, so a later run
 // can carry them into the rewritten body. Only this feature's own body is parsed.
 func improveProposeParseProjects(body string) []improveProposeProject {
-	const marker = "## Where\n\n"
-	start := strings.Index(body, marker)
-	if start < 0 {
+	rest, ok := improveProposeBodySection(body, "## Where\n\n", "## Seen\n\n")
+	if !ok {
 		return nil
-	}
-	rest := body[start+len(marker):]
-	if end := strings.Index(rest, "\n## "); end >= 0 {
-		rest = rest[:end]
 	}
 	var out []improveProposeProject
 	for _, line := range strings.Split(rest, "\n") {
@@ -472,13 +487,12 @@ func improveProposeParseProjects(body string) []improveProposeProject {
 
 // improveProposeParseEvidence reads the evidence locations a stored improve body names.
 func improveProposeParseEvidence(body string) []string {
-	const marker = "## Evidence\n\n"
-	start := strings.Index(body, marker)
-	if start < 0 {
+	rest, ok := improveProposeBodySection(body, "## Evidence\n\n", "")
+	if !ok {
 		return nil
 	}
 	var out []string
-	for _, line := range strings.Split(body[start+len(marker):], "\n") {
+	for _, line := range strings.Split(rest, "\n") {
 		if strings.HasPrefix(line, "- ") {
 			out = append(out, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 		}
@@ -583,7 +597,7 @@ func improveProposeMergedCount(project string, incremental int, current []improv
 // the unknown owner to the project instead of counting the origin twice. An origin the draft does
 // not carry yet adds one to the project this run saw it in. The owner moves are returned in a
 // second map, because a stored project's count is otherwise carried forward unchanged.
-func improveProposeReconcileSightings(candidate improveProposeCandidate, stored []auditDraftSeen) (seen []auditDraftSeen, added map[string]int, moved map[string]int) {
+func improveProposeReconcileSightings(candidate improveProposeCandidate, stored []auditDraftSeen, issueKeys map[string]bool) (seen []auditDraftSeen, added map[string]int, moved map[string]int) {
 	seen = append([]auditDraftSeen(nil), stored...)
 	added = map[string]int{}
 	moved = map[string]int{}
@@ -608,7 +622,10 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		}
 		seen[at].Subject = sighting.Subject
 		seen[at].At = sighting.At
-		if was != owner {
+		// A stored owner this run's own evidence names as an issue key is not moved here: the merge
+		// already drops that false project and carries its occurrences to the unknown owner, so
+		// moving them again would count the same occurrence twice.
+		if was != owner && !issueKeys[was] {
 			moved[was]--
 			moved[owner]++
 		}
@@ -817,23 +834,26 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 		// A draft with this fingerprint already exists, from this feature or from the audit. The
 		// whole record is rewritten, so only fields this command understands may change: the seen
 		// list gains the origins this run reached, and an occurrence whose owner changed is counted
-		// under its latest owner. The added and moved counts are read before the seen list is
-		// updated, so they name only what this run newly recorded or re-owned.
-		seen, added, moved := improveProposeReconcileSightings(candidate, doc.Seen)
+		// under its latest owner. The evidence is the union of what the draft holds and what this
+		// run reached, and the issue keys it names are what an earlier build could have taken for a
+		// project. The added and moved counts are read before the seen list is updated, so they
+		// name only what this run newly recorded or re-owned.
+		evidence := improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...))
+		issueKeys := improveProposeIssueKeys(evidence)
+		seen, added, moved := improveProposeReconcileSightings(candidate, doc.Seen, issueKeys)
 		changed := len(seen) != len(doc.Seen)
 		doc.Seen = seen
 		if doc.Source == improveProposeSource {
 			// The whole record is rewritten, so the projects and the evidence the new run reached
 			// are folded in rather than dropped: a project's count is what the draft already held
 			// plus the occurrences this run newly recorded there, and the evidence is the union.
-			evidence := improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...))
 			merged := improveProposeCandidate{
 				// The reason is this run's own text, which is the whole reason the fingerprint was
 				// taken over. Reading it back out of the rendered body could not tell a Markdown
 				// heading inside the reason from the end of its section, so a multiline reason
 				// would be cut short on the next run.
 				Title:    candidate.Title,
-				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added, moved, improveProposeIssueKeys(evidence)),
+				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added, moved, issueKeys),
 				Evidence: evidence,
 				seen:     doc.Seen,
 			}

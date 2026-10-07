@@ -914,3 +914,86 @@ func TestImproveReview789LearnedProjectIsOneSighting(t *testing.T) {
 		t.Errorf("the draft still counts the occurrence under the unknown owner:\n%s", doc.Body)
 	}
 }
+
+// TestImproveReview789ReasonHeadingIsNotAProjectList covers the review finding that a reason
+// quoting a Markdown heading was read back as the draft's own Where section: the parser took the
+// first occurrence of the heading, which sits inside the reason, so an identical rerun saved a
+// project that never existed and even took it for the draft's owner. Only the section this feature
+// wrote is read, so a reason may contain any heading.
+func TestImproveReview789ReasonHeadingIsNotAProjectList(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	reason := "size overrun\n\n## Where\n\n- aaa-fake (10)"
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "project-a", "rel-a", reason, 1, "events:rel-a"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+	first := improveProposeTestReport(t, stdout)
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+
+	// The identical bundle again: the reason still holds the heading, and no fake project appears.
+	code, _, stderr = improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("the repeated propose: exit %d, stderr %s", code, stderr)
+	}
+	doc := improveProposeTestDraft(t, w, fingerprint)
+	// The reason itself holds the text, so the body legitimately contains it; what must not happen
+	// is the reader taking it for a project.
+	if projects := improveProposeParseProjects(doc.Body); len(projects) != 1 || projects[0].Project != "project-a" || projects[0].Count != 1 {
+		t.Errorf("the rerun read the reason's heading as the Where section: projects = %+v, want only project-a (1)\n%s", projects, doc.Body)
+	}
+	if doc.Project != "project-a" {
+		t.Errorf("the draft project = %q, want project-a", doc.Project)
+	}
+}
+
+// TestImproveReview789IssueKeyOwnerIsNotMovedTwice covers the review finding that a draft an
+// earlier build wrote with the issue key as its project counted its one occurrence twice on the
+// next run: the merge already carries that false project's occurrences to the unknown owner, and
+// the owner move counted the same occurrence again. One occurrence stays one.
+func TestImproveReview789IssueKeyOwnerIsNotMovedTwice(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+
+	// A draft as the earlier build wrote it: the issue key as the project and in the sighting.
+	fingerprint := auditDraftFingerprint(improveKindSplit, "size overrun")
+	stale := &auditDraft{
+		Schema: auditDraftSchema, Fingerprint: fingerprint, Source: improveProposeSource,
+		Project: "CRW-900", Title: "size overrun", Severity: "P1", State: auditDraftStateDraft,
+		Body: "## What\n\nsize overrun\n\n## Where\n\n- CRW-900 (1)\n\n## Seen\n\n" +
+			"- source=improve subject=CRW-900 where=rel-a at=2026-10-06T01:00:00Z\n\n## Evidence\n\n- issue:CRW-900\n",
+		Seen: []auditDraftSeen{{Mode: improveProposeSource, Subject: "CRW-900", Head: "rel-a", At: "2026-10-06T01:00:00Z"}},
+	}
+	if err := auditDraftSave(filepath.Join(w.stateDir, "drafts", fingerprint+".json"), stale); err != nil {
+		t.Fatal(err)
+	}
+
+	// The corrected reading of the same split: no scope, so no project, and the same occurrence.
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "", "rel-a", "size overrun", 1, "issue:CRW-900"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the stored draft to be corrected", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, fingerprint)
+	if len(doc.Seen) != 1 {
+		t.Errorf("the draft carries %d seen entries, want one: %+v", len(doc.Seen), doc.Seen)
+	}
+	if !strings.Contains(doc.Body, "- owner_unknown (1)") {
+		t.Errorf("the corrected draft does not count the one occurrence once:\n%s", doc.Body)
+	}
+	if strings.Contains(doc.Body, "- CRW-900 (") {
+		t.Errorf("the corrected draft still names the issue key as a project:\n%s", doc.Body)
+	}
+}
