@@ -271,6 +271,14 @@ func newDir(fd int, path string) (*Dir, error) {
 	return &Dir{f, path, id}, nil
 }
 
+// newDirWith builds a directory handle on fd with an identity the caller already read at the name. It is
+// the fallback for a directory this run created whose descriptor identity read failed: the name the
+// rename published was already checked against that identity, so the handle is this run's directory and
+// the caller must be able to record it rather than lose the creation.
+func newDirWith(fd int, path string, id fileID) *Dir {
+	return &Dir{os.NewFile(uintptr(fd), path), path, id}
+}
+
 // pinned is a root as found on disk: its handle (nil when its last component is absent) and the identity of every directory on
 // the way down to it, itself included.
 type pinned struct {
@@ -603,28 +611,31 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 	}
 	// cleanup removes this run's temporary unless the rename put it at name. The removal is addressed by
 	// the identity of the directory this call created, so it never deletes an entry another actor put at
-	// the temporary name.
+	// the temporary name. The pin on that directory stays open until the removal has run: the removal
+	// compares the identity it recorded, and with the pin closed first the kernel could free that inode
+	// and hand it to another directory, which the comparison would then take for this run's.
+	fd := -1
 	cleanup := true
 	defer func() {
-		if !cleanup {
-			return
-		}
-		if rm := d.migrateOwnedDirIdentityDrop(tmp, tmpID); rm != nil {
-			if child != nil {
-				_ = child.Close()
-				child, made = nil, false
+		if cleanup {
+			if rm := d.migrateOwnedDirIdentityDrop(tmp, tmpID); rm != nil {
+				if child != nil {
+					_ = child.Close()
+					child, made = nil, false
+				}
+				err = errors.Join(err, rm)
 			}
-			err = errors.Join(err, rm)
 		}
-	}()
-	fd, err := d.migrateOwnedDirIdentityClaim(tmp, tmpID, perm)
-	if err != nil {
-		return nil, false, err
-	}
-	if err := migrateOwnedDirIdentityStep("rename"); err != nil {
 		if fd >= 0 {
 			_ = unix.Close(fd)
 		}
+	}()
+	fd, err = d.migrateOwnedDirIdentityClaim(tmp, tmpID, perm)
+	if err != nil {
+		fd = -1
+		return nil, false, err
+	}
+	if err := migrateOwnedDirIdentityStep("rename"); err != nil {
 		return nil, false, err
 	}
 	switch err = noReplaceRename(d.fd(), tmp, name); {
@@ -636,14 +647,8 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 		// not this run's, so this run neither gives it a mode nor reports that it created it.
 		made = false
 	case errors.Is(err, errors.ErrUnsupported) || errors.Is(err, unix.EINVAL):
-		if fd >= 0 {
-			_ = unix.Close(fd)
-		}
 		return nil, false, refuse(ReasonUnsupported, d.join(name), "no-replace rename: "+err.Error())
 	default:
-		if fd >= 0 {
-			_ = unix.Close(fd)
-		}
 		return nil, false, &fs.PathError{Op: "rename", Path: d.join(name), Err: err}
 	}
 	if made {
@@ -651,6 +656,9 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 		// created, and the name is checked to hold that same directory, so a swap in the interval
 		// between the rename and this point is refused rather than published into.
 		child, err = d.migrateOwnedDirIdentityChild(name, fd, tmpID, perm)
+		// The child owns that handle now, or the open that failed already closed it; either way this
+		// call must not close the number again, which could belong to another file by then.
+		fd = -1
 		if err != nil {
 			// The rename put this run's own directory at the name, so the creation succeeded even when
 			// this attempt could not confirm it. The verified handle is handed back with the error so the
@@ -659,9 +667,6 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 			return child, made, err
 		}
 	} else {
-		if fd >= 0 {
-			_ = unix.Close(fd)
-		}
 		if child, err = d.Child(name); err != nil {
 			return nil, false, err
 		}
@@ -887,8 +892,16 @@ func (d *Dir) migrateOwnedDirIdentityChild(name string, fd int, want fileID, per
 	}
 	child, err := newDir(fd, d.join(name))
 	if err != nil {
-		_ = unix.Close(fd)
-		return nil, err
+		// newDir closed the descriptor it was handed, so this call must not close that number again.
+		// The rename already put this run's own directory at the name and that name is what the checks
+		// below compare, so a fresh handle carrying the identity read at the temporary is built instead:
+		// the caller can then record this run's identity and hold the pin, where returning nothing would
+		// make a retry read this run's own root as another actor's and never finish its mode.
+		reopened, oerr := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if oerr != nil {
+			return nil, err
+		}
+		child = newDirWith(reopened, d.join(name), want)
 	}
 	var st unix.Stat_t
 	if err := migrateOwnedDirIdentityLstat(d.fd(), name, &st); err != nil {

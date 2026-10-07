@@ -863,6 +863,37 @@ func TestMigrateOwnedDirIdentityFailedFinalReadKeepsTheCreation(t *testing.T) {
 	}
 }
 
+// C2(1): the descriptor identity read of the published root can fail even though the rename succeeded.
+// The creation is still this run's - the name was checked against the identity read at the temporary - so
+// the caller must record that identity and hold a handle, and a retry then finishes the root's mode. The
+// head before this cycle returned no handle, so the retry read this run's own root as another actor's and
+// left it at the marker mode.
+func TestMigrateOwnedDirIdentityUnreadableDescriptorStillKeepsTheCreation(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	restore := dirIdentity
+	t.Cleanup(func() { dirIdentity = restore })
+	dirIdentity = func(f *os.File) (fileID, error) {
+		if f.Name() == apDst(ws, "") {
+			return fileID{}, unix.EIO
+		}
+		return restore(f)
+	}
+	_, err := apply(r, p)
+	dirIdentity = restore
+	if r.Project.created == (fileID{}) {
+		t.Fatal("a creation that reached its rename must be recorded as this run's even when its descriptor identity could not be read")
+	}
+	if err != nil {
+		// The attempt may still stop on the unreadable identity, but the creation it recorded must let the
+		// retry finish the root rather than read it as another actor's.
+		if _, err = apply(r, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, "sessions"), 0o755)
+}
+
 // C2(3): the leftover a run interrupted while creating the destination root is reported at its own
 // location. It sits beside the root, not inside it, so the item carries that location rather than a
 // destination-root-relative path that would place it inside the root. The head before this cycle
