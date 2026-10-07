@@ -345,8 +345,11 @@ func blockScalarKey(line string) (int, bool) {
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return 0, false
 	}
-	value := trimmed[strings.LastIndex(trimmed, ":")+1:]
-	if !regexp.MustCompile(`^[ \t]*[|>][-+]?[ \t]*(?:#.*)?$`).MatchString(value) {
+	// A comment after the marker is part of the header, and it may itself hold a colon, so the
+	// marker is read from the first colon that is followed by one -- not from the last colon in the
+	// line, which would land inside the comment (CRW-939, the ninth generation-2 evaluation of d1).
+	marker := regexp.MustCompile(`:[ \t]*([|>][-+]?[ \t]*(?:#.*)?)$`)
+	if !marker.MatchString(trimmed) {
 		return 0, false
 	}
 	return indentOf(line), true
@@ -721,6 +724,24 @@ func TestWorkflow_a_commented_block_scalar_is_still_a_finding(t *testing.T) {
 		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
 			t.Errorf("%s: extra.yml splits a node --test run inside a commented block scalar and is not refused", name)
 		}
+	}
+}
+
+// A block-scalar header's comment may itself carry a colon (`- run: >- # see docs: tests`), which
+// YAML reads as part of the comment. A reader that takes the text after the last colon as the value
+// sees the comment, does not join the body, and a `node` / `--test` split across its lines escapes
+// (CRW-939, the ninth generation-2 evaluation of d1).
+func TestWorkflow_a_block_scalar_whose_comment_has_a_colon_is_still_a_finding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: >- # see docs: the staged tests\n          node\n          --test\n"
+	if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
+		t.Error("extra.yml splits a node --test run under a block scalar whose comment holds a colon and is not refused")
 	}
 }
 

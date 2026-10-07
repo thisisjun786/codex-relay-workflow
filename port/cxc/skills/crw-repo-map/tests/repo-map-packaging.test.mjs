@@ -270,7 +270,11 @@ function parserImportsBeforeParsing(source) {
       // The header a statement shares its line with governs it: an inline `finally: import x` or
       // `except SystemExit: import x` runs while --help unwinds, so the reader must not walk past it
       // to the enclosing function (CRW-939, the seventh generation-2 evaluation of d2).
-      const clause = line.slice(0, line.indexOf(text)).replace(/^.*;[ \t]*/, "").trim();
+      // The handler is the last one opened before this statement on the line, whether it is the
+      // statement's immediate prefix or an earlier `;`-separated one: in `finally: import os;
+      // import networkx` both statements are in the finally body.
+      const opened = [...line.slice(0, line.indexOf(text)).matchAll(/(?:^|;)[ \t]*((?:finally|except)\b[^;:]*:)/g)];
+      const clause = opened.length === 0 ? "" : opened[opened.length - 1][1].trim();
       if (/^finally\b/.test(clause) || (/^except\b/.test(clause) && catchesSystemExit(clause))) {
         const modules = importedModules(text);
         if (modules === null || modules.some((mod) => PARSER_IMPORTS.includes(mod))) {
@@ -450,6 +454,16 @@ test("the parser-import check reads module-level imports placed after the parse"
   }
   // The control: an inline import in a body that cannot catch SystemExit still defers.
   const inlineImportError = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError: from repomap_class import RepoMap\n";
+  // Every statement after a handler header on the same line is in that handler body, not only the
+  // first: in `finally: import os; import networkx` both run while --help unwinds (CRW-939, the
+  // ninth generation-2 evaluation of d2).
+  for (const shape of [
+    "def main():\n    try:\n        args = parser.parse_args()\n    finally: import os; import networkx\n",
+    "def main():\n    try:\n        args = parser.parse_args()\n    except SystemExit: import os; import networkx\n",
+  ]) {
+    assert.ok(parserImportsBeforeParsing(shape).offenders.length > 0,
+      `${JSON.stringify(shape)}: every statement after a handler header is in its body`);
+  }
   // A handler may name SystemExit through a qualifier or an alias, and the reader cannot always tell
   // whether an unfamiliar name reaches it. A name it does not recognize counts as catching it, so the
   // check fails closed; only the names it can place -- a plain `ImportError` or `Exception`, or a
