@@ -8,15 +8,22 @@ import (
 	"testing"
 )
 
-// resetLinkWalkRoot opens dir as an os.Root and closes it when the test ends.
-func resetLinkWalkRoot(t *testing.T, dir string) *os.Root {
+// resetLinkWalkPinned opens dir as the pinned directory the link judgement reads through — the
+// os.Root the removals act with, plus the descriptor resetPin takes — and closes it when the test
+// ends.
+func resetLinkWalkPinned(t *testing.T, dir string) *resetLinkWalkPin {
 	t.Helper()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = root.Close() })
-	return root
+	pinned, err := resetLinkWalkPinOf(root)
+	if err != nil {
+		root.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pinned.Close() })
+	return pinned
 }
 
 // resetLinkWalkWorkspace makes a directory holding keep/ (with inner.txt), which the links of
@@ -118,13 +125,13 @@ func TestResetLinkWalkChainDoesNotOpenTheTargetDirectory(t *testing.T) {
 			if err := os.Symlink(tc.target, filepath.Join(dir, tc.link)); err != nil {
 				t.Fatal(err)
 			}
-			root := resetLinkWalkRoot(t, dir)
+			pinned := resetLinkWalkPinned(t, dir)
 			calls := 0
 			stat := func(name string) (os.FileInfo, error) {
 				calls++
-				return root.Stat(name)
+				return pinned.Stat(name)
 			}
-			got, err := resetLinkTargetExistsWith(root, tc.link, stat)
+			got, err := resetLinkTargetExistsWith(pinned, tc.link, stat)
 			if err != nil {
 				t.Fatalf("resetLinkTargetExistsWith: %v", err)
 			}
@@ -209,8 +216,8 @@ func TestResetLinkWalkJudgesLikeToday(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, outside := resetLinkWalkWorkspace(t), t.TempDir()
 			link := tc.setup(t, dir, outside)
-			root := resetLinkWalkRoot(t, dir)
-			got, err := resetLinkTargetExists(root, link)
+			pinned := resetLinkWalkPinned(t, dir)
+			got, err := resetLinkTargetExists(pinned, link)
 			if err != nil {
 				t.Fatalf("resetLinkTargetExists: %v", err)
 			}
@@ -283,7 +290,7 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 		if err := os.Symlink("sub/x", filepath.Join(dir, "a.json")); err != nil {
 			t.Fatal(err)
 		}
-		got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+		got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 		if err != nil {
 			t.Fatalf("resetLinkTargetExists: %v", err)
 		}
@@ -303,7 +310,7 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, statErr := os.Stat(link)
-		got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+		got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 		if err != nil {
 			t.Fatalf("resetLinkTargetExists: %v", err)
 		}
@@ -338,7 +345,7 @@ func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
 			link := filepath.Join(dir, "a.json")
 			resetLinksLink(t, "c1", link)
 			_, statErr := os.Stat(link)
-			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 			if err != nil {
 				t.Fatalf("resetLinkTargetExists: %v", err)
 			}
@@ -436,7 +443,7 @@ func TestResetLinkWalkKeepsADotEndingLinkWhenSearchIsDenied(t *testing.T) {
 			// into the directory the target names. Concatenated, not joined, so the "." survives.
 			_, oracleErr := os.Stat(dir + "/a.json")
 			wantExists := oracleErr == nil
-			got, err := resetLinkTargetExists(resetLinkWalkRoot(t, dir), "a.json")
+			got, err := resetLinkTargetExists(resetLinkWalkPinned(t, dir), "a.json")
 			if err != nil {
 				t.Fatalf("resetLinkTargetExists: %v", err)
 			}
