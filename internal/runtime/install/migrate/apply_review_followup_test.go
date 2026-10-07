@@ -8,8 +8,8 @@ package migrate
 import (
 	"bytes"
 	"errors"
-	"io"
 	"maps"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -297,46 +297,47 @@ func TestMigrateApplyReviewFollowupOrdersACycleTheSameWayOnEveryRun(t *testing.T
 	}
 }
 
-// R1g: a record that cannot be a receipt is refused without being read whole. The receipt reader's bound is the size of
-// the largest string the oracle could hold, far larger than any record, and this scan looks at every planned file under
-// evidence/: an artifact of hundreds of megabytes must not be pulled into memory, expanded into text, or even read
-// through, just to find out it holds no manifest. The counter pins how much the judgement actually pulls.
-func TestMigrateApplyReviewFollowupRefusesALargeRecordWithoutReadingIt(t *testing.T) {
-	for name, record := range map[string][]byte{
-		// Bytes that cannot be UTF-8 text at all, which the reader's own normaliser would expand by half again.
-		"not text": bytes.Repeat([]byte{0xff}, 8<<20),
-		// Valid JSON that is not an object: a decoder would read all of it before failing on the type.
-		"not an object": append([]byte("["), bytes.Repeat([]byte{'0', ','}, 4<<20)...),
-		"a bare string": append([]byte("\""), bytes.Repeat([]byte{'x'}, 8<<20)...),
-		// A number, which a decoder must read to the end to know it has ended.
-		"a bare number": append([]byte("1"), bytes.Repeat([]byte{'2'}, 8<<20)...),
+// R1g: the judgement must not hold a record. The receipt reader's bound is the size of the largest string the oracle
+// could hold, far larger than any record, and this scan looks at every planned file under evidence/, so an ordinary
+// artifact of tens of megabytes must be judged without being kept: the bytes it allocates must stay far below the
+// record, whatever shape the record has and whether or not it turns out to be a receipt.
+func TestMigrateApplyReviewFollowupJudgesALargeRecordWithoutHoldingIt(t *testing.T) {
+	big := bytes.Repeat([]byte{'x'}, 16<<20)
+	notText := bytes.Repeat([]byte{0xff}, 16<<20)
+	for name, c := range map[string]struct {
+		record []byte
+		want   bool
+	}{
+		// A record that cannot be a JSON object at all, refused from its first byte.
+		"not text":      {record: notText},
+		"not an object": {record: append([]byte("["), big...)},
+		// Leading whitespace that alone is larger than any probe: the walk must stream it, not buffer it.
+		"long leading whitespace": {record: append(bytes.Repeat([]byte{' '}, 8<<20), []byte("{\"a\":1}")...)},
+		// A whole JSON object with no manifest: valid, but this order holds nothing of it.
+		"an object with no manifest": {record: []byte("{\"payload\":\"" + string(big) + "\"}")},
+		// A whole JSON object whose manifest is there but too large for this order to hold: still a receipt.
+		"a manifest past the cap": {
+			record: []byte("{\"artifactManifest\":[{\"path\":\"" + string(big) + "\",\"kind\":\"verdict\"}]}"),
+			want:   true,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			counted := &migrateReviewFollowupCountingReader{data: record}
-			manifest, ok := migrateReviewFollowupDecodeManifest(counted, migrateReviewFollowupReceiptReadCap)
-			if ok || manifest != nil {
-				t.Errorf("a record that is not a JSON object is not a receipt: ok=%v manifest=%v", ok, manifest)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			manifest, ok := migrateReviewFollowupDecodeManifest(bytes.NewReader(c.record), migrateReviewFollowupReceiptReadCap)
+			runtime.ReadMemStats(&after)
+			if ok != c.want {
+				t.Errorf("ok = %v, want %v (manifest %v)", ok, c.want, manifest)
 			}
-			if counted.read > 64<<10 {
-				t.Errorf("the judgement read %d bytes of a %d byte record that cannot be a receipt", counted.read, len(record))
+			if !c.want && manifest != nil {
+				t.Errorf("a refused record must return no manifest: %v", manifest)
+			}
+			if grew := after.TotalAlloc - before.TotalAlloc; grew > 8<<20 {
+				t.Errorf("the judgement allocated %d bytes of a %d byte record", grew, len(c.record))
 			}
 		})
 	}
-}
-
-// migrateReviewFollowupCountingReader counts the bytes a judgement actually pulls from a record.
-type migrateReviewFollowupCountingReader struct {
-	data []byte
-	read int
-}
-
-func (c *migrateReviewFollowupCountingReader) Read(p []byte) (int, error) {
-	if c.read >= len(c.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, c.data[c.read:])
-	c.read += n
-	return n, nil
 }
 
 // R1g2: the end-to-end case: a receipt whose manifest path holds bytes that are not UTF-8 names the plan file the
