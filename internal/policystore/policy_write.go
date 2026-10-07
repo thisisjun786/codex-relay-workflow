@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,6 +59,11 @@ const (
 // errPolicyMoved is the publication's answer when the file no longer holds the bytes the caller
 // authorized it to replace: the exchange was undone and nothing was replaced.
 var errPolicyMoved = errors.New("the policy file changed since it was read")
+
+// errExchangeHappened reports a publication whose exchange ran and whose outcome could not be read
+// back or put back. The path holds the new bytes, so a caller must not report that nothing was
+// written; the bytes the exchange displaced are kept at the path the error names.
+var errExchangeHappened = errors.New("the policy file was replaced and what it held could not be read back")
 
 // writeDecisionTimeout bounds the post-publication phase: the registration, the (a)/(b)/(c)
 // decision and any restore. It is a var so a test can shorten it. The phase runs on a context
@@ -127,11 +133,14 @@ type WriteOptions struct {
 
 // SwapFunc is the shape of the publication step: the file is replaced only while it still holds
 // expected, by an atomic exchange with a temporary file holding next. displaced is what the exchange
-// moved out of the path; it is nil and errPolicyMoved when the file had already changed and the
-// exchange was undone, and non-nil when the replacement stands. The context is honoured up to the
-// exchange, which is the durable effect. It is exported so a caller outside policystore can name
-// the type of the WriteOptions.Swap seam.
-type SwapFunc func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) (displaced []byte, err error)
+// moved out of the path and is set only when the replacement stands. kept names a file holding bytes
+// this call did not create and therefore never deletes: the caller must report it. err is nil on a
+// standing replacement, errPolicyMoved when the file had already changed (nothing was replaced),
+// errExchangeHappened when the exchange ran and its outcome could not be established, and any other
+// error when nothing was replaced. The context is honoured up to the exchange, which is the durable
+// effect. It is exported so a caller outside policystore can name the type of the WriteOptions.Swap
+// seam.
+type SwapFunc func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) (displaced []byte, kept string, err error)
 
 // WriteRequest is one proposed write: the digest the caller read and the change it proposes.
 type WriteRequest struct {
@@ -295,9 +304,21 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	}
 	// The replacement happens only while the file still holds the bytes read under the lock, and it is
 	// an atomic exchange, so a writer that saved in between is neither replaced nor lost.
-	displaced, err := swap(ctx, encoded, raw, updated, info.Mode())
+	displaced, kept, err := swap(ctx, encoded, raw, updated, info.Mode())
 	var warnings []string
 	switch {
+	case kept != "":
+		// Bytes this call did not create are kept: the file and the record do not describe one
+		// document, so the answer is a recovery that names where those bytes are.
+		if kept != "" {
+			warnings = append(warnings, "the bytes the exchange displaced are kept at "+kept)
+		}
+		observed, readErr := digestAt(path)
+		if readErr != nil {
+			observed = ""
+		}
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: original, Backup: reported,
+			Recovery: recoveryAdvice(path, reported), Warnings: warnings, Errors: []string{err.Error()}}
 	case err == nil:
 		// The file held the bytes this run read and now holds the candidate.
 	case errors.Is(err, errPolicyMoved):
@@ -467,9 +488,12 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 	}
 	var syncErr error
 	if observed == published {
-		displaced, err := swap(ctx, encoded, current, raw, mode)
+		displaced, kept, err := swap(ctx, encoded, current, raw, mode)
 		switch {
 		case err == nil:
+		case kept != "":
+			warnings = append(warnings, "the bytes the exchange displaced are kept at "+kept)
+			fallthrough
 		case errors.Is(err, errPolicyMoved):
 			now, _ := digestAt(path)
 			return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: now, RegisteredDigest: original, Backup: backup,
@@ -498,7 +522,17 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 	// The file holds the original bytes again. The record is read once more: a registration that ran
 	// elsewhere while this restore was deciding may now name another digest, and then the two still
 	// disagree even though the file is back.
-	if after := Locate(env); after.State == Registered && after.RegisteredDigest != original {
+	// The file holds the original bytes again, so the record must be read once more and must still
+	// name them: a registration that ran elsewhere while this restore was deciding may name another
+	// digest, and a record that is now absent or unreadable establishes nothing. Either way the two
+	// no longer describe one document, which is a recovery rather than a confirmed restore.
+	after := Locate(env)
+	switch {
+	case after.State != Registered:
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, Backup: backup,
+			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Errors: []string{detail + "; the wiring record could not be read back after the restore: " + after.Reason}}
+	case after.RegisteredDigest != original:
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: after.RegisteredDigest, Backup: backup,
 			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
 			Errors: []string{detail + "; the wiring record names " + after.RegisteredDigest + ", not the bytes that were put back"}}
@@ -564,6 +598,10 @@ func describeAnswer(answer RegisterAnswer, outcome string, parsed bool) string {
 
 // recoveryAdvice is what a person does about a policy file and a wiring record that no longer agree.
 // The backup is named only when this run knows one.
+// A path whose bytes are not UTF-8 is spelled by the installer as a surrogate escape; a JSON writer
+// that replaces it with U+FFFD would name a file that does not exist. The advice is therefore built
+// from the path's own bytes (the kernel spelling) so that it survives any writer: the command it
+// names opens the file the record describes.
 func recoveryAdvice(path, backup string) string {
 	advice := "the execution policy and the wiring record name different digests, so neither is enforced; re-register the file with crw install register-mcp --re-register-policy --execution-policy " + path
 	if backup != "" {
@@ -659,20 +697,19 @@ func backupPolicy(path string, raw []byte, now time.Time) (string, error) {
 //
 // A plain rename replaces whatever is at the path; the exchange lets this step read back what it
 // displaced and put it back when it is not the bytes the caller authorized, so a writer that saved
-// between the caller's decision and this call keeps its content. displaced is nil and errPolicyMoved
-// when the exchange was undone, and the displaced bytes when the replacement stands; an error after
-// the exchange is a file that was replaced whose durability was not established.
-func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os.FileMode) (displaced []byte, err error) {
+// between the caller's decision and this call keeps its content. Bytes this call did not create are
+// never deleted: a document that raced the undo is kept at the path the error names.
+func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os.FileMode) (displaced []byte, kept string, err error) {
 	dir := publishParent(path)
 	file, err := os.CreateTemp(dir, writeTempPrefix)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	temporary := file.Name()
-	fail := func(err error) ([]byte, error) {
+	fail := func(err error) ([]byte, string, error) {
 		_ = file.Close()
 		_ = os.Remove(temporary)
-		return nil, err
+		return nil, "", err
 	}
 	if err := os.Chmod(temporary, mode.Perm()); err != nil {
 		return fail(err)
@@ -685,35 +722,43 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(temporary)
-		return nil, err
+		return nil, "", err
 	}
 	if err := ctx.Err(); err != nil {
 		_ = os.Remove(temporary)
-		return nil, err
+		return nil, "", err
 	}
 	if err := exchangeFiles(temporary, path); err != nil {
 		_ = os.Remove(temporary)
-		return nil, err
+		return nil, "", err
 	}
 	// The exchange happened: the temporary path now holds what the policy held. It is put back
 	// unchanged when it is not the content this call was authorized to replace, so no writer's bytes
 	// are lost to a decision made before it saved.
-	displaced, readErr := os.ReadFile(temporary)
+	// The displaced content is read with the package's own non-blocking reader, so a path that became a
+	// named pipe after it was judged cannot hang the request while the policy lock is held.
+	displaced, readErr := readRegular(temporary)
 	if readErr != nil {
-		return nil, readErr
+		// The exchange ran and what it displaced cannot be read. The bytes are kept at the temporary
+		// path, which is never removed, and the caller is told the replacement stands.
+		return nil, temporary, fmt.Errorf("%w: %s (%s)", errExchangeHappened, readErr.Error(), temporary)
 	}
-	if !bytes.Equal(displaced, expected) {
-		if undoErr := exchangeFiles(temporary, path); undoErr != nil {
-			return nil, undoErr
-		}
+	if bytes.Equal(displaced, expected) {
 		_ = os.Remove(temporary)
-		return nil, errPolicyMoved
+		return displaced, "", syncDirectory(dir)
 	}
-	_ = os.Remove(temporary)
-	if err := syncDirectory(dir); err != nil {
-		return displaced, err
+	// The file had already moved on, so this call replaces nothing. The exchange is undone so the
+	// writer that saved keeps its bytes.
+	if undoErr := exchangeFiles(temporary, path); undoErr != nil {
+		return nil, temporary, fmt.Errorf("%w: the exchange could not be undone: %s (%s)", errExchangeHappened, undoErr.Error(), temporary)
 	}
-	return displaced, nil
+	// The undo moved this call's own candidate back to the temporary path unless a writer saved again
+	// in between; that writer's document is kept and named rather than deleted.
+	if back, backErr := readRegular(temporary); backErr == nil && bytes.Equal(back, next) {
+		_ = os.Remove(temporary)
+		return nil, "", errPolicyMoved
+	}
+	return nil, temporary, errPolicyMoved
 }
 
 // publishParent is the directory the temporary file is created in and synced: the path's own parent

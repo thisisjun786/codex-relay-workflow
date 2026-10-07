@@ -655,10 +655,10 @@ func cancelAfterPublish(t *testing.T) (context.Context, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	restore := writeSwap
-	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, error) {
-		displaced, err := restore(ctx, path, expected, next, mode)
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
 		cancel()
-		return displaced, err
+		return displaced, kept, err
 	}
 	t.Cleanup(func() { writeSwap = restore })
 	return ctx, cancel
@@ -1017,13 +1017,13 @@ func TestARestoreWhoseDirectorySyncFailedIsStillARestore(t *testing.T) {
 	env, file := host(t, policyText, true)
 	restore := writeSwap
 	calls := 0
-	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, error) {
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
 		calls++
-		displaced, err := restore(ctx, path, expected, next, mode)
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
 		if calls == 2 {
-			return displaced, errors.New("the directory could not be synced")
+			return displaced, "", errors.New("the directory could not be synced")
 		}
-		return displaced, err
+		return displaced, kept, err
 	}
 	t.Cleanup(func() { writeSwap = restore })
 	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
@@ -1130,18 +1130,18 @@ func TestARestoreWhoseBytesMovedAfterTheRenameNeedsRecovery(t *testing.T) {
 	third := "a document another writer put there after the restore\n"
 	restore := writeSwap
 	calls := 0
-	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, error) {
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
 		calls++
-		displaced, err := restore(ctx, path, expected, next, mode)
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
 		if calls == 2 {
 			// The restore's rename is done and its directory was not synced; another writer then
 			// replaces the bytes before the write reads them back.
 			if err := os.WriteFile(file, []byte(third), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			return displaced, errors.New("the directory could not be synced")
+			return displaced, "", errors.New("the directory could not be synced")
 		}
-		return displaced, err
+		return displaced, kept, err
 	}
 	t.Cleanup(func() { writeSwap = restore })
 	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
@@ -1232,11 +1232,12 @@ func TestACancellationDuringPublicationDoesNotReplaceTheFile(t *testing.T) {
 	env, file := host(t, policyText, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	opts := WriteOptions{Register: neverRegisters(t), Swap: func(publishCtx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, error) {
+	opts := WriteOptions{Register: neverRegisters(t), Swap: func(publishCtx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
 		// The request goes away while the publication is under way; the real publication must then
 		// refuse the exchange.
 		cancel()
-		return swapPolicy(publishCtx, path, expected, next, mode)
+		displaced, kept, err := swapPolicy(publishCtx, path, expected, next, mode)
+		return displaced, kept, err
 	}}
 	result := Write(ctx, envOf(env), opts,
 		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
@@ -1285,5 +1286,41 @@ func TestAChangeThatMovesNothingIsRefused(t *testing.T) {
 	}
 	if !slices.Equal(before, backupsOf(t, filepath.Dir(file))) {
 		t.Fatal("a refused no-op wrote a backup")
+	}
+}
+
+// TestARestoreWhoseRecordWentAwayNeedsRecovery is the pre-merge evaluation's finding: the final check
+// after a restore rejected only a registered record with a different digest, so a record that was
+// removed or corrupted while the restore ran fell through to a confirmed restore. The record must be
+// re-established, not assumed.
+func TestARestoreWhoseRecordWentAwayNeedsRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The registration leaves the record naming the original, so the (b) restore is decided; the
+	// record then disappears while the restore runs, so the final check cannot re-establish it.
+	restore := writeSwap
+	calls := 0
+	writeSwap = func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+		calls++
+		displaced, kept, err := restore(ctx, path, expected, next, mode)
+		if calls == 2 {
+			if err := os.Remove(recordOf(env)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return displaced, kept, err
+	}
+	t.Cleanup(func() { writeSwap = restore })
+	opts := WriteOptions{Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) }}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the record was not re-established", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Restored {
+		t.Fatal("a restore was confirmed although the wiring record is gone")
+	}
+	after, _ := os.ReadFile(file)
+	if string(after) != policyText {
+		t.Fatal("the original bytes are not on disk")
 	}
 }

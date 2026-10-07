@@ -85,19 +85,19 @@ type policyWriteBody struct {
 // set, so a stale digest carries the digest on disk and a recovery carries both digests and the
 // command that settles them. It never carries an environment variable, a secret or the token.
 type policyWriteErrorBody struct {
-	Error            string   `json:"error"`
-	Reason           string   `json:"reason,omitempty"`
-	CurrentDigest    string   `json:"currentDigest,omitempty"`
-	Errors           []string `json:"errors,omitempty"`
-	Restored         bool     `json:"restored,omitempty"`
-	FileDigest       string   `json:"fileDigest,omitempty"`
-	RegisteredDigest string   `json:"registeredDigest,omitempty"`
-	Backup           pathText `json:"backup,omitempty"`
-	Recovery         string   `json:"recovery,omitempty"`
-	Step             string   `json:"step,omitempty"`
+	Error            string      `json:"error"`
+	Reason           messageText `json:"reason,omitempty"`
+	CurrentDigest    string      `json:"currentDigest,omitempty"`
+	Errors           textList    `json:"errors,omitempty"`
+	Restored         bool        `json:"restored,omitempty"`
+	FileDigest       string      `json:"fileDigest,omitempty"`
+	RegisteredDigest string      `json:"registeredDigest,omitempty"`
+	Backup           pathText    `json:"backup,omitempty"`
+	Recovery         messageText `json:"recovery,omitempty"`
+	Step             string      `json:"step,omitempty"`
 	// Warnings carry what the outcome could not establish: a restore whose directory was not synced,
 	// for example, is still a restore but may not survive a power loss.
-	Warnings []string `json:"warnings,omitempty"`
+	Warnings textList `json:"warnings,omitempty"`
 }
 
 // envLookup is the process environment as a LookupEnv.
@@ -202,29 +202,29 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 			Error: "stale_digest", CurrentDigest: result.CurrentDigest}}, nil
 	case policystore.WriteInvalidPolicy:
 		return Response{Status: http.StatusUnprocessableEntity, Body: policyWriteErrorBody{
-			Error: "invalid_policy", Errors: emptyIfNil(result.Errors)}}, nil
+			Error: "invalid_policy", Errors: textList(emptyIfNil(result.Errors))}}, nil
 	case policystore.WriteRegisterFailed:
 		// The file was put back, so restored is the headline; the warnings and errors carry what the
 		// restore could not establish (a directory that was not synced, say) and the backup names the
 		// bytes that were put back.
 		return Response{Status: http.StatusBadGateway, Body: policyWriteErrorBody{
 			Error: "register_failed", Restored: result.Restored, Backup: pathText(result.Backup),
-			Warnings: result.Warnings, Errors: emptyIfNil(result.Errors)}}, nil
+			Warnings: textList(result.Warnings), Errors: textList(emptyIfNil(result.Errors))}}, nil
 	case policystore.WriteRecoveryNeeded:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
-			Backup: pathText(result.Backup), Recovery: result.Recovery, Errors: emptyIfNil(result.Errors)}}, nil
+			Backup: pathText(result.Backup), Recovery: messageText(result.Recovery), Errors: textList(emptyIfNil(result.Errors))}}, nil
 	case policystore.WriteCancelled:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "cancelled", Step: result.Step, Backup: pathText(result.Backup), FileDigest: result.FileDigest}}, nil
 	case policystore.WriteFailed:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
-			Error: "failed", Reason: firstReason(result.Errors)}}, nil
+			Error: "failed", Reason: messageText(firstReason(result.Errors))}}, nil
 	default:
 		// not_registered, unreadable, symlinked and busy are all "the write could not be started",
 		// each with its own reason.
 		return Response{Status: http.StatusConflict, Body: policyWriteErrorBody{
-			Error: result.Kind, Reason: firstReason(result.Errors)}}, nil
+			Error: result.Kind, Reason: messageText(firstReason(result.Errors))}}, nil
 	}
 }
 

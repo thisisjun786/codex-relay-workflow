@@ -710,21 +710,21 @@ func TestPolicyWriteReportsTheRestoreWarning(t *testing.T) {
 	}, unavailablePolicyRunning)
 	previous := policyWriteSeams
 	calls := 0
-	policyWriteSeams.Swap = func(_ context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, error) {
+	policyWriteSeams.Swap = func(_ context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
 		calls++
 		// The GUI package cannot reach policystore's unexported swapPolicy, so the seam exchanges the
 		// bytes itself: the first call publishes the candidate, the second restores the original.
 		displaced, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if err := os.WriteFile(path, next, mode.Perm()); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if calls == 2 {
-			return displaced, errors.New("the directory could not be synced")
+			return displaced, "", errors.New("the directory could not be synced")
 		}
-		return displaced, nil
+		return displaced, "", nil
 	}
 	t.Cleanup(func() { policyWriteSeams = previous })
 	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
