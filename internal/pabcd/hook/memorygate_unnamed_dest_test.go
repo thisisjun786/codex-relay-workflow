@@ -405,6 +405,42 @@ func TestMemoryGateUnnamedDestinationReceiverAndLiteralShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationThirdPassShapes pins the shapes the third pre-merge evaluation found: a write method
+// on an attribute chain rooted in a variable, an interpolated mode and an interpolated copy destination, a write
+// function captured as a def default, and a nested shell program the outer quotes escape. The controls pin the
+// read-only module opens the same reading must leave allowed.
+func TestMemoryGateUnnamedDestinationThirdPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"attribute chain rooted in a variable", py("from pathlib import Path; p = Path(\"" + m + "/child\"); p.parent.write_text(\"x\")")},
+		{"interpolated mode", py("from pathlib import Path; mode = \"w\"; open(Path(\"" + m + "\"), f\"{mode}\").write(\"x\")")},
+		{"interpolated copy destination", py("import shutil; root = \"" + root + "\"; shutil.copy(\"/w/a\", f\"{root}/n.md\")")},
+		{"write function as a def default", "python3 <<'PY'\ndef put(m, f=open):\n    f(m, \"w\").write(\"x\")\nput(\"" + m + "\")\nPY"},
+		{"nested shell program with escaped quotes", "bash -c \"python3 -c \\\"from pathlib import Path; open(Path('" + m + "'), 'w').write('x')\\\"\""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A module's own open with a computed path and no mode reads, which is Python's default mode.
+		{"module open read with a computed path", py("import io, os; io.open(os.path.join(\"" + root + "\", \"n.md\")).read()")},
+		{"module open read with a computed path and a mode", py("import io, os; io.open(os.path.join(\"" + root + "\", \"n.md\"), \"r\").read()")},
+		{"tarfile open read with a computed path", py("import tarfile, os; tarfile.open(os.path.join(\"" + root + "\", \"a.tar\"))")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.
