@@ -123,6 +123,16 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		seen[key] = i
 		bundles[i] = bundle
 	}
+	// The grade file and the ledger row that names it are one record: this run replaces
+	// grade.json and then appends the row. The drafts surface reads that pair, the ledger
+	// first and then the file, so the two must not interleave: the lock the drafts surface
+	// holds is taken here for the whole grade, and a concurrent grade or drafts run is
+	// refused by name rather than allowed to read a half-recorded pair.
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	results := make([]AuditResult, len(jobs))
 	logs := make([]auditLog, len(jobs))
 	sem := make(chan struct{}, section.Workers)
@@ -151,15 +161,20 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 // auditGradeOne writes the prompt into the bundle, runs the grader there under the time
 // limit, and reads what it wrote.
 func auditGradeOne(ctx context.Context, e *Env, section auditSection, bundle *auditBundle, job AuditJob, log *auditLog) AuditResult {
+	// The grader's own paths are absolute, because the grader runs with the bundle as its
+	// working directory and a relative argument would be resolved against it twice. The
+	// ledger records that same absolute directory, not the spelling the caller passed: a
+	// later reader (audit drafts, for one) resolves the row's bundle from its own working
+	// directory, and a relative spelling would name a different directory there, so two
+	// grades of one bundle would read as two bundles.
+	absBundle, err := filepath.Abs(job.Bundle)
 	result := AuditResult{
 		Mode: bundle.Mode, Subject: bundle.Subject, Head: bundle.Head, Issue: bundle.Issue,
 		Pair: job.Pair, Phase: job.Phase, Round: job.Round,
-		Bundle: job.Bundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
+		Bundle: absBundle, GradedAt: e.Now().UTC().Format(auditTimeFormat),
 	}
-	// The grader's own paths are absolute, because the grader runs with the bundle as its
-	// working directory and a relative argument would be resolved against it twice.
-	absBundle, err := filepath.Abs(job.Bundle)
 	if err != nil {
+		result.Bundle = job.Bundle
 		result.Status = auditStatusInvalid
 		return result
 	}

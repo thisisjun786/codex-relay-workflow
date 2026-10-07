@@ -197,6 +197,11 @@ func auditDraftUnknownKeys(data []byte) ([]string, error) {
 // run, so two processes cannot create or grow one draft at once. It is non-blocking: a second
 // caller is refused by name rather than waiting. The lock file itself is never removed,
 // because another process may hold it.
+//
+// A grade holds the same lock for its whole run (AuditGrade), because the grade file and the
+// ledger row that names it are one record and the drafts surface reads that pair: without the
+// lock a regrade could replace grade.json between the ledger read and the file read, and a
+// row would be drafted from another run's file.
 func auditDraftLock(e *Env, cfg *Config) (func(), error) {
 	dir := auditDraftDir(e, cfg)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

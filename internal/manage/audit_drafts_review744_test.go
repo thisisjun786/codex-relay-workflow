@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // This file pins the four defects the post-merge grade of the audit drafts pull request found
@@ -317,7 +318,7 @@ func TestAuditDraftsReview744ImproveProposePostedDraftOnlyGrowsSeen(t *testing.T
 				Schema: auditDraftSchema, Fingerprint: key, Source: source,
 				Project: "project-a", Title: "a posted defect", Severity: "P1",
 				Labels: []string{source, "P1"}, State: auditDraftStatePosted, Posted: "CRW-1",
-				Body: "## What\n\na defect\n\n## Projects\n\n- project-a: 1\n\n## Evidence\n\n- events:rel-a\n",
+				Body: improveProposePostedBody(source),
 				Seen: []auditDraftSeen{{Mode: auditModePR, Subject: "s", Head: "h", At: "2026-10-01T00:00:00Z"}},
 			}
 			path := filepath.Join(dir, key+".json")
@@ -353,5 +354,133 @@ func TestAuditDraftsReview744ImproveProposePostedDraftOnlyGrowsSeen(t *testing.T
 				t.Errorf("the seen list went from %d to %d entries, want it to grow", len(seenBefore), len(seenAfter))
 			}
 		})
+	}
+}
+
+// improveProposePostedBody is a stored body in the shape its source writes: an improve draft
+// carries the projects and the evidence its own renderer folds in, and an audit draft carries
+// the source-audit and criteria sections the audit renderer advances. Both are the sections a
+// rewrite would touch, so a test that reads them back unchanged is a real check.
+func improveProposePostedBody(source string) string {
+	if source == improveProposeSource {
+		return "## What\n\na posted defect\n\n## Projects\n\n- project-a: 1\n\n## Evidence\n\n- events:rel-a\n"
+	}
+	return "## What\n\na posted defect\n\n## Where\n\na.go:1\n\n## Source audit\n\n- mode=pr subject=s head=h at=2026-10-01T00:00:00Z\n\n## Criteria\n\n- C1: PASS\n"
+}
+
+// auditDraftsReview744SlowGrader writes its result and then runs past the time limit, so a
+// regrade records timeout while leaving a usable grade.json behind. It touches the marker once
+// it has started, so a test can tell the grade is under way.
+const auditDraftsReview744SlowGrader = "#!/bin/sh\n" +
+	"prompt=$1\n" +
+	"dir=$(dirname $prompt)\n" +
+	"if [ -n \"$AUDIT_MARKER\" ]; then : > \"$AUDIT_MARKER\"; fi\n" +
+	"printf '%s' \"$AUDIT_JSON\" > $dir/grade.json\n" +
+	"if [ -n \"$AUDIT_SLOW\" ]; then sleep 30; fi\n" +
+	"exit 0\n"
+
+// auditDraftsReview744BundleAt writes a bundle document into a directory.
+func auditDraftsReview744BundleAt(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	decl := map[string]any{"schema": auditBundleSchema, "mode": auditModePR, "subject": "s", "head": "h", "issue": "CRW-1"}
+	body, err := json.Marshal(decl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, auditBundleFile), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// auditDraftsReview744Grader writes the slow fake grader and returns its command.
+func auditDraftsReview744Grader(t *testing.T) []string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "slow-grader.sh")
+	if err := os.WriteFile(path, []byte(auditDraftsReview744SlowGrader), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return []string{path, "{prompt_file}", "{bundle}"}
+}
+
+// C1: a regrade that names the same bundle by a relative path is the same bundle wherever the
+// reader runs, because the ledger records the bundle absolutely. The earlier ok row is then
+// skipped rather than drafted from the grade.json the timed-out regrade left.
+func TestAuditDraftsReview744RegradeFromAnotherCwdVoidsTheBundle(t *testing.T) {
+	state := t.TempDir()
+	base := t.TempDir()
+	bundle := filepath.Join(base, "a", "B")
+	auditDraftsReview744BundleAt(t, bundle)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 1})
+	e, _, _ := auditTestEnv(t)
+	// R1 is graded from the bundle parent, naming the bundle absolutely, and finds nothing.
+	t.Chdir(filepath.Join(base, "a"))
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle, Round: "r1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// R2 grades the same bundle again, naming it relatively, writes a usable P1 result and runs
+	// past its time limit.
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "1")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: "B", Round: "r2"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Drafts runs from a directory where the relative spelling names nothing at all.
+	other := filepath.Join(base, "other")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(other)
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{Round: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 0 || len(report.Updated) != 0 {
+		t.Fatalf("the regrade from another cwd still produced a draft: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
+		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	}
+}
+
+// C1: a grade holds the drafts lock for its whole run, so the drafts surface cannot read the
+// ledger and then a grade.json another run replaced: the grade file and the row that names it
+// are one record, and the two writers do not interleave.
+func TestAuditDraftsReview744GradeHoldsTheDraftsLock(t *testing.T) {
+	state := t.TempDir()
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	auditDraftsReview744BundleAt(t, bundle)
+	marker := filepath.Join(t.TempDir(), "started")
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 2})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_MARKER", marker)
+	t.Setenv("AUDIT_SLOW", "1")
+	done := make(chan error, 1)
+	go func() {
+		_, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}})
+		done <- err
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the grader never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := auditDraftLock(e, cfg); err == nil {
+		t.Error("a grade in flight did not hold the drafts lock")
+	} else if !strings.Contains(err.Error(), "drafts_locked") {
+		t.Errorf("the refusal reads %q, want drafts_locked", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
