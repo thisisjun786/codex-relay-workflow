@@ -512,6 +512,12 @@ func dagHostCommandUnits(text string) []string {
 			frames = append(frames, dagHostUnitFrame{})
 			i += 2
 			wordStart = true
+		case !quoted && c == '(' && wordStart:
+			// A subshell's ( starts a command unit, so "(crw relay dag-ready ...)" names the relay and
+			// not "(crw". A ( that does not start a word (an array assignment, say) is left alone.
+			flush()
+			i++
+			wordStart = true
 		case c == '`':
 			flush()
 			if frames[len(frames)-1].tick {
@@ -522,6 +528,9 @@ func dagHostCommandUnits(text string) []string {
 			i++
 			wordStart = true
 		case !quoted && c == ')' && len(frames) > 1 && !frames[len(frames)-1].tick:
+			// The substitution's last command ends here; the text after the ) is the outer command's
+			// again, so it starts a unit of its own and a word is never glued to the ).
+			flush()
 			frames = frames[:len(frames)-1]
 			i++
 			wordStart = true

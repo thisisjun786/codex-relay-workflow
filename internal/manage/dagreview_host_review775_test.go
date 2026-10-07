@@ -210,6 +210,11 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"a substitution in an unquoted here-document body", "cat <<EOF\n$(crw relay dag-release --plan p1)\nEOF", true},
 		{"a substitution in a quoted here-document body", "cat <<'EOF'\n$(crw relay dag-release --plan p1)\nEOF", false},
 		{"a relay example line in an unquoted here-document body", "cat <<EOF\ncrw relay dag-release --plan p1\nEOF", false},
+		// A subshell is a command unit of its own, and a substitution that sits in the middle of a
+		// word does not glue the words around it together.
+		{"a relay command in a subshell", "(crw relay dag-release --plan p1)", true},
+		{"a relay command in a substitution inside a word", "echo x\"$(crw relay dag-release --plan p1)\"y", true},
+		{"a relay command in an assignment substitution", "out=\"$(crw relay dag-release --plan p1)\"", true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
