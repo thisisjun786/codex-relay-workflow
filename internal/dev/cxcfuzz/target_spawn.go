@@ -113,8 +113,8 @@ func spawnNestingBytes(depth int) int {
 }
 
 // spawnNestingLimit is the deepest depth spawnNestingMaxBytes allows. It is derived from the cap
-// rather than assumed equal to spawnNestingMaxDepth, so a case's bytes are decided by the cap and the
-// two can never drift into a depth the cap forbids.
+// rather than assumed equal to the bound and its spread, so a case's bytes are decided by the cap and
+// the two can never drift into a depth the cap forbids.
 func spawnNestingLimit() int {
 	return (spawnNestingMaxBytes - spawnNestingFixedBytes) / spawnNestingBytesPerLevel
 }
