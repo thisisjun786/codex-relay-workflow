@@ -694,8 +694,10 @@ func auditDraftFingerprintName(fingerprint string) error {
 	return nil
 }
 
-// auditDraftScopeMatches reports whether one ledger row is inside the run's range. Only an ok
-// row carries a usable grade.json, so every other status is out of the range.
+// auditDraftScopeMatches reports whether one ledger row is inside the run's range. Only an ok row
+// is drafted from, whatever a row of another status left in the bundle: a timeout or a failure
+// records that the run did not finish inside its limit, so its grade.json is not a result this
+// surface reads, and a bundle whose newest row is one of those produces no draft at all.
 func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, error) {
 	if row.Status != auditStatusOK {
 		return false, nil
@@ -715,10 +717,12 @@ func auditDraftScopeMatches(row auditLedgerRow, scope auditDraftScope) (bool, er
 	return true, nil
 }
 
-// auditDraftsRun reads the ledger's ok rows and each bundle's grade.json, and writes one draft
-// per defect at or above the threshold. A defect already in the index grows its seen list
-// instead of becoming a new draft, and the new drafts the cap leaves uncreated are counted in
-// the report rather than silently dropped.
+// auditDraftsRun reads the ledger and each bundle's grade.json, and writes one draft per defect at
+// or above the threshold. The ledger is read in full, because the newest row of a bundle decides
+// whether its grade.json may be read at all, and only the ok rows inside the run's range are then
+// drafted from. A defect already in the index grows its seen list instead of becoming a new draft,
+// and the new drafts the cap leaves uncreated are counted in the report rather than silently
+// dropped.
 func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftReport, error) {
 	report := auditDraftReport{
 		Created:           []auditDraftSummary{},
