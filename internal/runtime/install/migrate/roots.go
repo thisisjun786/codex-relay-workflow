@@ -665,7 +665,8 @@ func (d *Dir) migrateOwnedDirIdentityOpen(tmp string) (*Dir, error) {
 // migrateOwnedDirIdentityVerify checks the pinned descriptor against what this run just created: the
 // very inode the mkdirat made at the temporary name, a directory of this process, at exactly perm.
 // Anything else is not this run's directory, so the run refuses rather than publishing it, and the
-// entry is left where it is.
+// entry is left where it is. The identity read at the name when it was created comes first, so the
+// proof that the descriptor is this run's own directory does not rest on the owner alone.
 func (d *Dir) migrateOwnedDirIdentityVerify(child *Dir, perm uint32, want fileID) error {
 	var st unix.Stat_t
 	if err := unix.Fstat(child.fd(), &st); err != nil {
