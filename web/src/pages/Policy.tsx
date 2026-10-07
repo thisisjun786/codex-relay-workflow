@@ -801,9 +801,11 @@ export function PolicyPage() {
     keepInputs.current = false;
     // The whole read-and-apply sequence lives in runRead (policy-state.ts), outside React, so the
     // shipped lifecycle is the one the tests drive with a fake transport rather than a parallel copy.
-    void runRead(stateRef.current, () => getPolicy(controller.signal), keep).then((outcome) => {
+    void runRead(stateRef.current, () => getPolicy(controller.signal), keep, (started) => apply(() => started)).then((outcome) => {
       if (controller.signal.aborted || current !== generation.current) return;
-      apply(() => outcome.state);
+      // The outcome carries the read's own result. Only the catalog is merged from whatever the screen
+      // holds now, so a catalog that arrived while the read was in flight is not dropped.
+      apply((previous) => ({ ...outcome.state, catalog: previous.catalog }));
     });
     return () => {
       controller.abort();

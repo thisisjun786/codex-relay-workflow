@@ -1414,6 +1414,25 @@ test("a conflict re-read keeps the operator's inputs through the shipped read se
   assert.deepEqual(kept.state.allowedDraft.get("anthropic/opus"), ["max", "high"]);
 });
 
+test("a read publishes its started state before the first await", async () => {
+  // d1: runRead marked only its own local copy busy, so the page never disabled its controls while a
+  // read was in flight and the answer replaced whatever the operator had done meanwhile. It now hands
+  // the started state to the caller synchronously, exactly as runSave does.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const seen: PolicyScreenState[] = [];
+  let resolve: (body: unknown) => void = () => {};
+  const pending = runRead(state, () => new Promise((done) => { resolve = done; }), false, (started) => seen.push(started));
+  assert.equal(seen.length, 1, "the started state is reported before the read resolves");
+  assert.equal(screenBusy(seen[0]), true, "and it is busy, so the controls are disabled");
+  assert.equal(screenMayEdit(seen[0], "allowed:gpt-6.1-sol"), false);
+  resolve(reading({ digest: "b".repeat(64) }));
+  const outcome = await pending;
+  assert.equal(outcome.ok, true);
+  assert.equal(screenBusy(outcome.state), false, "the answer clears the busy state");
+});
+
 // C6's other half. node:test cannot load the .tsx, so the label a control carries is built by a
 // pure function here and the screen renders every control's aria-label from it: a control cannot be
 // added without a label, and the label text is pinned where a test can read it.

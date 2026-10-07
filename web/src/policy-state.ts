@@ -921,15 +921,21 @@ export function checkRefusedNotice(status: number, body: unknown): PolicyNotice 
  *
  * The body is decoded here rather than by the caller, so a malformed answer becomes the screen's own
  * failure state instead of a half-populated screen.
+ *
+ * onStart receives the started state before the first await, exactly as runSave does, so the caller
+ * publishes it: every edit control is disabled while the read is in flight, and no edit can be made
+ * that the read's answer would then replace.
  */
 export function runRead(
   state: PolicyScreenState,
   read: () => Promise<unknown>,
   keepInputs: boolean,
+  onStart?: (started: PolicyScreenState) => void,
 ): Promise<{ state: PolicyScreenState; ok: boolean }> {
   // One pending change at a time: the read marks the screen busy before it starts, so no draft can be
   // begun that this read's answer would silently replace.
   const started = screenReadStarted(state);
+  onStart?.(started);
   return read().then(
     (body) => {
       // A malformed answer is refused here rather than rendered as a half-populated screen, so the

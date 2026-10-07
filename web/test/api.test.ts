@@ -24,6 +24,8 @@ interface Fake {
   fetched: Array<{ url: string; init?: RequestInit }>;
   /** True makes sessionStorage.setItem throw, as a storage-denied context does. */
   storageRefused: boolean;
+  /** True makes sessionStorage.removeItem throw, so the old stored token stays behind. */
+  storageRemoveRefused: boolean;
 }
 
 const GLOBALS = globalThis as unknown as Record<string, unknown>;
@@ -57,7 +59,7 @@ function install(hash: string, status: number, payload: unknown): Fake {
       replaced.push(url);
     },
   };
-  const sessionStorageFake = {
+ const sessionStorageFake = {
     getItem: (key: string) => (stored.has(key) ? stored.get(key) : null),
     setItem: (key: string, value: string) => {
       if (sessionStorageFake.refused) throw new Error("storage denied");
@@ -65,20 +67,30 @@ function install(hash: string, status: number, payload: unknown): Fake {
     },
     removeItem: (key: string) => {
       removed.push(key);
+      // A context can refuse the cleanup as well as the write; removeRefused models that, so a test
+      // can leave the old value in storage and prove the in-memory token still wins.
+      if (sessionStorageFake.removeRefused) throw new Error("storage denied");
       stored.delete(key);
     },
     refused: false,
+    removeRefused: false,
   };
   GLOBALS.sessionStorage = sessionStorageFake;
   GLOBALS.fetch = async (url: string, init?: RequestInit) => {
     fetched.push({ url, init });
     return new Response(JSON.stringify(payload), { status });
   };
-  const fake = { location, replaced, stored, removed, fetched, storageRefused: false };
+  const fake = { location, replaced, stored, removed, fetched, storageRefused: false, storageRemoveRefused: false };
   Object.defineProperty(fake, "storageRefused", {
     get: () => sessionStorageFake.refused,
     set: (value: boolean) => {
       sessionStorageFake.refused = value;
+    },
+  });
+  Object.defineProperty(fake, "storageRemoveRefused", {
+    get: () => sessionStorageFake.removeRefused,
+    set: (value: boolean) => {
+      sessionStorageFake.removeRefused = value;
     },
   });
   return fake;
@@ -235,6 +247,27 @@ test("a fragment token wins over an old stored token when the storage write fail
     await api.request("/api/policy", { method: "POST", body: "{}" });
     assert.equal(headersOf(fake)["X-CRW-Token"], "new-token");
     assert.ok(fake.removed.includes(api.TOKEN_STORAGE_KEY), "the failed write also clears the old stored token");
+  } finally {
+    uninstall();
+  }
+});
+
+// The precedence rule on its own, with the cleanup failing too: a context that refuses both the
+// write and the removal leaves the old token in storage, so a storage-first getToken would still
+// answer it. This is the case the first regression could not see, because its fake always deleted
+// the old value on removeItem.
+test("the fragment token wins even when the old stored token could not be cleared", async () => {
+  const api = await freshApi();
+  const fake = install("#token=new-token", 200, {});
+  fake.stored.set(api.TOKEN_STORAGE_KEY, "old-token");
+  fake.storageRefused = true;
+  fake.storageRemoveRefused = true;
+  try {
+    api.bootstrapToken();
+    assert.equal(fake.stored.get(api.TOKEN_STORAGE_KEY), "old-token", "the old value really is still in storage");
+    assert.equal(api.getToken(), "new-token", "the token this page load received still wins");
+    await api.request("/api/policy", { method: "POST", body: "{}" });
+    assert.equal(headersOf(fake)["X-CRW-Token"], "new-token");
   } finally {
     uninstall();
   }
