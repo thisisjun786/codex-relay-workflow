@@ -607,8 +607,10 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 		// The integrity check runs before the recovery accounting, so a retry reaches this refusal
 		// without having looked at what its first attempt published. The plan on disk cannot prove
 		// whether that attempt committed it, so the refusal leaves it unknown (CRW-930, d2/d3).
+		// The reasons are detail and are bounded, so the accounting appended after them survives the
+		// harness's cut (CRW-930, d1: found by the pre-merge evaluation of the generation-2 head).
 		return promptDclosePlanOutcome{output: promptDclosePartialRefusal(
-			promptOrchestrateRefusal("invalid goalplan: "+strings.Join(integrityReasons, "; ")+". Nothing was written."), published, nil)}, nil
+			promptOrchestrateRefusal("invalid goalplan: "+promptDcloseDetailFor(published, integrityReasons, "integrity reason(s)")+". Nothing was written."), published, nil)}, nil
 	}
 	if len(plan.WorkPhases) == 0 {
 		// A plan with no work-phase cannot carry a commit of this close, so no shape can decide it;
@@ -893,7 +895,7 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	case goalplan.WorkPhaseCloseFixedTasksPending:
 		// §41 W1: the marker stays so the operator can repair the plan and finish with the same request.
 		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " gained " + promptDcloseCount(len(closed.Pending)) +
-			" open task(s) after its marker was written (CYCLE-COMPLETION-01): " + promptDclosePendingText(closed.Pending) +
+			" open task(s) after its marker was written (CYCLE-COMPLETION-01): " + promptDcloseBoundedDetail(promptDclosePendingItems(closed.Pending), "task(s)") +
 			". The recovery marker was kept; close those tasks and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedNotRunnable:
 		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is now " + string(closed.Status) +
@@ -1056,37 +1058,63 @@ func promptDcloseSameJSONString(stored any, want *string) bool {
 	return ok && want != nil && got == *want
 }
 
-// promptDclosePendingText is the oracle's pending.map((t) => t.id (t.title)).join("; "), bounded.
-//
-// The oracle's own listing is unbounded, and the harness cuts an answer over MaxContext (32000
-// UTF-16 units) at 31936 and appends "[truncated]". The port appends this close's publication
-// accounting after the listing, so an unbounded listing would let a refusal drop exactly the part
-// the operator has to act on - the artifacts this close already published (CRW-930, c6). The count
-// precedes the listing, so the listing is detail: it is cut at a stated budget in UTF-16 units and
-// the tasks left out are named by their number. A refusal over the budget still names every
-// published artifact. Found by the pre-merge evaluation of the generation-2 head.
+// promptDclosePendingText is the oracle's pending.map((t) => t.id (t.title)).join("; ").
 func promptDclosePendingText(pending []goalplan.GoalplanTask) string {
+	return strings.Join(promptDclosePendingItems(pending), "; ")
+}
+
+// promptDclosePendingItems is the oracle's per-task text, one item per open task.
+func promptDclosePendingItems(pending []goalplan.GoalplanTask) []string {
+	items := make([]string, 0, len(pending))
+	for _, task := range pending {
+		items = append(items, task.ID+" ("+task.Title+")")
+	}
+	return items
+}
+
+// promptDcloseDetailFor joins a refusal's detail items, bounding them only when the refusal will
+// also carry this close's publication accounting. A refusal with no accounting to protect - a fresh
+// close, which published nothing - keeps the oracle's own text byte for byte.
+func promptDcloseDetailFor(published promptDclosePublishedArtifacts, items []string, noun string) string {
+	if len(published.sentences()) == 0 {
+		return strings.Join(items, "; ")
+	}
+	return promptDcloseBoundedDetail(items, noun)
+}
+
+// promptDcloseBoundedDetail joins detail items for a refusal that carries this close's publication
+// accounting after them.
+//
+// The oracle's own listings are unbounded, and the harness cuts an answer over MaxContext (32000
+// UTF-16 units) at 31936 and appends "[truncated]". The port appends the publication accounting
+// after that detail, so an unbounded listing would let a refusal drop exactly the part the operator
+// has to act on - the artifacts this close already published (CRW-930, c6). The count always
+// precedes the listing, so the listing is detail: it is cut at a stated budget in bytes (never
+// below the item's UTF-16 unit count, so the budget is conservative for non-ASCII too) and the
+// items left out are named by their number. Found by the pre-merge evaluation of the generation-2
+// head.
+//
+// Only a refusal that has an accounting to protect bounds its detail. A fresh close publishes
+// nothing, its accounting is empty, and it keeps the oracle's own text byte for byte.
+func promptDcloseBoundedDetail(items []string, noun string) string {
 	// The budget leaves room for the refusal's own text (the count, the guidance, the publication
 	// sentences) inside the harness's 31936-unit cut with a wide margin.
 	const budget = 8000
-	open := make([]string, 0, len(pending))
+	kept := make([]string, 0, len(items))
 	used := 0
-	for i, task := range pending {
-		item := task.ID + " (" + task.Title + ")"
+	for i, item := range items {
 		sep := 0
 		if i > 0 {
 			sep = len("; ")
 		}
-		// len is bytes, which is never below the item's UTF-16 unit count, so the budget is
-		// conservative for non-ASCII titles too.
 		if used+sep+len(item) > budget {
-			open = append(open, "... ("+promptDcloseCount(len(pending)-i)+" more task(s))")
+			kept = append(kept, "... ("+promptDcloseCount(len(items)-i)+" more "+noun+")")
 			break
 		}
 		used += sep + len(item)
-		open = append(open, item)
+		kept = append(kept, item)
 	}
-	return strings.Join(open, "; ")
+	return strings.Join(kept, "; ")
 }
 
 // promptDcloseNoActive is the no_active refusal (:1193-1206): the dependency deadlock diagnosis

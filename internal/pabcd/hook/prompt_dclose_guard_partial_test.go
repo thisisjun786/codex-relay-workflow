@@ -1196,3 +1196,68 @@ func TestPromptDcloseHugePendingListKeepsThePublicationAccounting(t *testing.T) 
 		t.Errorf("the bounded listing dropped the tasks it should still name: %q", answer[:min(len(answer), 400)])
 	}
 }
+
+// TestPromptDcloseFreshPendingListKeepsTheOracleText is the control the pre-merge evaluation of the
+// generation-2 head asked for: a fresh close publishes nothing before its tasks_pending refusal, so
+// that refusal must keep the oracle's own text byte for byte - the unbounded listing included. A
+// shared bound that also shortened this path would change a refusal this issue promised to leave
+// alone.
+func TestPromptDcloseFreshPendingListKeepsTheOracleText(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-fresh-huge-pending"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-fresh-huge-pending")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-fresh-huge-pending")
+	tasks := make([]goalplan.GoalplanTask, 0, 400)
+	items := make([]string, 0, 400)
+	for i := 0; i < 400; i++ {
+		tasks = append(tasks, goalplan.GoalplanTask{
+			ID: "t-" + strconv.Itoa(i), Title: strings.Repeat("y", 100), Status: goalplan.TaskPending,
+		})
+		items = append(items, "t-"+strconv.Itoa(i)+" ("+strings.Repeat("y", 100)+")")
+	}
+	plan := promptDcloseReadPlan(t, cwd, slug)
+	plan.WorkPhases[0].Tasks = tasks
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt))
+	want := promptOrchestrateRefusal("work-phase wp-1 still has 400 open task(s), so this cycle cannot close (CYCLE-COMPLETION-01): " +
+		strings.Join(items, "; ") + ". Nothing was written.")
+	if answer != want {
+		t.Errorf("a fresh close's tasks_pending refusal changed\n got %d bytes\nwant %d bytes", len(answer), len(want))
+	}
+}
+
+// TestPromptDcloseHugeIntegrityReasonsKeepThePublicationAccounting is the d1 case for the integrity
+// refusal: every integrity reason is joined before the publication accounting is appended, so a plan
+// with a very large reason list can push the accounting past the harness's cut and the operator
+// receives a refusal without it. The reasons are detail; the accounting must survive.
+func TestPromptDcloseHugeIntegrityReasonsKeepThePublicationAccounting(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-huge-integrity"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// The committed shape, with many criterion references the plan does not define: structurally
+	// readable, but its definition is refused with one reason per reference.
+	missing := make([]string, 0, 400)
+	for i := 0; i < 400; i++ {
+		missing = append(missing, "criterion-"+strconv.Itoa(i)+"-"+strings.Repeat("z", 100))
+	}
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, missing)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "invalid goalplan:") {
+		t.Fatalf("the retry did not refuse at the integrity check: %q", answer[:min(len(answer), 200)])
+	}
+	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
+		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 300)])
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer[:min(len(answer), 300)])
+	}
+	if !strings.Contains(answer, "more integrity reason(s)") {
+		t.Errorf("the bounded reasons did not name what they left out: %q", answer[:min(len(answer), 400)])
+	}
+}
