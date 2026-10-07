@@ -21,11 +21,12 @@ package cli
 //     (docs/port-cxc/known-defects/CRW-756.md records why that order is kept).
 //
 // The oracle's commit hooks (OrchestrateCommitHooks, :424-429) become orchestrateDcloseSeam, an
-// unexported seam the tests pass in. Nothing here is a package-level variable and nothing runs at
-// program start.
+// unexported seam the tests pass in. The one package-level value here is
+// orchestrateDcloseSurrogateOptions, a struct literal with no initializer work; nothing runs at
+// program start and there is no init().
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -38,7 +39,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // orchestrateDcloseSeam is the oracle's OrchestrateCommitHooks (:424-429), the seam its own tests use
@@ -51,6 +54,9 @@ type orchestrateDcloseSeam struct {
 	afterPabcdLedgerAppend   func() error
 	afterStateWrite          func() error
 	writeState               func(cwd string, next state.State) error
+	// interrupt runs immediately before this close's pre-write cancellation check inside each
+	// critical section (CRW-871). A field, never package state; nil means no hook.
+	interrupt func()
 }
 
 // orchestrateDcloseRunHook runs one hook, or nothing when the test left it nil.
@@ -102,13 +108,32 @@ type orchestrateDcloseLockAnswer struct {
 	Output  string
 }
 
+// orchestrateDcloseSurrogateOptions is the reading both guards take of a ledger line: the oracle's
+// JSON.parse. Surrogates keeps a lone surrogate escape as the three WTF-8 bytes a Go string holds a
+// lone surrogate in, where encoding/json folds it into U+FFFD - that folding is the defect CRW-850
+// fixes, because a stored "closed wp-\\ud800" row then compared equal to a U+FFFD close and the close
+// skipped the row it owed (data loss). Map reads an object into a map[string]any, as the oracle's
+// Record is, and SpelledNumbers keeps a number as spelled, which is what JSON.parse's double holds
+// for an integer the way the guard keys never read a number.
+var orchestrateDcloseSurrogateOptions = pyjson.LoadOptions{Surrogates: true, Map: true, Numbers: pyjson.SpelledNumbers}
+
 // orchestrateDcloseReadJSONLObjects is readJsonlObjects (:431-435): every non-empty line of the file
-// as a JSON object. A missing file is no rows. A line the oracle's readers would refuse is an error,
-// so a damaged ledger fails the close loudly instead of silently answering "no row yet" and writing a
-// duplicate: text JSON.parse cannot read at all, and a bare `null`, whose property access is the
-// TypeError the oracle's .some() callback throws. A line that is another JSON value is not an error
-// there - property access on a number, string, boolean or array answers undefined - so it is dropped
-// as a row that matches nothing, and no reader is fooled into treating it as an empty object.
+// as a JSON object. A missing file is no rows. The bytes are decoded as UTF-8 first (source.DecodeUTF8,
+// what Node's readFileSync(path, "utf8") and goalplan read.go both do: an invalid byte becomes one
+// U+FFFD), then each non-empty line is parsed the way the oracle's JSON.parse parses it.
+//
+// A line the oracle's readers would refuse is an error, so a damaged ledger fails the close loudly
+// instead of silently answering "no row yet" and writing a duplicate: text JSON.parse cannot read at
+// all, and a bare `null`, whose property access is the TypeError the oracle's .some() callback throws.
+// A line that is another JSON value is not an error there - property access on a number, string,
+// boolean or array answers undefined - so it is dropped as a row that matches nothing, and no reader
+// is fooled into treating it as an empty object. A repeated key keeps its last value, as a JS object
+// literal and a Python dict both do.
+//
+// The error text is the reader's own, not the oracle's V8 SyntaxError text. Two refusals differ from
+// the encoding/json reading this replaces, both named in the pull request: a number past float64's
+// range is now read rather than refused, and text after the value reads as "trailing data after the
+// JSON value" rather than encoding/json's own wording.
 func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -118,12 +143,12 @@ func orchestrateDcloseReadJSONLObjects(path string) ([]map[string]any, error) {
 		return nil, err
 	}
 	rows := []map[string]any{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(source.DecodeUTF8(raw), "\n") {
 		if line == "" {
 			continue
 		}
-		var value any
-		if err := json.Unmarshal([]byte(line), &value); err != nil {
+		value, err := pyjson.Loads(line, orchestrateDcloseSurrogateOptions)
+		if err != nil {
 			return nil, err
 		}
 		if value == nil {
@@ -248,6 +273,17 @@ func orchestrateDcloseAppendPabcdRow(cwd string, cur state.State, checkEpoch, cl
 // already held. It takes only the goalplan write lock (never the session lock again: the repository
 // lock order is session outside, goalplan inside), and the hooks are the oracle's commit seam.
 func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool, seam orchestrateDcloseSeam) (CliResult, error) {
+	return orchestrateDcloseContext(context.Background(), cwd, sessionID, closePhaseID, cur, att, recovering, seam)
+}
+
+// orchestrateDcloseContext is orchestrateDclose for a caller that can be interrupted (the orchestrate
+// row's D edge, CRW-871). The close takes its own goalplan write lock, which is not context-aware, so
+// the invocation's context is read once more at the top of each critical section, before that
+// section's first durable effect: the unbound write, and the callback of the first goalplan lock
+// (whose first effect is the recovery marker, the all-done PABCD row, or the closed plan). Once the
+// first write has started the close runs to the end and answers as it did before, because the later
+// critical section is cleanup of a close that is already visible.
+func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool, seam orchestrateDcloseSeam) (CliResult, error) {
 	// The recovery branch reads the marker it is resuming. The caller decides recovering with
 	// state.MatchesDcloseRecovery, which is false without one, so a nil marker here is a caller bug and
 	// taking the normal path is the safe reading of it: no marker means no recorded close decision.
@@ -280,6 +316,10 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 	if cur.Slug == "" {
 		next := fsm.ClearedIdle(cur)
 		next.StopBlockPhase, next.StopBlockCount = nil, 0
+		// CRW-871: the unbound close takes no goalplan lock, so this is its only pre-write check.
+		if err := orchestrateInterruptCheckWith(ctx, seam.interrupt); err != nil {
+			return CliResult{}, err
+		}
 		warning, err := orchestrateDcloseWriteState(seam, cwd, next)
 		if err != nil {
 			return CliResult{}, err
@@ -301,6 +341,12 @@ func orchestrateDclose(cwd, sessionID, closePhaseID string, cur state.State, att
 	locked, err := goalplan.WithGoalplanWriteLock(cwd, slug, func(plan *goalplan.Goalplan) (orchestrateDcloseLockAnswer, error) {
 		refuse := func(output string) (orchestrateDcloseLockAnswer, error) {
 			return orchestrateDcloseLockAnswer{Code: 1, AllDone: false, Output: output}, nil
+		}
+		// CRW-871: this callback's first durable effect is the recovery marker, the all-done PABCD row
+		// or the closed plan. A cancellation that landed while this process waited for the goalplan lock
+		// (which is not context-aware) leaves everything untouched and ends the close with 130.
+		if err := orchestrateInterruptCheckWith(ctx, seam.interrupt); err != nil {
+			return orchestrateDcloseLockAnswer{}, err
 		}
 		// §5: integrity is checked inside the lock, before marker or any write.
 		integrityReasons := append([]string{}, goalplan.GoalplanDefinitionIntegrityReasons(plan)...)

@@ -80,6 +80,10 @@ func (p *Publisher) Publish(dir *Dir, leaf string, src io.ReaderAt, size int64, 
 		return res, nil
 	case refusal(err) != nil:
 		return ResultRefused, err
+	case res == ResultAlreadyEqual:
+		// The destination already held these bytes, so this run wrote nothing: the failure is the directory sync's alone and
+		// the result says so, so a caller never counts it as a write of its own.
+		return res, err
 	}
 	return ResultFailed, err
 }
@@ -182,6 +186,9 @@ func (p *Publisher) settle(dir *Dir, leaf string, src io.ReaderAt, size int64) (
 	if !same {
 		return "", refuse(ReasonDiffers, dir.join(leaf), "")
 	}
+	if err := p.step("dirsync"); err != nil {
+		return ResultAlreadyEqual, err
+	}
 	return ResultAlreadyEqual, dir.Sync()
 }
 
@@ -191,14 +198,15 @@ func sum(r io.Reader) ([sha256.Size]byte, error) {
 	return [sha256.Size]byte(h.Sum(nil)), err
 }
 
-// EnsureProjectRoot returns the pinned W/.crw, created when absent, once its .gitignore is there: published as
+// EnsureProjectRoot returns the pinned W/.crw, created when absent, and whether this call's own mkdir created it, once its
+// .gitignore is there: published as
 // crwdir.GitignoreText whenever it is absent, also in a root that already exists, so a run interrupted between the mkdir and the
 // publication is repaired by the next one before any state is copied (crwdir.EnsureDir stops at an existing root). A regular
 // .gitignore that was already there when the call began belongs to its owner and is kept as it is, so a differing one is
 // published past and the call succeeds; when it was absent and a racer makes a differing one before the rename, that
 // ReasonDiffers refusal is returned so the caller stops before copying state (state-migration.md Preflight 3-4). A link,
 // directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
-func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
+func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, bool, error) {
 	// Was .gitignore already there when this call started? Capture that before EnsureDest can create the root, so a .gitignore
 	// a racer makes in the window that creation opens (or in the root step) is a conflicting initialization race, not a
 	// retained owner file: the root did not exist before the call, so no .gitignore could have.
@@ -208,15 +216,21 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		case err == nil:
 			pre = true
 		case !errors.Is(err, fs.ErrNotExist):
-			return nil, err
+			return nil, false, err
 		}
 	}
-	root, err := pair.EnsureDest(0o777)
+	root, made, err := pair.EnsureDest(0o777)
+	if err == nil && made {
+		// EnsureDest creates the root 0777 subject to umask, and only a root this call made may be tightened. Give it the
+		// private marker mode here, before the fallible .gitignore publication, so a failure below cannot leave a widened
+		// root that a retry would then find as an existing one.
+		err = applyChmodRaw(root, applyTempRaw)
+	}
 	if err == nil {
 		err = p.step("root")
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	text := crwdir.GitignoreText
 	_, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
@@ -224,9 +238,9 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		err = nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return root, nil
+	return root, made, nil
 }
 
 // OlderTemps lists the temporaries other runs left in dir. It only reports: nothing adopts, renames or removes them.

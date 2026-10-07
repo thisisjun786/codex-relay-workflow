@@ -21,6 +21,20 @@ import (
 type ReviewRoundRunOptions struct {
 	Env  host.LookupEnv
 	Lock *goalplan.GoalplanWriteLockOptions
+
+	// WriteGoalplan is the CRW-823 plan-write seam of the open and abort verbs. Nil means
+	// goalplan.WriteGoalplan, the writer a production call uses; a caller that passes one drives the
+	// published-but-unsynced path. It is an argument, never package state, so one test cannot fault
+	// another's write.
+	WriteGoalplan func(string, *goalplan.Goalplan) error
+}
+
+// cliPublishedWriteGoalplan is the configured plan write, defaulting to the real one.
+func cliPublishedWriteGoalplan(o *ReviewRoundRunOptions) func(string, *goalplan.Goalplan) error {
+	if o != nil && o.WriteGoalplan != nil {
+		return o.WriteGoalplan
+	}
+	return goalplan.WriteGoalplan
 }
 
 // RunReviewRoundCli ports runReviewRoundCli (review-round-cli.ts:210-306, CXC v0.2.40, 3c1459ac) on the parser, the plan-file
@@ -40,6 +54,12 @@ func RunReviewRoundCli(args ReviewRoundCliArgs, o *ReviewRoundRunOptions) (Revie
 	}
 	if session == "" {
 		return reviewRoundRunRefuse("review-round: --session <id> is required"), nil
+	}
+	// CRW-871: open and abort write, so a non-canonical id is refused after the trim and before the
+	// state read: state.ReadState sanitises the key, so a raw id would judge and rewrite a DIFFERENT
+	// session's plan. show only reads and keeps the oracle's behaviour.
+	if args.Verb != ReviewRoundVerbShow && !state.IsCanonicalSessionID(session) {
+		return reviewRoundRunRefuse("review-round " + string(args.Verb) + ": " + sessionAliasRefusalText), nil
 	}
 	st := state.ReadState(args.Cwd, session)
 	switch args.Verb {
@@ -198,11 +218,25 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 		if inFlight.Kind != review.OK {
 			return reviewRoundRunRefuse(prefix + reviewRoundRunReason(inFlight)), nil
 		}
-		if err := goalplan.WriteGoalplan(args.Cwd, inFlight.Plan); err != nil {
-			return ReviewRoundCliResult{}, err
+		// A plan write that published at the final path and then failed the directory sync is a
+		// written plan: the round is in flight in the plan every reader sees, so the launch goes ahead
+		// and the durability failure is carried as a warning. A failure before the rename published
+		// nothing and stays an error.
+		warning := ""
+		if err := cliPublishedWriteGoalplan(o)(args.Cwd, inFlight.Plan); err != nil {
+			if !state.Published(err) {
+				return ReviewRoundCliResult{}, err
+			}
+			warning = cliPublishedGoalplanWarning(st.Slug, err)
 		}
 		packet, err := reviewRoundArgsRenderOpenPacket(round, len(files), o.Env)
-		return ReviewRoundCliResult{Output: packet}, err
+		if err != nil {
+			return ReviewRoundCliResult{Output: packet}, err
+		}
+		if warning != "" {
+			packet += "\n" + warning
+		}
+		return ReviewRoundCliResult{Output: packet}, nil
 	})
 }
 
@@ -220,11 +254,28 @@ func reviewRoundRunAbort(args ReviewRoundCliArgs, st state.State, o *ReviewRound
 		if aborted.Kind != review.OK {
 			return reviewRoundRunRefuse("review-round abort: " + reviewRoundRunReason(aborted)), nil
 		}
-		if err := goalplan.WriteGoalplan(args.Cwd, aborted.Plan); err != nil {
-			return ReviewRoundCliResult{}, err
+		warning := ""
+		if err := cliPublishedWriteGoalplan(o)(args.Cwd, aborted.Plan); err != nil {
+			if !state.Published(err) {
+				return ReviewRoundCliResult{}, err
+			}
+			warning = cliPublishedGoalplanWarning(st.Slug, err)
 		}
-		return ReviewRoundCliResult{Output: "review-round abort: " + aborted.Round.RoundID + " closed as inconclusive"}, nil
+		out := "review-round abort: " + aborted.Round.RoundID + " closed as inconclusive"
+		if warning != "" {
+			out += "\n" + warning
+		}
+		return ReviewRoundCliResult{Output: out}, nil
 	})
+}
+
+// cliPublishedGoalplanWarning is CRW-823's plan durability warning, the goalplan counterpart of
+// cliPublishedStateWarning and the wording CRW-793 uses in the goalplan package: the plan at the
+// final path is the new one, so the verb stands, but the directory that holds it could not be synced
+// and the publication may not survive a crash. The oracle never syncs that directory, so it has no
+// counterpart; the wording is the issue's own.
+func cliPublishedGoalplanWarning(slug string, err error) string {
+	return "goalplan '" + slug + "' was published but its directory could not be synced: " + cliErrorMessage(err)
 }
 
 // reviewRoundRunShown is the --json answer of show in the oracle's key order; an absent verdict, work-phase or epoch is null.

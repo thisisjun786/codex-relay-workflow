@@ -158,30 +158,6 @@ func (c coverage) ruleFor(p string) (string, bool) {
 	return dagsched.MechanicalRuleFor(sets, p)
 }
 
-// coversPath reports whether any declaration given names a region that touches p, whatever its grade
-// and rule. ruleFor answers false both for a path no declaration touches and for one whose
-// declarations do not agree on a mechanical rule; a rule the check applies outside the declarations
-// may use only the first of those.
-func (c coverage) coversPath(p string) bool {
-	for _, set := range c {
-		for _, r := range set.regions {
-			if regionTouches(r, p) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// regionTouches is whether a change at p lies in the region: a tree holds what lies under it, and any
-// other region is its own path (the scheduler's reading, dagsched.Overlaps).
-func regionTouches(r dagsched.Region, p string) bool {
-	if r.Kind == "tree" {
-		return p == r.Path || strings.HasPrefix(p, r.Path+"/")
-	}
-	return r.Path == p
-}
-
 // regenerateCommands are the commands of every regenerate rule the declarations name, sorted: the
 // most runs a check can make is two of each.
 func (c coverage) regenerateCommands() []string {

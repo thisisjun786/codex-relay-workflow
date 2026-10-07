@@ -74,7 +74,7 @@ func RunHarnessDoctor(pluginRoot string, runner HarnessRunner, options HarnessOp
 	checks = append(checks, HarnessHookTrustCheck(pluginRoot, options, env))
 	checks = append(checks, HarnessHookExecutionCheck(pluginRoot, options, env, now))
 	checks = append(checks, HarnessAstGrepCheck(pluginRoot, runner))
-	checks = append(checks, HarnessInstalledRootCheck(pluginRoot, options))
+	checks = append(checks, HarnessInstalledRootCheck(pluginRoot, options, env))
 	checks = append(checks, HarnessPabcdCheck(projectRoot))
 	checks = append(checks, HarnessFeaturesCheck(runner("codex", []string{"features", "list"}, harnessRunFeaturesTimeout)))
 	checks = append(checks, HarnessWslCheck())
@@ -301,9 +301,13 @@ func harnessRunRoot(options HarnessOptions, env host.LookupEnv) (string, error) 
 
 // harnessRunRootScan lists the version directories under cacheRoot that hold a plugin
 // manifest, the way harnessInstallRootBody scans the same tree (harness_install.go): every
-// marketplace segment, the crw folder, then each version. A path that is simply absent
-// contributes nothing; a directory that exists and cannot be read is an error, because the scan
-// then cannot see the whole cache and no root may be picked from an incomplete count.
+// marketplace segment, the crw folder, then each version. A version counts only when its
+// manifest path stats to a regular file, so a directory, a FIFO, a device or any other
+// non-regular file at that path contributes nothing, exactly as an absent path does; the stat
+// follows links, so a manifest link and a link version directory that resolve to a regular file
+// still count while a dangling link is absent. A path that is simply absent contributes nothing;
+// a directory that exists and cannot be read, and any other stat failure, is an error, because
+// the scan then cannot see the whole cache and no root may be picked from an incomplete count.
 func harnessRunRootScan(cacheRoot string) ([]string, error) {
 	markets, err := os.ReadDir(cacheRoot)
 	if err != nil {
@@ -325,11 +329,15 @@ func harnessRunRootScan(cacheRoot string) ([]string, error) {
 		for _, entry := range versions {
 			root := filepath.Join(dir, harnessInstallNodeName(entry.Name()))
 			manifest := filepath.Join(root, harnessRunManifestRelative)
-			if _, err := os.Stat(manifest); err != nil {
+			info, err := os.Stat(manifest)
+			if err != nil {
 				if harnessRunRootMissing(err) {
 					continue
 				}
 				return nil, harnessRunRootUnreadable(manifest, err)
+			}
+			if !info.Mode().IsRegular() {
+				continue
 			}
 			found = append(found, root)
 		}
@@ -371,20 +379,11 @@ func harnessRunDoctorRecovered(pluginRoot string, runner HarnessRunner, options 
 }
 
 // harnessRunParseOptions is parseHookOptions (cli.ts:46-66): --bootstrap-ok, --key <value> and
-// --codex-home <value>, and anything else is the "unknown hooks option" the catch prints. The
-// default Codex home is CODEX_HOME when set (the oracle's ?? keeps an empty string), else the
-// account's ~/.codex.
+// --codex-home <value>, and anything else is the "unknown hooks option" the catch prints. An option
+// is filled only when its flag was given -- the checks resolve CODEX_HOME and the home themselves
+// -- and an empty flag value is refused, as the oracle's `if (!value) throw` refuses it (cli.ts:49).
 func harnessRunParseOptions(args []string, env host.LookupEnv) (HarnessOptions, error) {
 	options := HarnessOptions{}
-	if value, set := env("CODEX_HOME"); set {
-		options.CodexHome = value
-	} else {
-		home, err := host.Home(env)
-		if err != nil {
-			return options, err
-		}
-		options.CodexHome = filepath.Join(home, ".codex")
-	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch arg {
@@ -395,12 +394,17 @@ func harnessRunParseOptions(args []string, env host.LookupEnv) (HarnessOptions, 
 				return options, errors.New(arg + " requires a value")
 			}
 			value := args[index+1]
+			if value == "" {
+				// The oracle refuses an empty value too (`if (!value) throw`, cli.ts:49), so an
+				// explicitly empty option is expressible through the Go API only.
+				return options, errors.New(arg + " requires a value")
+			}
 			if arg == "--key" {
-				options.PluginKey = value
+				options.PluginKey = harnessRunString(value)
 			} else if resolved, err := filepath.Abs(value); err == nil {
-				options.CodexHome = resolved
+				options.CodexHome = harnessRunString(resolved)
 			} else {
-				options.CodexHome = value
+				options.CodexHome = harnessRunString(value)
 			}
 			index++
 		default:
