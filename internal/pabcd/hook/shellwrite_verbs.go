@@ -2544,12 +2544,6 @@ func shellWriteUnnamedPythonStdin(args []string) bool {
 	return true
 }
 
-// shellWriteUnnamedSeparator reports whether a byte ends the command that holds a here-document operator, as the walk
-// that reads here-documents cuts commands.
-func shellWriteUnnamedSeparator(c byte) bool {
-	return c == ';' || c == '&' || c == '|' || c == '\n'
-}
-
 // shellWriteUnnamedSeparatorAt reports whether the byte at i ends the command, read with its neighbours: the & and |
 // of a redirection (2>&1, >&2, &>out, <&0) belong to that redirection and cut nothing, while a bare & or | does.
 func shellWriteUnnamedSeparatorAt(line string, i int) bool {
