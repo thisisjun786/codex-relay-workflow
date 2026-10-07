@@ -177,9 +177,11 @@ type upgradeRunState struct {
 	installed string
 	previous  string
 	startFrom string
-	// updated reports whether the update ran and ended successfully, so the post-check knows
-	// whether an install target is something it has to compare the pointer with.
-	updated bool
+	// promoted reports whether the update put a runtime in service (the installer's OK or
+	// Incomplete), which is what the post-check compares the pointer and the version with. An
+	// update that did not land leaves the pointer on the runtime it replaced, which is a correct
+	// rollback rather than a mismatch.
+	promoted bool
 
 	beforeConfig string
 	reasons      []string
@@ -266,8 +268,14 @@ func (r *upgradeRunState) write(reason string) error {
 		ExtractDir: r.extract,
 		StartFrom:  r.startFrom,
 		Outcome:    "ok",
-		Reasons:    r.reasons,
 		Steps:      r.steps,
+	}
+	// Every failure names its reasons. A run that refused before the update has only the one
+	// reason it stopped on, so the list carries that; a run that got as far as the update names
+	// every reason that applied, in the order they were decided.
+	record.Reasons = r.reasons
+	if len(record.Reasons) == 0 && reason != "" {
+		record.Reasons = []string{reason}
 	}
 	if reason != "" {
 		record.Outcome = "failed"

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -30,6 +31,13 @@ const (
 	// post-check reads the service status again after starting it.
 	upgradeServiceInterval = 2 * time.Second
 	upgradeServiceBudget   = 60 * time.Second
+	// upgradeInstallOK and upgradeInstallIncomplete are the installer's own statuses for an update
+	// that promoted the runtime: OK, and Incomplete (the candidate is selected and the owned
+	// pointer names it, and only the claim that records it did not settle). Neither is this
+	// command's status space: an update that ends Incomplete is reported as failed here, but the
+	// runtime is in service, so the post-check still compares the pointer with it.
+	upgradeInstallOK         = 0
+	upgradeInstallIncomplete = 3
 )
 
 // upgradeRunCommand runs exe and returns its stdout, stderr and exit status.
@@ -350,12 +358,16 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 		args = append(args, "--issue", r.opts.Issue)
 	}
 	out, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
-	if err == nil && code == 0 {
-		r.updated = true
-		r.installed = upgradeInstalledRuntime(out)
-	}
 	if err != nil {
 		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
+	}
+	if code == upgradeInstallOK || code == upgradeInstallIncomplete {
+		// The installer's Incomplete is a promotion whose claim did not settle: the candidate is
+		// selected and the owned pointer already names it, so the runtime is in service and the
+		// post-check compares the pointer and the version with it, even though this command reports
+		// the run as failed because the promotion did not finish.
+		r.promoted = true
+		r.installed = upgradeInstalledRuntime(out)
 	}
 	if code != 0 {
 		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
@@ -376,28 +388,46 @@ func upgradeInstalledRuntime(answer string) string {
 	return reported.Environment
 }
 
-// start is step 7: start again, whatever the update did. The pointer's runtime is used when it
-// still resolves; otherwise the runtime the pointer named before the stop, which is what the
-// service was running, so a pointer the update broke cannot leave the service down. Which runtime
-// was used is written into the record.
+// start is step 7: start again, whatever the update did. The pointer's runtime is tried first when
+// it still resolves; a pointer that does not resolve, or a start that does not succeed, falls back
+// to the runtime the pointer named before the stop, which is what the service was running. A
+// pointer left on an unusable runtime therefore cannot leave the relay down. Every attempt is
+// recorded, and startFrom is the runtime the service came back on.
 func (r *upgradeRunState) start() {
-	runtime, from := "", ""
+	var candidates []string
 	if pointer, err := upgradePointerTarget(r.e); err == nil {
-		runtime, from = pointer, "the pointer"
+		candidates = append(candidates, pointer)
 	} else if r.previous != "" {
-		runtime, from = r.previous, "the runtime the pointer named before the stop"
+		r.note(upgradeStepStart, nil, 1, "", err)
 	} else {
 		r.note(upgradeStepStart, nil, 1, "", err)
 		return
 	}
-	r.startFrom = runtime
-	// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
-	defer cancel()
-	argv := []string{filepath.Join(runtime, "bin", "codex-session-relay"),
-		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start"}
-	out, stderr, code, err := upgradeRunCommand(ctx, argv[0], argv[1:]...)
-	r.note(upgradeStepStart, argv, code, "started from "+from+": "+runtime+"\n"+out+stderr, err)
+	if r.previous != "" && !slices.Contains(candidates, r.previous) {
+		candidates = append(candidates, r.previous)
+	}
+	for i, runtime := range candidates {
+		// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
+		argv := []string{filepath.Join(runtime, "bin", "codex-session-relay"),
+			"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start"}
+		out, stderr, code, err := upgradeRunCommand(ctx, argv[0], argv[1:]...)
+		cancel()
+		from := "the pointer"
+		if runtime == r.previous {
+			from = "the runtime the pointer named before the stop"
+		}
+		r.note(upgradeStepStart, argv, code, "started from "+from+": "+runtime+"\n"+out+stderr, err)
+		if err == nil && code == 0 {
+			r.startFrom = runtime
+			return
+		}
+		if i+1 == len(candidates) {
+			// Nothing started the service. startFrom names the last runtime tried, so the post-check
+			// reads the status the way this attempt left it.
+			r.startFrom = runtime
+		}
+	}
 }
 
 // upgradePostCheck is what step 8 established: the status and reason it reports, every reason it
@@ -419,18 +449,23 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 	case err != nil:
 		r.note(upgradeStepPostCheck, nil, 1, "", err)
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-	case r.updated && r.installed == "":
+	case r.promoted && r.installed == "":
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update named no runtime it installed, so nothing shows the pointer names what it installed"))
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-	case r.updated && !upgradeSameDirectory(pointer, r.installed):
+	case r.promoted && !upgradeSameDirectory(pointer, r.installed):
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
 	default:
-		version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
-		got := strings.TrimSpace(version)
-		if err != nil || code != 0 || got != r.version {
-			r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
-			post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		// The version is compared only against a runtime the update put in service. An update that
+		// did not land leaves the pointer on the runtime it replaced, whose version is the previous
+		// one by design: that is the rollback, not a mismatch.
+		if r.promoted {
+			version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
+			got := strings.TrimSpace(version)
+			if err != nil || code != 0 || got != r.version {
+				r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
+				post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+			}
 		}
 	}
 	runtime := r.startFrom
@@ -440,7 +475,15 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 	if runtime != "" && !r.waitForService(runtime) {
 		post.reasons = append(post.reasons, upgradeReasonPostCheck)
 	}
-	if digest, err := upgradeFileDigest(upgradeConfigPath(r.e)); err != nil || digest != r.beforeConfig {
+	// A configuration file the post-check could not read is not a configuration change: only a
+	// digest that was read and differs is. An unreadable one is a post-check finding of its own, so
+	// it never takes the exit code away from an update failure that would otherwise report it.
+	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
+	switch {
+	case err != nil:
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file could not be read: %w", err))
+		post.reasons = append(post.reasons, upgradeReasonPostCheck)
+	case digest != r.beforeConfig:
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file changed"))
 		post.reasons = append(post.reasons, upgradeReasonConfigChanged)
 		post.configChanged = true

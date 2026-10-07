@@ -58,6 +58,9 @@ type upgradeEnv struct {
 
 	statusAnswers string
 	statusCounter string
+	// started marks that a service start succeeded, so a status read reports a service that is
+	// really up rather than one the script was merely asked about.
+	started     string
 	pointerLink   string
 
 	// previous is the runtime directory the owned pointer names before the run, and installed the
@@ -76,6 +79,10 @@ type upgradeHarnessOptions struct {
 	// installedVersion is what the runtime the update produces answers --version with; empty
 	// means the archive's version.
 	installedVersion string
+	// previousVersion is what the runtime the pointer already names answers --version with; empty
+	// means the archive's version. A real upgrade replaces one version with another, so the
+	// runtime left behind answers differently from the archive.
+	previousVersion string
 	// openAttempts is the doctor answer's contents.openAttempts.
 	openAttempts int
 	// doctorUnavailable makes the doctor answer report contents it could not read.
@@ -94,6 +101,11 @@ type upgradeHarnessOptions struct {
 	breakPointer bool
 	// mutateConfig makes the fake update append to the configuration file.
 	mutateConfig bool
+	// unreadableConfigAfter makes the fake update leave the configuration file unreadable.
+	unreadableConfigAfter bool
+	// breakInstalledStart makes the runtime the update produces fail to start the service, so the
+	// restart has to fall back.
+	breakInstalledStart bool
 	// stopExit is the status the fake service stop ends with.
 	stopExit int
 	// statusAnswers is the matchesRunning answer for each service status read, the last one
@@ -135,6 +147,7 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 		ghCalls:       filepath.Join(home, "gh-calls.jsonl"),
 		statusAnswers: filepath.Join(home, "service-status-answers"),
 		statusCounter: filepath.Join(home, "service-status-count"),
+		started:       filepath.Join(home, "service-started"),
 		pointerLink:   filepath.Join(root, "current"),
 		previous:      filepath.Join(root, "bin-"+upgradeArchiveVersion+"-000000000000"),
 		installed:     filepath.Join(root, "bin-"+upgradeArchiveVersion+"-111111111111"),
@@ -143,7 +156,11 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 	h.writeFakes(opts)
 	h.writeStore()
 	h.writeArchive(opts)
-	h.installRuntime(h.previous, opts.version)
+	previous := opts.previousVersion
+	if previous == "" {
+		previous = opts.version
+	}
+	h.installRuntime(h.previous, previous)
 	h.installPointer(opts.pointer)
 	return h
 }
@@ -191,9 +208,19 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	b.WriteString("dir=" + "$" + "{0%/*}\n")
 	b.WriteString("case \"$*\" in\n")
 	b.WriteString("*\"service stop\"*) exit " + strconv.Itoa(opts.stopExit) + ";;\n")
+	b.WriteString("*\"service start\"*)\n")
+	if opts.breakInstalledStart {
+		// The runtime the update produced cannot start the service: its relay executable fails.
+		b.WriteString("  [ \"$dir\" = " + coreShellQuote(filepath.Join(h.installed, "bin")) + " ] && exit 1\n")
+	}
+	b.WriteString("  printf '%s\\n' \"$dir\" > " + coreShellQuote(h.started) + "\n")
+	b.WriteString("  exit 0;;\n")
 	b.WriteString("*\"service status\"*)\n")
 	b.WriteString("  n=$(cat " + coreShellQuote(h.statusCounter) + " 2>/dev/null || printf '0')\n")
 	b.WriteString("  n=$((n + 1))\n")
+	// A status read before anything started the service reports it as down, so a run that never
+	// restarts cannot pass the post-check by reading an answer that was scripted for another case.
+	b.WriteString("  [ -f " + coreShellQuote(h.started) + " ] || { printf '%s\\n' " + coreShellQuote("{\"running\":false,\"launchPolicy\":{\"matchesRunning\":\"different\"}}") + "; exit 0; }\n")
 	b.WriteString("  lines=$(wc -l < " + coreShellQuote(h.statusAnswers) + ")\n")
 	b.WriteString("  [ \"$n\" -gt \"$lines\" ] && n=$lines\n")
 	b.WriteString("  printf '%s\\n' \"$n\" > " + coreShellQuote(h.statusCounter) + "\n")
@@ -206,6 +233,9 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	}
 	if opts.mutateConfig {
 		b.WriteString("  printf 'changed\\n' >> \"$CODEX_HOME/config.toml\"\n")
+	}
+	if opts.unreadableConfigAfter {
+		b.WriteString("  rm -f \"$CODEX_HOME/config.toml\"\n")
 	}
 	if opts.produceRuntime {
 		b.WriteString("  mkdir -p " + coreShellQuote(bin) + "\n")

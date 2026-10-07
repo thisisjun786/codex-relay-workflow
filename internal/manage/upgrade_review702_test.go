@@ -218,3 +218,103 @@ func upgradeReview702StatusReads(h *upgradeEnv) int {
 	}
 	return reads
 }
+
+// TestUpgradeReview702RestartsFromThePreviousRuntimeWhenTheNewOneWillNotStart: the pointer can
+// resolve to a directory the service cannot be started from (a runtime whose relay executable is
+// missing, say). The service is stopped by then, so the restart falls back to the runtime the
+// pointer named before the stop rather than leaving the relay down, and the record names the
+// runtime the service came back on.
+func TestUpgradeReview702RestartsFromThePreviousRuntimeWhenTheNewOneWillNotStart(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		produceRuntime: true, pointAtIt: true, breakInstalledStart: true})
+	if code := h.run("--release-dir", h.release); code != 0 {
+		t.Fatalf("exit %d, want 0; the service came back on the previous runtime, so the run is a success: %+v", code, h.recordOf(t))
+	}
+	if !h.calledFrom(filepath.Join(h.installed, "bin", "codex-session-relay"), "service start") {
+		t.Errorf("the pointer's runtime was not tried: %q", h.callLines())
+	}
+	if !h.calledFrom(filepath.Join(h.previous, "bin", "codex-session-relay"), "service start") {
+		t.Errorf("the previous runtime was not tried after the pointer's runtime failed to start: %q", h.callLines())
+	}
+	if got := h.recordOf(t).StartFrom; got != h.previous {
+		t.Errorf("the record says the service came back on %q, want the previous runtime %q", got, h.previous)
+	}
+}
+
+// TestUpgradeReview702UnreadableConfigIsNotAChange: a configuration file the post-check cannot read
+// is not a configuration change. An update failure must keep its own exit code, and the record must
+// not claim config_changed.
+func TestUpgradeReview702UnreadableConfigIsNotAChange(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		installExit: 1, unreadableConfigAfter: true})
+	if code := h.run("--release-dir", h.release); code != upgradeExitUpdateFailed {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitUpdateFailed, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonUpdateFailed {
+		t.Errorf("reason %q, want %q", got, upgradeReasonUpdateFailed)
+	}
+	if slices.Contains(h.recordOf(t).Reasons, upgradeReasonConfigChanged) {
+		t.Errorf("an unreadable configuration was recorded as a change: %v", h.recordOf(t).Reasons)
+	}
+}
+
+// TestUpgradeReview702PreUpdateRefusalNamesItsReason: a run that refuses before the update still
+// names its reason in the record's reasons list, not only in the single reason field.
+func TestUpgradeReview702PreUpdateRefusalNamesItsReason(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true})
+	if err := os.WriteFile(filepath.Join(h.release, upgradeSumsName), []byte("deadbeef  "+upgradeArchiveName+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.run("--release-dir", h.release); code != upgradeExitRefused {
+		t.Fatalf("exit %d, want %d", code, upgradeExitRefused)
+	}
+	if got := h.recordOf(t).Reasons; !slices.Contains(got, upgradeReasonSumsFailed) {
+		t.Errorf("the record's reasons are %v, want them to name %s", got, upgradeReasonSumsFailed)
+	}
+}
+
+// TestUpgradeReview702FailedUpdateIsNotAVersionMismatch: when the update did not land, the pointer
+// correctly stays on the runtime it replaced, whose version is not the archive's. That is a
+// rollback, not a mismatch, so the record must not claim runtime_mismatch.
+func TestUpgradeReview702FailedUpdateIsNotAVersionMismatch(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		installExit: 1, previousVersion: "v0.4.0-4633-gaaaaaaaa1"})
+	if code := h.run("--release-dir", h.release); code != upgradeExitUpdateFailed {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitUpdateFailed, h.recordOf(t))
+	}
+	// The pointer still names the runtime the failed update replaced, which reports the previous
+	// version. That is the rollback working, not a mismatch.
+	if target, err := h.pointerTarget(); err != nil || target != h.previous {
+		t.Errorf("the pointer names %q (%v), want the previous runtime %q", target, err, h.previous)
+	}
+	if slices.Contains(h.recordOf(t).Reasons, upgradeReasonRuntimeMismatch) {
+		t.Errorf("a correct rollback was recorded as a version mismatch: %v", h.recordOf(t).Reasons)
+	}
+}
+
+// TestUpgradeReview702IncompletePromotionIsChecked: the installer's exit 3 is a promotion whose
+// claim did not settle, so the runtime is in service and the pointer must name it. An update that
+// ends that way still has to fail the run, and a pointer that does not name what it promoted is
+// still a mismatch.
+func TestUpgradeReview702IncompletePromotionIsChecked(t *testing.T) {
+	t.Run("the pointer names what it promoted", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+			produceRuntime: true, pointAtIt: true, installExit: 3})
+		if code := h.run("--release-dir", h.release); code != upgradeExitUpdateFailed {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitUpdateFailed, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reasons; slices.Contains(got, upgradeReasonRuntimeMismatch) {
+			t.Errorf("the pointer names the runtime the update promoted, so there is no mismatch: %v", got)
+		}
+	})
+	t.Run("the pointer names another runtime", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+			produceRuntime: true, installExit: 3})
+		if code := h.run("--release-dir", h.release); code != upgradeExitUpdateFailed {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitUpdateFailed, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reasons; !slices.Contains(got, upgradeReasonRuntimeMismatch) {
+			t.Errorf("the pointer does not name the runtime the update promoted, so it is a mismatch: %v", got)
+		}
+	})
+}
