@@ -397,7 +397,9 @@ func TestResetLinkPermOutOfRootTargetStillRefusesARenamedPin(t *testing.T) {
 }
 
 // TestResetLinkPermVerdictsMatchStatWithoutARename is the control for the cases above: with the
-// pinned directory left where it was, every verdict equals os.Stat on the same link.
+// pinned directory left where it was, every verdict equals os.Stat on the same link. The one
+// exception is a target whose walked pathname exceeds PATH_MAX, which the walk answers absent for
+// and which TestResetLinkPermALongChainStaysInsideTheWalk pins (the parent's 2026-10-08 decision).
 func TestResetLinkPermVerdictsMatchStatWithoutARename(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("mode bits do not deny search to root")
@@ -606,6 +608,12 @@ func TestResetLinkPermReadsALongTargetWhole(t *testing.T) {
 // is absent, which keeps the link. It must not reach the descriptor stat or the root-path
 // judgement, which open the directories A2 forbids, and a renamed pinned directory must not turn
 // the verdict into a reset-wide refusal that skips the remaining candidates.
+//
+// This is the one explicit exception to c2's no-rename control, which otherwise makes every verdict
+// equal os.Stat on the same link: here os.Stat resolves the chain and the walk answers absent, so
+// the link the oracle removes is kept. The parent decided it on 2026-10-08 (the Linear issue body,
+// section "결정 (10-08, 부모)"): absent deletes nothing, and the alternative would open the
+// directories A2 forbids or stop the whole reset on a renamed pin.
 func TestResetLinkPermALongChainStaysInsideTheWalk(t *testing.T) {
 	root := t.TempDir()
 	sessions := filepath.Join(root, ".crw", "sessions")
