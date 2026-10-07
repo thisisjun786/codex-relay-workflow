@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
@@ -437,27 +439,36 @@ func improveResolvedPath(path string) (string, error) { return store.Realpath(pa
 // still caught. The window between that last check and os.Rename itself is accepted: nothing
 // closes it without holding the destination's directory against every other writer.
 func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []byte) error {
+	// The directory the temporary file is created in is held open, so a refusal unlinks the file
+	// through that descriptor even when the destination's directory has since been replaced and
+	// the spelling the file was created under no longer reaches it.
+	parent, err := os.Open(plan.Parent)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
 	temp, err := os.CreateTemp(plan.Parent, "improve-bundle-*")
 	if err != nil {
 		return err
 	}
 	name := temp.Name()
+	discard := func() { _ = unix.Unlinkat(int(parent.Fd()), filepath.Base(name), 0) }
 	if _, err := temp.Write(data); err != nil {
 		temp.Close()
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if err := temp.Sync(); err != nil {
 		temp.Close()
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if err := temp.Close(); err != nil {
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if err := os.Chmod(name, 0o600); err != nil {
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if improveInputBeforeRename != nil {
@@ -470,23 +481,23 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	// nothing closes it without holding the destination's directory against every other writer.
 	fresh, err := improvePlanOutput(plan.Out)
 	if err != nil {
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if plan.parent != nil && fresh.parent != nil && !os.SameFile(plan.parent, fresh.parent) {
-		os.Remove(name)
+		discard()
 		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
 	}
 	if err := ids.improveIdentityRefuse(fresh.Dest, fresh.parent); err != nil {
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if err := ids.improveIdentityVerify(); err != nil {
-		os.Remove(name)
+		discard()
 		return err
 	}
 	if err := os.Rename(name, fresh.Dest); err != nil {
-		os.Remove(name)
+		discard()
 		return err
 	}
 	return nil

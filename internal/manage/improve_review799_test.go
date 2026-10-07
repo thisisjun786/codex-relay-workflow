@@ -209,10 +209,11 @@ func TestImproveReview799DraftEntryUnderALinkedDirectoryIsProtected(t *testing.T
 	if err := os.Symlink(real, filepath.Join(base, "link")); err != nil {
 		t.Skipf("symbolic links are unavailable here: %v", err)
 	}
-	// The configured spelling reaches root/drafts, so the enumeration sees that directory, but the
-	// reader opens each entry at the path filepath.Join builds from the spelling, which cleans the
-	// ".." away and lands in root/base/drafts. The file the reader opens is therefore the one under
-	// root/base/drafts, and that is the file the guard has to record.
+	// The configured spelling reaches root/drafts, so a directory enumeration sees that directory,
+	// but the reader opens each entry at the path filepath.Join builds from the spelling, which
+	// cleans the ".." away and lands in root/base/drafts. Both are ordinary files holding different
+	// drafts, so the file the reader opens is the one under root/base/drafts, and that is the file
+	// the guard has to record.
 	improveTestWrite(t, filepath.Join(listed, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"enumerated\",\"project\":\"p\",\"title\":\"t\"}\n")
 	target := filepath.Join(opened, "one.json")
 	improveTestWrite(t, target, "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"opened\",\"project\":\"p\",\"title\":\"t\"}\n")
@@ -447,6 +448,45 @@ func TestImproveReview799CollectHoldsTheDraftTheReaderOpened(t *testing.T) {
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRefuse(draft, nil); err == nil {
 		t.Errorf("the identity set does not hold the draft the reader opened")
+	}
+}
+
+// TestImproveReview799SwappedParentLeavesNoTemporaryFile covers the cleanup a refusal owes: the
+// output directory is replaced with a link into a configured source directory after the temporary
+// file was written into it, so the spelling the file was created under no longer reaches it. The
+// refusal must still remove the temporary file, which it does through the directory descriptor it
+// holds rather than through that spelling.
+func TestImproveReview799SwappedParentLeavesNoTemporaryFile(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	out := improveReview799OutDir(t, s)
+	moved := filepath.Join(s.root, "out-moved")
+	improveInputRelayConfig(t, s)
+	previous := improveInputBeforeRename
+	improveInputBeforeRename = func(improveOutputPlan) {
+		if err := os.Rename(out, moved); err != nil {
+			t.Errorf("moving the output directory aside: %v", err)
+		}
+		if err := os.Symlink(s.stateDir, out); err != nil {
+			t.Errorf("relinking the output directory: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputBeforeRename = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", filepath.Join(out, "bundle.json"))
+	if code != 1 {
+		t.Fatalf("an output whose directory moved aside: exit %d, stderr %q, want a refusal", code, stderr)
+	}
+	entries, err := os.ReadDir(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "improve-bundle-") {
+			t.Errorf("the refusal left the temporary file %s in the directory it was written to", entry.Name())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.stateDir, "bundle.json")); !os.IsNotExist(err) {
+		t.Errorf("the refused run wrote the bundle into the source directory (stat err %v)", err)
 	}
 }
 
