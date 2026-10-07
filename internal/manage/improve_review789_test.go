@@ -503,15 +503,6 @@ func TestImproveReview789ConcurrentRunIsRefused(t *testing.T) {
 	}
 }
 
-// improveReview789FaultRecord is one fault ledger record of a bundle: the class it groups by, the
-// project scope it names, its signature, how many occurrences the ledger row holds, when it was
-// last seen, and the ledger row it came from.
-func improveReview789FaultRecord(count int, lastSeen string) improveRecord {
-	return improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
-		What: "a signature", Count: count, FirstAt: "2026-10-06T01:00:00Z", LastAt: lastSeen,
-		Evidence: []string{"fault:f1"}}
-}
-
 // improveReview789StoreAt builds one synthetic relay store at an explicit path, so a test can
 // collect from more than one store.
 func improveReview789StoreAt(t *testing.T, dbPath string, f func(t *testing.T, db *sql.DB)) {
