@@ -9,6 +9,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   POLICY_BLAST_RADIUS,
   allowedAddChoice,
+  allowedAddBlocked,
+  NEW_EXCEPTION_TOKEN,
+  exceptionEditToken,
   addModelOptions,
   exceptionRoleOptions,
   allowedEffortsLabel,
@@ -310,11 +313,15 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
               {editable ? (
                 (() => {
                   const free = models.filter((option) => !view.allowed.some((entry) => entry.model === option.id));
-                  if (free.length === 0) return null;
-                  const choice = allowedAddChoice(state, free.map((option) => option.id));
+                  const listed = view.allowed.map((entry) => entry.model);
+                  const freeIds = free.map((option) => option.id);
+                  const choice = allowedAddChoice(state, freeIds, listed);
                   // The add control is one more edit: it proposes a setAllowed for `choice`, so it is
-                  // disabled in the same condition as that row's own controls.
-                  const addDisabled = busy || !screenMayEdit(state, `allowed:${choice}`);
+                  // disabled in the same condition as that row's own controls, and also when the
+                  // choice is a model the file already lists (adding it again would replace its
+                  // approved efforts with the single first one).
+                  const addDisabled = busy || allowedAddBlocked(state, freeIds, listed) || !screenMayEdit(state, `allowed:${choice}`);
+                  if (choice === "" && free.length === 0) return null;
                   return (
                     <div className="list-row">
                       <div className="row-id"><span className="row-sub">Add a model to the allowed list</span></div>
@@ -323,11 +330,11 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                           {/* The chosen model keeps a matching option even when the refreshed catalog
                               no longer lists it, so the control can never display one model while Add
                               proposes another. */}
-                          {addModelOptions(state, free.map((option) => option.id)).map((id) => (
+                          {addModelOptions(state, freeIds, listed).map((id) => (
                             <option key={id} value={id}>{id}</option>
                           ))}
                         </select>
-                        <button className="btn" disabled={addDisabled || choice === "" || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
+                        <button className="btn" disabled={addDisabled || efforts.length === 0} aria-label="Add allowed model" onClick={() => handlers.propose({ kind: "setAllowed", model: choice, efforts: [efforts[0] ?? ""] })}>Add</button>
                       </div>
                     </div>
                   );
@@ -349,7 +356,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   editable={editable}
                   draft={!draftIsNew && state.exceptionDraft?.id === exception.id ? state.exceptionDraft : null}
                   editDraft={draftForExceptionEdit(state, exception)}
-                  disabled={busy || !screenMayEdit(state, `exception:${exception.id}`)}
+                  disabled={busy || !screenMayEdit(state, exceptionEditToken(exception.id))}
                   effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
                   onRemove={() => handlers.removeException(exception.id)}
@@ -365,7 +372,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   models={models}
                   efforts={efforts}
                   draft={draftIsNew ? state.exceptionDraft : null}
-                  disabled={busy || !screenMayEdit(state, "exception:new")}
+                  disabled={busy || !screenMayEdit(state, NEW_EXCEPTION_TOKEN)}
                   effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
                   onAdd={(draft) => {

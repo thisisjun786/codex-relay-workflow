@@ -1055,7 +1055,12 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
   // other exception change still has to match the token, so a removal cannot steal the editor's turn.
   const fromOpenExceptionDraft = change.kind === "setException" && state.exceptionDraft !== null;
   if (!screenMayEdit(state, changeOwner(change)) && !(fromOpenExceptionDraft && !screenBusy(state))) return state;
-  return { ...state, change, notice: null, exceptionDraft: null };
+  // An existing exception's editor closes on Apply: its values are now the pending change and the row
+  // itself offers Edit again. A NEW exception's editor stays open, because the exception it describes
+  // is not in the file yet: there is no row to reopen, and closing would leave the operator unable to
+  // correct the values or to fix a check refusal without discarding the whole draft and retyping it.
+  const keepNewDraft = change.kind === "setException" && state.exceptionDraft?.isNew === true;
+  return { ...state, change, notice: null, exceptionDraft: keepNewDraft ? state.exceptionDraft : null };
 }
 
 /** changeOwner is the edit token one proposed change belongs to. */
@@ -1148,19 +1153,47 @@ export function screenAllowedAddModel(state: PolicyScreenState, model: string): 
 }
 
 /**
- * allowedAddChoice is the model the add control is on: the one the operator chose when it is still
- * a free option, and the first free one otherwise. "" means there is nothing left to add.
+ * NEW_EXCEPTION_TOKEN is the edit token of the open new-exception draft. It is deliberately NOT the
+ * form a stored id produces (exceptionEditToken), because a policy may declare an exception whose id
+ * is literally "new": with a shared form, that row would own the new draft's edit and could be
+ * replaced or removed while the draft was still being written.
  */
-export function allowedAddChoice(state: PolicyScreenState, free: readonly string[]): string {
-  // A chosen model that is no longer free is kept rather than substituted: the operator's selection
-  // is not the screen's to replace, and Add must propose the model the control shows.
-  return state.allowedAddModel !== "" ? state.allowedAddModel : (free[0] ?? "");
+export const NEW_EXCEPTION_TOKEN = "new-exception";
+
+/** exceptionEditToken is the edit token of one stored exception, by its exact id. */
+export function exceptionEditToken(id: string): string {
+  return `exception:${id}`;
 }
 
-/** addModelOptions is what the add-allowed select offers: every free model, plus the chosen one. */
-export function addModelOptions(state: PolicyScreenState, free: readonly string[]): string[] {
-  if (state.allowedAddModel === "" || free.includes(state.allowedAddModel)) return [...free];
-  return [state.allowedAddModel, ...free];
+/**
+ * allowedAddChoice is the model the add control is on. The operator's own choice is kept while it is
+ * still a model the file does not list: that covers both a free option and a model the catalog has
+ * since dropped, which the screen must not silently replace. A chosen model the file ALREADY lists
+ * is never kept, because Add would then propose a setAllowed for it and replace its approved efforts
+ * with the single first one; that is a permission change the operator did not ask for. "" means
+ * there is nothing this control may add.
+ */
+export function allowedAddChoice(state: PolicyScreenState, free: readonly string[], listed: readonly string[]): string {
+  if (state.allowedAddModel !== "" && !listed.includes(state.allowedAddModel)) return state.allowedAddModel;
+  return free[0] ?? "";
+}
+
+/** addModelOptions is what the add-allowed select offers: every free model, plus a chosen one the
+ * file does not list. A model the file already lists is not offered again. */
+export function addModelOptions(state: PolicyScreenState, free: readonly string[], listed: readonly string[]): string[] {
+  if (state.allowedAddModel === "" || listed.includes(state.allowedAddModel)) return [...free];
+  return free.includes(state.allowedAddModel) ? [...free] : [state.allowedAddModel, ...free];
+}
+
+/**
+ * allowedAddBlocked reports whether the Add control must be disabled. It is disabled when there is
+ * nothing the control may add: no free model, or a selection that is already in the allowed list.
+ * Adding a listed model would propose a setAllowed for it and replace its approved efforts with the
+ * single first one, which removes approvals the operator never chose to change.
+ */
+export function allowedAddBlocked(state: PolicyScreenState, free: readonly string[], listed: readonly string[]): boolean {
+  const choice = allowedAddChoice(state, free, listed);
+  return choice === "" || listed.includes(choice);
 }
 
 /** screenExceptionDraft opens or updates the exception editor. */
@@ -1168,7 +1201,7 @@ export function screenExceptionDraft(state: PolicyScreenState, draft: ExceptionD
   // Closing is always allowed; opening or moving the editor while another edit owns the pending
   // change is refused, so the two edits never compete for the one change the API applies.
   if (draft !== null) {
-    const token = draft.isNew ? "exception:new" : `exception:${draft.id}`;
+    const token = draft.isNew ? NEW_EXCEPTION_TOKEN : exceptionEditToken(draft.id);
     if (!screenMayEdit(state, token)) return state;
   }
   return { ...state, exceptionDraft: draft };
@@ -1372,7 +1405,7 @@ export function screenBusy(state: PolicyScreenState): boolean {
 export function screenEditOwner(state: PolicyScreenState): string | null {
   // An open exception editor owns the edit before its change is proposed: its draft is the operator's
   // work in progress, and another row's edit would leave it unsubmittable.
-  if (state.exceptionDraft !== null) return state.exceptionDraft.isNew ? "exception:new" : `exception:${state.exceptionDraft.id}`;
+  if (state.exceptionDraft !== null) return state.exceptionDraft.isNew ? NEW_EXCEPTION_TOKEN : exceptionEditToken(state.exceptionDraft.id);
   const change = state.change;
   if (change === null) return null;
   switch (change.kind) {
@@ -1383,7 +1416,7 @@ export function screenEditOwner(state: PolicyScreenState): string | null {
       return `allowed:${change.model}`;
     case "setException":
     case "removeException":
-      return `exception:${change.id}`;
+      return exceptionEditToken(change.id);
   }
 }
 

@@ -43,6 +43,8 @@ import {
   screenDraftIsNew,
   screenEditable,
   screenEditOwner,
+  exceptionEditToken,
+  NEW_EXCEPTION_TOKEN,
   screenEffortUnavailable,
   screenExceptionDraft,
   screenLoaded,
@@ -58,6 +60,7 @@ import {
   screenSaveStarted,
   initialScreen,
   allowedAddChoice,
+  allowedAddBlocked,
   addModelOptions,
   allowedEntriesOf,
   screenAllowedEntryAdded,
@@ -390,22 +393,28 @@ test("the add-model control follows a catalog that arrives after the policy", ()
   // must end up on a model that is actually offered, never on an empty string.
   let state = initialScreen();
   state = screenLoaded(state, reading({ allowed: [{ model: "m", efforts: ["high"] }], exceptions: [], roles: [{ name: "child", expectation: "", pairs: [{ model: "m", reasoningEffort: "high" }] }] }));
+  const listed = ["m"];
   // Before the catalog, the only model is the policy's own, and it is already in the allowed list.
-  assert.equal(allowedAddChoice(state, []), "");
+  assert.equal(allowedAddChoice(state, [], listed), "");
   // The catalog then lists a new model.
   state = screenCatalogLoaded(state, catalog("fresh", [{ id: "fresh/model", label: "Fresh" }]) as never);
   const free = ["fresh/model"];
-  assert.equal(allowedAddChoice(state, free), "fresh/model");
-  // A choice the operator made is kept while it is still free, and dropped when it is not.
+  assert.equal(allowedAddChoice(state, free, listed), "fresh/model");
+  // A choice the operator made is kept while the file does not list it.
   state = screenAllowedAddModel(state, "fresh/model");
-  assert.equal(allowedAddChoice(state, free), "fresh/model");
-  // d3: a chosen model that is no longer free is KEPT rather than substituted with the first free
-  // one, so the control can never display one model while Add proposes another.
-  assert.equal(allowedAddChoice(state, []), "fresh/model");
-  assert.deepEqual(addModelOptions(state, []), ["fresh/model"]);
-  assert.deepEqual(addModelOptions(state, ["other"]), ["fresh/model", "other"]);
+  assert.equal(allowedAddChoice(state, free, listed), "fresh/model");
+  // A chosen model that is no longer free is KEPT rather than substituted with the first free one, so
+  // the control can never display one model while Add proposes another.
+  assert.equal(allowedAddChoice(state, [], listed), "fresh/model");
+  assert.deepEqual(addModelOptions(state, [], listed), ["fresh/model"]);
+  assert.deepEqual(addModelOptions(state, ["other"], listed), ["fresh/model", "other"]);
+  // A model the FILE already lists is never the choice: Add would replace its approved efforts.
+  assert.equal(allowedAddChoice(screenAllowedAddModel(state, "m"), ["other"], listed), "other");
+  assert.deepEqual(addModelOptions(screenAllowedAddModel(state, "m"), ["other"], listed), ["other"]);
+  assert.equal(allowedAddBlocked(screenAllowedAddModel(state, "m"), ["other"], listed), false, "another free model is still addable");
+  assert.equal(allowedAddBlocked(screenAllowedAddModel(state, "m"), [], listed), true, "nothing free left to add");
   // With nothing chosen, the first free model is the default.
-  assert.equal(allowedAddChoice(screenAllowedAddModel(state, ""), ["other"]), "other");
+  assert.equal(allowedAddChoice(screenAllowedAddModel(state, ""), ["other"], listed), "other");
 });
 
 // The five defects the second pre-merge evaluation found on the fixed head.
@@ -657,6 +666,52 @@ test("one pending change at a time: another row's edit cannot replace the live o
 
 // The three defects the tenth pre-merge evaluation found, fixed under the parent decision of
 // 2026-10-07 (event 17ed771c38dcc02a0dabc30ad3f25002).
+
+// The three defects the eleventh pre-merge evaluation found.
+
+test("a new exception's editor stays open after Apply so its values can still be corrected", () => {
+  // d1: Apply closed the editor and moved the edit to the exception's own id, but a new exception has
+  // no row to reopen: the operator had to discard the whole draft and retype it to change one value.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenExceptionDraft(state, draftForNewException("child", "m", "high"));
+  state = screenExceptionDraft(state, { ...(state.exceptionDraft as ExceptionDraft), id: "fresh", cwd: ["/srv/a"] });
+  const proposed = screenPropose(state, changeFromExceptionDraft(state.exceptionDraft as ExceptionDraft));
+  assert.equal(proposed.change?.kind, "setException");
+  assert.ok(proposed.exceptionDraft, "the new exception's editor stays open");
+  assert.equal(screenMayEdit(proposed, NEW_EXCEPTION_TOKEN), true, "and it can still be edited");
+  // An existing exception's editor does close, because its row offers Edit again.
+  let editing = screenLoaded(initialScreen(), reading({ exceptions: [{ id: "legacy", role: "child", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] }] }));
+  editing = screenExceptionDraft(editing, draftForException({ id: "legacy", role: "child", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] }));
+  const editChange = changeFromExceptionDraft({ ...(editing.exceptionDraft as ExceptionDraft), effort: "max" });
+  assert.equal(screenPropose(editing, editChange).exceptionDraft, null, "an existing editor closes on Apply");
+});
+
+test("a stored exception id can never take the new-draft token", () => {
+  // d3: the new draft's token was the literal "exception:new", which is also the token of a stored
+  // exception whose id is "new" - a valid identifier the server does not forbid. The two shared one
+  // edit, so that row could replace or remove the draft the operator was still writing.
+  assert.notEqual(NEW_EXCEPTION_TOKEN, exceptionEditToken("new"));
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ exceptions: [{ id: "new", role: "child", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] }] }));
+  state = screenExceptionDraft(state, draftForNewException("child", "m", "high"));
+  assert.equal(screenEditOwner(state), NEW_EXCEPTION_TOKEN, "the draft owns the edit");
+  assert.equal(screenMayEdit(state, exceptionEditToken("new")), false, "the stored 'new' row does not share it");
+  assert.equal(screenMayEdit(state, NEW_EXCEPTION_TOKEN), true);
+});
+
+test("adding a model the file already lists is refused, so its approved efforts are never replaced", () => {
+  // d2: the add control kept a chosen model even after it entered the allowed list, so Add proposed a
+  // setAllowed for it and replaced its approved efforts with the single first one - a permission
+  // change the operator never asked for.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "m", efforts: ["high", "max"] }] }));
+  state = screenAllowedAddModel(state, "m");
+  assert.equal(allowedAddChoice(state, ["free/model"], ["m"]), "free/model", "the control falls to a free model");
+  assert.deepEqual(addModelOptions(state, ["free/model"], ["m"]), ["free/model"], "a listed model is not offered again");
+  assert.equal(allowedAddBlocked(state, [], ["m"]), true, "with nothing free there is nothing to add");
+  assert.equal(allowedAddBlocked(state, ["free/model"], ["m"]), false, "a free model is still addable");
+});
 
 test("a record role's exception removal returns the scope to the allowed list, never to a pair", () => {
   // d1: the preview used pairs.length > 0 as the test for whether a role has a default. The bridge
@@ -938,7 +993,7 @@ test("the open exception editor can propose its own change", () => {
   state = screenLoaded(state, reading());
   const draft = draftForNewException("parent", "m", "high");
   state = screenExceptionDraft(state, draft);
-  assert.equal(screenEditOwner(state), "exception:new");
+  assert.equal(screenEditOwner(state), NEW_EXCEPTION_TOKEN);
   state = screenExceptionDraft(state, { ...draft, id: "fresh", cwd: ["/srv/a"] });
   const change = changeFromExceptionDraft(state.exceptionDraft as ExceptionDraft);
   assert.ok(change);
@@ -951,6 +1006,10 @@ test("the open exception editor can propose its own change", () => {
   const editChange = changeFromExceptionDraft({ ...(editing.exceptionDraft as ExceptionDraft), effort: "max" });
   assert.ok(editChange);
   assert.equal(screenPropose(editing, editChange).change?.kind, "setException");
+  // An existing exception's editor closes on Apply, because its row offers Edit again.
+  assert.equal(screenPropose(editing, editChange).exceptionDraft, null, "an existing editor closes on Apply");
+  // A new exception's editor stays open, because there is no row to reopen it from.
+  assert.ok(proposed.exceptionDraft, "a new editor stays open on Apply");
   // A removal of a DIFFERENT exception still cannot steal the open editor's turn.
   assert.equal(screenPropose(editing, { kind: "removeException", id: "other" }), editing);
 });
