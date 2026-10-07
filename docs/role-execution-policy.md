@@ -104,9 +104,10 @@ with the model beside it: Sonnet at SOL's effort is refused too, because an effo
 model. The list keeps the order the file declares, and that order carries no preference.
 
 The file is refused when it is read, not at the first creation, if a `pairs` list is empty or is not a
-list, names the same pair twice, holds an entry that is not exactly `{model, reasoningEffort}`, sits in
-the same entry as `model` or `reasoningEffort`, is declared for the `supervisor`, or names a pair that the
-file's `allowed` list does not approve. A list of one pair is the one-pair form written another way.
+list, names the same pair twice, holds an entry that states anything beyond `model`, `reasoningEffort`
+and the optional `autoCompactTokenLimit` (see "A pair may cap auto-compaction"), sits in the same entry
+as `model` or `reasoningEffort`, is declared for the `supervisor`, or names a pair that the file's
+`allowed` list does not approve. A list of one pair is the one-pair form written another way.
 The description of a policy whose roles list several pairs must also fit what the relay publishes
 about it (half of the 64 KiB its readers accept), so an absurdly long list is refused when the file is
 read instead of leaving every worker check reading "unreadable".

@@ -77,3 +77,48 @@ func TestResumeWithoutAPolicyLimitSendsNoKey(t *testing.T) {
 		t.Fatalf("a pair without a limit sent one: %v", config)
 	}
 }
+
+// The gate that authorized the record read the policy the settings-show subprocess inherited from
+// the environment, so that is the policy this command has to resolve the limit from. Reading only
+// manage.bridge.execution_policy would find nothing under the supported environment-only
+// configuration, while the gate had accepted the capped pair.
+func TestResumeResolvesTheLimitFromTheGatePolicyEnvironment(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, autoCompactResumeSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, autoCompactResumePolicy(t))
+	cfg := resumeConfig(host, "alpha")
+	cfg.Bridge.ExecutionPolicy = ""
+	if _, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	var resume map[string]any
+	if err := json.Unmarshal(resumeHostRequests(host)[1].Params, &resume); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := resume["config"].(map[string]any)
+	if config["model_auto_compact_token_limit"] != float64(550000) {
+		t.Fatalf("the resume config does not carry the pair's limit: %v", config)
+	}
+}
+
+// The host never reports the value back, so the report has to say what went out and that the host
+// cannot confirm it: an operator reading a bare ok cannot tell a capped reload from an uncapped one.
+func TestResumeReportsTheLimitItSentAsUnobservable(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, autoCompactResumeSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, autoCompactResumePolicy(t))
+	cfg := resumeConfig(host, "alpha")
+	cfg.Bridge.ExecutionPolicy = os.Getenv(execution.EnvPolicy)
+	report, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.AutoCompactTokenLimit == nil || *report.AutoCompactTokenLimit != 550000 {
+		t.Fatalf("the report does not carry the limit it sent: %+v", report)
+	}
+	if !report.AutoCompactUnobservable {
+		t.Fatalf("the report does not mark the limit unobservable: %+v", report)
+	}
+}

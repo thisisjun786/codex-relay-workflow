@@ -92,6 +92,13 @@ type resumeReport struct {
 	Servers    map[string]string `json:"servers"`
 	AdmitTurn  string            `json:"admitTurn,omitempty"`
 	DryRun     bool              `json:"dryRun,omitempty"`
+	// AutoCompactTokenLimit is the value this resume sent, nil when the pair declares none. The
+	// host never reports it back, so the report states it the way the bridge states a setting the
+	// host cannot confirm: the value that went out, and AutoCompactUnobservable saying the host
+	// cannot be asked about it. Without these a reader cannot tell a capped reload from an
+	// uncapped one.
+	AutoCompactTokenLimit   *int64 `json:"autoCompactTokenLimit,omitempty"`
+	AutoCompactUnobservable bool   `json:"autoCompactUnobservable,omitempty"`
 }
 
 // resumeFailure is a refusal: the reason and, where the host or the relay gave one, its detail.
@@ -239,7 +246,12 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 // that cites an exception names no pair and sends none. A configured policy that cannot be read is a
 // refusal rather than a silent omission: resuming a capped child without its limit is the failure
 // this command exists to prevent, and an unreadable policy means the limit cannot be established.
-func resumeAutoCompactLimit(cfg *Config, settings resumeSettings) (*int64, error) {
+//
+// The policy is the one the gate read. The gate is the settings-show subprocess, which reads
+// CODEX_THREAD_BRIDGE_EXECUTION_POLICY from the environment it inherits, so that environment value
+// is authoritative here and manage.bridge.execution_policy is the fallback for a configuration that
+// carries the policy for other commands but leaves the environment unset.
+func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
 	if settings.CitedException != nil {
 		return nil, nil
 	}
@@ -250,7 +262,10 @@ func resumeAutoCompactLimit(cfg *Config, settings resumeSettings) (*int64, error
 	if role == "" {
 		return nil, nil
 	}
-	path := strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
+	path := strings.TrimSpace(e.Getenv(execution.EnvPolicy))
+	if path == "" {
+		path = strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
+	}
 	if path == "" {
 		return nil, nil
 	}
@@ -335,12 +350,17 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
-	limit, err := resumeAutoCompactLimit(cfg, *settings)
+	limit, err := resumeAutoCompactLimit(e, cfg, *settings)
 	if err != nil {
 		return nil, err
 	}
 	report := &resumeReport{OK: true, Thread: child, Generation: generation, Model: settings.Model,
 		Effort: settings.ReasoningEffort, Servers: map[string]string{}, DryRun: opts.dryRun}
+	if limit != nil {
+		// The value is not in the host's answer, so the report carries it rather than reading it back.
+		report.AutoCompactTokenLimit = limit
+		report.AutoCompactUnobservable = true
+	}
 	client := appserver.New(cfg.Relay.Socket, appserver.DefaultBounds)
 	defer client.Close()
 	if err := client.Connect(ctx); err != nil {
