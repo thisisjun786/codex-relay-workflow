@@ -512,7 +512,7 @@ func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q s
 		if head == "" {
 			continue
 		}
-		clauses = append(clauses, "(lower(repository) = lower(?) AND lower(trim(candidate_head)) = lower(trim(?)))")
+		clauses = append(clauses, "(lower(repository) = lower(?) AND lower(trim(candidate_head, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13))))")
 		args = append(args, forge, head)
 	}
 	if acc.PRNumber > 0 {
@@ -566,7 +566,7 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		}
 		var train string
 		found, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
-			" WHERE (lower(t.repository) = lower(?) OR m.relationship_id = ?) AND lower(trim(m.member_head)) = lower(trim(?))"+
+			" WHERE (lower(t.repository) = lower(?) OR m.relationship_id = ?) AND lower(trim(m.member_head, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"+
 			" AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')"+
 			" ORDER BY m.train_id, m.seq LIMIT 1", []any{forge, acc.RelationshipID, head}, &train)
 		if err != nil {

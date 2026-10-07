@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -47,6 +48,7 @@ import (
 // The refusal is the existing disposition_conflict and it names the open generation: no new refusal
 // name, no column, no schema change.
 func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeTurnsRow) (*registry.CoordinationRefusal, error) {
+	held := strings.TrimSpace(r.CandidateHead)
 	candidates := []string{}
 	if r.RelationshipID.Valid && r.RelationshipID.String != "" {
 		candidates = append(candidates, r.RelationshipID.String)
@@ -78,7 +80,7 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 				" WHERE lower(f.forge_repository) = lower(?) AND f.pr_number = ? AND a.state = 'active'",
 				[]any{r.Repository, r.PRNumber.Int64}})
 		}
-		if r.CandidateHead != "" {
+		if held != "" {
 			// The head the turn holds belongs to the acceptance that recorded it. A recorded base refresh
 			// moves the head the acceptance stands on without changing the accepted head
 			// (dag_base_refreshes carries the refreshed head), so both are read.
@@ -95,16 +97,16 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 				identity = "lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository))"
 			}
 			query := "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
-			args := []any{r.Repository, r.CandidateHead}
+				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+			args := []any{r.Repository, held}
 			if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 				return nil, err
 			} else if refreshed {
 				query = "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
+					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))" +
 					" UNION ALL SELECT a.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
-				args = []any{r.Repository, r.CandidateHead, r.Repository, r.CandidateHead}
+					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+				args = []any{r.Repository, held, r.Repository, held}
 			}
 			queries = append(queries, struct {
 				query string
@@ -134,14 +136,14 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 	// ACTIVE acceptance and the active-only lookups above cannot see it: a turn that was held for the old
 	// head would otherwise proceed to merge exactly the result the correction replaced. The acceptance
 	// that recorded the head is read whatever its state, and a turn holding it is refused.
-	if r.CandidateHead != "" {
-		if replaced, err := ucReplacedHead(ctx, q, r.Repository, r.CandidateHead); err != nil {
+	if held != "" {
+		if replaced, err := ucReplacedHead(ctx, q, r.Repository, held); err != nil {
 			return nil, err
 		} else if replaced != "" {
 			return coordination(r, contract.RefusalDispositionConflict,
 				"the head this turn holds is no longer the accepted result of its relationship "+pyvalue.StrRepr(replaced)+
 					": an acceptance of it was replaced by a later one (dag-accept --supersedes), so the result the plan accepts has moved and this turn would merge the result that was replaced. Request the turn for the head the acceptance stands on now",
-				r.CandidateHead, r.HolderTaskID), nil
+				held, r.HolderTaskID), nil
 		}
 	}
 	for _, relationship := range candidates {
@@ -157,7 +159,7 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 				" is under correction: generation "+strconv.FormatInt(live, 10)+" is open over the acceptance, which stands on generation "+
 				strconv.FormatInt(stand, 10)+", so the head this turn holds is the result being repaired and is not merged. "+
 				"Accept the corrected result with dag-accept --supersedes, or withdraw the generation if it was never bound or sent, and request the turn again",
-			r.CandidateHead, r.HolderTaskID), nil
+			held, r.HolderTaskID), nil
 	}
 	return nil, nil
 }
@@ -202,25 +204,25 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
 	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
+		" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
 	args := []any{repository, head}
 	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshed {
 		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
+			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))" +
 			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
+			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(f.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
 		args = []any{repository, head, repository, head}
 	}
 	// A head is replaced only when a correction was accepted over it (superseded): a revoked acceptance is a parent's withdrawal, not a replacement. A relationship that still holds the head actively, as its acceptance's head or through a base refresh of
 	// it, is not replaced by it: the head is that relationship's own current result.
-	held := "lower(trim(a2.head_sha)) = lower(trim(?))"
+	held := "lower(trim(a2.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
 	args = append(args, head)
 	if refreshedHeads, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshedHeads {
-		held += " OR a2.acceptance_id IN (SELECT f2.acceptance_id FROM dag_base_refreshes f2 WHERE lower(trim(f2.head_sha)) = lower(trim(?)))"
+		held += " OR a2.acceptance_id IN (SELECT f2.acceptance_id FROM dag_base_refreshes f2 WHERE lower(trim(f2.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13))))"
 		args = append(args, head)
 	}
 	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +

@@ -748,3 +748,19 @@ func TestTrainLandRefusesAnExcludedMemberWhoseHeadAnotherNodeIsRepairing(t *test
 		t.Fatalf("a refused land wrote %d landed event(s)", n)
 	}
 }
+
+// CRW-906 evaluation 596938c9 D1: a head padded with tab or newline is the same commit (SameCommit trims every
+// whitespace). The correction gate must refuse it as the accepted head, whatever whitespace surrounds it.
+func TestTheLaneGateMatchesAHeadPaddedWithTabsAndNewlines(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	turn := store.MergeTurnsRow{TurnID: "mtn-tabbed", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "\tHEAD-A\n", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a head padded with tabs and newlines was not refused: %+v", refusal)
+	}
+}
