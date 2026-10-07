@@ -398,47 +398,6 @@ func TestConfigLockPathsRefusesACaseVariantHardLink(t *testing.T) {
 	}
 }
 
-// The fallback that keeps a case-insensitive alias acceptable when the parent cannot be enumerated.
-// It asks only os.Stat of a known name, so a parent with SEARCH permission alone answers — the same
-// permission the restore needs, and no directory read or write (CRW-899's thirteenth evaluation: a
-// probe that created a file refused a no-op deactivation on a search-only parent). On a
-// case-sensitive directory the flipped name does not resolve to the locked file, which is the
-// fail-closed direction.
-func TestConfigLockPathsCaseFlippedResolvesNeedsNoDirectoryReadOrWrite(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-0100 directory")
-	}
-	// The case-folding filesystem the suite runs on is taken from CRW_899_CASE_INSENSITIVE_DIR
-	// when a runner provides one; otherwise this test has nothing to exercise and skips.
-	root := os.Getenv("CRW_899_CASE_INSENSITIVE_DIR")
-	if root == "" {
-		t.Skip("set CRW_899_CASE_INSENSITIVE_DIR to a case-insensitive directory to exercise this")
-	}
-	configLockActivationHome(t)
-	dir, err := os.MkdirTemp(root, "locked-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	cfg := filepath.Join(dir, "config.toml")
-	activationWrite(t, cfg, deactivationConfig)
-	pin := configLockPathsTestPin(t, cfg)
-	if !configLockPathsCaseFlippedResolvesToThePin(pin) {
-		t.Fatalf("the flipped name did not resolve on the case-insensitive directory %s", root)
-	}
-	// Search permission alone: no read, no write.
-	if err := os.Chmod(dir, 0100); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
-	if _, err := os.ReadDir(dir); err == nil {
-		t.Fatal("the directory was still readable; the test would not prove anything")
-	}
-	if !configLockPathsCaseFlippedResolvesToThePin(pin) {
-		t.Fatal("the fallback needed more than search permission")
-	}
-}
-
 // configLockPathsRequiresCaseSensitive skips the test when the directory folds case: on such a
 // filesystem a differently cased name is the SAME entry, so a rename to it is not a second entry and
 // an os.Link to it cannot create one. The probe is this test's own file, created and removed inside
@@ -506,11 +465,12 @@ func configLockPathsCaseInsensitiveDir(t *testing.T) string {
 	return dir
 }
 
-// The seventh-generation d1 case, through the public entry point: the manifest names the same config
-// through a differently cased spelling and the parent directory has no read permission. The restore
-// needs only search permission, so the comparison must accept the spelling without enumerating the
-// directory. Red on the head that read the directory: it refused and left the owned key behind.
-func TestConfigLockPathsDeactivateAcceptsACaseVariantUnderAnUnreadableParent(t *testing.T) {
+// The seventeenth-generation d1 case, through the public entry point: the manifest names the same
+// config through a differently cased spelling and the parent directory has no read permission. The
+// entry count cannot be read, so the comparison cannot prove the two spellings are one entry and
+// refuses (fail closed); the owned key stays in place and nothing is written. Red on every head that
+// answered with a read-only proxy, each of which a hard link or symlink can forge.
+func TestConfigLockPathsDeactivateRefusesACaseVariantUnderAnUnreadableParent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-0300 directory")
 	}
@@ -546,15 +506,12 @@ func TestConfigLockPathsDeactivateAcceptsACaseVariantUnderAnUnreadableParent(t *
 		return os.WriteFile(manifestPath(home), fresh, 0o644)
 	}, held.Release)
 
-	r, err := Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
-	if err != nil {
-		t.Fatalf("the deactivation refused a case variant under an unreadable parent: %v", err)
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation accepted a spelling it could not prove: %v", err)
 	}
-	if r == nil || r.NoManifest || len(r.RestoredKeys) != 1 || r.RestoredKeys[0] != "memories.dedicated_tools" {
-		t.Fatalf("the deactivation did not restore the owned key: %+v", r)
-	}
-	if got := activationRead(t, path); strings.Contains(got, "dedicated_tools") {
-		t.Fatalf("the managed key was left behind: %q", got)
+	if got := activationRead(t, path); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the config: %q", got)
 	}
 }
 
@@ -1374,101 +1331,6 @@ func TestConfigLockPathsDeactivateRefusesAnEntryRenamedToAFoldedSibling(t *testi
 
 // The root-parent boundary: a config named directly at the filesystem root must resolve through
 
-// The fifteenth-generation d1 case: a hard link planted at the case-flipped SIDECAR name makes two
-// names reach one inode on a case-SENSITIVE directory, so a probe that trusted os.SameFile alone
-// would report case folding and accept a genuinely different config entry. The inode has two links
-// then, which is what separates a hard link from a case-folding filesystem's single entry.
-func TestConfigLockPathsCaseFlippedProbeRefusesASidecarHardLink(t *testing.T) {
-	home := configLockActivationHome(t)
-	dir := filepath.Join(home, "x")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	cfg := filepath.Join(dir, "config.toml")
-	activationWrite(t, cfg, deactivationConfig)
-	configLockPathsRequiresCaseSensitive(t, dir)
-	pin := configLockPathsTestPin(t, cfg)
-	// The sidecar exists now; plant its flipped name as a second link to the same inode.
-	sidecar := cfg + ".crw-lock"
-	if _, err := os.Stat(sidecar); err != nil {
-		t.Fatalf("the sidecar was not created: %v", err)
-	}
-	if err := os.Link(sidecar, filepath.Join(dir, "CONFIG.TOML.CRW-LOCK")); err != nil {
-		t.Fatal(err)
-	}
-	if configLockPathsCaseFlippedResolvesToThePin(pin) {
-		t.Fatal("a hard link at the flipped sidecar name was reported as case folding")
-	}
-}
-
-// The fifteenth-generation d2 case: the probe must look beside the PINNED path, not beside the
-// lock's pre-pin spelling. The alias is retargeted after the pin, and the new directory holds a hard
-// link at the flipped sidecar name, so a probe that followed the pre-pin spelling would report case
-// folding for a file the lock no longer guards.
-func TestConfigLockPathsCaseFlippedProbeStaysBesideThePinnedPath(t *testing.T) {
-	home := configLockActivationHome(t)
-	dirA := filepath.Join(home, "A")
-	dirB := filepath.Join(home, "B")
-	for _, dir := range []string{dirA, dirB} {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configLockPathsRequiresCaseSensitive(t, dirA)
-	activationWrite(t, filepath.Join(dirA, "config.toml"), deactivationConfig)
-	activationWrite(t, filepath.Join(dirB, "config.toml"), deactivationConfig)
-	alias := filepath.Join(home, "alias")
-	if err := os.Symlink("A", alias); err != nil {
-		t.Fatal(err)
-	}
-	pin := configLockPathsTestPin(t, filepath.Join(alias, "config.toml"))
-	// Give the OTHER directory the spoof: a hard link at its sidecar's flipped name.
-	otherSidecar := filepath.Join(dirB, "config.toml.crw-lock")
-	otherLock, err := crwdir.LockConfig(filepath.Join(dirB, "config.toml"), time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(otherLock.Release)
-	if err := os.Link(otherSidecar, filepath.Join(dirB, "CONFIG.TOML.CRW-LOCK")); err != nil {
-		t.Fatal(err)
-	}
-	// Retarget the alias, so the lock's pre-pin spelling now names the other directory.
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("B", alias); err != nil {
-		t.Fatal(err)
-	}
-	if configLockPathsCaseFlippedResolvesToThePin(pin) {
-		t.Fatal("the probe followed the lock's pre-pin spelling instead of the pinned path")
-	}
-}
-
 // The name-folded count on a readable directory: a separate hard link under ANOTHER name leaves the
-
-// The sixteenth-generation d1 case: a SYMLINK at the case-flipped sidecar name resolves to the real
-// sidecar under os.Stat, so SameFile would be true on a case-SENSITIVE directory too while the
-// target's link count stays one. The probe must read both names with Lstat and refuse a link.
-func TestConfigLockPathsCaseFlippedProbeRefusesASidecarSymlink(t *testing.T) {
-	home := configLockActivationHome(t)
-	dir := filepath.Join(home, "x")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	cfg := filepath.Join(dir, "config.toml")
-	activationWrite(t, cfg, deactivationConfig)
-	configLockPathsRequiresCaseSensitive(t, dir)
-	pin := configLockPathsTestPin(t, cfg)
-	sidecar := cfg + ".crw-lock"
-	if _, err := os.Stat(sidecar); err != nil {
-		t.Fatalf("the sidecar was not created: %v", err)
-	}
-	if err := os.Symlink(filepath.Base(sidecar), filepath.Join(dir, "CONFIG.TOML.CRW-LOCK")); err != nil {
-		t.Fatal(err)
-	}
-	if configLockPathsCaseFlippedResolvesToThePin(pin) {
-		t.Fatal("a symlink at the flipped sidecar name was reported as case folding")
-	}
-}
 
 // The name-folded count on a readable directory: a separate hard link under ANOTHER name leaves the

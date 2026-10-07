@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -239,24 +238,26 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 }
 
 // configLockPathsOneFoldedEntry reports whether the candidate's spelling and the locked file's name
-// reach exactly one directory entry. Where the directory can be read the entries are counted: the
-// kernel permits no two entries with fold-equal names on a directory that folds case, so one such
-// entry IS the locked entry, and two — a case-sensitive sibling or a hard link — are entries a
-// rename over the locked path would not reach. Where it cannot be read (a parent without read
-// permission, which still allows the stat, open, create and rename the restore needs), the count is
-// replaced by a direct test of the filesystem itself: a probe name is created in that directory and
-// read back under a different case. A filesystem that resolves it to the probe is one where the two
-// spellings are necessarily the same entry, so the alias is accepted; a filesystem that does not is
-// one where a second, case-differing entry can exist — the hard-link shape — and the comparison
-// refuses rather than restore under a name the lock does not guard. An inode link count is
-// deliberately not used: it cannot separate the locked entry from a hard link (CRW-899's eighth
-// evaluation) and a count captured at pin time is stale by the time the manifest is read, which
-// accepted an entry created after the pin (the ninth evaluation's fail-open).
+// reach exactly one directory entry. The kernel permits no two entries with fold-equal names on a
+// directory that folds case, so one such entry IS the locked entry, and two — a case-sensitive
+// sibling or a hard link — are entries a rename over the locked path would not reach. A parent that
+// cannot be enumerated cannot answer that count, and the comparison then refuses (see the branch
+// below).
 func configLockPathsOneFoldedEntry(real string, pinned *configLockPathsPin) bool {
 	dir := filepath.Dir(real)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return configLockPathsCaseFlippedResolvesToThePin(pinned)
+		// A parent that cannot be enumerated cannot be asked which entries it holds, so the
+		// comparison cannot prove that the two spellings are one entry, and it refuses (fail
+		// closed) — the same refusal dev already gave every differing spelling. Every alternative
+		// failed a later evaluation: a created probe needs directory write permission the restore
+		// does not (CRW-899's seventh and fourteenth evaluations), and every read-only proxy — an
+		// inode link count or a case-flipped stat of a known name — is forgeable by a hard link or
+		// a symlink a writer in that directory can plant, while an unrelated hard link to the file
+		// or its sidecar makes the same proxy refuse a valid alias (the eighth, ninth, fifteenth,
+		// sixteenth and seventeenth evaluations). Proving the folded name really is one entry
+		// needs the directory's own entry list.
+		return false
 	}
 	matches := 0
 	for _, entry := range entries {
@@ -265,65 +266,6 @@ func configLockPathsOneFoldedEntry(real string, pinned *configLockPathsPin) bool
 		}
 	}
 	return matches == 1
-}
-
-// configLockPathsCaseFlippedResolvesToThePin reports whether a directory resolves a differently
-// cased spelling of the locked file's name to that very file. It asks only os.Stat of a known name,
-// so it needs no directory read and no directory write — a parent with search permission alone
-// answers, which is exactly what the restore needs (CRW-899's thirteenth evaluation: a probe that
-// created a file needed write permission and refused a no-op deactivation on a search-only parent).
-// A filesystem that folds case resolves the flipped name to the locked file, so the two spellings
-// are one entry and the alias is accepted; one that does not cannot, and the comparison refuses. The
-// caller only reaches here with basenames that fold equal but differ in case, so the name has a
-// letter to flip; a name with no letter to flip answers false.
-func configLockPathsCaseFlippedResolvesToThePin(pinned *configLockPathsPin) bool {
-	if pinned == nil || pinned.file == nil {
-		return false
-	}
-	if pinned.lock == nil {
-		return false
-	}
-	// The sidecar BESIDE THE PINNED PATH, not the lock's pre-pin spelling: a directory alias
-	// retargeted after the pin would otherwise send the probe to another directory, where the held
-	// sidecar does not live (CRW-899's fifteenth evaluation). The name is the held sidecar's own
-	// basename, which is known to exist.
-	held := filepath.Join(filepath.Dir(pinned.path), filepath.Base(pinned.lock.Path))
-	base := filepath.Base(held)
-	flipped := strings.ToUpper(base)
-	if flipped == base {
-		flipped = strings.ToLower(base)
-	}
-	if flipped == base {
-		return false
-	}
-	// Both names are read with Lstat and must be the regular sidecar file itself, never a link: a
-	// symlink planted at the flipped name resolves to the real sidecar under os.Stat, which would
-	// make SameFile true on a case-SENSITIVE directory too (CRW-899's sixteenth evaluation).
-	self, err := os.Lstat(held)
-	if err != nil || self.Mode()&os.ModeSymlink != 0 {
-		return false
-	}
-	other, err := os.Lstat(filepath.Join(filepath.Dir(held), flipped))
-	if err != nil || other.Mode()&os.ModeSymlink != 0 {
-		return false
-	}
-	// Two names reaching one inode is a case-folding filesystem's single entry ONLY when the inode
-	// has exactly one link. A hard link planted at the flipped name gives the inode a second link,
-	// so the count separates that from a folded name (CRW-899's fifteenth evaluation). A count that
-	// cannot be read is not known to be one, so the comparison refuses.
-	return os.SameFile(other, self) && configLockPathsOneLink(self)
-}
-
-// configLockPathsOneLink reports whether the inode has exactly one directory entry.
-func configLockPathsOneLink(info os.FileInfo) bool {
-	if info == nil {
-		return false
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false
-	}
-	return uint64(st.Nlink) == 1
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means
