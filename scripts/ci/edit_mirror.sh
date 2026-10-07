@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A body-only edit of a pull request (the "edited" action with no base change) reruns no job
 # that already succeeded on the same head. ci.yml runs this script as the first step of
-# validate, secrets, skill-scripts-node and go-product on such an edit only, and guards every later step of those
+# validate, secrets, skill-scripts-node, gui and go-product on such an edit only, and guards every later step of those
 # jobs with its answer. It reads the newest created run of this workflow, of this pull
 # request, of this repository, for this head, other than the run it is in, and mirrors the job
 # when that run's same-named job concluded success. Creation order is run_number and then id, the

@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-// The split proposal for an issue that is split_recommended. It is a draft for crw-plan to judge, and
+// The split proposal for an issue that is over a baseline. It is a draft for crw-plan to judge, and
 // it is built from counts and word overlap only, with integer arithmetic, so the same issue gives the
 // same bytes on every platform: nothing here is a float, a random choice or a map order.
 //

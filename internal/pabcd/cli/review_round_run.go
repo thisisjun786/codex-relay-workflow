@@ -55,6 +55,12 @@ func RunReviewRoundCli(args ReviewRoundCliArgs, o *ReviewRoundRunOptions) (Revie
 	if session == "" {
 		return reviewRoundRunRefuse("review-round: --session <id> is required"), nil
 	}
+	// CRW-871: open and abort write, so a non-canonical id is refused after the trim and before the
+	// state read: state.ReadState sanitises the key, so a raw id would judge and rewrite a DIFFERENT
+	// session's plan. show only reads and keeps the oracle's behaviour.
+	if args.Verb != ReviewRoundVerbShow && !state.IsCanonicalSessionID(session) {
+		return reviewRoundRunRefuse("review-round " + string(args.Verb) + ": " + sessionAliasRefusalText), nil
+	}
 	st := state.ReadState(args.Cwd, session)
 	switch args.Verb {
 	case ReviewRoundVerbOpen:
