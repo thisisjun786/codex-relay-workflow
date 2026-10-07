@@ -3,20 +3,28 @@
 // It renders the first screen the issue fixes - the supervisor row (read-only), the parent and child
 // pair rows with their source, the allowed list and the exceptions - and drives one pending change
 // through a preview and a save. Everything it decides lives in policy-state.ts, which is pure, so
-// this file is only the rendering and the two effects that read the routes.
+// this file is only the rendering and the effects that read the routes.
+//
+// One rule shapes the controls: a select or input shows the PENDING change where there is one for
+// its item, and the saved reading where there is not. Binding them to the saved reading instead
+// would make an edit snap back on screen, and would rebuild each edit from the saved value, so two
+// edits to the same item could not be composed.
 import { useEffect, useRef, useState } from "react";
 import {
   POLICY_BLAST_RADIUS,
+  allowedEffortsLabel,
   catalogNotice,
+  checkNotice,
+  decodeCheck,
   decodePolicy,
+  lostWriteNotice,
   modelOptions,
   noticeForWrite,
+  pairEffortLabel,
+  pairModelLabel,
   policyEfforts,
   policyView,
   previewChange,
-  allowedEffortsLabel,
-  pairEffortLabel,
-  pairModelLabel,
   removeExceptionLabel,
   roleControlsLabel,
   type ModelCatalog,
@@ -26,7 +34,7 @@ import {
   type PolicyPair,
   type PolicyReading,
 } from "../policy-state.ts";
-import { getModelCatalog, getPolicy, writePolicy } from "../api.ts";
+import { checkPolicy, getModelCatalog, getPolicy, writePolicy } from "../api.ts";
 import { Loading } from "../ui/kit.tsx";
 import { toast } from "../ui/toast.tsx";
 import { HelpDrawer, HelpTopicButton, useHelp } from "../ui/help.tsx";
@@ -46,7 +54,13 @@ function exceptionScope(exception: PolicyExceptionView): string {
   return exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.join(", ");
 }
 
-/** unreachableNotice is the sentence a transport failure becomes. */
+/** effortDraft is the allowed-efforts input's text for one model, from the pending change first. */
+function effortDraft(change: PolicyChange | null, model: string, saved: string[]): string {
+  if (change?.kind === "setAllowed" && change.model === model) return change.efforts.join(", ");
+  return saved.join(", ");
+}
+
+/** unreachableNotice is the sentence a read or a check that could not be answered becomes. */
 function unreachableNotice(): PolicyNotice {
   return {
     tone: "err",
@@ -56,6 +70,7 @@ function unreachableNotice(): PolicyNotice {
     applied: null,
     actions: [],
     errors: [],
+    warnings: [],
     restored: null,
     keepInputs: true,
     reread: false,
@@ -130,17 +145,47 @@ export function PolicyPage() {
     setNotice(null);
   }
 
+  /** reread drops the pending change and reads the policy again. */
+  function reread() {
+    setChange(null);
+    setNotice(null);
+    setReload((n) => n + 1);
+  }
+
   async function save() {
     if (!reading || !change || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setNotice(null);
+    // Check first: the server judges the change with the bridge's own parser, so a refusal here is a
+    // refusal the write would meet. Sending only a change the check accepted keeps the two answers
+    // from disagreeing, and a refusal is shown without touching the file.
+    let checked;
+    try {
+      checked = decodeCheck((await checkPolicy({ expectedDigest: reading.digest ?? "", change })).body);
+    } catch {
+      // The check itself could not be answered. Nothing was written, so this is a plain failure.
+      savingRef.current = false;
+      setSaving(false);
+      setNotice(unreachableNotice());
+      return;
+    }
+    if (!checked.valid) {
+      const refused = checkNotice(checked);
+      savingRef.current = false;
+      setSaving(false);
+      setNotice(refused);
+      if (refused.reread) setReload((n) => n + 1);
+      return;
+    }
     let result: PolicyNotice;
     try {
       const answer = await writePolicy({ expectedDigest: reading.digest ?? "", change });
       result = noticeForWrite(answer.status, answer.body);
     } catch {
-      result = unreachableNotice();
+      // A lost response is not a lost write: the server finishes registration after it has replaced
+      // the file, so the screen re-reads rather than claiming nothing changed.
+      result = lostWriteNotice();
     }
     savingRef.current = false;
     setSaving(false);
@@ -153,8 +198,7 @@ export function PolicyPage() {
       return;
     }
     if (result.reread) {
-      // A stale digest: the caller's inputs are kept and the file is read again, exactly as the
-      // decided answer says. The pending change survives so the operator can compare and retry.
+      // A stale digest or a lost response: the caller's inputs are kept and the file is read again.
       setReload((n) => n + 1);
     }
     if (result.blockEditing) setChange(null);
@@ -162,6 +206,12 @@ export function PolicyPage() {
 
   const editable = (view?.editable ?? false) && !(notice?.blockEditing ?? false);
   const preview = reading && change ? previewChange(reading, change) : null;
+
+  /** pairsFor is the pair list a role's controls show: the pending change first, then the reading. */
+  function pairsFor(name: string, saved: PolicyPair[]): PolicyPair[] {
+    if (change?.kind === "setRolePairs" && change.role === name) return change.pairs;
+    return saved;
+  }
 
   return (
     <>
@@ -194,6 +244,9 @@ export function PolicyPage() {
               <p className="sub mono">registered {view.source.registeredDigest || "-"}</p>
               <p className="sub mono">running {view.source.runningDigest ?? `unknown (${view.source.runningReason || "no reason"})`}</p>
               <p className="sub">applied: {view.source.applied}{view.source.mode ? ` · mode ${view.source.mode}` : ""}</p>
+              {view.source.actions.map((action) => (
+                <p className="sub" role="status" key={action}>To apply it: {action}</p>
+              ))}
               {!view.editable ? (
                 <p role="status" className="sub">
                   This host has no registered execution policy this screen can read{view.reason ? `: ${view.reason}` : "."} Editing is blocked until one is registered.
@@ -202,74 +255,82 @@ export function PolicyPage() {
             </div>
 
             <div className="row-list" style={{ marginTop: 12 }}>
-              {view.roles.map((role) => (
-                <section key={role.name} className="list-row role-row" aria-label={`${role.name} policy`}>
-                  <div className="row-id">
-                    <span className="row-name">{role.name}</span>
-                    <span className="row-sub">
-                      {role.name === "supervisor"
-                        ? role.label
-                        : role.pairs.length === 0
-                          ? "no pair declared"
-                          : role.pairs.map(pairText).join(" · ")}
-                    </span>
-                    {role.expectation ? <span className="row-sub">expectation: {role.expectation}</span> : null}
-                  </div>
-                  {role.editable && editable ? (
-                    <fieldset className="role-controls" disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={roleControlsLabel(role.name)}>
-                      {role.pairs.map((pair, index) => (
-                        <div className="role-selects" key={index}>
-                          <select
-                            className="select"
-                            style={{ maxWidth: "220px" }}
-                            aria-label={pairModelLabel(role.name, index)}
-                            value={pair.model}
-                            onChange={(e) => {
-                              const pairs = role.pairs.map((current, at) => (at === index ? { ...current, model: e.target.value } : current));
-                              propose({ kind: "setRolePairs", role: role.name, pairs });
-                            }}
-                          >
-                            {models.some((option) => option.id === pair.model) ? null : (
-                              <option value={pair.model}>{pair.model} (saved, unavailable)</option>
-                            )}
-                            {models.map((option) => (
-                              <option key={option.id} value={option.id}>{option.label}</option>
-                            ))}
-                          </select>
-                          <select
-                            className="select"
-                            style={{ maxWidth: "160px" }}
-                            aria-label={pairEffortLabel(role.name, index)}
-                            value={pair.reasoningEffort}
-                            onChange={(e) => {
-                              const pairs = role.pairs.map((current, at) => (at === index ? { ...current, reasoningEffort: e.target.value } : current));
-                              propose({ kind: "setRolePairs", role: role.name, pairs });
-                            }}
-                          >
-                            {efforts.includes(pair.reasoningEffort) ? null : (
-                              <option value={pair.reasoningEffort}>{pair.reasoningEffort} (saved, unavailable)</option>
-                            )}
-                            {efforts.map((effort) => (
-                              <option key={effort} value={effort}>{effort}</option>
-                            ))}
-                          </select>
-                          {role.pairs.length > 1 ? (
-                            <button
-                              className="btn"
-                              onClick={() => propose({ kind: "setRolePairs", role: role.name, pairs: role.pairs.filter((_, at) => at !== index) })}
+              {view.roles.map((role) => {
+                const pairs = pairsFor(role.name, role.pairs);
+                return (
+                  <section key={role.name} className="list-row role-row" aria-label={`${role.name} policy`}>
+                    <div className="row-id">
+                      <span className="row-name">{role.name}</span>
+                      <span className="row-sub">
+                        {role.name === "supervisor"
+                          ? role.label
+                          : pairs.length === 0
+                            ? "no pair declared"
+                            : pairs.map(pairText).join(" · ")}
+                      </span>
+                      {role.expectation ? <span className="row-sub">expectation: {role.expectation}</span> : null}
+                    </div>
+                    {role.editable && editable ? (
+                      <fieldset className="role-controls" disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={roleControlsLabel(role.name)}>
+                        {pairs.map((pair, index) => (
+                          <div className="role-selects" key={index}>
+                            <select
+                              className="select"
+                              style={{ maxWidth: "220px" }}
+                              aria-label={pairModelLabel(role.name, index)}
+                              value={pair.model}
+                              onChange={(e) => {
+                                const next = pairs.map((current, at) => (at === index ? { ...current, model: e.target.value } : current));
+                                propose({ kind: "setRolePairs", role: role.name, pairs: next });
+                              }}
                             >
-                              Remove pair
-                            </button>
-                          ) : null}
+                              {models.some((option) => option.id === pair.model) ? null : (
+                                <option value={pair.model}>{pair.model} (saved, unavailable)</option>
+                              )}
+                              {models.map((option) => (
+                                <option key={option.id} value={option.id}>{option.label}</option>
+                              ))}
+                            </select>
+                            <select
+                              className="select"
+                              style={{ maxWidth: "160px" }}
+                              aria-label={pairEffortLabel(role.name, index)}
+                              value={pair.reasoningEffort}
+                              onChange={(e) => {
+                                const next = pairs.map((current, at) => (at === index ? { ...current, reasoningEffort: e.target.value } : current));
+                                propose({ kind: "setRolePairs", role: role.name, pairs: next });
+                              }}
+                            >
+                              {efforts.includes(pair.reasoningEffort) ? null : (
+                                <option value={pair.reasoningEffort}>{pair.reasoningEffort} (saved, unavailable)</option>
+                              )}
+                              {efforts.map((effort) => (
+                                <option key={effort} value={effort}>{effort}</option>
+                              ))}
+                            </select>
+                            {pairs.length > 1 ? (
+                              <button className="btn" onClick={() => propose({ kind: "setRolePairs", role: role.name, pairs: pairs.filter((_, at) => at !== index) })}>
+                                Remove pair
+                              </button>
+                            ) : null}
+                          </div>
+                        ))}
+                        <div className="role-selects">
+                          <button
+                            className="btn"
+                            onClick={() => propose({ kind: "setRolePairs", role: role.name, pairs: [...pairs, { model: models[0]?.id ?? "", reasoningEffort: efforts[0] ?? "" }] })}
+                          >
+                            Add pair
+                          </button>
                         </div>
-                      ))}
-                      <p className="sub">A role runs on one of the pairs listed here; the file is the only source of them.</p>
-                    </fieldset>
-                  ) : (
-                    <span className="badge" role="status">{role.name === "supervisor" ? "read-only" : "not editable"}</span>
-                  )}
-                </section>
-              ))}
+                        <p className="sub">A role runs on one of the pairs listed here; the file is the only source of them.</p>
+                      </fieldset>
+                    ) : (
+                      <span className="badge" role="status">{role.name === "supervisor" ? "read-only" : "not editable"}</span>
+                    )}
+                  </section>
+                );
+              })}
             </div>
 
             <div className="row-list" style={{ marginTop: 12 }}>
@@ -290,11 +351,12 @@ export function PolicyPage() {
                         className="input"
                         style={{ maxWidth: "220px" }}
                         aria-label={allowedEffortsLabel(entry.model)}
-                        defaultValue={entry.efforts.join(", ")}
-                        onBlur={(e) => {
+                        value={effortDraft(change, entry.model, entry.efforts)}
+                        onChange={(e) => {
                           const next = e.target.value.split(",").map((name) => name.trim()).filter((name) => name !== "");
-                          if (next.length === 0) return;
-                          propose({ kind: "setAllowed", model: entry.model, efforts: next });
+                          // An empty list is not a change: the backend refuses it, and clearing the
+                          // field mid-edit must not raise a preview for a change nobody asked for.
+                          propose(next.length === 0 ? null : { kind: "setAllowed", model: entry.model, efforts: next });
                         }}
                       />
                       <button className="btn" onClick={() => propose({ kind: "removeAllowed", model: entry.model })}>Remove</button>
@@ -302,6 +364,14 @@ export function PolicyPage() {
                   ) : null}
                 </section>
               ))}
+              {editable ? (
+                <AllowedAdder
+                  models={models}
+                  efforts={efforts}
+                  existing={view.allowed.map((entry) => entry.model)}
+                  onAdd={(model, names) => propose({ kind: "setAllowed", model, efforts: names })}
+                />
+              ) : null}
             </div>
 
             <div className="row-list" style={{ marginTop: 12 }}>
@@ -309,24 +379,17 @@ export function PolicyPage() {
                 <div className="list-row"><span className="row-sub">No exception is declared, so every scope runs on its role's pair.</span></div>
               ) : null}
               {view.exceptions.map((exception) => (
-                <section key={exception.id} className="list-row" aria-label={`exception ${exception.id}`}>
-                  <div className="row-id">
-                    <span className="row-name">{exception.id}</span>
-                    <span className="row-sub">{exception.role || "any role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
-                  </div>
-                  {editable ? (
-                    <div className="row-actions">
-                      <button
-                        className="btn danger"
-                        onClick={() => propose({ kind: "removeException", id: exception.id })}
-                        aria-label={removeExceptionLabel(exception.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ) : null}
-                </section>
+                <ExceptionRow
+                  key={exception.id}
+                  exception={exception}
+                  roles={view.roles.filter((role) => role.editable).map((role) => role.name)}
+                  models={models}
+                  efforts={efforts}
+                  editable={editable}
+                  onChange={propose}
+                />
               ))}
+              {editable ? <ExceptionAdder roles={view.roles.filter((role) => role.editable).map((role) => role.name)} models={models} efforts={efforts} onAdd={propose} /> : null}
             </div>
 
             {preview ? (
@@ -367,6 +430,9 @@ export function PolicyPage() {
                 {notice.actions.map((action) => (
                   <p className="sub" key={action}>To do: {action}</p>
                 ))}
+                {notice.warnings.map((warning) => (
+                  <p className="sub" key={warning}>Warning: {warning}</p>
+                ))}
                 {notice.errors.map((message) => (
                   <p className="sub" key={message}>{message}</p>
                 ))}
@@ -376,12 +442,170 @@ export function PolicyPage() {
 
             <p className="sub" style={{ marginTop: 12 }}>{catalogNotice(catalog)}</p>
             <div className="role-selects">
-              <button className="btn" disabled={saving} onClick={() => { setChange(null); setReload((n) => n + 1); }}>Read the policy again</button>
+              <button className="btn" disabled={saving} onClick={reread}>Read the policy again</button>
             </div>
           </>
         ) : null}
       </div>
       <HelpDrawer open={helpOpen} topic={helpTopic} onClose={closeHelp} />
     </>
+  );
+}
+
+/** The control that adds one model to the allowed list. */
+function AllowedAdder({ models, efforts, existing, onAdd }: { models: Array<{ id: string }>; efforts: string[]; existing: string[]; onAdd: (model: string, names: string[]) => void }) {
+  const free = models.filter((option) => !existing.includes(option.id));
+  const [model, setModel] = useState(free[0]?.id ?? "");
+  if (free.length === 0) return null;
+  return (
+    <div className="list-row">
+      <div className="row-id"><span className="row-sub">Add a model to the allowed list</span></div>
+      <div className="row-actions">
+        <select className="select" style={{ maxWidth: "220px" }} aria-label="model to allow" value={model} onChange={(e) => setModel(e.target.value)}>
+          {free.map((option) => (
+            <option key={option.id} value={option.id}>{option.id}</option>
+          ))}
+        </select>
+        <button className="btn" aria-label="Add allowed model" onClick={() => onAdd(model, [efforts[0] ?? ""])}>Add</button>
+      </div>
+    </div>
+  );
+}
+
+/** One declared exception's row: it edits the exception in place or removes it. */
+function ExceptionRow({
+  exception,
+  roles,
+  models,
+  efforts,
+  editable,
+  onChange,
+}: {
+  exception: PolicyExceptionView;
+  roles: string[];
+  models: Array<{ id: string }>;
+  efforts: string[];
+  editable: boolean;
+  onChange: (change: PolicyChange | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<PolicyExceptionView>(exception);
+  if (!editable) {
+    return (
+      <section className="list-row" aria-label={`exception ${exception.id}`}>
+        <div className="row-id">
+          <span className="row-name">{exception.id}</span>
+          <span className="row-sub">{exception.role || "any role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
+        </div>
+      </section>
+    );
+  }
+  if (!editing) {
+    return (
+      <section className="list-row" aria-label={`exception ${exception.id}`}>
+        <div className="row-id">
+          <span className="row-name">{exception.id}</span>
+          <span className="row-sub">{exception.role || "any role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
+        </div>
+        <div className="row-actions">
+          <button className="btn" aria-label={`Edit exception ${exception.id}`} onClick={() => { setDraft(exception); setEditing(true); }}>Edit</button>
+          <button className="btn danger" aria-label={removeExceptionLabel(exception.id)} onClick={() => onChange({ kind: "removeException", id: exception.id })}>Remove</button>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="list-row role-row" aria-label={`edit exception ${exception.id}`}>
+      <div className="row-id"><span className="row-name">{exception.id}</span></div>
+      <fieldset className="role-controls" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label={`${exception.id} exception controls`}>
+        <div className="role-selects">
+          <select className="select" style={{ maxWidth: "160px" }} aria-label={`${exception.id} exception role`} value={draft.role ?? ""} onChange={(e) => setDraft({ ...draft, role: e.target.value === "" ? undefined : e.target.value })}>
+            <option value="">any role</option>
+            {roles.map((role) => (
+              <option key={role} value={role}>{role}</option>
+            ))}
+          </select>
+          <select className="select" style={{ maxWidth: "220px" }} aria-label={`${exception.id} exception model`} value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })}>
+            {models.some((option) => option.id === draft.model) ? null : <option value={draft.model}>{draft.model} (saved, unavailable)</option>}
+            {models.map((option) => (
+              <option key={option.id} value={option.id}>{option.id}</option>
+            ))}
+          </select>
+          <select className="select" style={{ maxWidth: "160px" }} aria-label={`${exception.id} exception effort`} value={draft.reasoningEffort} onChange={(e) => setDraft({ ...draft, reasoningEffort: e.target.value })}>
+            {efforts.includes(draft.reasoningEffort) ? null : <option value={draft.reasoningEffort}>{draft.reasoningEffort} (saved, unavailable)</option>}
+            {efforts.map((effort) => (
+              <option key={effort} value={effort}>{effort}</option>
+            ))}
+          </select>
+          <input
+            className="input"
+            style={{ maxWidth: "220px" }}
+            aria-label={`${exception.id} exception cwd`}
+            value={draft.cwd.join(", ")}
+            onChange={(e) => setDraft({ ...draft, cwd: e.target.value.split(",").map((root) => root.trim()).filter((root) => root !== "") })}
+          />
+        </div>
+        <div className="role-selects">
+          <button className="btn primary" onClick={() => { onChange({ kind: "setException", id: draft.id, role: draft.role, model: draft.model, effort: draft.reasoningEffort, cwd: draft.cwd }); setEditing(false); }}>Apply</button>
+          <button className="btn" onClick={() => setEditing(false)}>Cancel</button>
+        </div>
+      </fieldset>
+    </section>
+  );
+}
+
+/** The control that adds a new exception. */
+function ExceptionAdder({ roles, models, efforts, onAdd }: { roles: string[]; models: Array<{ id: string }>; efforts: string[]; onAdd: (change: PolicyChange) => void }) {
+  const [open, setOpen] = useState(false);
+  const [id, setId] = useState("");
+  const [role, setRole] = useState("");
+  const [model, setModel] = useState(models[0]?.id ?? "");
+  const [effort, setEffort] = useState(efforts[0] ?? "");
+  const [cwd, setCwd] = useState("");
+  if (!open) {
+    return (
+      <div className="list-row">
+        <div className="row-id"><span className="row-sub">Add an exception for one scope</span></div>
+        <div className="row-actions"><button className="btn" onClick={() => setOpen(true)}>Add exception</button></div>
+      </div>
+    );
+  }
+  const roots = cwd.split(",").map((root) => root.trim()).filter((root) => root !== "");
+  return (
+    <section className="list-row role-row" aria-label="add exception">
+      <div className="row-id"><span className="row-name">New exception</span></div>
+      <fieldset className="role-controls" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} aria-label="new exception controls">
+        <div className="role-selects">
+          <input className="input" style={{ maxWidth: "160px" }} aria-label="new exception id" placeholder="id" value={id} onChange={(e) => setId(e.target.value)} />
+          <select className="select" style={{ maxWidth: "160px" }} aria-label="new exception role" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="">any role</option>
+            {roles.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <select className="select" style={{ maxWidth: "220px" }} aria-label="new exception model" value={model} onChange={(e) => setModel(e.target.value)}>
+            {models.map((option) => (
+              <option key={option.id} value={option.id}>{option.id}</option>
+            ))}
+          </select>
+          <select className="select" style={{ maxWidth: "160px" }} aria-label="new exception effort" value={effort} onChange={(e) => setEffort(e.target.value)}>
+            {efforts.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <input className="input" style={{ maxWidth: "220px" }} aria-label="new exception cwd" placeholder="cwd roots, comma separated" value={cwd} onChange={(e) => setCwd(e.target.value)} />
+        </div>
+        <div className="role-selects">
+          <button
+            className="btn primary"
+            disabled={id === "" || model === ""}
+            onClick={() => { onAdd({ kind: "setException", id, role: role === "" ? undefined : role, model, effort, cwd: roots }); setOpen(false); setId(""); setCwd(""); }}
+          >
+            Add
+          </button>
+          <button className="btn" onClick={() => setOpen(false)}>Cancel</button>
+        </div>
+      </fieldset>
+    </section>
   );
 }

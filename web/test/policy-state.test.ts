@@ -16,7 +16,10 @@ import {
   SUPERVISOR_LABEL,
   allowedEffortsLabel,
   catalogNotice,
+  checkNotice,
+  decodeCheck,
   decodePolicy,
+  lostWriteNotice,
   modelOptions,
   noticeForWrite,
   pairEffortLabel,
@@ -99,6 +102,32 @@ test("decodePolicy refuses an answer that is not the route's shape", () => {
   assert.equal(decodePolicy(reading()).state, "registered");
 });
 
+// The two nulls the Go route actually sends. Devin found both: policyHandler assigns
+// AppliedActions(...) without the emptyIfNil wrapper, and projectRoles leaves Pairs nil for a role
+// that declares only an expectation. A strict array check on either made the whole screen throw on
+// every normally applied host, so each is pinned with the exact bytes the route produces.
+test("a null actions list is an empty list, not a malformed answer", () => {
+  const raw = { ...reading(), actions: null };
+  const decoded = decodePolicy(raw);
+  assert.deepEqual(decoded.actions, []);
+  assert.equal(policyView(decoded).editable, true);
+});
+
+test("a null pairs list is a role with no pairs, not a malformed answer", () => {
+  const raw = {
+    ...reading(),
+    roles: [
+      { name: "supervisor", expectation: "record", pairs: null },
+      { name: "child", expectation: "", pairs: [{ model: "anthropic/opus", reasoningEffort: "xhigh" }] },
+    ],
+  };
+  const view = policyView(decodePolicy(raw));
+  const supervisor = view.roles.find((role) => role.name === "supervisor");
+  assert.deepEqual(supervisor?.pairs, []);
+  assert.equal(supervisor?.editable, false);
+  assert.equal(view.editable, true);
+});
+
 /* ---- C2: edits, and the exception-removal fallback ---- */
 
 test("the role-pair preview shows the before and after of the changing row", () => {
@@ -169,6 +198,64 @@ test("setting an exception that is not declared previews it as new", () => {
   assert.equal(item?.after, "parent gpt-6.1-sol xhigh (no cwd scope)");
 });
 
+test("removing an exception with no role previews each task's own role default", () => {
+  // An exception that omits role applies to every role, so there is no single role whose default it
+  // returns to; the earlier wording invented one ("the cited role") and produced a nonsense sentence.
+  const unscoped = reading({ exceptions: [{ id: "any", model: "m", reasoningEffort: "max", cwd: ["/srv/all"] }] });
+  const preview = previewChange(unscoped, { kind: "removeException", id: "any" });
+  const item = preview.items.find((entry) => entry.label.includes("any"));
+  assert.equal(item?.after, "each task's own role default");
+  assert.ok(preview.fallback?.includes("each task's own role default"));
+  assert.ok(!preview.fallback?.includes("the cited role"));
+});
+
+// The unsupported catalog is a fourth state, not the generic stale sentence: this host's OCX does
+// not read a live catalog at all, and the reader says so in its message.
+test("the unsupported catalog is told apart from a failed refresh", () => {
+  const unsupported: ModelCatalog = {
+    state: "unsupported-ocx-catalog",
+    status: "stale",
+    entries: [{ id: "m", label: "m" }],
+    message: "This OCX does not support reading the live model catalog (ocx models live --json).",
+  };
+  const notice = catalogNotice(unsupported);
+  assert.ok(notice.includes("does not support"));
+  assert.notEqual(notice, catalogNotice({ ...unsupported, state: "unavailable", status: "stale", message: "" }));
+});
+
+// A lost write response is indeterminate, not a failure: the server finishes registration after it
+// has replaced the file, so the screen must re-read rather than claim nothing changed.
+test("a lost write response is reported as unknown and triggers a re-read", () => {
+  const notice = lostWriteNotice();
+  assert.equal(notice.tone, "err");
+  assert.equal(notice.reread, true);
+  assert.equal(notice.keepInputs, true);
+  assert.equal(notice.stored, null);
+  assert.ok(notice.text.toLowerCase().includes("unknown"));
+  assert.ok(!notice.text.includes("was not changed"));
+});
+
+test("decodeCheck reads the check route's answer and refuses a body without its verdict", () => {
+  const refused = decodeCheck({ valid: false, errors: ["role 'supervisor' cannot declare a model"], currentDigest: "a".repeat(64), stale: false, diff: [] });
+  assert.equal(refused.valid, false);
+  assert.equal(refused.errors.length, 1);
+  const accepted = decodeCheck({ valid: true, errors: [], currentDigest: "b".repeat(64), stale: true, diff: ["roles.parent"] });
+  assert.equal(accepted.valid, true);
+  assert.equal(accepted.stale, true);
+  assert.deepEqual(accepted.diff, ["roles.parent"]);
+  assert.throws(() => decodeCheck({ errors: [] }));
+  assert.throws(() => decodeCheck(null));
+});
+
+test("a check refusal is an error notice and never a success", () => {
+  const refused = checkNotice(decodeCheck({ valid: false, errors: ["the change moved allowed"], currentDigest: "a", stale: false, diff: [] }));
+  assert.equal(refused.tone, "err");
+  assert.ok(refused.text.includes("the change moved allowed"));
+  const accepted = checkNotice(decodeCheck({ valid: true, errors: [], currentDigest: "a", stale: false, diff: ["roles.child"] }));
+  assert.equal(accepted.tone, "info");
+  assert.ok(accepted.text.includes("roles.child"));
+});
+
 /* ---- C3: the catalog states, and never swapping a saved value ---- */
 
 test("the four catalog states are told apart from success", () => {
@@ -224,6 +311,27 @@ test("a 200 answer whose registered digest is missing says the registration was 
   assert.equal(notice.tone, "ok");
   assert.equal(notice.registered, null);
   assert.ok(notice.text.toLowerCase().includes("registered"));
+});
+
+test("a 200 that carries warnings keeps them beside the success", () => {
+  // The server can warn that the directory sync failed or the record could not be read back. The
+  // write still succeeded, so the tone stays ok, but dropping the warnings would report an
+  // unqualified save while the server says its durability or registration is uncertain.
+  const notice = noticeForWrite(200, {
+    stored: { digest: "f".repeat(64) },
+    registered: { digest: "f".repeat(64) },
+    applied: "applied",
+    actions: [],
+    warnings: ["the directory could not be synced; a power loss may recover the previous file"],
+  });
+  assert.equal(notice.tone, "ok");
+  assert.equal(notice.warnings.length, 1);
+  assert.ok(notice.warnings[0].includes("power loss"));
+});
+
+test("a 200 without warnings carries none", () => {
+  const notice = noticeForWrite(200, { stored: { digest: "g".repeat(64) }, registered: { digest: "g".repeat(64) }, applied: "applied", actions: [] });
+  assert.deepEqual(notice.warnings, []);
 });
 
 test("needs_user_action shows the work a person must do", () => {

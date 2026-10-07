@@ -90,6 +90,23 @@ export interface PolicyCheckResult {
   diff: string[];
 }
 
+/**
+ * decodeCheck validates a POST /api/policy/check answer. A body without the boolean the route always
+ * answers with is refused rather than read as a refusal, which would show the operator a message the
+ * server never sent.
+ */
+export function decodeCheck(raw: unknown): PolicyCheckResult {
+  if (!isObject(raw) || typeof raw.valid !== "boolean") throw new Error("The policy check could not be read. Try saving again.");
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  return {
+    valid: raw.valid,
+    errors: strings(raw.errors),
+    currentDigest: stringOf(raw.currentDigest),
+    stale: raw.stale === true,
+    diff: strings(raw.diff),
+  };
+}
+
 /** POST /api/policy's 200 answer (internal/gui/policyWriteBody). */
 export interface PolicyWriteSuccess {
   stored: { digest: string };
@@ -130,6 +147,8 @@ export interface PolicySource {
   digest: string;
   registeredDigest: string;
   applied: string;
+  /** The repair the applied state names, straight from the read. */
+  actions: string[];
   runningDigest: string | null;
   runningReason: string;
   mode: string;
@@ -171,6 +190,8 @@ export interface PolicyNotice {
   applied: string | null;
   actions: string[];
   errors: string[];
+  /** What the server warned about on a write that still succeeded. */
+  warnings: string[];
   restored: boolean | null;
   /** True when the caller's own inputs must survive (a stale digest). */
   keepInputs: boolean;
@@ -217,13 +238,21 @@ export function decodePolicy(raw: unknown): PolicyReading {
   if (!Array.isArray(raw.roles) || !Array.isArray(raw.allowed) || !Array.isArray(raw.exceptions)) {
     throw new Error("Invalid policy response. Reload and try again.");
   }
-  if (!Array.isArray(raw.actions)) throw new Error("Invalid policy response. Reload and try again.");
+  // actions is the one member the Go route does not wrap with its emptyIfNil helper, so a host with
+  // nothing to do answers "actions": null. That is the ordinary case, not a malformed answer, and a
+  // strict array check here would leave the whole screen unreadable on every normally applied host.
+  const rawActions = raw.actions;
+  if (rawActions !== undefined && rawActions !== null && !Array.isArray(rawActions)) {
+    throw new Error("Invalid policy response. Reload and try again.");
+  }
   const roles: PolicyRoleView[] = [];
   for (const entry of raw.roles) {
     if (!isObject(entry) || stringOf(entry.name) === "") throw new Error("Invalid policy response. Reload and try again.");
     const pairs: PolicyPair[] = [];
     const rawPairs = entry.pairs;
-    if (rawPairs !== undefined && !Array.isArray(rawPairs)) throw new Error("Invalid policy response. Reload and try again.");
+    // A role that declares no pair (the supervisor's expectation-only entry above all) is encoded
+    // "pairs": null by the projection, which is a role with no pairs rather than a malformed answer.
+    if (rawPairs !== undefined && rawPairs !== null && !Array.isArray(rawPairs)) throw new Error("Invalid policy response. Reload and try again.");
     for (const pair of Array.isArray(rawPairs) ? rawPairs : []) {
       const decoded = pairOf(pair);
       if (!decoded) throw new Error("Invalid policy response. Reload and try again.");
@@ -272,7 +301,7 @@ export function decodePolicy(raw: unknown): PolicyReading {
     allowed,
     exceptions,
     applied: stringOf(raw.applied),
-    actions: raw.actions.map((action) => stringOf(action)),
+    actions: (Array.isArray(rawActions) ? rawActions : []).map((action) => stringOf(action)),
   };
 }
 
@@ -297,6 +326,7 @@ export function policyView(reading: PolicyReading): PolicyView {
       digest: reading.digest ?? "",
       registeredDigest: reading.registeredDigest ?? "",
       applied: reading.applied,
+      actions: reading.actions,
       runningDigest: reading.runningDigest,
       runningReason: reading.runningReason ?? "",
       mode: reading.mode ?? "",
@@ -395,14 +425,17 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
     }
     case "removeException": {
       const existing = reading.exceptions.find((row) => row.id === change.id);
-      const role = existing?.role ?? "the cited role";
       const scope = existing && existing.cwd.length > 0 ? existing.cwd.join(", ") : "the exception's scope";
       items.push({
         label: `exception ${change.id}`,
         before: existing ? exceptionText(existing) : "not declared",
-        after: `${role} default`,
+        after: existing?.role ? `${existing.role} default` : "each task's own role default",
       });
-      preview.fallback = `Removing this exception returns ${scope} to the ${role} role default.`;
+      // An exception that omits role applies to every role, so there is no one role whose default it
+      // returns to: each task under that scope falls back to its own role's default.
+      preview.fallback = existing?.role
+        ? `Removing this exception returns ${scope} to the ${existing.role} role default.`
+        : `Removing this exception returns ${scope} to each task's own role default.`;
       break;
     }
     default:
@@ -482,6 +515,14 @@ export function modelOptions(reading: PolicyReading, catalog: ModelCatalog | nul
  */
 export function catalogNotice(catalog: ModelCatalog | null): string {
   if (!catalog) return "Loading the model list...";
+  // This host's OCX does not read the live catalog at all. The reader reports that as a stale
+  // answer behind a cache, and it is a different state from a refresh that simply failed: the
+  // message says so, and folding it into the generic stale sentence would hide which one it is.
+  if (catalog.state === "unsupported-ocx-catalog") {
+    return catalog.message && catalog.message !== ""
+      ? `Model list unavailable: ${catalog.message}`
+      : "This host's OCX does not support reading the live model catalog; the policy file's own names are still offered";
+  }
   switch (catalog.status) {
     case "fresh":
       return `Model list from ${catalog.source === "ocx" ? "OCX" : "the Codex catalog"}`;
@@ -509,7 +550,7 @@ function isWriteError(body: unknown): body is PolicyWriteError {
 }
 
 function emptyNotice(tone: PolicyNotice["tone"], text: string): PolicyNotice {
-  return { tone, text, stored: null, registered: null, applied: null, actions: [], errors: [], restored: null, keepInputs: false, reread: false, blockEditing: false };
+  return { tone, text, stored: null, registered: null, applied: null, actions: [], errors: [], warnings: [], restored: null, keepInputs: false, reread: false, blockEditing: false };
 }
 
 /**
@@ -534,6 +575,10 @@ export function noticeForWrite(status: number, body: unknown): PolicyNotice {
     notice.registered = registered === "" ? null : registered;
     notice.applied = stringOf(body.applied);
     notice.actions = Array.isArray(body.actions) ? body.actions.map((action) => stringOf(action)) : [];
+    // A 200 can still carry warnings (a directory sync that failed, a record that could not be read
+    // back). They do not make the write a failure, but dropping them would report an unqualified
+    // save while the server is saying its durability or its registration is uncertain.
+    notice.warnings = Array.isArray(body.warnings) ? body.warnings.map((warning) => stringOf(warning)) : [];
     const parts = [`Stored ${digest12(notice.stored)}`];
     parts.push(notice.registered === null ? "registered: not read back" : `registered ${digest12(notice.registered)}`);
     if (notice.applied === "applied") parts.push("the running relay holds these bytes");
@@ -601,5 +646,18 @@ export function checkNotice(result: PolicyCheckResult): PolicyNotice {
   }
   const notice = emptyNotice("err", result.errors.length > 0 ? `The policy check refused this change: ${result.errors.join("; ")}` : "The policy check refused this change.");
   notice.errors = result.errors;
+  return notice;
+}
+
+/**
+ * lostWriteNotice is the sentence a write whose transport failed becomes. It is deliberately NOT
+ * "the policy was not changed": the server detaches the registration phase from the request once it
+ * has replaced the file, so a dropped connection can leave a write that completed with no answer.
+ * The only honest reading is that the result is unknown, and the screen re-reads to find out.
+ */
+export function lostWriteNotice(): PolicyNotice {
+  const notice = emptyNotice("err", "The connection was lost before the server answered, so whether this change was written is unknown. The policy is being read again to find out; check the digest before retrying.");
+  notice.keepInputs = true;
+  notice.reread = true;
   return notice;
 }
