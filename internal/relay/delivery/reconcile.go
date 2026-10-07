@@ -466,8 +466,17 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 			// counts the recipient's busy answers beyond this attempt, so it can stand with an attempt number
 			// below the caps settleFromReceipt compares, and whatever else this attempt turns out to have been
 			// (a busy answer, a rejection before the send) says nothing about it.
-			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
-				aggregate, next, boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)
+			// CRW-904: a busy answer to an attempt the recipient's idle edge woke keeps the earlier deadline
+			// (due = min(original, recomputed)). The claim left the delivery's own deadline untouched, so the
+			// original is still on the row; a delivery that was simply due carries one in the past, which the
+			// CASE does not take. Only the busy reason takes it: the presend curve is a different retry.
+			deadline, deadlineArgs := "?", []any{next}
+			if aggregate == DeferredBusy && next != nil {
+				deadline = "CASE WHEN next_eligible_at IS NOT NULL AND next_eligible_at > ? AND next_eligible_at < ? THEN next_eligible_at ELSE ? END"
+				deadlineArgs = []any{now, next, next}
+			}
+			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
+				append(append([]any{aggregate}, deadlineArgs...), boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)...)
 			if err != nil {
 				return err
 			}

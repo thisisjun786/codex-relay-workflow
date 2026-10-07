@@ -133,3 +133,13 @@ type Adapter interface {
 	// RecipientFingerprint digests the newest items' content, so an append shows up.
 	RecipientFingerprint(ctx context.Context, thread string) (string, error)
 }
+
+// IdleReport is one thread status the App Server pushed for a thread this connection subscribes to
+// (CRW-904): the thread, and the status type it reported (active, idle, notLoaded, systemError).
+// Only a subscribed connection receives them, which is why the relay opens a subscription on a
+// recipient whose head delivery waits out a busy backoff. The delivery package holds the type so
+// that the daemon and the host adapter share it without either importing the other.
+type IdleReport struct {
+	ThreadID string
+	Status   string
+}

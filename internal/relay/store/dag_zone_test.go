@@ -601,11 +601,7 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 // pendingWriters are the zone tables whose first writer is a later issue of the DAG project: no production query names them
 // yet. The list is exactly those tables: a table gains a query and leaves this list in the same change, and a table with neither
 // is dead schema.
-var pendingWriters = map[string]string{
-	// CRW-904 adds delivery_wakes with the store-zone statement; the delivery service's query for it
-	// arrives in the next commit of this change, which removes this entry.
-	"delivery_wakes": "CRW-904 delivery service (the idle-edge wake)",
-}
+var pendingWriters = map[string]string{}
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
 	t.Parallel()
