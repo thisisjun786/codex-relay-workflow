@@ -274,10 +274,13 @@ var (
 	// skills'.
 	// A quoted executable is the same run: "node" --test and "/usr/bin/node" --test launch the same
 	// binary, so the word is read through either quote as well as bare (CRW-939, the generation-2
-	// evaluation of d1). The gap between the word and --test stops at a newline, a separator or a
-	// pipeline, because a literal block scalar keeps its lines apart: a node in one line and a
-	// --test in another are two commands, not one run (the same evaluation's d2).
-	nodeTest = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_./-])(?:"[^"]*node[^"]*"|'[^']*node[^']*'|[^ \t]*node)[ \t][^;|&\n]*--test(?:$|[^A-Za-z0-9_-])`)
+	// evaluation of d1). The gap between the word and --test stops at an unquoted newline, separator
+	// or pipeline, because a literal block scalar keeps its lines apart: a node in one line and a
+	// --test in another are two commands, not one run (the same evaluation's d2). A separator inside
+	// a quoted argument is not a separator to the shell, so the gap carries a whole quoted string
+	// over: --test-name-pattern='V1|V17' --test is one run (CRW-939, the twelfth generation-2
+	// evaluation of d1).
+	nodeTest = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_./-])(?:"[^"\n]*node[^"\n]*"|'[^'\n]*node[^'\n]*'|[^ \t]*node)[ \t](?:[^;|&\n"']|"[^"\n]*"|'[^'\n]*')*--test(?:$|[^A-Za-z0-9_-])`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -331,6 +334,14 @@ func commandWindow(physical []string, i int) string {
 		for j := i + 1; j < len(physical); j++ {
 			body := physical[j]
 			if strings.TrimSpace(body) == "" {
+				// A folded scalar joins its lines with a blank, but a blank line of its own is a
+				// paragraph break: YAML keeps it as a newline, so the two commands either side are
+				// separate to the shell. Joining across it would read a node in one and a --test in
+				// the other as one run and refuse a workflow that only runs them apart (CRW-939, the
+				// twelfth generation-2 evaluation of d2).
+				if !literal {
+					joined += "\n"
+				}
 				continue
 			}
 			if indentOf(body) <= key {
@@ -845,6 +856,24 @@ func TestWorkflow_separate_commands_in_a_literal_block_are_not_one_run(t *testin
 	}
 }
 
+// A blank line inside a folded scalar is a paragraph break: YAML keeps it as a newline, so the two
+// commands either side are separate to the shell. Dropping it and joining the lines with a blank
+// would read a node in one command and a --test in the other as one run and refuse a workflow that
+// only prints them (CRW-939, the twelfth generation-2 evaluation of d2).
+func TestWorkflow_a_paragraph_break_in_a_folded_scalar_separates_commands(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: >-\n          printf '%s\\n' node\n\n          printf '%s\\n' '--test'\n"
+	if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) != 0 {
+		t.Errorf("a paragraph break was read as one node run: %v", findings)
+	}
+}
+
 // The detector refuses what installs or runs Python in a workflow, and a step that names a skill
 // asset script, and lets comments, other words that contain pip or python, and ordinary skill
 // paths through.
@@ -917,6 +946,9 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      - run: '/usr/bin/node' --test", true},                                          // and a quoted absolute path
 		{"      - run: \"/usr/bin/node\" --test", true},                                        // in either quote
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
+		{"      - run: node --test-name-pattern='V1|V17' --test", true},                        // a separator inside a quoted argument is no boundary
+		{"      - run: node --test-name-pattern=\"V1|V17\" --test", true},                      // in either quote
+		{"      - run: node \"a;b\" --test", true},                                             // nor is a semicolon one
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
 		if got := pythonInWorkflow("release.yml", row.line+"\n"); (len(got) > 0) != row.found {

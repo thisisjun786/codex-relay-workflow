@@ -126,6 +126,62 @@ function closingQuote(line, at, quote) {
   return -1;
 }
 
+/**
+ * True when the string that opens at \`at\` is an f-string: the identifier letters just before its
+ * quote are a Python string prefix (\`r\`, \`b\`, \`u\`, \`f\` and their combinations, any case) and one of
+ * them is \`f\`. Only an f-string evaluates the expressions in its replacement fields, so only one
+ * needs the treatment below (CRW-939, the twelfth generation-2 evaluation of d3).
+ */
+function fstringAt(line, at) {
+  let i = at - 1;
+  let prefix = "";
+  while (i >= 0 && /[A-Za-z]/.test(line[i])) {
+    prefix = line[i] + prefix;
+    i -= 1;
+  }
+  return prefix !== "" && /^[rRbBuUfF]+$/.test(prefix) && /[fF]/.test(prefix);
+}
+
+/**
+ * The executable part of an f-string literal: the body of each replacement field, joined so the
+ * reader's statement splitter sees them apart. A field's text runs to the brace that matches its
+ * opening one; a doubled brace is the literal escape and carries nothing. The reader cannot always
+ * separate a field from the literal text around it -- a brace inside a nested string breaks the
+ * count -- so a body whose braces do not balance is returned whole instead: reading too much is the
+ * fail-closed direction, and reading too little would pass an import the f-string really runs
+ * (CRW-939, the twelfth generation-2 evaluation of d3).
+ */
+function fstringCode(body) {
+  const bare = body.replace(/\{\{/g, "").replace(/\}\}/g, "");
+  const opens = (bare.match(/\{/g) || []).length;
+  const closes = (bare.match(/\}/g) || []).length;
+  if (opens !== closes) return body;
+  const fields = [];
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== "{") continue;
+    if (body[i + 1] === "{") {
+      i += 1;
+      continue;
+    }
+    let depth = 1;
+    let j = i + 1;
+    let inner = "";
+    while (j < body.length && depth > 0) {
+      const c = body[j];
+      if (c === "{") depth += 1;
+      else if (c === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      inner += c;
+      j += 1;
+    }
+    fields.push(inner);
+    i = j;
+  }
+  return fields.join(" ; ");
+}
+
 function codeLines(source) {
   const out = [];
   let open = null; // the triple-quote delimiter a string is still open with
@@ -158,6 +214,18 @@ function codeLines(source) {
         }
         const end = closingQuote(line, at, ch);
         if (end < 0) break; // a quote that does not close: the rest of the line is unread
+        // An f-string evaluates the expressions in its replacement fields while the line runs, so
+        // the reader keeps their bodies as code. A plain string evaluates nothing and is dropped
+        // whole (CRW-939, the twelfth generation-2 evaluation of d3).
+        if (fstringAt(line, at)) {
+          // The prefix letters were appended as code before the quote was reached. They are not
+          // code, and left in place they would sit against the first field body and hide it from a
+          // word-boundary test, so they are dropped with the literal text around them.
+          let prefixAt = at - 1;
+          while (prefixAt >= 0 && /[A-Za-z]/.test(line[prefixAt])) prefixAt -= 1;
+          code = code.slice(0, code.length - (at - 1 - prefixAt));
+          code += fstringCode(line.slice(at + 1, end)) + " ";
+        }
         at = end + 1;
         continue;
       }
@@ -495,6 +563,22 @@ test("the parser-import check reads module-level imports placed after the parse"
     const { offenders } = parserImportsBeforeParsing(line + parse);
     assert.ok(offenders.length > 0, `${JSON.stringify(line)}: a dynamic import before the parse must be refused`);
   }
+  // An f-string evaluates the expressions in its replacement fields while the line runs, so a
+  // dependency loaded there precedes --help like any other import; a plain string evaluates nothing
+  // and is still dropped whole (CRW-939, the twelfth generation-2 evaluation of d3).
+  for (const line of [
+    'marker = f"{__import__(\'networkx\')}"\n',
+    'marker = f"x {importlib.import_module(\'networkx\')} y"\n',
+    "marker = f'{__import__(\"networkx\")}'\n",
+    'marker = f"{ {\'a\': 1}[\'a\'] } {__import__(\'networkx\')}"\n',
+  ]) {
+    const { offenders } = parserImportsBeforeParsing(line + parse);
+    assert.ok(offenders.length > 0, `${JSON.stringify(line)}: an f-string's replacement field runs before --help`);
+  }
+  // The control: the same call inside a plain string is not evaluated and stays clean.
+  const plainString = 'marker = "__import__(\'networkx\')"\n';
+  assert.deepEqual(parserImportsBeforeParsing(plainString + parse).offenders, [],
+    "a plain string evaluates nothing");
   // The control: the same call inside the function after the parse is deferred like an import.
   const dynamicInFunction = 'def main():\n    args = parser.parse_args()\n    importlib.import_module("networkx")\n';
   assert.deepEqual(parserImportsBeforeParsing(dynamicInFunction).offenders, [], "a deferred dynamic import stays clean");
