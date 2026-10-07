@@ -347,9 +347,6 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		wrote = true
 		warnings = append(warnings, warning)
 		from := cur.Phase
-		if err := orchestrateDcloseCancelCheck(ctx, seam.interrupt, wrote); err != nil {
-			return CliResult{}, err
-		}
 		if err := state.AppendLedger(cwd, state.LedgerEntry{
 			TS: orchestrateTransitionTimestamp(), SessionID: cur.SessionID, From: &from, To: state.PhaseIdle,
 			Reason: "done", Evidence: orchestrateDcloseEvidence(att),
