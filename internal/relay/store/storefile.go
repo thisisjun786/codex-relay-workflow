@@ -43,8 +43,9 @@ var storeFileAfterStatHook func(path string)
 type storeFileKey struct{ device, inode uint64 }
 
 // heldRegistry is the process-wide registry. byPath answers the common case without an open;
-// byKey answers a second path that names an already-held inode. Neither map ever loses an entry
-// and nothing in this package closes a stored handle. neverClosed keeps every descriptor that
+// byKey answers a second path that names an already-held inode. A byPath value is replaced when
+// the path stops naming the handle's file, and byKey keeps every handle reachable, so no handle is
+// lost and nothing in this package closes a stored handle. neverClosed keeps every descriptor that
 // must stay reachable but is not the registry's answer for its inode: one whose identity could
 // not be measured, one that lost the same-inode race after the open (CRW-880), and one the
 // artifact reader refused and handed over rather than closing (CRW-880). recorded holds the

@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -260,6 +261,37 @@ func TestStoreFileRace_siblingDiscoverySkipsANonRegularDatabase(t *testing.T) {
 	}
 }
 
+// TestStoreFileRace_aPathBecomingAFifoBetweenStatAndOpenIsRefused pins the post-open half of the
+// regular-file check: the identity stat sees a regular file, the path becomes a FIFO before the
+// open, and the open (O_NONBLOCK, so it returns at once) is followed by an fstat that refuses and
+// closes the descriptor.
+func TestStoreFileRace_aPathBecomingAFifoBetweenStatAndOpenIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := openDescriptorCount(t)
+	withStoreFileStatHook(t, path, func() {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	_, err := holdStoreFile(path)
+	if err == nil {
+		t.Fatal("a path that became a FIFO between the stat and the open was held instead of refused")
+	}
+	if !errors.Is(err, syscall.ENXIO) {
+		t.Fatalf("a FIFO at a store-file path: err = %v, want ENXIO", err)
+	}
+	if after := openDescriptorCount(t); after != before {
+		t.Fatalf("a refused FIFO left a descriptor open: %d -> %d", before, after)
+	}
+}
+
 // TestStoreFileRace_repeatedRefusalsDoNotExhaustDescriptors pins the cost of the artifact
 // refusal: a path this process already knows as a store file is refused before it is opened, so
 // verifying the same store-file artifact again and again does not leave a descriptor behind each
@@ -270,8 +302,8 @@ func TestStoreFileRace_repeatedRefusalsDoNotExhaustDescriptors(t *testing.T) {
 	s := openRaceStore(t, path)
 	defer func() { _ = s.Close() }()
 
-	// The first refusal is allowed to cost one descriptor (it is the one that teaches the
-	// registry the sidecars' identities); every later one must not.
+	// The first refusal is allowed to cost one descriptor (the path is not yet known by identity
+	// on the first call); every later one must not.
 	if _, _, _, err := HashArtifact(context.Background(), path, []string{root}, false); err == nil {
 		t.Fatal("the store file was hashed instead of refused")
 	}
