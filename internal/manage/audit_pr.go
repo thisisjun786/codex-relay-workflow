@@ -498,17 +498,26 @@ func auditPRDiffPaths(ctx context.Context, co auditPkgCheckout, merge string) ([
 //
 // A record that is not well formed is an error rather than the end of the list: the answer is
 // not the one that was asked for, and half-reading it would build a bundle missing a file the
-// change carries while the bundle still reads as complete.
+// change carries while the bundle still reads as complete. An empty path is a framing error
+// too, so a record that is present but blank is refused rather than silently shifting every
+// later record by one.
 func auditPRNameStatusPaths(out []byte) ([]string, error) {
-	records := auditPkNulRecords(out)
+	records, err := auditPRNameStatusRecords(out)
+	if err != nil {
+		return nil, err
+	}
 	var paths []string
 	seen := map[string]bool{}
-	add := func(path string) {
-		if path == "" || seen[path] {
-			return
+	add := func(path string) error {
+		if path == "" {
+			return errors.New("the git diff-tree listing names an empty path")
+		}
+		if seen[path] {
+			return nil
 		}
 		seen[path] = true
 		paths = append(paths, path)
+		return nil
 	}
 	for i := 0; i < len(records); {
 		status := records[i]
@@ -519,23 +528,49 @@ func auditPRNameStatusPaths(out []byte) ([]string, error) {
 		if status[0] == 'R' || status[0] == 'C' {
 			// A rename or a copy names the path it came from and the path it became; the
 			// bundle reads the latter.
-			if i+1 >= len(records) {
-				return nil, fmt.Errorf("the git diff-tree record %q names no target path", status)
+			if i+2 > len(records) {
+				return nil, fmt.Errorf("the git diff-tree record %q names fewer than two paths", status)
 			}
-			i++
-			add(records[i])
-			i++
+			if records[i] == "" {
+				return nil, fmt.Errorf("the git diff-tree record %q names an empty source path", status)
+			}
+			if err := add(records[i+1]); err != nil {
+				return nil, err
+			}
+			i += 2
 			continue
 		}
 		if i >= len(records) {
 			return nil, fmt.Errorf("the git diff-tree record %q names no path", status)
 		}
 		if status[0] != 'D' {
-			add(records[i])
+			if err := add(records[i]); err != nil {
+				return nil, err
+			}
 		}
 		i++
 	}
 	return paths, nil
+}
+
+// auditPRNameStatusRecords splits a `git diff-tree --name-status -z` listing into its records.
+// It keeps an empty record: a record is a status or a path, so a blank one where a path belongs
+// is a listing this build cannot read, and dropping it would shift every later record by one.
+// The last record must be terminated by a NUL, as git always terminates it; a listing that ends
+// in the middle of a record is truncated and is refused. An empty listing is no changes.
+func auditPRNameStatusRecords(out []byte) ([]string, error) {
+	if len(out) == 0 {
+		return nil, nil
+	}
+	if out[len(out)-1] != 0 {
+		return nil, errors.New("the git diff-tree listing does not end with a NUL")
+	}
+	fields := bytes.Split(out[:len(out)-1], []byte{0})
+	records := make([]string, 0, len(fields))
+	for _, field := range fields {
+		records = append(records, string(field))
+	}
+	return records, nil
 }
 
 // auditPRNameStatus reports whether a record is a `git diff-tree --name-status` status: one

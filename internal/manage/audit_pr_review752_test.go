@@ -60,14 +60,23 @@ func TestAuditPRReview752NameStatusPaths(t *testing.T) {
 	// A listing read half way would build a bundle that looks complete while a file the
 	// change carries is missing from it, so a record that does not fit is an error.
 	for _, broken := range []string{
-		"M\x00",
-		"R100\x00old.go\x00",
-		"internal/a.go\x00M\x00x\x00",
-		"Z\x00x\x00",
+		"M\x00",                            // a status with no path
+		"R100\x00old.go\x00",               // a rename with no target path
+		"internal/a.go\x00M\x00x\x00",      // a path where a status belongs
+		"Z\x00x\x00",                       // a status git never writes
+		"M\x00a.go",                        // no terminating NUL: the listing is truncated
+		"R100\x00\x00old.go\x00new.go\x00", // a rename whose source path is empty
+		"M\x00\x00",                        // a present but empty path
+		"M\x00a.go\x00\x00b.go\x00",        // an empty path between two records
 	} {
 		if _, err := auditPRNameStatusPaths([]byte(broken)); err == nil {
 			t.Errorf("the listing %q was accepted", broken)
 		}
+	}
+	// A path that merely looks like a status is a path: the records alternate, so a file named
+	// `M` is read as the path of the record before it, not as another status.
+	if paths, err := auditPRNameStatusPaths(auditPRReview752Listing("M", "M")); err != nil || strings.Join(paths, ",") != "M" {
+		t.Errorf("a path named M gave %v (%v)", paths, err)
 	}
 }
 
