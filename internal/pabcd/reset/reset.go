@@ -289,7 +289,15 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			// there, so ask the kernel here and answer absent when it cannot search. This is the
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
-			if !resetLinkWalkSearchable(dir, walked) {
+			searchable, asked := resetLinkWalkSearchable(dir, walked)
+			if !asked {
+				// The probe name pushed the concatenated pathname past the kernel's own limit, so the
+				// search question could not be asked. That is not an answer about search permission:
+				// the walk cannot decide this target, so the caller keeps the descriptor stat and the
+				// root-path judgement, which answer as the kernel does for the link.
+				return false, false
+			}
+			if !searchable {
 				return false, true
 			}
 			if component == ".." {
@@ -303,6 +311,14 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 		path := resetLinkWalkPath(walked, component)
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
+			// The walk resolves the target through one concatenated pathname, and the kernel applies its
+			// own limit to a single pathname. ENAMETOOLONG therefore reports the walk's own limit, not
+			// the kernel's answer about the target, which may still resolve: the walk cannot decide it,
+			// so it keeps the descriptor stat and the root-path judgement. Every other error is the
+			// kernel's answer about the target and is absent.
+			if errors.Is(err, unix.ENAMETOOLONG) {
+				return false, false
+			}
 			return false, true
 		}
 		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
@@ -359,35 +375,47 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 	}
 }
 
-// resetLinkWalkSearchable reports whether the kernel may search the directory the walked components
-// name, which is what resolving a "." or ".." component relative to that directory needs. It asks
-// the kernel's own search question with faccessat(X_OK) through the descriptor resetPin took,
-// relative to that descriptor: the answer is EACCES for a directory the kernel cannot search and
-// success for one it can, and it opens no file or directory (CRW-554) and creates nothing.
+// resetLinkWalkSearchable reports whether the kernel could look a name up inside the directory the
+// walked components name, which is what resolving a "." or ".." component relative to that
+// directory needs. It asks through the descriptor resetPin took, where a name inside the directory
+// answers ENOENT when the directory may be searched and EACCES when it may not, and it opens no file
+// or directory (CRW-554) and creates nothing. A directory the kernel cannot search is reported as
+// not searchable.
 //
-// The question is asked about the directory itself rather than about a synthetic name inside it. A
-// probe name is appended to the walked components, so it can push the concatenated pathname past the
-// kernel's single-pathname limit where the walked directory's own pathname has not: that
-// ENAMETOOLONG says nothing about search permission, and reading it as "not searchable" answered
-// absent for a directory the kernel can search (keeping a link the oracle removes), while reading it
-// as searchable removed the link of a directory the kernel cannot search (losing one the oracle
-// keeps). A walked pathname that has itself reached the limit answers ENAMETOOLONG, which is one of
-// the errors the walk decides as absent.
-func resetLinkWalkSearchable(dir *os.File, walked []string) bool {
-	err := unix.Faccessat(int(dir.Fd()), resetLinkWalkSearchPath(walked), unix.X_OK, unix.AT_EACCESS)
-	return err == nil
+// The lookup is of a name inside the directory rather than of the directory itself, so a directory
+// a writer swapped for a regular file between the walk's observation and this question is rejected
+// too: a name lookup inside a regular file answers ENOTDIR, where an existence or executability
+// check on the pathname itself would answer success for an executable file.
+//
+// The probe name is appended to the walked components, so its pathname can cross the kernel's
+// single-pathname limit where the walked directory's own pathname has not. ENAMETOOLONG then says
+// nothing about search permission, so the question is reported as not asked and the caller keeps the
+// descriptor stat and the root-path judgement: reading the overflow as "not searchable" would answer
+// absent for a directory the kernel can search, and reading it as searchable would remove the link
+// of a directory the kernel cannot search.
+func resetLinkWalkSearchable(dir *os.File, walked []string) (searchable, asked bool) {
+	// The name is concatenated by hand, never filepath.Join, which would clean away the "." and
+	// ".." components this judgement exists for.
+	_, err := resetLinkWalkLstat(dir, resetLinkWalkSearchableName(walked))
+	if errors.Is(err, unix.ENAMETOOLONG) {
+		return false, false
+	}
+	return err == nil || errors.Is(err, unix.ENOENT), true
 }
 
-// resetLinkWalkSearchPath is the pathname the search question is asked about: the components the walk
-// has already seen to be directories, or the pinned directory itself when it has seen none. It is
-// concatenated by hand, never filepath.Join, which would clean away the "." and ".." components this
-// judgement exists for.
-func resetLinkWalkSearchPath(walked []string) string {
+// resetLinkWalkSearchableName is the probe name the search question looks up inside the directory the
+// walked components name. It is concatenated by hand, never filepath.Join, which would clean away the
+// "." and ".." components this judgement exists for.
+func resetLinkWalkSearchableName(walked []string) string {
 	if len(walked) == 0 {
-		return "."
+		return resetLinkWalkSearchProbe
 	}
-	return strings.Join(walked, string(filepath.Separator))
+	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + resetLinkWalkSearchProbe
 }
+
+// resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point
+// is only whether the kernel may look it up, which it answers with ENOENT or EACCES.
+const resetLinkWalkSearchProbe = ".crw927searchprobe"
 
 // resetLinkWalkPath is the path of component below the components already walked. It is built by
 // concatenation, never filepath.Join, which would clean ".." the kernel resolves physically.
