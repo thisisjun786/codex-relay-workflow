@@ -257,8 +257,8 @@ func TestHarnessRunDoctorRecorded(t *testing.T) {
 			tmp := t.TempDir()
 			opts, options, env, states, version := harnessRunCase(recorded.Name)
 			root := harnessRunPayload(t, tmp, harnessRunPayloadName(recorded.Name), opts)
-			options.CodexHome = filepath.Join(tmp, "codex")
-			if err := os.MkdirAll(options.CodexHome, 0o755); err != nil {
+			options.CodexHome = harnessRunString(filepath.Join(tmp, "codex"))
+			if err := os.MkdirAll(*options.CodexHome, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			projectRoot := filepath.Join(tmp, "cwd")
@@ -327,8 +327,8 @@ func TestHarnessRunDoctorTextRender(t *testing.T) {
 	tmp := t.TempDir()
 	opts, options, env, states, version := harnessRunCase("healthy_assembly")
 	root := harnessRunPayload(t, tmp, harnessRunPayloadName("healthy_assembly"), opts)
-	options.CodexHome = filepath.Join(tmp, "codex")
-	if err := os.MkdirAll(options.CodexHome, 0o755); err != nil {
+	options.CodexHome = harnessRunString(filepath.Join(tmp, "codex"))
+	if err := os.MkdirAll(*options.CodexHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	report := RunHarnessDoctor(root, harnessRunStub(states, version), options, tmp, harnessRunEnv(env), time.Now())
@@ -417,12 +417,16 @@ func TestHarnessRunDoctorCLI(t *testing.T) {
 		}
 	})
 
-	t.Run("an unset plugin root is a usage error", func(t *testing.T) {
+	t.Run("an unset plugin root without an installed plugin takes the catch path", func(t *testing.T) {
 		tmp := t.TempDir()
 		var stdout, stderr bytes.Buffer
-		code := RunHarnessDoctorCLI(nil, &stdout, &stderr, harnessRunEnv(map[string]string{}), func() (string, error) { return tmp, nil }, harnessRunStub(allOn, ""), time.Now())
-		if code != usageExit {
-			t.Fatalf("exit = %d, want %d", code, usageExit)
+		values := map[string]string{"CODEX_HOME": filepath.Join(tmp, "codex")}
+		code := RunHarnessDoctorCLI(nil, &stdout, &stderr, harnessRunEnv(values), func() (string, error) { return tmp, nil }, harnessRunStub(allOn, ""), time.Now())
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1", code)
+		}
+		if !strings.Contains(stderr.String(), "PLUGIN_ROOT") {
+			t.Fatalf("stderr = %q, want the resolution message naming PLUGIN_ROOT", stderr.String())
 		}
 	})
 }

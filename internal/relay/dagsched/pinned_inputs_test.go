@@ -15,6 +15,7 @@ import (
 )
 
 func TestPinnedInputReleaseSurvivesSourceOverwrite(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	original := "the input bytes the released child must consume"
@@ -69,6 +70,7 @@ func TestPinnedInputReleaseSurvivesSourceOverwrite(t *testing.T) {
 }
 
 func TestPinnedInputChangedSourceRefusesWithVerifiedRestore(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	source := writeFile(t, k.root, "notes.md", "pinned notes")
@@ -109,6 +111,7 @@ func TestPinnedInputChangedSourceRefusesWithVerifiedRestore(t *testing.T) {
 }
 
 func TestPinnedInputCopiesNeverFallBackToOriginal(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"missing", "corrupt", "linked"} {
 		t.Run(kind, func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -149,6 +152,7 @@ func TestPinnedInputCopiesNeverFallBackToOriginal(t *testing.T) {
 }
 
 func TestPinnedInputScopeIsExactEvenWithoutFileReads(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	source := writeFile(t, k.root, "source", "original")
@@ -173,6 +177,7 @@ func TestPinnedInputScopeIsExactEvenWithoutFileReads(t *testing.T) {
 }
 
 func TestPinnedInputCorrectionUsesCopiesAndKeepsLegacyInstructions(t *testing.T) {
+	t.Parallel()
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "new retained input", true: "legacy prepared input"}[legacy], func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -241,6 +246,7 @@ func TestPinnedInputCorrectionUsesCopiesAndKeepsLegacyInstructions(t *testing.T)
 }
 
 func TestPinnedInputPublicationIsSharedAndConfined(t *testing.T) {
+	t.Parallel()
 	for _, linked := range []string{"", "snapshot directory", "plan directory"} {
 		t.Run(linked, func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -299,6 +305,7 @@ func TestPinnedInputPublicationIsSharedAndConfined(t *testing.T) {
 }
 
 func TestPinnedInputUnreleasedSourcesStayEditable(t *testing.T) {
+	t.Parallel()
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	source := writeFile(t, k.root, "source", "first version")
@@ -316,6 +323,7 @@ func TestPinnedInputUnreleasedSourcesStayEditable(t *testing.T) {
 }
 
 func TestPinnedInputFailedCopyPublishesNothing(t *testing.T) {
+	t.Parallel()
 	for _, canceled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "wrong bytes", true: "canceled read"}[canceled], func(t *testing.T) {
 			k := newReleaseKit(t)
@@ -338,6 +346,7 @@ func TestPinnedInputFailedCopyPublishesNothing(t *testing.T) {
 	}
 }
 
+// sequential: t.Chdir is process-wide.
 func TestPinnedInputRelativeStorePathUsesSelectedState(t *testing.T) {
 	k := newReleaseKit(t)
 	t.Chdir(filepath.Dir(k.s.Path))
@@ -357,6 +366,7 @@ func TestPinnedInputRelativeStorePathUsesSelectedState(t *testing.T) {
 	}
 }
 
+// sequential: assigns the package variable pinnedInputAfterPublish.
 func TestPinnedInputPublishedInodeRemainsStable(t *testing.T) {
 	k := newReleaseKit(t)
 	source := writeFile(t, k.root, "source", "published input")

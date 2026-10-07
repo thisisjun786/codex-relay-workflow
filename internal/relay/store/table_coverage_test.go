@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // schemaTables is every CREATE TABLE name in the embedded frozen schema, each once.
@@ -119,7 +121,7 @@ func TestEverySchemaTable_has_a_go_query_referencing_it(t *testing.T) {
 	tables := schemaTables(t)
 	s := recordStore(t)
 	var created int
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'dag\\_%' ESCAPE '\\'").Scan(&created); err != nil {
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND " + testsupport.V1ObjectPredicateFor(t)).Scan(&created); err != nil {
 		t.Fatal(err)
 	}
 	if len(tables) != created || created == 0 {

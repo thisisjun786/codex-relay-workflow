@@ -43,20 +43,29 @@ func openPlanDir(cwd, slug string) (*os.File, string, error) {
 	return f, dir, nil
 }
 
+// goalplanRelocatedError is the unexported type boundFile returns for its two identity
+// failures: the descriptor is the wrong kind (not a directory, or not a regular file), or
+// the descriptor's own path is not the expected one. The texts are unchanged; the type is
+// what lets the writer tell a relocation apart from a genuine open failure after the rename
+// (CRW-856). openAt returns it as it is, so callers see the same value boundFile built.
+type goalplanRelocatedError struct{ msg string }
+
+func (e *goalplanRelocatedError) Error() string { return e.msg }
+
 func boundFile(f *os.File, expected string, directory bool) error {
 	info, err := f.Stat() // fstat, never a second pathname lookup
 	if err != nil {
 		return err
 	}
 	if directory && !info.IsDir() || !directory && !info.Mode().IsRegular() {
-		return fmt.Errorf("goalplan path is not a %s: %s", map[bool]string{true: "directory", false: "regular file"}[directory], expected)
+		return &goalplanRelocatedError{msg: fmt.Sprintf("goalplan path is not a %s: %s", map[bool]string{true: "directory", false: "regular file"}[directory], expected)}
 	}
 	actual, err := descriptorPath(f)
 	if err != nil {
 		return err
 	}
 	if actual != expected {
-		return fmt.Errorf("goalplan descriptor path %q is not %q", actual, expected)
+		return &goalplanRelocatedError{msg: fmt.Sprintf("goalplan descriptor path %q is not %q", actual, expected)}
 	}
 	return nil
 }

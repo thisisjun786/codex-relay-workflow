@@ -23,6 +23,16 @@ import (
 // with no Node on PATH.
 const helperEnv = "CXCFUZZ_TEST_HELPER"
 
+// helperBootDelay is how long the fake worker sleeps before it reads its first request, modelling a
+// real shim's interpreter boot and top-level imports. It is an environment variable rather than a
+// field because the delay must be in place before the worker reads anything, the way helperEnv is.
+const helperBootDelay = "CXCFUZZ_TEST_BOOT_DELAY"
+
+// helperBadHandshake makes the fake worker answer the start-up handshake (a null input) with a reply
+// that names another request, so the pool's envelope check on the handshake reply can be driven
+// through the pool rather than only through answer.
+const helperBadHandshake = "CXCFUZZ_TEST_BAD_HANDSHAKE"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(helperEnv) == "1" {
 		os.Exit(helperMain())
@@ -35,6 +45,11 @@ func TestMain(m *testing.M) {
 // helperMain answers one line per request. A request whose input carries STALL never answers, so
 // the pool must time it out, kill that worker and start another for the next request.
 func helperMain() int {
+	// A boot delay is slept before the scan loop, so nothing is read or answered while it runs: the
+	// first request sits in the pipe exactly as it would while a shim boots.
+	if delay, err := time.ParseDuration(os.Getenv(helperBootDelay)); err == nil && delay > 0 {
+		time.Sleep(delay)
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	out := bufio.NewWriter(os.Stdout)
@@ -54,7 +69,11 @@ func helperMain() int {
 		if strings.Contains(string(request.Input), "STALL") {
 			select {}
 		}
-		reply, _ := json.Marshal(map[string]any{"id": request.ID, "output": request.Input})
+		id := request.ID
+		if os.Getenv(helperBadHandshake) == "1" && string(request.Input) == "null" {
+			id++ // a reply for a request the pool never sent
+		}
+		reply, _ := json.Marshal(map[string]any{"id": id, "output": request.Input})
 		out.Write(append(reply, '\n'))
 		if err := out.Flush(); err != nil {
 			return 1
@@ -65,6 +84,16 @@ func helperMain() int {
 
 // helperEnvFor is the environment that turns a re-executed test binary into the fake worker.
 func helperEnvFor() []string { return append(os.Environ(), helperEnv+"=1") }
+
+// helperEnvForBoot is helperEnvFor with a start-up delay before the worker reads anything.
+func helperEnvForBoot(delay time.Duration) []string {
+	return append(helperEnvFor(), helperBootDelay+"="+delay.String())
+}
+
+// helperEnvForBadHandshake is helperEnvFor with a worker that mis-answers the handshake.
+func helperEnvForBadHandshake() []string {
+	return append(helperEnvFor(), helperBadHandshake+"=1")
+}
 
 // helperTarget is a target whose oracle is this test binary, so its campaign needs no Node.
 func helperTarget(t *testing.T, generate func(rng *rand.Rand, size int) any) Target {
@@ -113,9 +142,9 @@ func TestCampaignEchoAgreesWithTheShim(t *testing.T) {
 	}
 }
 
-// A shim-side mutation of one input gives one divergence, and one divergence file holding the
-// input as it was generated.
-func TestShimMutationGivesOneDivergenceHoldingTheGeneratedInput(t *testing.T) {
+// A shim-side mutation of one input gives one divergence, one divergence file, and a shrunk input
+// that still produces the difference.
+func TestShimMutationGivesOneDivergenceAndItsShrunkInput(t *testing.T) {
 	requireNode(t)
 	count := 0
 	target := echoTarget()
@@ -150,8 +179,12 @@ func TestShimMutationGivesOneDivergenceHoldingTheGeneratedInput(t *testing.T) {
 	if d.Kind != Differ {
 		t.Fatalf("kind %q", d.Kind)
 	}
-	if d.Input != `{"mutate": true, "text": "hello"}` {
-		t.Fatalf("the divergence holds %s, want the input as generated", d.Input)
+	shrunk, err := decode(d.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := canonical(shrunk); got != `{"mutate": true, "text": ""}` {
+		t.Fatalf("shrunk input %s", got)
 	}
 	if !strings.HasPrefix(filepath.Base(files[0]), string(Differ)+"-") {
 		t.Fatalf("divergence file %s is not named by kind and input hash", filepath.Base(files[0]))
@@ -174,8 +207,55 @@ func TestTimeoutIsRecordedAndTheNextRequestProceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Timeouts != 1 || summary.Same != 3 {
+	// Same 3 of 4 cases with one worker proves the stalled worker was replaced: the two cases after
+	// the stall can only have been answered by the worker started in its place.
+	if summary.Timeouts != 1 || summary.Same != 3 || summary.Cases != 4 {
 		t.Fatalf("summary %+v", summary)
+	}
+}
+
+// A worker that takes a long time to become ready is not a timeout case: its start-up is charged to
+// the startup deadline, not to the first case's deadline. This is the defect the issue reports -- on a
+// slow runner the shim's boot exceeded the 5 s per-case deadline and the agreement test counted a
+// case as a timeout. Red before the fix: the first case times out at 50 ms.
+func TestStartupDelayIsNotChargedToTheCaseDeadline(t *testing.T) {
+	target := helperTarget(t, func(rng *rand.Rand, size int) any {
+		return pyjson.Object{{Key: "text", Value: "ok"}}
+	})
+	out := t.TempDir()
+	summary, err := Campaign(Config{Target: target, Cases: 2, Seed: 1, Workers: 1, Out: out,
+		Timeout: 50 * time.Millisecond, StartupTimeout: 5 * time.Second,
+		Env: helperEnvForBoot(750 * time.Millisecond)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Same != 2 || summary.Timeouts != 0 {
+		t.Fatalf("summary %+v", summary)
+	}
+}
+
+// The command reports a real divergence as a failure: a target whose oracle answer differs from the
+// port's ends with Differ > 0 and exit 1. The echo shim's CXCFUZZ_MUTATE knob makes the oracle
+// append to a "mutate" input, so a fixed seed that generates one gives a deterministic divergence.
+func TestRunExitsOneOnADivergence(t *testing.T) {
+	requireNode(t)
+	t.Setenv("CXCFUZZ_MUTATE", "1")
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"echo", "--cases", "30", "--seed", "7", "--workers", "2", "--out", out}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit %d, stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written Summary
+	if err := json.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.Differ == 0 {
+		t.Fatalf("summary.json %+v, want a divergence", written)
 	}
 }
 

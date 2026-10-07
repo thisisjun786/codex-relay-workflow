@@ -9,6 +9,7 @@ import (
 // The scheduler's page names every reason a reading can give and every command the package registers, so the table cannot drift from the
 // vocabulary the code emits.
 func TestSchedulerPageNamesEveryReasonAndCommand(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)

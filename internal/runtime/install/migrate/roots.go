@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -37,8 +38,8 @@ type Roots struct {
 }
 
 // Open resolves and pins the roots of o.Scope and creates nothing. It refuses trees that overlap or lie inside one another (by path,
-// then by file identity), a Codex home inside a selected tree, a link at any component of a root, a root that is not a directory,
-// a ".." element and the filesystem root.
+// then by file identity, then by the identity of every directory below them, which catches a bind mount), a Codex home inside a
+// selected tree, a link at any component of a root, a root that is not a directory, a ".." element and the filesystem root.
 func Open(o Options) (_ *Roots, err error) {
 	scope, err := ParseScope(string(o.Scope))
 	if err != nil {
@@ -111,6 +112,9 @@ func Open(o Options) (_ *Roots, err error) {
 	if err = overlapByIdentity(pins, codex); err != nil {
 		return nil, err
 	}
+	if err = overlapByContents(pins, codex); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -125,18 +129,20 @@ func (r *Roots) Close() error {
 	return errors.Join(err, r.Codex.Close())
 }
 
-// EnsureDest returns the pinned destination root, creating it with perm (under the umask) when absent. The directory that holds it
-// is synced either way, so a run interrupted between the mkdir and its sync finishes the entry on the next one.
-func (p *Pair) EnsureDest(perm uint32) (*Dir, error) {
+// EnsureDest returns the pinned destination root, creating it with perm (under the umask) when absent, and reports whether this
+// call's own mkdir created it. A creation that ended in EEXIST is not this run's, so made is false then and the caller must not
+// give the directory a mode. The directory that holds it is synced either way, so a run interrupted between the mkdir and its
+// sync finishes the entry on the next one.
+func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	if p.Dest != nil {
-		return p.Dest, p.parent.Sync()
+		return p.Dest, false, p.parent.Sync()
 	}
-	d, err := p.parent.EnsureChild(filepath.Base(p.DestPath), perm)
+	d, made, err := p.parent.EnsureChild(filepath.Base(p.DestPath), perm)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	p.Dest = d
-	return d, nil
+	return d, made, nil
 }
 
 // resolveRoot picks the explicit root, else the environment variable, else the default under the home directory.
@@ -184,19 +190,28 @@ type Dir struct {
 // fileID names a directory by device and inode, which two spellings of one path (a case-insensitive volume, a bind mount) share.
 type fileID struct{ dev, ino uint64 }
 
+// dirIdentity reads the identity of an open directory. It is a variable so a test can make one path report another
+// directory's identity, which is what a bind mount does on Linux; no other code replaces it.
+var dirIdentity = func(f *os.File) (fileID, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return fileID{}, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok { // not reachable on Linux or Darwin; a platform without inode identity cannot compare roots, so it refuses
+		return fileID{}, errors.New("this platform reports no inode identity")
+	}
+	return fileID{uint64(st.Dev), uint64(st.Ino)}, nil
+}
+
 func newDir(fd int, path string) (*Dir, error) {
 	f := os.NewFile(uintptr(fd), path)
-	info, err := f.Stat()
+	id, err := dirIdentity(f)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok { // not reachable on Linux or Darwin; a platform without inode identity cannot compare roots, so it refuses
-		_ = f.Close()
-		return nil, errors.New("this platform reports no inode identity")
-	}
-	return &Dir{f, path, fileID{uint64(st.Dev), uint64(st.Ino)}}, nil
+	return &Dir{f, path, id}, nil
 }
 
 // pinned is a root as found on disk: its handle (nil when its last component is absent) and the identity of every directory on
@@ -236,6 +251,130 @@ func overlapByIdentity(trees []pinned, codex *pinned) error {
 		}
 		if codex != nil && a.alike(*codex) {
 			return refuse(ReasonOverlap, codex.path, "spelled like "+a.path+" below the same directory")
+		}
+	}
+	return nil
+}
+
+// overlapWalkLimit bounds one tree's identity walk. A tree the walk enters more directories of than this, a walk that nests
+// deeper than this, or a directory the walk cannot open or read refuses: the comparison against the other trees cannot be
+// proven, and a run must not guess. The walk counts every directory it enters, not the distinct identities it records,
+// because two spellings of one directory are both visited and a tree of aliases must not slip past the bound.
+const overlapWalkLimit = 200000
+
+// overlapByContents refuses a tree, or the Codex home, that reaches another selected tree through a second spelling of a
+// directory. A bind mount gives one directory a second name whose identity (device and inode) is unchanged, so the aliased
+// directory's identity lies inside the other tree while the two paths differ; neither the lexical check nor
+// overlapByIdentity can see that, because the alias is not the other tree's root. A bind mount below a selected root is
+// invisible to the root chains, so two trees that hold one directory below both roots are refused as well: the same
+// directory is reachable under each of them, and a write under one lands in the other. The walk fails closed: a tree it
+// cannot read refuses rather than passing an unproven comparison.
+func overlapByContents(trees []pinned, codex *pinned) error {
+	sets := make([]map[fileID]struct{}, len(trees))
+	for i, t := range trees {
+		if t.dir == nil {
+			continue
+		}
+		set, err := identitySet(t.path, t.dir)
+		if err != nil {
+			return err
+		}
+		sets[i] = set
+	}
+	for i, a := range trees {
+		for j, set := range sets {
+			if i == j || set == nil {
+				continue
+			}
+			if chainHits(a.chain, set) || setsShare(sets[i], set) {
+				return refuse(ReasonOverlap, a.path, "reaches "+trees[j].path+" through another spelling (a bind mount)")
+			}
+		}
+	}
+	if codex == nil {
+		return nil
+	}
+	for j, set := range sets {
+		if set == nil {
+			continue
+		}
+		if chainHits(codex.chain, set) {
+			return refuse(ReasonOverlap, codex.path, "reaches "+trees[j].path+" through another spelling (a bind mount)")
+		}
+	}
+	return nil
+}
+
+// chainHits reports whether any identity of chain lies in set.
+func chainHits(chain []fileID, set map[fileID]struct{}) bool {
+	for _, id := range chain {
+		if _, ok := set[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// setsShare reports whether two identity sets hold one directory in common.
+func setsShare(a, b map[fileID]struct{}) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	for id := range a {
+		if _, ok := b[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// identitySet collects the identity of root and of every directory reachable below it, walking from the pinned handle
+// with Child only, so a link entry is skipped and never opened. Every spelling is walked: two names of one directory can
+// show different submounts, so a directory already seen is visited again under its second name, and only the walk's depth
+// or the tree's size stops it. Recursion bounds the open descriptors by the tree's depth, so a directory holding many
+// children cannot exhaust them.
+func identitySet(path string, root *Dir) (map[fileID]struct{}, error) {
+	set := map[fileID]struct{}{root.id: {}}
+	visited := 1
+	if err := walkIdentity(path, root, set, 0, &visited); err != nil {
+		return nil, err
+	}
+	return set, nil
+}
+
+// walkIdentity adds every directory below cur to set, at most overlapWalkLimit levels down and counting each directory it
+// enters in visited. cur stays open for the whole call and each child is closed before the next sibling is opened, so a
+// directory holding many children costs two descriptors rather than one per child.
+func walkIdentity(path string, cur *Dir, set map[fileID]struct{}, depth int, visited *int) error {
+	if depth >= overlapWalkLimit {
+		return refuse(ReasonOverlap, path, "nests more than "+strconv.Itoa(overlapWalkLimit)+" directories deep")
+	}
+	names, err := cur.Names()
+	if err != nil {
+		return refuse(ReasonOverlap, path, "cannot be read to compare identities: "+err.Error())
+	}
+	for _, name := range names {
+		typ, err := cur.typeOf(name)
+		if err != nil {
+			return refuse(ReasonOverlap, path, "cannot be inspected to compare identities: "+err.Error())
+		}
+		if typ != unix.S_IFDIR {
+			continue
+		}
+		child, err := cur.Child(name)
+		if err != nil {
+			return refuse(ReasonOverlap, path, "cannot be opened to compare identities: "+err.Error())
+		}
+		*visited++
+		if *visited > overlapWalkLimit {
+			_ = child.Close()
+			return refuse(ReasonOverlap, path, "holds more than "+strconv.Itoa(overlapWalkLimit)+" directories (visited "+strconv.Itoa(*visited)+")")
+		}
+		set[child.id] = struct{}{}
+		err = walkIdentity(path, child, set, depth+1, visited)
+		_ = child.Close()
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -331,14 +470,24 @@ func (d *Dir) Child(name string) (*Dir, error) {
 	return nil, &fs.PathError{Op: "open", Path: d.join(name), Err: err}
 }
 
+// migrateOwnedDirMkdirat creates a directory for EnsureChild. It is a variable so a case can model a host whose mkdir does not
+// keep the mode it is given - Darwin drops the sticky bit from a directory's creation mode - which is the case the marker chmod
+// after a creation exists for; no other code replaces it.
+var migrateOwnedDirMkdirat = unix.Mkdirat
+
 // EnsureChild creates the subdirectory name with perm (under the umask) unless it exists, pins it, and syncs this directory so
-// the new entry survives a crash. The sync also runs when the entry already existed.
-func (d *Dir) EnsureChild(name string, perm uint32) (*Dir, error) {
+// the new entry survives a crash, and reports whether its own mkdir created the directory. A creation that ended in EEXIST is
+// another actor's directory, so made is false then. The sync also runs when the entry already existed.
+func (d *Dir) EnsureChild(name string, perm uint32) (*Dir, bool, error) {
 	if err := checkName(name); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if err := unix.Mkdirat(d.fd(), name, perm); err != nil && !errors.Is(err, unix.EEXIST) {
-		return nil, &fs.PathError{Op: "mkdir", Path: d.join(name), Err: err}
+	made := true
+	if err := migrateOwnedDirMkdirat(d.fd(), name, perm); err != nil {
+		if !errors.Is(err, unix.EEXIST) {
+			return nil, false, &fs.PathError{Op: "mkdir", Path: d.join(name), Err: err}
+		}
+		made = false
 	}
 	child, err := d.Child(name)
 	if err == nil {
@@ -347,9 +496,9 @@ func (d *Dir) EnsureChild(name string, perm uint32) (*Dir, error) {
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return child, nil
+	return child, made, nil
 }
 
 // OpenRegular opens the file name for reading. A link, directory, FIFO, socket or device found there is refused without being

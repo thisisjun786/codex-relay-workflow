@@ -8,6 +8,7 @@ import (
 // Values from the real report.inline / unheaded / known on this checkout's Python (moved here
 // with todo 20's preview when it was folded into this package's renderer).
 func TestText_helpers_match_python_report(t *testing.T) {
+	t.Parallel()
 	for input, want := range map[string]string{"x": "x", "a\nb": "a / b", "a\r\nb\n": "a / b", "\n": "", "": "",
 		"a\x1cb": "a / b", "  \nz": "z", "a\u2028b": "a / b"} {
 		if got := inline(input); got != want {

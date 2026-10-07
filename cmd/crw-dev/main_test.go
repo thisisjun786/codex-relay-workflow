@@ -18,7 +18,7 @@ func TestCommandTreeDispatches(t *testing.T) {
 		{[]string{"nope"}, 2, "", `invalid command "nope"`},
 		{[]string{"--help"}, 0, "usage: crw-dev {ci,cxc,fuzz,skills,stop-events,trial-ledger}", ""},
 		{[]string{"ci"}, 2, "", "crw-dev ci: error: the following arguments are required: check"},
-		{[]string{"ci", "--help"}, 0, "usage: crw-dev ci {contracts,operations,plugin,refactor-backlog,validate}", ""},
+		{[]string{"ci", "--help"}, 0, "usage: crw-dev ci {contracts,dispatch-cases,gui-drift,operations,plugin,refactor-backlog,validate}", ""},
 		{[]string{"ci", "nope"}, 2, "", `invalid choice: "nope"`},
 		{[]string{"fuzz"}, 2, "", "crw-dev fuzz: error: the following arguments are required: target"},
 		{[]string{"fuzz", "nope", "--cases", "1"}, 2, "", `crw-dev fuzz: error: unknown target "nope"`},

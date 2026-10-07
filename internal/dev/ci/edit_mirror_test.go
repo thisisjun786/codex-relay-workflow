@@ -77,6 +77,7 @@ const (
 // from, which a shared head sha makes necessary to tell two pull requests' runs apart.
 type editMirrorRunFixture struct {
 	id         int
+	number     int
 	headSHA    string
 	event      string
 	status     string
@@ -96,6 +97,7 @@ type editMirrorPull struct {
 func editMirrorRun(id int, startedAt string) editMirrorRunFixture {
 	return editMirrorRunFixture{
 		id:         id,
+		number:     id,
 		headSHA:    editMirrorHead,
 		event:      "pull_request",
 		status:     "completed",
@@ -118,8 +120,8 @@ func (r editMirrorRunFixture) json() string {
 	for i, pull := range r.pulls {
 		pulls[i] = fmt.Sprintf(`{"number":%d,"head":{"sha":%q}}`, pull.number, pull.head)
 	}
-	return fmt.Sprintf(`{"id":%d,"head_sha":%q,"event":%q,"status":%q,"path":%q,"head_repository":{"full_name":%q},"run_started_at":%q,"pull_requests":[%s]}`,
-		r.id, r.headSHA, r.event, r.status, r.path, r.repository, r.startedAt, strings.Join(pulls, ","))
+	return fmt.Sprintf(`{"id":%d,"run_number":%d,"head_sha":%q,"event":%q,"status":%q,"path":%q,"head_repository":{"full_name":%q},"run_started_at":%q,"pull_requests":[%s]}`,
+		r.id, r.number, r.headSHA, r.event, r.status, r.path, r.repository, r.startedAt, strings.Join(pulls, ","))
 }
 
 // editMirrorJobFixture is one entry of a run's jobs: one attempt of one job name, with the steps
@@ -145,6 +147,45 @@ func (s editMirrorStepFixture) json() string {
 // editMirrorTestStep is the step a go-product test leg runs, as ci.yml names it.
 func editMirrorTestStep(part, conclusion string) editMirrorStepFixture {
 	return editMirrorStepFixture{name: "Test and replay the contract corpus (" + part + ")", conclusion: conclusion}
+}
+
+// editMirrorGuiStepNames is the four screen steps the gui job runs, in ci.yml's order. The mirror
+// mirrors the gui job only when its newest attempt concluded each of them as success, so the names
+// have to be the ones ci.yml gives those steps
+// (TestEditMirror_the_gui_screen_step_names_match_the_workflow holds the script's list to this one).
+var editMirrorGuiStepNames = []string{
+	"Install the screen dependencies from the committed lockfile",
+	"Run the screen tests",
+	"Build the screens into a fresh tree",
+	"Refuse a committed tree that is not a fresh build",
+}
+
+// editMirrorGuiSteps is the gui job's four screen steps, each with the conclusion named.
+func editMirrorGuiSteps(conclusion string) []editMirrorStepFixture {
+	steps := make([]editMirrorStepFixture, len(editMirrorGuiStepNames))
+	for i, name := range editMirrorGuiStepNames {
+		steps[i] = editMirrorStepFixture{name: name, conclusion: conclusion}
+	}
+	return steps
+}
+
+// editMirrorGuiStepsFrom is editMirrorGuiSteps with one step's conclusion changed. A name that
+// matches no step is a test that would otherwise assert a different scenario than it reads, so it
+// fails loudly rather than returning the all-success fixture.
+func editMirrorGuiStepsFrom(t *testing.T, name, conclusion string) []editMirrorStepFixture {
+	t.Helper()
+	steps := editMirrorGuiSteps("success")
+	found := false
+	for i := range steps {
+		if steps[i].name == name {
+			steps[i].conclusion = conclusion
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no gui screen step is named %q", name)
+	}
+	return steps
 }
 
 func editMirrorJob(name, conclusion string, attempt int) editMirrorJobFixture {
@@ -559,6 +600,85 @@ func TestEditMirror_an_unfinished_newer_run_is_not_a_candidate(t *testing.T) {
 	runEditMirror(t, c).check(t, c)
 }
 
+// A rerun of only the failed jobs moves an older run's run_started_at past a newer run's, and
+// the old order (run_started_at, then id) then picked the older run. The candidate is the newest
+// CREATED run of this workflow, pull request, repository and head: the largest run_number, then
+// the largest id, neither of which a rerun rewrites. This is the reproduction of the reported
+// defect: run 1111 (number 11) reran its failed dist job later and so starts after run 2222
+// (number 12), whose validate failed. 2222 is the candidate, so validate is not mirrored.
+func TestEditMirror_the_newest_created_run_decides_even_when_a_rerun_moved_an_older_runs_start_time(t *testing.T) {
+	const older, newer = 1111, 2222
+	runs := []editMirrorRunFixture{
+		editMirrorRunAs(older, "2026-10-06T08:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+		editMirrorRunAs(newer, "2026-10-06T07:00:00Z", func(r *editMirrorRunFixture) { r.number = 12 }),
+	}
+	jobs := map[int][]editMirrorJobFixture{
+		// The older run: validate passed on its first attempt, dist failed and was rerun to success.
+		older: {editMirrorJob("validate", "success", 1), editMirrorJob("dist", "failure", 1), editMirrorJob("dist", "success", 2)},
+		newer: {editMirrorJob("validate", "failure", 1)},
+	}
+	for _, c := range []editMirrorCase{
+		{
+			name: "the newest created run failed this job even though an older run passed it",
+			runs: runs, jobs: jobs, jobName: "validate", want: "false",
+		},
+		{
+			// The older run's rerun did pass dist, but it is not the candidate and is never consulted.
+			name: "the older run's successful dist rerun does not vouch for the newest created run",
+			runs: runs, jobs: jobs, jobName: "dist", want: "false",
+		},
+	} {
+		runEditMirror(t, c).check(t, c)
+	}
+
+	// The same two runs with the newest created run's job a success: the job is mirrored, and it
+	// is mirrored from that run, not from the older one the old order would have chosen.
+	jobs[newer] = []editMirrorJobFixture{editMirrorJob("validate", "success", 1)}
+	c := editMirrorCase{
+		name: "the newest created run succeeded at this job",
+		runs: runs, jobs: jobs, jobName: "validate", want: "true", wantRun: newer,
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
+// The parent's order is run_number first, then id. Two runs can share a run_number only in a
+// fixture, and the larger id is then the newer creation.
+func TestEditMirror_a_shared_run_number_is_broken_by_the_larger_id(t *testing.T) {
+	const older, newer = 1111, 2222
+	c := editMirrorCase{
+		name: "the same run number, the larger id is the newer creation",
+		runs: []editMirrorRunFixture{
+			editMirrorRunAs(older, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+			editMirrorRunAs(newer, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+		},
+		jobs: map[int][]editMirrorJobFixture{
+			older: {editMirrorJob("validate", "success", 1)},
+			newer: {editMirrorJob("validate", "failure", 1)},
+		},
+		want: "false",
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
+// run_number is the first key and id only breaks a tie between equal run numbers, so a run whose
+// larger id belongs to the smaller run_number is not the candidate.
+func TestEditMirror_the_run_number_outranks_the_id(t *testing.T) {
+	const older, newer = 9999, 1111
+	c := editMirrorCase{
+		name: "the smaller id carries the larger run number",
+		runs: []editMirrorRunFixture{
+			editMirrorRunAs(older, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 11 }),
+			editMirrorRunAs(newer, "2026-10-06T06:00:00Z", func(r *editMirrorRunFixture) { r.number = 12 }),
+		},
+		jobs: map[int][]editMirrorJobFixture{
+			older: {editMirrorJob("validate", "success", 1)},
+			newer: {editMirrorJob("validate", "failure", 1)},
+		},
+		want: "false",
+	}
+	runEditMirror(t, c).check(t, c)
+}
+
 // The script asks for the runs of this workflow on this head, reads every page so its answer
 // never rests on the API's page order, and never reads its own run.
 func TestEditMirror_reads_every_page_of_the_runs_of_this_workflow_on_this_head(t *testing.T) {
@@ -588,14 +708,16 @@ func TestEditMirror_reads_every_page_of_the_runs_of_this_workflow_on_this_head(t
 
 // The workflow mirrors a body-only edit without cancelling a running run, and every step
 // behind the mirror stands down only when the mirror answered. No job is skipped at job
-// level, dev-gate keeps its place and its script, and the ten check names stay.
+// level, dev-gate keeps its place and its script, and the eleven check names stay. The fifth
+// job is skill-scripts-node (CRW-353), which joined the mirror when CRW-779's rule met it, and
+// the sixth is gui (CRW-831), which joined it on the same shape.
 func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 	const (
 		bodyEdit = "${{ github.event.action == 'edited' && !github.event.changes.base }}"
 		guard    = "steps.mirror.outputs.mirrored != 'true'"
 	)
 	jobs, order := editMirrorJobs(t)
-	editMirrorExpectEqual(t, "the job names", editMirrorSorted(order), []string{"dev-gate", "go-product", "secrets", "validate"})
+	editMirrorExpectEqual(t, "the job names", editMirrorSorted(order), []string{"dev-gate", "go-product", "gui", "secrets", "skill-scripts-node", "validate"})
 	editMirrorExpectEqual(t, "the go-product legs", editMirrorSorted(editMirrorMatrixValues(t, jobs["go-product"], "part")),
 		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-rest"})
 
@@ -630,7 +752,7 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 		t.Error("cancel-in-progress does not keep a body-only edit from cancelling a running run")
 	}
 
-	for _, job := range []string{"validate", "secrets", "go-product"} {
+	for _, job := range []string{"validate", "secrets", "skill-scripts-node", "gui", "go-product"} {
 		body := jobs[job]
 		if regexp.MustCompile(`(?m)^    if:`).MatchString(body) {
 			t.Errorf("%s carries a job-level if, which could skip it", job)
@@ -675,9 +797,11 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 	// The mirror speaks for the job's check name and for this pull request, the ones the
 	// earlier run reported.
 	for job, name := range map[string]string{
-		"validate":   "          JOB_NAME: validate\n",
-		"secrets":    "          JOB_NAME: secrets\n",
-		"go-product": "          JOB_NAME: go-product (${{ matrix.part }})\n",
+		"validate":           "          JOB_NAME: validate\n",
+		"secrets":            "          JOB_NAME: secrets\n",
+		"skill-scripts-node": "          JOB_NAME: skill-scripts-node\n",
+		"gui":                "          JOB_NAME: gui\n",
+		"go-product":         "          JOB_NAME: go-product (${{ matrix.part }})\n",
 	} {
 		if !strings.Contains(jobs[job], name) {
 			t.Errorf("%s does not ask the mirror for %q", job, strings.TrimSpace(name))
@@ -692,7 +816,7 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^    if: always\(\)$`).MatchString(gate) {
 		t.Error("dev-gate no longer runs always")
 	}
-	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, go-product\]$`).MatchString(gate) {
+	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, skill-scripts-node, gui, go-product\]$`).MatchString(gate) {
 		t.Error("dev-gate's prerequisites changed")
 	}
 	if strings.Contains(gate, guard) {
@@ -798,4 +922,104 @@ func editMirrorExpectEqual(t *testing.T, label string, got, want any) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("%s = %#v, want %#v", label, got, want)
 	}
+}
+
+// A gui job concludes success without verifying the screens when gui_paths.sh answered
+// changed=false: the job ends before Node is installed, its four screen steps are skipped, and its
+// check still reads success. A body-only edit after such a run must not carry that success forward,
+// so the gui job is mirrored only when the same newest attempt concluded all four screen steps as
+// success.
+// The four names are ci.yml's; the step-name test below holds the script's list to them.
+func TestEditMirror_the_gui_job_is_mirrored_only_when_the_screens_were_verified(t *testing.T) {
+	run := editMirrorRun(1111, "2026-10-06T06:00:00Z")
+	for _, c := range []editMirrorCase{
+		{
+			name:    "the four screen steps all succeeded",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("success")...)}},
+			jobName: "gui",
+			want:    "true",
+			wantRun: 1111,
+		},
+		{
+			name:    "the job concluded success with every screen step skipped",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("skipped")...)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name:    "the job carries no steps at all",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJob("gui", "success", 1)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name:    "the screen tests failed",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiStepsFrom(t, editMirrorGuiStepNames[1], "failure")...)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name:    "one screen step is missing from the steps that ran",
+			runs:    []editMirrorRunFixture{run},
+			jobs:    map[int][]editMirrorJobFixture{1111: {editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("success")[:3]...)}},
+			jobName: "gui",
+			want:    "false",
+		},
+		{
+			name: "the newest attempt skipped the screens after an older one ran them",
+			runs: []editMirrorRunFixture{run},
+			jobs: map[int][]editMirrorJobFixture{1111: {
+				editMirrorJobWithSteps("gui", "success", 1, editMirrorGuiSteps("success")...),
+				editMirrorJobWithSteps("gui", "success", 2, editMirrorGuiSteps("skipped")...),
+			}},
+			jobName: "gui",
+			want:    "false",
+		},
+	} {
+		runEditMirror(t, c).check(t, c)
+	}
+}
+
+// edit_mirror.sh looks for the gui job's screen steps by name, so the names it holds have to be the
+// ones ci.yml's gui job gives those steps. The two sets are compared as sets: the gui job's steps
+// that run only when the changed-path decision said true are exactly what verifies the screens, so a
+// rename in either file, a removal, and a newly added screen step each go red here rather than a gui
+// job mirrored without all of its screens verified.
+func TestEditMirror_the_gui_screen_step_names_match_the_workflow(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(editMirrorRepoRoot(), "scripts", "ci", "edit_mirror.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := editMirrorScriptGuiStepNames(t, string(data))
+	editMirrorExpectEqual(t, "the screen steps the script watches", names, editMirrorGuiStepNames)
+
+	jobs, _ := editMirrorJobs(t)
+	var inWorkflow []string
+	for _, step := range editMirrorSteps(t, jobs["gui"]) {
+		// The screen steps are the job's run steps behind the changed-path decision; setup-go and
+		// setup-node carry the same condition but are actions, not verification steps.
+		if step["run"] != "" && strings.Contains(step["if"], "steps.paths.outputs.changed == 'true'") {
+			inWorkflow = append(inWorkflow, step["name"])
+		}
+	}
+	editMirrorExpectEqual(t, "the screen steps ci.yml's gui job runs", editMirrorSorted(inWorkflow), editMirrorSorted(names))
+}
+
+// editMirrorScriptGuiStepNames reads the screen step names edit_mirror.sh holds: the quoted lines
+// of its screen_steps array, in order.
+func editMirrorScriptGuiStepNames(t *testing.T, script string) []string {
+	t.Helper()
+	block := regexp.MustCompile(`(?ms)^screen_steps=\(\n(.*?)^\)$`).FindStringSubmatch(script)
+	if block == nil {
+		t.Fatal("edit_mirror.sh does not define a screen_steps array")
+	}
+	var names []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*'(.*)'$`).FindAllStringSubmatch(block[1], -1) {
+		names = append(names, m[1])
+	}
+	return names
 }

@@ -2,9 +2,8 @@
 
 // Package cxcfuzz is the dev-only differential-fuzz harness. It feeds one generated input to a
 // CXC v0.2.40 oracle worker and to the equivalent Go function, compares the two answers in one
-// canonical form, and writes each difference once. Shrinking a difference and replaying it
-// without Node belong to the follow-up issue. It is built only with -tags dev and never ships in
-// a release archive.
+// canonical form, shrinks a divergence to a minimal input, and pins it as a case the tests replay
+// without Node. It is built only with -tags dev and never ships in a release archive.
 package cxcfuzz
 
 import (
@@ -30,6 +29,12 @@ const DefaultOutRoot = "/scratch/crw/fuzz"
 const (
 	DefaultWorkers = 4
 	DefaultTimeout = 5 * time.Second
+	// DefaultStartupTimeout bounds how long a freshly started oracle worker may take to boot and
+	// answer its handshake, separately from the per-case DefaultTimeout. Starting a worker costs an
+	// interpreter boot and its top-level imports (measured 19 ms idle, 3 s under a 1% CPU quota),
+	// which is a property of the worker program rather than of a case, so a slow runner cannot turn
+	// it into a timeout case. It is paid once per worker start.
+	DefaultStartupTimeout = 60 * time.Second
 )
 
 // Config is one campaign.
@@ -41,9 +46,12 @@ type Config struct {
 	Workers int
 	Out     string
 	Timeout time.Duration
-	Env     []string
-	Now     time.Time
-	DevSHA  string
+	// StartupTimeout bounds one worker's start-up (see DefaultStartupTimeout). Zero takes the
+	// default; the per-case Timeout is not affected.
+	StartupTimeout time.Duration
+	Env            []string
+	Now            time.Time
+	DevSHA         string
 }
 
 // Summary is <out>/summary.json: what one campaign did.
@@ -58,6 +66,7 @@ type Summary struct {
 	Extra     int     `json:"extra"`
 	Differ    int     `json:"differ"`
 	Timeouts  int     `json:"timeouts"`
+	Refused   int     `json:"refused"`
 	PerSecond float64 `json:"casesPerSecond"`
 }
 
@@ -75,6 +84,9 @@ type Divergence struct {
 // DivergenceDir is the subdirectory of --out the divergence files go in.
 const DivergenceDir = "divergences"
 
+// ShrinkAttempts bounds one divergence's shrinking.
+const ShrinkAttempts = 500
+
 // divergenceName is <kind>-<the first 12 hex characters of the input hash>.json, so the same input
 // is one file and a case is named by what it holds.
 func divergenceName(kind Kind, input string) string {
@@ -86,7 +98,7 @@ func divergenceName(kind Kind, input string) string {
 // It exits 2 when the target is unknown or its oracle command is missing, 1 when the campaign
 // found a divergence, and 0 when every case agreed.
 func Run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev fuzz <target> [--seconds N] [--cases N] [--seed S] [--workers N] [--out DIR]"
+	const usage = "usage: crw-dev fuzz <target> [--seconds N] [--cases N] [--seed S] [--workers N] [--out DIR] [--adopt FILE --tag TAG --record TEXT --name NAME]"
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: the following arguments are required: target")
@@ -100,6 +112,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	seed := set.Int64("seed", 0, "the generator seed (default: the clock, written to summary.json)")
 	workers := set.Int("workers", DefaultWorkers, "long-lived oracle workers")
 	out := set.String("out", "", "the output directory (default "+DefaultOutRoot+"/<target>/<UTC time>)")
+	adopt := set.String("adopt", "", "a divergence file to pin as a case")
+	tag := set.String("tag", "", "the adopted case's tag: identical, intentionally-changed or open")
+	record := set.String("record", "", "the adopted case's known-defects or follow-up pointer")
+	name := set.String("name", "", "the adopted case's name")
 	if err := set.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -111,6 +127,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		fmt.Fprintf(stderr, "crw-dev fuzz: error: unknown target %q (registered: %s)\n", targetName, strings.Join(Names(), ", "))
 		return 2
+	}
+	if *adopt != "" {
+		if err := Adopt(target, *adopt, *tag, *record, *name); err != nil {
+			fmt.Fprintf(stderr, "crw-dev fuzz: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "crw-dev fuzz: pinned %s from %s\n", *name, *adopt)
+		return 0
 	}
 	if *seconds <= 0 && *cases <= 0 {
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: one of --seconds or --cases is required")
@@ -142,10 +166,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "crw-dev fuzz: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d\n",
-		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts)
-	// A case that timed out compared nothing, so it is not an agreement either.
-	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts > 0 {
+	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d\n",
+		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused)
+	// A case that timed out, or whose fs scenario was refused, compared nothing, so it is not an
+	// agreement either: a campaign that compared nothing does not report success.
+	if summary.Differ+summary.Miss+summary.Extra+summary.Timeouts+summary.Refused > 0 {
 		return 1
 	}
 	return 0
@@ -166,7 +191,7 @@ func Campaign(cfg Config) (Summary, error) {
 	if env == nil {
 		env = os.Environ()
 	}
-	pool, err := NewPool(cfg.Target.Oracle, cfg.Workers, cfg.Timeout, env)
+	pool, err := NewPool(cfg.Target.Oracle, cfg.Workers, cfg.Timeout, cfg.StartupTimeout, env)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -189,6 +214,9 @@ func Campaign(cfg Config) (Summary, error) {
 		case errors.Is(err, Timeout{}):
 			summary.Timeouts++
 			continue
+		case errors.Is(err, errRefused):
+			summary.Refused++
+			continue
 		case err != nil:
 			// The worker died, or its reply was unreadable: the issue records that input as a
 			// timeout case and carries on with the replacement worker, so one transient death
@@ -209,12 +237,14 @@ func Campaign(cfg Config) (Summary, error) {
 		default:
 			return summary, fmt.Errorf("the target's Compare answered an unknown verdict kind %q", verdict.Kind)
 		}
+		shrinker := &shrinkRun{campaign: run, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
+		shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
 		if err := writeDivergence(cfg.Out, Divergence{
 			Kind:    verdict.Kind,
-			Input:   canonical(input),
-			Go:      goOut,
-			Oracle:  oracleOut,
-			Verdict: verdict,
+			Input:   canonical(shrunk),
+			Go:      shrinker.goOut,
+			Oracle:  shrinker.oracleOut,
+			Verdict: shrinker.verdict,
 			Seed:    seed,
 			DevSHA:  cfg.DevSHA,
 		}, written); err != nil {
@@ -230,6 +260,9 @@ func Campaign(cfg Config) (Summary, error) {
 	}
 	return summary, nil
 }
+
+// errRefused is a case whose fs scenario the harness refused to build, so it was not run.
+var errRefused = errors.New("the fs scenario was refused")
 
 type campaign struct {
 	cfg  Config
@@ -262,6 +295,12 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 			return Verdict{}, "", "", err
 		}
 	}
+	if _, err := Scenarios(goRoot, input); err != nil {
+		return Verdict{}, "", "", errRefused
+	}
+	if _, err := Scenarios(oracleRoot, input); err != nil {
+		return Verdict{}, "", "", errRefused
+	}
 	value, err := decode(text)
 	if err != nil {
 		return Verdict{}, "", "", err
@@ -279,8 +318,30 @@ func (c *campaign) evaluate(input any) (Verdict, string, string, error) {
 	if err != nil {
 		return Verdict{}, "", "", err
 	}
-	verdict := c.cfg.Target.Compare(goOut, oracleValue)
-	return verdict, canonical(goOut), canonical(oracleValue), nil
+	goStripped := stripRoot(goOut, goRoot)
+	oracleStripped := stripRoot(oracleValue, oracleRoot)
+	verdict := c.cfg.Target.Compare(goStripped, oracleStripped)
+	return verdict, canonical(goStripped), canonical(oracleStripped), nil
+}
+
+// shrinkRun is the shrinker's keep test. A candidate is kept only while it still produces the
+// same verdict kind, and the verdict and the two answers of the last candidate kept are what the
+// divergence file ends up holding: the shrunk input, the answers and the verdict must describe
+// one run, or a case adopted from the file could never replay and its detail could contradict it.
+type shrinkRun struct {
+	campaign  *campaign
+	verdict   Verdict
+	goOut     string
+	oracleOut string
+}
+
+func (s *shrinkRun) keep(candidate any) bool {
+	verdict, goOut, oracleOut, err := s.campaign.evaluate(candidate)
+	if err != nil || verdict.Kind != s.verdict.Kind {
+		return false
+	}
+	s.verdict, s.goOut, s.oracleOut = verdict, goOut, oracleOut
+	return true
 }
 
 // writeDivergence writes one divergence file, once per input hash.

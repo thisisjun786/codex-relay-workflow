@@ -34,6 +34,7 @@ func forkJoinPlan(f *fixture, plan string) {
 }
 
 func TestEdgeArtifactVerified(t *testing.T) {
+	t.Parallel()
 	type tc struct {
 		name   string
 		edge   string
@@ -172,6 +173,7 @@ func (f *fixture) mergeCheck(a accepted, observedHead string, eligible bool) {
 // E-25: what an accepted node consumed must still be what its predecessors' acceptances are. The manifest names the research acceptance's real
 // id, which only exists once research is accepted, so the case is built in that order.
 func TestEdgeStalePredecessorFrankenbuild(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	research := f.acceptNode("p1", "research", acceptOpts{})
@@ -191,6 +193,7 @@ func TestEdgeStalePredecessorFrankenbuild(t *testing.T) {
 // Node and edge ids are plan-local (dag_zone.go): the same ids in two plans are different nodes, and the contract's SQL, which
 // predates the plan id, would let one plan's acceptance open another's edge.
 func TestPredicatesAreScopedByPlan(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	forkJoinPlan(f, "p2")
@@ -239,6 +242,7 @@ func (f *fixture) linkTurn(state, repository, ref, head string) {
 }
 
 func TestEdgeIntegrated(t *testing.T) {
+	t.Parallel()
 	pinned := acceptOpts{HeadSHA: head1, PR: 7, Forge: "owner/repo", Repository: "owner/repo"}
 	type tc struct {
 		name   string
@@ -329,6 +333,7 @@ func TestEdgeIntegrated(t *testing.T) {
 
 // A terminal node has no outgoing edge, so its target is not an edge's: integratedAt is keyed by the acceptance and the target.
 func TestIntegratedAtIsKeyedByTarget(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	a := f.acceptNode("p1", "ship", acceptOpts{HeadSHA: head1, PR: 7, Forge: "owner/repo", Repository: "owner/repo"})
@@ -350,6 +355,7 @@ func (f *fixture) decision(subject, digest, disposition, kind string, revision i
 }
 
 func TestEdgeDecision(t *testing.T) {
+	t.Parallel()
 	digest := dig("subject e5")
 	type tc struct {
 		name   string
@@ -417,6 +423,7 @@ func TestEdgeDecision(t *testing.T) {
 // Rule 6 binds the consumed acceptance to the plan and to the node the manifest names: another plan's acceptance, or another node's, is no
 // predecessor of this one.
 func TestEdgeStalePredecessorIsScopedByPlanAndNode(t *testing.T) {
+	t.Parallel()
 	consume := func(t *testing.T, build func(f *fixture) accepted, from string) EdgeStatus {
 		f := newFixture(t)
 		forkJoinPlan(f, "p1")

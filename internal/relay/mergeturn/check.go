@@ -111,13 +111,21 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		refuse := func(reason contract.RefusalReason, detail, incumbent, challenger string) {
 			refusal = &registry.CoordinationRefusal{Reason: reason, Detail: detail, Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: incumbent, Challenger: challenger}
 		}
-		switch {
-		case row.HolderTaskID != actor:
-			refusal = notHolder(row, actor, "begin a merge on")
-		case row.State != Holding:
-			refusal = wrongState(row, actor, "beginning a merge")
-		case row.DeclaredReady != 1:
-			refuse(contract.RefusalMergeCandidateMoved, "turn "+pyvalue.StrRepr(turn)+" has not declared its candidate ready, so there is nothing saying "+pyvalue.StrRepr(row.CandidateHead)+" is the head it means to merge; "+notReadyStep(turn, actor, row.CandidateHead, head), row.CandidateHead, actor)
+		// CRW-768: a member of a live train does not begin a merge of its own; its merge is the bundle's.
+		if guard, e := s.trainMemberRefusal(tx, turn, actor, "begin a merge on it"); e != nil {
+			return e
+		} else if guard != nil {
+			refusal = guard
+		}
+		if refusal == nil {
+			switch {
+			case row.HolderTaskID != actor:
+				refusal = notHolder(row, actor, "begin a merge on")
+			case row.State != Holding:
+				refusal = wrongState(row, actor, "beginning a merge")
+			case row.DeclaredReady != 1:
+				refuse(contract.RefusalMergeCandidateMoved, "turn "+pyvalue.StrRepr(turn)+" has not declared its candidate ready, so there is nothing saying "+pyvalue.StrRepr(row.CandidateHead)+" is the head it means to merge; "+notReadyStep(turn, actor, row.CandidateHead, head), row.CandidateHead, actor)
+			}
 		}
 		if refusal == nil {
 			held, e := s.parents(tx, row.ProjectKey)

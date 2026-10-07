@@ -1,0 +1,21 @@
+{
+  "issue": "CRW-753",
+  "pending": [],
+  "identical": [
+    "hook__pre-tool-use-guarding-automation-ownership__baseline_empty_workspace",
+    "hook__pre-tool-use-guarding-automation-ownership__child_and_invalid_caller_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__foreign_owner_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__heartbeat_create_rules",
+    "hook__pre-tool-use-guarding-automation-ownership__malformed_payload_fails_closed",
+    "hook__pre-tool-use-guarding-automation-ownership__multiline_prompt_cannot_spoof_owner",
+    "hook__pre-tool-use-guarding-automation-ownership__mutation_shape_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__oversized_or_non_regular_store_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__own_heartbeat_passes",
+    "hook__pre-tool-use-guarding-automation-ownership__pabcd_off_still_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__payload_over_1mib_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__symlinked_store_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__unsafe_or_missing_id_denies",
+    "hook__pre-tool-use-guarding-automation-ownership__unsupported_store_denies"
+  ],
+  "intentionally-changed": []
+}

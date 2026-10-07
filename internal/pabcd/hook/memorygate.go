@@ -121,7 +121,9 @@ func memoryGateConsume(cwd, sid, turn string, write func(string, state.State) er
 		} else {
 			s.MemoryWriteRequested, s.MemoryWriteTurn = false, nil
 		}
-		if err := write(cwd, s); err != nil {
+		// The authorization is spent in the state every reader sees once the write published it, so a failure after the
+		// rename (state.Published) is a spent authorization and this call, which it authorized, goes ahead.
+		if err := write(cwd, s); err != nil && !state.Published(err) {
 			return err
 		}
 		allowed = true

@@ -136,8 +136,8 @@ var linkageCommands = []command{
 		}},
 	{Command: dispatch.Command{Name: "linkage-handover"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
-			return r.Handover(ctx, p.text("role"), p.text("scope"), p.text("expect-task"), endpoint(p, ""), p.values["acknowledge"],
-				p.text("evidence"), p.text("actor"))
+			return r.HandoverScopeKind(ctx, p.text("role"), p.text("scope-kind"), p.text("scope"), p.text("expect-task"), endpoint(p, ""),
+				p.values["acknowledge"], p.text("evidence"), p.text("actor"))
 		}},
 	{Command: dispatch.Command{Name: "linkage-directive"},
 		run: cmdLinkageDirective},
