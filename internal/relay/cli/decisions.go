@@ -365,10 +365,11 @@ const decisionReplyProducer = "relay"
 // decision — and its id must be the relay's own delivery.DecisionEventID(relationship,
 // answersEvent), read from the delivery package rather than re-derived, because decision.go belongs
 // to another project. Any other source — a report, a status file, a message — names no receipt, so
-// the reply is identified by the relationship and by when the relay recorded it: it must have been
-// recorded at or after the decision was answered. What it returns is the execution generation the
-// reply event itself was recorded under, which the record then carries as the generation it was
-// applied in.
+// the reply is identified by the relationship it answers and by when the relay wrote it: it must
+// have been written at or after the decision was answered, and the instant that places it is the
+// delivery row's (see decisionReplyWrittenAtOrAfterTheAnswer). What it returns is the execution
+// generation the reply event itself was recorded under, which the record then carries as the
+// generation it was applied in.
 func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisions.Record, event string) (int64, error) {
 	row, err := opened.One(ctx, "SELECT relationship_id, outcome, producer, receipt, execution_generation, first_seen_at FROM events WHERE event_id = ?", event)
 	if err != nil {
@@ -389,6 +390,16 @@ func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisio
 	if answers == "" {
 		return 0, decisionNotTheReplyEvent(event)
 	}
+	// The reply's delivery is read once, here: it says whether the child received the reply (the
+	// apply waits for that) and when the relay wrote it (the order a non-receipt source is placed
+	// by). Both are read inside the record's own transaction, on its connection.
+	delivered, err := delivery.NewService(opened, delivery.SystemClock{}).Find(ctx, event)
+	if err != nil {
+		return 0, err
+	}
+	if !decisionReplyDelivered(delivered) {
+		return 0, decisionConflict("reply_not_delivered", fmt.Sprintf("the reply %q has not been delivered to the child (%s): a decision is applied once the relay records the reply's delivery as accepted", event, decisionDeliveryState(delivered)))
+	}
 	if decisionSourceIsEvent(record) {
 		// The question was raised on a receipt, and decision-raise names that receipt as the
 		// record's source: the reply must answer it, so an older reply to another receipt of the
@@ -399,10 +410,10 @@ func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisio
 		if delivery.DecisionEventID(relationship, answers) != event {
 			return 0, decisionNotTheReplyEvent(event)
 		}
-	} else if !decisionReplyRecordedAtOrAfterTheAnswer(record, row.Text("first_seen_at")) {
+	} else if !decisionReplyWrittenAtOrAfterTheAnswer(record, row.Text("first_seen_at"), decisionDeliveryCreatedAt(delivered)) {
 		// A question raised from anything else — a report, a status file, a message — names no
 		// receipt, so the reply is identified by the relationship it answers and by when the relay
-		// recorded it: a reply recorded before the decision was answered cannot be the reply that
+		// wrote it: a reply written before the decision was answered cannot be the reply that
 		// answers it. An instant either side cannot be read is refused rather than accepted.
 		return 0, decisionNotTheReplyEvent(event)
 	}
@@ -413,16 +424,6 @@ func decisionReplyEvent(ctx context.Context, opened *store.Store, record decisio
 	}
 	if strings.TrimSpace(option.Reply) != strings.TrimSpace(decision) {
 		return 0, decisionConflict("reply_contradicts_answer", fmt.Sprintf("the answer chose option %q, whose reply is %q, and the relay recorded the decision %q: a decision is applied by the reply its chosen option makes", option.ID, option.Reply, decision))
-	}
-	// The reply applies the decision only once the relay has recorded its delivery as accepted by
-	// the child: a reply that is still queued has not been observed by the child, and Q5 applies a
-	// decision on the reply the child received, not on the event alone.
-	delivered, err := delivery.NewService(opened, delivery.SystemClock{}).Find(ctx, event)
-	if err != nil {
-		return 0, err
-	}
-	if !decisionReplyDelivered(delivered) {
-		return 0, decisionConflict("reply_not_delivered", fmt.Sprintf("the reply %q has not been delivered to the child (%s): a decision is applied once the relay records the reply's delivery as accepted", event, decisionDeliveryState(delivered)))
 	}
 	generation, ok := row.Get("execution_generation").(int64)
 	if !ok {
@@ -443,20 +444,40 @@ func decisionSourceIsEvent(record decisions.Record) bool {
 // written by decision-raise as the kind of the report, event or message the question was read from.
 const decisionEventSourceKind = "event"
 
-// decisionReplyRecordedAtOrAfterTheAnswer reports whether the reply event was first seen at or after
-// the instant the decision was answered, both read as instants rather than compared as text. An
-// instant either side cannot be read is refused: a reply whose time cannot be placed is not shown
-// to have answered the decision.
-func decisionReplyRecordedAtOrAfterTheAnswer(record decisions.Record, firstSeenAt string) bool {
+// decisionReplyWrittenAtOrAfterTheAnswer reports whether the relay wrote the reply after the decision
+// was answered, both read as instants rather than compared as text. An instant either side cannot be
+// read is refused: a reply whose time cannot be placed is not shown to have answered the decision.
+//
+// The instant it uses is the delivery row's created_at, not the event's first_seen_at. The relay
+// stamps first_seen_at before it takes the writer transaction that records the reply (delivery's
+// RecordDecision reads its clock above its transaction), so a reply that overlapped the answer
+// carries a first_seen_at older than the answer even though it was written after it. The delivery
+// row is written inside that transaction (queueToChild's EnqueueIn), so its created_at is the order
+// the writes actually took. An event with no delivery row was never queued, and then the event's own
+// first_seen_at is the only instant left to place it by.
+func decisionReplyWrittenAtOrAfterTheAnswer(record decisions.Record, firstSeenAt, deliveryCreatedAt string) bool {
 	answered, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(record.AnsweredAt))
 	if err != nil {
 		return false
 	}
-	seen, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(firstSeenAt))
+	writtenAt := strings.TrimSpace(deliveryCreatedAt)
+	if writtenAt == "" {
+		writtenAt = strings.TrimSpace(firstSeenAt)
+	}
+	written, err := time.Parse(time.RFC3339Nano, writtenAt)
 	if err != nil {
 		return false
 	}
-	return !seen.Before(answered)
+	return !written.Before(answered)
+}
+
+// decisionDeliveryCreatedAt is the instant the relay wrote the reply's delivery row, or "" when
+// there is no such row.
+func decisionDeliveryCreatedAt(delivered delivery.Row) string {
+	if delivered == nil {
+		return ""
+	}
+	return delivered.S("created_at")
 }
 
 // decisionReplyDelivered reports whether the delivery the relay queued for the reply event has

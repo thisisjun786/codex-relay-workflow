@@ -517,6 +517,43 @@ func TestReview818TheFoldMatchesOptionIDsAsTheFingerprintDoes(t *testing.T) {
 	}
 }
 
+// review818SetDeliveryCreatedAt moves the reply delivery's created_at, the instant the relay wrote
+// the delivery row.
+func review818SetDeliveryCreatedAt(t *testing.T, state, event, at string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE deliveries SET created_at = ? WHERE event_id = ?", at, event)
+}
+
+// A reply recorded after the answer can still carry an earlier first_seen_at: the relay stamps that
+// field before it takes its writer transaction, so a reply that overlapped the answer is stamped
+// first and written second. The delivery row is written inside that transaction, so its created_at
+// is the order the writes actually took, and a reply whose delivery followed the answer applies.
+func TestReview818AReportSourceAppliesOnTheReplysWriteOrder(t *testing.T) {
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	event := review818SeedReply(t, state, "rel-903", "ev-report", "stop", 1)
+	raised := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge the report asks about?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "report=1",
+		"--authority", "user"))
+	decision, _ := raised["decisionId"].(string)
+	review818AnswerUser(t, state, decision, "hold")
+	answeredAt, _ := crw737List(t, state)[0].(map[string]any)["answered_at"].(string)
+	if answeredAt == "" {
+		t.Fatal("the answered record carries no answered_at")
+	}
+	// The event row was stamped before the answer; the delivery row was written after it.
+	review818SetFirstSeenAt(t, state, event, "2026-10-06T00:00:00Z")
+	review818SetDeliveryCreatedAt(t, state, event, answeredAt)
+	if got := crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event); got.code != 0 {
+		t.Fatalf("decision-apply: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "applied" {
+		t.Fatalf("the applied record is %v", record)
+	}
+}
+
 // The same identity rule is what makes a conflict visible: a stored HOLD=stop and an incoming
 // hold=answer are one option, so the fold refuses rather than dropping the second raise's reply.
 func TestReview818TheFoldRefusesAConflictAcrossAnIDSpelling(t *testing.T) {
@@ -656,12 +693,14 @@ func TestReview818ReportSourceApplies(t *testing.T) {
 	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
 		t.Fatalf("a reply recorded before the answer applied the record: %v", record)
 	}
-	// Recorded at the answer, the same reply applies it.
+	// Written at the answer, the same reply applies it. The instant that places the write is the
+	// delivery row's created_at, written inside the relay's transaction; the event's first_seen_at
+	// is left where it was, because it is stamped before that transaction and does not place it.
 	answeredAt, _ := crw737List(t, state)[0].(map[string]any)["answered_at"].(string)
 	if answeredAt == "" {
 		t.Fatal("the answered record carries no answered_at")
 	}
-	review818SetFirstSeenAt(t, state, event, answeredAt)
+	review818SetDeliveryCreatedAt(t, state, event, answeredAt)
 	if got := crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event); got.code != 0 {
 		t.Fatalf("decision-apply: exit %d %s %s", got.code, got.stdout, got.stderr)
 	}
