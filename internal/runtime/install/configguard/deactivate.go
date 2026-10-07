@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -71,7 +72,7 @@ func configLockPathsPinned(lock *crwdir.ConfigLock) (*configLockPathsPin, error)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("the config file could not be inspected (%s); run the deactivation again", pinned)
 	}
-	return &configLockPathsPin{lock: lock, path: pinned, file: file, dir: dir, dirPath: dirPath}, nil
+	return &configLockPathsPin{lock: lock, path: pinned, file: file, dir: dir}, nil
 }
 
 // configLockPathsPin is the locked config file as it was when the lock was proven: its resolved path
@@ -81,11 +82,10 @@ func configLockPathsPinned(lock *crwdir.ConfigLock) (*configLockPathsPin, error)
 // decision, that the pinned path still names the sidecar the lock holds; without that proof the
 // captured identities describe a file the lock no longer guards.
 type configLockPathsPin struct {
-	lock    *crwdir.ConfigLock
-	path    string
-	file    os.FileInfo
-	dir     os.FileInfo
-	dirPath string
+	lock *crwdir.ConfigLock
+	path string
+	file os.FileInfo
+	dir  os.FileInfo
 }
 
 // configLockPathsPinHolds reports whether the pinned path still names the very sidecar this lock
@@ -203,7 +203,7 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	// components. That is the same target — a rename over it replaces the entry both spellings
 	// name — but a hard link is a DIFFERENT entry a rename would not reach, so it stays refused.
 	// The two are told apart with the identities captured at pin time: the candidate must be the
-	// pinned file, in the pinned directory, and that directory must hold one entry for the name.
+	// pinned file, in the pinned directory, and that file must have exactly one directory entry.
 	// The pin itself is proven live by configLockPathsPinHolds above, so the captured directory is
 	// the one the pinned path still names.
 	if !strings.EqualFold(filepath.Base(real), filepath.Base(pinned.path)) {
@@ -217,17 +217,25 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	if err != nil || !os.SameFile(realDir, pinned.dir) {
 		return false
 	}
-	entries, err := os.ReadDir(pinned.dirPath)
-	if err != nil {
+	return configLockPathsOneEntry(realFile)
+}
+
+// configLockPathsOneEntry reports whether the file has exactly one directory entry, which is what
+// separates a case-insensitive spelling — one entry the kernel reaches under two spellings — from a
+// hard link or a case-sensitive sibling, two entries a rename over the locked path would not reach.
+// The count comes from the file's own inode, not from reading the directory: a parent directory
+// without read permission still allows the stat, open and rename the restore needs, so enumerating
+// it would refuse a restore the kernel would have allowed (CRW-899's seventh evaluation). A count
+// that cannot be read is not known to be one, so it answers false.
+func configLockPathsOneEntry(info os.FileInfo) bool {
+	if info == nil {
 		return false
 	}
-	matches := 0
-	for _, entry := range entries {
-		if strings.EqualFold(entry.Name(), filepath.Base(pinned.path)) {
-			matches++
-		}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
 	}
-	return matches == 1
+	return uint64(st.Nlink) == 1
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means
