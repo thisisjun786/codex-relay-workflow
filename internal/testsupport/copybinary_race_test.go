@@ -36,6 +36,11 @@ const (
 	// copyRunaway is what the wall clock is actually asserted against: a ceiling a hang or a
 	// pathological slowdown still trips, wide enough that no correct run reaches it.
 	copyRunaway = 30 * time.Second
+	// copyForkerStop is the forker shutdown's own budget, spent after the copies are done and stop
+	// is closed. It is separate from copyRunaway so a run that finishes its copies near the ceiling
+	// still gives a forker inside its own exec the full budget to return; the two together stay
+	// under the issue's one-minute ceiling.
+	copyForkerStop = 10 * time.Second
 )
 
 // TestCopyBinarySurvivesConcurrentForks is this issue's regression. CopyBinary opens the copy for
@@ -121,9 +126,8 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 		failures = append(failures, fmt.Sprintf(format, args...))
 	}
 	start := time.Now()
-	// One deadline covers the whole exercise, the copies and the forker shutdown together, so a
-	// stalled copy or a stalled fork cannot hang the test past copyRunaway (the issue's one-minute
-	// ceiling).
+	// The copies are bounded by copyRunaway, so a stalled copy fails the test there rather than
+	// hanging it. The forker shutdown below gets its own budget.
 	deadline := start.Add(copyRunaway)
 	var writers sync.WaitGroup
 	for i := 0; i < copyWriters; i++ {
@@ -165,14 +169,16 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 		t.Fatalf("the exercise did not finish within the %s runaway ceiling: a copy is stuck", copyRunaway)
 	}
 	close(stop)
-	// The forker shutdown is bounded too: closing stop ends a forker that is between execs, but one
-	// already inside exec.Command(source).Run() must return on its own, so it shares the deadline.
+	// The forker shutdown is bounded too, with its own budget: closing stop ends a forker that is
+	// between execs, but one already inside exec.Command(source).Run() must return on its own. A
+	// budget shared with the copies would leave a run that finished near the ceiling no time for
+	// that and would fail a correct run.
 	forked := make(chan struct{})
 	go func() { forkers.Wait(); close(forked) }()
 	select {
 	case <-forked:
-	case <-time.After(time.Until(deadline)):
-		t.Fatalf("the forkers did not stop within the %s runaway ceiling: a fork is stuck", copyRunaway)
+	case <-time.After(copyForkerStop):
+		t.Fatalf("the forkers did not stop within %s after stop was closed: a fork is stuck", copyForkerStop)
 	}
 	elapsed = time.Since(start)
 	failuresMu.Lock()
