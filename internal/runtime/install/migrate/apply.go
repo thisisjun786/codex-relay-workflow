@@ -359,13 +359,13 @@ func (a *applyRun) writeFiles() error {
 			order = append(order, i)
 		}
 	}
-	refs := a.migrateApplyReviewReferences()
+	refs, receipts := a.migrateApplyReviewReferences()
 	slices.SortStableFunc(order, func(x, y int) int {
 		ix, iy := a.plan.Items[x], a.plan.Items[y]
 		if c := cmp.Compare(applyRank(ix), applyRank(iy)); c != 0 {
 			return c
 		}
-		return cmp.Compare(migrateApplyReviewSubRank(ix, refs), migrateApplyReviewSubRank(iy, refs))
+		return cmp.Compare(migrateApplyReviewSubRank(ix, refs, receipts), migrateApplyReviewSubRank(iy, refs, receipts))
 	})
 	for _, i := range order {
 		if err := a.publishFile(i, a.plan.Items[i]); err != nil {
@@ -375,42 +375,35 @@ func (a *applyRun) writeFiles() error {
 	return nil
 }
 
-// migrateApplyReviewReferences returns the source paths another plan item's evidence manifest names: the artifactManifest[]
-// entries of a QA receipt, each resolved against the receipt's own directory, whose kinds are the verdict and
-// artifact-identity files the receipt is judged with (internal/pabcd/gate/receipt.go:35-36, gate/manifest.go:89-143). A
-// record that cannot be read or decoded contributes nothing: this key only orders publications and never decides what is
-// copied, so a receipt this run cannot read is reported by attention, not refused here.
-func (a *applyRun) migrateApplyReviewReferences() map[string]bool {
-	refs := map[string]bool{}
+// migrateApplyReviewReferences reads the plan's evidence records and returns two keys over source paths: the artifactManifest[]
+// entries a receipt names, each resolved against the receipt's own directory, whose kinds are the verdict and
+// artifact-identity files the receipt is judged with (internal/pabcd/gate/receipt.go:35-36, gate/manifest.go:89-143), and
+// the records that are receipts. A record is a receipt by its content, never by its name (CRW-879): a planned written
+// regular file under evidence/ whose bytes, read within attentionReadCap, are a JSON object with a non-empty
+// artifactManifest array. The receipt reader takes the name its caller chose (gate/receipt.go:104-108), so a dependency
+// order that only knew the conventional qa-receipt.json name published a receipt under another name before the artifact it
+// refers to. A record that cannot be read, is over the bound or holds no manifest array is not judged by content, and one
+// carrying the conventional name keeps the place the name gave it, so an unreadable receipt still orders after its
+// dependencies. Nothing here decides what is copied or fails the run: a record this run cannot read contributes no key and
+// is reported by attention.
+func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]bool) {
+	refs, receipts = map[string]bool{}, map[string]bool{}
 	for _, it := range a.plan.Items {
-		if !applyWrites(it) || applyDir(it) || !strings.HasSuffix(it.Source, "qa-receipt.json") {
+		if !applyWrites(it) || applyDir(it) {
 			continue
+		}
+		named := strings.HasSuffix(it.Source, "qa-receipt.json")
+		if !named && !classifyEvidenceTree(it.Source) {
+			continue
+		}
+		manifest, ok := a.migrateReviewFollowupReceiptManifest(it)
+		if ok {
+			receipts[it.Source] = true
+		} else if named {
+			receipts[it.Source] = true // an unreadable record keeps the name judgement and the order it gave
 		}
 		dir := classifyDirPart(it.Source)
-		src, err := a.open(it.Scope, dir, false)
-		if err != nil {
-			continue
-		}
-		_, base := applySplit(it.Source)
-		f, _, err := src.OpenRegular(base)
-		if err != nil {
-			continue
-		}
-		data, err := io.ReadAll(io.LimitReader(f, attentionReadCap+1))
-		_ = f.Close()
-		if err != nil || len(data) > attentionReadCap {
-			continue
-		}
-		var view struct {
-			ArtifactManifest []struct {
-				Path string `json:"path"`
-				Kind string `json:"kind"`
-			} `json:"artifactManifest"`
-		}
-		if json.Unmarshal(data, &view) != nil {
-			continue
-		}
-		for _, e := range view.ArtifactManifest {
+		for _, e := range manifest {
 			if e.Kind != "verdict" && e.Kind != "artifact-identity" {
 				continue
 			}
@@ -421,14 +414,58 @@ func (a *applyRun) migrateApplyReviewReferences() map[string]bool {
 			refs[rel] = true
 		}
 	}
-	return refs
+	return refs, receipts
+}
+
+// migrateReviewFollowupReceiptManifest reads one planned item as a receipt and returns the artifactManifest entries it
+// names. ok is true for a referring receipt, which is any file whose content is a JSON object with a non-empty
+// artifactManifest array, whatever the file is called: the receipt reader takes the caller's chosen name
+// (internal/pabcd/gate/receipt.go:104-108), so a dependency order that only knew the conventional qa-receipt.json name left
+// a receipt under another name publishing before the artifact it refers to (CRW-879). A file this run cannot open, one past
+// attentionReadCap, or one that is not such an object returns ok false with a nil manifest, and the caller falls back to the
+// name judgement for it. Only the entries whose kind is verdict or artifact-identity name a dependency; an entry of another
+// kind, or one that is not an object, contributes no key and never fails the run.
+func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) (manifest []struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}, ok bool) {
+	if it.Size > attentionReadCap {
+		// The plan already measured it, so a record past the bound is refused without opening it: the same judgement the
+		// read below would reach, at no cost to a large artifact.
+		return nil, false
+	}
+	dir := classifyDirPart(it.Source)
+	src, err := a.open(it.Scope, dir, false)
+	if err != nil {
+		return nil, false
+	}
+	_, base := applySplit(it.Source)
+	f, _, err := src.OpenRegular(base)
+	if err != nil {
+		return nil, false
+	}
+	data, err := io.ReadAll(io.LimitReader(f, attentionReadCap+1))
+	_ = f.Close()
+	if err != nil || len(data) > attentionReadCap {
+		return nil, false
+	}
+	var view struct {
+		ArtifactManifest []struct {
+			Path string `json:"path"`
+			Kind string `json:"kind"`
+		} `json:"artifactManifest"`
+	}
+	if json.Unmarshal(data, &view) != nil || len(view.ArtifactManifest) == 0 {
+		return nil, false
+	}
+	return view.ArtifactManifest, true
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
-// Codex config backups, 2 for the records that refer to them (a QA receipt and the Codex install record), and 1 for the
-// rest. A receipt whose manifest this run could not read still takes the referrer's place, so its dependencies keep the
-// dependencies-first order even when the graph is unknown.
-func migrateApplyReviewSubRank(it Item, refs map[string]bool) int {
+// Codex config backups, 2 for the records that refer to them (a QA receipt, by name or by content, and the Codex install
+// record), and 1 for the rest. A receipt whose manifest this run could not read still takes the referrer's place, so its
+// dependencies keep the dependencies-first order even when the graph is unknown.
+func migrateApplyReviewSubRank(it Item, refs, receipts map[string]bool) int {
 	if it.Scope == ScopeCodex {
 		switch {
 		case strings.HasPrefix(it.Source, backupSource) && strings.HasSuffix(it.Source, backupSuffix):
@@ -440,7 +477,7 @@ func migrateApplyReviewSubRank(it Item, refs map[string]bool) int {
 	if refs[it.Source] {
 		return 0
 	}
-	if strings.HasSuffix(it.Source, "qa-receipt.json") {
+	if receipts[it.Source] {
 		return 2
 	}
 	return 1
@@ -472,11 +509,13 @@ func (a *applyRun) publishFile(i int, it Item) error {
 		return a.stop(i, it, err)
 	}
 	_, leaf := applySplit(it.Destination)
-	res, err := a.pub.Publish(parent, leaf, f, it.Size, it.Mode.Perm())
+	res, renamed, err := a.pub.migrateReviewFollowupPublish(parent, leaf, f, it.Size, it.Mode.Perm())
 	a.result.Items[i].Result = res
-	if res == ResultCopied {
-		// The rename and the directory sync completed, so this file is this run's write whatever the source recheck below
-		// finds: a moved source must not erase a completed write from the report.
+	if renamed {
+		// This run's own no-replace rename completed, so the file is this run's write whatever the source recheck below
+		// finds and whether or not the directory sync after it failed: neither a moved source nor a failed sync erases a
+		// completed rename from the report. A failure before the rename is never counted, whatever the destination holds,
+		// because a racer can publish the plan's bytes between settle's look and this run's own create (CRW-879).
 		a.result.WritesCompleted++
 	}
 	if err != nil {
@@ -488,9 +527,9 @@ func (a *applyRun) publishFile(i int, it Item) error {
 			if got, derr := a.destMode(parent, leaf); derr == nil && got != it.Mode.Perm() {
 				a.result.Items[i].Note += "; destination kept its mode " + got.String()
 			}
-		case res == ResultFailed && a.checkDest(parent, leaf, it) == nil:
-			// A failure after the no-replace rename leaves a whole final file, which the report must count.
-			a.result.WritesCompleted++
+		case renamed:
+			// The rename completed before the failure, so the whole final file is at the destination and only its directory
+			// sync failed.
 			a.result.Items[i].Note = "the final file is whole but its directory sync failed"
 		}
 		return err

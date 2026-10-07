@@ -43,12 +43,15 @@ func tempRun(name string) (string, bool) {
 // seams: rename is the platform's no-replace rename, and at is called before a named step ("root", "rename", "dirsync") and fails
 // it by returning an error. ensureDest is the seam for the destination root's creation, so a test can fail the step EnsureChild runs
 // between the mkdir and EnsureProjectRoot's mode chmod; it reports whether its own mkdir created the root, like Pair.EnsureDest.
+// createTemp is the seam for this run's temporary creation, so a test can fail it (or put a competing writer's file in the window it
+// opens) without a real filesystem error.
 type Publisher struct {
 	run        string
 	seq        int
 	rename     func(dirfd int, oldName, newName string) error
 	at         func(step string) error
 	ensureDest func(pair *Pair, perm uint32) (*Dir, bool, error)
+	createTemp func(dir *Dir, name string) (int, error)
 }
 
 // NewPublisher starts a run. A platform without a no-replace rename is refused here, so nothing is written there.
@@ -60,7 +63,14 @@ func NewPublisher() (*Publisher, error) {
 		run:        rand.Text(),
 		rename:     noReplaceRename,
 		ensureDest: func(pair *Pair, perm uint32) (*Dir, bool, error) { return pair.EnsureDest(perm) },
+		createTemp: migrateReviewFollowupCreateTemp,
 	}, nil
+}
+
+// migrateReviewFollowupCreateTemp creates this run's exclusive temporary in dir: the default createTemp seam. O_EXCL and
+// O_NOFOLLOW mean a name something else already holds is never opened or written through.
+func migrateReviewFollowupCreateTemp(dir *Dir, name string) (int, error) {
+	return unix.Openat(dir.fd(), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 }
 
 func (p *Publisher) step(name string) error {
@@ -80,18 +90,29 @@ func (p *Publisher) step(name string) error {
 // run is never touched, and none of this run's is unlinked once its rename has happened. The temporary is addressed by name until
 // the rename, so a process of the same user that swaps it in that window is a residual risk, as it is for Dir.OpenRegular.
 func (p *Publisher) Publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (Result, error) {
-	res, err := p.publish(dir, leaf, src, size, mode)
+	res, _, err := p.migrateReviewFollowupPublish(dir, leaf, src, size, mode)
+	return res, err
+}
+
+// migrateReviewFollowupPublish is the publication Publish performs, and also reports whether this run's own no-replace
+// rename completed. A failure after the rename (renamed true, ResultFailed) left a whole final file at the destination,
+// so it is this run's write; a failure before any rename (renamed false) wrote nothing, whatever the destination holds,
+// because a racer can publish the plan's bytes between settle's look and this run's own create (CRW-879). The Result
+// contract Publish documents is unchanged: a failure is ResultFailed and a refusal is ResultRefused, whichever step it
+// happened at.
+func (p *Publisher) migrateReviewFollowupPublish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (Result, bool, error) {
+	res, renamed, err := p.publish(dir, leaf, src, size, mode)
 	switch {
 	case err == nil:
-		return res, nil
+		return res, renamed, nil
 	case refusal(err) != nil:
-		return ResultRefused, err
+		return ResultRefused, false, err
 	case res == ResultAlreadyEqual:
 		// The destination already held these bytes, so this run wrote nothing: the failure is the directory sync's alone and
 		// the result says so, so a caller never counts it as a write of its own.
-		return res, err
+		return res, renamed, err
 	}
-	return ResultFailed, err
+	return ResultFailed, renamed, err
 }
 
 // refusal returns err as a refusal, or nil when it is anything else, a refusal that came with another error included: a temporary
@@ -101,23 +122,24 @@ func refusal(err error) *RefusedError {
 	return r
 }
 
-func (p *Publisher) publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (_ Result, err error) {
+// publish performs the steps and reports whether this run's own no-replace rename completed, so a caller can tell a
+// failure after the rename (the whole final file is there) from one before it (nothing of this run's was renamed).
+func (p *Publisher) publish(dir *Dir, leaf string, src io.ReaderAt, size int64, mode fs.FileMode) (_ Result, renamed bool, err error) {
 	if err = checkName(leaf); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if mode&^fs.ModePerm != 0 {
-		return "", errors.New("only permission bits can be published, not " + mode.String())
+		return "", false, errors.New("only permission bits can be published, not " + mode.String())
 	}
 	if res, err := p.settle(dir, leaf, src, size); res != "" || err != nil {
-		return res, err
+		return res, false, err
 	}
 	p.seq++
 	tmp := tempName(p.run, p.seq)
-	fd, err := unix.Openat(dir.fd(), tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	fd, err := p.createTemp(dir, tmp)
 	if err != nil {
-		return "", &fs.PathError{Op: "create", Path: dir.join(tmp), Err: err}
+		return "", false, &fs.PathError{Op: "create", Path: dir.join(tmp), Err: err}
 	}
-	renamed := false
 	defer func() {
 		if renamed {
 			return
@@ -127,10 +149,10 @@ func (p *Publisher) publish(dir *Dir, leaf string, src io.ReaderAt, size int64, 
 		}
 	}()
 	if err = fillTemp(os.NewFile(uintptr(fd), dir.join(tmp)), src, size, mode); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err = p.step("rename"); err != nil {
-		return "", err
+		return "", false, err
 	}
 	switch err = p.rename(dir.fd(), tmp, leaf); {
 	case err == nil:
@@ -141,19 +163,19 @@ func (p *Publisher) publish(dir *Dir, leaf string, src io.ReaderAt, size int64, 
 		if res == "" && serr == nil {
 			serr = &fs.PathError{Op: "rename", Path: dir.join(leaf), Err: err} // it vanished again; no retry
 		}
-		return res, serr
+		return res, false, serr
 	case errors.Is(err, errors.ErrUnsupported) || errors.Is(err, unix.EINVAL):
-		return "", refuse(ReasonUnsupported, dir.join(leaf), "no-replace rename: "+err.Error())
+		return "", false, refuse(ReasonUnsupported, dir.join(leaf), "no-replace rename: "+err.Error())
 	default:
-		return "", &fs.PathError{Op: "rename", Path: dir.join(leaf), Err: err}
+		return "", false, &fs.PathError{Op: "rename", Path: dir.join(leaf), Err: err}
 	}
 	if err = p.step("dirsync"); err == nil {
 		err = dir.Sync()
 	}
 	if err != nil {
-		return "", err
+		return "", renamed, err
 	}
-	return ResultCopied, nil
+	return ResultCopied, renamed, nil
 }
 
 // fillTemp writes exactly size bytes, gives the file its final permission bits (it was created 0600, so the content was never
@@ -239,7 +261,7 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, bool, error) {
 		return nil, false, err
 	}
 	text := crwdir.GitignoreText
-	_, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
+	_, _, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
 	if r := refusal(err); r != nil && r.Reason == ReasonDiffers && pre {
 		err = nil
 	}
