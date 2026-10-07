@@ -405,6 +405,96 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 	}
 }
 
+// C2: the caller's spelling is resolved afresh by the kernel on every use, so it still reaches the
+// directory this call made after the physical parent has been renamed. A record that only kept the
+// parent location read at mkdir time would reopen a name that no longer exists and abandon a
+// directory this call made; dev removed it through the spelling.
+func TestToolsReview836RemovesThroughTheSpellingWhenAParentMoves(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(filepath.Join(real, "inner"), link); err != nil {
+		t.Fatal(err)
+	}
+	// "link/.." resolves to <base>/real, so the directory this call makes is <base>/real/p.
+	root := link + "/../p/q"
+	moved := filepath.Join(base, "moved")
+
+	movedOnce := false
+	review836Seam(t, func(path string) {
+		if path != root || movedOnce {
+			return
+		}
+		movedOnce = true
+		// The physical parent is renamed and the link is pointed at its new place, so the spelling
+		// still reaches the same directory while the parent location read earlier no longer does.
+		if err := os.Rename(real, moved); err != nil {
+			t.Errorf("the seam could not rename the parent: %v", err)
+		}
+		if err := os.Remove(link); err != nil {
+			t.Errorf("the seam could not remove the link: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(moved, "inner"), link); err != nil {
+			t.Errorf("the seam could not repoint the link: %v", err)
+		}
+	})
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot across a moved parent: %v", err)
+	}
+	removeCreated(created)
+	// The directory this call made under the moved parent is gone, reached by the spelling.
+	for _, path := range []string{filepath.Join(moved, "p"), filepath.Join(moved, "p", "q")} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+	// The pre-existing directories are never this call's to remove. real was renamed to moved by the
+	// seam, so only the moved tree is expected to remain.
+	for _, path := range []string{moved, filepath.Join(moved, "inner")} {
+		if info, statErr := os.Stat(path); statErr != nil || !info.IsDir() {
+			t.Errorf("the pre-existing directory %s was disturbed: %v", path, statErr)
+		}
+	}
+}
+
+// C5: making the root must not need more of the parent than making a directory in it does. A parent
+// that is writable and searchable but not readable can be used with os.Mkdir, so the walk must keep
+// working there; requiring a readable parent would turn a valid configuration into a host failure.
+func TestToolsReview836CreatesUnderAParentWithoutReadPermission(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	base := t.TempDir()
+	drop := filepath.Join(base, "drop")
+	if err := os.Mkdir(drop, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	// The temporary tree is removed after the test, which needs the mode back.
+	t.Cleanup(func() { _ = os.Chmod(drop, 0o700) })
+	target := filepath.Join(drop, "downloads")
+
+	created, err := createRoot(target)
+	if err != nil {
+		t.Fatalf("createRoot under a write and search only parent: %v", err)
+	}
+	if len(created) == 0 {
+		t.Fatalf("createRoot recorded nothing for %s", target)
+	}
+	// The directory was really made, so the mode did not silently stand in for it.
+	if info, statErr := os.Stat(target); statErr != nil || !info.IsDir() {
+		t.Fatalf("the root was not made under the restricted parent: %v", statErr)
+	}
+	removeCreated(created)
+	if _, statErr := os.Lstat(target); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("%s survived the cleanup of %v: %v", target, created, statErr)
+	}
+}
+
 // C1, the location a recorded component is reached by: the record must reach the directory through
 // the parent the mkdir ran under, so the cleanup still finds it after a component before a ".." has
 // vanished. The parent is taken as text and resolved by the kernel, so the record keeps the ".."
