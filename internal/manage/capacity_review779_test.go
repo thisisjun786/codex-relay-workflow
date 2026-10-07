@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -75,6 +76,25 @@ func capacityReview779ChainLive() []string {
 
 // capacityReview779Relationship is the relationship the fixture binds one node to.
 func capacityReview779Relationship(node string) string { return "rel-" + node }
+
+// capacityReview779PassSeam installs the reading's pass seam for one test. It runs at the start of the
+// reading, after the plan's ready pass has been read and before the reading takes its snapshot, and
+// writes the revisions the test described but did not write, so a revision lands between the pass and
+// the snapshot.
+func capacityReview779PassSeam(t *testing.T, f *branchFixture) {
+	t.Helper()
+	previous := branchPassSeam
+	branchPassSeam = func() { f.writePlan() }
+	t.Cleanup(func() { branchPassSeam = previous })
+}
+
+// capacityReview779ProjectParent registers one live parent for the fixture's project. The relay's own
+// readiness judges a node with no registered parent as defer:ownership_unverified, so a test that reads
+// the ready set from the store rather than from the fake relay registers the parent the release needs.
+func capacityReview779ProjectParent(f *branchFixture) {
+	f.exec("INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, created_at, updated_at) VALUES ('binding-parent','parent','project',?,'task-parent','host',NULL,NULL,'active',1,?,?)",
+		branchTestProject, branchTestStamp(0), branchTestStamp(0))
+}
 
 // capacityReview779MergedMark records the parent's merged mark on one generation of a node's event,
 // which is what the relay's integration judgement asks for beside a contained observation.
@@ -204,6 +224,29 @@ func TestCapacityReview779OneSnapshot(t *testing.T) {
 		branchWant(t, branchSummaries(branchList(t, plan)),
 			"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
 	})
+}
+
+// C1: the readiness the reading reports belongs to the revision its snapshot holds. The pass answers
+// for revision 1 and counts both A and B as waiting; a later revision lands between the pass and the
+// snapshot. The reading must not carry the pass's stale count onto a plan revision it never saw, and it
+// must not simply clear the readiness either: it reads the ready set at the snapshot's own revision, so
+// A is ready and B waits on A, which is 1 of 2.
+func TestCapacityReview779ReadinessFollowsTheSnapshotRevision(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	capacityReview779Plan(f)
+	capacityReview779ProjectParent(f)
+	// The pass answers for revision 1; revision 2 pauses C, which leaves both bundles as they were.
+	f.passRevision = 1
+	f.revision(2)
+	f.pauseNode("C")
+	f.publishOpen()
+	capacityReview779PassSeam(t, f)
+	plan := f.run()
+	if plan.Verdict != capacityExpand {
+		t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
+	}
+	branchWant(t, branchSummaries(branchList(t, plan)),
+		"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
 }
 
 // C3: readiness is judged by node id. Two nodes implement the same issue, and the pass lists only
@@ -569,6 +612,28 @@ func TestCapacityReview779PartialDagZoneIsUnmeasuredThroughTheRealRelay(t *testi
 	capacityReview779WantUnmeasured(t, f)
 }
 
+// C5: a store that keeps the plan header but is missing another zone table must not turn an unknown
+// plan into a fabricated unmeasured reading. unregistered_scope is also the relay's refusal for a plan
+// the store does not hold, so the missing-zone reading is only claimed when the plan-header table
+// itself is the one that is absent; with dag_plans present, a refused lookup stays the read failure
+// (exit 3) it is, and the command reports the configuration error instead of writing empty state.
+func TestCapacityReview779UnknownPlanBesideAPartialZoneIsAReadFailure(t *testing.T) {
+	f := capacityReview779RealRelayFixture(t, func(t *testing.T, path, _ string) {
+		// dag_plans is present and holds no such plan; dag_nodes is gone.
+		capacityReview779ZoneMissingTable(t, path, "", "dag_nodes")
+	})
+	// The fixture's plan is registered by ZoneMissingTable, so name one the store does not hold.
+	f.section = map[string]any{"plans": []map[string]any{{"plan": "p-absent", "project": branchTestProject, "parent": branchTestParent}}}
+	f.load()
+	code, out, errOut := capacityReview779RunCommand(t, f)
+	if code != capacityReadFailureExit {
+		t.Fatalf("an unknown plan exited %d, want %d (stdout %q, stderr %q)", code, capacityReadFailureExit, out, errOut)
+	}
+	if strings.Contains(out, "branches unmeasured") {
+		t.Fatalf("an unknown plan was reported as an unmeasured reading:\n%s", out)
+	}
+}
+
 // capacityReview779ZoneMissingTable writes a store carrying the whole DAG zone with one named table
 // dropped, so a case can pin that the local check covers that table on its own. The zone is installed
 // by opening the store for writing under the socket its ownership record names, and the drop leaves
@@ -579,6 +644,17 @@ func capacityReview779ZoneMissingTable(t *testing.T, path, socket, missing strin
 	opened, err := store.Open(ctx, path, socket)
 	if err != nil {
 		t.Fatalf("install the DAG zone: %v", err)
+	}
+	// A real plan is registered through the DAG repository first, so the store genuinely holds the plan
+	// and only the dropped table is missing: a store that holds the zone and no plan is the relay's
+	// unknown-plan refusal, which this change deliberately keeps as a read failure rather than reading
+	// it as a missing zone.
+	repo := &dag.Repo{Store: opened}
+	rev := dag.Revision{PlanID: branchTestPlan, ProjectKey: branchTestProject, RequestID: "seed-request",
+		AuthorTaskID: "task-parent", Changes: []dag.Change{{Op: dag.OpAddNode, Node: &dag.Node{
+			NodeID: "A", IssueKey: "CRW-1", Kind: dag.NodeImplementation, CriteriaSetDigest: testsupport.Dig("criteria A")}}}}
+	if _, err := repo.Put(ctx, rev); err != nil {
+		t.Fatalf("register the seed plan: %v", err)
 	}
 	if err := opened.Close(); err != nil {
 		t.Fatalf("close the writer: %v", err)

@@ -211,16 +211,16 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 	// the zone, or one an interrupted install left partial, cannot answer for a plan's branches, and a
 	// partial zone makes the relay fail with a raw table error rather than a refusal. The reason then
 	// travels with the plan, so the unmeasured reading survives the hold shortcut.
-	zoneReason := ""
+	zoneReason, headerMissing := "", false
 	if len(settings.Plans) > 0 {
-		zoneReason, err = capacityZoneReason(ctx, stateDir)
+		zoneReason, headerMissing, err = capacityZoneReason(ctx, stateDir)
 		if err != nil {
 			return CapacityReport{}, err
 		}
 	}
 
 	for _, ref := range settings.Plans {
-		waiting, err := capacityWaitingFor(ctx, e, cfg, ref.Plan, zoneReason)
+		waiting, err := capacityWaitingFor(ctx, e, cfg, ref.Plan, zoneReason, headerMissing)
 		if err != nil {
 			return CapacityReport{}, err
 		}
@@ -238,7 +238,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 
 		plan.WaitingMinutes, plan.Alert = capacityPersist(&next, previous.Plans[ref.Plan], plan, limits, now)
 		plan.Verdict, plan.Reasons = capacityJudge(plan, limits, report.Lane.MergesLastHour, report.Actions.Incident, report.Child429.Count)
-		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, waiting.WaitingNodes, zoneReason)
+		branches, unmeasured, err := branchAttach(ctx, e, cfg, stateDir, ref.Plan, plan.Verdict, waiting.WaitingNodes, waiting.PlanRevision, zoneReason)
 		if err != nil {
 			return CapacityReport{}, err
 		}
