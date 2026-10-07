@@ -443,45 +443,67 @@ func TestResetLinkPermVerdictsMatchStatWithoutARename(t *testing.T) {
 
 // TestResetLinkPermReadsALongTargetWhole: readlinkat answers a target of 128 bytes or more by
 // filling the buffer and reporting its size, not by failing, so a read that stopped at the first
-// buffer would judge a cut-off path. A target longer than that buffer that exists must be judged as
-// os.Stat judges the link.
+// buffer would judge a cut-off path — and either direction of the verdict is wrong. A live target
+// longer than that buffer must be judged present, and a dangling one whose first buffer's worth of
+// bytes happens to name a real file must be judged absent; both are compared with os.Stat on the
+// same link.
 func TestResetLinkPermReadsALongTargetWhole(t *testing.T) {
-	root := t.TempDir()
-	crw := filepath.Join(root, ".crw")
-	sessions := filepath.Join(crw, "sessions")
-	if err := os.MkdirAll(sessions, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	long := strings.Repeat("n", 150) + ".txt"
-	if err := os.WriteFile(filepath.Join(sessions, long), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(long, filepath.Join(sessions, "a.json")); err != nil {
-		t.Fatal(err)
-	}
-	parent, err := os.OpenRoot(crw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer parent.Close()
-	observed, err := parent.Lstat("sessions")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pinned, err := resetPin(parent, "sessions", observed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pinned.Close()
-	_, oracleErr := os.Stat(filepath.Join(sessions, "a.json"))
-	if oracleErr != nil {
-		t.Fatalf("the control must resolve: %v", oracleErr)
-	}
-	got, err := resetLinkTargetExists(pinned, "a.json")
-	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v", err)
-	}
-	if got != (oracleErr == nil) {
-		t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
+	// The name is one byte longer than the first buffer, so a read that stopped there is a proper
+	// prefix of it: the live case then names a missing file and the dangling case names a real one.
+	prefix := strings.Repeat("n", 128)
+	for _, tc := range []struct {
+		name, target string
+		exists       bool
+	}{
+		{"live_target", prefix + "aaa.txt", true},
+		{"dangling_target_whose_prefix_is_a_file", prefix + "bbb.txt", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			crw := filepath.Join(root, ".crw")
+			sessions := filepath.Join(crw, "sessions")
+			if err := os.MkdirAll(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// A cut-off read stops at the prefix, so the live target needs that prefix to be missing
+			// (the truncated read then answers absent where the whole target exists) and the dangling
+			// one needs it to be a real file (the truncated read then answers present where the whole
+			// target does not exist).
+			if tc.exists {
+				if err := os.WriteFile(filepath.Join(sessions, tc.target), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(filepath.Join(sessions, prefix), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(tc.target, filepath.Join(sessions, "a.json")); err != nil {
+				t.Fatal(err)
+			}
+			parent, err := os.OpenRoot(crw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			observed, err := parent.Lstat("sessions")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pinned, err := resetPin(parent, "sessions", observed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pinned.Close()
+			_, oracleErr := os.Stat(filepath.Join(sessions, "a.json"))
+			if (oracleErr == nil) != tc.exists {
+				t.Fatalf("the control must resolve as %v: %v", tc.exists, oracleErr)
+			}
+			got, err := resetLinkTargetExists(pinned, "a.json")
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v", err)
+			}
+			if got != (oracleErr == nil) {
+				t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
+			}
+		})
 	}
 }
