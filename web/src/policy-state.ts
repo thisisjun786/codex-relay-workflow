@@ -567,7 +567,11 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
     }
     case "removeAllowed": {
       const entry = reading.allowed.find((row) => row.model === change.model);
-      items.push(...entryRows(`allowed ${change.model} effort`, entry?.efforts ?? [], []));
+      const rows = entryRows(`allowed ${change.model} effort`, entry?.efforts ?? [], []);
+      // A model the file does not list produces no per-entry rows; without this the preview would be
+      // empty rather than saying which row would leave. (The server refuses such a removal, but the
+      // screen must still show what it was about to ask for.)
+      items.push(...(rows.length > 0 ? rows : [{ label: `allowed ${change.model}`, before: "not listed", after: "removed" }]));
       break;
     }
     case "setException": {

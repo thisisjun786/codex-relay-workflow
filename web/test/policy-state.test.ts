@@ -216,6 +216,16 @@ test("removing an allowed model previews the row leaving the list", () => {
   assert.equal(preview.blastRadius, POLICY_BLAST_RADIUS);
 });
 
+test("removing an allowed model the file does not list still names the row", () => {
+  // A removal the reading cannot match still has to say what the screen was about to ask for, rather
+  // than render an empty preview a reader could mistake for "nothing changes".
+  const preview = previewChange(reading(), { kind: "removeAllowed", model: "not-in-the-file" });
+  const item = preview.items.find((entry) => entry.label === "allowed not-in-the-file");
+  assert.ok(item, "the preview names the row that would leave");
+  assert.equal(item?.before, "not listed");
+  assert.equal(item?.after, "removed");
+});
+
 test("setting an exception previews the exception before and after", () => {
   const preview = previewChange(reading(), {
     kind: "setException",
