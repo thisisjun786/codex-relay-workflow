@@ -1139,14 +1139,6 @@ func TestImproveReview789SymlinkedParentDotDotIsOneLocation(t *testing.T) {
 	}
 }
 
-// improveReview789FaultAt is one fault ledger record of a bundle whose origin names the store it
-// was read from, so a test can model the same friction seen in more than one store.
-func improveReview789FaultAt(count int, lastSeen, origin string) improveRecord {
-	return improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
-		What: "a signature", Count: count, FirstAt: "2026-10-06T01:00:00Z", LastAt: lastSeen,
-		Evidence: []string{origin}}
-}
-
 // TestImproveReview789MultiOriginAggregateKeepsItsTotal covers the review finding that a record
 // which reports several origins lost the count it carries: the record's own total is what the
 // bundle says the friction was seen, so merging it into an existing draft must add the whole count,
