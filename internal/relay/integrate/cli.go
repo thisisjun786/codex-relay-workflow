@@ -71,13 +71,21 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 	for i, e := range result.MarkedEvents {
 		events[i] = e
 	}
+	already := make([]any, len(result.AlreadyContained))
+	for i, c := range result.AlreadyContained {
+		already[i] = contract.OrderedObject{{Key: "node_id", Value: c.NodeID}, {Key: "acceptance_id", Value: c.AcceptanceID}, {Key: "head_sha", Value: c.HeadSHA}, {Key: "contained_in", Value: c.ContainedIn}, {Key: "marked_event", Value: c.MarkedEvent}, {Key: "reason", Value: c.Reason}}
+	}
+	unverified := make([]any, len(result.ContainedUnverified))
+	for i, c := range result.ContainedUnverified {
+		unverified[i] = contract.OrderedObject{{Key: "node_id", Value: c.NodeID}, {Key: "acceptance_id", Value: c.AcceptanceID}, {Key: "head_sha", Value: c.HeadSHA}, {Key: "contained_in", Value: c.ContainedIn}}
+	}
 	return contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaIntegrate}, {Key: "plan_id", Value: result.Plan}, {Key: "batch_id", Value: result.BatchID},
 		{Key: "checkout", Value: result.Checkout}, {Key: "integration_ref", Value: result.Ref}, {Key: "base_ref", Value: result.BaseRef},
 		{Key: "old_head", Value: result.OldHead}, {Key: "new_head", Value: result.NewHead},
 		{Key: "merged", Value: merged}, {Key: "split", Value: split}, {Key: "pending_marks", Value: pending},
 		{Key: "verification", Value: contract.OrderedObject{{Key: "result", Value: result.Verification.Result}, {Key: "tree", Value: result.Verification.TreeHash}, {Key: "digest", Value: result.VerificationDigest}}},
-		{Key: "marked_events", Value: events}, {Key: "targets", Value: targets},
+		{Key: "marked_events", Value: events}, {Key: "already_contained", Value: already}, {Key: "contained_unverified", Value: unverified}, {Key: "targets", Value: targets},
 	}, nil
 }
 
