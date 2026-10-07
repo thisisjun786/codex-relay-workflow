@@ -387,6 +387,61 @@ func TestCheckCaseReportsARefusedScenario(t *testing.T) {
 	}
 }
 
+// c7 d1 (CRW-908 generation 2): an input the harness cannot read is a refusal of the case, so it removes
+// the prepared root the way every other refusal does. Red first: the malformed-fs exits returned before
+// the removal, so a root the caller had prepared stayed on the host.
+func TestScenariosRemoveTheRootOfAMalformedInput(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		input any
+	}{
+		{"fs is not an array", pyjson.Object{{Key: "fs", Value: "not an array"}}},
+		{"an entry has a bad mode", fsInput(pyjson.Object{
+			{Key: "path", Value: "x"}, {Key: "kind", Value: "file"}, {Key: "mode", Value: "bad"},
+		})},
+		{"an entry is missing its path", fsInput(pyjson.Object{{Key: "kind", Value: "file"}})},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, root := caseRoot(t)
+			if err := PrepareRoot(root); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Scenarios(root, c.input); err == nil {
+				t.Fatal("a malformed input was accepted")
+			}
+			if err := emptyBase(base); err != nil {
+				t.Fatalf("the refused input left the prepared root behind: %v", err)
+			}
+		})
+	}
+}
+
+// c7 d2 (CRW-908 generation 2): the campaign classifies a case's error, and the classification is what
+// keeps a removal failure from being counted as a refusal or a timeout. Each case is pinned here so a
+// reordering that put the refusal check first would fail.
+func TestClassifyCaseError(t *testing.T) {
+	removal := RemovalError{Root: "/root", Refused: errRefused, Err: errors.New("permission denied")}
+	for _, c := range []struct {
+		name string
+		err  error
+		want caseOutcome
+	}{
+		{"no error", nil, caseOK},
+		{"a plain refusal", errRefused, caseRefused},
+		{"a worker death", errors.New("the worker died"), caseTimedOut},
+		{"a timeout", Timeout{}, caseTimedOut},
+		{"a removal failure", removal, caseRemovalFailed},
+		{"a removal failure beside a refusal", errors.Join(errRefused, removal), caseRemovalFailed},
+		{"a removal failure beside a timeout", errors.Join(Timeout{}, removal), caseRemovalFailed},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := classifyCaseError(c.err); got != c.want {
+				t.Fatalf("classifyCaseError(%v) = %v, want %v", c.err, got, c.want)
+			}
+		})
+	}
+}
+
 // c7 d2 (CRW-908 generation 2): the helpers the caller folds errors with preserve a removal failure,
 // and a deferred cleanup failure is wrapped as one, so a root that outlived a run is never read as a
 // plain refusal or a transient worker death.

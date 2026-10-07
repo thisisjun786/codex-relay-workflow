@@ -210,28 +210,16 @@ func Campaign(cfg Config) (Summary, error) {
 		}
 		summary.Cases++
 		verdict, goOut, oracleOut, input, err := run.one()
-		switch {
-		case errors.As(err, new(RemovalError)):
+		switch classifyCaseError(err) {
+		case caseRemovalFailed:
 			// A root that survived its removal is reported, never counted: the caller must see which root
 			// was left and why, and the run must not continue as if the case had merely been refused.
 			return summary, err
-		case errors.Is(err, Timeout{}):
+		case caseTimedOut:
 			summary.Timeouts++
 			continue
-		case errors.Is(err, errRefused):
+		case caseRefused:
 			summary.Refused++
-			continue
-		case err != nil:
-			// A cleanup failure is never a transient worker death: it says a root outlived the run that
-			// owned it, which the caller must see.
-			var removal RemovalError
-			if errors.As(err, &removal) {
-				return summary, err
-			}
-			// The worker died, or its reply was unreadable: the issue records that input as a
-			// timeout case and carries on with the replacement worker, so one transient death
-			// does not discard the run. It is not an agreement either.
-			summary.Timeouts++
 			continue
 		}
 		switch verdict.Kind {
@@ -250,6 +238,8 @@ func Campaign(cfg Config) (Summary, error) {
 		shrinker := &shrinkRun{campaign: run, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
 		shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
 		if shrinker.removal != nil {
+			// A removal failure during shrinking is the same fact as one during the run: a root outlived
+			// the work that owned it, so it is reported rather than folded into the kept candidate.
 			return summary, shrinker.removal
 		}
 		if err := writeDivergence(cfg.Out, Divergence{
@@ -276,6 +266,36 @@ func Campaign(cfg Config) (Summary, error) {
 
 // errRefused is a case whose fs scenario the harness refused to build, so it was not run.
 var errRefused = errors.New("the fs scenario was refused")
+
+// caseOutcome is what one case's error means to a campaign.
+type caseOutcome int
+
+const (
+	// caseOK is no error: the case ran and its verdict decides.
+	caseOK caseOutcome = iota
+	// caseRefused is a scenario the harness declined, which the run counts and carries on from.
+	caseRefused
+	// caseTimedOut is a worker that died or did not answer, which the run counts and carries on from.
+	caseTimedOut
+	// caseRemovalFailed is a root that outlived its run, which is reported and never counted.
+	caseRemovalFailed
+)
+
+// classifyCaseError says what one case's error means. A removal failure is checked before the refusal,
+// because a refused build whose root survived is answered as the RemovalError itself: reading it as a
+// refused case would let the run carry on with a root still on the host.
+func classifyCaseError(err error) caseOutcome {
+	if err == nil {
+		return caseOK
+	}
+	if errors.As(err, new(RemovalError)) {
+		return caseRemovalFailed
+	}
+	if errors.Is(err, errRefused) {
+		return caseRefused
+	}
+	return caseTimedOut
+}
 
 // refusedOutcome turns a scenario failure into the error the caller sees. A refusal is the harness
 // declining the case; a RemovalError is not - the root survived, so it is reported as itself and never

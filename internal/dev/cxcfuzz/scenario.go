@@ -34,14 +34,16 @@ type Entry struct {
 func Scenarios(root string, input any) (int, error) {
 	entries, err := fsEntries(input)
 	if err != nil {
-		return 0, err
+		// An input the harness cannot read is a refusal of the case, so it leaves no tree either: the
+		// caller prepared the root before this call.
+		return 0, refuse(root, err)
 	}
 	if len(entries) == 0 {
 		return 0, nil
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return 0, err
+		return 0, refuse(root, err)
 	}
 	for _, entry := range entries {
 		if err := build(root, resolvedRoot, entry); err != nil {
