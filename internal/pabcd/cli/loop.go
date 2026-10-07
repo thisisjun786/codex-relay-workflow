@@ -79,27 +79,42 @@ func loopInitWriteState(cwd string, next state.State) error {
 	return state.WriteState(cwd, next)
 }
 
-// loopInitPlanWaitPause pauses between the rounds of init's wait for a competing init's plan, and
-// loopInitPlanWaitLimit bounds how many rounds that wait keeps going while the holder it is waiting on
-// is still running. The wait follows the holder's own lifetime — loopInitGoalplanHolderAlive and
-// loopInitSessionHolder decide when to stop — so a live competing init is never mistaken for an
-// abandoned lock. The limit is a backstop, not a grace period: the wait cannot be unbounded, because
-// c2 fixes that a lock held by another holder must answer (the shared lock's own busy message, its
-// documented recovery) rather than hang, so a holder that lives but never publishes is bounded here.
-// At 200 ms a round it covers five minutes, far longer than any real init's write, which is what the
-// c1 answer needs: the loser must still be waiting when a slow but live winner publishes. Both are
-// test seams, and loopInitPlanWaitEntered runs once when the wait begins, so a test can synchronize at
-// the post-budget entry instead of guessing with a timer (CRW-646 d4).
+// loopInitPlanWaitPause pauses between the rounds of init's wait for a competing init's plan. The wait
+// is bounded by the competing holder's own lifetime — loopInitGoalplanHolder and loopInitSessionHolder
+// decide when it ends — and by no fixed round limit: a limit would make the
+// criterion's answer depend on an assumed maximum winner duration, so a slow but live winner (a stalled
+// fsync, a paused process) could outlast it and the loser would answer a lock error instead of "a plan
+// already exists at slug ..." (CRW-646 c1). The wait therefore ends when the plan appears or when the
+// holder's process is gone; a holder that lives but never publishes is the shared lock's documented
+// human recovery (inspect and remove the lock directory after verifying no writer is active). A holder
+// whose owner metadata is absent or unreadable is bounded by loopInitPlanWaitGrace instead, because a
+// foreign or corrupt lock must not make init hang. loopInitPlanWaitPause is a test seam, and
+// loopInitPlanWaitEntered runs once when the wait begins, so a test can synchronize at the post-budget
+// entry instead of guessing with a timer (CRW-646 d4).
 var (
 	loopInitPlanWaitPause   = func() { time.Sleep(200 * time.Millisecond) }
-	loopInitPlanWaitLimit   = 1500
 	loopInitPlanWaitEntered func()
 )
 
-// loopInitGoalplanHolderAlive reports whether the process holding slug's goalplan creation lock is
-// still running, so the loser of a concurrent creation can keep waiting for it (CRW-646 c1).
-func loopInitGoalplanHolderAlive(cwd, slug string) bool {
-	return goalplan.GoalplanLockHolderAlive(cwd, slug)
+// loopInitPlanWaitGrace bounds how many rounds a waiter follows a lock whose owner metadata is absent or
+// unreadable: enough to cover the window between acquiring the lock and writing its owner file, and short
+// enough that a foreign lock cannot make init hang. A holder whose metadata names a live process is not
+// bounded by this, because such a holder may still publish the plan the loser owes an answer for.
+const loopInitPlanWaitGrace = 25
+
+// loopInitGoalplanHolder maps slug's goalplan lock onto the shared wait vocabulary, so the goalplan
+// wait and the session wait act on the same four answers.
+func loopInitGoalplanHolder(cwd, slug string) loopInitHolder {
+	switch goalplan.GoalplanLockHolderState(cwd, slug) {
+	case goalplan.GoalplanHolderLive:
+		return loopInitHolderLive
+	case goalplan.GoalplanHolderDead:
+		return loopInitHolderDead
+	case goalplan.GoalplanHolderGone:
+		return loopInitHolderGone
+	default:
+		return loopInitHolderUnknown
+	}
 }
 
 // loopInitHolder is what a wait can learn about the process that holds a lock, told apart because the
@@ -109,9 +124,10 @@ func loopInitGoalplanHolderAlive(cwd, slug string) bool {
 type loopInitHolder int
 
 const (
-	loopInitHolderGone loopInitHolder = iota // no lock file: released (or never created)
-	loopInitHolderLive                       // the lock file names a running process
-	loopInitHolderDead                       // the lock file is there, its owner is not
+	loopInitHolderGone    loopInitHolder = iota // no lock file: released (or never created)
+	loopInitHolderLive                          // the lock file names a running process
+	loopInitHolderDead                          // the lock file is there, its owner is not
+	loopInitHolderUnknown                       // the lock file is there, its owner is unreadable
 )
 
 // loopInitSessionHolder reads the session lock: gone when the file is absent, dead when its pid is not
@@ -121,16 +137,29 @@ const (
 // unreadable or empty is the ordinary state of a holder that has just created the file, so it counts as
 // live rather than refusing a competing creator that is about to publish.
 func loopInitSessionHolder(cwd, sessionID string) loopInitHolder {
-	raw, err := state.ReadLockOwnerBytes(state.StatePath(cwd, sessionID) + ".lock")
+	lockPath := state.StatePath(cwd, sessionID) + ".lock"
+	info, err := os.Lstat(lockPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return loopInitHolderGone
 		}
-		return loopInitHolderLive
+		return loopInitHolderUnknown
+	}
+	if !info.Mode().IsRegular() {
+		// A FIFO, a link, a directory or a device at the lock path is no holder: nothing there can
+		// publish a plan, and waiting on it would be a hang. The caller reports the lock's own error.
+		return loopInitHolderDead
+	}
+	raw, err := state.ReadLockOwnerBytes(lockPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return loopInitHolderGone
+		}
+		return loopInitHolderUnknown
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 	if err != nil || pid <= 0 {
-		return loopInitHolderLive
+		return loopInitHolderUnknown
 	}
 	if loopInitProcessAlive(pid) {
 		return loopInitHolderLive
@@ -305,8 +334,11 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 //   - a lock file whose owner is DEAD is an abandoned lock, answered with the shared lock's own busy
 //     message, that lock's documented recovery.
 //
-// The round limit is a backstop for a holder that lives but never finishes: c2 fixes that a lock held
-// by another holder must answer rather than hang, so the wait cannot be unbounded.
+// The wait is bounded by that liveness alone, never by a fixed round count: a limit would let a slow but
+// live winner outlast it and make the loser answer a lock error instead of the criterion's "a plan
+// already exists at slug ..." (CRW-646 c1, d4). A lock whose owner metadata is unreadable (a foreign or
+// corrupt lock, or a holder that has not yet written its pid) is followed only for loopInitPlanWaitGrace
+// rounds, so such a lock cannot make init hang.
 func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID string, lockErr error) (LoopCliResult, error) {
 	// The wait's entry seam: this call runs only after the session lock's own acquisition budget ran out,
 	// so the seam marks exactly the post-budget moment a test synchronizes a competing publication at
@@ -314,7 +346,8 @@ func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID strin
 	if loopInitPlanWaitEntered != nil {
 		loopInitPlanWaitEntered()
 	}
-	for round := 0; round < loopInitPlanWaitLimit; round++ {
+	unknown := 0
+	for {
 		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
 			return result, nil
 		}
@@ -340,14 +373,16 @@ func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID strin
 			lockErr = err // another init took the lock in the window; keep waiting for its plan
 		case loopInitHolderDead:
 			return LoopCliResult{}, lockErr
-		case loopInitHolderLive:
-			loopInitPlanWaitPause()
+		case loopInitHolderUnknown:
+			// No readable owner metadata: cover the window between taking the lock and writing the pid,
+			// but do not follow a foreign or corrupt lock forever.
+			if unknown >= loopInitPlanWaitGrace {
+				return LoopCliResult{}, lockErr
+			}
+			unknown++
 		}
+		loopInitPlanWaitPause()
 	}
-	if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
-		return result, nil
-	}
-	return LoopCliResult{}, lockErr
 }
 
 // loopInitPlanRefusal is the one "a plan of this slug must not be created" predicate: init's outer
@@ -437,13 +472,15 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 	// lifetime, however long that is — re-checking the plan and re-attempting the acquisition each
 	// round; a round that takes the lock runs the same check-and-publish body, so a holder that
 	// released without publishing is simply followed. The wait ends when the plan appears, when the
-	// holder is gone (an abandoned lock, answered with the shared lock's own busy message, that lock's
-	// documented recovery), or after loopInitPlanWaitLimit rounds — the backstop for a holder that
-	// stays alive but never finishes, so a reused pid cannot make init hang forever. At 200 ms a round
-	// the backstop is five minutes, far longer than any real init's write, so a slow but live winner
-	// still gets its plan seen and the loser still answers the criterion's refusal.
+	// holder's process is gone (an abandoned lock, answered with the shared lock's own busy message, that
+	// lock's documented recovery), or — for a lock whose owner metadata is absent or unreadable — after
+	// loopInitPlanWaitGrace rounds. It is NOT bounded by a fixed round count while a live holder is
+	// named: that would make the criterion's answer depend on an assumed maximum winner duration and let
+	// a slow but live winner outlast it (CRW-646 c1, d4). A live holder that never publishes is the
+	// shared lock's documented human recovery, and the answer names the lock directory.
 	entered := false
-	for round := 0; round < loopInitPlanWaitLimit; round++ {
+	unknown := 0
+	for {
 		var refusal *LoopCliResult
 		warnings := []string{}
 		locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
@@ -491,18 +528,23 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
 			return result, nil
 		}
-		if !loopInitGoalplanHolderAlive(args.Cwd, slug) {
+		switch loopInitGoalplanHolder(args.Cwd, slug) {
+		case loopInitHolderGone:
+			continue // the lock was released without publishing: re-attempt the acquisition now
+		case loopInitHolderLive:
+			// The holder may still publish the plan this init owes an answer for; wait for it.
+		case loopInitHolderUnknown:
+			// No readable owner metadata: cover the window between acquiring the lock and writing the
+			// pid, but do not follow a foreign or corrupt lock forever.
+			if unknown >= loopInitPlanWaitGrace {
+				return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+			}
+			unknown++
+		case loopInitHolderDead:
 			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
 		}
 		loopInitPlanWaitPause()
 	}
-	// The backstop ran out. Re-check the plan once more — the winner may have published between the last
-	// round's check and here — and otherwise answer the shared lock's own busy message, which is that
-	// lock's documented recovery and never a claim that nothing is there (CRW-646 c1, d3).
-	if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
-		return result, nil
-	}
-	return LoopCliResult{Output: "loop init: " + fmt.Sprintf("goalplan '%s' is still held by a live writer that has not published a plan; inspect and remove its lock directory after verifying no writer is active", slug), Code: 1}, nil
 }
 
 // loopPlanFileExists reports whether anything occupies slug's plan path. A regular file is the plan; a

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -267,33 +268,55 @@ func writeLockOwner(lock *os.File, dir string, now func() string) {
 	_, _ = fmt.Fprintf(file, "{\"pid\":%d,\"acquiredAt\":%s}\n", os.Getpid(), quote(now()))
 }
 
-// GoalplanLockHolderAlive reports whether the process holding slug's goalplan write lock is still
-// running, read from the lock directory's owner.json. The shared lock never expires a directory (a
-// stale one is removed by hand), so this is how a waiter tells a live competing writer from an
-// abandoned lock: it can keep waiting for the former and give up on the latter (CRW-646). A lock
-// whose owner.json is missing or unreadable answers false, so the waiter's wait always ends in
-// something.
-func GoalplanLockHolderAlive(cwd, slug string) bool {
+// GoalplanLockHolder is what a waiter can learn about slug's goalplan write lock. The four answers
+// call for different actions: Live is waited for (the holder may still publish), Dead ends the wait
+// with the lock's own busy message, Gone means the lock was released and the waiter can try again, and
+// Unknown (no lock directory, or owner.json absent/unreadable/undecodable) is bounded by the caller so
+// a foreign or corrupt lock cannot make a waiter hang (CRW-646).
+type GoalplanLockHolder int
+
+const (
+	GoalplanHolderGone    GoalplanLockHolder = iota // the lock directory is absent
+	GoalplanHolderLive                              // owner.json names a running process
+	GoalplanHolderDead                              // owner.json names a process that is gone
+	GoalplanHolderUnknown                           // owner.json is absent, unreadable or undecodable
+)
+
+// GoalplanLockHolderState reports the holder of slug's goalplan write lock from the lock directory and
+// its owner.json. The shared lock never expires a directory (a stale one is removed by hand), so this is
+// how a waiter tells a live competing writer from an abandoned lock: it keeps waiting for the former
+// and gives up on the latter.
+func GoalplanLockHolderState(cwd, slug string) GoalplanLockHolder {
 	dir, err := GoalplanDir(cwd, slug)
 	if err != nil {
-		return false
+		return GoalplanHolderUnknown
 	}
-	raw, err := readLockOwnerBytes(filepath.Join(dir, GoalplanLockDir, GoalplanLockOwnerFile))
+	lockDir := filepath.Join(dir, GoalplanLockDir)
+	if _, err := os.Lstat(lockDir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return GoalplanHolderGone
+		}
+		return GoalplanHolderUnknown
+	}
+	raw, err := readLockOwnerBytes(filepath.Join(lockDir, GoalplanLockOwnerFile))
 	if err != nil {
 		// The lock directory exists but its owner.json is absent or unreadable. mkdir acquires the lock
-		// and owner.json is written right after, so this is the ordinary state of a holder that has
-		// just started; it is also what a foreign or corrupt lock looks like. Treat it as a live holder
-		// (the caller's wait is bounded), because the opposite default would refuse a competing creator
-		// that is about to publish (CRW-646 c1).
-		return true
+		// and owner.json is written right after, so this is the ordinary state of a holder that has just
+		// started; it is also what a foreign or corrupt lock looks like. The caller treats Unknown as a
+		// live holder for a bounded grace, so a just-started creator is not refused and a corrupt lock
+		// cannot make the waiter hang.
+		return GoalplanHolderUnknown
 	}
 	var owner struct {
 		PID int `json:"pid"`
 	}
 	if json.Unmarshal(raw, &owner) != nil || owner.PID <= 0 {
-		return true
+		return GoalplanHolderUnknown
 	}
-	return processAlive(owner.PID)
+	if processAlive(owner.PID) {
+		return GoalplanHolderLive
+	}
+	return GoalplanHolderDead
 }
 
 // readLockOwnerBytes reads a lock's small owner/metadata file without following a symbolic link and

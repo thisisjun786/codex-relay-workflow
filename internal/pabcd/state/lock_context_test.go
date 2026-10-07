@@ -5,8 +5,11 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // CRW-871: WithSessionLockContext is WithSessionLock for a caller that can be interrupted (the
@@ -111,5 +114,53 @@ func TestWithSessionLockStillUsesItsSleepSeam(t *testing.T) {
 	}
 	if slept == 0 {
 		t.Fatal("the busy lock did not use the caller's sleep seam")
+	}
+}
+
+// TestWithSessionLockReleasesALockTakenInADisplacedDirectory is CRW-646 d1: after a lock file is
+// created, the directory it was created in is checked against the path the walk resolved, and a lock
+// taken in a directory a rename has since displaced is released and retried. Without that check the
+// waiter would hold a lock on an inode the current path no longer reaches, and two writers could each
+// hold "the" lock on different inodes (the loser of the rename could then rewrite state the winner's
+// lock protected).
+//
+// The seam displaces the directory between the create and the check, and the fresh directory carries a
+// second holder's lock, so the retry meets it and fails with the lock's own EEXIST: the callback must
+// never run, and the displaced directory must be left without the lock this attempt created.
+func TestWithSessionLockReleasesALockTakenInADisplacedDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	if err := makeSessionsDir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	sessions := filepath.Join(cwd, crwdir.DirName, SessionsSubdir)
+	lockName := SanitizeKey("s") + ".json.lock"
+	displaced := sessions + ".old"
+	sessionLockAfterCreate = func() {
+		sessionLockAfterCreate = nil // once
+		if err := os.Rename(sessions, displaced); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Mkdir(sessions, 0o777); err != nil {
+			t.Error(err)
+			return
+		}
+		// A second holder owns the fresh directory's lock, so the retry cannot take it.
+		if err := os.WriteFile(filepath.Join(sessions, lockName), []byte("999999"), 0o666); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { sessionLockAfterCreate = nil })
+
+	ran := false
+	err := withSessionLock(cwd, "s", func() error { ran = true; return nil }, func(time.Duration) {})
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("the lock returned %v, want fs.ErrExist from the fresh directory's holder", err)
+	}
+	if ran {
+		t.Fatal("the callback ran while holding a lock in the displaced directory")
+	}
+	if _, err := os.Lstat(filepath.Join(displaced, lockName)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the displaced directory kept the lock this attempt created: %v", err)
 	}
 }

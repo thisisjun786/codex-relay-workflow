@@ -251,17 +251,17 @@ func makeSessionsDir(cwd string) error {
 	return dir.Close()
 }
 
-// openSessionsDir is ensureCodexclawDir(cwd) then the sessions directory, returned as an open
-// descriptor. Every step of the walk from the filesystem root is opened with O_NOFOLLOW, so a
-// symbolic link in the way is refused (ErrStateRootSymlink) instead of followed, and a caller that
-// writes through the returned descriptor cannot be redirected by a later rename of a path component.
-// The .crw directory is left as crwdir.EnsureDir made it (an existing directory, a file or a link in
-// its place is returned untouched and refused by the walk below); only the sessions directory is
-// created here, and an existing one that is a real directory is accepted.
+// openSessionsDir returns cwd/.crw/sessions as an open descriptor, creating .crw and the sessions
+// directory through that same walk when they are missing. Every step from the filesystem root is opened
+// with O_NOFOLLOW, so a symbolic link in the way is refused (ErrStateRootSymlink) instead of followed,
+// and every create is made RELATIVE to the parent descriptor with Mkdirat, so no pathname write runs
+// before or beside the walk: the .gitignore is published through the new .crw descriptor, not by
+// pathname (CRW-646; a pathname create there could be redirected into a link swapped in after the
+// mkdir). A caller that writes through the returned descriptor cannot be redirected by a later rename
+// of a path component either. An existing .crw or sessions directory that is a real directory is
+// accepted; only the process that creates .crw publishes its .gitignore, exactly as crwdir.EnsureDir
+// does.
 func openSessionsDir(cwd string) (*os.File, error) {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return nil, err
-	}
 	base, err := filepath.Abs(cwd)
 	if err != nil {
 		return nil, err
@@ -270,36 +270,94 @@ func openSessionsDir(cwd string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	parent, err := openRootDir()
 	if err != nil {
 		return nil, err
 	}
-	parent := os.NewFile(uintptr(fd), "/")
 	expected := "/"
-	for _, part := range append(strings.Split(strings.TrimPrefix(base, "/"), "/"), crwdir.DirName, SessionsSubdir) {
+	for _, part := range strings.Split(strings.TrimPrefix(base, "/"), "/") {
 		if part == "" {
 			continue
 		}
 		expected = filepath.Join(expected, part)
-		next, err := openDirNoFollow(parent, part, expected)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				_ = parent.Close()
-				return nil, err
-			}
-			if err := unix.Mkdirat(int(parent.Fd()), part, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
-				_ = parent.Close()
-				return nil, err
-			}
-			if next, err = openDirNoFollow(parent, part, expected); err != nil {
-				_ = parent.Close()
-				return nil, err
-			}
-		}
+		next, _, err := ensureDirNoFollow(parent, part, expected)
 		_ = parent.Close()
+		if err != nil {
+			return nil, err
+		}
 		parent = next
 	}
-	return parent, nil
+	// The state root is created through the walk and, only when this call created it, its .gitignore is
+	// published through the new descriptor. A .crw that is a link, a file or another non-directory entry
+	// is refused by the walk (ErrStateRootSymlink for a link), so nothing is written through it.
+	rootPath := filepath.Join(expected, crwdir.DirName)
+	root, created, err := ensureDirNoFollow(parent, crwdir.DirName, rootPath)
+	_ = parent.Close()
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		if err := writeIgnoreAt(root, rootPath); err != nil {
+			_ = root.Close()
+			// rmdir, as crwdir.ensureDir does: it removes an empty directory only, so whatever a
+			// concurrent writer put there stays and this removal's own failure is ignored.
+			_ = os.Remove(rootPath)
+			return nil, err
+		}
+	}
+	sessionsPath := filepath.Join(rootPath, SessionsSubdir)
+	sessions, _, err := ensureDirNoFollow(root, SessionsSubdir, sessionsPath)
+	_ = root.Close()
+	if err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+// openRootDir opens the filesystem root for the walk's first step.
+func openRootDir() (*os.File, error) {
+	fd, err := unix.Open("/", sessionsDirOpenFlags(), 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: "/", Err: err}
+	}
+	return os.NewFile(uintptr(fd), "/"), nil
+}
+
+// ensureDirNoFollow opens name under parent as a directory, creating it with Mkdirat relative to parent
+// when it is absent. It reports whether this call created the directory. A symbolic link is refused as
+// ErrStateRootSymlink and any other non-directory entry as an ordinary error.
+func ensureDirNoFollow(parent *os.File, name, expected string) (*os.File, bool, error) {
+	next, err := openDirNoFollow(parent, name, expected)
+	if err == nil {
+		return next, false, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, false, err
+	}
+	if mkErr := unix.Mkdirat(int(parent.Fd()), name, 0o777); mkErr != nil && !errors.Is(mkErr, fs.ErrExist) {
+		return nil, false, &os.PathError{Op: "mkdir", Path: expected, Err: mkErr}
+	}
+	next, err = openDirNoFollow(parent, name, expected)
+	if err != nil {
+		return nil, false, err
+	}
+	return next, true, nil
+}
+
+// writeIgnoreAt publishes .crw/.gitignore through the descriptor of the .crw this call created, so the
+// write cannot be redirected by a rename of the root path. A .gitignore a concurrent creator wrote first
+// answers EEXIST and is kept.
+func writeIgnoreAt(dir *os.File, dirPath string) error {
+	fd, err := unix.Openat(int(dir.Fd()), ".gitignore", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o666)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return &os.PathError{Op: "open", Path: filepath.Join(dirPath, ".gitignore"), Err: err}
+	}
+	f := os.NewFile(uintptr(fd), filepath.Join(dirPath, ".gitignore"))
+	_, err = f.WriteString(crwdir.GitignoreText)
+	return errors.Join(err, f.Close())
 }
 
 // ErrStateRootSymlink reports a state root (cwd/.crw) or its sessions directory that is a symbolic
@@ -310,7 +368,7 @@ var ErrStateRootSymlink = errors.New("state path must not be a symlink")
 // openDirNoFollow opens name under parent as a directory, refusing a symbolic link at that step. A
 // link is reported as ErrStateRootSymlink so the caller can name the refusal.
 func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {
-	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(parent.Fd()), name, sessionsDirOpenFlags(), 0)
 	if err != nil {
 		// The open answers ENOTDIR (or ELOOP) for a symbolic link, because O_NOFOLLOW stops at the link
 		// and a link is not a directory. Ask the kernel whether the entry IS a link, so the refusal can
@@ -326,6 +384,12 @@ func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {
 	if err != nil {
 		_ = f.Close()
 		return nil, err
+	}
+	// With O_PATH the open can succeed on a symbolic link (the descriptor names the link itself), so the
+	// mode is checked here as well, not only on the error path above.
+	if info.Mode()&os.ModeSymlink != 0 {
+		_ = f.Close()
+		return nil, fmt.Errorf("%w: %s", ErrStateRootSymlink, expected)
 	}
 	if !info.IsDir() {
 		_ = f.Close()

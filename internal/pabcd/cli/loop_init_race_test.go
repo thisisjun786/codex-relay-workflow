@@ -16,6 +16,7 @@ package cli
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -148,7 +149,7 @@ func TestLoopInitWritesNothingWhenTheSessionLockIsHeld(t *testing.T) {
 	loopSession(t, cwd, id)
 
 	lockPath := state.StatePath(cwd, id) + ".lock"
-	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0o666); err != nil {
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(loopDeadPID(t))), 0o666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -661,6 +662,26 @@ func loopInitFastWaits(t *testing.T) {
 	t.Cleanup(func() { loopInitPlanWaitPause = pause })
 }
 
+// loopDeadPID returns the pid of a process that has already exited, so a lock file naming it is an
+// abandoned lock (its owner is gone) rather than a live holder. The wait follows a live holder's
+// lifetime without a fixed round limit (CRW-646 c1), so a case that must fail on a held lock models an
+// abandoned one, which is exactly what the oracle's stale-lock note describes.
+func loopDeadPID(t *testing.T) int {
+	t.Helper()
+	for attempt := 0; attempt < 20; attempt++ {
+		cmd := exec.Command("sh", "-c", "exit 0")
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("start and reap a short-lived process: %v", err)
+		}
+		if pid := cmd.Process.Pid; !loopInitProcessAlive(pid) {
+			return pid
+		}
+	}
+	// Every reaped pid was reused by a live process (vanishingly unlikely); answer one above pid_max,
+	// which no process can hold and the kernel therefore reports as gone.
+	return 1 << 22
+}
+
 // TestLoopInitDoesNotWaitForAReleasedSessionLock is d2 (P1): the holder of the session lock released
 // it without publishing a plan. An absent lock file is the holder's ordinary release, not a live
 // holder, so the waiter must take the lock itself and complete instead of waiting out its whole budget
@@ -696,32 +717,62 @@ func TestLoopInitDoesNotWaitForAReleasedSessionLock(t *testing.T) {
 	}
 }
 
-// TestLoopInitAnswersTheLockRecoveryWhenALiveWriterNeverPublishes is d3's backstop: a lock whose owner
-// is a live process that never publishes cannot be waited for forever (c2 fixes that a held lock must
-// answer), so the wait ends with the shared lock's own recovery text — never with a claim that nothing
-// is there, and never with a raw error a caller cannot act on. The round limit is the test seam.
-func TestLoopInitAnswersTheLockRecoveryWhenALiveWriterNeverPublishes(t *testing.T) {
+// TestLoopInitAnswersTheLockRecoveryWhenALockHasNoReadableOwner is d3's bound: a lock whose owner
+// metadata is absent or unreadable (a foreign or corrupt lock, not a just-started holder) is followed
+// only for loopInitPlanWaitGrace rounds and then answers the shared lock's own recovery text — never a
+// claim that nothing is there, and never a raw error a caller cannot act on. The grace is the test seam.
+func TestLoopInitAnswersTheLockRecoveryWhenALockHasNoReadableOwner(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	const slug = "ship-the-export-feature"
+	dir := filepath.Join(cwd, ".crw", "goalplans", slug)
 	loopInitFastWaits(t)
-	limit := loopInitPlanWaitLimit
-	loopInitPlanWaitLimit = 3
-	t.Cleanup(func() { loopInitPlanWaitLimit = limit })
-	holder := newLoopPlanHolder(t, cwd, slug, "Ship the export feature")
-	loopInitAfterAbsenceCheck = func() { holder.plant() } // planted, never published, owner is this live process
+	// A lock directory with NO owner.json: the state a foreign or corrupt lock has, and the state a
+	// holder has for the instant between mkdir and the owner write. The waiter must not hang on it.
+	loopInitAfterAbsenceCheck = func() {
+		if err := os.MkdirAll(filepath.Join(dir, ".goalplan.lock"), 0o755); err != nil {
+			t.Error(err)
+		}
+	}
 	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
 
 	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
 	if result.Code != 1 {
 		t.Fatalf("got %d %q, want the lock's recovery answer", result.Code, result.Output)
 	}
-	for _, want := range []string{"still held by a live writer", "lock directory", "remove"} {
+	for _, want := range []string{"is busy", "lock directory", "remove"} {
 		if !strings.Contains(result.Output, want) {
-			t.Fatalf("the backstop answer does not name %q: %q", want, result.Output)
+			t.Fatalf("the recovery answer does not name %q: %q", want, result.Output)
 		}
 	}
 	if _, err := os.Stat(loopPlanFile(cwd, slug)); !os.IsNotExist(err) {
 		t.Fatalf("the refused init wrote a plan: %v", err)
+	}
+}
+
+// TestLoopInitWaitsForALiveWinnerWithoutARoundLimit is c1's unconditional answer: a live winner that
+// publishes only after many rounds still gets its plan seen by the loser, because the wait follows the
+// holder's lifetime and not a fixed round count (CRW-646 c1, d4). The holder here stays live and
+// publishes well past any small round budget a fixed limit would have set.
+func TestLoopInitWaitsForALiveWinnerWithoutARoundLimit(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	const slug = "ship-the-export-feature"
+	loopInitFastWaits(t)
+	holder := newLoopPlanHolder(t, cwd, slug, "Ship the export feature")
+	loopInitAfterAbsenceCheck = func() { holder.plant() }
+	// Publish only after a long stretch of the loser's wait, well past a small fixed limit, and stop the
+	// holder being "live" only after it has published: the owner is this test process throughout.
+	loopInitPlanWaitEntered = func() {
+		go func() {
+			time.Sleep(300 * time.Millisecond) // ~300 fast-wait rounds, far past a small backstop
+			_ = holder.publish()
+		}()
+	}
+	t.Cleanup(func() { loopInitAfterAbsenceCheck, loopInitPlanWaitEntered = nil, nil })
+
+	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
+	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+	if result.Code != 1 || result.Output != want {
+		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }
 
