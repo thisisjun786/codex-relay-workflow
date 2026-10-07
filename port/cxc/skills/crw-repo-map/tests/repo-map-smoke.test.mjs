@@ -10,13 +10,16 @@
  *   - the fixtures are written into a temporary directory at run time instead of being committed,
  *     because a .py file may sit only in a skill's scripts/ or examples/ (crw-dev ci validate).
  *     They are the same three files the oracle kept under plugins/codexclaw/test/fixtures/repo-map/.
+ *   - the live run is opt-in: it happens only with CRW_REPOMAP_SMOKE=1. This repository's CI installs
+ *     no Python and runs no skill script, so a CI-collected test must not invoke the vendored script
+ *     just because a runner image happens to carry its parser deps: the answer there has to be a skip
+ *     whatever the image holds, and the live run belongs to a checkout that installed them. The
+ *     oracle ran by default and escaped with CODEXCLAW_SKIP_REPOMAP_SMOKE=1 because CXC's own CI
+ *     preinstalled uv; the polarity is inverted here because CRW's CI installs nothing.
  *   - the interpreter is the one the deps are already installed in (CRW_PYTHON, else python3), not
- *     a `uv run --with-requirements` resolve. The oracle's check also accepted a bare `uv` on PATH
- *     because it drove `cxc map`, whose ladder would resolve the deps itself; this test runs the
- *     vendored script directly, so an interpreter that cannot import them is the only runnable case.
- *     The skill-scripts-node job installs neither, so it reports the test skipped, exactly as the
- *     oracle's own CI did with its CODEXCLAW_SKIP_REPOMAP_SMOKE escape.
- *   - CRW_SKIP_REPOMAP_SMOKE=1 skips it, the renamed oracle escape.
+ *     a `uv run --with-requirements` resolve: the ladder that would do that is `crw map`'s, and this
+ *     test drives the vendored script directly, so an interpreter that cannot import them is the
+ *     only runnable case.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -83,8 +86,8 @@ function depsAvailable() {
 }
 
 test("the vendored map surfaces fixture symbols across TS/Python/Rust", (t) => {
-  if (process.env.CRW_SKIP_REPOMAP_SMOKE === "1") {
-    t.skip("CRW_SKIP_REPOMAP_SMOKE=1 (avoid a live dependency resolve)");
+  if (process.env.CRW_REPOMAP_SMOKE !== "1") {
+    t.skip("set CRW_REPOMAP_SMOKE=1 to run the vendored mapper over the fixtures (it needs the parser deps; CI installs none)");
     return;
   }
   if (!depsAvailable()) {

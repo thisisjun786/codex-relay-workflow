@@ -261,7 +261,7 @@
       "file": "tests/repo-map-smoke.test.mjs",
       "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects.",
       "add": true,
-      "sha256": "1b4781faea06d06e4da967cce7197b685e47e67de61ad48c4b8f7f90d1943ac0"
+      "sha256": "807b9330e4471ea576a07672e5b6ec1f28980dec6c3f7def6f4059226697c3db"
     }
   ]
 }
