@@ -401,11 +401,20 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			report.Notes = append(report.Notes, "enqueue refused for "+turn.TurnID+": "+err.Error())
 			err = commit(false, err)
 		} else {
+			// The settlement's own failure is judged here, after the rollback, never inside the
+			// transaction body: a damaged store is marked from outside the store it could not write
+			// (halt.go, CRW-848), and the marker is not part of the transaction that rolled back.
+			if d.halted(ctx, report, store.HaltSiteWrite, err) {
+				return
+			}
 			report.Notes = append(report.Notes, "settlement rolled back for "+turn.TurnID+": "+err.Error())
 			return
 		}
 	}
 	if err != nil {
+		if d.halted(ctx, report, store.HaltSiteWrite, err) {
+			return
+		}
 		report.Notes = append(report.Notes, "settlement rolled back for "+turn.TurnID+": "+err.Error())
 		return
 	}

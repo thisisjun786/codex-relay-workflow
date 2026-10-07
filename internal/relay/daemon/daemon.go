@@ -84,6 +84,13 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r := Report{Notes: []string{}}
+	// A store whose writes are halted gets a pass that writes nothing at all (CRW-848): no read of
+	// the host, no settlement, no delivery, no journal row. The deliveries this daemon was carrying
+	// stay where they are, for the next daemon and for the operator's restore.
+	if state := store.HaltStateAt(d.Store.Path); state.Present {
+		r.Notes = append(r.Notes, haltNote(state))
+		return r, nil
+	}
 	now := d.Clock.Now()
 	bind := func() {
 		bound, err := d.Ack.BindPendingAnchors(ctx)
@@ -95,12 +102,22 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	}
 	bind()
 	if err := d.observe(ctx, &r); err != nil {
+		if d.halted(ctx, &r, store.HaltSiteObservation, err) {
+			return r, nil
+		}
 		return r, err
 	}
-	d.sweep(ctx, &r)
-	d.requeue(ctx, &r, now)
+	if err := d.sweep(ctx, &r); err != nil && d.halted(ctx, &r, store.HaltSiteObservation, err) {
+		return r, nil
+	}
+	if err := d.requeue(ctx, &r, now); err != nil && d.halted(ctx, &r, store.HaltSiteObservation, err) {
+		return r, nil
+	}
 	var rr delivery.ReconcileReport
 	if err := delivery.ReconcilePass(ctx, d.Reconciler, d.Host, d.Policy.MaxReconciles, now, &rr); err != nil {
+		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+			return r, nil
+		}
 		return r, err
 	}
 	r.Reconciled += rr.Reconciled
@@ -130,6 +147,9 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	r.Notes = append(r.Notes, tc.Notes...)
 	var sent delivery.TickCounts
 	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
+		if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+			return r, nil
+		}
 		return r, err
 	}
 	r.Delivered += sent.Delivered
@@ -139,6 +159,9 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	if d.Channel != nil {
 		a, err := d.Channel.AutoSend(ctx, d.Host, now, d.Policy.MaxProjects, d.Policy.MaxSupervisorSends, d.afterProject, d.afterStaged, d.afterMessage)
 		if err != nil {
+			if d.halted(ctx, &r, store.HaltSiteWrite, err) {
+				return r, nil
+			}
 			return r, err
 		}
 		d.afterProject, d.afterStaged, d.afterMessage = a.AfterProject, a.AfterStagedAt, a.AfterMessageID
@@ -171,11 +194,47 @@ func value(o contract.OrderedObject, key string) any {
 	}
 	return nil
 }
-func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) {
+
+// halted marks the store and reports whether err was a failure of the class that stops writes
+// (halt.go, CRW-848). The marker is published for the write site and the pass that saw it ends: the
+// caller returns without an error, so the run keeps ticking and every later pass is write-free
+// because Tick checks the marker first. A failure that is not the class is left to the caller
+// exactly as it was. The marker's own failure is a note, never a second failure that would hide the
+// first.
+func (d *Daemon) halted(ctx context.Context, r *Report, site string, err error) bool {
+	cause, ok := store.CorruptingFailure(err)
+	if !ok {
+		return false
+	}
+	cause.Site = site
+	if recordErr := store.RecordHalt(ctx, d.Store.Path, cause); recordErr != nil {
+		r.Notes = append(r.Notes, "the halt marker could not be written: "+recordErr.Error())
+	} else {
+		r.Notes = append(r.Notes, haltNote(store.HaltStateAt(d.Store.Path)))
+	}
+	return true
+}
+
+// haltNote is what a pass says about a halted store.
+func haltNote(state store.HaltState) string {
+	if state.Detail != "" {
+		return "store writes are halted: " + state.Detail + " (" + state.Path + ")"
+	}
+	return fmt.Sprintf("store writes are halted: %s records %s (code %d) seen at %s on %s; no write is attempted until it is cleared by hand",
+		state.Path, state.Marker.Message, state.Marker.Code, state.Marker.Site, state.Marker.DetectedAt)
+}
+
+// requeue re-enqueues the intents whose delivery never landed. A scan that fails is a note for
+// every other failure and the error itself when the store is damaged, so Tick halts the pass
+// (CRW-848).
+func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) error {
 	rows, err := d.Store.All(ctx, "SELECT i.* FROM delivery_intent i LEFT JOIN deliveries d ON d.event_id=i.event_id WHERE d.event_id IS NULL AND (i.next_retry_at IS NULL OR i.next_retry_at<=?) ORDER BY i.next_retry_at LIMIT ?", now, d.Policy.MaxSends)
 	if err != nil {
+		if _, corrupting := store.CorruptingFailure(err); corrupting {
+			return err
+		}
 		r.Notes = append(r.Notes, "requeue scan failed: "+err.Error())
-		return
+		return nil
 	}
 	for _, row := range rows {
 		event := row.Get("event_id").(string)
@@ -192,20 +251,22 @@ func (d *Daemon) requeue(ctx context.Context, r *Report, now float64) {
 		}
 		r.Requeued++
 	}
+	return nil
 }
-func (d *Daemon) sweep(ctx context.Context, r *Report) {
+
+// sweep records the fault ledger's batch. Its failures are notes, apart from a damaged store,
+// whose error is returned so Tick halts the pass (CRW-848).
+func (d *Daemon) sweep(ctx context.Context, r *Report) error {
 	if d.Faults == nil || d.Sweeper == nil {
-		return
+		return nil
 	}
 	batch, err := d.Sweeper.Sweep(ctx, "crw")
 	if err != nil {
-		r.Notes = append(r.Notes, "fault sweep failed: "+err.Error())
-		return
+		return sweepFailure(r, err)
 	}
 	answer, err := d.Sweeper.RecordAll(ctx, d.Faults, batch)
 	if err != nil {
-		r.Notes = append(r.Notes, "fault sweep failed: "+err.Error())
-		return
+		return sweepFailure(r, err)
 	}
 	r.FaultsRecorded += answer.Recorded
 	for _, one := range answer.Gaps {
@@ -214,14 +275,24 @@ func (d *Daemon) sweep(ctx context.Context, r *Report) {
 	}
 	attention, err := d.Faults.Attention(ctx)
 	if err != nil {
-		r.Notes = append(r.Notes, "fault sweep failed: "+err.Error())
-		return
+		return sweepFailure(r, err)
 	}
 	warning, _ := attention["warning"].(string)
 	if warning != "" && warning != d.lastAttention {
 		r.Notes = append(r.Notes, warning)
 	}
 	d.lastAttention = warning
+	return nil
+}
+
+// sweepFailure is a fault sweep failure: the error itself when the store is damaged, so Tick halts
+// the pass, and otherwise the note it has always been.
+func sweepFailure(r *Report, err error) error {
+	if _, corrupting := store.CorruptingFailure(err); corrupting {
+		return err
+	}
+	r.Notes = append(r.Notes, "fault sweep failed: "+err.Error())
+	return nil
 }
 
 // Run is bounded by count or wall deadline; stop is additional, never a bound.
