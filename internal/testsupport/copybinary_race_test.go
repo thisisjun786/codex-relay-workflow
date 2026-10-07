@@ -26,7 +26,7 @@ import (
 // runs the exercise.
 const (
 	copyWriters = 8
-	// copyMinOverlap is how many forks must complete while a copy call is open before the run counts as
+	// copyMinOverlap is how many fork attempts must begin while a copy call is open before the run counts as
 	// exercised. Copies keep going past the iteration count, within copyByteBudget, until it is reached.
 	copyMinOverlap = 5
 	copyIterations = 40
@@ -66,9 +66,8 @@ type copyRaceResult struct {
 	// Forked is how many forker program starts succeeded. A green run whose forkers never started a
 	// process would prove nothing about the race, so the parent requires it to be non-zero.
 	Forked int64 `json:"forked"`
-	// Overlap is how many forks completed while a copy call was open (from before CopyBinary to its
-	// return). A fork cannot complete inside the locked window, so Overlap counts the closest observable
-	// interval; a green run shows fork pressure was active at the copy, not only before or after it.
+	// Overlap is how many fork attempts began while a copy call was open (from before CopyBinary to its
+	// return). The count is taken at each attempt's start, so it does not depend on child completion order.
 	Overlap int64         `json:"overlap"`
 	Elapsed time.Duration `json:"elapsed"`
 }
@@ -86,7 +85,7 @@ func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 		t.Fatalf("no forker started a process: the exercise did not establish the concurrent-fork pressure it needs")
 	}
 	if result.Overlap < copyMinOverlap {
-		t.Fatalf("only %d forks completed while a copy was open (need %d): the copies never raced a fork", result.Overlap, copyMinOverlap)
+		t.Fatalf("only %d fork attempts began while a copy was open (need %d): the copies never raced a fork", result.Overlap, copyMinOverlap)
 	}
 	if result.Busy != 0 {
 		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", result.Busy, result.Attempted)
@@ -229,7 +228,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 	// when the result is built, so marshalling the result can never race a writer that the timeout
 	// left running.
 	var written, busy, forkStarts int64
-	// copiesOpen counts copy calls in progress; forksInCopy counts forks that complete while one is.
+	// copiesOpen counts copy calls in progress; forksInCopy counts fork attempts that begin while one is.
 	var copiesOpen, forksInCopy int64
 	snapshot := func() copyRaceResult {
 		return copyRaceResult{
@@ -252,11 +251,13 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 					return
 				default:
 				}
+				// Counted when the attempt begins: a fork begun during a copy waits behind syscall.ForkLock
+				// until the copy closes, so the start, not the child's completion, is the evidence.
+				if atomic.LoadInt64(&copiesOpen) > 0 {
+					atomic.AddInt64(&forksInCopy, 1)
+				}
 				if err := exec.Command(source).Run(); err == nil {
 					atomic.AddInt64(&forkStarts, 1)
-					if atomic.LoadInt64(&copiesOpen) > 0 {
-						atomic.AddInt64(&forksInCopy, 1)
-					}
 				}
 			}
 		}()
