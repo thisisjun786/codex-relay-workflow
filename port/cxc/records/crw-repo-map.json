@@ -255,7 +255,7 @@
       "file": "tests/repo-map-packaging.test.mjs",
       "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects. The --help case is checked from repomap.py's source structure (the optional parser imports come after the argument parsing) because CI runs no skill script.",
       "add": true,
-      "sha256": "c35f0c7d1361e629207c502625a32bd8afe0e4a25a6e1be7d55ea983f734a3aa"
+      "sha256": "15db2c664cc8891ae36293ebf1caff3e494a5234c543589a82f029197bec9917"
     },
     {
       "file": "tests/repo-map-smoke.test.mjs",

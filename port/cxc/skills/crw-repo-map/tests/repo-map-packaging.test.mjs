@@ -85,6 +85,24 @@ test("tags queries cover the fixture-verified languages", () => {
 // them at their own top level (`utils`, `repomap_class`).
 const PARSER_IMPORTS = ["diskcache", "networkx", "grep_ast", "tree_sitter", "tree_sitter_language_pack", "tiktoken", "pygments", "utils", "repomap_class"];
 
+/**
+ * The modules one import statement binds, without following anything: a plain `import a, b.c`
+ * statement and a `from a import b, c` statement both name every module they touch. Anything the
+ * reader cannot fully parse (a parenthesised or continued statement, an `importlib` call, a
+ * relative import) is reported as an offender, so the check fails closed rather than passing on a
+ * line it did not read.
+ */
+function importedModules(statement) {
+  const text = statement.trim();
+  const from = /^from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+(.+)$/.exec(text);
+  if (from) return [from[1].split(".")[0]];
+  const plain = /^import\s+(.+)$/.exec(text);
+  if (!plain) return null;
+  const names = plain[1].split(",").map((part) => part.trim().split(/\s+as\s+/)[0].trim());
+  if (names.some((name) => !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(name))) return null;
+  return names.map((name) => name.split(".")[0]);
+}
+
 /** Imports of the optional parser stack that appear before the `parse_args()` call. */
 function parserImportsBeforeParsing(source) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
@@ -93,8 +111,15 @@ function parserImportsBeforeParsing(source) {
   const offenders = [];
   for (const [i, line] of lines.entries()) {
     if (i >= parseAt) break;
-    const m = /^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line);
-    if (m && PARSER_IMPORTS.includes(m[1])) offenders.push(`line ${i + 1}: ${line.trim()}`);
+    const code = line.trim();
+    if (!/^(?:from|import)\s/.test(code)) continue;
+    const modules = importedModules(code);
+    if (modules === null) {
+      offenders.push(`line ${i + 1}: ${code} (not a plain import this check can read)`);
+      continue;
+    }
+    // Every module the statement binds, not only the first: `import os, networkx` names both.
+    if (modules.some((mod) => PARSER_IMPORTS.includes(mod))) offenders.push(`line ${i + 1}: ${code}`);
   }
   return { parseAt, offenders };
 }
@@ -131,6 +156,31 @@ test("the parser-import check sees an import moved above the argument parsing", 
   assert.match(offenders[0], /from repomap_class import RepoMap$/, "the moved import must be named");
   // The unmodified source is the control: the same reader reports nothing for it.
   assert.deepEqual(parserImportsBeforeParsing(source).offenders, [], "the unmodified source must be clean");
+});
+
+// The check reads every module an import statement names, and it fails closed on a statement it
+// cannot read, so a dependency cannot slip past inside a multi-module or unparseable import.
+test("the parser-import check reads every module and refuses what it cannot read", () => {
+  const parse = "args = parser.parse_args()\n";
+  for (const line of [
+    "import os, networkx\n",                     // the second module is the parser dependency
+    "import os, networkx as nx\n",
+    "import diskcache, os\n",
+    "from grep_ast import TreeContext\n",
+    "from os import path\n",                      // the module itself is not a dependency
+    "import os\n",
+  ]) {
+    const { offenders } = parserImportsBeforeParsing(line + parse);
+    const wantsFinding = /networkx|diskcache|grep_ast/.test(line);
+    assert.equal(offenders.length > 0, wantsFinding, `${JSON.stringify(line)}: got ${JSON.stringify(offenders)}`);
+  }
+  for (const line of [
+    "from repomap_class import (RepoMap,\n", // a continued statement this reader does not parse
+    "from . import utils\n",                 // a relative import it cannot resolve
+  ]) {
+    const { offenders } = parserImportsBeforeParsing(line + parse);
+    assert.ok(offenders.length > 0, `${JSON.stringify(line)}: an unreadable import must be refused, not passed`);
+  }
 });
 
 test("find_src_files skips compiled-output dirs", () => {

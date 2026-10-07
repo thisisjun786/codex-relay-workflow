@@ -279,8 +279,9 @@ const skillScriptsNodeFile = "ci.yml"
 // The tail is deliberately unconstrained: a job key's value is whatever follows the colon, and
 // `key:`, `key: # comment`, `key: value`, `key:#value` and `key :` all open the same job. Two
 // spaces is a job's own indentation, so a step's key (eight) and a job's `runs-on:` (four) are not
-// read as one. Over-resetting is the safe direction here: it can only refuse more, and no line at
-// this indentation occurs inside the admitted job, which its own test holds.
+// read as one. A matched line still has its own text checked (pythonInWorkflow does not skip it),
+// because a workflow-level `env:` value and a one-line flow job are read here too and their content
+// can name a skill path.
 var jobKeyLine = regexp.MustCompile(`^  (?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_.-]+))[ \t]*:.*$`)
 
 // alternation is words as a regular expression alternative, each taken literally.
@@ -302,7 +303,9 @@ func alternation(words []string) string {
 // the workflow's path or base name; the job name alone does not carry the exception (CRW-939). The
 // Python rule is unchanged in every job, that one included. Every line YAML reads as a key at a
 // job's own indentation starts a new job and resets the exception, so a job cannot be added in a
-// form this detector misses.
+// form this detector misses. Resetting is not skipping: the line is still read for a Python or
+// skill-path token, because a workflow-level `env:` value and a one-line flow job share this shape
+// and either can name a skill path or run one (CRW-939, the generation-2 evaluation).
 func pythonInWorkflow(file, text string) []string {
 	var found []string
 	admitted := filepath.Base(file) == skillScriptsNodeFile
@@ -310,7 +313,6 @@ func pythonInWorkflow(file, text string) []string {
 	for number, line := range lines(text) {
 		if name, ok := workflowJobHeader(line); ok {
 			inSkillScriptsNode = admitted && name == skillScriptsNodeJob
-			continue
 		}
 		code := strings.TrimSpace(line)
 		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code)
@@ -446,6 +448,31 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 		body := head + header + "    runs-on: ubuntu-24.04\n    steps:\n" + run
 		if got := pythonInWorkflow("ci.yml", body); len(got) == 0 {
 			t.Errorf("a job opened by %q inherits the Node-run exception: the run is not refused", strings.TrimSpace(header))
+		}
+	}
+	// Resetting the exception on a line is not skipping it. A workflow-level `env:` value and a
+	// one-line flow job share the two-space key shape, and either can name a skill path or run one,
+	// so the line is still read for a Python or skill-path token. A reader that reset the exception
+	// by dropping the whole line let a skill script run under a variable (CRW-939, the generation-2
+	// evaluation).
+	for _, row := range []struct{ name, body string }{
+		{"a workflow-level env value and a job that uses it",
+			"name: extra\n\nenv:\n  SKILLS_ROOT: port/cxc/skills\n\njobs:\n  extra_job:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n"},
+		{"a one-line flow job running a staged skill test",
+			"name: extra\n\njobs:\n  skill-scripts-node: {runs-on: ubuntu-24.04, steps: [{run: 'node --test port/cxc/skills/crw-qa/tests/a.test.mjs'}]}\n"},
+	} {
+		if got := pythonInWorkflow("extra.yml", row.body); len(got) == 0 {
+			t.Errorf("%s: the line that reset the exception was skipped and no finding was raised", row.name)
+		}
+	}
+	// The real ci.yml's own workflow-level env: and its jobs stay clean.
+	for _, file := range []string{"ci.yml", "release.yml"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot(), ".github", "workflows", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := pythonInWorkflow(file, string(data)); len(got) != 0 {
+			t.Errorf("the real %s is refused: %q", file, got)
 		}
 	}
 	// A key nested below a job, and a step's own key, are not job keys: the detector must not reset
