@@ -356,3 +356,42 @@ func TestARelayResumeWithoutALimitRecordsNoSettingsObservation(t *testing.T) {
 		t.Fatalf("a send without a limit recorded a settings observation: %v", observed)
 	}
 }
+
+// autoCompactBoundRecord is a record registered without a cited role: the sender's role gate bound
+// the task to the role and authorized the send against it, but the record itself cites none.
+func autoCompactBoundRecord() *delivery.TaskSettings {
+	record := childRecord(false, "")
+	data := delivery.Obj{}
+	for _, field := range record.Data {
+		if field.Key == "citedRole" {
+			continue
+		}
+		data = append(data, field)
+	}
+	record.Data = data
+	record.BoundRole = "child"
+	return record
+}
+
+// A record that cites no role still has one: the sender's role gate resolved the role the task is
+// bound to and authorized this very send against that role's pair, so the limit is read from it.
+// Reading only the record's own citation would send no limit on a delivery the gate accepted, which
+// is the case this feature exists to cover.
+func TestARelayResumeReadsTheLimitFromTheBoundRoleTheGateConfirmed(t *testing.T) {
+	record := autoCompactBoundRecord()
+	if _, cited := record.Data.Lookup("citedRole"); cited {
+		t.Fatal("the fixture still cites a role")
+	}
+	rpc := &mcpRPC{}
+	a := mcpAdapter(t, rpc, autoCompactChildPolicy(t, record))
+	receipt := sendRecord(t, a, "send-bound-role", record)
+	if receipt["status"] != "accepted" {
+		t.Fatalf("receipt=%v", receipt)
+	}
+	if got := resumeConfig(rpc)[settings.AutoCompactTokenLimitKey]; got != int64(550000) {
+		t.Fatalf("thread/resume config = %v", resumeConfig(rpc))
+	}
+	if value, present := autoCompactSentValue(t, receipt); !present || value != 550000 || !autoCompactMarkedUnobservable(t, receipt) {
+		t.Fatalf("the receipt does not record the limit it sent as unobservable: %v", receipt)
+	}
+}

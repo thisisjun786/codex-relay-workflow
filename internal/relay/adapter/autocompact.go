@@ -17,6 +17,12 @@ import (
 // sends none: an exception and a supervisor name no pair, and the policy file is the only place a
 // limit is written. Where the role lists several pairs the record's own pair says which one it is,
 // and a pair that declares no limit sends none rather than inheriting a sibling pair's.
+//
+// The role is the one the sender's gate confirmed the task is bound to (record.BoundRole) when it
+// has one: a record need not cite its own role, and the gate authorizes the send against the bound
+// role, so reading only the record's citation would send no limit on a delivery the gate accepted.
+// A record that cites a role and was bound to none keeps using the citation, which is the bridge's
+// own path (the bridge reads a caller's request, not a binding).
 func (a *Adapter) autoCompactLimit(record *delivery.TaskSettings) *int64 {
 	if a.bridge == nil || record == nil {
 		return nil
@@ -24,8 +30,11 @@ func (a *Adapter) autoCompactLimit(record *delivery.TaskSettings) *int64 {
 	if cited, _ := record.Data.Lookup("citedException"); cited != nil {
 		return nil
 	}
-	named, _ := record.Data.Lookup("citedRole")
-	role, _ := named.(string)
+	role := record.BoundRole
+	if role == "" {
+		named, _ := record.Data.Lookup("citedRole")
+		role, _ = named.(string)
+	}
 	if role == "" {
 		return nil
 	}

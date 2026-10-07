@@ -15,6 +15,11 @@ import (
 type TaskSettings struct {
 	Data               Obj
 	SettingsFreeResume bool
+	// BoundRole is the role the sender's gate confirmed this task is bound to, "" when it is bound
+	// to none. A record need not cite its own role, and the gate authorizes the send against the
+	// bound role rather than the citation, so a rule that reads the role (the pair's auto-compaction
+	// limit) has to read the role the gate checked rather than only the record's own citation.
+	BoundRole string
 	// AutoCompactTokenLimit is the pair's auto-compaction limit this send put in the resume config,
 	// nil when it sent none. The limit is not in the record (the host never reports it back), so both
 	// a refusal that describes what a settings-free resume sent and the receipt that has to record
@@ -38,9 +43,10 @@ type RoleGate func(ctx context.Context, s *store.Store, taskID string, settings 
 // derived from its role's pair (a supervisor's recorded pair, an exception) is resumed
 // settings-free, as every other sender resumes it, so a later user selection is never reverted.
 func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, settings *TaskSettings) error {
-	_, settingsFree, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, registry.EnvironmentRolePolicy())
+	role, settingsFree, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, registry.EnvironmentRolePolicy())
 	if err == nil {
 		settings.SettingsFreeResume = settingsFree
+		settings.BoundRole = role
 	}
 	return err
 }

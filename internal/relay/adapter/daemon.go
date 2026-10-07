@@ -29,11 +29,11 @@ func (f hostFactory) daemonFactory(ctx context.Context, services dispatch.Servic
 	channel := &supervisor.Channel{Store: s, Linkage: supervisor.StoreLinkage{Store: s}, Program: services.Program, Socket: services.SocketPath}
 	channel.SettingsLoader = func(ctx context.Context, task string) (*delivery.TaskSettings, error) {
 		r := &registry.Registry{Store: s, Now: clock.ISO, Policy: registry.EnvironmentRolePolicy()}
-		settings, free, err := r.AuthorizedSettings(ctx, task)
+		settings, role, free, err := r.AuthorizedSettingsBound(ctx, task)
 		if err != nil {
 			return nil, err
 		}
-		return &delivery.TaskSettings{Data: delivery.Obj(settings.Data), SettingsFreeResume: free}, nil
+		return &delivery.TaskSettings{Data: delivery.Obj(settings.Data), SettingsFreeResume: free, BoundRole: role}, nil
 	}
 	d := daemon.New(s, a, clock, channel)
 	d.Faults = &faults.Ledger{Store: s, Clock: clock}
