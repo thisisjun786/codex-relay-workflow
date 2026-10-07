@@ -109,6 +109,23 @@ function importedModules(statement) {
  * `Examples:` line -- is never read as a statement. A quote that does not close leaves the rest of
  * the line unread, and the import check then refuses the statement rather than passing it.
  */
+/**
+ * The index of the quote that closes the string opened at `at`, or -1 when the line does not close
+ * it. A backslash escapes the quote after it, so `"a \" b"` closes at its last quote and not at the
+ * escaped one; reading the escaped quote as the end would leave the real closing quote to open a new
+ * string and drop the rest of the line, hiding a statement (CRW-939, the fifth generation-2
+ * evaluation of d2).
+ */
+function closingQuote(line, at, quote) {
+  for (let i = at + 1; i < line.length; i++) {
+    if (line[i] !== quote) continue;
+    let backslashes = 0;
+    for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) backslashes += 1;
+    if (backslashes % 2 === 0) return i;
+  }
+  return -1;
+}
+
 function codeLines(source) {
   const out = [];
   let open = null; // the triple-quote delimiter a string is still open with
@@ -139,7 +156,7 @@ function codeLines(source) {
           at = end + 3;
           continue;
         }
-        const end = line.indexOf(ch, at + 1);
+        const end = closingQuote(line, at, ch);
         if (end < 0) break; // a quote that does not close: the rest of the line is unread
         at = end + 1;
         continue;
@@ -354,6 +371,16 @@ test("the parser-import check reads module-level imports placed after the parse"
       `${JSON.stringify(shape)}: a statement inside the function after the parse stays clean`);
   }
   // Only the function that parses the arguments defers its imports. A helper defined outside it
+  // A quote is closed by the next quote that is not escaped. Reading `marker = "\""; import networkx`
+  // as the string `"\"` and then an unterminated string would drop the import from the line, which
+  // is the regression this check exists to catch (CRW-939, the fifth generation-2 evaluation of d2).
+  const escaped = 'marker = "\\""; import networkx\n';
+  assert.ok(parserImportsBeforeParsing(escaped + parse).offenders.length > 0,
+    "an import after an escaped quote must still be reported");
+  // A string that only holds an escaped quote is not a statement: the reader must not invent one.
+  const quiet = 'marker = "a \\" b"\n';
+  assert.deepEqual(parserImportsBeforeParsing(quiet + parse).offenders, [],
+    "a string with an escaped quote is not an import");
   // may be called at module level before main() runs, so a parser import in that helper executes
   // before --help answers (CRW-939, the fourth generation-2 evaluation's d2).
   const helperShape = "def main():\n    args = parser.parse_args()\n\ndef helper():\n    from repomap_class import RepoMap\n\nhelper()\n";

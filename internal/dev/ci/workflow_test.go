@@ -264,7 +264,7 @@ var (
 	// a single- or double-quoted key, blanks before the colon (`SKILLS_ROOT : port/cxc/skills`), a key
 	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
 	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
-	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:[A-Za-z_][A-Za-z0-9_-]*=)?(?:` + alternation(skillAssetRoots) + `)/?[ \t]*(?:#.*)?$`)
+	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:[A-Za-z_][A-Za-z0-9_-]*=)?["']?(?:` + alternation(skillAssetRoots) + `)/?["']?[ \t]*(?:#.*)?$`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -598,8 +598,8 @@ func TestWorkflow_a_skills_root_split_across_lines_is_still_a_finding(t *testing
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
-		"block scalar":   "name: extra\n\njobs:\n  other:\n    env:\n      SKILLS_ROOT: >-\n        port/cxc/skills\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n",
-		"shell variable": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          root=port/cxc/skills\n          node --test \"$root\"/crw-qa/tests/a.test.mjs\n",
+		"block scalar":          "name: extra\n\njobs:\n  other:\n    env:\n      SKILLS_ROOT: >-\n        port/cxc/skills\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n",
+		"quoted shell variable": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          root=\"port/cxc/skills\"\n          node --test \"$root\"/crw-qa/tests/a.test.mjs\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -672,6 +672,9 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"          root=port/cxc/skills/", true},                                              // with a trailing slash
 		{"          root=port/cxc/skills # the staged skills", true},                           // and with a trailing comment
 		{"          root=port/cxc/skillset", false},                                            // a longer name is no root
+		{"          root=\"port/cxc/skills\"", true},                                           // a quoted shell assignment is the same value
+		{"          root='port/cxc/skills'", true},                                             // in either quote
+		{"          root=\"port/cxc/skillset\"", false},                                        // a longer name is no root in quotes either
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {

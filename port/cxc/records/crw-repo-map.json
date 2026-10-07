@@ -253,9 +253,9 @@
     },
     {
       "file": "tests/repo-map-packaging.test.mjs",
-      "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects. The --help case is checked from repomap.py's source structure (the optional parser imports do not run before the argument parsing) because CI runs no skill script; the check reads each line's code with strings and comments stripped, splits it into the statements the line carries (a semicolon separator and a compound header sharing its line with its body), and defers an import only inside the def body that holds the parse_args call, so a module-level import, a compound-statement import, a class-body import, a multi-module import, an import on a shared line, an import in a helper defined beside main and an unreadable statement are all reported.",
+      "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects. The --help case is checked from repomap.py's source structure (the optional parser imports do not run before the argument parsing) because CI runs no skill script; the check reads each line's code with strings and comments stripped, closes a string at the next unescaped quote, splits the line into the statements it carries (a semicolon separator and a compound header sharing its line with its body), and defers an import only inside the def body that holds the parse_args call, so a module-level import, a compound-statement import, a class-body import, a multi-module import, an import on a shared line, an import after an escaped quote, an import in a helper defined beside main and an unreadable statement are all reported.",
       "add": true,
-      "sha256": "a17559732647b72068cfef84a6a60a9bc67a5c37aebfac3940176b6271e013c5"
+      "sha256": "c71cf5d37f3c08562eccf0261e2844f57d3c548f41adf4b6ad930a38a6d77f5c"
     },
     {
       "file": "tests/repo-map-smoke.test.mjs",
