@@ -145,7 +145,7 @@ func loopInitSessionHolder(cwd, sessionID string) loopInitHolder {
 		// publish a plan, and waiting on it would be a hang. The caller reports the lock's own error.
 		return loopInitHolderDead
 	}
-	raw, err := state.ReadLockOwnerBytes(lockPath)
+	raw, err := os.ReadFile(lockPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return loopInitHolderGone
@@ -315,9 +315,6 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 		if !running {
 			return LoopCliResult{}, err
 		}
-		if errors.Is(err, state.ErrStateRootSymlink) {
-			return LoopCliResult{Output: "loop init: " + err.Error() + "\nNothing was written.", Code: 1}, nil
-		}
 		// The lock's wait budget ran out (the create's EEXIST is what the lock returns when another
 		// holder keeps its file). An error the callback itself returned is not this case.
 		if errors.Is(err, fs.ErrExist) {
@@ -372,18 +369,19 @@ func loopInitAfterSessionLock(args LoopCliArgs, slug, objective, sessionID strin
 			if !ran {
 				return LoopCliResult{}, err
 			}
-			if errors.Is(err, state.ErrStateRootSymlink) {
-				return LoopCliResult{Output: "loop init: " + err.Error() + "\nNothing was written.", Code: 1}, nil
-			}
 			if !errors.Is(err, fs.ErrExist) {
 				return LoopCliResult{}, err
 			}
 			lockErr = err // another init took the lock in the window; keep waiting for its plan
 		case loopInitHolderDead:
 			return LoopCliResult{}, lockErr
-		}
-		if time.Now().After(deadline) {
-			return LoopCliResult{}, lockErr
+		case loopInitHolderLive:
+			// A live winner may still publish: keep waiting for it however long it takes (CRW-646 d3).
+		default:
+			// No readable owner: bounded by the deadline so a corrupt or foreign lock cannot hang init.
+			if time.Now().After(deadline) {
+				return LoopCliResult{}, lockErr
+			}
 		}
 		loopInitPlanWaitPause()
 	}
@@ -537,9 +535,14 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 			continue // the lock was released without publishing: re-attempt the acquisition now
 		case loopInitHolderDead:
 			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
-		}
-		if time.Now().After(deadline) {
-			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+		case loopInitHolderLive:
+			// A live winner may still publish: keep waiting for it however long it takes. The deadline
+			// below never ends a wait for a holder that is alive (CRW-646 d3).
+		default:
+			// No readable owner: bounded by the deadline so a corrupt or foreign lock cannot hang init.
+			if time.Now().After(deadline) {
+				return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+			}
 		}
 		loopInitPlanWaitPause()
 	}

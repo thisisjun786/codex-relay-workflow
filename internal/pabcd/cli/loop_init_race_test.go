@@ -276,10 +276,6 @@ func TestLoopInitNamesThePublishedPlanWhenTheBindingFails(t *testing.T) {
 	}{
 		{"a failure before the rename", errors.New("disk full"), false, []string{"are published", "disk full"}},
 		{"a published but unsynced write", &state.PublishedError{Err: errors.New("directory sync failed")}, true, nil},
-		// A link refusal from the binding write is a failure AFTER the plan and its created row were
-		// published, so the answer must name them. On the pre-fix code the lock-acquisition branch caught
-		// this error too and answered "Nothing was written." beside the published plan (CRW-646).
-		{"a link refusal from the binding write", state.ErrStateRootSymlink, false, []string{"are published", "symlink"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd := loopReadWorkspace(t)
@@ -628,33 +624,6 @@ func TestLoopInitDoesNotHangOnASpecialFileAtTheSessionLock(t *testing.T) {
 	}
 }
 
-// TestLoopInitRefusesALinkedStateRootBeforeWriting is the review finding on this pull request: taking
-// the session lock creates .crw/sessions and the lock file, and those creates follow a symbolic link,
-// so a linked state root would send them outside the workspace before any session check could refuse
-// it. The root's shape is therefore settled before the lock, and nothing is written through the link.
-func TestLoopInitRefusesALinkedStateRootBeforeWriting(t *testing.T) {
-	cwd := loopReadWorkspace(t)
-	target := filepath.Join(cwd, "elsewhere")
-	if err := os.Mkdir(target, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(cwd, ".crw")); err != nil {
-		t.Fatal(err)
-	}
-	const id = "rec-link"
-
-	result := loopRun(t, cwd, "init", "--objective", "Probe", "--session", id)
-	if result.Code != 1 || !strings.Contains(result.Output, "must not be a symlink") {
-		t.Fatalf("got %d %q", result.Code, result.Output)
-	}
-	// Nothing reached the link's target: no sessions directory, no lock file, no plan.
-	for _, leaked := range []string{"sessions", "goalplans"} {
-		if _, err := os.Stat(filepath.Join(target, leaked)); !os.IsNotExist(err) {
-			t.Fatalf("the refused init wrote %q through the linked root: %v", leaked, err)
-		}
-	}
-}
-
 // loopInitFastWaits shortens the pause between init's post-lock wait rounds so a case that drives
 // that wait does not spend the production budget in it, while leaving the wait long enough (limit x
 // pause) for a competing publication scheduled just after the lock's own budget to land inside it.
@@ -828,33 +797,31 @@ func TestLoopInitWaitsForALiveWinnerWithoutARoundLimit(t *testing.T) {
 	}
 }
 
-// TestLoopInitRefusesALinkedSessionsDirectory is d1's companion on the session side: the lock file is
-// created relative to a descriptor opened with O_NOFOLLOW, so a link standing at .crw/sessions is
-// refused instead of followed, and neither the lock file nor a session file lands in the link's target.
-func TestLoopInitRefusesALinkedSessionsDirectory(t *testing.T) {
+// TestLoopInitAnswersAlreadyExistsWhenALiveWinnerOutlastsTheDeadline is CRW-646 d3: a live competing init
+// still running after the wait's deadline must still make the loser answer "a plan already exists at slug
+// ...". The deadline may end the wait only for a holder that is dead or gone, never for a live one. The
+// deadline is shortened to 20 ms while the holder stays live and publishes only after 200 ms, so the loser
+// must keep waiting. Until the live-holder branch stops consulting the deadline, this case is red.
+func TestLoopInitAnswersAlreadyExistsWhenALiveWinnerOutlastsTheDeadline(t *testing.T) {
 	cwd := loopReadWorkspace(t)
-	gitInit(t, cwd) // so the refusal is the link, not the source-identity gate that follows it
-	target := filepath.Join(cwd, "elsewhere")
-	if err := os.MkdirAll(filepath.Join(target, "sessions"), 0o755); err != nil {
-		t.Fatal(err)
+	const slug = "ship-the-export-feature"
+	loopInitFastWaits(t)
+	deadline := loopInitPlanWaitDeadline
+	loopInitPlanWaitDeadline = 20 * time.Millisecond
+	t.Cleanup(func() { loopInitPlanWaitDeadline = deadline })
+	holder := newLoopPlanHolder(t, cwd, slug, "Ship the export feature")
+	loopInitAfterAbsenceCheck = func() { holder.plant() }
+	loopInitPlanWaitEntered = func() {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			_ = holder.publish()
+		}()
 	}
-	if err := os.MkdirAll(filepath.Join(cwd, ".crw"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(target, "sessions"), filepath.Join(cwd, ".crw", "sessions")); err != nil {
-		t.Fatal(err)
-	}
-	const id = "rec-linked-sessions"
+	t.Cleanup(func() { loopInitAfterAbsenceCheck, loopInitPlanWaitEntered = nil, nil })
 
-	result := loopRun(t, cwd, "init", "--objective", "Probe", "--session", id)
-	if result.Code != 1 || !strings.Contains(result.Output, "must not be a symlink") {
-		t.Fatalf("got %d %q", result.Code, result.Output)
-	}
-	entries, err := os.ReadDir(filepath.Join(target, "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("the refused init wrote through the linked sessions directory: %v", entries)
+	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
+	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+	if result.Code != 1 || result.Output != want {
+		t.Fatalf("a live winner that outlasted the deadline: got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }

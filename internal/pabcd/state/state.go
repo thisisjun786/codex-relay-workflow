@@ -25,8 +25,6 @@ package state
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -34,7 +32,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
-	"golang.org/x/sys/unix"
 )
 
 // Phase is where a session stands in the IPABCD cycle; IDLE is the rest state a closed cycle returns to.
@@ -200,28 +197,6 @@ func defaultState(sessionID, slug string, now time.Time) State {
 // StatePath is cwd/.crw/sessions/<sanitised id>.json.
 func StatePath(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, SessionsSubdir, SanitizeKey(sessionID)+".json")
-}
-
-// ReadLockOwnerBytes reads a lock's small owner/metadata file without following a symbolic link and
-// without blocking on a special file: the open refuses a link (O_NOFOLLOW) and a FIFO or device
-// (O_NONBLOCK with a regular-file check), so a hostile or accidental special file at the path cannot
-// turn a bounded lock wait into an indefinite hang. It is the session-side counterpart of the
-// goalplan lock's own owner read (CRW-646).
-func ReadLockOwnerBytes(path string) ([]byte, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("lock metadata is not a regular file: " + path)
-	}
-	return io.ReadAll(io.LimitReader(f, 4096))
 }
 
 // FindForeignSessionCopies lists the state files of candidates' trees that hold the same session id as cwd's own, so a
