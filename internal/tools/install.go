@@ -251,21 +251,21 @@ func createRoot(dir string) ([]createRootRecord, error) {
 		// absent carries this round's not-exist error out of the component walk, so the walk is
 		// left and the components are recomputed instead of the error being returned at once.
 		var absent error
-		components := rootComponents(dir)
-		if len(components) > 0 {
-			if _, err := os.Lstat(components[0]); errors.Is(err, fs.ErrNotExist) {
-				// The scan found this component absent while its parent was there, so the
-				// directory this call recorded at that path is gone: whatever stands there when a
-				// mkdir reaches it next is not this call's, whatever identity it has. The identity
-				// alone cannot say so, because the filesystem hands a freed directory's inode to
-				// the next directory made in its place, and then a directory another install made
-				// there compares equal to the one this call made. Only the outermost missing
-				// component is dropped: the components below it were inferred missing through an
-				// ancestor, and a component before a ".." can vanish while a path below it is
-				// still this call's, so their records stay for the identity comparison the mkdir
-				// makes.
-				created = dropCreated(created, components[0])
-			}
+		components, scanErr := rootComponents(dir)
+		if len(components) > 0 && errors.Is(scanErr, fs.ErrNotExist) {
+			// The scan found this component absent while its parent was there, so the directory
+			// this call recorded at that path is gone: whatever stands there when a mkdir reaches
+			// it next is not this call's, whatever identity it has. The identity alone cannot say
+			// so, because the filesystem hands a freed directory's inode to the next directory
+			// made in its place, and then a directory another install made there compares equal to
+			// the one this call made. The scan's own observation is what is used, not a second
+			// read of the path: another install can make the path again between the scan and that
+			// read, and a fresh read would then report the peer's directory as present and keep a
+			// stale claim on it. Only the outermost missing component is dropped: the components
+			// below it were inferred missing through an ancestor, and a component before a ".."
+			// can vanish while a path below it is still this call's, so their records stay for the
+			// identity comparison the mkdir makes.
+			created = dropCreated(created, components[0])
 		}
 		for _, component := range components {
 			if createRootBeforeMkdir != nil {
@@ -372,12 +372,17 @@ var createRootBeforeMkdir func(path string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
-// recorded as a directory this call made.
-func rootComponents(dir string) []string {
+// recorded as a directory this call made. It also answers the error the scan stopped on, which is
+// the error of the outermost component in the list: a caller that has a claim on that path needs
+// the scan's own observation of its absence, and a second read of the path can no longer make it.
+func rootComponents(dir string) ([]string, error) {
 	var missing []string
+	var lastErr error
 	for path := dir; path != ""; {
 		if _, err := os.Lstat(path); err == nil {
 			break
+		} else {
+			lastErr = err
 		}
 		missing = append(missing, path)
 		trimmed := strings.TrimRight(path, string(os.PathSeparator))
@@ -391,7 +396,7 @@ func rootComponents(dir string) []string {
 	for i, j := 0, len(missing)-1; i < j; i, j = i+1, j-1 {
 		missing[i], missing[j] = missing[j], missing[i]
 	}
-	return missing
+	return missing, lastErr
 }
 
 // removeCreated removes the directories this call created, innermost outward, and only while each

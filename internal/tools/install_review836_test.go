@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,29 +18,20 @@ func review836Seam(t *testing.T, seam func(path string)) {
 	t.Cleanup(func() { createRootBeforeMkdir = saved })
 }
 
-// review836LinkHost builds the shape the defect needs: a root spelled <base>/x/../p/q whose
-// component before the ".." is a symbolic link to a sibling directory. Removing that link makes
-// Lstat(<base>/x/../p) fail while <base>/p - the directory this call made - is still there, which
-// is how a scan can report a path missing that is not missing. A symbolic link is used because it
-// is the shape in which the component before the ".." can be taken away without taking the
-// directory made below it: removing the link removes nothing else, while removing a real directory
-// would first have to empty the directory this call made inside it.
-func review836LinkHost(t *testing.T) (link, root, target string) {
+// review836RaceHost builds the shape the defect needs: the root is spelled <base>/x/../p/q and the
+// component before the ".." does not exist yet, so createRoot makes that component itself. A
+// concurrent install can then remove the component this call made while the directory this call
+// made below it is still there. The scan then reports that directory missing although it exists,
+// which is the state in which a mkdir of it answers EEXIST.
+func review836RaceHost(t *testing.T) (component, root, target string) {
 	t.Helper()
 	base := t.TempDir()
-	real := filepath.Join(base, "real")
-	if err := os.Mkdir(real, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	link = filepath.Join(base, "x")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
+	component = filepath.Join(base, "x")
 	// The spelling is kept as the caller wrote it: filepath.Join would clean the ".." away, and
 	// the race is exactly about a component before that "..".
-	root = link + "/../p/q"
+	root = component + "/../p/q"
 	target = filepath.Join(base, "p")
-	return link, root, target
+	return component, root, target
 }
 
 // C1, C3: the component before the ".." is removed by a concurrent install while the directory
@@ -48,7 +40,7 @@ func review836LinkHost(t *testing.T) (link, root, target string) {
 // call's directory, so the record must keep it and the cleanup must leave neither x nor that
 // directory behind.
 func TestToolsReview836KeepsItsOwnDirectoryWhenAnAncestorVanishes(t *testing.T) {
-	link, root, target := review836LinkHost(t)
+	component, root, target := review836RaceHost(t)
 
 	removed := false
 	review836Seam(t, func(path string) {
@@ -56,7 +48,7 @@ func TestToolsReview836KeepsItsOwnDirectoryWhenAnAncestorVanishes(t *testing.T) 
 			return
 		}
 		removed = true
-		if err := os.Remove(link); err != nil {
+		if err := os.Remove(component); err != nil {
 			t.Errorf("the seam could not remove the ancestor: %v", err)
 		}
 	})
@@ -66,7 +58,7 @@ func TestToolsReview836KeepsItsOwnDirectoryWhenAnAncestorVanishes(t *testing.T) 
 		t.Fatalf("createRoot with an ancestor removed between its scan and its mkdir: %v", err)
 	}
 	removeCreated(created)
-	for _, path := range []string{link, target} {
+	for _, path := range []string{component, target} {
 		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
 			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
 		}
@@ -77,7 +69,7 @@ func TestToolsReview836KeepsItsOwnDirectoryWhenAnAncestorVanishes(t *testing.T) 
 // answers the not-exist error it gave up on and removes what it made; nothing it created is left
 // under the root for the next run to trip over.
 func TestToolsReview836GivesUpWithoutLeavingItsDirectories(t *testing.T) {
-	link, root, target := review836LinkHost(t)
+	component, root, target := review836RaceHost(t)
 
 	attempts := 0
 	review836Seam(t, func(path string) {
@@ -85,7 +77,7 @@ func TestToolsReview836GivesUpWithoutLeavingItsDirectories(t *testing.T) {
 			return
 		}
 		attempts++
-		if err := os.Remove(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Remove(component); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("the seam could not remove the ancestor: %v", err)
 		}
 	})
@@ -100,7 +92,7 @@ func TestToolsReview836GivesUpWithoutLeavingItsDirectories(t *testing.T) {
 	if attempts < 2 {
 		t.Errorf("createRoot reached the target mkdir %d times, want the walk retried", attempts)
 	}
-	for _, path := range []string{link, target} {
+	for _, path := range []string{component, target} {
 		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
 			t.Errorf("%s was left behind after createRoot gave up: %v", path, statErr)
 		}
@@ -173,5 +165,32 @@ func TestToolsReview836DropsAPathAnotherInstallTookOver(t *testing.T) {
 	info, statErr := os.Stat(target)
 	if statErr != nil || !info.IsDir() {
 		t.Fatalf("this call removed the directory another install made at %s: %v", target, statErr)
+	}
+}
+
+// The scan answers the error it stopped on together with the components it found missing, because
+// that observation is the evidence createRoot uses to decide that a recorded path is gone. A second
+// read of the path cannot replace it: another install can make the path again in between, and the
+// fresh read would then report the peer's directory as present and leave a stale claim on it.
+func TestToolsReview836ScanReportsTheAbsenceItObserved(t *testing.T) {
+	base := t.TempDir()
+	existing := filepath.Join(base, "existing")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(existing, "a", "b")
+
+	missing, err := rootComponents(target)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the scan answered %v, want the not-exist error it stopped on", err)
+	}
+	want := []string{filepath.Join(existing, "a"), target}
+	if strings.Join(missing, ",") != strings.Join(want, ",") {
+		t.Fatalf("the scan found %v, want %v", missing, want)
+	}
+	// A root that already exists has nothing missing and no absence to report.
+	missing, err = rootComponents(existing)
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("the scan of an existing root answered %v, %v", missing, err)
 	}
 }
