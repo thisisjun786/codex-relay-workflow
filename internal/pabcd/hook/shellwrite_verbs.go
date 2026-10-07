@@ -480,9 +480,11 @@ func shellVerbSkipOptions(head string, rest []string, opts string, duration bool
 		rest = rest[1:]
 		if a[1] == '-' {
 			name, _, inline := strings.Cut(a[2:], "=")
-			if head == "env" && name == "split-string" {
+			if head == "env" && name != "" && strings.HasPrefix("split-string", name) {
 				// env's --split-string builds a command line out of the argument, so the command this reader would call
-				// the verb is not the one env runs (CRW-765 correction 9, sixth pass).
+				// the verb is not the one env runs. GNU getopt accepts any unambiguous prefix of a long option, so
+				// `--split-str`, `--sp` and `--s` all name it (CRW-765 correction 9, sixth pass, after the blind
+				// pre-merge evaluation of head cf4c472b9).
 				return nil, false
 			}
 			if shellVerbNoExec(head, name, 0) {
@@ -2128,7 +2130,10 @@ func shellWriteHeredocNameBinding(command []uint16) bool {
 	if len(shellWriteHeredocFunctionNames(stripped)) > 0 {
 		return true
 	}
-	s := shellWriteHeredocCanonical(shellString(shellWriteHeredocBlankComments(stripped)))
+	// The words are read with quoted spans blanked: a quoted operand is text the shell passes through, so the PATH=
+	// of `echo 'PATH=x'` is no assignment and the `;` of `echo 'a; eval b'` splits nothing (CRW-765 correction 9,
+	// sixth pass, after the blind pre-merge evaluation of head cf4c472b9).
+	s := shellWriteHeredocCanonicalWords(stripped)
 	for i := 0; i+len("path=") <= len(s); i++ {
 		if s[i:i+len("path=")] != "path=" {
 			continue
@@ -2169,6 +2174,15 @@ func shellWriteHeredocOutsideBodies(command []uint16) []uint16 {
 		spans = append(spans, [2]int{h.bodyAt, h.bodyEnd})
 	}
 	return shellWriteHeredocBlankSpans(command, spans)
+}
+
+// shellWriteHeredocCanonicalWords is rule G2's canonical text read the way a word scan needs it: the comments and the
+// quoted spans are blanked first, so a quoted operand stays inert text, and then every quote character and backslash is
+// deleted and the ASCII letters are lowered (CRW-765 correction 9, sixth pass, after the blind pre-merge evaluation of
+// head cf4c472b9: deleting the quotes without blanking their content turned the PATH= of `echo 'PATH=x'` into an
+// assignment and the `;` of `echo 'a; eval b'` into a command separator).
+func shellWriteHeredocCanonicalWords(command []uint16) string {
+	return shellWriteHeredocCanonical(shellString(shellWriteHeredocBlankCommentsAndQuotes(command)))
 }
 
 // shellWriteHeredocFirstWord is the first word of a token list, or the empty string when the list is empty.

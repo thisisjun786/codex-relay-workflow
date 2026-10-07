@@ -375,11 +375,18 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 					if s[i] == '\\' {
 						dec, n := shellWriteHeredocAnsiC(s, i)
 						if len(dec) == 1 && dec[0] == 0 {
-							// Bash truncates the ANSI-C quoted word at a NUL: the delimiter is the part before it, and
-							// the rest of the word is gone, so the terminator is not the text this reader would build
-							// from the raw spelling (CRW-765 correction 9, sixth pass, after the blind pre-merge
-							// evaluation of head 9709977c5).
-							return out, quoted
+							// Bash truncates the ANSI-C quoted fragment at a NUL: the fragment contributes the part
+							// before it, and the rest of the word is read on, so `$'DATA\0ignored'X` is the word DATAX
+							// (CRW-765 correction 9, sixth pass, after the blind pre-merge evaluation of head
+							// 9709977c5). Skip to the fragment's closing quote and continue the word.
+							i = n
+							for i < len(s) && s[i] != '\'' {
+								i++
+							}
+							if shellAt(s, i) == '\'' {
+								i++
+							}
+							continue
 						}
 						out = append(out, dec...)
 						i = n

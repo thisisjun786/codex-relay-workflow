@@ -714,3 +714,91 @@ func TestShellWriteHeredocGeneration9QuotedFunctionControls(t *testing.T) {
 		})
 	}
 }
+
+// The blind pre-merge evaluation of head cf4c472b9 (score 4) found two more bypasses inside the same promise and one
+// regression this change had introduced: a NUL truncated the whole delimiter word instead of one ANSI-C fragment, env's
+// long-option abbreviation of split-string was not recognized, and the name-binding scan read a quoted operand as a
+// PATH assignment or a command separator. The rows below are red on cf4c472b9.
+
+// TestShellWriteHeredocGeneration9AnsiCNulContinuesDenied is the denied case for a delimiter whose ANSI-C fragment holds
+// a NUL and is followed by more word: the shell truncates only that fragment's contribution, so the word continues.
+func TestShellWriteHeredocGeneration9AnsiCNulContinuesDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, delim, term string }{
+		{"a literal fragment after the NUL", `$'DATA\0ignored'X`, "DATAX"},
+		{"a fragment before and after", `$'DA\0TA'X`, "DAX"},
+		{"a literal fragment before the ANSI-C word", `X$'DA\0TA'`, "XDA"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			command := "cat <<" + row.delim + "\ntext\n" + row.term + "\npython3 - <<'PY'\nopen('" + mem + "/a','w')\nPY"
+			hss := shellWriteHeredocs(utf16.Encode([]rune(command)))
+			if len(hss) != 2 {
+				t.Fatalf("collected %d here-documents, want 2: %+v", len(hss), hss)
+			}
+			if got := string(utf16.Decode(hss[0].delim)); got != row.term {
+				t.Errorf("delimiter %q, want %q", got, row.term)
+			}
+			got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9EnvSplitStringAbbrevDenied is the denied case for a GNU getopt abbreviation of env's
+// split-string option: any unambiguous prefix names it.
+func TestShellWriteHeredocGeneration9EnvSplitStringAbbrevDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"an abbreviation with a value", "env --split-str 'python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"a short abbreviation", "env --sp 'python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"an abbreviation with an attached value", "env --split-str='python3 -' cat <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path or the fail-closed reason", row.command, got)
+			}
+		})
+	}
+	// An env option that is not a prefix of split-string is an ordinary option.
+	for _, command := range []string{"env -u FOO cat <<'EOF'\n" + mem + "\nEOF", "env --unset=FOO cat <<'EOF'\n" + mem + "\nEOF"} {
+		t.Run("an ordinary env option stays allowed: "+command[:7], func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9QuotedOperandControls is the invariant case for the name-binding scan: a quoted
+// operand is text the shell passes through, so a PATH= inside it is no assignment and a ; inside it splits nothing.
+func TestShellWriteHeredocGeneration9QuotedOperandControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a quoted PATH operand beside a data here-document", "echo 'PATH=/usr/bin'; cat > note.md <<'EOF'\nhello\nEOF"},
+		{"a quoted separator and eval beside a data here-document", "echo 'example; eval placeholder'; cat <<'EOF'\nhello\nEOF"},
+		{"a quoted binding verb beside a data here-document", "echo 'hash -p /bin/bash b'; cat <<'EOF'\nhello\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(row.command); ok {
+				t.Errorf("%q reported unreadable %q, want data", row.command, got)
+			}
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+	// An unquoted binding still denies.
+	for _, command := range []string{"PATH=/tmp/bin cat <<'EOF'\n" + mem + "\nEOF", "eval cat <<'EOF'\n" + mem + "\nEOF"} {
+		t.Run("an unquoted binding denies: "+command[:6], func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface == "" {
+				t.Errorf("%q must be denied: %+v", command, got)
+			}
+		})
+	}
+}
