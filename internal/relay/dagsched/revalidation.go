@@ -51,6 +51,26 @@ const (
 	OpenedByDecisionReply = "decision_reply"
 )
 
+// AcceptedResultCorrection is the reason a coordinator gives generation-open when it corrects a result that was accepted and is still current (recordHandOpened): the relay's verdict writer has no review to
+// open a second ruling on the accepted head with, so the generation is opened by hand and its own reason says why. needs_changes_revision, the reason generation-open writes by default, is admitted the same way;
+// a generation opened for anything else (the assignment itself, a returning tenure, a reply) is not a correction of an accepted result.
+const AcceptedResultCorrection = "accepted_result_correction"
+
+// correctionOpenReason is whether the reason a generation was opened with says a correction: the generation-open default, or the reason the coordinator gives when the accepted result is current.
+func correctionOpenReason(reason string) bool {
+	return reason == "needs_changes_revision" || reason == AcceptedResultCorrection
+}
+
+// correctionOpenedReason is the reason the relationship's current generation was opened under: generations.reason, which generation-open writes and a returning tenure leaves empty. Named for this route
+// rather than for the column, because a sibling node of the same plan edits this package too and two top-level names that only differ by which file declares them do not conflict in git.
+func (s *Scheduler) correctionOpenedReason(ctx context.Context, q store.Querier, rel relRow) (string, error) {
+	var reason sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT reason FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &reason); err != nil {
+		return "", err
+	}
+	return reason.String, nil
+}
+
 // CorrectionRequestID is the dispatch request id a correction generation opened by hand carries (generation-open --dispatch-request-id): derived from the plan, the node, the manifest and the generation, so
 // the generation row itself names the one manifest it was opened for and a generation opened under any other id is not bound to a manifest by dag-correct.
 func CorrectionRequestID(plan, node, manifestDigest string, generation int64) string {
@@ -91,7 +111,8 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // an accepted head it ruled verified (disposition_conflict, naming this route) unless the criteria registered for the relationship changed (a node whose consumed input was replaced, its criteria untouched). The
 // route is bounded so that it cannot make a rerun or bind a manifest other than the one the generation was opened for:
 //
-//   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is not accepted yet is corrected by a ruling, an accepted result that is current has no recorded correction route in this build, a change of the criteria alone is a revalidation and
+//   - the node's accepted result is stale and its route, without this generation, is a correction, or the result is accepted and still current and the generation's own reason states a correction
+//     (needs_changes_revision, the generation-open default, or accepted_result_correction): a result that is not accepted yet is corrected by a ruling, a change of the criteria alone is a revalidation and
 //     opens no generation, and a node that landed was refused before this;
 //   - the manifest is named (--manifest-digest) and is the one stored for this node at its current slice and criteria, as on the ruling route, and its inputs are still the ones the node's edges are satisfied
 //     by now (VerifyManifest without the file bytes, as release checks its own intent): a predecessor accepted again after the prepare leaves another input than the one the child was told to consume;
@@ -101,6 +122,11 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // What is recorded of how the instruction reached the child is that request id (dag_node_executions.managed_request_id, which a ruling leaves NULL) and the bound dispatch turn. It is the coordinator's
 // statement: the relay does not read the child's thread, so unlike the ruling route (which compares the restoration note with the instruction line) nothing here compares the dispatching message with the
 // line; the child checks the manifest file against the digest and hash the line names and answers blocked_needs_input on a mismatch.
+//
+// CRW-906: a result that was accepted and is still current (not stale) is corrected by hand as well, when a blocking defect is found in it before it lands and no ruling can open the generation: a bundle
+// review that finds one in an accepted member is the case. The generation's own reason states the correction (needs_changes_revision, what generation-open writes by default, or accepted_result_correction,
+// which names the route), the node must not have landed, and every check above is the one the stale route had. The acceptance stays active until the parent takes the new result with dag-accept --supersedes,
+// and the reason of the generation row is what notes that the correction came through this route: nothing is added to the schema, no column and no refusal name is new.
 func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, rel relRow, suppliedDigest string, out *CorrectionResult) error {
 	before, err := store.LiveGenerationBefore(ctx, q, rel.ID, rel.Generation)
 	if err != nil {
@@ -130,8 +156,21 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 	if err != nil {
 		return err
 	}
+	// CRW-906: an accepted result that is still current is corrected by hand as well, when the generation's own reason says a correction (needs_changes_revision or accepted_result_correction) and the node has
+	// not landed. Every check below is the one the stale route had. The reason of the generation row is what notes the route, so nothing is added to the schema and no refusal name is new. The caller refuses a
+	// generation whose reason states no correction before it reaches this binder (correction.go); the case below is this binder's own bound, so an accepted result is never recorded as corrected by a
+	// generation that was opened for something else.
 	if st == nil && !ambiguousPrevious {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling, and an accepted result that is current has no recorded correction route in this build. A generation that only merged the base into the branch is not a correction: when the generation was ruled verified, dag-base-refresh records it, after proving from git that its head is the accepted head plus merges of the base", notRuled, n.NodeID)
+		reason, err := s.correctionOpenedReason(ctx, q, rel)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !hasAcceptance:
+			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is not accepted yet is corrected by a ruling. A generation that only merged the base into the branch is not a correction: when the generation was ruled verified, dag-base-refresh records it, after proving from git that its head is the accepted head plus merges of the base", notRuled, n.NodeID)
+		case !correctionOpenReason(reason):
+			return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is current: a generation opened by hand corrects it only when the reason it was opened under states a correction, and generation %d reads %q. Open the generation with generation-open --reason needs_changes_revision or %s, or, when it only merged the base into the branch, record it with dag-base-refresh", notRuled, n.NodeID, rel.Generation, reason, AcceptedResultCorrection)
+		}
 	}
 	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
 	// there waits; only a result that must be reworked is corrected
