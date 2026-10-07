@@ -103,14 +103,15 @@ func Local(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "local: reused %s (%s)\n", *reuse, made.Digest)
 		return 0
 	}
-	if _, err := writeRecord(opts.Record, made); err != nil {
+	sealed, err := writeRecord(opts.Record, made)
+	if err != nil {
 		return failf(stderr, "local: %s", err)
 	}
-	if made.Result == localPass {
-		fmt.Fprintf(stdout, "local: pass at %s (%s)\n", made.HeadCommit, made.Digest)
+	if sealed.Result == localPass {
+		fmt.Fprintf(stdout, "local: pass at %s (%s)\n", sealed.HeadCommit, sealed.Digest)
 		return 0
 	}
-	fmt.Fprintf(stderr, "local: fail at %s (%s)\n", made.HeadCommit, made.Digest)
+	fmt.Fprintf(stderr, "local: fail at %s (%s)\n", sealed.HeadCommit, sealed.Digest)
 	for _, job := range made.Jobs {
 		for _, step := range job.Steps {
 			if step.Result != localPassed && step.Result != localNotApplicableResult {
@@ -151,9 +152,11 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 		fmt.Fprintf(stdout, "local: %s does not answer this tree: %s\n", reusePath, why)
 	}
 	// The workflow-coverage refusal guards the real table: a step ci.yml grows cannot go
-	// unverified. An injected table (tests) owns its own coverage.
+	// unverified. An injected table (tests) owns its own coverage. The workflow is read from the
+	// verified commit, not the caller's working tree, so a dirty edit to ci.yml cannot change what
+	// this run is held to.
 	if opts.Plan == nil {
-		if err := checkWorkflow(opts.Root, plan); err != nil {
+		if err := checkWorkflowAt(opts.Root, current.HeadCommit, plan); err != nil {
 			return verificationRecord{}, false, err
 		}
 	}
@@ -184,17 +187,39 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		}
 		dependencies[name] = digest
 	}
+	// The range the blob and secret steps judge is base..head, so the base is part of what the
+	// record covers: a different base is a different verification even at the same tree.
+	base := opts.Base
+	if base == "" {
+		base, err = localDefaultBase(opts.Root, head)
+		if err != nil {
+			return verificationRecord{}, err
+		}
+	}
 	return verificationRecord{
 		Schema:       recordSchema,
 		Runner:       opts.Runner,
+		Repository:   localRepository(opts.Root),
+		BaseCommit:   base,
 		HeadCommit:   head,
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
 		Tools:        localToolVersions(localPathEnv(opts.Env)),
+		GoFlags:      os.Getenv("GOFLAGS"),
+		GoEnv:        os.Getenv("GOENV"),
 		Dependencies: dependencies,
 		OS:           localHostOS(),
 		Arch:         localHostArch(),
 	}, nil
+}
+
+// localRepository is the origin remote's URL, the identity a record names. It is read from the
+// checkout rather than written down, so the record travels with the repository it describes.
+func localRepository(root string) string {
+	if out, err := runGit(root, "remote", "get-url", "origin"); err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return ""
 }
 
 // localExecute runs the table in a clean worktree of the verified commit and assembles the record.
@@ -233,11 +258,8 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	}
 	record := current
 	record.Pins = pins
-	record.PinMismatch = localPinMismatch(pins, current.Tools)
-	record.BaseCommit = opts.Base
-	if record.BaseCommit == "" {
-		record.BaseCommit, _ = localDefaultBase(opts.Root, current.HeadCommit)
-	}
+	record.Tools = localObservedVersions(current.Tools, pins)
+	record.PinMismatch = localPinMismatch(pins, record.Tools)
 	// The steps read the same base the record names (the blob and secret range) and the commit
 	// itself (the changed-path decisions), so the environment carries the resolved values rather
 	// than the caller's flags.
@@ -417,15 +439,19 @@ func localStepEnvValues(values []string, opts localOptions, leg string) []string
 }
 
 // localDefaultBase is the commit a record names as its base: the merge base with origin/dev, or
-// the commit's parent when that is not known.
+// the commit's parent when that is not known. The head itself is never the base: a merge base that
+// equals the head means the commit is already reachable from origin/dev, and base..head would then
+// be empty, which would let the range-scoped blob and secret steps judge nothing.
 func localDefaultBase(root, head string) (string, error) {
 	if out, err := runGit(root, "merge-base", "origin/dev", head); err == nil {
-		if base := strings.TrimSpace(string(out)); base != "" {
+		if base := strings.TrimSpace(string(out)); base != "" && base != head {
 			return base, nil
 		}
 	}
 	if out, err := runGit(root, "rev-parse", "--verify", "--quiet", head+"^"); err == nil {
-		return strings.TrimSpace(string(out)), nil
+		if base := strings.TrimSpace(string(out)); base != "" && base != head {
+			return base, nil
+		}
 	}
 	return "", nil
 }

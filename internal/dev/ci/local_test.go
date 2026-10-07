@@ -252,11 +252,11 @@ func TestLocalRecord_carries_every_required_field(t *testing.T) {
 // C3: a record answers a second run when every key matches.
 func TestLocalReuse_every_key_matches_answers_the_record(t *testing.T) {
 	base := verificationRecord{
-		Schema: recordSchema, Result: localPass, TreeHash: "tree", CiDigest: "ci", OS: "linux", Arch: "amd64",
+		Schema: recordSchema, Result: localPass, TreeHash: "tree", CiDigest: "ci", OS: "linux", Arch: "amd64", BaseCommit: "base",
 		Tools: map[string]string{"go": "1.27.1", "node": "24.20.0"}, Dependencies: map[string]string{"go.sum": "sum"},
 	}
 	same := verificationRecord{
-		TreeHash: "tree", CiDigest: "ci", OS: "linux", Arch: "amd64",
+		TreeHash: "tree", CiDigest: "ci", OS: "linux", Arch: "amd64", BaseCommit: "base",
 		Tools: map[string]string{"go": "1.27.1", "node": "24.20.0"}, Dependencies: map[string]string{"go.sum": "sum"},
 	}
 	if ok, why := localReuse(base, same); !ok {
@@ -270,6 +270,7 @@ func TestLocalReuse_one_changed_key_reruns(t *testing.T) {
 	fresh := func() verificationRecord {
 		return verificationRecord{
 			Schema: recordSchema, Result: localPass, TreeHash: "tree", CiDigest: "ci", OS: "linux", Arch: "amd64",
+			BaseCommit:   "base",
 			Tools:        map[string]string{"go": "1.27.1", "node": "24.20.0"},
 			Dependencies: map[string]string{"go.sum": "sum", "web/package-lock.json": "lock"},
 		}
@@ -286,6 +287,9 @@ func TestLocalReuse_one_changed_key_reruns(t *testing.T) {
 		{"lockfile digest", func(r *verificationRecord) { r.Dependencies["web/package-lock.json"] = "other" }},
 		{"os", func(r *verificationRecord) { r.OS = "darwin" }},
 		{"arch", func(r *verificationRecord) { r.Arch = "arm64" }},
+		{"base commit", func(r *verificationRecord) { r.BaseCommit = "other-base" }},
+		{"GOFLAGS", func(r *verificationRecord) { r.GoFlags = "-tags=other" }},
+		{"GOENV", func(r *verificationRecord) { r.GoEnv = "/tmp/goenv" }},
 	} {
 		current := fresh()
 		row.apply(&current)
@@ -330,7 +334,7 @@ func TestLocalTools_pin_mismatch_is_recorded_and_never_reused(t *testing.T) {
 		t.Errorf("a record with a pin mismatch is reused (%s)", why)
 	}
 	// A tool the tree pins and the host does not have is a mismatch too.
-	if got := localPinMismatch(map[string]string{"gitleaks": "8.30.1"}, map[string]string{"gitleaks": ""}); len(got) != 1 {
+	if got := localPinMismatch(map[string]string{"go": "1.27.1"}, map[string]string{"go": ""}); len(got) != 1 {
 		t.Errorf("a missing pinned tool is not a mismatch: %v", got)
 	}
 	// An unpinned tool is not a mismatch.
@@ -408,5 +412,98 @@ func TestLocal_gate_prefixes_a_heavy_step_as_argv(t *testing.T) {
 	}
 	if !strings.Contains(block[3], "\n") {
 		t.Error("the block scalar's newlines were lost")
+	}
+}
+
+// The two tools a step fetches rather than inherits are named from the pin when the host has no
+// copy, so the record says what the step used; a host copy is still compared.
+func TestLocalTools_a_fetched_tool_is_named_from_its_pin(t *testing.T) {
+	pins := map[string]string{"go": "1.27.1", "gitleaks": "8.30.1", "staticcheck": "0.8.1"}
+	observed := localObservedVersions(map[string]string{"go": "1.27.1", "gitleaks": "", "staticcheck": ""}, pins)
+	if observed["gitleaks"] != "8.30.1" || observed["staticcheck"] != "0.8.1" {
+		t.Errorf("the fetched tools are not named from their pins: %v", observed)
+	}
+	if got := localPinMismatch(pins, observed); len(got) != 0 {
+		t.Errorf("a host without the fetched tools reports a mismatch: %v", got)
+	}
+	// A host copy that differs from the pin is still a mismatch.
+	host := localObservedVersions(map[string]string{"go": "1.27.1", "gitleaks": "8.18.0"}, pins)
+	if got := localPinMismatch(pins, host); len(got) != 1 || got[0] != "gitleaks" {
+		t.Errorf("a host Gitleaks that differs from the pin is not a mismatch: %v", got)
+	}
+}
+
+// The record names the repository it was made in, so two repositories' records are told apart.
+func TestLocalRecord_names_the_repository(t *testing.T) {
+	repo := newLocalFixture(t)
+	repo.git("remote", "add", "origin", "https://example.invalid/owner/repo.git")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan("echo hello"), filepath.Join(t.TempDir(), "r.json")), "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Repository != "https://example.invalid/owner/repo.git" {
+		t.Errorf("repository = %q, want the origin URL", made.Repository)
+	}
+}
+
+// A base equal to the head would scan an empty range, so it is never chosen as the default base.
+func TestLocalDefaultBase_never_returns_the_head(t *testing.T) {
+	repo := newLocalFixture(t)
+	head, err := localRev(repo.root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// origin/dev does not exist here, so the parent is the base; a root commit has no parent and
+	// the base stays empty rather than becoming the head.
+	base, err := localDefaultBase(repo.root, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base == head {
+		t.Errorf("the default base is the head itself (%s)", head)
+	}
+}
+
+// The heavy gate takes the plan's workdir into account: the screen commands run in web/.
+func TestLocalPlan_the_screen_commands_run_in_web(t *testing.T) {
+	for _, job := range localPlan() {
+		if job.name != "gui" {
+			continue
+		}
+		for _, step := range job.steps {
+			switch step.name {
+			case "Install the screen dependencies from the committed lockfile",
+				"Run the screen tests",
+				"Build the screens into a fresh tree":
+				if step.workdir != "web" {
+					t.Errorf("%q runs in %q, want web", step.name, step.workdir)
+				}
+			}
+		}
+	}
+}
+
+// A ci.yml run scalar written in YAML single quotes is unquoted by the parser, and the table
+// carries the shell text, so the two compare as the runner sees them.
+func TestLocalPlan_a_quoted_run_scalar_is_compared_unquoted(t *testing.T) {
+	workflow, err := parseWorkflow(localWorkflow(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := workflowJobNamed(workflow, "validate")
+	if job == nil {
+		t.Fatal("ci.yml has no validate job")
+	}
+	found := false
+	for _, step := range job.steps {
+		if strings.Contains(step.run, "ci validate") {
+			found = true
+			if strings.HasPrefix(step.run, "'") {
+				t.Errorf("the reader kept the YAML quotes: %q", step.run)
+			}
+		}
+	}
+	if !found {
+		t.Error("validate has no ci validate step")
 	}
 }

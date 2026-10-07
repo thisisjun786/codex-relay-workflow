@@ -21,6 +21,10 @@ type localHookFixture struct {
 // localHookScanner is a stand-in Gitleaks: it fails when the range carries the marker, so the
 // test proves the hook's decision rather than Gitleaks' rules.
 const localHookScanner = `#!/bin/sh
+if [ "$1" = version ]; then
+  echo "${CRW964_SCANNER_VERSION:-8.30.1}"
+  exit 0
+fi
 if [ "$1" != git ]; then
   echo "stand-in scanner: unexpected command $1" >&2
   exit 2
@@ -216,4 +220,76 @@ func mustHookPath(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// The hook requires the pinned Gitleaks release: a scanner of another version is refused rather
+// than approving a range with different rules.
+func TestLocalHook_refuses_a_scanner_of_another_version(t *testing.T) {
+	repo := newLocalHookFixture(t)
+	repo.write("clean.txt", "nothing to see\n")
+	repo.commit()
+	head := strings.TrimSpace(repo.git("rev-parse", "HEAD"))
+	if _, err := localHookInstall(mustHookPath(t, repo.root)); err != nil {
+		t.Fatal(err)
+	}
+	code, out := localHookRun(repo.root, "refs/heads/main", head, "refs/heads/main", repo.base,
+		[]string{"CRW_CI_GITLEAKS=" + localHookScannerPath(t), "CRW964_SCANNER_VERSION=8.18.0"})
+	if code == 0 {
+		t.Fatalf("a push went through with an unpinned scanner:\n%s", out)
+	}
+	if !strings.Contains(out, "8.18.0") || !strings.Contains(out, localGitleaksPin) {
+		t.Errorf("the refusal does not name both versions:\n%s", out)
+	}
+}
+
+// An older hook this tool wrote is recognised so an upgrade replaces it, while a hook it did not
+// write stays foreign.
+func TestLocalHook_recognises_its_own_older_hook(t *testing.T) {
+	repo := newLocalHookFixture(t)
+	path := mustHookPath(t, repo.root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	older := "#!/usr/bin/env bash\n" + localHookMarker + "\n# an older body this tool wrote\nexit 0\n"
+	if err := os.WriteFile(path, []byte(older), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if state := localHookState(path); state != "installed" {
+		t.Fatalf("this tool's own older hook reads %q, want installed", state)
+	}
+	if _, err := localHookInstall(path); err != nil {
+		t.Fatalf("an upgrade of this tool's own older hook was refused: %v", err)
+	}
+	// A file that merely mentions the marker is still foreign.
+	impostor := "#!/usr/bin/env bash\necho " + localHookMarker + "\nexit 0\n"
+	if err := os.WriteFile(path, []byte(impostor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if state := localHookState(path); state != "foreign" {
+		t.Errorf("a hook with the marker in the wrong place reads %q, want foreign", state)
+	}
+	if _, err := localHookInstall(path); err == nil {
+		t.Error("a foreign hook was replaced")
+	}
+}
+
+// A SHA-256 all-zero object id (a 64-character sentinel) is recognised as a new ref, so the whole
+// local sha is judged rather than an invalid range.
+func TestLocalHook_recognises_a_sha256_zero_remote(t *testing.T) {
+	repo := newLocalHookFixture(t)
+	repo.write("secret.txt", "token = CRW964-LEAKED-VALUE\n")
+	repo.commit()
+	head := strings.TrimSpace(repo.git("rev-parse", "HEAD"))
+	if _, err := localHookInstall(mustHookPath(t, repo.root)); err != nil {
+		t.Fatal(err)
+	}
+	zeros := strings.Repeat("0", 64)
+	code, out := localHookRun(repo.root, "refs/heads/main", head, "refs/heads/main", zeros,
+		[]string{"CRW_CI_GITLEAKS=" + localHookScannerPath(t), "CRW964_MARKER=CRW964-LEAKED-VALUE"})
+	if code == 0 {
+		t.Fatalf("a new-ref push carrying the marker went through:\n%s", out)
+	}
+	if !strings.Contains(out, "Gitleaks found a secret") {
+		t.Errorf("the refusal does not name the finding:\n%s", out)
+	}
 }

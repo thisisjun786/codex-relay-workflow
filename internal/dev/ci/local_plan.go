@@ -4,9 +4,8 @@ package ci
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -156,11 +155,11 @@ func localPlan() []localJob {
 	validate.steps = append(validate.steps, goToolchain)
 	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "go build -tags dev -o \"$RUNNER_TEMP/crw-dev\" ./cmd/crw-dev",
 		tool: "go", scope: "full", heavy: true, legs: nil, env: nil})
-	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "'\"$RUNNER_TEMP/crw-dev\" ci validate'",
+	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "\"$RUNNER_TEMP/crw-dev\" ci validate",
 		tool: "go", scope: "range", heavy: true, legs: nil, env: []string{"BLOB_RANGE_BASE=" + localBaseEnv}})
-	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "'\"$RUNNER_TEMP/crw-dev\" ci plugin'",
+	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "\"$RUNNER_TEMP/crw-dev\" ci plugin",
 		tool: "go", scope: "full", heavy: true, legs: nil, env: nil})
-	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "'\"$RUNNER_TEMP/crw-dev\" ci contracts'",
+	validate.steps = append(validate.steps, localStep{name: "", kind: localRun, command: "\"$RUNNER_TEMP/crw-dev\" ci contracts",
 		tool: "go", scope: "full", heavy: true, legs: nil, env: nil})
 	plan = append(plan, validate)
 	secrets := localJob{name: "secrets", legs: nil}
@@ -177,7 +176,7 @@ func localPlan() []localJob {
 		note: "the same changed-path decision ci.yml runs, recorded; the local run performs every step, so the answer skips nothing"})
 	skill_scripts_node.steps = append(skill_scripts_node.steps, nodeToolchain)
 	skill_scripts_node.steps = append(skill_scripts_node.steps, localStep{name: "Run the staged skill-script tests", kind: localRun, command: localSkillTests,
-		tool: "go", scope: "full", heavy: true, legs: nil, env: []string{"SKILLS_ROOT=port/cxc/skills"}})
+		tool: "node", scope: "full", heavy: true, legs: nil, env: []string{"SKILLS_ROOT=port/cxc/skills"}})
 	plan = append(plan, skill_scripts_node)
 	gui := localJob{name: "gui", legs: nil}
 	gui.steps = append(gui.steps, mirrorPair()...)
@@ -187,11 +186,11 @@ func localPlan() []localJob {
 		note: "the same changed-path decision ci.yml runs, recorded; the local run performs every step, so the answer skips nothing"})
 	gui.steps = append(gui.steps, goToolchain)
 	gui.steps = append(gui.steps, nodeToolchain)
-	gui.steps = append(gui.steps, localStep{name: "Install the screen dependencies from the committed lockfile", kind: localRun, command: "npm ci",
+	gui.steps = append(gui.steps, localStep{name: "Install the screen dependencies from the committed lockfile", kind: localRun, command: "npm ci", workdir: "web",
 		tool: "node", scope: "full", heavy: true, legs: nil, env: nil})
-	gui.steps = append(gui.steps, localStep{name: "Run the screen tests", kind: localRun, command: "npm test",
+	gui.steps = append(gui.steps, localStep{name: "Run the screen tests", kind: localRun, command: "npm test", workdir: "web",
 		tool: "node", scope: "full", heavy: true, legs: nil, env: nil})
-	gui.steps = append(gui.steps, localStep{name: "Build the screens into a fresh tree", kind: localRun, command: "npm run build -- --outDir \"$RUNNER_TEMP/gui-built\" --emptyOutDir",
+	gui.steps = append(gui.steps, localStep{name: "Build the screens into a fresh tree", kind: localRun, command: "npm run build -- --outDir \"$RUNNER_TEMP/gui-built\" --emptyOutDir", workdir: "web",
 		tool: "node", scope: "full", heavy: true, legs: nil, env: nil})
 	gui.steps = append(gui.steps, localStep{name: "Refuse a committed tree that is not a fresh build", kind: localRun, command: "go run -tags dev ./cmd/crw-dev ci gui-drift --built \"$RUNNER_TEMP/gui-built\"",
 		tool: "go", scope: "full", heavy: true, legs: nil, env: nil})
@@ -295,7 +294,7 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 			step.uses = strings.Fields(m[2])[0]
 		case "run":
 			if m[2] != "|" && m[2] != "|-" && m[2] != ">" && m[2] != ">-" {
-				step.run = m[2]
+				step.run = localYAMLScalar(m[2])
 				break
 			}
 			// A literal block scalar: its body is the run text. The body sits deeper than the key
@@ -329,6 +328,21 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 		return nil, fmt.Errorf("ci.yml has no jobs")
 	}
 	return jobs, nil
+}
+
+// localYAMLScalar is a run value as the workflow's YAML reader hands it to the runner: a quoted
+// scalar loses its quotes (single-quoted text keeps everything else, with ” for one quote), and
+// a plain scalar is itself. The table carries the shell text, so the comparison is like for like.
+func localYAMLScalar(value string) string {
+	if len(value) >= 2 && strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
+		return strings.ReplaceAll(value[1:len(value)-1], "''", "'")
+	}
+	if len(value) >= 2 && strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+	}
+	return value
 }
 
 // workflowJobNamed is the parsed job called name, or nil.
@@ -375,9 +389,11 @@ func localPlanProblems(plan []localJob, workflow []workflowJob) []string {
 	return problems
 }
 
-// checkWorkflow reads ci.yml from root and refuses a workflow the table does not cover.
-func checkWorkflow(root string, plan []localJob) error {
-	data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+// checkWorkflowAt reads ci.yml as the named commit has it and refuses a workflow the table does not
+// cover. Reading it from the verified commit rather than the working tree is what keeps a dirty
+// edit to ci.yml from changing what this run is held to.
+func checkWorkflowAt(root, commit string, plan []localJob) error {
+	data, err := runGit(root, "show", commit+":.github/workflows/ci.yml")
 	if err != nil {
 		return err
 	}

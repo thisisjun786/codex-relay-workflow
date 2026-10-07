@@ -62,6 +62,19 @@ func localToolVersions(pathEnv string) map[string]string {
 	return versions
 }
 
+// localObservedVersions is what the steps actually used. Two tools are fetched by the step rather
+// than inherited: secrets.sh downloads the pinned Gitleaks, and the lint leg runs staticcheck
+// through the module the tree requires. When the host has no copy, the record names the pin the
+// step will fetch, so the field says what ran rather than staying empty.
+func localObservedVersions(versions, pins map[string]string) map[string]string {
+	for _, name := range []string{"gitleaks", "staticcheck"} {
+		if versions[name] == "" && pins[name] != "" {
+			versions[name] = pins[name]
+		}
+	}
+	return versions
+}
+
 // localObserveTool is one tool's version, or "" when it is not on PATH or does not answer.
 func localObserveTool(name, pathEnv string) string {
 	var args []string
@@ -108,6 +121,11 @@ func localParseToolVersion(name, output string) string {
 
 // localPinMismatch names every tool whose observed version differs from its pin. A tool the tree
 // pins but the host does not have is a mismatch too: the run cannot claim the pinned toolchain.
+//
+// Two tools are fetched by the step rather than inherited from the host, so an absent host copy is
+// not a mismatch: secrets.sh downloads the pinned Gitleaks and verifies its checksum itself, and
+// the lint leg runs staticcheck through the module the tree requires. A host copy, when there is
+// one, is still compared.
 func localPinMismatch(pins, observed map[string]string) []string {
 	var mismatches []string
 	for _, name := range localToolNames {
@@ -115,7 +133,11 @@ func localPinMismatch(pins, observed map[string]string) []string {
 		if !pinned || pin == "" {
 			continue
 		}
-		if observed[name] != pin {
+		seen := observed[name]
+		if seen == "" && (name == "gitleaks" || name == "staticcheck") {
+			continue
+		}
+		if seen != pin {
 			mismatches = append(mismatches, name)
 		}
 	}

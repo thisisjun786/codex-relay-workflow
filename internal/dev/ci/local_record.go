@@ -51,6 +51,8 @@ type verificationRecord struct {
 	CiDigest     string            `json:"ciDigest"`
 	Tools        map[string]string `json:"tools"`
 	Pins         map[string]string `json:"pins"`
+	GoFlags      string            `json:"goFlags"`
+	GoEnv        string            `json:"goEnv"`
 	PinMismatch  []string          `json:"pinMismatch"`
 	Dependencies map[string]string `json:"dependencies"`
 	OS           string            `json:"os"`
@@ -204,6 +206,9 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 	}{
 		{"tree", reused.TreeHash, current.TreeHash},
 		{"ci.yml digest", reused.CiDigest, current.CiDigest},
+		// The blob and secret steps judge base..head, so a different base is a different
+		// verification even when the tree is the same (the range a record covers).
+		{"base commit", reused.BaseCommit, current.BaseCommit},
 		{"os", reused.OS, current.OS},
 		{"arch", reused.Arch, current.Arch},
 	} {
@@ -224,6 +229,19 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 	for _, name := range sortedKeys(current.Dependencies) {
 		if was := reused.Dependencies[name]; was != current.Dependencies[name] {
 			return false, fmt.Sprintf("the %s digest changed (%s -> %s)", name, was, current.Dependencies[name])
+		}
+	}
+	// The inherited Go settings decide what the Go steps actually build, so a run with different
+	// ones is not the same verification.
+	for _, key := range []struct {
+		name       string
+		was, isNow string
+	}{
+		{"GOFLAGS", reused.GoFlags, current.GoFlags},
+		{"GOENV", reused.GoEnv, current.GoEnv},
+	} {
+		if key.was != key.isNow {
+			return false, fmt.Sprintf("%s changed (%q -> %q)", key.name, key.was, key.isNow)
 		}
 	}
 	return true, "every key matches"

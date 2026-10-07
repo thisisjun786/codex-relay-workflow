@@ -20,12 +20,23 @@ import (
 const (
 	// localHookName is the hook this tool owns.
 	localHookName = "pre-push"
+	// localHookMarker is the line the hook carries, so a reader can tell this tool's hook from a
+	// foreign one. The whole script is compared for the current version; the marker under the
+	// shebang is what recognises an older script this tool wrote.
+	localHookMarker = "# crw-dev ci local pre-push hook (CRW-964)"
+	// localGitleaksPin is the Gitleaks release the hook requires: the one scripts/ci/secrets.sh
+	// pins and the hosted secrets job runs. A different scanner has different rules, so the hook
+	// refuses it rather than approving a range the hosted job would reject after the push.
+	localGitleaksPin = "8.30.1"
 )
 
 // localHookScript is the hook, written verbatim. It is a shell script so it can run before git
 // starts the push, and it fails closed: a missing scanner, an unreadable range or a finding each
 // block the push rather than letting it through.
-const localHookScript = `#!/usr/bin/env bash
+var localHookScript = strings.ReplaceAll(hookScriptTemplate, "@CRW964_GITLEAKS_PIN@", localGitleaksPin)
+
+// hookScriptTemplate is the hook before the pinned Gitleaks version is substituted.
+const hookScriptTemplate = `#!/usr/bin/env bash
 # crw-dev ci local pre-push hook (CRW-964)
 # Refuses a push whose range brings a secret or a blob over 2 MiB into the history. The range is
 # <remote sha>..<local sha>; when the remote sha is the all-zeros object the whole local sha is
@@ -36,14 +47,16 @@ limit=$((2 * 1024 * 1024))
 root=$(git rev-parse --show-toplevel)
 git_dir=$(git rev-parse --absolute-git-dir)
 scanner=${CRW_CI_GITLEAKS:-gitleaks}
+expected=${CRW_CI_GITLEAKS_VERSION:-@CRW964_GITLEAKS_PIN@}
 
 status=0
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
   case "$local_sha" in
-    0000000000000000000000000000000000000000) continue ;;
+    *[!0]*) : ;;
+    *) continue ;;  # an all-zero local sha (SHA-1 or SHA-256): the ref is being deleted
   esac
-  if [ "${remote_sha:-}" = 0000000000000000000000000000000000000000 ] || [ -z "${remote_sha:-}" ]; then
+  if [ -z "${remote_sha:-}" ] || [ -z "${remote_sha//0/}" ]; then
     range="$local_sha"
   else
     range="$remote_sha..$local_sha"
@@ -72,9 +85,16 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     status=1
   fi
 
-  # The secret scan: the same Gitleaks the hosted secrets job pins, over the same range.
+  # The secret scan: the same Gitleaks the hosted secrets job pins, over the same range. The
+  # pinned release is required: an older scanner has different rules and could approve a range the
+  # hosted job rejects after the push has already left the host.
   if ! command -v "$scanner" >/dev/null 2>&1; then
     echo "pre-push: $scanner is not on PATH (set CRW_CI_GITLEAKS); refusing the push rather than scanning nothing" >&2
+    exit 1
+  fi
+  found=$("$scanner" version 2>/dev/null || true)
+  if [ "$found" != "$expected" ]; then
+    echo "pre-push: $scanner is version '$found', but this repository pins $expected; refusing the push" >&2
     exit 1
   fi
   ignore=$(mktemp)
@@ -140,8 +160,9 @@ func localHookPath(dir string) (string, error) {
 	return path, nil
 }
 
-// localHookState is what the hook's path holds: installed (this tool's hook), absent, or foreign
-// (a different hook, which this tool leaves alone).
+// localHookState is what the hook's path holds: installed (this tool's hook, the current script or
+// an older one it wrote), absent, or foreign (a hook this tool did not write, which it leaves
+// alone).
 func localHookState(path string) string {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -153,7 +174,22 @@ func localHookState(path string) string {
 	if bytes.Equal(data, []byte(localHookScript)) {
 		return "installed"
 	}
+	if localHookOwned(data) {
+		return "installed"
+	}
 	return "foreign"
+}
+
+// localHookOwned reports whether data is a hook this tool wrote: a shell script whose second line
+// is the marker. The marker alone is not trusted (a foreign hook could carry the line by accident),
+// so the file must also open like the script this tool writes.
+func localHookOwned(data []byte) bool {
+	first, rest, _ := bytes.Cut(data, []byte("\n"))
+	if !bytes.Equal(bytes.TrimRight(first, "\r"), []byte("#!/usr/bin/env bash")) {
+		return false
+	}
+	second, _, _ := bytes.Cut(rest, []byte("\n"))
+	return bytes.Equal(bytes.TrimRight(second, "\r"), []byte(localHookMarker))
 }
 
 // localHookInstall writes the hook, refusing to replace a hook this tool did not write. It is
