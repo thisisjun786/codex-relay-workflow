@@ -187,3 +187,22 @@ func TestMigrateRootPrivateSeamDefaultIsArmed(t *testing.T) {
 		t.Errorf("the default seam must create the root at the mode it was given: %v %v", fi, err)
 	}
 }
+
+// The merged rule (CRW-813's made result beside this issue's mkdir mode): a root this call did not create reports
+// made=false and is left at the mode it has. Here that is the 0700 root a failed creation left, so the rerun neither
+// claims it as its own nor chmods it to the private marker, and the root stays at most 0700.
+func TestMigrateRootPrivateExistingRootIsNotClaimedOrRetightened(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	ws, pair := migrateRootPrivateWorkspace(t)
+	mkdirs(t, filepath.Join(ws, crwdir.DirName))
+	must(t, os.Chmod(filepath.Join(ws, crwdir.DirName), 0o700))
+	root, made, err := newPub(t).EnsureProjectRoot(pair)
+	must(t, err)
+	if root == nil || made {
+		t.Fatalf("EnsureProjectRoot = %v, %v; want the existing root and made=false", root, made)
+	}
+	migrateRootPrivateWantPrivate(t, filepath.Join(ws, crwdir.DirName))
+	if got := get(t, filepath.Join(ws, crwdir.DirName, ".gitignore")); got != crwdir.GitignoreText {
+		t.Errorf(".gitignore = %q", got)
+	}
+}
