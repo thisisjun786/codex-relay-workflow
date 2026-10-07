@@ -65,6 +65,51 @@ func TestReservationDeduplicatesPerIssueAndPacket(t *testing.T) {
 	}
 }
 
+// A second packet of one issue may not be reserved while another start of the issue is pending: the
+// shipped unique partial index managed_start_one_pending_issue allows one reserved or armed request per
+// issue_key, so the two starts run one after the other. The refusal is the existing duplicate_assignment
+// shape, not the index's constraint error.
+func TestReservationRefusesASecondPendingPacket(t *testing.T) {
+	t.Parallel()
+	r, first := fixtureReservation(t)
+	ctx := context.Background()
+	if _, err := r.Reserve(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	packetRelease(t, r, "PL", "n1", first.IssueKey, "p1", first.RequestID)
+
+	other := first
+	other.RequestID, other.Fingerprint, other.CreateRequestID, other.DispatchRequestID = "req-3", "fp-3", "create-3", "business-3"
+	packetRelease(t, r, "PL", "n3", first.IssueKey, "p2", other.RequestID)
+	if _, err := r.Reserve(ctx, other); err == nil {
+		t.Fatal("a second pending packet of one issue was reserved")
+	} else {
+		reasonIs(t, err, "duplicate_assignment")
+	}
+	if n := pendingStarts(t, r, first.IssueKey); n != 1 {
+		t.Fatalf("%d requests of the issue are pending, want 1", n)
+	}
+
+	// The first start leaves the pending state the way the managed start leaves it (attached): the
+	// second packet is released once the first has attached.
+	if _, err := r.Store.DB.ExecContext(ctx, "UPDATE managed_start_requests SET state = 'attached' WHERE request_id = ?", first.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reserve(ctx, other); err != nil {
+		t.Fatalf("the second packet is refused after the first attached: %v", err)
+	}
+}
+
+// pendingStarts counts the reserved or armed managed requests of an issue.
+func pendingStarts(t *testing.T, r Reservation, issueKey string) int {
+	t.Helper()
+	var n int
+	if err := r.Store.DB.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM managed_start_requests WHERE issue_key = ? AND state IN ('reserved','create_armed')", issueKey).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // TestReservationRefusesWhenAPacketCannotBeResolved: a reservation of a request that is not a release of
 // a packet is refused beside another one, as it always was.
 func TestReservationRefusesWhenAPacketCannotBeResolved(t *testing.T) {

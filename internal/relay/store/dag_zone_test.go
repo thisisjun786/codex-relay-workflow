@@ -83,6 +83,10 @@ var zoneInventory = map[string][]string{
 	"dag_node_packets":      {"plan_id", "node_id", "introduced_rev", "packet_id", "covers_json", "owns_json"},
 	"dag_feature_criteria":  {"plan_id", "revision_no", "issue_key", "criteria_json"},
 	"dag_execution_packets": {"relationship_id", "plan_id", "node_id", "issue_key", "packet_id", "branch", "recorded_at"},
+	// CRW-839 (appended statement): the work branch a release itself named, one row per release and keyed
+	// by the managed request id the release took, so a replay that completes the managed start binds the
+	// same branch the first pass would have.
+	"dag_release_branches": {"managed_request_id", "plan_id", "node_id", "manifest_digest", "work_branch", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

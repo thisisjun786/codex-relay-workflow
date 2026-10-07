@@ -255,11 +255,23 @@ track of which packet each belongs to. The plan is the registry: the packet rule
   `dag_nodes`, which the schema gate reads as a changed object.
 * `dag-release` writes one `dag_execution_packets` row when the managed start has created the relationship and the node is bound
   (`dag_node_executions`): that is the first moment the relationship id exists. The row carries the plan, the node, the issue, the packet
-  and the child's work branch (`work_branch` on the release request, null when the request names none).
+  and the child's work branch (`work_branch` on the release request, null when the request names none). A branch the request named is
+  recorded with the release intent itself (`dag_release_branches`, one row per release, keyed by the managed request id that release
+  took), because the managed-start request frozen with the intent does not carry `work_branch`: a replay that completes the start on a
+  later call binds the branch the release recorded, so the first pass and the replay record the same branch. A rerelease takes a
+  successor request id and records its own branch, so neither path loses the branch its own release named.
 * The registry's duplicate-assignment guard admits a second active relationship of one issue only when both sides resolve to distinct
   packets registered in the same plan: the newcomer's packet from its release intent (`dag_releases` to the live node) and the rival's from
   `dag_execution_packets`. Anything unresolvable, an empty packet, or a pair in different plans is `duplicate_assignment` exactly as
   before, and no new refusal reason is added. Managed reservations are deduplicated per (issue, packet) the same way.
+* A packet node is released beside the other packets of its feature, not against them: `dag-ready` counts an open relationship of the issue
+  as ownership only when that relationship is not the execution of another distinct registered packet of the same plan (`dag_execution_packets`),
+  and a node with no `packet_id` keeps the rule it always had.
+* The packets of one issue start one after the other, never at once. The shipped unique partial index `managed_start_one_pending_issue`
+  allows a single `reserved` or `create_armed` managed start per issue key, so a second packet's reservation is refused while another start
+  of the same issue is pending — with the existing `duplicate_assignment` shape, not the index's constraint error — and `dag-ready` keeps
+  deferring the packet node (`skip:already_owned`) until that start has attached. The admission beside an *active* relationship stays: it is
+  the attached case, and there the two packets do run side by side.
 * `dag-feature-coverage --plan --issue` is the reading: the packets, each packet's acceptance and integration (the merge train's member
   mapping, or a landing the relay observed), and the packet owning each criterion. A feature is complete only when every required
   criterion is covered by an integrated packet. An issue whose plan declares no criteria is read from the criteria registered for its

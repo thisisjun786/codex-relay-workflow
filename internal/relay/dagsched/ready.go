@@ -276,12 +276,17 @@ func introducedAt(ctx context.Context, q store.Querier, plan string, revision in
 // resourceHold applies the checks a candidate meets outside the plan: nobody else owns the issue (an open relationship, or a managed start still
 // pending: an attached start is the relationship's, and a finished relationship frees the issue), the project has exactly one registered parent to
 // reserve under, and no merge is in flight on a branch the node builds on. A non-empty reason is a closed reason.
+//
+// A node that carries a packet_id is delivered beside the other packets of its feature issue (CRW-839): an
+// open relationship of the issue holds it only when that relationship is not the execution of another
+// distinct registered packet of the same plan. A node without a packet_id keeps the rule it always had,
+// and so does a packet node when the store cannot say which packet a relationship executes.
 func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, edges []dag.SnapEdge) (string, string, error) {
-	var open int
-	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL", []any{n.IssueKey}, &open); err != nil {
+	holds, err := openRelationshipHolds(ctx, q, plan, n)
+	if err != nil {
 		return "", "", err
 	}
-	if open > 0 {
+	if holds {
 		return SkipAlreadyOwned, n.IssueKey + " already has an open relationship that is not an execution of this node", nil
 	}
 	var pending int
@@ -289,6 +294,10 @@ func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan stri
 		return "", "", err
 	}
 	if pending > 0 {
+		// One pending managed start per issue is what the shipped unique partial index
+		// managed_start_one_pending_issue allows, so a packet node waits for the start in flight of its own
+		// issue too (CRW-839): the packets of one issue start one after the other, and the node is released
+		// once that start has attached.
 		return SkipAlreadyOwned, n.IssueKey + " has a managed start in flight that no release of this node made", nil
 	}
 	parents, err := projectParents(ctx, q, snap.ProjectKey)
@@ -312,6 +321,43 @@ func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan stri
 		}
 	}
 	return "", "", nil
+}
+
+// openRelationshipHolds is whether an open relationship of the node's issue owns it (CRW-839). A node with
+// no packet_id is the single packet its issue always was, so any open relationship of the issue owns it.
+// A packet node is owned by an open relationship only when that relationship is not the execution of
+// another distinct registered packet of the same plan: the packets of one feature are released side by
+// side. A relationship whose packet cannot be resolved (no dag_execution_packets row, a store that
+// predates the packet tables, a row of another plan) holds the node, which is the conservative answer and
+// the one the guard refuses on.
+func openRelationshipHolds(ctx context.Context, q store.Querier, plan string, n dag.SnapNode) (bool, error) {
+	if n.PacketID == "" {
+		var open int
+		if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL", []any{n.IssueKey}, &open); err != nil {
+			return false, err
+		}
+		return open > 0, nil
+	}
+	present, err := tableExists(ctx, q, "dag_execution_packets")
+	if err != nil {
+		return false, err
+	}
+	if !present {
+		var open int
+		if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM relationships WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL", []any{n.IssueKey}, &open); err != nil {
+			return false, err
+		}
+		return open > 0, nil
+	}
+	// A rival relationship holds the node unless it is the execution of another distinct packet of the
+	// same plan and issue: the predicate the registry's duplicate-assignment guard resolves the rival by,
+	// so a node this reading admits is a node that guard admits too. A rival with no packet row, an empty
+	// packet, a row of another plan or another issue, or this node's own packet holds the node.
+	var rivals int
+	_, err = queryOne(ctx, q, "SELECT COUNT(*) FROM relationships r WHERE r.issue_key = ? AND r.status IN ('active','paused') AND r.superseded_by IS NULL"+
+		" AND NOT EXISTS (SELECT 1 FROM dag_execution_packets e WHERE e.relationship_id = r.relationship_id AND e.plan_id = ? AND e.issue_key = ? AND e.packet_id <> ?)",
+		[]any{n.IssueKey, plan, n.IssueKey, n.PacketID}, &rivals)
+	return rivals > 0, err
 }
 
 // graphMetrics are, for every node, the number of nodes on the longest chain that starts at it (hop-count critical path) and the number of nodes

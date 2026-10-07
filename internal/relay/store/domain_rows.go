@@ -1069,3 +1069,33 @@ func DagExecutionPacket(ctx context.Context, s *Store, relationshipID string) (D
 	}
 	return row, true, nil
 }
+
+// RecordDagReleaseBranch records the work branch a release named, keyed by the managed request id that
+// release took. The managed-start request frozen with a release never held work_branch (it is a
+// dag-release-request/1 field, not a managed one), so the replay path reads the branch the release
+// recorded here rather than parsing the frozen bytes: the first pass and the replay then write the same
+// branch into dag_execution_packets. A release that named no branch writes no row, so absence is none.
+// Append-only: the branch is recorded once, with the intent.
+func RecordDagReleaseBranch(ctx context.Context, s *Store, requestID, planID, nodeID, manifestDigest, workBranch, at string) error {
+	_, err := s.exec(ctx, "INSERT INTO dag_release_branches (managed_request_id, plan_id, node_id, manifest_digest, work_branch, recorded_at) VALUES (?,?,?,?,?,?)"+
+		" ON CONFLICT (managed_request_id) DO NOTHING", requestID, planID, nodeID, manifestDigest, workBranch, at)
+	return err
+}
+
+// DagReleaseBranch reads the work branch a release recorded. found is false when the release named none,
+// when no release took that request id, or when the store predates the table.
+func DagReleaseBranch(ctx context.Context, s *Store, requestID string) (string, bool, error) {
+	present, err := dagZoneTable(ctx, s, "dag_release_branches")
+	if err != nil || !present {
+		return "", false, err
+	}
+	var branch string
+	err = s.q(ctx).QueryRowContext(ctx, "SELECT work_branch FROM dag_release_branches WHERE managed_request_id = ?", requestID).Scan(&branch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return branch, true, nil
+}

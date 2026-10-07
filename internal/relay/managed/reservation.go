@@ -55,22 +55,6 @@ func (r Reservation) relationshipPacket(ctx context.Context, relationshipID stri
 	return plan, packet, packet != ""
 }
 
-// packetsApart is whether two managed requests are two distinct packets of one feature issue in the same plan.
-func (r Reservation) packetsApart(ctx context.Context, mine, other string) bool {
-	if mine == "" || other == "" {
-		return false
-	}
-	plan, packet, ok := r.releasedPacket(ctx, mine)
-	if !ok {
-		return false
-	}
-	otherPlan, otherPacket, ok := r.releasedPacket(ctx, other)
-	if !ok {
-		return false
-	}
-	return otherPacket != packet && otherPlan == plan
-}
-
 // packetBesideRelationship is whether this request is a different packet of the same plan as the live
 // relationship it would sit beside.
 func (r Reservation) packetBesideRelationship(ctx context.Context, requestID, relationshipID string) bool {
@@ -118,8 +102,12 @@ func (r Reservation) Reserve(ctx context.Context, in Identity) (out store.Manage
 				return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, fmt.Sprint(live.Get("relationship_id")), live.Get("status")))
 			}
 		}
-		// Every other request in flight for the issue is a rival: a second packet of the issue may be
-		// reserved beside them, anything else is refused as it always was (CRW-839).
+		// Every other request in flight for the issue is a rival, and a packet does not get past one
+		// (CRW-839): the shipped unique partial index managed_start_one_pending_issue allows a single
+		// reserved or create_armed request per issue_key, so two packet starts of one issue run one after the
+		// other rather than at once. Admitting the second here would only move the refusal to that index's
+		// constraint error, so it is refused with the duplicate_assignment shape the caller already knows;
+		// the packet node waits in resourceHold until the start in flight has attached.
 		others, e := r.Store.PendingManagedStarts(ctx, in.IssueKey)
 		if e != nil {
 			return e
@@ -128,9 +116,7 @@ func (r Reservation) Reserve(ctx context.Context, in Identity) (out store.Manage
 			if other.RequestID == in.RequestID {
 				continue
 			}
-			if !r.packetsApart(ctx, in.RequestID, other.RequestID) {
-				return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already held by request %q (%s)", in.IssueKey, other.RequestID, other.State))
-			}
+			return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already held by request %q (%s)", in.IssueKey, other.RequestID, other.State))
 		}
 		at := r.now()
 		e = r.Store.ReserveManagedStart(ctx, store.ManagedStartRequestsRow{RequestID: in.RequestID, IssueKey: in.IssueKey, RequestFingerprint: in.Fingerprint, FingerprintVersion: in.Version, Workspace: in.Workspace, MarkerRoot: in.MarkerRoot, SocketIdentity: in.SocketIdentity, CreateRequestID: in.CreateRequestID, DispatchRequestID: in.DispatchRequestID, CreatedAt: at, UpdatedAt: at})

@@ -890,4 +890,24 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
 BEGIN SELECT RAISE(ABORT, 'dag_execution_packets rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_execution_packets_no_delete BEFORE DELETE ON dag_execution_packets
 BEGIN SELECT RAISE(ABORT, 'dag_execution_packets rows are append-only: never deleted'); END`,
+
+	// CRW-839: the child's work branch as the release itself recorded it, one row per release and keyed by the
+	// managed request id the release took (a rerelease takes a successor id and records its own branch). The
+	// managed-start request frozen with a release never held work_branch (it is a dag-release-request/1 field,
+	// not a managed one), so a replay that completes the start reads the branch here instead of parsing the
+	// frozen bytes: the first pass and the replay then record the same branch in dag_execution_packets. A
+	// release that names no branch writes no row, so absence means none. Appended as its own CREATE for the
+	// same reason the other CRW-839 tables are: a shipped statement is never edited.
+	`CREATE TABLE IF NOT EXISTS dag_release_branches (
+    managed_request_id TEXT PRIMARY KEY CHECK (managed_request_id <> ''),
+    plan_id            TEXT NOT NULL,
+    node_id            TEXT NOT NULL,
+    manifest_digest    TEXT NOT NULL,
+    work_branch        TEXT NOT NULL CHECK (work_branch <> ''),
+    recorded_at        TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_release_branches_no_update BEFORE UPDATE ON dag_release_branches
+BEGIN SELECT RAISE(ABORT, 'dag_release_branches rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_release_branches_no_delete BEFORE DELETE ON dag_release_branches
+BEGIN SELECT RAISE(ABORT, 'dag_release_branches rows are append-only: never deleted'); END`,
 }

@@ -163,18 +163,6 @@ func validWorkBranch(s string) error {
 	return nil
 }
 
-// workBranchOf reads the work branch a frozen release request names. The request is read again rather
-// than carried as a field, because the bind runs from the frozen bytes on the replay path too.
-func workBranchOf(raw []byte) string {
-	var doc struct {
-		WorkBranch string `json:"work_branch"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(doc.WorkBranch)
-}
-
 // releaseRow is a decided release: the manifest it was decided on and the managed-start request id derived from it. Recovered says the request is the successor of a closed intent (a rereleased row of
 // dag_release_recoveries, release_recovery.go) and not the one dag_releases holds for the digest.
 type releaseRow struct {
@@ -391,6 +379,16 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			return err
 		}
 		at := s.now()
+		// The work branch the request named is recorded with the intent, under the request id this release
+		// takes (CRW-839). The frozen managed-start request never holds work_branch, so a replay that
+		// completes the start on a later call reads it from here and binds the same branch the first pass
+		// would have; a rerelease takes a successor request id and records its own branch, so neither path
+		// loses the branch its own release named. A release that names no branch records none.
+		if req.WorkBranch != "" {
+			if err := store.RecordDagReleaseBranch(txCtx, s.Store, out.RequestID, plan, node, digest, req.WorkBranch, at); err != nil {
+				return err
+			}
+		}
 		if closedBase != "" {
 			_, err = tx.ExecContext(txCtx, "INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, successor_request_id, request_sha256, request_json, marker_root, socket, state_selector, reason, recorded_by, coordinator_epoch, recorded_at)"+
 				" VALUES (?,?,?,?,'rereleased',?,?,?,?,?,?,?,?,?,?)", plan, node, digest, closedBase, out.RequestID, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector,
@@ -722,7 +720,14 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	if frozenReq.Marker != s.Selectors.MarkerRoot || frozenReq.Socket != s.Selectors.Socket || frozenReq.Selector != s.Selectors.StateSelector {
 		return out, refuse(contract.RefusalDispositionConflict, "the release of %s was frozen under marker root %q, socket %q and state %q and is replayed under other spellings", node, frozenReq.Marker, frozenReq.Socket, frozenReq.Selector)
 	}
-	return s.startAndBind(ctx, plan, node, actor, out, []byte(frozenReq.Raw), workBranchOf([]byte(frozenReq.Raw)), true)
+	// The branch is the one the release itself recorded with its intent, never one parsed from the frozen
+	// managed-start request, which does not carry work_branch at all (CRW-839). A release that named no
+	// branch recorded none, and the replay then binds none, exactly as the first pass would have.
+	branch, _, err := store.DagReleaseBranch(ctx, s.Store, row.Request)
+	if err != nil {
+		return out, err
+	}
+	return s.startAndBind(ctx, plan, node, actor, out, []byte(frozenReq.Raw), branch, true)
 }
 
 // startAndBind runs the managed start with the frozen bytes and binds the child it admitted to the node.
