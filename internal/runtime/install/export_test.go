@@ -111,6 +111,15 @@ func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {
 	return func() { beforeWriteLock = saved }
 }
 
+// ReplaceOwnershipLockWait runs just before the re-registration path waits for the ownership lock,
+// until restored: a test that moves the policy file while the run waits for that lock uses it to
+// know the wait has begun.
+func ReplaceOwnershipLockWait(wait func()) (restore func()) {
+	saved := beforeOwnershipLock
+	beforeOwnershipLock = wait
+	return func() { beforeOwnershipLock = saved }
+}
+
 // ReplaceProcessOwner makes the process table's owner reading go through owner until restored,
 // so that a fake /proc can hold another user's processes.
 func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
