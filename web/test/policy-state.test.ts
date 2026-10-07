@@ -967,6 +967,47 @@ test("a removal preview names the refusal a stale exception id meets", () => {
   assert.ok(preview.fallback?.includes("refused as unknown"), "the refusal is named too");
 });
 
+test("a removal preview under a policy with no allowed list never promises an allowlist check", () => {
+  // d1: presence_only is a valid policy (roles declared, allowed omitted), and the bridge then runs
+  // NO allowlist check at all (internal/bridge/execution/execution.go Authorize guards the allowlist
+  // branch with p.allowed != nil, and internal/policystore/policy.go Mode reports presence_only when
+  // the file declares no allowed list). Saying the scope returns to the allowed list promised a
+  // narrower permission boundary than the host actually enforces.
+  const presenceOnly = reading({
+    mode: "presence_only",
+    allowed: [],
+    roles: [
+      { name: "child", expectation: "pair", pairs: [{ model: "m", reasoningEffort: "high" }] },
+      { name: "supervisor", expectation: "record", pairs: [] },
+    ],
+    exceptions: [
+      { id: "legacy", role: "supervisor", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] },
+      { id: "any", model: "m", reasoningEffort: "max", cwd: ["/srv/all"] },
+    ],
+  });
+  // The record role (the supervisor) has no pair default and no allowlist to fall back to.
+  const record = previewChange(presenceOnly, { kind: "removeException", id: "legacy" });
+  assert.ok(record.fallback, "the record-role preview carries a sentence");
+  assert.ok(!record.fallback?.includes("allowed list"), "there is no allowlist check to promise");
+  assert.ok(!record.fallback?.includes("checked against"), "nothing checks the request");
+  assert.ok(record.fallback?.includes("refused as unknown"), "the stale id is still refused");
+  // The role-less exception is the same: the fall-through reaches no list.
+  const roleless = previewChange(presenceOnly, { kind: "removeException", id: "any" });
+  assert.ok(roleless.fallback, "the role-less preview carries a sentence");
+  assert.ok(!roleless.fallback?.includes("allowed list"), "no allowlist is promised here either");
+  assert.ok(roleless.fallback?.includes("cite no role"));
+  // A declared pair role keeps its default, and no allowlist is promised there either.
+  const pair = reading({
+    mode: "presence_only",
+    allowed: [],
+    roles: [{ name: "child", expectation: "pair", pairs: [{ model: "m", reasoningEffort: "high" }] }],
+    exceptions: [{ id: "kid", role: "child", model: "m", reasoningEffort: "max", cwd: ["/srv/b"] }],
+  });
+  const child = previewChange(pair, { kind: "removeException", id: "kid" });
+  assert.ok(child.fallback?.includes("child role default"), "the pair default still returns");
+  assert.ok(!child.fallback?.includes("allowed list"), "and no allowlist is promised");
+});
+
 test("runSave drives the whole check-then-write round trip", async () => {
   // d5: the asynchronous sequence was only reachable inside the React component. runSave is that
   // sequence, outside React, so a fake transport can drive every branch the promise names.
@@ -987,15 +1028,23 @@ test("runSave drives the whole check-then-write round trip", async () => {
   assert.equal(payloads.length, 2, "the check runs before the write");
   assert.equal(ok.state.change, null, "the saved change is no longer pending");
 
-  // A stale check never reaches the write, keeps the inputs and asks for a keeping re-read.
+  // A stale check never reaches the write, keeps the inputs and asks for a keeping re-read. The
+  // check is valid=true AND stale=true, so the stale guard is the only thing that can stop the
+  // write: dropping that guard would fall through to the write and the count below would catch it.
+  // The write is counted rather than left to throw, because runSave's own catch turns a throwing
+  // write into the same lost-response state these assertions describe, which is what made the
+  // earlier version of this case pass even when the write ran.
+  let staleWrites = 0;
   const stale = await runSave(state, {
-    check: async () => ({ status: 200, body: { valid: false, errors: ["the file moved"], currentDigest: "c".repeat(64), stale: true, diff: [] } }),
-    write: async () => { throw new Error("the write must not run after a stale check"); },
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "c".repeat(64), stale: true, diff: ["allowed.anthropic/opus"] } }),
+    write: async () => { staleWrites += 1; return { status: 200, body: { stored: { digest: "c".repeat(64) }, applied: "applied", actions: [] } }; },
   });
+  assert.equal(staleWrites, 0, "a stale check never reaches the write");
   assert.equal(stale.saved, false);
   assert.equal(stale.reread, true);
   assert.equal(stale.rereadKeepsInputs, true, "a conflict keeps the inputs across the re-read");
   assert.equal(stale.state.notice?.tone, "err");
+  assert.ok(stale.state.change, "the pending change survives the conflict for the re-read");
 
   // An invalid check is an error notice and no write.
   const invalid = await runSave(state, {
@@ -1345,6 +1394,33 @@ test("needs_user_action shows the work a person must do", () => {
   assert.equal(notice.applied, "needs_user_action");
   assert.deepEqual(notice.actions, ["restart the relay service so it loads the new policy"]);
   assert.ok(notice.text.toLowerCase().includes("restart"));
+});
+
+test("needs_user_action never guesses what the running relay holds", () => {
+  // d2: needs_user_action is returned both when the running service has not loaded the file and when
+  // the file and the wiring record disagree (internal/policystore/running.go Applied decides the
+  // record mismatch BEFORE it ever looks at the running digest, and AppliedActions then names the
+  // re-registration). The screen cannot tell the two apart, so it must not claim the relay still
+  // holds the old bytes: it reports that the policy is not in force and repeats the server's action.
+  const mismatch = noticeForWrite(200, {
+    stored: { digest: "d".repeat(64) },
+    registered: { digest: "e".repeat(64) },
+    applied: "needs_user_action",
+    actions: ["re-register the execution policy with crw install register-mcp --re-register-policy --execution-policy <file>"],
+  });
+  assert.equal(mismatch.applied, "needs_user_action");
+  assert.ok(!mismatch.text.includes("still holds the old bytes"), "the running state is not asserted");
+  assert.ok(!mismatch.text.includes("holds these bytes"), "and neither is the reverse");
+  assert.ok(mismatch.text.includes("re-register"), "the server's own action is repeated");
+  // The restart case repeats the restart action and asserts no digest either.
+  const restart = noticeForWrite(200, {
+    stored: { digest: "d".repeat(64) },
+    registered: { digest: "d".repeat(64) },
+    applied: "needs_user_action",
+    actions: ["restart the relay service so it loads the new policy"],
+  });
+  assert.ok(!restart.text.includes("still holds the old bytes"));
+  assert.ok(restart.text.toLowerCase().includes("restart"));
 });
 
 test("unverifiable is its own applied value and is not reported as applied", () => {

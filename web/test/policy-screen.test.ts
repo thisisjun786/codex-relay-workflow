@@ -337,6 +337,70 @@ test("a stale check keeps the inputs and asks for a re-read", async () => {
   assert.deepEqual(kept.allowedDraft.get("anthropic/opus"), ["max", "high"], "the typed text survives too");
 });
 
+test("the preview the screen renders for a removal under presence_only promises no allowlist", async () => {
+  const pure = await import("../src/policy-state.ts");
+  // d1 observed on the screen itself: the file declares roles but no allowed list, so the bridge runs
+  // no allowlist check (internal/bridge/execution/execution.go Authorize guards it with p.allowed != nil).
+  // The rendered preview must not tell the operator the scope returns to a list this policy lacks.
+  const presenceOnly = readingBody({
+    mode: "presence_only",
+    allowed: [],
+    roles: [
+      { name: "child", expectation: "pair", pairs: [{ model: "m", reasoningEffort: "high" }] },
+      { name: "supervisor", expectation: "record", pairs: [] },
+    ],
+    exceptions: [{ id: "legacy", role: "supervisor", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] }],
+  });
+  let state = loadedState(pure, presenceOnly, catalogBody([]));
+  state = pure.screenPropose(state as never, { kind: "removeException", id: "legacy" } as never) as unknown as Record<string, unknown>;
+  const { elements, markup } = await mount(state);
+  assert.ok(markup.includes("Preview before saving"), "the preview is on screen before saving");
+  // The assertion is scoped to the preview's own sentence: the screen renders other text that
+  // legitimately says "allowed list" (the section heading and the empty-list row), so only the
+  // removal sentence can be judged here.
+  const sentence = elements
+    .filter((el) => el.props["role"] === "status")
+    .map((el) => textOf(el.props.children))
+    .find((text) => text.includes("Removing this exception"));
+  assert.ok(sentence, "the removal sentence is on screen");
+  assert.ok(sentence?.includes("refused as unknown"), "the sentence names the stale-id refusal");
+  assert.ok(!sentence?.includes("allowed list"), "and never promises an allowlist check that does not exist");
+  assert.ok(sentence?.includes("declares no allowlist"), "it says the policy has no allowlist");
+  // The same change against an allowlist policy still names the allowed list, so the sentence follows
+  // the policy and not the code path.
+  const withList = readingBody({ exceptions: [{ id: "legacy", role: "supervisor", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] }] });
+  let listed = loadedState(pure, withList, catalogBody([]));
+  listed = pure.screenPropose(listed as never, { kind: "removeException", id: "legacy" } as never) as unknown as Record<string, unknown>;
+  const second = await mount(listed);
+  const listedSentence = second.elements
+    .filter((el) => el.props["role"] === "status")
+    .map((el) => textOf(el.props.children))
+    .find((text) => text.includes("Removing this exception"));
+  assert.ok(listedSentence?.includes("allowed list"), "an allowlist policy still names it");
+  assert.ok(!listedSentence?.includes("declares no allowlist"), "and does not claim there is none");
+});
+
+test("the screen shows the applied state and the server's action, never a guessed running digest", async () => {
+  const pure = await import("../src/policy-state.ts");
+  // d2 observed on the screen: needs_user_action covers both a service that has not loaded the bytes
+  // and a file/record disagreement (internal/policystore/running.go Applied decides the record
+  // mismatch first). The rendered notice repeats the server's action and asserts nothing about the
+  // running relay.
+  let state = pure.initialScreen();
+  state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
+  const notice = pure.noticeForWrite(200, {
+    stored: { digest: "b".repeat(64) },
+    registered: { digest: "c".repeat(64) },
+    applied: "needs_user_action",
+    actions: ["re-register the execution policy with crw install register-mcp --re-register-policy --execution-policy <file>"],
+  });
+  const finished = pure.screenSaveFinished(pure.screenSaveStarted(state), state.change, notice) as unknown as Record<string, unknown>;
+  const { markup } = await mount(finished);
+  assert.ok(markup.includes("needs_user_action"), "the applied value is shown as its own fact");
+  assert.ok(markup.includes("re-register"), "the server's own action is repeated");
+  assert.ok(!markup.includes("still holds the old bytes"), "the running state is never asserted");
+});
+
 test("a save in flight disables the screen's other edit controls", async () => {
   const pure = await import("../src/policy-state.ts");
   let state = pure.initialScreen();

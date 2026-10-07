@@ -594,25 +594,39 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       const existing = reading.exceptions.find((row) => row.id === change.id);
       const scope = existing && existing.cwd.length > 0 ? existing.cwd.join(", ") : "the exception's scope";
       items.push(...exceptionRows(`exception ${change.id}`, existing ?? null, null));
-      // What the removal actually does depends on the exception's ROLE EXPECTATION, not on whether the
-      // role happens to list a pair. The bridge skips the pair check for a record role
-      // (internal/bridge/execution/execution.go Authorize: the pair branch runs only when the
+      // What the removal actually does depends on the exception's ROLE EXPECTATION and on the file's
+      // MODE, not on whether the role happens to list a pair.
+      //
+      // The expectation decides whether the pair check applies: the bridge skips it for a record role
+      // (internal/bridge/execution/execution.go Authorize runs the pair branch only when the
       // expectation is "pair"), so a request that no longer cites the removed exception falls through
-      // to the allowed list - for the supervisor exactly as for a role-less exception. A record role
-      // never has a pair to fall back to and the server refuses it declaring one
-      // (internal/bridge/execution/roles.go parseRole), so telling the operator to add one would name
-      // a repair the server will not accept.
+      // - for the supervisor exactly as for a role-less exception. A record role never has a pair to
+      // fall back to and the server refuses it declaring one (internal/bridge/execution/roles.go
+      // parseRole), so telling the operator to add one would name a repair the server will not accept.
+      //
+      // The mode decides what the fall-through reaches: Authorize checks the allowed list only when
+      // the file declares one (p.allowed != nil, internal/policystore/policy.go Mode), so a
+      // presence_only file has NO allowlist check and the fall-through is unrestricted. Claiming an
+      // allowlist there would promise a narrower permission boundary than the host enforces.
       const role = existing?.role;
       const declared = role !== undefined ? reading.roles.find((entry) => entry.name === role) : undefined;
       const record = declared?.expectation === "record";
+      const allowlist = reading.mode === "allowlist" || reading.allowed.length > 0;
+      const fallThrough = allowlist
+        ? "checked against the allowed list"
+        : "not checked against any list, because this policy declares no allowlist, so it is allowed";
       if (role === undefined) {
-        preview.fallback = `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then checked against the allowed list, and a request still citing this exception is refused as unknown.`;
+        preview.fallback = `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then ${fallThrough}, and a request still citing this exception is refused as unknown.`;
       } else if (record) {
-        preview.fallback = `Removing this exception returns ${scope} to the allowed list: a request that still cites the removed exception id is refused as unknown, and one that does not cite it is checked against the allowed list. A ${role} role is declared with a record expectation, so it has no pair default to return to.`;
+        preview.fallback = allowlist
+          ? `Removing this exception returns ${scope} to the allowed list: a request that still cites the removed exception id is refused as unknown, and one that does not cite it is checked against the allowed list. A ${role} role is declared with a record expectation, so it has no pair default to return to.`
+          : `Removing this exception leaves ${scope} with nothing to fall back to: this policy declares no allowlist, so a request that still cites the removed exception id is refused as unknown and one that does not cite it is allowed. A ${role} role is declared with a record expectation, so it has no pair default to return to.`;
       } else if (declared !== undefined) {
-        preview.fallback = `Removing this exception returns ${scope} to the ${role} role default. A request that still cites the removed exception id is refused as unknown before that default is reached.`;
+        preview.fallback = allowlist
+          ? `Removing this exception returns ${scope} to the ${role} role default, and the request must also appear in the allowed list. A request that still cites the removed exception id is refused as unknown before that default is reached.`
+          : `Removing this exception returns ${scope} to the ${role} role default. This policy declares no allowlist, so nothing else is checked. A request that still cites the removed exception id is refused as unknown before that default is reached.`;
       } else {
-        preview.fallback = `This file declares no ${role} role, so ${scope} has no default to return to: a request that cites ${role} is refused as unknown, and one that does not is checked against the allowed list.`;
+        preview.fallback = `This file declares no ${role} role, so ${scope} has no default to return to: a request that cites ${role} is refused as unknown, and one that does not is ${fallThrough}.`;
       }
       break;
     }
@@ -801,7 +815,13 @@ export function noticeForWrite(status: number, body: unknown): PolicyNotice {
     parts.push(notice.registered === null ? "registered: not read back" : `registered ${digest12(notice.registered)}`);
     if (notice.applied === "applied") parts.push("the running relay holds these bytes");
     else if (notice.applied === "needs_user_action") {
-      parts.push("the running relay still holds the old bytes");
+      // The server returns needs_user_action for TWO different situations: the running service has
+      // not loaded these bytes, and the file and the wiring record disagree
+      // (internal/policystore/running.go Applied decides the record mismatch BEFORE it looks at the
+      // running digest, and AppliedActions then names the re-registration). The screen cannot tell
+      // them apart, so it says the policy is not in force and repeats the server's own action rather
+      // than asserting what the running relay holds.
+      parts.push("the policy is not in force yet");
       if (notice.actions.length > 0) parts.push(`to apply it: ${notice.actions.join("; ")}`);
     } else if (notice.applied === "unverifiable") parts.push("whether the running relay holds these bytes could not be read");
     else parts.push(`applied: ${notice.applied || "unknown"}`);
