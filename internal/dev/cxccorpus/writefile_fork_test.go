@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestWriteFile_executes_under_concurrent_forks writes a program with writeFile, makes it executable
@@ -22,6 +24,7 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 	dir := t.TempDir()
 	stop := make(chan struct{})
 	var forkers sync.WaitGroup
+	var forks int64
 	for i := 0; i < 2; i++ {
 		forkers.Add(1)
 		go func() {
@@ -32,10 +35,23 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 					return
 				default:
 				}
-				_ = exec.Command("true").Run()
+				if exec.Command("true").Run() == nil {
+					atomic.AddInt64(&forks, 1)
+				}
 			}
 		}()
 	}
+
+	// The forkers must be running before the first write, or the overlap check below proves nothing.
+	for i := 0; atomic.LoadInt64(&forks) == 0 && i < 5000; i++ {
+		time.Sleep(time.Millisecond)
+	}
+	if atomic.LoadInt64(&forks) == 0 {
+		close(stop)
+		forkers.Wait()
+		t.Fatal("no fork started before the writes")
+	}
+	forksBeforeWrites := atomic.LoadInt64(&forks)
 
 	const writers, copies = 4, 40
 	var (
@@ -70,8 +86,12 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 		}(w)
 	}
 	wg.Wait()
+	overlap := atomic.LoadInt64(&forks) - forksBeforeWrites
 	close(stop)
 	forkers.Wait()
+	if overlap == 0 {
+		t.Error("no fork ran while a write was open: the pressure did not overlap the writes")
+	}
 	for _, f := range fail {
 		t.Error(f)
 	}

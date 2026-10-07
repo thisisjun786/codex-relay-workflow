@@ -62,7 +62,11 @@ type copyRaceResult struct {
 	Attempted int64 `json:"attempted"`
 	// Forked is how many forker program starts succeeded. A green run whose forkers never started a
 	// process would prove nothing about the race, so the parent requires it to be non-zero.
-	Forked  int64         `json:"forked"`
+	Forked int64 `json:"forked"`
+	// Overlap is how many forker starts succeeded between the first copy and the last. The forkers run
+	// before the copies start and are counted while they run, so a green run proves fork pressure was
+	// open during the copy window, not only before or after it.
+	Overlap int64         `json:"overlap"`
 	Elapsed time.Duration `json:"elapsed"`
 }
 
@@ -77,6 +81,9 @@ func TestCopyBinarySurvivesConcurrentForks(t *testing.T) {
 	result := copyRaceInChild(t, "locked")
 	if result.Forked == 0 {
 		t.Fatalf("no forker started a process: the exercise did not establish the concurrent-fork pressure it needs")
+	}
+	if result.Overlap == 0 {
+		t.Fatalf("no fork started while a copy was open: the pressure ended before the copies began")
 	}
 	if result.Busy != 0 {
 		t.Fatalf("%d of the %d copies could not be run: ETXTBSY", result.Busy, result.Attempted)
@@ -255,6 +262,16 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 		defer failuresMu.Unlock()
 		failures = append(failures, fmt.Sprintf(format, args...))
 	}
+	// The forkers must be running before the first copy opens, or the overlap check below proves nothing.
+	readyBy := time.Now().Add(copyForkerStop)
+	for atomic.LoadInt64(&forkStarts) == 0 {
+		if time.Now().After(readyBy) {
+			close(stop)
+			return snapshot(), fmt.Errorf("no forker started a process within %s", copyForkerStop)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	forksBeforeCopies := atomic.LoadInt64(&forkStarts)
 	start := time.Now()
 	deadline := start.Add(copyRunaway)
 	var writers sync.WaitGroup
@@ -296,8 +313,10 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 	}
 	done := make(chan struct{})
 	go func() { writers.Wait(); close(done) }()
+	var overlap int64
 	select {
 	case <-done:
+		overlap = atomic.LoadInt64(&forkStarts) - forksBeforeCopies
 	case <-time.After(time.Until(deadline)):
 		// A stuck copy holds syscall.ForkLock, so the forkers are not waited for here: they could not
 		// fork again while it is held. The parent's kill is what ends this process.
@@ -316,6 +335,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 	}
 	result = snapshot()
 	result.Elapsed = time.Since(start)
+	result.Overlap = overlap
 	failuresMu.Lock()
 	defer failuresMu.Unlock()
 	if len(failures) > 0 {
