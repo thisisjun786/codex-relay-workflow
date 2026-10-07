@@ -585,6 +585,55 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 	return githubPostSite{}, false, true
 }
 
+// githubPostNormalWords reads each token as the shell builds it: a token from the strict reader still
+// carries its quotes, and a token from the tolerant tokenizer has them already removed, so a name is
+// decoded exactly once and a quote piece is neither lost nor applied twice.
+func githubPostNormalWords(tokens []string, quoted bool) []string {
+	if !quoted {
+		return tokens
+	}
+	normal := make([]string, len(tokens))
+	for i, token := range tokens {
+		normal[i] = githubPostNormal(token)
+	}
+	return normal
+}
+
+// githubPostChdir is the literal directory a cd or pushd moves to, and whether the command changes the
+// working directory. A name holding an expansion is not read: the guard cannot know where it lands, so it
+// keeps the payload's directory and the file rule refuses what it cannot resolve.
+func githubPostChdir(words []string) (string, bool) {
+	if len(words) < 2 {
+		return "", false
+	}
+	switch githubPostProgram(words[0]) {
+	case "cd", "pushd":
+	default:
+		return "", false
+	}
+	for _, w := range words[1:] {
+		if strings.HasPrefix(w, "-") {
+			continue
+		}
+		if githubPostHoldsExpansion(w) {
+			return "", false
+		}
+		return w, true
+	}
+	return "", false
+}
+
+// githubPostJoinDir is the directory a cd moves to, resolved against the directory the command runs in.
+func githubPostJoinDir(cwd, dir string) string {
+	if filepath.IsAbs(dir) {
+		return dir
+	}
+	if cwd == "" {
+		return dir
+	}
+	return cwd + string(filepath.Separator) + dir
+}
+
 // githubPostScriptCommand is CRW-875's file rule for one command's tokens: the leading assignments and the
 // wrapper commands with their options are dropped with the same reader the gh-post decomposition uses, and
 // the program that remains is judged as a shell that takes its program from a file (D1) or as a path the
@@ -606,6 +655,12 @@ func githubPostScriptCommand(tokens []string, cwd string, quoted bool) (githubPo
 		}
 	}
 	rest := shellVerbSkipWrappers(normal)
+	// A command word that is a path (./env, scripts/post.sh) names a file the shell runs, not the wrapper
+	// command its last element happens to spell; the wrapper reader compares by basename, so the path is
+	// judged here before any wrapper stripping.
+	if len(normal) > 0 && strings.ContainsRune(normal[0], '/') {
+		rest = normal
+	}
 	for len(rest) > 0 && rest[0] == "--" {
 		// A wrapper's own -- separator is an operand boundary the shell drops; the command runs the words
 		// after it (timeout 30 -- bash post.sh runs bash post.sh).
@@ -627,10 +682,27 @@ func githubPostScriptCommand(tokens []string, cwd string, quoted bool) (githubPo
 // (cd . && bash post.sh, true; bash post.sh, bash post.sh &) no longer hides a posting script file.
 func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
 	for _, part := range shellVerbSubsegments(command) {
-		// A subshell or brace group closes with an unquoted ) or } glued to the last word; it is dropped
-		// from the raw text, so a quoted operand keeps a literal close ('evil.sh)' names evil.sh)).
-		part = strings.TrimRight(part, ")}")
-		if site, denied := githubPostScriptCommand(shellTokenize(part), cwd, false); denied {
+		// A subshell or brace group opens and closes with an unquoted ( or { and ) or } glued to the words;
+		// both are dropped from the raw text, so a quoted operand keeps a literal close ('evil.sh)' names
+		// evil.sh), not evil.sh).
+		part = strings.TrimLeft(strings.TrimRight(part, ")}"), "({")
+		// The words are read as written (the strict reader keeps the quote characters), so a name is decoded
+		// exactly once by the shell's own quote removal and a quote piece is not lost or applied twice. A
+		// part the strict reader refuses (a redirection, an expansion) falls back to the tolerant tokenizer,
+		// whose words are already decoded and so are not decoded again.
+		words, ok := githubPostWords(part)
+		quoted := true
+		if !ok {
+			words, quoted = shellTokenize(part), false
+		}
+		rest := shellVerbSkipWrappers(githubPostNormalWords(words, quoted))
+		// A cd moves the working directory for the commands after it, so a later relative operand is read
+		// where the shell would read it.
+		if dir, moved := githubPostChdir(rest); moved {
+			cwd = githubPostJoinDir(cwd, dir)
+			continue
+		}
+		if site, denied := githubPostScriptCommand(words, cwd, quoted); denied {
 			return site, true
 		}
 	}
@@ -645,11 +717,6 @@ func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
 func githubPostDirectScript(words []string, cwd string) (githubPostSite, bool) {
 	name := words[0]
 	if !strings.ContainsRune(name, '/') {
-		return githubPostSite{}, false
-	}
-	switch githubPostProgram(name) {
-	case "bash", "sh", "zsh", "dash", "ksh", "source", ".":
-		// The shell rule owns a shell spelled as a path (/bin/bash script.sh); it already judged the script.
 		return githubPostSite{}, false
 	}
 	content, binary, unreadable := githubPostReadScriptFile(name, cwd)
@@ -928,7 +995,8 @@ func githubPostReadScriptFile(name, cwd string) (content string, binary, unreada
 	if err != nil || !st.Mode().IsRegular() {
 		return "", false, true
 	}
-	file, err := os.Open(path)
+	// O_NONBLOCK keeps a FIFO swapped in between the stat and the open from waiting for a writer.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", false, true
 	}
@@ -967,7 +1035,9 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}
-	file, err := os.Open(path)
+	// The open itself does not block: O_NONBLOCK keeps a FIFO swapped in between the stat and the open from
+	// waiting for a writer, and the handle is checked below.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", false
 	}
@@ -1318,9 +1388,14 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 	if err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}
-	// The handle must be the file the resolved path names now: a link or another file swapped in between
-	// the resolution and the open would otherwise be read past the containment check.
-	if now, err := os.Lstat(path); err != nil || !os.SameFile(st, now) {
+	// The handle must be the file the name resolves to now, under a root: re-resolving after the open
+	// catches a link or a parent directory swapped in between the resolution and the open, in either
+	// direction, which a comparison against the earlier resolved path would not.
+	again, err := filepath.EvalSymlinks(githubPostAbsPath(name, cwd))
+	if err != nil || !githubPostUnderRoots(again) {
+		return "", false
+	}
+	if now, err := os.Stat(again); err != nil || !os.SameFile(st, now) {
 		return "", false
 	}
 	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
