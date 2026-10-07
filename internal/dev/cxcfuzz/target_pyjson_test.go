@@ -32,13 +32,14 @@ func TestPyjsonGoAnswersTheJsonToolFlags(t *testing.T) {
 	for _, row := range []struct {
 		name   string
 		input  pyjson.Object
-		exit   float64
+		exit   int
 		stdout string
 	}{
 		{"compact", pyjson.Object{{Key: "text", Value: `{"b": 1, "a": [1, 2]}`}, {Key: "compact", Value: true}}, 0, `{"b":1,"a":[1,2]}`},
 		{"sorted-indent", pyjson.Object{{Key: "text", Value: `{"b": 1, "a": 2}`}, {Key: "sortKeys", Value: true}, {Key: "indent", Value: 2}}, 0, "{\n  \"a\": 2,\n  \"b\": 1\n}"},
 		{"no-indent", pyjson.Object{{Key: "text", Value: `{"a": 1}`}, {Key: "indent", Value: 0}}, 0, `{"a": 1}`},
 		{"big-integer", pyjson.Object{{Key: "text", Value: `{"a": 123456789012345678901234567890}`}}, 0, "{\n    \"a\": 123456789012345678901234567890\n}"},
+		{"broken-document", pyjson.Object{{Key: "text", Value: `{`}}, 1, ""},
 	} {
 		answer, err := pyjsonGo(row.input, RootEnv(root))
 		if err != nil {
@@ -46,7 +47,7 @@ func TestPyjsonGoAnswersTheJsonToolFlags(t *testing.T) {
 		}
 		exit, _ := field(answer, "exit")
 		stdout, _ := field(answer, "stdout")
-		if got, _ := exit.(float64); got != row.exit || stdout != row.stdout {
+		if got, err := integer(exit); err != nil || got != row.exit || stdout != row.stdout {
 			t.Errorf("%s: exit %v stdout %q, want %v %q", row.name, exit, stdout, row.exit, row.stdout)
 		}
 	}

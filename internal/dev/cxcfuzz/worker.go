@@ -83,6 +83,11 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 		startup = DefaultStartupTimeout
 	}
 	workerEnv := append([]string{}, env...)
+	// A worker environment with no PATH entry gets the PATH the requirement check searched, so the
+	// worker finds what the check found (CRW-708 generation 5, d5). An explicit PATH= is kept as it is.
+	if !poolEnvNamesPath(env) {
+		workerEnv = append(workerEnv, "PATH="+os.Getenv("PATH"))
+	}
 	if oracle.Root != "" {
 		workerEnv = append(workerEnv, "ORACLE_ROOT="+oracle.Root)
 	}
@@ -91,6 +96,16 @@ func NewPool(oracle Oracle, workers int, timeout, startup time.Duration, env []s
 		pool.slots <- nil
 	}
 	return pool, nil
+}
+
+// poolEnvNamesPath reports whether a worker environment has a PATH entry of its own, present or empty.
+func poolEnvNamesPath(env []string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pool) start() (*worker, error) {

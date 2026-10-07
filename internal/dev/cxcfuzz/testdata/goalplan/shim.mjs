@@ -167,6 +167,12 @@ function run(request) {
     if (typeof read.diagnostic.field === "string" && read.diagnostic.field !== "") {
       answer.field = read.diagnostic.field;
     }
+    if (typeof read.diagnostic.path === "string" && read.diagnostic.path !== "") {
+      answer.path = read.diagnostic.path;
+    }
+    if (typeof read.diagnostic.detail === "string" && read.diagnostic.detail !== "") {
+      answer.detail = read.diagnostic.detail;
+    }
   }
   answer.plan = read.plan === null ? null : JSON.stringify(read.plan, null, 2);
   if (read.plan === null) return answer;

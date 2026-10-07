@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -316,7 +317,9 @@ func collectWrittenLosses(goValue, oracleValue any, path string, lost *[]string)
 		}
 	case string:
 		goText, ok := goValue.(string)
-		if ok && lossyString(oracle, goText) {
+		// A string the oracle keeps and the Go document holds as something else (null, a number, an
+		// object) has lost its text, at any depth (CRW-708 generation 5, c10 d1).
+		if !ok || lossyString(oracle, goText) {
 			*lost = append(*lost, path)
 		}
 	}
@@ -324,10 +327,15 @@ func collectWrittenLosses(goValue, oracleValue any, path string, lost *[]string)
 
 // lossyString reports whether got is oracle with every unpaired UTF-16 surrogate replaced by U+FFFD,
 // which is what a decoder that refuses a lone surrogate leaves behind (the CRW-556 class this target
-// pins). A string that is equal, or that differs in any other way, is not a loss.
+// pins), or any string with fewer UTF-16 code units than the oracle's, which is a truncation or a
+// dropped surrogate pair (CRW-708 generation 5, c10 d2). A string that is equal, or that differs in
+// any other way with as many code units, is not a loss.
 func lossyString(oracle, got string) bool {
 	if oracle == got {
 		return false
+	}
+	if lossUTF16Units(got) < lossUTF16Units(oracle) {
+		return true
 	}
 	var rebuilt strings.Builder
 	rebuilt.Grow(len(got))
@@ -341,6 +349,27 @@ func lossyString(oracle, got string) bool {
 		i++
 	}
 	return rebuilt.String() == got
+}
+
+// lossUTF16Units counts the UTF-16 code units a string holds: an astral code point is two, a lone
+// surrogate held as its three WTF-8 bytes is one, and every other code point is one.
+func lossUTF16Units(s string) int {
+	units := 0
+	for i := 0; i < len(s); {
+		if size := unpairedSurrogateAt(s, i); size > 0 {
+			units++
+			i += size
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r >= 0x10000 {
+			units += 2
+		} else {
+			units++
+		}
+		i += size
+	}
+	return units
 }
 
 // unpairedSurrogateAt is the byte length of the WTF-8 encoding of an unpaired UTF-16 surrogate at

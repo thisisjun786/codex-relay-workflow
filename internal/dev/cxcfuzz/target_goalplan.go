@@ -135,9 +135,10 @@ func goalplanGo(input any, env Env) (any, error) {
 }
 
 // goalplanAnswer is the read half of both sides' answers: the diagnostic kind and field, and the
-// revived plan as its text form or null. The diagnostic path and detail are excluded: the port uses
-// Go's own OS and JSON-parser wording there by contract (internal/pabcd/goalplan/read.go), so they
-// are a documented, deliberate difference rather than a divergence this target can compare.
+// revived plan as its text form or null. The diagnostic path and detail are compared too: the port
+// words an OS or JSON-parser error with Go's own text (internal/pabcd/goalplan/read.go), so a
+// wording difference is a divergence the cases pin as wording, not a difference this target hides
+// (CRW-708 generation 5, c10 d3).
 func goalplanAnswer(read goalplan.GoalplanReadResult) pyjson.Object {
 	kind, field := "ok", ""
 	if read.Diagnostic != nil {
@@ -146,6 +147,14 @@ func goalplanAnswer(read goalplan.GoalplanReadResult) pyjson.Object {
 	answer := pyjson.Object{{Key: "kind", Value: kind}}
 	if field != "" {
 		answer = answer.Set("field", field)
+	}
+	if read.Diagnostic != nil {
+		if read.Diagnostic.Path != "" {
+			answer = answer.Set("path", read.Diagnostic.Path)
+		}
+		if read.Diagnostic.Detail != "" {
+			answer = answer.Set("detail", read.Diagnostic.Detail)
+		}
 	}
 	if read.Plan == nil {
 		return answer.Set("plan", nil)

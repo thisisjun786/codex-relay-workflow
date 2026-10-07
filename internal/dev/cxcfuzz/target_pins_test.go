@@ -5,6 +5,7 @@ package cxcfuzz
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -128,8 +129,40 @@ func caseOracleMatches(target Target, pool *Pool, c Case) string {
 	if err != nil {
 		return "the oracle answer is not JSON: " + err.Error()
 	}
-	if got := canonical(stripRoot(value, root)); got != canonicalText(c.Oracle) {
+	live := stripRoot(value, root)
+	if got := canonical(live); got != canonicalText(c.Oracle) {
+		if recursionPinMatches(live, c.Oracle) {
+			return ""
+		}
 		return "the oracle answers " + got + ", pinned " + canonicalText(c.Oracle)
 	}
 	return ""
+}
+
+// recursionPinMatches reports whether a live oracle answer matches a pinned one whose stderr is a
+// RecursionError traceback. The traceback names the interpreter's own install path, source line
+// numbers and repeat counts, which differ between Python builds, so such a pin compares the exit
+// status and stdout exactly and requires the live stderr to name the same error (CRW-708 generation 5,
+// c10 d4). Any other pinned answer is compared whole, as before.
+func recursionPinMatches(live any, pinned string) bool {
+	stored, err := decode(pinned)
+	if err != nil {
+		return false
+	}
+	storedErr, _ := field(stored, "stderr")
+	if text, _ := storedErr.(string); !strings.Contains(text, "RecursionError") {
+		return false
+	}
+	liveErr, _ := field(live, "stderr")
+	if text, _ := liveErr.(string); !strings.Contains(text, "RecursionError") {
+		return false
+	}
+	for _, key := range []string{"exit", "stdout"} {
+		a, _ := field(live, key)
+		b, _ := field(stored, key)
+		if canonical(a) != canonical(b) {
+			return false
+		}
+	}
+	return true
 }

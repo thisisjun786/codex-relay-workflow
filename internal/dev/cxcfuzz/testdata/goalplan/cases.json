@@ -34,10 +34,10 @@
   {
     "name": "broken-json",
     "input": "{\"fs\": [{\"content\": \"{\", \"kind\": \"file\", \"path\": \".crw/goalplans/rec-plan/goalplan.json\"}]}",
-    "oracle": "{\"kind\": \"invalid-json\", \"plan\": null}",
-    "go": "{\"kind\": \"invalid-json\", \"plan\": null}",
-    "tag": "identical",
-    "record": ""
+    "oracle": "{\"detail\": \"Expected property name or '}' in JSON at position 1 (line 1 column 2)\", \"kind\": \"invalid-json\", \"path\": \"${ROOT}/.codexclaw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
+    "go": "{\"detail\": \"unexpected EOF\", \"kind\": \"invalid-json\", \"path\": \"${ROOT}/.crw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
+    "tag": "intentionally-changed",
+    "record": "CRW-708 known-defects: wording and naming only (the read diagnostic detail is the parser's own text, and the oracle path names .codexclaw where the port names .crw); see the generation-5 record in docs/port-cxc/known-defects/CRW-708.md"
   },
   {
     "name": "duplicate-work-phase-id",
@@ -67,7 +67,7 @@
     "name": "lone-surrogate-objective",
     "input": "{\"fs\": [{\"content\": \"{\\\"objective\\\": \\\"o\\\\ud800\\\", \\\"slug\\\": \\\"rec-plan\\\", \\\"workPhases\\\": [], \\\"criteria\\\": [], \\\"host\\\": {\\\"armed\\\": false, \\\"armedAt\\\": null, \\\"source\\\": \\\"none\\\"}}\", \"kind\": \"file\", \"path\": \".crw/goalplans/rec-plan/goalplan.json\"}]}",
     "oracle": "{\"kind\": \"ok\", \"plan\": \"{\\n  \\\"objective\\\": \\\"o\\\\ud800\\\",\\n  \\\"slug\\\": \\\"rec-plan\\\",\\n  \\\"createdAt\\\": \\\"1970-01-01T00:00:00.000Z\\\",\\n  \\\"updatedAt\\\": \\\"1970-01-01T00:00:00.000Z\\\",\\n  \\\"activeWorkPhaseId\\\": null,\\n  \\\"workPhases\\\": [],\\n  \\\"criteria\\\": [],\\n  \\\"host\\\": {\\n    \\\"armed\\\": false,\\n    \\\"armedAt\\\": null,\\n    \\\"source\\\": \\\"none\\\"\\n  }\\n}\", \"written\": \"{\\n  \\\"objective\\\": \\\"o\\\\ud800\\\",\\n  \\\"slug\\\": \\\"rec-plan\\\",\\n  \\\"createdAt\\\": \\\"1970-01-01T00:00:00.000Z\\\",\\n  \\\"updatedAt\\\": \\\"@TS@\\\",\\n  \\\"activeWorkPhaseId\\\": null,\\n  \\\"workPhases\\\": [],\\n  \\\"criteria\\\": [],\\n  \\\"host\\\": {\\n    \\\"armed\\\": false,\\n    \\\"armedAt\\\": null,\\n    \\\"source\\\": \\\"none\\\"\\n  }\\n}\"}",
-    "go": "{\"kind\": \"unreadable\", \"plan\": null}",
+    "go": "{\"detail\": \"unpaired JSON surrogate at byte 16 would lose stored text\", \"kind\": \"unreadable\", \"path\": \"${ROOT}/.crw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
     "tag": "intentionally-changed",
     "record": "CRW-708 known-defects: the goalplan reader refuses a plan holding a lone surrogate that the oracle reads (the CRW-556 class)"
   },
@@ -90,8 +90,8 @@
   {
     "name": "slug-directory-is-a-dangling-link",
     "input": "{\"fs\": [{\"kind\": \"symlink\", \"path\": \".crw/goalplans/rec-plan\", \"target\": \"r\"}]}",
-    "oracle": "{\"kind\": \"absent\", \"plan\": null}",
-    "go": "{\"kind\": \"unreadable\", \"plan\": null}",
+    "oracle": "{\"kind\": \"absent\", \"path\": \"${ROOT}/.codexclaw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
+    "go": "{\"detail\": \"open ${ROOT}/.crw/goalplans/rec-plan: not a directory\", \"kind\": \"unreadable\", \"path\": \"${ROOT}/.crw/goalplans/rec-plan/goalplan.json\", \"plan\": null}",
     "tag": "open",
     "record": "follow-up: a dangling symlink at the slug directory reads as unreadable in the port and absent in the oracle (a real behaviour difference in the read diagnostic)"
   }
