@@ -175,3 +175,47 @@ func TestMemoryGateUnnamedDestinationStaysOnPythonPrograms(t *testing.T) {
 		t.Error("a gate env with no resolvable home must have no protected root")
 	}
 }
+
+// TestMemoryGateUnnamedDestinationReviewFixes pins the shapes this pull request's Devin and Codex reviews found: a
+// Path(...) call whose argument is not a literal names only its directory, a write method on a receiver the reader never
+// named is a write whose destination it cannot name, an exec program keeps its own imports, a program the reader cannot
+// read fails closed, a def header and an assignment bind a name rather than calling it, and a * or ** argument leaves
+// the mode and the path unread.
+func TestMemoryGateUnnamedDestinationReviewFixes(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		// A Path(...) call whose argument is not a literal names its directory, not a destination.
+		{"Path prefix with a non-literal part", py("from pathlib import Path; Path('/w', 'memories').joinpath('n.md').write_text('x')")},
+		// A write method on a receiver the reader never named.
+		{"variable receiver", py("from pathlib import Path; p = Path('/w') / 'memories' / 'n.md'; p.write_text('x')")},
+		{"variable receiver from the environment", py("import os; from pathlib import Path; p = Path(os.environ['CODEX_HOME']) / 'memories' / 'n.md'; p.write_text('x')")},
+		// An exec program keeps its own imports beside the enclosing program's.
+		{"exec program with its own import", py("exec(\"import shutil as s, os; s.copy('/w/a', os.path.join(os.environ['CODEX_HOME'], 'memories', 'n.md'))\")")},
+		// A program the reader cannot read fails closed.
+		{"expanded here-document", "python3 <<PY\nimport os\nopen(os.path.join('$CODEX_HOME', 'memories', 'n.md'), 'w')\nPY"},
+		{"redirection before the interpreter", "0<<'PY' python3\nimport os\nopen(os.path.join(os.environ['CODEX_HOME'], 'memories', 'n.md'), 'w')\nPY"},
+		// A * or ** argument leaves the mode and the path unread.
+		{"unpacked open arguments", py("import os; opts = {'file': os.path.join(os.environ['CODEX_HOME'], 'memories', 'n.md'), 'mode': 'w'}; open(**opts)")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	// The controls the reviews asked for: a def header and an assignment bind a name rather than calling it, and an
+	// interpreter that runs a script operand does not read its here-document as the program.
+	for _, c := range []struct{ name, command string }{
+		{"def header", py("def open(file, mode='w'): pass; print('memories')")},
+		{"assignment target", py("open = print; print('memories')")},
+		{"script operand with a here-document", "python3 consume.py <<'EOF'\nopen(Path('memories'), 'w')\nEOF"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
