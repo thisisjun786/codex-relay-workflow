@@ -1406,9 +1406,13 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // edit the operator made while the save was in flight is their next change and stays, even when
     // it is for the same model or exception. The drafts are compared against the snapshot taken when
     // the save started, so a draft that has not moved since is the spent one and a changed one is not.
-    const before = state.savingDrafts;
-    if (saved.kind === "setAllowed" && before !== null && sameEntries(allowedDraft.get(saved.model), before.allowedDraft.get(saved.model))) {
+    // The spent draft is the one that PROPOSES the change the write saved, not merely the one that was
+    // on screen when the save started: a new exception's editor stays open after Apply, so the operator
+    // can keep editing it while the write is in flight, and the start snapshot would then be that newer
+    // draft. Dropping it would discard the latest id, model, effort or cwd the operator had typed.
+    if (saved.kind === "setAllowed" && sameEntries(effortsOf(allowedDraft.get(saved.model)), saved.efforts)) {
       allowedDraft = withoutKey(allowedDraft, saved.model);
+      allowedNew = withoutKey(allowedNew, saved.model);
     }
     // A removal spends the draft of the model it removed as well. The removal's own change carries no
     // draft, so without this the removed model's typed text survives and a later Add for the same
@@ -1420,7 +1424,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // The write landed, so the model is in the file now and is no longer "pending"; the row it had is
     // the file's own row from here on.
     if (saved.kind === "setAllowed" && state.pendingAllowed === saved.model) pendingAllowed = "";
-    if (saved.kind === "setException" && exceptionDraft !== null && before !== null && exceptionDraft === before.exceptionDraft) {
+    if (saved.kind === "setException" && exceptionDraft !== null && sameExceptionChange(saved, exceptionDraft)) {
       exceptionDraft = null;
     }
     // The pending change is cleared only when it is still the one that was saved; a later edit is
@@ -1434,6 +1438,27 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
 function sameEntries(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+/** effortsOf is a raw draft's entries as a change carries them: the blanks dropped. */
+function effortsOf(entries: readonly string[] | undefined): string[] {
+  return (entries ?? []).filter((entry) => entry !== "");
+}
+
+/**
+ * sameExceptionChange reports whether a saved setException is the change one open draft proposes. It
+ * is how screenSaveFinished tells the draft the write spent from a newer one the operator typed while
+ * the write was in flight. Every field the change carries is compared, and the role is compared as
+ * the change carries it (an empty role means "keep the stored one", which the draft records too).
+ */
+function sameExceptionChange(saved: Extract<PolicyChange, { kind: "setException" }>, draft: ExceptionDraft): boolean {
+  const proposed = changeFromExceptionDraft(draft);
+  if (proposed === null || proposed.kind !== "setException") return false;
+  return proposed.id === saved.id
+    && proposed.model === saved.model
+    && proposed.effort === saved.effort
+    && (proposed.role ?? "") === (saved.role ?? "")
+    && sameEntries(proposed.cwd, saved.cwd);
 }
 
 /** withoutKey returns a draft map with one key removed, leaving every other key as it was. */

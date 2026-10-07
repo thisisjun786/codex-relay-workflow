@@ -436,18 +436,28 @@ test("every input the screen actually renders carries a label and is a native co
 
 test("a reopened exception editor shows the pending values, not the file's", async () => {
   // C6's other half: after a change is proposed, what the screen shows must still be what a save
-  // would send. This renders the pending state rather than deriving it twice.
+  // would send. This drives the real Edit control and inspects the controls it renders, so a wrong
+  // draft passed to the handler is caught here rather than only in the pure function.
   const pure = await import("../src/policy-state.ts");
   let state = loadedState(pure, readingBody(), catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }, { id: "devin/swe-2", label: "SWE" }]));
   state = pure.screenPropose(state as never, { kind: "setException", id: "legacy", role: "parent", model: "anthropic/opus", effort: "max", cwd: ["/srv/new"] }) as unknown as Record<string, unknown>;
-  const { elements } = await mount(state);
-  // The row's own summary is rendered from the pending change's values.
-  const row = elements.find((el) => el.props["aria-label"] === "exception legacy");
-  assert.ok(row, "the exception row is rendered");
-  // Opening the editor from the pending state shows the pending model, not the file's.
-  const editDraft = pure.draftForExceptionEdit(state as never, pure.decodePolicy(readingBody()).exceptions[0]);
-  assert.equal(editDraft.model, "anthropic/opus", "the editor opens on the pending model");
-  assert.deepEqual(editDraft.cwd, ["/srv/new"]);
+  const first = await mount(state);
+  // The row offers Edit, and pressing it hands the handler the pending draft.
+  const edit = byLabel(first.elements, "Edit exception legacy");
+  assert.ok(edit, "the row offers an Edit control");
+  fire(edit, "onClick");
+  const call = first.applied.find((entry) => entry.name === "exceptionDraft");
+  assert.ok(call, "Edit opens the editor");
+  const draft = call?.args[0] as { model: string; effort: string; cwd: string[] };
+  assert.equal(draft.model, "anthropic/opus", "the handler was given the pending model, not the file's");
+  assert.equal(draft.effort, "max");
+  assert.deepEqual(draft.cwd, ["/srv/new"]);
+  // Rendering the state that call produces shows those values in the editor's own controls.
+  const opened = pure.screenExceptionDraft(state as never, draft as never) as unknown as Record<string, unknown>;
+  const second = await mount(opened);
+  assert.equal(byLabel(second.elements, "legacy exception model")?.props.value, "anthropic/opus");
+  assert.equal(byLabel(second.elements, "legacy exception effort")?.props.value, "max");
+  assert.equal(byLabel(second.elements, "legacy exception cwd 1")?.props.value, "/srv/new");
 });
 
 test("a pending exception the file no longer declares keeps a row the operator can act on", async () => {
