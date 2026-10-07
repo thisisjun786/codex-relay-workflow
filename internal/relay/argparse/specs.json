@@ -907,6 +907,10 @@
   {"flag":"--repository","help":"an implementation node's pull request repository (owner/name)"},
   {"flag":"--pull-request","type":"int","help":"an implementation node's pull request number"},
   {"flag":"--supersedes","help":"the active acceptance of another output this one replaces"},
+  {"flag":"--commit","help":"an implementation node accepted without a pull request: the commit that is the receipt head of its generation (full lower-case hex). Needs --base, --checkout and --verification; not with --repository or --pull-request"},
+  {"flag":"--base","help":"with --commit: the commit the head must descend from"},
+  {"flag":"--checkout","help":"with --commit: an absolute path to the local checkout that holds both commits"},
+  {"flag":"--verification","help":"with --commit: the verification-record/1 document (JSON or @file) that names this commit tree with a PASS it may reuse"},
   {"flag":"--rule-version","required":true,"help":"the rules the result was verified under, {skills_digest, model, effort} as JSON or @file"},
   {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-integration-observe","summary":"records whether an accepted implementation node's head is contained in the branches it has to land on, read by the relay itself (git merge-base --is-ancestor for a local checkout, the compare API for a forge repository). Integration needs every required target to contain the head and the parent's merged mark on the same revision; the node's slot is returned when it does. A landing also runs the conflict sweep it owes (conflict_sweep in the answer), once per landing","options":[

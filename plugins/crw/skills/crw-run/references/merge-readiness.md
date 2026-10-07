@@ -449,6 +449,10 @@ other finding does; a warning with no such finding behind it is recorded in the 
 goes on. Do not turn a warning into a gate by waiting for a rerun, a fix or a statement that only the
 warning asked for.
 
+## Integrate a node by its commit (no pull request)
+
+A node built on the commit path has no pull request, so the merge gates above do not apply to it. Its acceptance is `dag-accept --commit HEAD --base BASE --verification RECORD`, and the relay checks in the local checkout that the commit is the receipt head of the node's generation, descends from the base, and that the verification record names this tree with a PASS it may reuse. The integration is one batch: `dag-integrate` merges the ready accepted candidates onto the local integration branch, verifies the merged tree once, and leaves out only the candidates that break it (returned to their parent as `split`). Then `dag-integrate-push` fast-forwards the remote dev to the same commit. Never force it: a remote dev that holds a commit the integration branch does not contain is refused, and the parent reads that as a divergence to resolve first. When the remote is unreachable the push is `deferred`; run `dag-integrate-push` again once it answers, and do not treat the deferral as a failed integration, because the batch and the merged marks already stand. Observe the landing with `dag-integration-observe --target` on the integration branch.
+
 ## Judge a finding by its impact
 
 Whether a finding blocks is decided by what it does to this change at its current
