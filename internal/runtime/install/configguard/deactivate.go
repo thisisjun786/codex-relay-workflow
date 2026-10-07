@@ -1,13 +1,13 @@
 package configguard
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -218,27 +218,28 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	if err != nil || !os.SameFile(realDir, pinned.dir) {
 		return false
 	}
-	return configLockPathsOneFoldedEntry(pinned)
+	return configLockPathsOneFoldedEntry(real, pinned)
 }
 
-// configLockPathsOneFoldedEntry reports whether the pinned directory holds exactly one entry whose
-// name folds to the pinned file's name: the entry a case-insensitive spelling reaches. Two entries
-// under that folded name — a case-sensitive sibling or a hard link — are what a rename over the
-// locked path would not reach, so the comparison refuses them. The count is per name, not the
-// inode's link count: a separate hard link under another name leaves the entry the manifest names
-// exactly one, and refusing that alias would fail a restore the kernel would have allowed (CRW-899's
-// eighth evaluation).
-//
-// A directory without read permission cannot be enumerated, yet it still allows the stat, open,
-// create and rename the restore needs, so refusing outright would fail a valid alias (CRW-899's
-// seventh evaluation). The link count is the fallback there: one link means the inode has no other
-// name anywhere, so the spelling names the one entry and the alias is accepted; two or more means a
-// second entry exists that a rename over the locked path would not reach, and the comparison refuses
-// rather than restore under a name the lock does not guard.
-func configLockPathsOneFoldedEntry(pinned *configLockPathsPin) bool {
-	entries, err := os.ReadDir(filepath.Dir(pinned.path))
+// configLockPathsOneFoldedEntry reports whether the candidate's spelling and the locked file's name
+// reach exactly one directory entry. Where the directory can be read the entries are counted: the
+// kernel permits no two entries with fold-equal names on a directory that folds case, so one such
+// entry IS the locked entry, and two — a case-sensitive sibling or a hard link — are entries a
+// rename over the locked path would not reach. Where it cannot be read (a parent without read
+// permission, which still allows the stat, open, create and rename the restore needs), the count is
+// replaced by a direct test of the filesystem itself: a probe name is created in that directory and
+// read back under a different case. A filesystem that resolves it to the probe is one where the two
+// spellings are necessarily the same entry, so the alias is accepted; a filesystem that does not is
+// one where a second, case-differing entry can exist — the hard-link shape — and the comparison
+// refuses rather than restore under a name the lock does not guard. An inode link count is
+// deliberately not used: it cannot separate the locked entry from a hard link (CRW-899's eighth
+// evaluation) and a count captured at pin time is stale by the time the manifest is read, which
+// accepted an entry created after the pin (the ninth evaluation's fail-open).
+func configLockPathsOneFoldedEntry(real string, pinned *configLockPathsPin) bool {
+	dir := filepath.Dir(real)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return configLockPathsOneLink(pinned.file)
+		return configLockPathsDirFoldsCase(dir)
 	}
 	matches := 0
 	for _, entry := range entries {
@@ -249,18 +250,28 @@ func configLockPathsOneFoldedEntry(pinned *configLockPathsPin) bool {
 	return matches == 1
 }
 
-// configLockPathsOneLink reports whether the inode has exactly one directory entry. It is the
-// unreadable-directory fallback of configLockPathsOneFoldedEntry; a count that cannot be read is not
-// known to be one, so it answers false.
-func configLockPathsOneLink(info os.FileInfo) bool {
-	if info == nil {
+// configLockPathsDirFoldsCase reports whether a directory resolves two spellings of one name to the
+// same entry, by creating a probe and reading it back under a different case. It needs only the
+// write and search permission the restore itself needs, so it answers where the directory cannot be
+// enumerated. Anything that prevents the probe — a create that fails, a name that cannot be removed
+// — leaves the question unproven and the answer false, so the comparison refuses (fail closed).
+func configLockPathsDirFoldsCase(dir string) bool {
+	probe := filepath.Join(dir, "crw-899-CaseProbe-"+rand.Text())
+	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
 		return false
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
+	_ = f.Close()
+	defer func() { _ = os.Remove(probe) }()
+	info, err := os.Stat(probe)
+	if err != nil {
 		return false
 	}
-	return uint64(st.Nlink) == 1
+	folded, err := os.Stat(filepath.Join(dir, strings.ToLower(filepath.Base(probe))))
+	if err != nil {
+		return false
+	}
+	return os.SameFile(info, folded)
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means

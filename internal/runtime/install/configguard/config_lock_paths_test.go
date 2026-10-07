@@ -397,11 +397,12 @@ func TestConfigLockPathsRefusesACaseVariantHardLink(t *testing.T) {
 	}
 }
 
-// The fallback that keeps a case-insensitive alias acceptable when the parent cannot be enumerated:
-// a parent without read permission still allows the stat, open and rename the restore needs, so the
-// comparison must not refuse outright (CRW-899's seventh evaluation, a mode-0300 parent). The link
-// count answers there, and it is per inode, so this test pins only that the fallback reads it.
-func TestConfigLockPathsOneFoldedEntryFallsBackWithoutDirectoryRead(t *testing.T) {
+// The fallback that keeps a case-insensitive alias acceptable when the parent cannot be enumerated.
+// A parent without read permission still allows the create, stat and remove the probe needs, so the
+// filesystem can be asked directly whether it folds case (CRW-899's seventh evaluation, a mode-0300
+// parent). On a case-sensitive directory the probe does not resolve and the answer is false, which is
+// the fail-closed direction (the ninth evaluation's d1).
+func TestConfigLockPathsDirFoldsCaseNeedsNoDirectoryReadPermission(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-0300 directory")
 	}
@@ -410,20 +411,14 @@ func TestConfigLockPathsOneFoldedEntryFallsBackWithoutDirectoryRead(t *testing.T
 	if err := os.MkdirAll(dir, 0300); err != nil {
 		t.Fatal(err)
 	}
-	cfg := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(cfg, []byte(deactivationConfig), 0600); err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
 	if _, err := os.ReadDir(dir); err == nil {
 		t.Fatal("the directory was still readable; the test would not prove anything")
 	}
-	info, err := os.Stat(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !configLockPathsOneLink(info) {
-		t.Fatal("a file with one link was not recognised without a directory read")
+	// This temporary directory is case-sensitive on the platforms the suite runs on, so the probe
+	// must answer false; a filesystem that folds case answers true, and both are correct.
+	if configLockPathsDirFoldsCase(dir) {
+		t.Skip("this filesystem folds case, so the refusal cannot be exercised here")
 	}
 }
 
@@ -436,14 +431,14 @@ func TestConfigLockPathsOneFoldedEntryCountsOnlyTheFoldedName(t *testing.T) {
 	cfg := filepath.Join(home, "config.toml")
 	activationWrite(t, cfg, deactivationConfig)
 	pin := configLockPathsTestPin(t, cfg)
-	if !configLockPathsOneFoldedEntry(pin) {
+	if !configLockPathsOneFoldedEntry(cfg, pin) {
 		t.Fatal("a file whose name has one entry was reported as having more than one")
 	}
 	if err := os.Link(cfg, filepath.Join(home, "backup.toml")); err != nil {
 		t.Skipf("this filesystem does not support hard links: %v", err)
 	}
 	// The extra name does not fold to the pinned name, so the entry the manifest names is still one.
-	if !configLockPathsOneFoldedEntry(pin) {
+	if !configLockPathsOneFoldedEntry(cfg, pin) {
 		t.Fatal("a hard link under another name made the folded-name count refuse the entry")
 	}
 }
@@ -524,6 +519,114 @@ func TestConfigLockPathsDeactivateAcceptsACaseVariantUnderAnUnreadableParent(t *
 	}
 	if got := activationRead(t, path); strings.Contains(got, "dedicated_tools") {
 		t.Fatalf("the managed key was left behind: %q", got)
+	}
+}
+
+// The ninth-generation d1 case, through the public entry point: the pin captured the file's link count
+// while it had one name, and a second, case-differing entry for the SAME inode appears before the
+// second manifest read. The file and parent identities still match, so a fallback that read the
+// captured count would accept the new entry and restore the pinned file while the name the manifest
+// uses kept the managed key. The fallback asks the filesystem whether it folds case instead, and this
+// directory does not, so the comparison refuses.
+func TestConfigLockPathsDeactivateRefusesAHardLinkCreatedAfterThePin(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-0300 directory")
+	}
+	home := configLockActivationHome(t)
+	dir := filepath.Join(home, "locked")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	sibling := filepath.Join(dir, "CONFIG.TOML")
+	hash, err := hashOrNull(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: path, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: sibling, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, path)
+	configLockPathsHandoverRetarget(t, home, stale, func() error {
+		// The pin has already run, so it captured a file with one name. The second name for the
+		// same inode appears now, and the directory loses its read permission, so only a fallback
+		// that trusted the captured count would accept it.
+		if err := os.Link(path, sibling); err != nil {
+			return err
+		}
+		return os.Chmod(dir, 0300)
+	}, held.Release, fresh)
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation accepted a hard link created after the pin: %v", err)
+	}
+	if got := activationRead(t, path); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the pinned file: %q", got)
+	}
+}
+
+// The ninth-generation d1 case, through the public entry point: the parent cannot be enumerated and
+// the manifest names a genuinely DIFFERENT entry whose name differs only by case (a case-sensitive
+// filesystem's own two files). A fallback that read a link count would see one and accept it, then
+// restore the pinned file while the sibling the manifest names kept the managed key. The comparison
+// asks the filesystem whether it folds case instead, so it refuses here.
+func TestConfigLockPathsDeactivateRefusesACaseSiblingWhenTheParentCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-0300 directory")
+	}
+	home := configLockActivationHome(t)
+	dir := filepath.Join(home, "locked")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	sibling := filepath.Join(dir, "CONFIG.TOML")
+	if err := os.WriteFile(sibling, []byte(deactivationConfig), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := os.Stat(sibling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(info, other) {
+		t.Skip("this filesystem folds case, so the two names are one entry")
+	}
+	hash, err := hashOrNull(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: path, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: sibling, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, path)
+	configLockActivationHandover(t, home, stale, func() error {
+		// The directory loses its read permission while the deactivation waits.
+		if err := os.Chmod(dir, 0300); err != nil {
+			return err
+		}
+		return os.WriteFile(manifestPath(home), fresh, 0o644)
+	}, held.Release)
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+
+	_, err = Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err == nil || !strings.Contains(err.Error(), "names a different config file") {
+		t.Fatalf("the deactivation accepted a case sibling as the locked entry: %v", err)
+	}
+	if got := activationRead(t, path); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the pinned file: %q", got)
+	}
+	if got := activationRead(t, sibling); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the sibling: %q", got)
 	}
 }
 
