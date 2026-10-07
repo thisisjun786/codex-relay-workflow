@@ -309,9 +309,11 @@ func TestCRW737C7ApplyNeedsTheDecisionReplyEvent(t *testing.T) {
 		t.Fatalf("a child-written row applied the record: %v", record)
 	}
 	// A reply that answers another receipt of the same relationship does not apply it, even though
-	// its id is internally consistent: the decision names the receipt it was raised on.
-	crw737SeedOtherReceiptReply(t, state)
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", "ev-other-reply"), "disposition_conflict")
+	// its id is internally consistent and its delivery reached the child: the decision names the
+	// receipt it was raised on. The event id is the one the fixture inserted, so the case reaches
+	// the receipt comparison rather than stopping at a missing row.
+	otherReceipt := crw737SeedOtherReceiptReply(t, state)
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", otherReceipt), "disposition_conflict")
 	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "answered" {
 		t.Fatalf("an older reply applied the record: %v", record)
 	}
@@ -396,9 +398,10 @@ func crw737SeedChildReply(t *testing.T, state string) {
 }
 
 // crw737SeedOtherReceiptReply writes the relay's own decision_reply for another receipt of the
-// same relationship: its id hashes its own answersEvent, so only the decision's own source ref
-// keeps it from applying the record.
-func crw737SeedOtherReceiptReply(t *testing.T, state string) {
+// same relationship, with its delivery dispatched: its id hashes its own answersEvent, so only the
+// decision's own source ref keeps it from applying the record. It returns the event id it wrote,
+// which is the id an apply must name to reach that comparison.
+func crw737SeedOtherReceiptReply(t *testing.T, state string) string {
 	t.Helper()
 	ctx := context.Background()
 	opened, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
@@ -408,10 +411,22 @@ func crw737SeedOtherReceiptReply(t *testing.T, state string) {
 	defer opened.Close()
 	event := delivery.DecisionEventID("rel-737", "ev-unrelated")
 	receipt := `{"eventId":"` + event + `","relationshipId":"rel-737","executionGeneration":1,"kind":"decision_reply","decision":"answer","answersEvent":"ev-unrelated","note":"n","generationEffect":"stays","anchorTurnId":"turn-1","childTaskId":"child","decidedAt":"2026-10-06T00:00:00Z"}`
-	if _, err := opened.Querier(ctx).ExecContext(ctx, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		event, "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-3", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"); err != nil {
-		t.Fatal(err)
+	// The delivery row is written inside the relay's transaction in production, so its created_at
+	// is the write order; the fixture records it as dispatched, the state the apply accepts.
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+			[]any{event, "rel-737", int64(1), "no_deliverable", "decision_reply", "relay", "thread", "turn-3", "completed", receipt, "final", "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+		{"INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+			[]any{event, "rel-737", delivery.Revision, "child", "child", delivery.Dispatched, "2026-10-06T00:00:00Z", "2026-10-06T00:00:00Z"}},
+	} {
+		if _, err := opened.Querier(ctx).ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("%s: %v", statement.query, err)
+		}
 	}
+	return event
 }
 
 // Review findings on PR #778, CLI level: an unknown --decision is the relay's refusal, not a host
