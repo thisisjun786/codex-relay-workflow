@@ -1,0 +1,11 @@
+{
+  "issue": "CRW-899",
+  "pending": [
+    "cli__enable__fresh_install_then_status",
+    "cli__enable__hard_flag_failure_aborts",
+    "cli__enable__soft_flag_failure_warns",
+    "cli__disable__round_trip_via_uninstall_alias"
+  ],
+  "identical": [],
+  "intentionally-changed": []
+}
