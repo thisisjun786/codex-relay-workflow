@@ -118,6 +118,32 @@ func TestSameGenerationRefreshOfAnAcceptedHeadIsRecorded(t *testing.T) {
 	}
 }
 
+// Criterion c1: in the acceptance's own generation the report of that generation names the accepted head, which the
+// refresh moves past by construction, so the proof from the accepted head stands in for the report-head comparison. A
+// head-bearing report of that generation is what makes the replacement observable: if the record read it as the later
+// route does, it would find the accepted head there and refuse the refreshed head as one the verified report does not
+// name. The later-generation route still compares, which the tests beside this one pin.
+func TestSameGenerationRefreshDoesNotCompareTheAcceptedGenerationsReportHead(t *testing.T) {
+	t.Parallel()
+	s := newRefreshScenario(t)
+	// the acceptance's own generation has a work report that names the head it was accepted at
+	s.reportSameGeneration(s.h1)
+	head := s.sameGenerationRefresh()
+	res, err := s.record()
+	if err != nil {
+		t.Fatalf("a head-bearing report of the acceptance's own generation made the record refuse: %v", err)
+	}
+	a := s.accepted.Acceptance
+	if res.Generation != a.ExecutionGeneration || res.HeadSHA != head || res.EventID != a.EventID || res.RevisionHash != a.RevisionHash || s.refreshRows() != 1 {
+		t.Fatalf("record = %+v (rows %d), want the refreshed head at the acceptance's own generation and event", res, s.refreshRows())
+	}
+	// the report row is what was set aside: it is still there, naming the accepted head
+	var reported string
+	if err := s.s.DB.QueryRow("SELECT head_sha FROM work_reports WHERE event_id = ? AND relationship_id = ?", a.EventID, s.rid).Scan(&reported); err != nil || reported != s.h1 {
+		t.Fatalf("the seeded report = %q (%v), want the accepted head", reported, err)
+	}
+}
+
 // Criterion c2 (a): the same generation integrates on that generation's own merged mark, and the head it observes is
 // the refreshed one.
 func TestSameGenerationRefreshIntegratesOnTheGenerationsOwnMark(t *testing.T) {
@@ -359,4 +385,15 @@ func (s *refreshScenario) supersedeSameGenerationReport() {
 	s.exec("INSERT INTO verdicts (event_id, record, verdict, verdict_turn_id, decided_at) VALUES (?, '{}', 'verified', 'verdict-turn-2', ?)", event, now)
 	s.exec("INSERT INTO verdict_context (event_id, set_digest, coverage, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?, ?, '{}', 'current', ?, ?, '{}', ?)",
 		event, s.criteria, event, revision, now)
+}
+
+// reportSameGeneration seeds the head-bearing work report of the acceptance's own generation, naming the head the node
+// was accepted at. The same-generation route does not read it; the later-generation route does, which is what makes this
+// row the discriminator between the two.
+func (s *refreshScenario) reportSameGeneration(head string) {
+	s.t.Helper()
+	a := s.accepted.Acceptance
+	s.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, pr_url, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
+		" VALUES (?, 1, ?, ?, ?, 'owner/repo', 7, NULL, ?, 'DONE', 'proved', 'v1', 'done', 'merge', 't')",
+		a.EventID, s.rid, a.ExecutionGeneration, a.RevisionHash, head)
 }
