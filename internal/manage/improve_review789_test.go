@@ -654,3 +654,180 @@ func TestImproveReview789RefWithAControlCharacterIsRefused(t *testing.T) {
 		t.Errorf("the improve directory holds %v, want one roadmap for the plain ref", roadmaps)
 	}
 }
+
+// TestImproveReview789StoredIssueKeyProjectIsDropped covers the review finding that a draft an
+// earlier build wrote for a scopeless split kept the issue key as its project: the next run drops
+// that false project and moves its occurrences to the unknown owner, because an issue key is never
+// a project.
+func TestImproveReview789StoredIssueKeyProjectIsDropped(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+
+	// A draft as the earlier build wrote it: the issue key in the project list and body.
+	fingerprint := auditDraftFingerprint(improveKindSplit, "size overrun")
+	stale := &auditDraft{
+		Schema: auditDraftSchema, Fingerprint: fingerprint, Source: improveProposeSource,
+		Project: "CRW-900", Title: "size overrun", Severity: "P1", State: auditDraftStateDraft,
+		Body: "## What\n\nsize overrun\n\n## Where\n\n- CRW-900 (1)\n\n## Seen\n\n" +
+			"- source=improve subject= where=rel-a at=2026-10-06T01:00:00Z\n\n## Evidence\n\n- issue:CRW-900\n",
+		Seen: []auditDraftSeen{{Mode: improveProposeSource, Head: "events:rel-a", At: "2026-10-06T01:00:00Z"}},
+	}
+	if err := auditDraftSave(filepath.Join(w.stateDir, "drafts", fingerprint+".json"), stale); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "", "rel-a", "size overrun", 1, "events:rel-a", "issue:CRW-900"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the stored draft to be corrected", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, fingerprint)
+	if strings.Contains(doc.Body, "- CRW-900 (") {
+		t.Errorf("the corrected draft still names the issue key as a project:\n%s", doc.Body)
+	}
+	if doc.Project == "CRW-900" {
+		t.Errorf("the corrected draft project = %q, want it not to be the issue key", doc.Project)
+	}
+	if !strings.Contains(doc.Body, "- owner_unknown (1)") {
+		t.Errorf("the corrected draft lost the occurrence with the false project name:\n%s", doc.Body)
+	}
+}
+
+// TestImproveReview789LongReasonSurvivesARerun covers the review finding that a reason longer than
+// the display title limit was cut in the body on a rerun: the body carries the whole reason, so a
+// rerun with no new occurrence leaves it whole.
+func TestImproveReview789LongReasonSurvivesARerun(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	reason := strings.Repeat("overrun-", 12) + "end"
+	if len([]rune(reason)) <= auditDraftTitleLimit {
+		t.Fatalf("the test reason is %d runes, want it over the %d-rune title limit", len([]rune(reason)), auditDraftTitleLimit)
+	}
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindRefusal, reason, reason, reason, 1, "refusals:1"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+	first := improveProposeTestReport(t, stdout)
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	doc := improveProposeTestDraft(t, w, first.Created[0].Fingerprint)
+	if got := improveReview789WhatSection(t, doc.Body); got != reason {
+		t.Fatalf("the first draft's What section is %q, want the whole reason", got)
+	}
+
+	// The same bundle again: no new occurrence, and the whole reason stays in the body.
+	code, _, stderr = improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("the repeated propose: exit %d, stderr %s", code, stderr)
+	}
+	again := improveProposeTestDraft(t, w, first.Created[0].Fingerprint)
+	if got := improveReview789WhatSection(t, again.Body); got != reason {
+		t.Errorf("the rerun shortened the reason in the body: What is %q, want the whole reason", got)
+	}
+}
+
+// improveReview789WhatSection is the What section of a stored improve body, the friction's own
+// text as the body holds it.
+func improveReview789WhatSection(t *testing.T, body string) string {
+	t.Helper()
+	const marker = "## What\n\n"
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("the body has no What section:\n%s", body)
+	}
+	rest := body[start+len(marker):]
+	if end := strings.Index(rest, "\n\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
+// TestImproveReview789StoreWithoutIdentityIsNamedByItsFile covers the review finding that a store
+// whose own identity row is missing must still be named by the file it was read from: the Store a
+// snapshot hands its reader carries no path, so deriving one from the reader's directory would
+// name two different stores by the same directory and merge their occurrences.
+func TestImproveReview789StoreWithoutIdentityIsNamedByItsFile(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	secondDir := filepath.Join(s.root, "state-b")
+	if err := os.MkdirAll(secondDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := filepath.Join(secondDir, "relay.sqlite3")
+	for _, dbPath := range []string{s.dbPath, secondDB} {
+		improveReview789StoreAt(t, dbPath, func(t *testing.T, db *sql.DB) {
+			improveTestInsert(t, db, "DELETE FROM schema_meta WHERE key = 'store_id'")
+			improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a','manifest_forbidden','first')")
+		})
+	}
+
+	improveReview789ConfigureSource(t, s, manageState, s.stateDir, map[string]any{})
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+
+	// The second store, with the same reason at the same row number and no identity row either.
+	// Only the file the store was opened from tells the two occurrences apart.
+	improveReview789ConfigureSource(t, s, manageState, secondDir, map[string]any{})
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", second.Updated)
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 2 {
+		t.Errorf("the draft carries %d seen entries, want one per store (2): %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// TestImproveReview789AliasedSourceIsOneLocation covers the review finding that a second source
+// spelling reaching the same file through a link must not count as a new occurrence: the origin
+// names the resolved file, so recollecting the same file through a link adds no sighting.
+func TestImproveReview789AliasedSourceIsOneLocation(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	real := filepath.Join(s.root, "interventions.jsonl")
+	improveTestWrite(t, real, "{\"signal\":\"stalled\",\"at\":\"2026-10-06T01:00:00Z\"}\n")
+	link := filepath.Join(s.root, "current.jsonl")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+
+	improveReview789Configure(t, s, manageState, map[string]any{
+		"sources": map[string]any{"intervention": map[string]any{"path": real}},
+	})
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+
+	// The same file, reached through the link: no new occurrence.
+	improveReview789Configure(t, s, manageState, map[string]any{
+		"sources": map[string]any{"intervention": map[string]any{"path": link}},
+	})
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Created) != 0 || len(second.Updated) != 0 {
+		t.Errorf("the aliased recollect created %d and updated %d, want neither", len(second.Created), len(second.Updated))
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 1 {
+		t.Errorf("the draft carries %d seen entries, want one for the one file: %+v", len(doc.Seen), doc.Seen)
+	}
+}

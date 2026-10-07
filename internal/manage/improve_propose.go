@@ -471,12 +471,70 @@ func improveProposeParseEvidence(body string) []string {
 	return out
 }
 
+// improveProposeBodyTitle is the friction's own text as a stored improve body holds it. The body
+// keeps the whole reason while the title field is cut to the display limit, so a rewrite takes the
+// body's text: rebuilding the body from the truncated title would shorten the reason on every run.
+func improveProposeBodyTitle(doc *auditDraft) string {
+	const marker = "## What\n\n"
+	if start := strings.Index(doc.Body, marker); start >= 0 {
+		rest := doc.Body[start+len(marker):]
+		if end := strings.Index(rest, "\n\n## "); end >= 0 {
+			rest = rest[:end]
+		}
+		if title := strings.TrimSpace(rest); title != "" {
+			return title
+		}
+	}
+	return doc.Title
+}
+
+// improveProposeIssueKeys is the issue keys a record's evidence names, the ones an earlier build
+// could have taken for a project. A split whose relationship carried no scope keeps its issue key
+// as issue:<KEY>, so a stored draft that took that key for its project can lose it on the next run.
+func improveProposeIssueKeys(evidence []string) map[string]bool {
+	keys := map[string]bool{}
+	for _, entry := range evidence {
+		trimmed := strings.TrimSpace(entry)
+		if key := strings.TrimSpace(strings.TrimPrefix(trimmed, improveEvidenceIssuePrefix)); strings.HasPrefix(trimmed, improveEvidenceIssuePrefix) && key != "" {
+			keys[key] = true
+		}
+	}
+	return keys
+}
+
 // improveProposeMergeProjects merges the projects a stored body names with the ones the new
 // candidate reached: a project's count is the count the draft already held plus the occurrences
 // this run newly recorded there, and a project the new run no longer carries keeps its count, so a
 // rewrite never drops a project and rerunning one bundle never grows a count.
-func improveProposeMergeProjects(stored, current []improveProposeProject, added map[string]int) []improveProposeProject {
-	out := append([]improveProposeProject(nil), stored...)
+//
+// One stored project is dropped: a key this run's own evidence names as an issue key. An earlier
+// build took the issue key of a split whose relationship carried no scope for the project, and an
+// issue key is never a project, so a draft written then must lose it on the next run rather than
+// keep a false owner. The key stays in the body's evidence as issue:<KEY>.
+func improveProposeMergeProjects(stored, current []improveProposeProject, added map[string]int, issueKeys map[string]bool) []improveProposeProject {
+	out := make([]improveProposeProject, 0, len(stored))
+	carried := 0
+	for _, project := range stored {
+		if project.Project != "" && issueKeys[project.Project] {
+			// The occurrences are real, only the key was never a project: they move to the
+			// unknown owner rather than being dropped with the false name.
+			carried += project.Count
+			continue
+		}
+		out = append(out, project)
+	}
+	if carried > 0 {
+		found := false
+		for i := range out {
+			if out[i].Project == auditDraftOwnerUnknown {
+				out[i].Count += carried
+				found = true
+			}
+		}
+		if !found {
+			out = append(out, improveProposeProject{Project: auditDraftOwnerUnknown, Count: carried})
+		}
+	}
 	for i := range out {
 		out[i].Count = improveProposeMergedCount(out[i].Project, out[i].Count+added[out[i].Project], current)
 	}
@@ -740,10 +798,14 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 			// The whole record is rewritten, so the projects and the evidence the new run reached
 			// are folded in rather than dropped: a project's count is what the draft already held
 			// plus the occurrences this run newly recorded there, and the evidence is the union.
+			evidence := improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...))
 			merged := improveProposeCandidate{
-				Title:    doc.Title,
-				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added),
-				Evidence: improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...)),
+				// The body holds the whole reason while the title is cut to the display limit, so
+				// the rewrite takes the body's text: taking the title would shorten the reason a
+				// little more on every run.
+				Title:    improveProposeBodyTitle(doc),
+				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added, improveProposeIssueKeys(evidence)),
+				Evidence: evidence,
 				seen:     doc.Seen,
 			}
 			// A run whose records report a larger total for a project than the sightings alone

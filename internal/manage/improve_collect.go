@@ -506,6 +506,17 @@ func improveResolvedPath(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
+// improveResolvedPathOr is improveResolvedPath for an origin that must still name a file when the
+// path cannot be resolved at all: the caller's own spelling is kept rather than dropping the
+// origin, because a record with no location would fall back to a sighting of its where.
+func improveResolvedPathOr(path string) string {
+	resolved, err := improveResolvedPath(path)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
+
 // improveWriteFile writes the bundle in the resolved parent directory and renames it onto
 // the resolved destination. The temporary file is fsynced, and the refusal check runs again
 // immediately before the rename, so a parent replaced between the first check and the write
@@ -719,11 +730,15 @@ func improveStorePath(configured string) (string, error) {
 }
 
 // improveStoreIdentity is the stable token one store's rows are read under, so an occurrence's
-// origin names the store it came from: the store's own store_id, or the resolved file path when
-// a store carries none. A row number is unique only inside one store, so two stores can carry
-// the same reason at the same row number and, without this token, the second store's row would
-// read as an occurrence already seen.
-func improveStoreIdentity(ctx context.Context, s *store.Store) (string, error) {
+// origin names the store it came from: the store's own store_id, or the file it was opened from
+// when the store carries none. A row number is unique only inside one store, so two stores can
+// carry the same reason at the same row number and, without this token, the second store's row
+// would read as an occurrence already seen.
+//
+// fallback is the store file the caller resolved before the snapshot, because the Store a
+// ReadSnapshot hands its reader carries no path of its own: deriving the file from the reader's
+// working directory would name every pathless store by the same directory.
+func improveStoreIdentity(ctx context.Context, s *store.Store, fallback string) (string, error) {
 	rows, err := s.All(ctx, "SELECT value FROM schema_meta WHERE key = 'store_id'")
 	if err != nil {
 		return "", err
@@ -735,7 +750,10 @@ func improveStoreIdentity(ctx context.Context, s *store.Store) (string, error) {
 	}
 	// A store whose identity row is missing is named by the file it was read from, so two
 	// different files still read as two different origins.
-	return improveResolvedPath(s.Path)
+	if resolved, err := improveResolvedPath(fallback); err == nil {
+		return resolved, nil
+	}
+	return fallback, nil
 }
 
 // improveReadRelay reads the relay store read-only and normalizes its refusal, fault,
@@ -747,12 +765,18 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		return 0, err
 	}
 	defer func() { _ = read.Close() }()
+	// The store file, resolved once, names a store whose own identity row is missing. The Store a
+	// snapshot hands its reader carries no path, so it cannot be taken from there.
+	storeFile, err := improveResolvedPath(dbPath)
+	if err != nil {
+		storeFile = dbPath
+	}
 	rows := 0
 	err = read.ReadSnapshot(ctx, func(ctx context.Context, s *store.Store) error {
 		// An occurrence's origin has to name the store it was read from. A row number is unique
 		// only inside one store: two stores can carry the same reason at the same row number, and
 		// without the store the second one's row reads as an occurrence already seen.
-		token, err := improveStoreIdentity(ctx, s)
+		token, err := improveStoreIdentity(ctx, s, storeFile)
 		if err != nil {
 			return err
 		}
@@ -1025,11 +1049,12 @@ func improveReadAudit(path string, acc *improveAccumulator) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	origin := improveResolvedPathOr(path)
 	for i, line := range lines {
 		acc.improveAdd(improveRecord{Kind: improveKindAudit, Key: improveStringField(line, "issue"),
 			Where: improveStringField(line, "subject"), What: improveStringField(line, "status"), Count: 1,
 			FirstAt: improveStringField(line, "graded_at"), LastAt: improveStringField(line, "graded_at"),
-			Evidence: []string{fmt.Sprintf("%s:%d", path, i+1)}})
+			Evidence: []string{fmt.Sprintf("%s:%d", origin, i+1)}})
 	}
 	return len(lines), nil
 }
@@ -1041,11 +1066,14 @@ func improveReadInterventions(path string, acc *improveAccumulator) (int, error)
 	if err != nil {
 		return 0, err
 	}
+	// The origin names the resolved file, so a second source spelling that reaches the same file
+	// through a link is the same location rather than a new occurrence.
+	origin := improveResolvedPathOr(path)
 	for i, line := range lines {
 		signal := improveStringField(line, "signal", "kind", "case")
 		acc.improveAdd(improveRecord{Kind: improveKindIntervention, Key: signal, What: signal, Count: 1,
 			FirstAt: improveStringField(line, "at", "date", "recorded_at"), LastAt: improveStringField(line, "at", "date", "recorded_at"),
-			Evidence: []string{fmt.Sprintf("%s:%d", path, i+1)}})
+			Evidence: []string{fmt.Sprintf("%s:%d", origin, i+1)}})
 	}
 	return len(lines), nil
 }
