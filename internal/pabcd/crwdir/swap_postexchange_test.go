@@ -154,3 +154,72 @@ func TestCrwdirSwapSyncsTheDirectoryWhenTheBackupReadFails(t *testing.T) {
 		t.Fatalf("the displaced content is not in the backup: %q", got)
 	}
 }
+
+// The backup read-back failure and a sync failure must both stay answerable, and the sync must be
+// attempted for the backup's directory as well when it differs from the target's. A regression that
+// dropped either directory, or the errors.Join, from the read-failure return would otherwise pass
+// every other case here.
+func TestCrwdirSwapJoinsASyncFailureIntoTheBackupReadFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the fault is a permission one, and root reads a write-only file")
+	}
+	dir := t.TempDir()
+	backupDir := t.TempDir()
+	target := filepath.Join(dir, "config.toml")
+	backup := filepath.Join(backupDir, "config.toml.bak-2026-01-01T00-00-00.000Z")
+	before := "model = \"a\"\n"
+	writeSwapFile(t, target, before, 0o644)
+	injected := errors.New("injected directory sync failure")
+
+	var synced []string
+	_, err := crwdirSwapPublish(target, []byte(before), []byte("model = \"b\"\n"), backup, func(at crwdirSwapStep) error {
+		if at != crwdirSwapStepCompare {
+			return nil
+		}
+		// The last check has passed; the inode the exchange displaces is unreadable, so the move
+		// succeeds and the read-back below fails.
+		return os.Chmod(target, 0o200)
+	}, func(at string) error { synced = append(synced, at); return injected })
+	if !Published(err) {
+		t.Fatalf("a post-exchange backup read failure was not reported as published: %v", err)
+	}
+	if !errors.Is(err, injected) {
+		t.Fatalf("the sync failure was not joined into the backup read failure: %v", err)
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("the read failure itself is no longer answerable: %v", err)
+	}
+	if !slices.Contains(synced, dir) || !slices.Contains(synced, backupDir) {
+		t.Fatalf("both directories must be attempted after the failure: synced=%v", synced)
+	}
+	var published *PublishedError
+	if !errors.As(err, &published) || published.DisplacedAt != backup {
+		t.Fatalf("the failure does not name where the displaced content is: %v", err)
+	}
+}
+
+// The move failure must sync the backup's directory too when it differs from the target's: the
+// no-replace move is the second rename, and B1 covers the failing return as much as the success one.
+func TestCrwdirSwapSyncsBothDirectoriesWhenTheMoveFails(t *testing.T) {
+	dir := t.TempDir()
+	backupDir := t.TempDir()
+	target := filepath.Join(dir, "config.toml")
+	backup := filepath.Join(backupDir, "config.toml.bak-2026-01-01T00-00-00.000Z")
+	before := "model = \"a\"\n"
+	writeSwapFile(t, target, before, 0o644)
+
+	var synced []string
+	_, err := crwdirSwapPublish(target, []byte(before), []byte("model = \"b\"\n"), backup, func(at crwdirSwapStep) error {
+		if at != crwdirSwapStepMove {
+			return nil
+		}
+		// The colliding name appears after the reservation and before the move.
+		return os.WriteFile(backup, []byte("an operator's own file\n"), 0o644)
+	}, func(at string) error { synced = append(synced, at); return nil })
+	if !Published(err) {
+		t.Fatalf("a post-exchange move failure was not reported as published: %v", err)
+	}
+	if !slices.Contains(synced, dir) || !slices.Contains(synced, backupDir) {
+		t.Fatalf("both directories must be synced after a failed move: synced=%v", synced)
+	}
+}

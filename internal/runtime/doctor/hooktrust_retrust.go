@@ -541,6 +541,11 @@ type hookTrustRetrustOptionSet struct {
 	pluginKey   string
 	pluginRoot  string
 	bootstrapOK bool
+	// codexHomeKnown distinguishes a Codex home the command line named from one it never learned. An
+	// empty CODEX_HOME that is set is a Codex home, not an absent one: the target is then
+	// ./config.toml, and a refusal report must name that path (CRW-936 B3) rather than say the path is
+	// unknown.
+	codexHomeKnown bool
 }
 
 // hookTrustRetrustOptions is parseHookOptions (cli.ts:40-60): --bootstrap-ok, --key <value> and
@@ -550,13 +555,13 @@ type hookTrustRetrustOptionSet struct {
 // command has no such relation (docs/port-cxc/known-defects/CRW-362.md).
 func hookTrustRetrustOptions(args []string, env host.LookupEnv) (options hookTrustRetrustOptionSet, err error) {
 	if value, set := env("CODEX_HOME"); set {
-		options.codexHome = value
+		options.codexHome, options.codexHomeKnown = value, true
 	} else {
 		home, err := host.Home(env)
 		if err != nil {
 			return options, err
 		}
-		options.codexHome = filepath.Join(home, ".codex")
+		options.codexHome, options.codexHomeKnown = filepath.Join(home, ".codex"), true
 	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -581,6 +586,7 @@ func hookTrustRetrustOptions(args []string, env host.LookupEnv) (options hookTru
 				} else {
 					options.codexHome = value
 				}
+				options.codexHomeKnown = true
 			}
 			index++
 		default:
@@ -722,7 +728,7 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 		// list, so it reports the config path, the reason and the file state instead; the reason is the
 		// refusal's own message, which is the only place it is written down.
 		if result.ConfigPath == "" {
-			result.ConfigPath = hookTrustRetrustReportPath(options.codexHome)
+			result.ConfigPath = hookTrustRetrustReportPath(options)
 		}
 		if result.Reason == "" {
 			result.Reason = err.Error()
@@ -733,15 +739,15 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 		return 1
 	}
 	if err != nil {
-		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options.codexHome)})
+		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options)})
 	}
 	root, err := hookTrustRetrustPluginRoot(pluginRoot, options.pluginRoot, options.codexHome)
 	if err != nil {
-		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options.codexHome)})
+		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options)})
 	}
 	key, err := hookTrustRetrustResolveKey(root, options.pluginKey, options.codexHome)
 	if err != nil {
-		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options.codexHome)})
+		return fail(err, HookTrustRetrustResult{ConfigPath: hookTrustRetrustReportPath(options)})
 	}
 	result, results, err := HookTrustRetrust(options.codexHome, root, key, options.bootstrapOK, runner, env, now)
 	if err != nil {
@@ -760,15 +766,15 @@ func HookTrustRetrustCLI(args []string, stdout, stderr io.Writer, env host.Looku
 	return 0
 }
 
-// hookTrustRetrustReportPath names the config.toml a refusal concerns before the file is resolved:
-// the Codex home's config.toml when the command line carried one, else the empty string the report
-// spells "(unknown)". A refusal that never learned a Codex home (an option that failed to parse
-// before --codex-home, with no CODEX_HOME and no HOME) must not print a path it guessed.
-func hookTrustRetrustReportPath(codexHome string) string {
-	if codexHome == "" {
+// hookTrustRetrustReportPath names the config.toml a refusal concerns before the file is resolved.
+// It answers the empty string only when the command never learned a Codex home at all (a parse that
+// refused before --codex-home, with no CODEX_HOME and no HOME): an empty CODEX_HOME that is set is
+// still a Codex home, whose target is ./config.toml, and the report must name it (CRW-936 B3).
+func hookTrustRetrustReportPath(options hookTrustRetrustOptionSet) string {
+	if !options.codexHomeKnown {
 		return ""
 	}
-	return filepath.Join(codexHome, "config.toml")
+	return filepath.Join(options.codexHome, "config.toml")
 }
 
 // hookTrustRetrustWarn prints the post-publication failure the command counted as a warning. It is

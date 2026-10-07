@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	hostenv "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
 // The retrust subcommand reads the wall clock unless a build links an instant into retrustTestClock
@@ -354,4 +355,50 @@ func TestHookTrustRetrustReportsAnUnreadableDisplacedFileWithoutNamingItsContent
 			t.Fatalf("the report does not carry %q:\n%s", want, report)
 		}
 	}
+}
+
+// An empty CODEX_HOME is set, not unset: the command's target is then ./config.toml, and a refusal
+// before the plan must still name that path. Before the fix the report treated the empty string as
+// "no Codex home was known" and printed "config.toml: (unknown)", hiding the path B3 promises.
+func TestHookTrustRetrustReportsThePathWhenCodexHomeIsSetButEmpty(t *testing.T) {
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+
+	stdout, stderr, code := retrustRunWithEnv(f, func(key string) (string, bool) {
+		if key == "CODEX_HOME" {
+			return "", true
+		}
+		return f.env()(key)
+	}, "--nope")
+	if code != 1 {
+		t.Fatalf("an unknown option did not refuse: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "config.toml: config.toml\n") {
+		t.Fatalf("the refusal report does not name the target the empty CODEX_HOME implies:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "(unknown)") {
+		t.Fatalf("the report says the path is unknown although CODEX_HOME is set:\n%s", stdout)
+	}
+}
+
+// When no Codex home was ever resolved (the options refused before one was known), the report must
+// say the path is unknown rather than print one it guessed. That state is unreachable from the
+// command line in a test - host.Home falls back to the account's home - so the report's own spelling
+// is pinned here, and the resolved-path case is the test above.
+func TestHookTrustRetrustReportSpellsAnUnknownPath(t *testing.T) {
+	var stdout bytes.Buffer
+	hookTrustRetrustReport(&stdout, HookTrustRetrustResult{Reason: "the Codex home could not be resolved"})
+	if !strings.Contains(stdout.String(), "config.toml: (unknown)\n") {
+		t.Fatalf("the report does not say the path is unknown:\n%s", stdout.String())
+	}
+}
+
+// retrustRunWithEnv runs the command with a caller-supplied environment, for the cases an empty or
+// absent CODEX_HOME distinguishes. It lives here, not in the CRW-844 fixture file, because CRW-936
+// must not edit a test file another issue owns.
+func retrustRunWithEnv(f *casFixture, env hostenv.LookupEnv, args ...string) (string, string, int) {
+	f.t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := HookTrustRetrustCLI(args, &stdout, &stderr, env, okRunner, f.plugin, f.now())
+	return stdout.String(), stderr.String(), code
 }
