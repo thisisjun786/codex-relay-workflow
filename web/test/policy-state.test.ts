@@ -669,6 +669,36 @@ test("one pending change at a time: another row's edit cannot replace the live o
 
 // The three defects the eleventh pre-merge evaluation found.
 
+// The two defects the twelfth pre-merge evaluation found.
+
+test("a newly added model's row survives clearing its sole effort entry", () => {
+  // d1: an all-empty draft clears the change (the server refuses an empty effort list), and the
+  // pending model was read from the change, so the row and the field the operator was typing in
+  // vanished the moment they selected the sole entry to replace it. The pending model is now held
+  // apart from the change.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenPropose(state, { kind: "setAllowed", model: "B", efforts: ["high"] });
+  assert.equal(pendingAllowedModel(state, state.reading as PolicyReading), "B");
+  state = screenAllowedDraft(state, "B", [""]);
+  assert.equal(state.change, null, "an all-empty draft proposes no change");
+  assert.equal(pendingAllowedModel(state, state.reading as PolicyReading), "B", "the row does not disappear mid-edit");
+  assert.deepEqual(allowedEntriesOf(state, "B", []), [""], "the field keeps what the operator typed");
+  // Typing the replacement brings the change back, for the same model.
+  state = screenAllowedDraft(state, "B", ["max"]);
+  assert.equal((state.change as { model: string }).model, "B");
+  assert.deepEqual((state.change as { efforts: string[] }).efforts, ["max"]);
+  // Cancelling drops the pending row for good.
+  state = screenPropose(state, null);
+  assert.equal(pendingAllowedModel(state, state.reading as PolicyReading), null);
+  assert.equal(allowedEntriesOf(state, "B", []).length, 0);
+  // A successful save ends the pending state too: the model is in the file now.
+  let saved = screenLoaded(initialScreen(), reading());
+  saved = screenPropose(saved, { kind: "setAllowed", model: "B", efforts: ["high"] });
+  saved = screenSaveFinished(screenSaveStarted(saved), saved.change, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
+  assert.equal(pendingAllowedModel(saved, saved.reading as PolicyReading), null, "a saved model is no longer pending");
+});
+
 test("a new exception's editor stays open after Apply so its values can still be corrected", () => {
   // d1: Apply closed the editor and moved the edit to the exception's own id, but a new exception has
   // no row to reopen: the operator had to discard the whole draft and retype it to change one value.

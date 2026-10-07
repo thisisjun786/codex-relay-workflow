@@ -261,6 +261,13 @@ export interface PolicyScreenState {
   allowedNew: Map<string, string>;
   /** The model the "add a model to the allowed list" select is on, or "" for its first free one. */
   allowedAddModel: string;
+  /**
+   * The model the Add control last proposed and that the file does not list yet, or "". It is held
+   * apart from `change` because the operator is editing the row it created: clearing the row's only
+   * effort entry empties the change (the server refuses an empty list) but must not make the row, and
+   * the field the operator is typing in, disappear.
+   */
+  pendingAllowed: string;
   /** The exception editor's draft, or null when it is closed. */
   exceptionDraft: ExceptionDraft | null;
   /** The change a save in flight is writing, or null when no save is in flight. */
@@ -995,7 +1002,7 @@ export async function runSave(state: PolicyScreenState, transports: PolicyWriteT
 
 /** initialScreen is the state before anything has been read. */
 export function initialScreen(): PolicyScreenState {
-  return { reading: null, catalog: null, error: null, change: null, allowedDraft: new Map(), allowedNew: new Map(), allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, busy: false, notice: null, repair: null };
+  return { reading: null, catalog: null, error: null, change: null, allowedDraft: new Map(), allowedNew: new Map(), allowedAddModel: "", pendingAllowed: "", exceptionDraft: null, saving: null, savingDrafts: null, busy: false, notice: null, repair: null };
 }
 
 /**
@@ -1022,7 +1029,7 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
     error: null,
     busy: false,
     repair,
-    ...(keepInputs ? {} : { change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", exceptionDraft: null }),
+    ...(keepInputs ? {} : { change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", pendingAllowed: "", exceptionDraft: null }),
   };
 }
 
@@ -1042,7 +1049,7 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
   // behind would show a value the operator just abandoned, and would survive the re-read that a
   // later successful save triggers. A non-null change keeps the drafts so a multi-step edit can go on.
   if (change === null) {
-    return { ...state, change: null, notice: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), exceptionDraft: null };
+    return { ...state, change: null, notice: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), pendingAllowed: "", exceptionDraft: null };
   }
   // One pending change at a time: a proposal from a control that does not own the live edit, or one
   // made while an answer is in flight, is refused, so the pending change is never silently replaced
@@ -1060,7 +1067,10 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
   // is not in the file yet: there is no row to reopen, and closing would leave the operator unable to
   // correct the values or to fix a check refusal without discarding the whole draft and retyping it.
   const keepNewDraft = change.kind === "setException" && state.exceptionDraft?.isNew === true;
-  return { ...state, change, notice: null, exceptionDraft: keepNewDraft ? state.exceptionDraft : null };
+  // A setAllowed proposed by the Add control is the model whose row must survive an empty
+  // intermediate edit, so the model is remembered apart from the change.
+  const pendingAllowed = change.kind === "setAllowed" ? change.model : state.pendingAllowed;
+  return { ...state, change, notice: null, pendingAllowed, exceptionDraft: keepNewDraft ? state.exceptionDraft : null };
 }
 
 /** changeOwner is the edit token one proposed change belongs to. */
@@ -1263,9 +1273,10 @@ export function draftForExceptionEdit(state: PolicyScreenState, exception: Polic
  * unwanted approval before they could correct it.
  */
 export function pendingAllowedModel(state: PolicyScreenState, reading: PolicyReading): string | null {
-  const change = state.change;
-  if (change?.kind !== "setAllowed") return null;
-  return reading.allowed.some((entry) => entry.model === change.model) ? null : change.model;
+  // The remembered model, not the change: the row must survive an empty intermediate edit, when the
+  // change is momentarily null because the server refuses an empty effort list.
+  if (state.pendingAllowed === "") return null;
+  return reading.allowed.some((entry) => entry.model === state.pendingAllowed) ? null : state.pendingAllowed;
 }
 
 /** draftForNewException opens the editor on a new exception, on a real role and a real model. */
@@ -1293,6 +1304,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
   let change = state.change;
   let allowedDraft = state.allowedDraft;
   let allowedNew = state.allowedNew;
+  let pendingAllowed = state.pendingAllowed;
   let exceptionDraft = state.exceptionDraft;
   let repair = state.repair;
   if (notice.blockEditing) {
@@ -1317,6 +1329,9 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
       allowedDraft = withoutKey(allowedDraft, saved.model);
       allowedNew = withoutKey(allowedNew, saved.model);
     }
+    // The write landed, so the model is in the file now and is no longer "pending"; the row it had is
+    // the file's own row from here on.
+    if (saved.kind === "setAllowed" && state.pendingAllowed === saved.model) pendingAllowed = "";
     if (saved.kind === "setException" && exceptionDraft !== null && before !== null && exceptionDraft === before.exceptionDraft) {
       exceptionDraft = null;
     }
@@ -1324,7 +1339,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // the operator's next change.
     if (stillPending) change = null;
   }
-  return { ...state, saving: null, savingDrafts: null, busy: false, notice, change, allowedDraft, allowedNew, exceptionDraft, repair };
+  return { ...state, saving: null, savingDrafts: null, busy: false, notice, change, allowedDraft, allowedNew, pendingAllowed, exceptionDraft, repair };
 }
 
 /** sameEntries reports whether two effort lists hold the same entries in the same order. */
@@ -1349,7 +1364,7 @@ function withoutKey<T>(drafts: Map<string, T>, key: string): Map<string, T> {
 export function screenReread(state: PolicyScreenState): PolicyScreenState {
   // The notice goes, but the repair sentence does not: it is the server's own instruction for the
   // repair, and the block it explains is still in force. screenRepairCleared lifts both together.
-  return { ...state, change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", exceptionDraft: null, notice: null };
+  return { ...state, change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", pendingAllowed: "", exceptionDraft: null, notice: null };
 }
 
 /**

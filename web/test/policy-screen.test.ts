@@ -410,3 +410,42 @@ test("a model the Add control proposed gets a row the operator can edit before s
   assert.ok(row, "the pending model gets its own row");
   assert.ok(byLabel(second.elements, "gpt-6.1-sol allowed effort 1"), "and an editor for its effort");
 });
+
+test("every input the screen actually renders carries a label and is a native control", async () => {
+  // C6: the label requirement is about the CONTROLS THE SCREEN RENDERS, so this renders the screen
+  // with an exception, an allowlist and all three roles and walks the real tree, rather than checking
+  // the label builders against themselves.
+  const pure = await import("../src/policy-state.ts");
+  const state = loadedState(pure, readingBody(), catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }]));
+  const { elements } = await mount(state);
+  const controls = elements.filter((el) => el.type === "select" || el.type === "input" || el.type === "button");
+  assert.ok(controls.length > 0, "the screen renders controls");
+  const native = new Set(["select", "input", "button"]);
+  for (const control of controls) {
+    // A button may carry visible text instead of an aria-label; an input or select must have one.
+    if (control.type === "button") continue;
+    assert.equal(typeof control.props["aria-label"], "string", `${String(control.type)} has an aria-label`);
+    assert.ok((control.props["aria-label"] as string).length > 0, "the label is never empty");
+    assert.ok(native.has(String(control.type)), "the control is a native element the browser makes keyboard operable");
+  }
+  // A fieldset groups the editable rows and is itself a native element.
+  const fieldsets = elements.filter((el) => el.type === "fieldset");
+  assert.ok(fieldsets.length > 0, "the editable rows are grouped in fieldsets");
+  for (const fieldset of fieldsets) assert.equal(typeof fieldset.props["aria-label"], "string", "each fieldset is labelled");
+});
+
+test("a reopened exception editor shows the pending values, not the file's", async () => {
+  // C6's other half: after a change is proposed, what the screen shows must still be what a save
+  // would send. This renders the pending state rather than deriving it twice.
+  const pure = await import("../src/policy-state.ts");
+  let state = loadedState(pure, readingBody(), catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }, { id: "devin/swe-2", label: "SWE" }]));
+  state = pure.screenPropose(state as never, { kind: "setException", id: "legacy", role: "parent", model: "anthropic/opus", effort: "max", cwd: ["/srv/new"] }) as unknown as Record<string, unknown>;
+  const { elements } = await mount(state);
+  // The row's own summary is rendered from the pending change's values.
+  const row = elements.find((el) => el.props["aria-label"] === "exception legacy");
+  assert.ok(row, "the exception row is rendered");
+  // Opening the editor from the pending state shows the pending model, not the file's.
+  const editDraft = pure.draftForExceptionEdit(state as never, pure.decodePolicy(readingBody()).exceptions[0]);
+  assert.equal(editDraft.model, "anthropic/opus", "the editor opens on the pending model");
+  assert.deepEqual(editDraft.cwd, ["/srv/new"]);
+});
