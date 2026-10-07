@@ -427,3 +427,39 @@ func TestC1FingerprintMaterialIsThePinnedJSONEncoding(t *testing.T) {
 		t.Fatalf("Fingerprint = %s", got)
 	}
 }
+
+// CRW-737: raised_at is a timestamp the format checks, as needed_by is.
+
+// A fractional-second RFC3339 raised_at is accepted and kept as written; a comma fraction, a
+// date without a time and free text are refused with ErrBadRaisedAt.
+func TestCRW737RaisedAtIsAnRFC3339Timestamp(t *testing.T) {
+	valid := func() Record {
+		return Record{Schema: Schema, Kind: KindPolicy, Context: "a question", State: StateOpen,
+			Options: []Option{{ID: "a"}, {ID: "b"}}, Authority: Authority{Kind: AuthorityUser}}
+	}
+	record := valid()
+	record.RaisedAt = "2026-10-06T00:00:00.5Z"
+	if err := Validate(record); err != nil {
+		t.Fatalf("a fractional-second raised_at must validate: %v", err)
+	}
+	if record.RaisedAt != "2026-10-06T00:00:00.5Z" {
+		t.Fatalf("raised_at was rewritten to %q", record.RaisedAt)
+	}
+	record = valid()
+	record.RaisedAt = "2026-10-06T09:00:00+09:00"
+	if err := Validate(record); err != nil {
+		t.Fatalf("an offset raised_at must validate: %v", err)
+	}
+	for _, at := range []string{"not a time", "2026-10-06T00:00:00,5Z", "2026-10-06", "2026-10-06T00:00:00"} {
+		record = valid()
+		record.RaisedAt = at
+		if err := Validate(record); !errors.Is(err, ErrBadRaisedAt) {
+			t.Errorf("Validate with raised_at %q = %v, want ErrBadRaisedAt", at, err)
+		}
+	}
+	// An absent raised_at is legal: a record a caller builds before its raise has no stamp yet.
+	record = valid()
+	if err := Validate(record); err != nil {
+		t.Fatalf("an absent raised_at must validate: %v", err)
+	}
+}
