@@ -600,6 +600,7 @@ func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
 		t.Fatalf("the case answered %s, want the case root's home", reply)
 	}
 }
+
 // c1 (CRW-938): the oracle is loaded eagerly, under the caller's environment, so that load is safe only while
 // the oracle's module initialization does no home I/O. This measures that against the real oracle tree: the
 // five homes point at a decoy directory, the handshake is answered, and nothing may have appeared under the
