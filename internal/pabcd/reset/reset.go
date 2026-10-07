@@ -300,16 +300,6 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			continue
 		}
 		path := resetLinkWalkPath(walked, component)
-		if resetLinkWalkPathTooLong(path) {
-			// The walk resolves the target through one concatenated pathname, and the kernel applies
-			// its own limit to a single pathname (ENAMETOOLONG). A target the walk cannot express in
-			// one pathname is one it cannot keep inside the root, so it goes to the descriptor stat and
-			// the root-path judgement: those resolve the candidate's own short link name through the
-			// kernel, which keeps an in-root target's verdict equal to the oracle's, and they refuse a
-			// target that leaves the root once the pinned directory was renamed. Answering absent here
-			// instead would keep a link the oracle removes and would miss that refusal.
-			return false, false
-		}
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
 			return false, true
@@ -372,12 +362,22 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 // walked components name, which is what resolving a "." or ".." component relative to that
 // directory needs. It asks through the descriptor resetPin took, where a name inside the directory
 // answers ENOENT when the directory may be searched and EACCES when it may not, and it opens no
-// directory for reading (CRW-554) and creates nothing. A directory the kernel cannot search, and a
-// question it cannot answer at all, are both reported as not searchable.
+// directory for reading (CRW-554) and creates nothing. A directory the kernel cannot search is
+// reported as not searchable.
+//
+// ENAMETOOLONG is reported as searchable, not as unsearchable. The probe name is appended to the
+// walked components, so the probe can push the concatenated pathname past the kernel's own limit
+// where the walk's own pathname for the next component is still short enough to be asked. The error
+// then says nothing about search permission, and reading it as "not searchable" would answer absent
+// for a directory the kernel can search and keep a live link the oracle removes. The component lstat
+// that follows decides such a target, and answers absent only when its own pathname is too long.
 func resetLinkWalkSearchable(dir *os.File, walked []string) bool {
 	// The name is concatenated by hand, never filepath.Join, which would clean away the "." and
 	// ".." components this judgement exists for.
 	_, err := resetLinkWalkLstat(dir, resetLinkWalkSearchableName(walked))
+	if errors.Is(err, unix.ENAMETOOLONG) {
+		return true
+	}
 	return err == nil || errors.Is(err, unix.ENOENT)
 }
 
