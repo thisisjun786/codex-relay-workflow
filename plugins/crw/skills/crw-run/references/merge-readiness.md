@@ -357,11 +357,11 @@ the node, as the first way of opening a generation in
 `dag-correct` then binds the generation. Without that, `dag-accept` refuses the child's new result as
 `stale_generation`.
 
-- A thread inside this issue's scope that needs a change, a P0 or security thread in or out of scope, a blocking
-  thread, or a thread the coordinator cannot classify: an ordinary correction. It carries the restoration block,
-  names the head and each thread, and asks the child to fix the finding or answer it with code evidence. The
-  child pushes and reruns checks only if it changed something, and emits again. The candidate does not merge
-  meanwhile.
+- A thread inside this issue's scope, a P0 or security thread in or out of scope, a blocking thread, or a
+  thread the coordinator cannot classify: an ordinary correction. It carries the restoration block, names the
+  head and each thread, and asks the child to fix the finding or answer it with code evidence, so a thread that
+  needs only a rebuttal takes this route too. The child pushes and reruns checks only if it changed something,
+  and emits again. The candidate does not merge meanwhile.
 - A minor thread where the installed relay cannot record the disposition: the temporary procedure.
   1. Read the late threads to the end (`merge-evidence` on the head lists them) and grade each by impact. A
      thread that needs a change and not an answer is an ordinary correction naming the change.
@@ -387,16 +387,20 @@ No thread has a correction route in this build, and resolving the thread does no
 thread that the installed relay can record is dispositioned as above and needs no route. Where it cannot, the
 coordinator still triages the thread as in the temporary procedure so that its disposition is ready, reports the
 case on the coordination record, and holds the candidate: it does not merge, and it opens no generation by hand
-around `dag-correct`. A thread inside this issue's scope, or a P0 or security one, is reported the same way and
-the candidate does not merge.
+around `dag-correct`. A thread inside this issue's scope, a P0 or security one, a blocking one, or one the
+coordinator cannot classify is reported the same way and the candidate does not merge.
 The two exceptions of that step are unchanged: a stale result whose reading says `correct` goes through
 `dag-correct`, and an open criteria re-review is decided first. The base-refresh route for an accepted node
 concerns the base only and is no way around a late thread.
 
 **After the merge.** A late thread inside this issue's scope reopens the same issue key: the finding belongs to
-what this issue promised, so the issue carries its own correction rather than a successor. A late thread outside
-this issue's scope is new work: a separable one is replied to and listed for the backlog with its own context,
-impact and outcome, and a P0 or security one is raised at once as a correction issue for the area it touches.
+what this issue promised, so the issue carries its own correction rather than a successor. This deliberately
+differs from the general [issue-to-PR mapping](../../crw-plan/references/integrations.md#issue-to-pr-mapping),
+whose "a new change after that delivery has merged gets a new issue and PR" is written for a change outside what
+the issue promised. A late thread outside this issue's scope is new work: a separable one is replied to and
+listed for the backlog with its own context, impact and outcome, a blocking one is raised at once as a correction
+issue for the area it touches, and a P0 or security one is fixed before the merge and raised as a correction
+issue if it arrives after it.
 
 **Why this is not a re-triage, and its limits.** The parent restates the child's handoff and does not judge again
 what the child judged ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A late thread is one
@@ -611,25 +615,32 @@ new head invalidating the review it outran.
 
 Once every CI job on the final head has finished, and before the verdict, the parent
 evaluates that head by independent grading rather than by the child's own numbers. It
-grades the head as it stands on a tree merged with the current `dev`, so the reading
-describes what would actually land; the required independent review of the same head
-may run alongside it and does not replace it.
+grades the head as it stands on a tree merged with the current tip of the candidate's
+destination branch (its `dev` in this repository, as
+[Identify the candidate and gates](#identify-the-candidate-and-gates) pins it), so the
+reading describes what would actually land; the required independent review of the same
+head may run alongside it and does not replace it.
 
 The evaluation reads every criterion and every defect against this issue's scope, and
-records a disposition for each criterion that is not PASS and each P0 to P2 defect. A
+records a disposition for each criterion that is not PASS, each defect inside this
+issue's scope whatever its grade, and each P0 to P2 defect outside it. A
 disposition is one of: `blocking` (the candidate waits for a fix or is reported
 blocked), `separable` (outside this issue's scope and standing on its own, so it
 becomes follow-up work with its own context, impact and outcome), `not_applicable`
 (code evidence shows the reading is wrong) or `already_resolved` (the evidence that
-the defect is gone at this head). `separable` is never the disposition of a P0, of an
-unmet criterion, of a defect this change created, or of a defect inside this issue's
-promise: those block. A disposition written to clear the gate without assessing what
-the finding does is the false record this step exists to prevent.
+the defect is gone at this head). `separable` is never the disposition of a P0, of a
+security finding, of an unmet criterion, of a defect this change created, or of a
+defect inside this issue's promise: those block. A disposition written to clear the
+gate without assessing what the finding does is the false record this step exists to
+prevent.
 
 The evaluation does not restate the child's handoff. The child judged the findings its
 own rounds produced ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release));
-the parent's reading is the independent grading the verdict stands on, and a
-disagreement between the two returns the candidate to the child fail-closed.
+what the parent grades anew is the findings the child never saw (a late thread) and the
+whole candidate as one reading — the criteria against the tree that would land, and any
+defect that reading finds — because that is the independent grading the verdict stands
+on. It does not re-triage a finding the child already judged and disposed of; a
+disagreement between the two readings returns the candidate to the child fail-closed.
 
 ## Recheck, integrate, and record
 

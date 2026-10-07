@@ -320,7 +320,8 @@ Execution:
   ([what the record says](merge-readiness.md#what-the-record-says)). A thread that still reaches the head
   after your receipt is not yours to chase and needs no new review: the coordinator triages a minor one itself,
   and where its relay cannot record that it asks you only to read the review threads again and emit again, and
-  one inside your issue's scope, or a P0 or security one anywhere, comes back as an ordinary correction, both only while a correction can still
+  one inside your issue's scope, a P0 or security one anywhere, a blocking one, or one it cannot classify, comes
+  back as an ordinary correction, both only while a correction can still
   reach you: once your result is accepted the coordinator holds the candidate instead, and after the merge it is
   new work, except that an in-scope one reopens your issue ([Late review threads](merge-readiness.md#late-review-threads)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).

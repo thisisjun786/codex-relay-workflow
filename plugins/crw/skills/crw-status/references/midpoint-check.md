@@ -420,8 +420,9 @@ now sits on its head that the record's `threadsSeen` does not list. The relay's 
 Action: report it as its own row: the thread, its reading against this issue's scope, the stage of the delivery and
 whose move it is. A thread outside the issue's scope, with a separable residue, is the coordinator's: where the installed relay can record a disposition
 (`merge-evidence --late-dispositions`) it is recorded and nothing goes back to the child; where it cannot, the child
-only emits its receipt again, before the acceptance. A thread inside the issue's scope, or a P0 or security one
-anywhere, is the child's ordinary correction before the acceptance. After the acceptance of a current result no
+only emits its receipt again, before the acceptance. A thread inside the issue's scope, a P0 or security one
+anywhere, a blocking one, or one the coordinator cannot classify, is the child's ordinary correction before the
+acceptance. After the acceptance of a current result no
 correction can reach the child, so such a thread, and an out-of-scope one that cannot be recorded, leaves the candidate held
 and reported on the coordination record. After the merge an in-scope thread reopens the issue; the rest is new work. A status call reads the thread and
 triages, replies to and resolves nothing: the triage is the coordinator's
