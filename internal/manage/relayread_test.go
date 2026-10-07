@@ -256,8 +256,11 @@ func (f *dagReviewFixture) relayReadPutPlan(planID, project string, nodes ...str
 }
 
 // relayReadMarkerRows writes the private bodies a projection must never carry: a settings record, a
-// rendered delivery message and a verdict memo.
+// rendered delivery message and a verdict memo. The verdict row matters: without it the verdict
+// context is empty and the assertion that the marker never reaches the projection would hold for
+// every implementation, including one that carried the memo.
 func (f *dagReviewFixture) relayReadMarkerRows() {
+	f.relayReadVerdict("evt-1", "verified", "criteria-1")
 	f.exec("INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)",
 		"parent-1", `{"marker":"`+relayReadSettingsMarker+`"}`, "test", dagReviewAt(0))
 	// The delivery marker goes in the columns a delivery body actually fills (dispatch_evidence,
