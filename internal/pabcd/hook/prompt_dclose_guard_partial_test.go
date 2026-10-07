@@ -761,3 +761,34 @@ func TestPromptDcloseRecoveryBusySessionLockNamesWhatTheFirstAttemptPublished(t 
 		t.Errorf("the busy refusal dropped the goalplan this close committed: %q", answer)
 	}
 }
+
+// TestPromptDcloseBusyRefusalSeparatesThePublicationSentences is the formatting control for the busy
+// refusals: the publication sentences follow the busy text's own final period, so a space must
+// separate them. Without it the answer runs two sentences together ("...changed.the recovery marker
+// was published."), which is unreadable for the operator who has to act on it.
+func TestPromptDcloseBusyRefusalSeparatesThePublicationSentences(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-busy-separator"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	planDir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(planDir, goalplan.GoalplanLockDir), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "is busy") {
+		t.Fatalf("the retry did not answer the busy lock: %q", answer)
+	}
+	if strings.Contains(answer, "changed.the") {
+		t.Errorf("the publication sentences run into the busy text: %q", answer)
+	}
+	if !strings.Contains(answer, "changed. the recovery marker was published.") {
+		t.Errorf("the busy refusal did not separate the marker sentence: %q", answer)
+	}
+	if !strings.Contains(answer, "the recovery marker was published. the goalplan was published.") {
+		t.Errorf("the busy refusal did not separate the plan sentence: %q", answer)
+	}
+}

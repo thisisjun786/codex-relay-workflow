@@ -1165,7 +1165,9 @@ func promptDcloseNotApplied(reason string) string {
 // named before the closing bracket. The busy text carries no "Nothing was written." claim of its own
 // - it says the phase and goalplan ledger were not changed - so the publication sentences are added
 // rather than substituted, and that sentence stays true: this retry changed nothing (CRW-930, d3).
-// With nothing published the text is returned exactly as it was.
+// The sentences follow that final period, so they are separated from it by a space; they keep the
+// lowercase sentence form the partial refusal uses. With nothing published the text is returned
+// exactly as it was.
 func promptDcloseNotAppliedNaming(reason string, published promptDclosePublishedArtifacts) string {
 	refusal := promptDcloseNotApplied(reason)
 	named := published.sentences()
@@ -1177,7 +1179,7 @@ func promptDcloseNotAppliedNaming(reason string, published promptDclosePublished
 	if at < 0 {
 		return refusal
 	}
-	return refusal[:at] + strings.Join(named, " ") + refusal[at:]
+	return refusal[:at] + " " + strings.Join(named, " ") + refusal[at:]
 }
 
 // promptDcloseGoalplanUnreadable is the unreadable-goalplan text (:1275-1281).
