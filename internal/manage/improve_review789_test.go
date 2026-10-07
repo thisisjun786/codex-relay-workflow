@@ -574,34 +574,6 @@ func TestImproveReview789DistinctStoresCountEachOccurrence(t *testing.T) {
 	}
 }
 
-// TestImproveReview789AggregateCountIsNotUnderstated covers the review finding that a record which
-// aggregates its occurrences must not be understated when its count moves with no new origin
-// location: a fault ledger row whose occurrence count grew reports the whole count in the draft,
-// not the count the draft first recorded plus the one sighting the new last-seen time produced.
-func TestImproveReview789AggregateCountIsNotUnderstated(t *testing.T) {
-	w := improveProposeTestSetup(t)
-	improveProposeTestConfigure(t, w, map[string]any{})
-	first := improveProposeTestBundle(t, w, []improveRecord{improveReview789FaultRecord(5, "2026-10-06T01:00:00Z")})
-	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
-		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
-	}
-
-	// The same ledger row now holds eight occurrences, with no new origin location.
-	second := improveProposeTestBundle(t, w, []improveRecord{improveReview789FaultRecord(8, "2026-10-06T02:00:00Z")})
-	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
-	if code != 0 {
-		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
-	}
-	report := improveProposeTestReport(t, stdout)
-	if len(report.Updated) != 1 {
-		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
-	}
-	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
-	if !strings.Contains(doc.Body, "- owner_unknown (8)") {
-		t.Errorf("the merged draft understates the aggregated count:\n%s", doc.Body)
-	}
-}
-
 // TestImproveReview789ContextEvidenceIsPerKind covers the review finding that the context exclusion
 // must look at the record kind, not only at the evidence prefix: only a split record attaches the
 // issue: and answer: context, so for every other kind each non-empty evidence entry is an origin
@@ -1105,5 +1077,34 @@ func TestImproveReview789SymlinkedParentDotDotIsOneLocation(t *testing.T) {
 	doc := improveReview789Draft(t, manageState, fingerprint)
 	if len(doc.Seen) != 1 {
 		t.Errorf("the draft carries %d seen entries, want one for the one file: %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// TestImproveReview789EvidenceLessObservationsStayApart covers the rule the issue keeps for a
+// record that names no origin: such a record falls back to one sighting of its where, and nothing
+// else tells its observations apart, so two observations of one where at different times stay two
+// occurrences rather than collapsing into one.
+func TestImproveReview789EvidenceLessObservationsStayApart(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveRecord{Kind: improveKindRefusal, Key: "manifest_forbidden", Where: "rel-a",
+		What: "manifest_forbidden", Count: 1, FirstAt: "2026-10-06T01:00:00Z", LastAt: "2026-10-06T01:00:00Z"}
+	second := improveRecord{Kind: improveKindRefusal, Key: "manifest_forbidden", Where: "rel-a",
+		What: "manifest_forbidden", Count: 1, FirstAt: "2026-10-06T02:00:00Z", LastAt: "2026-10-06T02:00:00Z"}
+	bundle := improveProposeTestBundle(t, w, []improveRecord{first, second})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", report.Created)
+	}
+	doc := improveProposeTestDraft(t, w, report.Created[0].Fingerprint)
+	if len(doc.Seen) != 2 {
+		t.Errorf("the draft carries %d seen entries, want one per observation (2): %+v", len(doc.Seen), doc.Seen)
+	}
+	if !strings.Contains(doc.Body, "- owner_unknown (2)") {
+		t.Errorf("the draft does not count both observations:\n%s", doc.Body)
 	}
 }

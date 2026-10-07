@@ -61,6 +61,13 @@ type improveProposeCandidate struct {
 	// exists adds only the sightings this run newly recorded to that project's count. It does not
 	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
+
+	// seenKeepTime is whether this candidate's sightings are compared by their whole entry, time
+	// included, rather than by their origin. A record that names no origin falls back to one
+	// sighting of its where, and nothing else tells its observations apart, so the time stays part
+	// of what makes them the same occurrence. A record with origins is compared by the origin, so
+	// the moving time does not make every earlier occurrence look new.
+	seenKeepTime bool
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -201,17 +208,17 @@ func improveProposeImpactOf(record improveRecord) int {
 // it is what tells the sightings apart, and At is the record's last sighting. A record that names
 // no location makes one sighting of the record's where, so the shape does not change when a
 // record gains its first location.
-func improveProposeRecordSightings(record improveRecord) []auditDraftSeen {
+func improveProposeRecordSightings(record improveRecord) (sightings []auditDraftSeen, fallback bool) {
 	subject, at := strings.TrimSpace(record.Key), strings.TrimSpace(record.LastAt)
 	locations := improveProposeOrigins(record)
 	if len(locations) == 0 {
-		return []auditDraftSeen{{Mode: improveProposeSource, Subject: subject, Head: strings.TrimSpace(record.Where), At: at}}
+		return []auditDraftSeen{{Mode: improveProposeSource, Subject: subject, Head: strings.TrimSpace(record.Where), At: at}}, true
 	}
 	out := make([]auditDraftSeen, 0, len(locations))
 	for _, location := range locations {
 		out = append(out, auditDraftSeen{Mode: improveProposeSource, Subject: subject, Head: location, At: at})
 	}
-	return out
+	return out, false
 }
 
 // improveProposeOrigins is the origin locations of one record: the evidence entries that name
@@ -244,13 +251,20 @@ func improveProposeContextEvidence(kind, entry string) bool {
 }
 
 // improveProposeSightingIdentity is what makes two sightings the same occurrence: the source and
-// the origin location. Neither the time nor the subject is part of it. A record's last sighting
-// moves forward every time the record is seen again, so a time that participated would make every
-// earlier occurrence look new on the next run and count it a second time. A split's subject is the
-// project its relationship currently carries, and a later reading may learn that project, so a
-// subject that participated would count one origin twice the moment its owner changed.
-func improveProposeSightingIdentity(sighting auditDraftSeen) auditDraftSeen {
-	sighting.At = ""
+// the origin location. The subject is never part of it: a split's subject is the project its
+// relationship currently carries, and a later reading may learn that project, so a subject that
+// participated would count one origin twice the moment its owner changed.
+//
+// A sighting made from an origin keeps its time out of the identity too, because a record's last
+// sighting moves forward every time the record is seen again, and a time that participated would
+// make every earlier occurrence look new and count it a second time. A sighting that falls back to
+// the record's where has no origin to tell its observations apart, so it keeps the whole-entry
+// comparison this feature used before one sighting per origin existed: two observations of one
+// where at different times stay two occurrences.
+func improveProposeSightingIdentity(sighting auditDraftSeen, keepTime bool) auditDraftSeen {
+	if !keepTime {
+		sighting.At = ""
+	}
 	sighting.Subject = ""
 	return sighting
 }
@@ -258,10 +272,10 @@ func improveProposeSightingIdentity(sighting auditDraftSeen) auditDraftSeen {
 // improveProposeSeenIndex is the position of the stored sighting that is the same occurrence as
 // this one, or -1 when the draft does not carry the occurrence. A caller uses it to read or update
 // the entry the draft holds for an origin.
-func improveProposeSeenIndex(seen []auditDraftSeen, entry auditDraftSeen) int {
-	identity := improveProposeSightingIdentity(entry)
+func improveProposeSeenIndex(seen []auditDraftSeen, entry auditDraftSeen, keepTime bool) int {
+	identity := improveProposeSightingIdentity(entry, keepTime)
 	for i, have := range seen {
-		if improveProposeSightingIdentity(have) == identity {
+		if improveProposeSightingIdentity(have, keepTime) == identity {
 			return i
 		}
 	}
@@ -271,10 +285,10 @@ func improveProposeSeenIndex(seen []auditDraftSeen, entry auditDraftSeen) int {
 // improveProposeSeenHas reports whether a seen list already carries this occurrence. It compares
 // identities rather than whole entries, so a sighting whose record was seen again is recognised
 // as the occurrence it already is.
-func improveProposeSeenHas(seen []auditDraftSeen, entry auditDraftSeen) bool {
-	identity := improveProposeSightingIdentity(entry)
+func improveProposeSeenHas(seen []auditDraftSeen, entry auditDraftSeen, keepTime bool) bool {
+	identity := improveProposeSightingIdentity(entry, keepTime)
 	for _, have := range seen {
-		if improveProposeSightingIdentity(have) == identity {
+		if improveProposeSightingIdentity(have, keepTime) == identity {
 			return true
 		}
 	}
@@ -306,7 +320,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			count = 1
 		}
 		impact := improveProposeImpactOf(record)
-		sightings := improveProposeRecordSightings(record)
+		sightings, fallback := improveProposeRecordSightings(record)
 		project := improveProposeProjectOf(record)
 		if at, ok := byKey[key]; ok {
 			current := &candidates[at]
@@ -316,6 +330,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			}
 			improveProposeAddProject(&current.Projects, project, count)
 			current.Evidence = append(current.Evidence, record.Evidence...)
+			current.seenKeepTime = current.seenKeepTime || fallback
 			improveProposeAddSightings(current, project, sightings)
 			continue
 		}
@@ -323,7 +338,8 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 		candidate := improveProposeCandidate{
 			Key: key, Kind: record.Kind, Title: title,
 			Impact: impact, Count: count,
-			Evidence: append([]string(nil), record.Evidence...),
+			Evidence:     append([]string(nil), record.Evidence...),
+			seenKeepTime: fallback,
 		}
 		improveProposeAddProject(&candidate.Projects, project, count)
 		improveProposeAddSightings(&candidate, project, sightings)
@@ -385,7 +401,7 @@ func improveProposeAddSightings(candidate *improveProposeCandidate, project stri
 	}
 	owner := improveProposeProjectKey(project)
 	for _, sighting := range sightings {
-		if improveProposeSeenHas(candidate.seen, sighting) {
+		if improveProposeSeenHas(candidate.seen, sighting, candidate.seenKeepTime) {
 			continue
 		}
 		candidate.seen = append(candidate.seen, sighting)
@@ -549,12 +565,14 @@ func improveProposeMergeProjects(stored, current []improveProposeProject, added,
 			out = append(out, improveProposeProject{Project: auditDraftOwnerUnknown, Count: carried})
 		}
 	}
-	// Each project's count is what the draft held plus the occurrences this run added there, plus
-	// the occurrences that moved to or from it because their owner changed. A project whose
-	// occurrences all moved away carries no count and is not kept.
+	// Each project's count is what the draft held plus the occurrences this run newly recorded
+	// there, plus the occurrences that moved to or from it because their owner changed. A project
+	// whose occurrences all moved away carries no count and is not kept. Nothing else moves the
+	// count: an occurrence the draft already carries adds nothing, so rerunning one bundle leaves
+	// every stored count as it was.
 	kept := out[:0]
 	for _, project := range out {
-		count := improveProposeMergedCount(project.Project, project.Count+added[project.Project]+moved[project.Project], current)
+		count := project.Count + added[project.Project] + moved[project.Project]
 		if count <= 0 {
 			continue
 		}
@@ -570,26 +588,11 @@ func improveProposeMergeProjects(stored, current []improveProposeProject, added,
 		}
 		if !found {
 			out = append(out, improveProposeProject{Project: project.Project,
-				Count: improveProposeMergedCount(project.Project, added[project.Project]+moved[project.Project], current)})
+				Count: added[project.Project] + moved[project.Project]})
 		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Project < out[b].Project })
 	return out
-}
-
-// improveProposeMergedCount is the count one project carries after a merge: what the draft held
-// plus the occurrences this run newly recorded there, or what the run own records report for that
-// project when that is more. A source that aggregates its occurrences (a fault ledger row, whose
-// count moves with no new origin location) reports a total the incremental sum does not reach, and
-// the body must not understate it. A project the new run no longer carries is not passed here at
-// all, so it keeps the count the draft already held.
-func improveProposeMergedCount(project string, incremental int, current []improveProposeProject) int {
-	for _, entry := range current {
-		if entry.Project == project && entry.Count > incremental {
-			incremental = entry.Count
-		}
-	}
-	return incremental
 }
 
 // improveProposeReconcileSightings brings a stored seen list and the counts its draft holds up to
@@ -605,7 +608,7 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 	moved = map[string]int{}
 	for _, sighting := range candidate.seen {
 		owner := improveProposeProjectKey(candidate.seenProjects[sighting])
-		at := improveProposeSeenIndex(seen, sighting)
+		at := improveProposeSeenIndex(seen, sighting, candidate.seenKeepTime)
 		if at < 0 {
 			seen = append(seen, sighting)
 			added[owner]++
