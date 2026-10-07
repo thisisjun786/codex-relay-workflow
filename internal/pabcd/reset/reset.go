@@ -255,10 +255,9 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 //
 // The walk resolves the target through one concatenated pathname, so a target whose prefix grows
 // past the kernel's own single-pathname limit (PATH_MAX, 4096 on Linux and 1024 on XNU) answers
-// ENAMETOOLONG from the walk's own fstatat. That error reports the walk's own limit rather than the
-// kernel's answer about the target, which may still resolve: the walk cannot decide it, so it is
-// reported as not kept inside the root and the caller keeps the descriptor stat and the root-path
-// judgement, exactly as for an absolute target or a ".." above the root.
+// ENAMETOOLONG from the walk's own fstatat. That is one of the errors above: the walk cannot decide
+// the target, and the answer is absent, which keeps the link. The walk never hands such a target to
+// the root-path judgement, which is reserved for a target that really leaves the root.
 //
 // The hop count starts at one because the caller already read this link's target with readlink:
 // the kernel counts that link as the first traversal it allows for the whole resolution, so a chain
@@ -289,15 +288,7 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			// there, so ask the kernel here and answer absent when it cannot search. This is the
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
-			searchable, asked := resetLinkWalkSearchable(dir, walked)
-			if !asked {
-				// The probe name pushed the concatenated pathname past the kernel's own limit, so the
-				// search question could not be asked. That is not an answer about search permission:
-				// the walk cannot decide this target, so the caller keeps the descriptor stat and the
-				// root-path judgement, which answer as the kernel does for the link.
-				return false, false
-			}
-			if !searchable {
+			if !resetLinkWalkSearchable(dir, walked) {
 				return false, true
 			}
 			if component == ".." {
@@ -311,14 +302,6 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 		path := resetLinkWalkPath(walked, component)
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
-			// The walk resolves the target through one concatenated pathname, and the kernel applies its
-			// own limit to a single pathname. ENAMETOOLONG therefore reports the walk's own limit, not
-			// the kernel's answer about the target, which may still resolve: the walk cannot decide it,
-			// so it keeps the descriptor stat and the root-path judgement. Every other error is the
-			// kernel's answer about the target and is absent.
-			if errors.Is(err, unix.ENAMETOOLONG) {
-				return false, false
-			}
 			return false, true
 		}
 		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
@@ -375,47 +358,37 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 	}
 }
 
-// resetLinkWalkSearchable reports whether the kernel could look a name up inside the directory the
-// walked components name, which is what resolving a "." or ".." component relative to that
-// directory needs. It asks through the descriptor resetPin took, where a name inside the directory
-// answers ENOENT when the directory may be searched and EACCES when it may not, and it opens no file
-// or directory (CRW-554) and creates nothing. A directory the kernel cannot search is reported as
-// not searchable.
+// resetLinkWalkSearchable reports whether the kernel may search the directory the walked components
+// name, which is what resolving a "." or ".." component relative to that directory needs. It asks
+// with an fstatat(AT_SYMLINK_NOFOLLOW) of that directory's own "." entry, relative to the descriptor
+// resetPin took: the kernel resolves that entry by looking it up inside the directory, so it answers
+// EACCES for a directory it cannot search and success for one it can, and it opens no file or
+// directory (CRW-554) and creates nothing.
 //
-// The lookup is of a name inside the directory rather than of the directory itself, so a directory
-// a writer swapped for a regular file between the walk's observation and this question is rejected
-// too: a name lookup inside a regular file answers ENOTDIR, where an existence or executability
-// check on the pathname itself would answer success for an executable file.
+// The question is asked about the directory rather than about a name that is not there, so it adds
+// no synthetic component to the pathname: an appended probe name can cross the kernel's single-
+// pathname limit where the walked directory's own pathname has not, and that ENAMETOOLONG says
+// nothing about search permission. Asking for "." also rejects a directory a writer swapped for a
+// regular file between the walk's observation and this question, which answers ENOTDIR, where an
+// existence or executability check on the pathname would accept an executable file.
 //
-// The probe name is appended to the walked components, so its pathname can cross the kernel's
-// single-pathname limit where the walked directory's own pathname has not. ENAMETOOLONG then says
-// nothing about search permission, so the question is reported as not asked and the caller keeps the
-// descriptor stat and the root-path judgement: reading the overflow as "not searchable" would answer
-// absent for a directory the kernel can search, and reading it as searchable would remove the link
-// of a directory the kernel cannot search.
-func resetLinkWalkSearchable(dir *os.File, walked []string) (searchable, asked bool) {
-	// The name is concatenated by hand, never filepath.Join, which would clean away the "." and
-	// ".." components this judgement exists for.
-	_, err := resetLinkWalkLstat(dir, resetLinkWalkSearchableName(walked))
-	if errors.Is(err, unix.ENAMETOOLONG) {
-		return false, false
-	}
-	return err == nil || errors.Is(err, unix.ENOENT), true
+// A directory the kernel cannot search, and one that stopped being a directory, are both reported as
+// not searchable, which is the kernel's answer for the link.
+func resetLinkWalkSearchable(dir *os.File, walked []string) bool {
+	_, err := resetLinkWalkLstat(dir, resetLinkWalkSearchPath(walked))
+	return err == nil
 }
 
-// resetLinkWalkSearchableName is the probe name the search question looks up inside the directory the
-// walked components name. It is concatenated by hand, never filepath.Join, which would clean away the
-// "." and ".." components this judgement exists for.
-func resetLinkWalkSearchableName(walked []string) string {
+// resetLinkWalkSearchPath is the pathname the search question asks about: the walked directory
+// itself, as the "." entry the kernel looks up inside it. For no walked component that is the pinned
+// directory's own ".", which the pin already had to be able to search. It is concatenated by hand,
+// never filepath.Join, which would clean away the "." and ".." components this judgement exists for.
+func resetLinkWalkSearchPath(walked []string) string {
 	if len(walked) == 0 {
-		return resetLinkWalkSearchProbe
+		return "."
 	}
-	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + resetLinkWalkSearchProbe
+	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + "."
 }
-
-// resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point
-// is only whether the kernel may look it up, which it answers with ENOENT or EACCES.
-const resetLinkWalkSearchProbe = ".crw927searchprobe"
 
 // resetLinkWalkPath is the path of component below the components already walked. It is built by
 // concatenation, never filepath.Join, which would clean ".." the kernel resolves physically.
