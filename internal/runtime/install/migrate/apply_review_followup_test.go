@@ -647,45 +647,34 @@ func TestMigrateApplyReviewFollowupWalksAsTheDecoderWould(t *testing.T) {
 	}
 }
 
-// R1g2: the record is decoded from its own bytes, with the decoder's own rule for an invalid UTF-8 run inside a string
-// (one U+FFFD per byte), and not through the receipt reader's whole-input normalisation (source.DecodeUTF8, one U+FFFD
-// per maximal subpart). The parent's answer for CRW-879 chose that, so this case pins it: the invalid run here is the
-// two bytes of a truncated three-byte sequence, which the reader's normalisation would read as one U+FFFD and this
-// judgement reads as two. The plan's own file is named with a single U+FFFD, so the path this judgement derives names no
-// file in the plan: it contributes no reference, and both records keep the plan order. The difference is confined to a
-// name that holds U+FFFD while the receipt spells the path with the invalid bytes, and it is recorded as a kept
-// limitation in the issue's defect record.
-func TestMigrateApplyReviewFollowupDecodesAPathFromItsOwnBytes(t *testing.T) {
+// R1j: a manifest path is read the way the receipt reader reads it, through the reader's own UTF-8 normalisation, so a
+// path that holds an invalid run names the plan file the reader's text holds. The reader normalises a maximal invalid
+// subpart to one U+FFFD (source.DecodeUTF8, gate/js.go:43), so the two bytes of a truncated three-byte sequence are one
+// U+FFFD there; decoding the record's own bytes with encoding/json's rule gives two, which names no plan file, drops the
+// reference, and leaves the referenced record in plan order behind the receipt that refers to it — the dangling
+// reference this issue exists to remove. The plan file here is named with the single U+FFFD the reader resolves.
+func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T) {
+	const fffd = "\uFFFD"
 	_, r, p := apPlan(t, map[string]string{
-		"evidence/s/a.json":                "{\"artifactManifest\":[{\"path\":\"z/identit" + string([]byte{0xe2, 0x82}) + "y.json\",\"kind\":\"artifact-identity\"}]}",
-		"evidence/s/b.json":                "{\"plain\":true}",
-		"evidence/s/z/identit\uFFFDy.json": "i",
+		// The receipt spells the verdict's directory with the invalid bytes E2 82 (a truncated three-byte sequence).
+		"evidence/s/qa-receipt.json": "{\"artifactManifest\":[{\"path\":\"z/" + string([]byte{0xe2, 0x82}) + "/verdict.json\",\"kind\":\"verdict\"}]}",
+		// The plan's own directory is named with the one U+FFFD the reader's normalisation produces.
+		"evidence/s/z/" + fffd + "/verdict.json":           "{\"artifactManifest\":[{\"path\":\"artifact-identity.json\",\"kind\":\"artifact-identity\"}]}",
+		"evidence/s/z/" + fffd + "/artifact-identity.json": "i",
 	}, nil)
 	pub, leaves := migrateApplyReviewRenames(t)
 	if _, err := applyWith(r, p, pub); err != nil {
 		t.Fatal(err)
 	}
 	got := leaves()
-	identity, plain := slices.Index(got, "identit\uFFFDy.json"), slices.Index(got, "b.json")
-	if identity < 0 || plain < 0 {
-		t.Fatalf("both records must publish: %v", got)
+	identity, verdict, receipt := slices.Index(got, "artifact-identity.json"), slices.Index(got, "verdict.json"), slices.Index(got, "qa-receipt.json")
+	if identity < 0 || verdict < 0 || receipt < 0 {
+		t.Fatalf("every record must publish: %v", got)
 	}
-	if plain > identity {
-		t.Errorf("a path this judgement cannot resolve names no plan file, so both records keep plan order: %v", got)
+	if verdict > receipt {
+		t.Errorf("the reader resolves the receipt's path, so the verdict must publish before the receipt that names it: %v", got)
 	}
-	// A receipt that names a plan file by a path both decoders read the same way still hoists it, which is the behaviour
-	// this issue exists for and the reason the difference above is confined to the undecodable spelling.
-	_, r2, p2 := apPlan(t, map[string]string{
-		"evidence/s/a.json":         "{\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}",
-		"evidence/s/b.json":         "{\"plain\":true}",
-		"evidence/s/z/verdict.json": "v",
-	}, nil)
-	pub2, leaves2 := migrateApplyReviewRenames(t)
-	if _, err := applyWith(r2, p2, pub2); err != nil {
-		t.Fatal(err)
-	}
-	got2 := leaves2()
-	if v, b := slices.Index(got2, "verdict.json"), slices.Index(got2, "b.json"); v < 0 || b < 0 || v > b {
-		t.Errorf("the artifact a receipt names must still publish before a plain record: %v", got2)
+	if identity > verdict {
+		t.Errorf("the identity the verdict names must publish before the verdict: %v", got)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -675,102 +676,45 @@ func migrateReviewFollowupSkipAfter(dec *json.Decoder, tok json.Token) error {
 }
 
 // migrateReviewFollowupReadManifest consumes the artifactManifest member of the object being walked and returns the
-// entries it names. ok is false when the member is not a non-empty array, which is what the receipt reader's own
-// judgement refuses (gate/manifest.go:110-139), and err is non-nil only for a malformed stream, which refuses the whole
-// record. The judgement is the array's presence and length, never the shape of its entries: an entry this order cannot use
-// names no dependency and never refuses the receipt, so a receipt whose entries are of an unexpected shape keeps the
-// referrer's place instead of falling back to plan order.
+// entries it names, read from the member's own text through the receipt reader's UTF-8 normalisation (source.DecodeUTF8,
+// which gate/js.go:36-53 applies to the whole record before it parses it) and decoded by encoding/json, the same decoder
+// that reader uses. A path that holds bytes which are not UTF-8 therefore names the plan file the reader's own text holds
+// rather than a file that is not in the plan, so the reference the reader resolves is the reference this order keeps. ok
+// is false when the member is not a non-empty array, which is what the receipt reader's own judgement refuses
+// (gate/manifest.go:110-139), and err is non-nil only for a malformed stream, which refuses the whole record. The
+// judgement is the array's presence and length, never the shape of its entries: an entry this order cannot use names no
+// dependency and never refuses the receipt, so a receipt whose entries are of an unexpected shape keeps the referrer's
+// place instead of falling back to plan order.
 func migrateReviewFollowupReadManifest(dec *json.Decoder) ([]migrateReviewFollowupManifestEntry, bool, error) {
-	tok, err := dec.Token()
-	if err != nil {
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
 		return nil, false, err
 	}
-	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
-		// The member is a scalar, an object or null: the reader's judgement refuses it, and the value still has to be
-		// consumed before the walk of the object can go on.
-		if err := migrateReviewFollowupSkipAfter(dec, tok); err != nil {
-			return nil, false, err
-		}
+	// The member's own text goes through the reader's UTF-8 normalisation, so a path that holds bytes which are not UTF-8
+	// names the plan file the reader's text holds, and every element is decoded on its own so one element of an unexpected
+	// shape names no dependency without refusing the receipt.
+	var items []json.RawMessage
+	if err := json.Unmarshal([]byte(source.DecodeUTF8(raw)), &items); err != nil || len(items) == 0 {
 		return nil, false, nil
 	}
-	manifest := []migrateReviewFollowupManifestEntry{}
-	items := 0
-	for dec.More() {
-		items++
-		entry, err := migrateReviewFollowupReadEntry(dec)
-		if err != nil {
-			return nil, false, err
+	manifest := make([]migrateReviewFollowupManifestEntry, 0, len(items))
+	for _, item := range items {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(item, &fields) != nil {
+			continue
 		}
-		if entry != nil {
-			manifest = append(manifest, *entry)
+		// Each field is read by its exact spelling, as the receipt reader's own map lookups read them, so a field spelled
+		// differently names no dependency rather than a false one.
+		var entry migrateReviewFollowupManifestEntry
+		if raw, present := fields["path"]; !present || json.Unmarshal(raw, &entry.Path) != nil || entry.Path == "" {
+			continue
 		}
-	}
-	if _, err := dec.Token(); err != nil { // the closing bracket
-		return nil, false, err
-	}
-	// The judgement is the array's presence and length, never the shape of its entries: an array of elements this order
-	// cannot use is still a receipt, with no dependency named.
-	if items == 0 {
-		return nil, false, nil
+		if raw, present := fields["kind"]; !present || json.Unmarshal(raw, &entry.Kind) != nil || entry.Kind == "" {
+			continue
+		}
+		manifest = append(manifest, entry)
 	}
 	return manifest, true, nil
-}
-
-// migrateReviewFollowupReadEntry consumes one artifactManifest element and returns the dependency it names, or nil for an
-// element of a shape this order cannot use. Each field is read by its exact spelling, as the receipt reader's own map
-// lookups read them, so a field spelled differently names no dependency rather than a false one.
-func migrateReviewFollowupReadEntry(dec *json.Decoder) (*migrateReviewFollowupManifestEntry, error) {
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok || delim != '{' {
-		if err := migrateReviewFollowupSkipAfter(dec, tok); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-	var entry migrateReviewFollowupManifestEntry
-	for dec.More() {
-		key, err := dec.Token()
-		if err != nil {
-			return nil, err
-		}
-		name, ok := key.(string)
-		if !ok {
-			return nil, errors.New("a JSON object key is a string")
-		}
-		switch name {
-		case "path", "kind":
-			val, err := dec.Token()
-			if err != nil {
-				return nil, err
-			}
-			// A field of any other type is not the string the receipt reader's own lookup would use, so it names no
-			// dependency; an object or array value still has to be consumed before the walk can go on.
-			if err := migrateReviewFollowupSkipAfter(dec, val); err != nil {
-				return nil, err
-			}
-			field, _ := val.(string)
-			if name == "path" {
-				entry.Path = field
-			} else {
-				entry.Kind = field
-			}
-		default:
-			if err := migrateReviewFollowupSkipValue(dec); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if _, err := dec.Token(); err != nil { // the closing brace
-		return nil, err
-	}
-	if entry.Path == "" || entry.Kind == "" {
-		return nil, nil
-	}
-	return &entry, nil
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
