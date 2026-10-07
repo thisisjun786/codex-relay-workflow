@@ -97,15 +97,15 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 				identity = "lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository))"
 			}
 			query := "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)"
 			args := []any{r.Repository, held}
 			if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 				return nil, err
 			} else if refreshed {
 				query = "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))" +
+					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)" +
 					" UNION ALL SELECT a.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND crw_same_commit(f.head_sha, ?)"
 				args = []any{r.Repository, held, r.Repository, held}
 			}
 			queries = append(queries, struct {
@@ -204,25 +204,25 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
 	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+		" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)"
 	args := []any{repository, head}
 	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshed {
 		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(a.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))" +
+			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND crw_same_commit(a.head_sha, ?)" +
 			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND lower(trim(f.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+			" WHERE a.state = 'superseded' AND " + identity + " = lower(?) AND crw_same_commit(f.head_sha, ?)"
 		args = []any{repository, head, repository, head}
 	}
 	// A head is replaced only when a correction was accepted over it (superseded): a revoked acceptance is a parent's withdrawal, not a replacement. A relationship that still holds the head actively, as its acceptance's head or through a base refresh of
 	// it, is not replaced by it: the head is that relationship's own current result.
-	held := "lower(trim(a2.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13)))"
+	held := "crw_same_commit(a2.head_sha, ?)"
 	args = append(args, head)
 	if refreshedHeads, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshedHeads {
-		held += " OR a2.acceptance_id IN (SELECT f2.acceptance_id FROM dag_base_refreshes f2 WHERE lower(trim(f2.head_sha, ' ' || char(9,10,11,12,13))) = lower(trim(?, ' ' || char(9,10,11,12,13))))"
+		held += " OR a2.acceptance_id IN (SELECT f2.acceptance_id FROM dag_base_refreshes f2 WHERE crw_same_commit(f2.head_sha, ?))"
 		args = append(args, head)
 	}
 	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +

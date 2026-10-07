@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/commitid"
 )
 
 // Tip is the branch's current full object name, not a caller's restatement.
@@ -54,9 +55,7 @@ func branch(base string) error {
 	return nil
 }
 func SameCommit(a, b string) bool {
-	a = strings.ToLower(strings.TrimSpace(a))
-	b = strings.ToLower(strings.TrimSpace(b))
-	return a != "" && a == b
+	return commitid.Same(a, b)
 }
 
 // Reader is mergeturn.py's target_reader: where a target's base branch points now.
