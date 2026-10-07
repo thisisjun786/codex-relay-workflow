@@ -48,6 +48,13 @@ func rootJoin(base string, rel ...string) string {
 	return strings.TrimRight(base, "/") + "/" + suffix
 }
 
+// JoinRoot joins rel below base as raw text, the way this package joins its own roots: the base's
+// trailing separators are dropped and one "/" is written between the base and rel, and nothing is
+// cleaned. A caller that builds a path under a configured root uses this so the root keeps the
+// meaning the filesystem gives its spelling: a base that mixes a symbolic link and ".." names the
+// directory the kernel resolves it to, not the different directory filepath.Clean would name.
+func JoinRoot(base string, rel ...string) string { return rootJoin(base, rel...) }
+
 // Source names where a value came from: the built-in default, an environment
 // variable, or the override input.
 type Source string

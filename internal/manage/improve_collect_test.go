@@ -595,7 +595,7 @@ func TestImproveCollectNormalizesCriteriaAndDrafts(t *testing.T) {
 	if err := os.MkdirAll(drafts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	improveTestWrite(t, filepath.Join(drafts, "one.json"), "{\"issue\":\"CRW-1\",\"project\":\"project-a\",\"title\":\"one\"}")
+	improveTestWrite(t, filepath.Join(drafts, "one.json"), "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"one\",\"project\":\"project-a\",\"title\":\"one\"}")
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
 		"sources": map[string]any{
 			"relay": map[string]any{"path": s.stateDir},
@@ -614,8 +614,8 @@ func TestImproveCollectNormalizesCriteriaAndDrafts(t *testing.T) {
 	if criteria[0].Where != "digest-1" || criteria[0].Count != 2 || criteria[0].FirstAt != "2026-10-06T01:00:00Z" || criteria[0].LastAt != "2026-10-06T02:00:00Z" {
 		t.Errorf("the digest-1 record = %+v", criteria[0])
 	}
-	if got := improveTestRecordsOf(bundle, improveKindDraft); len(got) != 1 || got[0].Key != "CRW-1" || got[0].Where != "project-a" {
-		t.Errorf("draft records = %+v, want one CRW-1 at project-a", got)
+	if got := improveTestRecordsOf(bundle, improveKindDraft); len(got) != 1 || got[0].Key != "one" || got[0].Where != "project-a" {
+		t.Errorf("draft records = %+v, want the one fingerprint at project-a", got)
 	}
 	if got := improveTestSourceOf(t, bundle, improveKindIntervention); got.State != improveStateMissing {
 		t.Errorf("the unconfigured intervention source = %+v, want missing", got)
