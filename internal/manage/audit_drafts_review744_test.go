@@ -634,15 +634,16 @@ func TestAuditDraftsReview744ResolvedBundleSurvivesItsLink(t *testing.T) {
 	}
 }
 
-// C1: a batch that is refused while it is taking its markers must leave no marker behind for the
-// bundles it never graded, so an unchanged, recorded grade keeps drafting.
+// C1: a batch that is refused while it is taking a marker stops before it reaches the bundles it
+// has not started, so an unchanged, recorded grade keeps drafting.
 func TestAuditDraftsReview744RefusedBatchLeavesNoMarker(t *testing.T) {
 	state := t.TempDir()
 	good := filepath.Join(t.TempDir(), "bundle-good")
 	auditDraftsReview744BundleAt(t, good)
 	bad := filepath.Join(t.TempDir(), "bundle-bad")
 	auditDraftsReview744BundleAt(t, bad)
-	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	// One worker, and the refused bundle first: the good bundle is never reached.
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "workers": 1})
 	e, _, _ := auditTestEnv(t)
 	t.Setenv("AUDIT_JSON", auditJSONWithP1)
 	t.Setenv("AUDIT_SLOW", "")
@@ -650,14 +651,13 @@ func TestAuditDraftsReview744RefusedBatchLeavesNoMarker(t *testing.T) {
 	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}}); err != nil {
 		t.Fatal(err)
 	}
-	// The second job's marker cannot be taken, because a directory already sits at its path, while
-	// the first job's marker was taken before it. The batch is refused before any worker starts, so
-	// the first bundle must be left exactly as it was: its marker rolled back and its recorded
-	// result still drafting.
+	// The refused job's marker cannot be taken, because a directory already sits at its path. The
+	// batch stops there, so the good bundle must be left exactly as it was: no marker, and its
+	// recorded result still drafting.
 	if err := os.MkdirAll(auditPendingPath(e, cfg, bad), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}, {Bundle: bad}}); err == nil {
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bad}, {Bundle: good}}); err == nil {
 		t.Fatal("a batch whose marker could not be taken was accepted")
 	}
 	if auditPending(e, cfg, good) {
@@ -858,5 +858,73 @@ func TestAuditDraftsReview744BundleWhoseMarkerIsRefusedIsNotGraded(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(bundle, auditGradeFile)); !os.IsNotExist(err) {
 		t.Errorf("a grader ran for a bundle whose marker was refused: %v", err)
+	}
+}
+
+// C1: a job that is still waiting for a worker is not marked. A batch that is refused for one
+// bundle must leave the bundles it never reached exactly as they were, so their recorded results
+// keep drafting.
+func TestAuditDraftsReview744QueuedBundleIsNotMarked(t *testing.T) {
+	state := t.TempDir()
+	good := filepath.Join(t.TempDir(), "bundle-good")
+	auditDraftsReview744BundleAt(t, good)
+	refused := filepath.Join(t.TempDir(), "bundle-refused")
+	auditDraftsReview744BundleAt(t, refused)
+	// One worker, and the refused bundle first: the good bundle never reaches a worker.
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "workers": 1})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(auditPendingPath(e, cfg, refused), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: refused}, {Bundle: good}}); err == nil {
+		t.Fatal("a batch whose marker could not be taken was accepted")
+	}
+	if auditPending(e, cfg, good) {
+		t.Fatal("a bundle that never reached a worker was marked")
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 1 {
+		t.Fatalf("the recorded result must still draft: %+v", report)
+	}
+}
+
+// C1: a grading failure is the run's, not one target's. Two pull requests are selected and the
+// grader is unconfigured, so the first grade fails on shared state; the run must stop there rather
+// than rebuild and grade the second, and it must say why.
+func TestAuditDraftsReview744GradeFailureStopsTheRun(t *testing.T) {
+	state := t.TempDir()
+	cfg := auditPRSectionFixture(t, state, map[string]any{
+		"pr_since": "2026-10-01T00:00:00Z",
+		"pairs":    map[string]string{"deepseek": "if-deepseek"},
+		"phases":   map[string]string{"2026-10-01T00:00:00Z": "live"},
+	})
+	patch := "diff --git a/internal/a.go b/internal/a.go\n--- a/internal/a.go\n+++ b/internal/a.go\n@@ -1 +1 @@\n-old\n+new\n"
+	entries := auditPRListJSON(t,
+		auditPRMergeEntry(12, "CRW-12: one", "2026-10-05T00:00:00Z", "m12"),
+		auditPRMergeEntry(13, "CRW-13: two", "2026-10-05T00:00:00Z", "m12"))
+	auditPRFakeGh(t, entries, map[int]string{12: patch, 13: patch})
+	auditPRFakeRelay(t,
+		map[string]string{"CRW-12": auditPRAssignmentJSON(t, "rel-1", "child-1"), "CRW-13": auditPRAssignmentJSON(t, "rel-2", "child-2")},
+		map[string]string{"child-1": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash"), "child-2": auditPRSettingsJSON(t, "inferhub/deepseek-v4.1-flash")},
+		map[string]string{"rel-1": auditPRCriteriaJSON(t, "c1", "it works"), "rel-2": auditPRCriteriaJSON(t, "c1", "it works")})
+	auditPRFakeCheckout(t, "m12", map[string]string{"internal/a.go": "package a\n"})
+	e, _, errOut := auditTestEnv(t)
+	if code := auditPRRunWith(context.Background(), e, cfg, 9, false); code != 1 {
+		t.Fatalf("audit pr: exit %d, want the run to stop; stderr %s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "grader_unconfigured") {
+		t.Errorf("the run did not report the shared failure: %s", errOut.String())
+	}
+	// The second pull request was never built or graded: the run stopped on the first failure.
+	if _, err := os.Stat(filepath.Join(state, "audit", auditLedgerFile)); !os.IsNotExist(err) {
+		t.Errorf("a ledger was written for a run that stopped before recording: %v", err)
 	}
 }

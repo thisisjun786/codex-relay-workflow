@@ -158,42 +158,50 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 		bundles[i] = bundle
 		resolved[i] = path
 	}
-	// Each bundle is marked as carrying a run whose ledger row is not recorded yet, before any
-	// grader can leave a file in it. The mark is what a later reader fails closed on, so a run
-	// that is killed, or one whose row cannot be appended, leaves a bundle the drafts surface
-	// refuses to read a result from rather than one that silently hands an older row another
-	// run's defects. A mark that cannot be written stops the batch before anything is graded, and
-	// the marks this preflight made are taken back: nothing was graded, so a marker left here
-	// would make a later reader distrust a bundle this run never touched. A marker that was
-	// already there is kept, because it is the record of a grade that never recorded its row.
+	// Each bundle is marked as carrying a run whose ledger row is not recorded yet, from the moment
+	// its own worker starts and before that grader can leave a file in it. The mark is what a later
+	// reader fails closed on, so a run that is killed, or one whose row cannot be appended, leaves a
+	// bundle the drafts surface refuses to read a result from rather than one that silently hands an
+	// older row another run's defects. The mark is taken per worker and not in a batch preflight: a
+	// job still waiting for a worker slot has not touched its bundle, and marking it would make a
+	// killed batch leave bundles this run never graded looking unrecorded.
 	marks := make([]*os.File, len(jobs))
 	paths := make([]string, len(jobs))
 	fresh := make([]bool, len(jobs))
-	for i := range jobs {
-		path := auditPendingPath(e, cfg, resolved[i])
-		mark, made, err := auditPendingMark(path)
-		if err != nil {
-			for j := 0; j < i; j++ {
-				if marks[j] != nil {
-					auditPendingDiscard(marks[j], paths[j], fresh[j])
-				}
-			}
-			return nil, err
-		}
-		marks[i] = mark
-		paths[i] = path
-		fresh[i] = made
-	}
+	var markMu sync.Mutex
+	var markErr error
 	results := make([]AuditResult, len(jobs))
 	logs := make([]auditLog, len(jobs))
 	sem := make(chan struct{}, section.Workers)
 	var wg sync.WaitGroup
 	for i := range jobs {
+		// Once a job's marker could not be taken the batch is refused, so no later job is started:
+		// a bundle this run never touched must keep the result it already had.
+		markMu.Lock()
+		stopped := markErr != nil
+		markMu.Unlock()
+		if stopped {
+			break
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			path := auditPendingPath(e, cfg, resolved[i])
+			mark, made, err := auditPendingMark(path)
+			if err != nil {
+				// This bundle is not graded at all. Nothing is recorded for it, and the batch is
+				// refused once the workers stop: recording a row for a run that never started would
+				// void a bundle this call never touched.
+				markMu.Lock()
+				if markErr == nil {
+					markErr = err
+				}
+				markMu.Unlock()
+				return
+			}
+			marks[i], paths[i], fresh[i] = mark, path, made
 			results[i] = auditGradeOne(ctx, e, section, bundles[i], resolved[i], jobs[i], &logs[i])
 		}(i)
 	}
@@ -209,9 +217,25 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 	// names its file and its result is complete, while a result whose row is missing keeps its
 	// marker and stays unreadable. A recorded result is never thrown away, so a failure that comes
 	// after some rows (an alert write, for one) costs only the results it actually lost.
-	if recorded, err := auditRecord(e, cfg, results); err != nil {
-		for i := range results {
-			if i >= recorded {
+	// A job whose marker could not be taken is not graded, so it has no result to record; the jobs
+	// that did grade are still recorded, because their rows are real results and leaving them
+	// unrecorded would take back markers from bundles that ran. The refusal is reported after that.
+	graded := make([]AuditResult, 0, len(results))
+	gradedAt := make([]int, 0, len(results))
+	for i := range results {
+		if marks[i] == nil {
+			continue
+		}
+		graded = append(graded, results[i])
+		gradedAt = append(gradedAt, i)
+	}
+	recorded, err := auditRecord(e, cfg, graded)
+	if err == nil && markErr != nil {
+		err = markErr
+	}
+	if err != nil {
+		for n, i := range gradedAt {
+			if n >= recorded {
 				auditPendingUnlock(marks[i])
 				continue
 			}
@@ -220,6 +244,9 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 		return nil, err
 	}
 	for i := range paths {
+		if marks[i] == nil {
+			continue
+		}
 		auditPendingClear(e, marks[i], paths[i])
 	}
 	return results, nil
