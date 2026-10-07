@@ -79,6 +79,13 @@ var errUndoSync = errors.New("the undo of this call's exchange could not be sync
 // every bridge would fail to start until a person repaired it.
 var writeDecisionTimeout = 2 * time.Minute
 
+// WriteSettleBound is how long a write's post-publication phase may run once the policy file has
+// been replaced: the registration, the decision and any restore. A caller that ends its process on
+// cancellation must wait at least this long for an in-flight write, or the process can end between
+// the replacement and the registration and leave the file and the wiring record naming different
+// digests, which no bridge will start under.
+func WriteSettleBound() time.Duration { return writeDecisionTimeout }
+
 // The outcome spellings of crw install register-mcp --re-register-policy that mean the wiring record
 // names the new policy: the registration succeeded.
 var registrationSucceeded = map[string]bool{"record_updated": true, "record_unchanged": true}
@@ -537,7 +544,9 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 	var syncErr error
 	// keptPath names a file holding bytes this call did not delete. A publication whose exchange ran
 	// and whose read-back failed leaves the bytes it displaced at that path, so the file is named in
-	// the answer rather than silently abandoned.
+	// the answer rather than silently abandoned. It is held in the kernel spelling the swap answered
+	// with and decoded once, where it is put in the result: decoding it here and again there would
+	// spell a byte that is not UTF-8 as the surrogates of its own surrogate encoding, naming no file.
 	var keptPath string
 	if observed == published {
 		displaced, kept, err := swap(ctx, encoded, current, raw, mode)
@@ -553,7 +562,7 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 			// read back, or the exchange could not be undone. What the path holds is read below rather
 			// than assumed, the durability of the replacement was not established, and the file the
 			// exchange left its bytes at is named rather than deleted.
-			keptPath = pyvalue.FSDecode(kept)
+			keptPath = kept
 			syncErr = err
 		case displaced == nil:
 			now, _ := digestAt(path)
@@ -591,20 +600,19 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 			Errors: []string{detail + "; the wiring record names " + after.RegisteredDigest + ", not the bytes that were put back"}}
 	}
 	if keptPath != "" {
-		// The file and the record agree again, but this run left a document it could not read at a path
-		// of its own. Calling that a confirmed restore would drop the only name of those bytes, so the
-		// answer is the recovery that carries it.
-		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: original, Backup: backup,
-			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
-			Errors: []string{detail + "; the bytes this restore displaced could not be read back and are kept at " + pyvalue.FSDecode(keptPath)}}
+		// The file and the record agree again, so this is the (b) outcome, not a recovery: a recovery
+		// would be a state the next write must refuse, and there is nothing left for it to refuse here.
+		// What the restore could not read back is carried as a warning and as the kept path, which is
+		// the only place those bytes exist.
+		warnings = append(warnings, "the bytes this restore displaced could not be read back and are kept at "+pyvalue.FSDecode(keptPath))
 	}
 	if syncErr != nil {
 		return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
-			Backup: backup, Kept: keptPath, Warnings: append(warnings, "the original bytes are back and the restore's durability was not established ("+syncErr.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
+			Backup: backup, Kept: pyvalue.FSDecode(keptPath), Warnings: append(warnings, "the original bytes are back and the restore's durability was not established ("+syncErr.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
 			Errors: []string{detail}, Step: "restored"}
 	}
 	return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
-		Backup: backup, Kept: keptPath, Warnings: warnings, Errors: []string{detail}, Step: "restored"}
+		Backup: backup, Kept: pyvalue.FSDecode(keptPath), Warnings: warnings, Errors: []string{detail}, Step: "restored"}
 }
 
 // registerWithInstaller is the production registration step: the same code crw install register-mcp

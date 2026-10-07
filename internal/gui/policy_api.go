@@ -212,10 +212,11 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 	case policystore.WriteRegisterFailed:
 		// The file was put back, so restored is the headline; the warnings and errors carry what the
 		// restore could not establish (a directory that was not synced, say) and the backup names the
-		// bytes that were put back.
+		// bytes that were put back. kept names a document the restore displaced and could not read
+		// back, which is the only place those bytes exist.
 		return Response{Status: http.StatusBadGateway, Body: policyWriteErrorBody{
 			Error: "register_failed", Restored: result.Restored, Backup: pathText(result.Backup),
-			Warnings: textList(result.Warnings), Errors: textList(emptyIfNil(result.Errors))}}, nil
+			Kept: pathText(result.Kept), Warnings: textList(result.Warnings), Errors: textList(emptyIfNil(result.Errors))}}, nil
 	case policystore.WriteRecoveryNeeded:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,

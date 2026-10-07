@@ -377,3 +377,101 @@ func TestARestoreKeepsTheDisplacedDocumentOnEveryExit(t *testing.T) {
 		t.Fatalf("the kept bytes are gone: %v", err)
 	}
 }
+
+// TestAKeptPathWhoseBytesAreNotUTF8SurvivesTheAnswer is the pre-merge evaluation's d1: the restore
+// held the kept file in the kernel spelling and decoded it again where it was reported, so a name
+// whose bytes are not UTF-8 went out as the surrogates of its own surrogate encoding and named no
+// file. The path is decoded exactly once, so encoding the answer's spelling returns the kernel path.
+func TestAKeptPathWhoseBytesAreNotUTF8SurvivesTheAnswer(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The kept file's name holds one byte that is not valid UTF-8.
+	raw := append([]byte("kept"), 0x80)
+	kernel := filepath.Join(filepath.Dir(file), string(raw))
+	if err := os.WriteFile(kernel, []byte("a document the restore displaced\n"), 0o600); err != nil {
+		t.Skipf("this filesystem refuses a non-UTF-8 name: %v", err)
+	}
+	calls := 0
+	opts := WriteOptions{
+		Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) },
+		Swap: func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+			calls++
+			if calls == 1 {
+				return swapPolicy(ctx, path, expected, next, mode)
+			}
+			// The restore's exchange ran; what it displaced could not be read back, so the bytes are
+			// kept at the kernel path above. The original bytes are put back, so the file and the
+			// record agree again and this is the (b) outcome.
+			if err := os.WriteFile(path, next, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+			return nil, kernel, fmt.Errorf("%w: the bytes it displaced could not be read", errExchangeHappened)
+		},
+	}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRegisterFailed || !result.Restored {
+		t.Fatalf("kind = %q restored = %v (%v), want %q with restored", result.Kind, result.Restored, result.Errors, WriteRegisterFailed)
+	}
+	if result.Kept == "" {
+		t.Fatal("the kept document is not named")
+	}
+	// The answer's spelling must encode back to the kernel path, not to the surrogates of it.
+	back, ok := pyvalue.FSEncode(result.Kept)
+	if !ok {
+		t.Fatalf("the answer's kept spelling is not encodable: %q", result.Kept)
+	}
+	if back != kernel {
+		t.Fatalf("kept decodes to %q, want the kernel path %q", back, kernel)
+	}
+	if _, err := os.Stat(back); err != nil {
+		t.Fatalf("following the answer's kept path reaches no file: %v", err)
+	}
+	if !strings.Contains(result.Warnings[0], pyvalue.FSDecode(kernel)) {
+		t.Fatalf("the warning does not name the kept file once: %v", result.Warnings)
+	}
+}
+
+// TestAConfirmedRestoreWithKeptBytesIsNotAnUnresolvableRecovery is the pre-merge evaluation's d2:
+// the restore left a document it could not read but put the file and the record back into agreement.
+// Answering recovery_needed for that state left nothing for the next write to refuse, so the write
+// after it must not be blocked by a phantom unresolved recovery.
+func TestAConfirmedRestoreWithKeptBytesIsNotAnUnresolvableRecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	kept := filepath.Join(filepath.Dir(file), "kept-displaced.tmp")
+	if err := os.WriteFile(kept, []byte("a document the restore displaced\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	opts := WriteOptions{
+		Register: func(context.Context, string) RegisterAnswer { return answer("record_absent", 1) },
+		Swap: func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+			calls++
+			if calls == 1 {
+				return swapPolicy(ctx, path, expected, next, mode)
+			}
+			if err := os.WriteFile(path, next, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+			return nil, kept, fmt.Errorf("%w: the bytes it displaced could not be read", errExchangeHappened)
+		},
+	}
+	first := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if first.Kind != WriteRegisterFailed || !first.Restored {
+		t.Fatalf("kind = %q restored = %v (%v), want %q with restored", first.Kind, first.Restored, first.Errors, WriteRegisterFailed)
+	}
+	if first.Kept != kept {
+		t.Fatalf("kept = %q, want %q", first.Kept, kept)
+	}
+	// The file and the record agree on the original bytes again, so the next write with that digest
+	// is not refused by an unresolved recovery: it runs and stores.
+	current, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := Write(context.Background(), envOf(env), WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()},
+		WriteRequest{ExpectedDigest: digestOf(string(current)), Change: removeLegacy()})
+	if second.Kind != WriteStored {
+		t.Fatalf("the next write: kind = %q (%v), want %q", second.Kind, second.Errors, WriteStored)
+	}
+}
