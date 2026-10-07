@@ -102,6 +102,24 @@ func auditConfigOf(cfg *Config) (auditSection, error) {
 // usable grade.json, or ran past grader_timeout_seconds, is a recorded result rather than
 // an error, because the mode issues read the ledger, not this call's error.
 func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]AuditResult, error) {
+	// The grade file and the ledger row that names it are one record: this run replaces grade.json
+	// and then appends the row, and the drafts surface reads that pair, the ledger first and then
+	// the file. The lock is taken here for the whole grade, and a concurrent grade or drafts run is
+	// refused by name rather than allowed to read a half-recorded pair. A caller that also rebuilds
+	// the bundle takes the same lock around its build (auditPkgBuildAndGrade,
+	// auditPRBuildAndGrade), so a rebuild can never empty a bundle a grade is reading or writing.
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return auditGradeLocked(ctx, e, cfg, jobs)
+}
+
+// auditGradeLocked grades the jobs with the drafts lock already held, so a caller that must keep a
+// bundle from being rebuilt between its own build and this grade takes the lock once around both.
+// AuditGrade is the entry point everything else uses; this one never takes or releases the lock.
+func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]AuditResult, error) {
 	section, err := auditConfigOf(cfg)
 	if err != nil {
 		return nil, err
@@ -133,16 +151,6 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		bundles[i] = bundle
 		resolved[i] = path
 	}
-	// The grade file and the ledger row that names it are one record: this run replaces
-	// grade.json and then appends the row. The drafts surface reads that pair, the ledger
-	// first and then the file, so the two must not interleave: the lock the drafts surface
-	// holds is taken here for the whole grade, and a concurrent grade or drafts run is
-	// refused by name rather than allowed to read a half-recorded pair.
-	release, err := auditDraftLock(e, cfg)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
 	// Each bundle is marked as carrying a run whose ledger row is not recorded yet, before any
 	// grader can leave a file in it. The mark is what a later reader fails closed on, so a run
 	// that is killed, or one whose row cannot be appended, leaves a bundle the drafts surface
@@ -156,12 +164,6 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 	fresh := make([]bool, len(jobs))
 	for i := range jobs {
 		path := auditPendingPath(e, cfg, resolved[i])
-		// A caller that built the bundle itself already holds its marker, so this run adopts
-		// that marker rather than refusing its own batch.
-		if jobs[i].held != nil {
-			marks[i], paths[i] = jobs[i].held, path
-			continue
-		}
 		mark, made, err := auditPendingMark(path)
 		if err != nil {
 			for j := 0; j < i; j++ {
@@ -290,20 +292,6 @@ func auditPendingPath(e *Env, cfg *Config, bundle string) string {
 	return filepath.Join(auditStateDir(e, cfg), "audit", auditPendingDir, hex.EncodeToString(sum[:]))
 }
 
-// auditPendingHold takes the in-flight marker for a bundle a caller is about to build and returns
-// it with its path and whether this call created it. The caller holds the marker across the build
-// and the grade, so a rebuild cannot empty the directory under a grader and a grader cannot be
-// drafted while its row is missing; the grade adopts the same marker rather than refusing its own
-// batch.
-func auditPendingHold(e *Env, cfg *Config, bundle string) (*os.File, string, bool, error) {
-	path := auditPendingPath(e, cfg, bundle)
-	mark, made, err := auditPendingMark(path)
-	if err != nil {
-		return nil, "", false, err
-	}
-	return mark, path, made, nil
-}
-
 // auditPendingMark creates or opens a bundle's marker and holds an exclusive lock on it for the
 // whole grade, reporting whether this call created it. The file stays behind when a run cannot
 // record its row, so a later reader can tell that the bundle's grade.json belongs to a run nothing
@@ -380,7 +368,14 @@ func auditPending(e *Env, cfg *Config, bundle string) bool {
 		return false
 	}
 	_, err := os.Stat(auditPendingPath(e, cfg, bundle))
-	return err == nil
+	if err == nil {
+		return true
+	}
+	// Only a marker that is certainly absent lets a result be read. A marker that cannot be
+	// inspected at all (a permission or I/O error on the marker store) is treated as present: the
+	// file it guards may belong to a run nothing names, and reading it would report defects an
+	// older row never found.
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 // auditGradeOne writes the prompt into the bundle, runs the grader there under the time

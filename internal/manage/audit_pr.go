@@ -723,6 +723,30 @@ func auditPRBuild(ctx context.Context, e *Env, cfg *Config, section auditPRSecti
 	return dir, nil
 }
 
+// auditPRBuildAndGrade assembles one pull request bundle and grades it with the drafts lock held
+// across both, for the reason auditPkgBuildAndGrade holds it: a rebuild empties the bundle a grade
+// reads, and a grade replaces the grade.json the rebuild's ledger row would describe, so the two
+// must not interleave. The target carries only the pair and phase the job needs.
+func auditPRBuildAndGrade(ctx context.Context, e *Env, cfg *Config, section auditPRSection, co auditPkgCheckout, source auditPRSource, target auditPRTarget) (string, []AuditResult, error) {
+	release, err := auditDraftLock(e, cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	defer release()
+	dir, err := auditPRBuild(ctx, e, cfg, section, co, source)
+	if err != nil {
+		return "", nil, err
+	}
+	results, err := auditGradeLocked(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase}})
+	if err != nil {
+		return "", nil, err
+	}
+	if len(results) != 1 {
+		return "", nil, fmt.Errorf("the grader answered %d results for one bundle", len(results))
+	}
+	return dir, results, nil
+}
+
 // auditPRCriteriaDocument encodes the criteria document the grader reads. Every string value
 // is scrubbed before the document is encoded, because encoding/json escapes &, < and > as
 // \u0026 and the like: a scrub applied only to the encoded bytes would never match a name that
@@ -951,36 +975,17 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				failed = true
 				continue
 			}
-			// The marker is taken before the bundle is emptied and held until the grade records its
-			// row, so this rebuild cannot delete the files of a grade that is running and the grade
-			// cannot be drafted while its row is missing.
-			bundleDir := filepath.Join(auditPRBundleRoot(e, cfg, section), auditPRSubject(target.Number))
-			mark, markPath, made, err := auditPendingHold(e, cfg, bundleDir)
-			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-				return 1
-			}
-			dir, err := auditPRBuild(ctx, e, cfg, section, co, auditPRSource{
+			_, _, err = auditPRBuildAndGrade(ctx, e, cfg, section, co, auditPRSource{
 				Target: target, Patch: patch, Criteria: criteria, CriteriaUnavailable: unavailable,
 				RelationshipUnavailable: target.Child.Relationship == "", Relationship: target.Child.Relationship,
-			})
+			}, target)
 			if err != nil {
-				auditPendingDiscard(mark, markPath, made)
 				if auditPRCancelled(e, ctx) {
 					return 1
 				}
 				auditPRSkipTarget(e, target, err)
 				failed = true
 				continue
-			}
-			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase, held: mark}})
-			if err != nil {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
-				return 1
-			}
-			if len(results) != 1 {
-				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: the grader answered %d results for one bundle\n", len(results))
-				return 1
 			}
 		}
 	}

@@ -649,16 +649,18 @@ func TestAuditDraftsReview744RefusedBatchLeavesNoMarker(t *testing.T) {
 	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}}); err != nil {
 		t.Fatal(err)
 	}
-	// The marker store cannot be written to any more, so the second job's marker cannot be taken
-	// and the batch is refused before any worker starts. The first bundle was graded and recorded
-	// before this, so it has a usable result and no marker, and it must still draft afterwards.
-	pending := filepath.Join(state, "audit", auditPendingDir)
-	if err := os.Chmod(pending, 0o500); err != nil {
+	// The second job's marker cannot be taken, because a directory already sits at its path, while
+	// the first job's marker was taken before it. The batch is refused before any worker starts, so
+	// the first bundle must be left exactly as it was: its marker rolled back and its recorded
+	// result still drafting.
+	if err := os.MkdirAll(auditPendingPath(e, cfg, bad), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(pending, 0o700) })
 	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}, {Bundle: bad}}); err == nil {
 		t.Fatal("a batch whose marker could not be taken was accepted")
+	}
+	if auditPending(e, cfg, good) {
+		t.Fatal("the refused batch left a marker on a bundle it never graded")
 	}
 	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{})
 	if err != nil {
