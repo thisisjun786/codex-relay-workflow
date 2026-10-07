@@ -457,3 +457,40 @@ func TestImproveReview789ConcurrentRunIsRefused(t *testing.T) {
 		t.Errorf("the refused run wrote %v", drafts)
 	}
 }
+
+// improveReview789FaultRecord is one fault ledger record of a bundle: the class it groups by, the
+// project scope it names, its signature, how many occurrences the ledger row holds, when it was
+// last seen, and the ledger row it came from.
+func improveReview789FaultRecord(count int, lastSeen string) improveRecord {
+	return improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
+		What: "a signature", Count: count, FirstAt: "2026-10-06T01:00:00Z", LastAt: lastSeen,
+		Evidence: []string{"fault:f1"}}
+}
+
+// TestImproveReview789AggregateCountIsNotUnderstated covers the review finding that a record which
+// aggregates its occurrences must not be understated when its count moves with no new origin
+// location: a fault ledger row whose occurrence count grew reports the whole count in the draft,
+// not the count the draft first recorded plus the one sighting the new last-seen time produced.
+func TestImproveReview789AggregateCountIsNotUnderstated(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	first := improveProposeTestBundle(t, w, []improveRecord{improveReview789FaultRecord(5, "2026-10-06T01:00:00Z")})
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+
+	// The same ledger row now holds eight occurrences, with no new origin location.
+	second := improveProposeTestBundle(t, w, []improveRecord{improveReview789FaultRecord(8, "2026-10-06T02:00:00Z")})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+	if code != 0 {
+		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if !strings.Contains(doc.Body, "- owner_unknown (8)") {
+		t.Errorf("the merged draft understates the aggregated count:\n%s", doc.Body)
+	}
+}

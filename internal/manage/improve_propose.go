@@ -467,13 +467,13 @@ func improveProposeParseEvidence(body string) []string {
 }
 
 // improveProposeMergeProjects merges the projects a stored body names with the ones the new
-// candidate reached: a project's count is the count the draft already held plus the sightings this
-// run newly added to it, and a project the new run no longer carries keeps its count, so a rewrite
-// never drops a project and rerunning one bundle never grows a count.
+// candidate reached: a project's count is the count the draft already held plus the occurrences
+// this run newly recorded there, and a project the new run no longer carries keeps its count, so a
+// rewrite never drops a project and rerunning one bundle never grows a count.
 func improveProposeMergeProjects(stored, current []improveProposeProject, added map[string]int) []improveProposeProject {
 	out := append([]improveProposeProject(nil), stored...)
 	for i := range out {
-		out[i].Count += added[out[i].Project]
+		out[i].Count = improveProposeMergedCount(out[i].Project, out[i].Count+added[out[i].Project], current)
 	}
 	for _, project := range current {
 		found := false
@@ -483,11 +483,27 @@ func improveProposeMergeProjects(stored, current []improveProposeProject, added 
 			}
 		}
 		if !found {
-			out = append(out, improveProposeProject{Project: project.Project, Count: added[project.Project]})
+			out = append(out, improveProposeProject{Project: project.Project,
+				Count: improveProposeMergedCount(project.Project, added[project.Project], current)})
 		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Project < out[b].Project })
 	return out
+}
+
+// improveProposeMergedCount is the count one project carries after a merge: what the draft held
+// plus the occurrences this run newly recorded there, or what the run own records report for that
+// project when that is more. A source that aggregates its occurrences (a fault ledger row, whose
+// count moves with no new origin location) reports a total the incremental sum does not reach, and
+// the body must not understate it. A project the new run no longer carries is not passed here at
+// all, so it keeps the count the draft already held.
+func improveProposeMergedCount(project string, incremental int, current []improveProposeProject) int {
+	for _, entry := range current {
+		if entry.Project == project && entry.Count > incremental {
+			incremental = entry.Count
+		}
+	}
+	return incremental
 }
 
 // improveProposeAddedSightings is how many sightings this run newly adds to each project of a
@@ -705,7 +721,8 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 		// A draft with this fingerprint already exists, from this feature or from the audit. The
 		// whole record is rewritten, so only fields this command understands may change: the seen
 		// list only grows, and only this feature's own body is re-rendered. The added counts are
-		// read before the seen list grows, so they name only the sightings this run newly added.
+		// read before the seen list grows, so they name only the occurrences this run newly
+		// recorded.
 		added := improveProposeAddedSightings(candidate, doc.Seen)
 		changed := false
 		for _, sighting := range candidate.seen {
@@ -714,22 +731,29 @@ func improveProposeRunCapped(ctx context.Context, e *Env, bundlePath string, dry
 				changed = true
 			}
 		}
-		if !changed {
-			continue
-		}
 		if doc.Source == improveProposeSource {
 			// The whole record is rewritten, so the projects and the evidence the new run reached
 			// are folded in rather than dropped: a project's count is what the draft already held
-			// plus the sightings this run newly added to it, and the evidence is the union.
+			// plus the occurrences this run newly recorded there, and the evidence is the union.
 			merged := improveProposeCandidate{
 				Title:    doc.Title,
 				Projects: improveProposeMergeProjects(improveProposeParseProjects(doc.Body), candidate.Projects, added),
 				Evidence: improveSortedEvidence(append(improveProposeParseEvidence(doc.Body), candidate.Evidence...)),
 				seen:     doc.Seen,
 			}
+			// A run whose records report a larger total for a project than the sightings alone
+			// imply grows the body without adding a sighting, so the rewrite is judged by the
+			// body it would write and not by the seen list alone.
+			body := improveProposeDraftBody(merged)
+			if !changed && body == doc.Body {
+				continue
+			}
 			doc.Project = improveProposeOwner(merged.Projects)
-			doc.Body = improveProposeDraftBody(merged)
+			doc.Body = body
 		} else {
+			if !changed {
+				continue
+			}
 			// A draft the audit wrote keeps its own body, and only its sighting section is
 			// advanced, so the management session reading the body sees the sighting this run
 			// recorded rather than a body that contradicts the file.
