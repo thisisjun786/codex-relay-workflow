@@ -224,6 +224,19 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"a pr close with a comment", "gh pr close 1 --comment plain", githubPostRuleUnread, githubPostWhereCommand},
 		{"a pr merge with a body", "gh pr merge 1 --body plain", githubPostRuleUnread, githubPostWhereCommand},
 		{"a release with notes", "gh release create v1 --notes plain", githubPostRuleUnread, githubPostWhereCommand},
+		// The generation-7 correction closes the release read list the way the pr and issue one is closed:
+		// only list, view and download read, and every other release subcommand may carry text whatever
+		// flags follow, so it is refused. The short flags matter too: -n is --notes and -t is --title.
+		{"a release with a short notes flag and a substitution", "gh release create v1 -n \"$(env)\"", githubPostRuleUnread, githubPostWhereCommand},
+		{"a release with a short notes flag", "gh release create v1 -n plain", githubPostRuleUnread, githubPostWhereCommand},
+		{"a release with a notes file", "gh release create v1 -F notes.md", githubPostRuleUnread, githubPostWhereCommand},
+		{"a release edit with a title", "gh release edit v1 -t \"Release $(date)\"", githubPostRuleUnread, githubPostWhereCommand},
+		{"a release create on a later line", "cd /tmp && gh release create v1 -n plain", githubPostRuleUnread, githubPostWhereCommand},
+		// The controls the release read list keeps allowed.
+		{"a release view", "gh release view v1", "", ""},
+		{"a release list", "gh release list", "", ""},
+		{"a release download", "gh release download v1", "", ""},
+		{"a release list piped", "gh release list | jq .", "", ""},
 		// The controls the rule keeps allowed.
 		{"a path-spelled clean body-file post", "/usr/bin/gh pr comment 1 --body-file " + githubPostAbs(cwd, "body.md"), "", ""},
 		{"pr status", "gh pr status", "", ""},

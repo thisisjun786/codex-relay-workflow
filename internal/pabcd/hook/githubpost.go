@@ -356,10 +356,8 @@ func githubPostCanonicalNamesPost(words []string) bool {
 				}
 			}
 		case "release":
-			for _, flag := range words {
-				if githubPostCanonicalReleaseText(flag) {
-					return true
-				}
+			if i+1 >= len(words) || !githubPostCanonicalReleaseRead(words[i+1]) {
+				return true
 			}
 		}
 	}
@@ -393,14 +391,14 @@ func githubPostCanonicalAPIFlag(w string) bool {
 	return false
 }
 
-// githubPostCanonicalReleaseText is a gh release text flag of rule 2, attached or as its own word.
-func githubPostCanonicalReleaseText(w string) bool {
-	switch {
-	case w == "--notes" || w == "--notes-file" || w == "--title":
-		return true
-	case strings.HasPrefix(w, "--notes=") || strings.HasPrefix(w, "--notes-file=") ||
-		strings.HasPrefix(w, "--title="):
-		return true
+// githubPostCanonicalReleaseRead is the release read list of rule 2: a release word followed by one of
+// these is a read, whatever text sits around it. Every other release subcommand may carry text, so a
+// release word followed by anything else (or by nothing) names a post.
+func githubPostCanonicalReleaseRead(w string) bool {
+	for _, name := range [...]string{"list", "view", "download"} {
+		if w == name {
+			return true
+		}
 	}
 	return false
 }
@@ -497,13 +495,19 @@ func githubPostForm(words []string, cwd string) (site githubPostSite, denied, ha
 			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 		}
 	case "release":
-		// A release's text arguments post the text; anything else is not a post shape.
-		for _, w := range words[2:] {
-			if name, _, _ := strings.Cut(w, "="); name == "--notes" || name == "--notes-file" || name == "--title" {
-				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
-			}
+		// The release read list, closed the way the pr and issue one is: only list, view and download
+		// read, and every other release subcommand may carry text whatever flags follow (create and edit
+		// take --notes, --notes-file and --title in their long and short forms, and the rest post text of
+		// their own), so it is refused. gh release is never form A1 or A2.
+		if len(words) < 3 {
+			return githubPostSite{}, false, true // a gh release with no subcommand
 		}
-		return githubPostSite{}, false, true
+		switch githubPostProgram(words[2]) {
+		case "list", "view", "download":
+			return githubPostSite{}, false, true
+		default:
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
+		}
 	}
 	return githubPostSite{}, false, true // a known gh command that is not a post shape
 }
