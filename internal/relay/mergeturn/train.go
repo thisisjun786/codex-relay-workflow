@@ -138,7 +138,17 @@ type TrainForge interface {
 // crw skill base-refresh check applies.
 type TrainCheckout interface {
 	Chain(ctx context.Context, checkout, head, base string, members []TrainMemberExpectation) (TrainChain, error)
+	// File answers the bytes a path holds at one commit in the checkout, read from git objects alone
+	// (never the working tree, which may sit on another branch). It is how verify reads the head's
+	// .github/workflows/ci.yml (CRW-897, answer 6).
+	File(ctx context.Context, checkout, commit, path string) (string, error)
 }
+
+// trainSkipEarlyMembership is a test seam: the in-transaction membership re-check (CRW-897, answer
+// 4) is what makes two concurrent opens safe, and the early check in front of it hides that. A test
+// sets this to drive the transaction with the early check out of the way. It is never set outside
+// tests.
+var trainSkipEarlyMembership = false
 
 // TrainChain is a passed chain proof: the tree of the head and the merge commits it walked.
 type TrainChain struct {
@@ -226,11 +236,13 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 	}
 	// a member that already belongs to another live train is refused here rather than wasting a whole
 	// CI run on a bundle whose land would refuse it (gap e)
-	for _, member := range waiting {
-		if _, _, live, err := store.MergeTrainOfTurn(ctx, s.Store, member.TurnID); err != nil {
-			return nil, err
-		} else if live {
-			return nil, trainConflict("turn %s of pull request %d already belongs to a live train, so it cannot ride another", pyvalue.StrRepr(member.TurnID), member.PRNumber.Int64)
+	if !trainSkipEarlyMembership {
+		for _, member := range waiting {
+			if _, _, live, err := store.MergeTrainOfTurn(ctx, s.Store, member.TurnID); err != nil {
+				return nil, err
+			} else if live {
+				return nil, trainConflict("turn %s of pull request %d already belongs to a live train, so it cannot ride another", pyvalue.StrRepr(member.TurnID), member.PRNumber.Int64)
+			}
 		}
 	}
 	// every member (the leader included) must stand on an active acceptance whose stand head is the
@@ -1402,6 +1414,25 @@ func (r TrainCheckoutProver) Chain(ctx context.Context, checkout, head, base str
 	return g.chain(ctx, head, base, want)
 }
 
+// File answers the bytes a path holds at one commit, read from the checkout's git objects rather
+// than its working tree: the checkout may sit on another branch, and verify must read what the head
+// it is verifying actually declares. A checkout or commit git cannot read is merge_target_unreadable.
+func (r TrainCheckoutProver) File(ctx context.Context, checkout, commit, path string) (string, error) {
+	if strings.TrimSpace(checkout) == "" {
+		return "", trainUnreadable("a bundle's head is read in a checkout, and none was named")
+	}
+	info, err := os.Stat(checkout)
+	if err != nil || !info.IsDir() {
+		return "", trainUnreadable("checkout %s is not a directory here", pyvalue.StrRepr(checkout))
+	}
+	g, err := openTrainGit(ctx, checkout, r.Git)
+	if err != nil {
+		return "", trainUnreadable("the checkout %s could not be read: %v", pyvalue.StrRepr(checkout), err)
+	}
+	defer g.close()
+	return g.file(ctx, commit, path)
+}
+
 // trainGit is the throwaway repository the chain proof runs in.
 type trainGit struct {
 	gitdir string
@@ -1517,6 +1548,16 @@ func (g *trainGit) tree(ctx context.Context, commit string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// file is one path's bytes at one commit. --end-of-options keeps a commit that looks like a flag
+// from being read as one.
+func (g *trainGit) file(ctx context.Context, commit, path string) (string, error) {
+	code, out, err := g.iso(ctx, "show", "--end-of-options", commit+":"+path)
+	if code != 0 {
+		return "", err
+	}
+	return out, nil
 }
 
 // mergeTree merges two commits in memory and returns the resulting tree, or an error when git cannot
