@@ -1,18 +1,24 @@
 // Ported from CXC v0.2.40 plugins/codexclaw/gui/test/subagent-client.test.ts (1-80), modified:
 // the store's scope is global only, so the read names no scope and the write body carries none;
 // the scope-metadata assertion becomes the whole-answer shape check; and the effort list is
-// asserted to keep the names the execution policy uses.
+// asserted to keep the names the execution policy uses. CRW-918 adds the store-accepted ladder
+// cases (why a role falls back to the session effort) and the case that builds a save body through
+// the editor state function rather than passing a value straight to setHelperRole.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   defaultHelperRoleSettings,
+  effortFallbackNotice,
+  effortLadderUnsupported,
   effortSelectable,
   getHelperRoleSettings,
   getModelCatalog,
   helperRoleEfforts,
+  selectableEfforts,
   setHelperRole,
   type HelperRoleSettings,
 } from "../src/api.ts";
+import { editText, inheritState, saveBody } from "../src/prompt-override.ts";
 
 /** A whole settings answer, with the parts a case changes. */
 function settings(changes: Partial<HelperRoleSettings> = {}): HelperRoleSettings {
@@ -161,4 +167,61 @@ test("the effort names come from the catalog and the policy and keep none and ma
   assert.equal(effortSelectable("max"), false);
   assert.equal(effortSelectable("xhigh"), true);
   assert.equal(effortSelectable("low"), true);
+});
+
+test("a ladder with none of the store's names leaves no effort selectable and needs a reason", () => {
+  // The catalog advertises "none" only; the store accepts low/medium/high/xhigh, so every option
+  // is disabled and only the session effort remains. The screen owes the user that explanation.
+  assert.deepEqual(selectableEfforts(["none"]), []);
+  assert.equal(effortLadderUnsupported(["none"]), true);
+  const notice = effortFallbackNotice(["none"], null);
+  assert.ok(notice !== null);
+  assert.match(notice as string, /session effort/);
+});
+
+test("a ladder that holds one store name keeps it selectable and needs no reason", () => {
+  assert.deepEqual(selectableEfforts(["none", "high"]), ["high"]);
+  assert.equal(effortLadderUnsupported(["none", "high"]), false);
+  assert.equal(effortFallbackNotice(["none", "high"], null), null);
+});
+
+test("an unreported or absent ladder keeps every store name and needs no reason", () => {
+  // null is "the catalog did not advertise a ladder" and undefined is "no model is selected";
+  // neither is evidence that the model refuses an effort, so neither may disable an option.
+  for (const supported of [null, undefined]) {
+    assert.deepEqual(selectableEfforts(supported), ["low", "medium", "high", "xhigh"]);
+    assert.equal(effortLadderUnsupported(supported), false);
+    assert.equal(effortFallbackNotice(supported, null), null);
+  }
+});
+
+test("an explicitly empty ladder is a positive claim, so the reason applies", () => {
+  // [] says the model advertises nothing, unlike null which says nothing was reported.
+  assert.deepEqual(selectableEfforts([]), []);
+  assert.equal(effortLadderUnsupported([]), true);
+  assert.ok(effortFallbackNotice([], null) !== null);
+});
+
+test("a saved effort is named as kept, never described as the session effort", () => {
+  // The screen never silently changes a stored value, so the reason says what the role then uses.
+  const notice = effortFallbackNotice(["none"], "high");
+  assert.ok(notice !== null);
+  assert.match(notice as string, /high/);
+  assert.doesNotMatch(notice as string, /uses the session effort/);
+});
+
+test("a save body built by the editor state function keeps the empty string and null apart", async (t) => {
+  const captured: Captured[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    captured.push({ url, init });
+    return new Response(JSON.stringify(settings()), { status: 200 });
+  });
+  const current = settings();
+  // A stored override is switched to override, cleared and saved: the body must carry "".
+  await setHelperRole("reviewer", saveBody(editText("")), current);
+  // The explicit switch to inherit is the only path that carries null.
+  await setHelperRole("reviewer", saveBody(inheritState()), current);
+  assert.equal(bodyOf(captured[0]).promptOverride, "");
+  assert.equal(bodyOf(captured[1]).promptOverride, null);
+  assert.notDeepEqual(bodyOf(captured[0]), bodyOf(captured[1]));
 });
