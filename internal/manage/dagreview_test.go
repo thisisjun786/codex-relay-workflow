@@ -21,6 +21,16 @@ func dagReviewFind(review Review, kind string) []DagReviewAnomaly {
 	return found
 }
 
+// dagReviewUnmeasuredCheck is whether the review carries an unmeasured check of the given name.
+func dagReviewUnmeasuredCheck(review Review, name string) bool {
+	for _, check := range review.Checks {
+		if check.Name == name && check.State == dagReviewUnmeasured {
+			return true
+		}
+	}
+	return false
+}
+
 // dagReviewRunReview runs the review over the fixture and fails the test on a read error.
 func dagReviewRunReview(t *testing.T, f *dagReviewFixture, plans []string, stall int) Review {
 	t.Helper()
@@ -40,9 +50,10 @@ func dagReviewOnePlan(t *testing.T, f *dagReviewFixture, node string) {
 	f.node("plan-1", node, "CRW-"+node)
 }
 
-// An integrated edge whose successor was released before the predecessor was observed
-// integrated is an anomaly.
-func TestDagReviewReleasedBeforePredecessor(t *testing.T) {
+// released_before_predecessor is a reading this review cannot take: when an edge became satisfied
+// is known only to the scheduler's unexported reading, so the review names the gap as an
+// unmeasured check and raises no anomaly.
+func TestDagReviewReleasedBeforePredecessorIsUnmeasured(t *testing.T) {
 	f := dagReviewNewFixture(t)
 	dagReviewOnePlan(t, f, "A")
 	f.node("plan-1", "B", "CRW-B")
@@ -52,43 +63,34 @@ func TestDagReviewReleasedBeforePredecessor(t *testing.T) {
 	f.observation("acceptance-A", dagReviewAt(30), true, "")
 	f.close()
 
-	found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindReleasedBeforePredecessor)
-	if len(found) != 1 || found[0].Node != "B" || found[0].Issue != "CRW-B" {
-		t.Fatalf("released_before_predecessor = %+v, want one for B", found)
+	review := dagReviewRunReview(t, f, nil, 0)
+	if found := dagReviewFind(review, dagReviewKindReleasedBeforePredecessor); len(found) != 0 {
+		t.Errorf("released_before_predecessor raised %+v, want no anomaly", found)
+	}
+	if !dagReviewUnmeasuredCheck(review, dagReviewKindReleasedBeforePredecessor) {
+		t.Errorf("the check is not unmeasured: %+v", review.Checks)
+	}
+	for _, check := range review.Checks {
+		if check.Name == dagReviewKindReleasedBeforePredecessor && check.Detail != "the scheduler exports no edge reading with the time it became satisfied" {
+			t.Errorf("the check detail = %q", check.Detail)
+		}
 	}
 }
 
-// An edge introduced after the successor was already released orders the merge, not the release,
-// so the same shape is not an anomaly.
-func TestDagReviewEdgeAddedAfterTheReleaseIsNotAnAnomaly(t *testing.T) {
-	f := dagReviewNewFixture(t)
-	dagReviewOnePlan(t, f, "A")
-	f.node("plan-1", "B", "CRW-B")
-	f.revision("plan-1", 2, dagReviewAt(20))
-	f.edge("plan-1", "e1", "A", "B", "integrated", 2)
-	f.release("plan-1", "B", "manifest-B", dagReviewAt(5))
-	f.acceptance("plan-1", "A", "acceptance-A", "relationship-A", dagReviewAt(6))
-	f.observation("acceptance-A", dagReviewAt(30), true, "")
-	f.close()
-
-	if found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindReleasedBeforePredecessor); len(found) != 0 {
-		t.Errorf("an edge added after the release was reported: %+v", found)
-	}
-}
-
-// A node released twice is an anomaly and its detail carries the count.
+// A node the relay executed twice is an anomaly and its detail carries the count. The correction
+// generation is the case a dag_releases count misses, and it is pinned in the canon test.
 func TestDagReviewReleasedRepeatedlyCarriesTheCount(t *testing.T) {
 	f := dagReviewNewFixture(t)
 	dagReviewOnePlan(t, f, "A")
-	f.release("plan-1", "A", "manifest-1", dagReviewAt(5))
-	f.release("plan-1", "A", "manifest-2", dagReviewAt(10))
+	relationshipID := f.boundExecution("plan-1", "A", dagReviewExecutionInitial, 1)
+	f.executionKind("plan-1", "A", relationshipID, 2, dagReviewExecutionCorrection)
 	f.close()
 
 	found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindReleasedRepeatedly)
 	if len(found) != 1 {
 		t.Fatalf("released_repeatedly = %+v, want one", found)
 	}
-	if !strings.Contains(found[0].Detail, "2") {
+	if !strings.Contains(found[0].Detail, "executed 2 times") {
 		t.Errorf("the detail does not carry the count: %q", found[0].Detail)
 	}
 }
@@ -268,8 +270,8 @@ func TestDagReviewCommandJSONOutputAndExitStatus(t *testing.T) {
 
 	f2 := dagReviewNewFixture(t)
 	dagReviewOnePlan(t, f2, "A")
-	f2.release("plan-1", "A", "manifest-1", dagReviewAt(5))
-	f2.release("plan-1", "A", "manifest-2", dagReviewAt(10))
+	relationshipID := f2.boundExecution("plan-1", "A", dagReviewExecutionInitial, 1)
+	f2.executionKind("plan-1", "A", relationshipID, 2, dagReviewExecutionCorrection)
 	f2.close()
 	if _, _, code := dagReviewRunCommand(t, f2.dir, nil); code != dagReviewAnomalyExit {
 		t.Errorf("a review that found something exited %d, want %d", code, dagReviewAnomalyExit)
@@ -280,8 +282,8 @@ func TestDagReviewCommandJSONOutputAndExitStatus(t *testing.T) {
 func TestDagReviewAnomaliesOnlyAndTextOutput(t *testing.T) {
 	f := dagReviewNewFixture(t)
 	dagReviewOnePlan(t, f, "A")
-	f.release("plan-1", "A", "manifest-1", dagReviewAt(5))
-	f.release("plan-1", "A", "manifest-2", dagReviewAt(10))
+	relationshipID := f.boundExecution("plan-1", "A", dagReviewExecutionInitial, 1)
+	f.executionKind("plan-1", "A", relationshipID, 2, dagReviewExecutionCorrection)
 	f.close()
 
 	stdout, stderr, code := dagReviewRunCommand(t, f.dir, []string{"--anomalies-only"})
@@ -436,39 +438,6 @@ func TestDagReviewLanesFollowTheConfiguredPlans(t *testing.T) {
 	}
 }
 
-// An integrated edge is judged in the target it names: an observation in the edge's own
-// repository and base ref satisfies it, and one in another target does not.
-func TestDagReviewEdgeTargetMatters(t *testing.T) {
-	f := dagReviewNewFixture(t)
-	dagReviewOnePlan(t, f, "A")
-	f.node("plan-1", "B", "CRW-B")
-	f.edge("plan-1", "e1", "A", "B", "integrated", 1)
-	f.release("plan-1", "B", "manifest-B", dagReviewAt(5))
-	f.acceptance("plan-1", "A", "acceptance-A", "relationship-A", dagReviewAt(6))
-	f.observation("acceptance-A", dagReviewAt(1), true, "")
-	f.close()
-
-	if found := dagReviewFind(dagReviewRunReview(t, f, nil, 0), dagReviewKindReleasedBeforePredecessor); len(found) != 0 {
-		t.Errorf("an observation in the edge's own target did not satisfy it: %+v", found)
-	}
-
-	// The same store, but the edge orders another repository, so the observation above no longer
-	// satisfies it and the release is reported.
-	f2 := dagReviewNewFixture(t)
-	dagReviewOnePlan(t, f2, "A")
-	f2.node("plan-1", "B", "CRW-B")
-	f2.edgeTarget("plan-1", "e1", "A", "B", "integrated", 1, "other/repo", "dev")
-	f2.release("plan-1", "B", "manifest-B", dagReviewAt(5))
-	f2.acceptance("plan-1", "A", "acceptance-A", "relationship-A", dagReviewAt(6))
-	f2.observation("acceptance-A", dagReviewAt(1), true, "")
-	f2.close()
-
-	found := dagReviewFind(dagReviewRunReview(t, f2, nil, 0), dagReviewKindReleasedBeforePredecessor)
-	if len(found) != 1 {
-		t.Fatalf("an observation outside the edge's target satisfied it: %+v", found)
-	}
-}
-
 // A node a later revision retired is no longer in the plan, so it is not in flight and cannot
 // overlap a live node.
 func TestDagReviewRetiredNodeIsNotInFlight(t *testing.T) {
@@ -477,7 +446,7 @@ func TestDagReviewRetiredNodeIsNotInFlight(t *testing.T) {
 	f.revision("plan-1", 1, dagReviewAt(0))
 	f.node("plan-1", "A", "CRW-A")
 	f.revision("plan-1", 2, dagReviewAt(20))
-	f.exec("UPDATE dag_nodes SET retired_rev = 2 WHERE plan_id = 'plan-1' AND node_id = 'A'")
+	f.retire("plan-1", "A", 2)
 	f.node("plan-1", "B", "CRW-B")
 	f.release("plan-1", "A", "manifest-A", dagReviewAt(5))
 	f.release("plan-1", "B", "manifest-B", dagReviewAt(25))
@@ -508,39 +477,33 @@ func TestDagReviewUndeclaredNodeRaisesNoOverlap(t *testing.T) {
 	}
 }
 
-// edgeTarget is the edge fixture with the target an integrated edge orders, which is immutable
-// once written.
-func (f *dagReviewFixture) edgeTarget(planID, edgeID, from, to, kind string, introducedRev int, repository, baseRef string) {
-	f.exec("INSERT INTO dag_edges (plan_id, edge_id, introduced_rev, retired_rev, from_node_id, to_node_id, kind, target_repository, target_base_ref, pins_code_head) VALUES (?,?,?,NULL,?,?,?,?,?,0)",
-		planID, edgeID, introducedRev, from, to, kind, repository, baseRef)
-}
-
-// A node whose relationship is closed no longer holds its regions, so a later release on the same
-// exclusive place is not an overlap; a node whose lane already landed released them at the landing.
-func TestDagReviewClosedAndLandedNodesAreNotInFlight(t *testing.T) {
-	// The relationship closed: not in flight.
+// A node whose relationship the relay ended holds nothing, and a node whose accepted head landed
+// released its regions at the landing: neither is in flight.
+func TestDagReviewCancelledAndLandedNodesAreNotInFlight(t *testing.T) {
+	// The relationship was cancelled: not in flight.
 	closed := dagReviewNewFixture(t)
 	dagReviewOnePlan(t, closed, "A")
 	closed.node("plan-1", "B", "CRW-B")
-	closed.release("plan-1", "A", "manifest-A", dagReviewAt(5))
 	closed.release("plan-1", "B", "manifest-B", dagReviewAt(6))
-	closed.execution("plan-1", "A", "relationship-A")
-	closed.exec("UPDATE relationships SET status = 'closed' WHERE relationship_id = 'relationship-A'")
+	closed.boundExecution("plan-1", "A", dagReviewExecutionInitial, 1)
+	closed.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = 'relationship-A'")
 	closed.region("plan-1", "A", "shared.go", "file", "", "delete", true)
 	closed.region("plan-1", "B", "shared.go", "file", "", "edit", false)
 	closed.close()
 	if found := dagReviewFind(dagReviewRunReview(t, closed, nil, 0), dagReviewKindExclusiveOverlapRunning); len(found) != 0 {
-		t.Errorf("a closed relationship's node was reported in flight: %+v", found)
+		t.Errorf("a cancelled relationship's node was reported in flight: %+v", found)
 	}
 
-	// The lane landed: the scheduler released the regions at the landing.
+	// The accepted head landed: the node is integrated, so it holds nothing.
 	landed := dagReviewNewFixture(t)
 	dagReviewOnePlan(t, landed, "A")
 	landed.node("plan-1", "B", "CRW-B")
-	landed.release("plan-1", "A", "manifest-A", dagReviewAt(5))
+	relationshipID := landed.boundExecution("plan-1", "A", dagReviewExecutionInitial, 1)
+	landed.acceptanceHead("plan-1", "A", "acceptance-A", relationshipID, "head-A", dagReviewAt(5))
+	landed.mergedMark(relationshipID, dagReviewAt(6))
+	landed.observation("acceptance-A", dagReviewAt(10), true, "")
+	landed.laneTurn("turn-A", "owner/repo#dev", "holder-A", "landed", relationshipID, 1, dagReviewAt(5), dagReviewAt(5), dagReviewAt(6))
 	landed.release("plan-1", "B", "manifest-B", dagReviewAt(6))
-	landed.execution("plan-1", "A", "relationship-A")
-	landed.laneTurn("turn-A", "owner/repo#dev", "holder-A", "landed", "relationship-A", 1, dagReviewAt(5), dagReviewAt(5), dagReviewAt(6))
 	landed.region("plan-1", "A", "shared.go", "file", "", "delete", true)
 	landed.region("plan-1", "B", "shared.go", "file", "", "edit", false)
 	landed.close()
