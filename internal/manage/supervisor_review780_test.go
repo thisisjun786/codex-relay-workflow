@@ -122,7 +122,7 @@ func TestSupervisorReview780HelpPipeChild(t *testing.T) {
 // stdout is a pipe. With the read end closed first, the write reaches a pipe nobody reads, which is
 // the case a fake writer cannot produce. The child's TMPDIR points at the parent's temporary
 // directory, so the child's own isolation root is removed with it rather than left behind.
-func supervisorReview780HelpPipeChild(t *testing.T, args []string, closeReadEnd bool) (code int, stdout, stderr string, signaled bool) {
+func supervisorReview780HelpPipeChild(t *testing.T, args []string, closeReadEnd, stderrOnPipe bool) (code int, stdout, stderr string, signaled bool) {
 	t.Helper()
 	read, write, err := os.Pipe()
 	if err != nil {
@@ -141,7 +141,13 @@ func supervisorReview780HelpPipeChild(t *testing.T, args []string, closeReadEnd 
 		"TMPDIR="+t.TempDir())
 	cmd.Stdout = write
 	var errOut bytes.Buffer
-	cmd.Stderr = &errOut
+	if stderrOnPipe {
+		// The shell's "2>&1": the diagnostic and the usage share one closed pipe, so a note that
+		// cannot be delivered must not take the run's exit status with it.
+		cmd.Stderr = write
+	} else {
+		cmd.Stderr = &errOut
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +190,7 @@ func TestSupervisorReview780HelpPipeEpipeExitsOne(t *testing.T) {
 		{"supervisor", "register", "--help"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			code, _, errOut, signaled := supervisorReview780HelpPipeChild(t, args, true)
+			code, _, errOut, signaled := supervisorReview780HelpPipeChild(t, args, true, false)
 			if signaled {
 				t.Fatalf("the child died on a signal (exit %d, stderr %q): the EPIPE from a closed stdout pipe must be reported, not raised", code, errOut)
 			}
@@ -206,7 +212,7 @@ func TestSupervisorReview780HelpPipeOpenPipeStaysZero(t *testing.T) {
 		{"supervisor", "register", "--help"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			code, out, errOut, signaled := supervisorReview780HelpPipeChild(t, args, false)
+			code, out, errOut, signaled := supervisorReview780HelpPipeChild(t, args, false, false)
 			if signaled {
 				t.Fatalf("the child died on a signal (exit %d, stderr %q)", code, errOut)
 			}
@@ -215,6 +221,26 @@ func TestSupervisorReview780HelpPipeOpenPipeStaysZero(t *testing.T) {
 			}
 			if !strings.Contains(out, "usage: crw manage supervisor") {
 				t.Errorf("stdout %q does not carry the usage", out)
+			}
+		})
+	}
+}
+
+// C2 (pre-merge evaluation d1): stdout and stderr are the same closed pipe, the shape "cmd 2>&1 |
+// head -1" leaves behind. The note cannot be delivered, but that is no reason for the run to die:
+// the diagnostic must be attempted without raising SIGPIPE and the promised exit 1 must survive.
+func TestSupervisorReview780HelpPipeBothStreamsClosedExitsOne(t *testing.T) {
+	for _, args := range [][]string{
+		{"supervisor", "--help"},
+		{"supervisor", "register", "--help"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			code, _, _, signaled := supervisorReview780HelpPipeChild(t, args, true, true)
+			if signaled {
+				t.Fatalf("the child died on a signal (exit %d): the diagnostic write must not raise SIGPIPE", code)
+			}
+			if code != 1 {
+				t.Fatalf("exit %d, want 1", code)
 			}
 		})
 	}
