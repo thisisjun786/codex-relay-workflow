@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The parent notification queue: send-parent --queue writes one notice per file under
@@ -15,10 +16,10 @@ import (
 // its own: it is steered into the parent's active turn, or sent with the parent role once the
 // oldest has waited max_queue_seconds, so an idle parent still receives it.
 const (
-	pumpQueueDir    = "parent-queue"
-	pumpSentDir     = "sent"
-	pumpOversizeDir = "oversize"
-	pumpQueueWait   = "queued"
+	pumpQueueDir             = "parent-queue"
+	pumpSentDir              = "sent"
+	pumpReview776OversizeDir = "oversize"
+	pumpQueueWait            = "queued"
 )
 
 // pumpQueueFlush delivers the queued notices of every thread. It first completes any accepted
@@ -56,7 +57,7 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	// A pinned batch is reconciled first, under its own frozen logical id and body, before any new
 	// batch is formed: a notice that may already have gone is never re-sent under a different id.
 	if _, pinned := st.QueueAttempt[thread]; pinned {
-		settled, err := pumpReview776QueueRetry(ctx, e, cfg, st, dir, thread, dry)
+		settled, err := pumpReview776QueueRetry(ctx, e, cfg, st, s, dir, thread, dry)
 		if settled || err != nil {
 			return err
 		}
@@ -79,7 +80,7 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		// A quiet thread starts no bridge process.
 		return nil
 	}
-	texts, oldest, err := pumpReview776QueueReadNotices(dir, names)
+	texts, err := pumpReview776QueueReadNotices(dir, names)
 	if err != nil {
 		return err
 	}
@@ -96,6 +97,12 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	if dry {
 		fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(batch.names), batch.body)
 		return nil
+	}
+	// The idle-parent timeout is measured on the notices the batch actually carries, so a notice
+	// moved aside as oversize or left for the next round cannot age it.
+	oldest, err := pumpReview776QueueOldest(dir, batch.names)
+	if err != nil {
+		return err
 	}
 	// The active-turn probe decides WHEN; Deliver's own read decides HOW. Both paths carry the
 	// parent role, so an idle-to-active race between them does not change the semantics.
@@ -126,7 +133,12 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 // gone. The accepted membership is recorded before the first move, so a move that fails part way
 // is completed by the next round instead of being sent again.
 func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, batch pumpReview776QueueBatch) error {
-	logicalID := pumpQueueBatchID(thread, batch.names)
+	if !utf8.ValidString(batch.body) {
+		// JSON replaces invalid bytes with the replacement character, so a pinned body would stop
+		// being the text on disk; the delivery core refuses such a message anyway.
+		return fmt.Errorf("crw manage pump: the queued notices of %s are not valid UTF-8", thread)
+	}
+	logicalID := pumpQueueBatchID(thread, batch.names, batch.body)
 	st.QueueAttempt[thread] = pumpReview776QueuePin{
 		LogicalID: logicalID, Names: append([]string(nil), batch.names...), Body: batch.body}
 	if err := st.pumpSave(cfg); err != nil {
@@ -191,31 +203,44 @@ type pumpReview776QueueBatch struct {
 	body  string
 }
 
-// pumpReview776QueueReadNotices reads one thread's notices in name order and reports the oldest
-// modification time. A notice is a regular file the producer wrote; a symlink would let the queue
-// carry the contents of a file outside it, so it is refused rather than followed.
-func pumpReview776QueueReadNotices(dir string, names []string) ([]string, time.Time, error) {
+// pumpReview776QueueReadNotices reads one thread's notices in name order. A notice is a regular
+// file the producer wrote; a symlink would let the queue carry the contents of a file outside it,
+// so it is refused rather than followed.
+func pumpReview776QueueReadNotices(dir string, names []string) ([]string, error) {
 	texts := make([]string, 0, len(names))
-	var oldest time.Time
 	for _, name := range names {
 		path := filepath.Join(dir, name)
 		info, err := os.Lstat(path)
 		if err != nil {
-			return nil, oldest, err
+			return nil, err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, oldest, fmt.Errorf("crw manage pump: the notice %s is a symlink; refusing to send through it", name)
+			return nil, fmt.Errorf("crw manage pump: the notice %s is a symlink; refusing to send through it", name)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		texts = append(texts, strings.TrimSpace(string(raw)))
+	}
+	return texts, nil
+}
+
+// pumpReview776QueueOldest is the oldest modification time among one batch's notices. It is
+// measured on the notices the batch actually carries, so a notice moved aside as oversize or left
+// for the next round cannot age a batch it is not part of.
+func pumpReview776QueueOldest(dir string, names []string) (time.Time, error) {
+	var oldest time.Time
+	for _, name := range names {
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err != nil {
+			return oldest, err
 		}
 		if oldest.IsZero() || info.ModTime().Before(oldest) {
 			oldest = info.ModTime()
 		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, oldest, err
-		}
-		texts = append(texts, strings.TrimSpace(string(raw)))
 	}
-	return texts, oldest, nil
+	return oldest, nil
 }
 
 // pumpReview776QueueOversize moves a notice whose body alone exceeds the batch limit out of the
@@ -235,7 +260,12 @@ func pumpReview776QueueOversize(e *Env, cfg *Config, dir, thread string, names, 
 			fmt.Fprintf(e.Stdout, "queue %s: would move oversize notice %s (%d bytes) to oversize/\n", thread, name, len(texts[i]))
 			continue
 		}
-		oversizeDir := filepath.Join(dir, pumpOversizeDir)
+		oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
+		// The destination is checked the way the queue root is: a symlink planted in its place would
+		// redirect the move outside the state directory.
+		if err := pumpQueueSafe(oversizeDir, "oversize directory"); err != nil {
+			return keptNames, keptTexts, err
+		}
 		if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
 			return keptNames, keptTexts, err
 		}
@@ -252,69 +282,92 @@ func pumpReview776QueueOversize(e *Env, cfg *Config, dir, thread string, names, 
 
 // pumpReview776QueueFit is the longest name-ordered prefix of a thread's notices whose body stays
 // inside the batch limit, the same rule the management batch uses. The rest waits for the next
-// round.
+// round. The body length is accumulated as the prefix grows rather than rebuilt for each length,
+// so a long backlog costs one pass.
 func pumpReview776QueueFit(names, texts []string) pumpReview776QueueBatch {
-	for n := len(names); n > 0; n-- {
-		body := pumpReview776QueueBody(texts[:n])
-		if len(body) <= pumpBatchLimit {
-			return pumpReview776QueueBatch{names: names[:n], body: body}
-		}
-	}
 	if len(names) == 0 {
 		return pumpReview776QueueBatch{}
 	}
-	// An oversize singleton was moved aside already, so this is only a guard against a batch the
-	// delivery core could never accept.
-	return pumpReview776QueueBatch{names: names[:1], body: pumpReview776QueueBody(texts[:1])}
+	total, fit := 0, 0
+	for i, text := range texts {
+		total += len(text)
+		if i > 0 {
+			// The separator between two notices, plus the header line the batch grows once it carries
+			// more than one.
+			total += 2
+		}
+		if total+len(pumpReview776QueueHeader(i+1)) > pumpBatchLimit {
+			break
+		}
+		fit = i + 1
+	}
+	if fit == 0 {
+		// An oversize singleton was moved aside already, so this is only a guard against a batch the
+		// delivery core could never accept.
+		return pumpReview776QueueBatch{names: names[:1], body: pumpReview776QueueBody(texts[:1])}
+	}
+	return pumpReview776QueueBatch{names: names[:fit], body: pumpReview776QueueBody(texts[:fit])}
+}
+
+// pumpReview776QueueHeader is the count line a queue batch carries once it holds more than one
+// notice.
+func pumpReview776QueueHeader(count int) string {
+	if count <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("management session notices: %d queued\n\n", count)
 }
 
 // pumpReview776QueueBody is a queue batch's delivered text: the notices' bodies, with the count
 // line the issue fixes for a batch carrying more than one.
 func pumpReview776QueueBody(texts []string) string {
-	body := strings.Join(texts, "\n\n")
-	if len(texts) > 1 {
-		body = fmt.Sprintf("management session notices: %d queued\n\n", len(texts)) + body
-	}
-	return body
+	return pumpReview776QueueHeader(len(texts)) + strings.Join(texts, "\n\n")
 }
 
 // pumpReview776QueueRetry reconciles a pinned queue batch. It reports whether it settled the
 // thread for this round, so the caller does not also form a fresh batch in the same round. The
-// retry skips the active-turn probe and the max_queue_seconds wait: the first attempt already
-// passed both, and re-gating a reconciliation could leave it unsettled forever.
-func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, dry bool) (bool, error) {
+// retry repeats the queue's own gate: an idle parent is only sent to once the oldest pinned notice
+// has waited max_queue_seconds, so reconciling never opens a parent turn early.
+func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, dir, thread string, dry bool) (bool, error) {
 	pin := st.QueueAttempt[thread]
-	present := 0
-	for _, name := range pin.Names {
-		if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return true, err
-			}
-			continue
+	texts, err := pumpReview776QueueReadNotices(dir, pin.Names)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return pumpReview776QueuePinDrop(cfg, e, st, thread, dry, "the pinned notices changed")
 		}
-		present++
+		return true, err
 	}
-	if present == 0 {
-		// The pinned notices are gone, so there is nothing left to reconcile: the pin lifts and the
-		// thread forms a fresh batch from whatever else is queued.
-		delete(st.QueueAttempt, thread)
-		if dry {
-			fmt.Fprintf(e.Stdout, "queue %s: would drop the pin, %d pinned notices gone\n", thread, len(pin.Names))
-			return false, nil
-		}
-		pumpLog(cfg, fmt.Sprintf("queue %s: pin dropped, %d pinned notices gone", thread, len(pin.Names)))
-		if err := st.pumpSave(cfg); err != nil {
-			return true, err
-		}
-		return false, nil
+	if pumpReview776QueueBody(texts) != pin.Body {
+		// A notice was replaced under the same name, so the frozen batch no longer describes what is
+		// queued: the pin lifts and the current notices form their own batch under their own id.
+		return pumpReview776QueuePinDrop(cfg, e, st, thread, dry, "the pinned notices changed")
 	}
 	if dry {
 		fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(pin.Names), pin.Body)
 		return true, nil
 	}
+	oldest, err := pumpReview776QueueOldest(dir, pin.Names)
+	if err != nil {
+		return true, err
+	}
+	state, err := pumpQueueTurnState(ctx, e, cfg, thread)
+	if err != nil {
+		// The probe failed: the pin stays and the notices are left alone, the same state a source
+		// whose read failed reports.
+		pumpLog(cfg, "queue "+thread+" "+pumpSourceUnmeasured+": "+err.Error())
+		return true, nil
+	}
+	if state == pumpQueueOther {
+		return true, nil
+	}
+	if state == pumpQueueIdle && e.Now().Sub(oldest).Seconds() < float64(pumpSettingInt(s.MaxQueueSeconds, pumpDefaultMaxQueueSeconds)) {
+		return true, nil
+	}
 	out, err := Deliver(ctx, e, cfg, Message{LogicalID: pin.LogicalID, Thread: thread, Text: pin.Body, Role: "parent", Settings: cfg.Settings.Parent})
 	if err != nil && out.Class == "" {
-		return true, pumpReview776QueuePinLift(cfg, st, thread, err)
+		// An unclassified local failure reached no bridge and learned nothing about the pinned
+		// attempt, so the pin stays and the next round reconciles it again.
+		return true, err
 	}
 	pumpLog(cfg, fmt.Sprintf("queue thread=%s notices=%d request=%s class=%s received=%v applied=%v",
 		thread, len(pin.Names), out.RequestID, out.Class, out.Class == deliverClassAccepted, false))
@@ -335,6 +388,22 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 	}
 }
 
+// pumpReview776QueuePinDrop drops a pin whose frozen batch no longer describes the queue, because
+// the pinned notices changed or are gone. The thread then forms a batch from what is queued, which
+// is why the caller is told the thread was not settled.
+func pumpReview776QueuePinDrop(cfg *Config, e *Env, st *pumpState, thread string, dry bool, reason string) (bool, error) {
+	delete(st.QueueAttempt, thread)
+	if dry {
+		fmt.Fprintf(e.Stdout, "queue %s: would drop the pin, %s\n", thread, reason)
+		return false, nil
+	}
+	pumpLog(cfg, fmt.Sprintf("queue %s: pin dropped, %s", thread, reason))
+	if err := st.pumpSave(cfg); err != nil {
+		return true, err
+	}
+	return false, nil
+}
+
 // pumpReview776QueuePinLift drops a pin whose delivery settled without an acceptance: a refusal is
 // terminal and a local failure reached no bridge, so a later round may carry the notices again
 // under a new id.
@@ -346,11 +415,17 @@ func pumpReview776QueuePinLift(cfg *Config, st *pumpState, thread string, cause 
 	return cause
 }
 
-// pumpQueueBatchID is a queue batch's logical id: the thread and the sorted notice names. The
-// thread is part of the input because the delivery ledger is shared across threads, so two
-// parents queueing the same file name must not collide on one logical id.
-func pumpQueueBatchID(thread string, names []string) string {
-	return pumpBatchIDStrings(append([]string{thread}, names...))
+// pumpQueueBatchID is a queue batch's logical id: the thread, the sorted notice names and the body
+// the batch carries. The thread is part of the input because the delivery ledger is shared across
+// threads, so two parents queueing the same file name must not collide on one logical id. The body
+// is part of it so a notice a producer replaced under the same name is a batch of its own rather
+// than one the ledger answers for the text it no longer carries.
+func pumpQueueBatchID(thread string, names []string, body string) string {
+	parts := make([]string, 0, len(names)+2)
+	parts = append(parts, thread)
+	parts = append(parts, names...)
+	parts = append(parts, body)
+	return pumpBatchIDStrings(parts)
 }
 
 // The three observations the active-turn probe settles on. Only an explicit idle may reach the
