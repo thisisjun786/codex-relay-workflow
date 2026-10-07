@@ -258,3 +258,133 @@ func TestEvidenceReview759UnpinnedProviderKeepsTheLenientRule(t *testing.T) {
 			ChecksStale, problems)
 	}
 }
+
+// review759EntryMarked reports whether the check entry of the snapshot with the given name carries
+// the given boolean mark set true.
+func review759EntryMarked(snapshot map[string]any, name, mark string) bool {
+	for _, raw := range listOf(mapOf(snapshot["handoff"])["checks"]) {
+		entry := mapOf(raw)
+		if strOf(entry["name"]) != name {
+			continue
+		}
+		if flag, isBool := entry[mark].(bool); isBool && flag {
+			return true
+		}
+	}
+	return false
+}
+
+// A success leg whose test step concluded null carries no testSkipped mark, so the check row alone
+// cannot tell it from a leg that ran -- and the reading merge-turn-check uses sees only those rows.
+// The collector marks such a leg testUnreadable, and the substitute rule refuses to count it as
+// having answered the judged run's skipped leg (CRW-946, the parent's correction of PR #875).
+func TestEvidenceReview759UnreadableTestStepIsNoSubstitute(t *testing.T) {
+	unreadable := review759Collect(review759MirroredJob(51, nil))
+	if !review759EntryMarked(unreadable, "go-product (test-1)", "testUnreadable") {
+		t.Fatalf("a leg whose test step cannot be read must carry testUnreadable: %v", unreadable["handoff"])
+	}
+	if review759EntryMarked(unreadable, "go-product (test-1)", "testSkipped") {
+		t.Fatalf("testUnreadable must not be reported as testSkipped: %v", unreadable["handoff"])
+	}
+	// The contrast: a leg that ran its tests carries neither mark.
+	ran := review759Collect(review759RanLeg(52))
+	if review759EntryMarked(ran, "go-product (test-1)", "testUnreadable") {
+		t.Fatalf("a leg that ran its tests is not unreadable: %v", ran["handoff"])
+	}
+
+	// The reading merge-turn-check uses: the judged run skipped its leg, and the only other run on
+	// the head holds that leg at a success conclusion whose test step could not be read. A row that
+	// says nothing about whether the tests ran is not the substitute.
+	checks := append(review759LightRun(),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+	)
+	checks[3].(map[string]any)["testUnreadable"] = true
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("an unreadable test step is no substitute, want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light refusal is the answer, got %q", problems[0].Detail)
+	}
+	// The contrast: the same substitute run with a readable test step is the evidence.
+	checks[3].(map[string]any)["testUnreadable"] = false
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+		t.Fatalf("a readable test step is the evidence, want no problem, got %v", problems)
+	}
+}
+
+// The light gate a substitute exempted is not an integration success. The success counted for a
+// pinned integration is the gate of a run that actually ran its tests, so the judged light run's own
+// gate answers no integration (CRW-946, the parent's correction of a regression PR #875 introduced).
+func TestEvidenceReview759ExemptedLightGateIsNoIntegrationSuccess(t *testing.T) {
+	build := func(judgedProvider, substituteProvider string, judgedLight bool) []any {
+		checks := []any{
+			crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+			crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, judgedLight),
+			crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+			crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+		}
+		checks[0].(map[string]any)["provider"] = judgedProvider
+		checks[1].(map[string]any)["provider"] = judgedProvider
+		checks[2].(map[string]any)["provider"] = substituteProvider
+		checks[3].(map[string]any)["provider"] = substituteProvider
+		return checks
+	}
+	// providers={dev-gate:[42,99]}: run 600 (42) is light and run 601 (99) ran the tests. 600 is
+	// exempted by 601, but integration 42 is not answered -- the exempted light gate is not its
+	// success, whatever it concluded.
+	pinned := map[string][]string{"dev-gate": {"42", "99"}}
+	problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, build("42", "99", true), true, pinned)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("an exempted light gate must not answer the integration, want one %s, got %v", ChecksStale, problems)
+	}
+	// The contrast: the same two integrations, with the judged run's own leg actually run, are both
+	// answered by their own full run.
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, build("42", "99", false), true, pinned); len(problems) != 0 {
+		t.Fatalf("two full runs answer both integrations, want no problem, got %v", problems)
+	}
+	// The documented repair is untouched: with only integration 42 pinned, the labeled full run 601
+	// from that same integration is the evidence for the light run 600.
+	same := map[string][]string{"dev-gate": {"42"}}
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, build("42", "42", true), true, same); len(problems) != 0 {
+		t.Fatalf("the labeled full run from the same integration is the evidence, want no problem, got %v", problems)
+	}
+}
+
+// The shape check refuses a testUnreadable mark the collector cannot produce: a value that is not a
+// boolean, a true one on a job that is not a go-product test leg, a true one on a conclusion other
+// than success, and one set together with testSkipped, which is the opposite answer (CRW-946).
+func TestEvidenceReview759ShapeRefusesAnUnreadableMarkTheCollectorCannotProduce(t *testing.T) {
+	leg := func() map[string]any {
+		return crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, false)
+	}
+	good := leg()
+	good["testUnreadable"] = true
+	if problems := ShapeProblems(cleanReview(), []any{good}, nil, nil); len(problems) != 0 {
+		t.Fatalf("a boolean testUnreadable on a successful test leg must pass the shape check, got %v", problems)
+	}
+	plain := leg()
+	if problems := ShapeProblems(cleanReview(), []any{plain}, nil, nil); len(problems) != 0 {
+		t.Fatalf("an absent testUnreadable must pass the shape check, got %v", problems)
+	}
+	for _, value := range []any{"true", 1, nil, []any{}} {
+		entry := leg()
+		entry["testUnreadable"] = value
+		if problems := ShapeProblems(cleanReview(), []any{entry}, nil, nil); len(problems) != 1 || problems[0].Code != Malformed {
+			t.Fatalf("testUnreadable %#v must be malformed, got %v", value, problems)
+		}
+	}
+	both := leg()
+	both["testUnreadable"] = true
+	both["testSkipped"] = true
+	notLeg := crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false)
+	notLeg["testUnreadable"] = true
+	failed := crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "failure", 1, false)
+	failed["testUnreadable"] = true
+	for _, entry := range []map[string]any{both, notLeg, failed} {
+		if problems := ShapeProblems(cleanReview(), []any{entry}, nil, nil); len(problems) != 1 || problems[0].Code != Malformed {
+			t.Fatalf("testUnreadable %v must be malformed, got %v", entry, problems)
+		}
+	}
+}

@@ -395,26 +395,29 @@ const lightMirrorStep = "Mirror the jobs this head already ran"
 // edit mirror's step concludes success whether or not it actually carried the leg's tests over, so
 // it is not evidence that they ran (CRW-946). A test step that concluded success is a leg that ran
 // its tests, one that concluded skipped or is absent from a readable list is a leg that skipped
-// them, and one whose conclusion cannot be read is neither: the leg is left unmarked and the
-// returned detail names it, so the caller records the existing unreadable problem instead and a
-// success leg whose test run cannot be confirmed is never merge evidence either way. The detail is
-// empty when the job is not this at all. The conclusion is read through outcome, the same read the
-// entry's own conclusion uses, so the mark can never disagree with the entry.
-func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail string) {
+// them, and one whose conclusion cannot be read is neither: the leg is marked unreadable and the
+// returned detail names it, so the caller records the existing unreadable problem beside that mark
+// and a success leg whose test run cannot be confirmed is never merge evidence either way. The
+// unreadable answer is separate from the skipped one because a check row that says nothing about
+// whether the tests ran must not read as a leg that ran them, and the reading that sees only the
+// rows -- the merge turn's -- has nothing else to go on (CRW-946). The detail is empty when the job
+// is not this at all. The conclusion is read through outcome, the same read the entry's own
+// conclusion uses, so the mark can never disagree with the entry.
+func jobTestSkipped(j map[string]any, runText string) (skipped, unreadable bool, detail string) {
 	name := strOf(j["name"])
 	if !strings.HasPrefix(name, lightLegPrefix) || outcome(j) != "success" {
-		return false, ""
+		return false, false, ""
 	}
-	unreadable := name + " of workflow run " + runText + " came back without a readable step list, so whether it ran its tests cannot be told"
+	unreadableDetail := name + " of workflow run " + runText + " came back without a readable step list, so whether it ran its tests cannot be told"
 	steps, ok := List(j["steps"])
 	if !ok {
-		return false, unreadable
+		return false, true, unreadableDetail
 	}
 	testStep, testConclusion, testReadable := "", "", false
 	for _, raw := range steps {
 		step, isObject := Object(raw)
 		if !isObject {
-			return false, unreadable
+			return false, true, unreadableDetail
 		}
 		stepName := strOf(step.Get("name"))
 		if strings.HasPrefix(stepName, LightTestStepPrefix) {
@@ -425,12 +428,12 @@ func jobTestSkipped(j map[string]any, runText string) (skipped bool, detail stri
 	}
 	if testStep == "" {
 		// The test step is absent from a readable list: the leg's test run did not conclude success.
-		return true, ""
+		return true, false, ""
 	}
 	if !testReadable {
-		return false, unreadable
+		return false, true, unreadableDetail
 	}
-	return testConclusion != "success", ""
+	return testConclusion != "success", false, ""
 }
 
 func provider(n map[string]any) any {
@@ -526,12 +529,18 @@ func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, conn
 				detailEntry["notRun"] = true
 			}
 			// The same value on the check entry and on the detail entry: a leg that concluded
-			// success without running its tests is told from one that ran them (CRW-824).
-			if skipped, detail := jobTestSkipped(j, runText); skipped {
+			// success without running its tests is told from one that ran them (CRW-824), and a
+			// leg whose test step cannot be read is told from both, so a reading that sees only
+			// the check rows does not take it as a leg that ran its tests (CRW-946).
+			skipped, unreadable, unreadableDetail := jobTestSkipped(j, runText)
+			if skipped {
 				entry["testSkipped"] = true
 				detailEntry["testSkipped"] = true
-			} else if detail != "" {
-				*problems = append(*problems, Problem{Code: UnreadableCode, Detail: detail})
+			}
+			if unreadable {
+				entry["testUnreadable"] = true
+				detailEntry["testUnreadable"] = true
+				*problems = append(*problems, Problem{Code: UnreadableCode, Detail: unreadableDetail})
 			}
 			if !replaced {
 				entries = append(entries, entry)

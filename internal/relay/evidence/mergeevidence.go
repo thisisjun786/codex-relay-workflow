@@ -256,6 +256,23 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 				}
 			}
 		}
+		if value, present := o.Lookup("testUnreadable"); present {
+			flag, isBool := value.(bool)
+			if !isBool {
+				bad(where + " states testUnreadable as " + quote.Kind(value) + ", not true or false; the collector sets it to say a test leg concluded success and its test step could not be read, and a value of another type cannot say that")
+			} else if flag {
+				// Only a go-product test leg that concluded success and whose test step cannot be
+				// read carries the mark, and the two marks are opposite answers, so a record that
+				// sets both says nothing about the leg (CRW-946).
+				if !isLightLegName(entry) {
+					bad(where + " states testUnreadable true on " + quote.Value(o.Get("name")) + ", and only a " + lightLegPrefix + "*) leg's test step can fail to be read; another job name cannot be one")
+				} else if o.Get("conclusion") != "success" {
+					bad(where + " states testUnreadable true on conclusion " + quote.Value(o.Get("conclusion")) + ", and a leg whose test step could not be read concluded success; another conclusion cannot be one")
+				} else if other, isBool := o.Get("testSkipped").(bool); isBool && other {
+					bad(where + " states testUnreadable and testSkipped together, and a leg that skipped its tests is not one whose test step could not be read; a record that says both cannot be read")
+				}
+			}
+		}
 	}
 	return problems
 }
@@ -435,10 +452,13 @@ func testedElsewhere(checks []any, head, name, provider string, pinned, skipped 
 
 // ranEverySkippedLeg reports whether the candidate workflow run holds, for every leg name the
 // judged run marked testSkipped, that leg at its own newest attempt within the candidate run: the
-// same head, conclusion success, and no testSkipped mark (CRW-946). A run that holds no leg of that
-// name answers none of them, so a run with no test leg at all is never a substitute. The judged
-// run's skipped leg names come from testSkippedJobs, which already reads each leg at its own newest
-// attempt.
+// same head, conclusion success, no testSkipped mark and no testUnreadable mark (CRW-946). The
+// unreadable mark is what the collector puts on a success leg whose test step could not be read:
+// without it the check row is indistinguishable from a leg that ran its tests, and the reading that
+// sees only the rows -- the merge turn's -- would take an unconfirmed leg as the evidence (CRW-946,
+// the correction of PR #875). A run that holds no leg of that name answers none of them, so a run
+// with no test leg at all is never a substitute. The judged run's skipped leg names come from
+// testSkippedJobs, which already reads each leg at its own newest attempt.
 func ranEverySkippedLeg(checks []any, candidate, head string, skipped []string, highest map[string]*big.Int) bool {
 	for _, leg := range skipped {
 		answered := false
@@ -455,6 +475,9 @@ func ranEverySkippedLeg(checks []any, candidate, head string, skipped []string, 
 				continue
 			}
 			if flag, isBool := o.Get("testSkipped").(bool); isBool && flag {
+				continue
+			}
+			if flag, isBool := o.Get("testUnreadable").(bool); isBool && flag {
 				continue
 			}
 			answered = true
@@ -660,13 +683,29 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 	}
 	var unanswered []string
 	incumbent := ""
+	// skippedRun marks the workflow runs that hold a testSkipped leg of their own: a run whose gate
+	// concluded success without running the tests. Its gate answers no integration, even where the run
+	// was itself exempted by a substitute, because the substitute answers the integration through its
+	// own gate and not through this one (CRW-946). Without this, a light run from one integration and
+	// a full run from another would together satisfy both, although neither ran the whole suite.
+	skippedRun := map[string]bool{}
+	for _, entry := range checks {
+		run := workflowRun(textField(entry, "runId"))
+		if _, seen := skippedRun[run]; run != "" && !seen {
+			skippedRun[run] = len(testSkippedJobs(checks, run, highest)) > 0
+		}
+	}
 	for _, name := range required {
 		for _, provider := range providers[name] {
 			found := false
 			for _, entry := range checks {
 				if textField(entry, "name") == name && textField(entry, "provider") == provider && attempt(entry).Cmp(highest[textField(entry, "runId")]) == 0 {
 					o, _ := Object(entry)
-					found = found || o.Get("conclusion") == "success"
+					// The success counted for a pinned integration is the gate of a run that
+					// actually ran its tests (CRW-946).
+					if o.Get("conclusion") == "success" && !skippedRun[workflowRun(textField(entry, "runId"))] {
+						found = true
+					}
 				}
 			}
 			if !found {
