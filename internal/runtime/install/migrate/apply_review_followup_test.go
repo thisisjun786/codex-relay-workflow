@@ -340,6 +340,45 @@ func TestMigrateApplyReviewFollowupJudgesALargeRecordWithoutHoldingIt(t *testing
 	}
 }
 
+// R1i: the walk must decide exactly what decoding the record would decide. These are the records where a hand-rolled
+// reader most easily drifts from encoding/json: an escaped key, a duplicate key, a member of every other JSON type, a
+// nested object that also holds the key, braces and brackets inside strings, and a record with data after it.
+func TestMigrateApplyReviewFollowupWalksAsTheDecoderWould(t *testing.T) {
+	records := map[string]struct {
+		record string
+		want   bool
+	}{
+		"a plain manifest":             {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		"the member after another":     {"{\"a\":1,\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"b\":2}", true},
+		"an escaped key":               {"{\"artifact\\u004danifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		"a duplicate key, last wins":   {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
+		"an empty array then a member": {"{\"artifactManifest\":[],\"artifactManifest\":[{\"path\":\"w.json\",\"kind\":\"verdict\"}]}", true},
+		"an empty array":               {"{\"artifactManifest\":[]}", false},
+		"a null member":                {"{\"artifactManifest\":null}", false},
+		"a string member":              {"{\"artifactManifest\":\"x\"}", false},
+		"a number member":              {"{\"artifactManifest\":1}", false},
+		"an object member":             {"{\"artifactManifest\":{}}", false},
+		"a brace inside a string":      {"{\"artifactManifest\":[{\"path\":\"a}\"}]}", true},
+		"a bracket inside a string":    {"{\"artifactManifest\":[{\"path\":\"a]\"}]}", true},
+		"a nested object holding it":   {"{\"nested\":{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}}", false},
+		"nested values before it":      {"{\"outer\":{\"x\":{\"y\":[1,2,{\"z\":\"}\"}]}},\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]}", true},
+		"data after the object":        {"{\"artifactManifest\":[{\"path\":\"v.json\",\"kind\":\"verdict\"}]} {}", false},
+		"an empty object":              {"{}", false},
+		"not an object":                {"[]", false},
+		"not JSON at all":              {"", false},
+		"an unterminated array":        {"{\"artifactManifest\":[}", false},
+		"a trailing comma":             {"{\"a\":1,}", false},
+	}
+	for name, c := range records {
+		t.Run(name, func(t *testing.T) {
+			_, got := migrateReviewFollowupDecodeManifest(strings.NewReader(c.record), migrateReviewFollowupReceiptReadCap)
+			if got != c.want {
+				t.Errorf("record %s: judged %v, want %v", c.record, got, c.want)
+			}
+		})
+	}
+}
+
 // R1g2: the end-to-end case: a receipt whose manifest path holds bytes that are not UTF-8 names the plan file the
 // reader's own text holds, so the artifact must publish before a plain record of the same rank. Decoding the raw bytes
 // would name a file that is not in the plan and leave the artifact in plan order.

@@ -683,27 +683,36 @@ func (s *migrateReviewFollowupScan) skipSpace() error {
 	}
 }
 
-// key reads an object key's bytes after its opening quote, so the caller can compare it by its exact spelling.
+// key reads an object key and returns the string the decoder would read, so the caller compares the same text the
+// receipt reader's own map lookup compares. The raw token is handed to encoding/json rather than unescaped by hand,
+// because an escape such as \u004d is part of the key the reader sees and a hand-rolled unescaper would miss it.
 func (s *migrateReviewFollowupScan) key() (string, error) {
-	var b strings.Builder
+	raw := []byte{'"'}
 	for {
 		c, err := s.br.ReadByte()
 		if err != nil {
 			return "", err
 		}
+		if len(raw) >= migrateReviewFollowupKeyCap {
+			return "", errors.New("key is too long")
+		}
+		raw = append(raw, c)
 		switch c {
-		case '"':
-			return b.String(), nil
 		case '\\':
-			if c, err = s.br.ReadByte(); err != nil {
+			c, err = s.br.ReadByte()
+			if err != nil {
 				return "", err
 			}
-			b.WriteByte(c)
-		default:
-			b.WriteByte(c)
-		}
-		if b.Len() > migrateReviewFollowupKeyCap {
-			return "", errors.New("key is too long")
+			if len(raw) >= migrateReviewFollowupKeyCap {
+				return "", errors.New("key is too long")
+			}
+			raw = append(raw, c)
+		case '"':
+			var key string
+			if err := json.Unmarshal(raw, &key); err != nil {
+				return "", err
+			}
+			return key, nil
 		}
 	}
 }
