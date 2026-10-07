@@ -1261,3 +1261,77 @@ func TestPromptDcloseHugeIntegrityReasonsKeepThePublicationAccounting(t *testing
 		t.Errorf("the bounded reasons did not name what they left out: %q", answer[:min(len(answer), 400)])
 	}
 }
+
+// TestPromptDcloseWarnedMarkerIsNamedAsTheMarker is the c1 case for a marker whose write published
+// and then failed the directory sync: the shared state warning says only "the session state", so a
+// refusal that carried it would not identify the artifact this close published. The line must name
+// the recovery marker.
+func TestPromptDcloseWarnedMarkerIsNamedAsTheMarker(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-warned-marker"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-warned-marker")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-warned-marker")
+	seams := &promptDcloseSeams{
+		// The marker reaches its final path, then the directory sync fails; the plan write then fails
+		// before its rename, so the refusal names the marker alone.
+		writeMarker: func(string, state.State, string, *string) error {
+			return &state.PublishedError{Err: syscall.EIO}
+		},
+		writePlan: func(string, *goalplan.Goalplan) error {
+			return errors.New("the goalplan could not be written before the rename")
+		},
+	}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	want := promptDcloseMarkerPublishedWarning(&state.PublishedError{Err: syscall.EIO})
+	if !strings.Contains(answer, want) {
+		t.Errorf("the refusal did not name the warned marker\n got %q\nwant it to contain %q", answer, want)
+	}
+	if strings.Contains(answer, "the session state was published but its directory could not be synced") {
+		t.Errorf("the refusal named the session state instead of the marker it published: %q", answer)
+	}
+}
+
+// TestPromptDcloseHugeDependencyListKeepsThePublicationAccounting is the d2 case for the
+// dependencies_unmet refusal: its dependency list is joined before the publication accounting is
+// appended, so a very large list can push the accounting past the harness's cut.
+func TestPromptDcloseHugeDependencyListKeepsThePublicationAccounting(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-huge-deps"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// The target is still open and waits on a very large list of real phases that are not done, so
+	// the retry refuses dependencies_unmet with that list embedded before the accounting.
+	deps := make([]string, 0, 400)
+	phases := make([]goalplan.GoalplanWorkPhase, 0, 402)
+	phases = append(phases, goalplan.GoalplanWorkPhase{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseInProgress,
+		Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}})
+	phases = append(phases, goalplan.GoalplanWorkPhase{ID: "wp-2", Title: "two", Status: goalplan.WorkPhasePending,
+		Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}})
+	for i := 0; i < 400; i++ {
+		id := "wp-dep-" + strconv.Itoa(i) + "-" + strings.Repeat("d", 100)
+		deps = append(deps, id)
+		phases = append(phases, goalplan.GoalplanWorkPhase{ID: id, Title: "dep", Status: goalplan.WorkPhasePending,
+			Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}})
+	}
+	phases[0].DependsOn = deps
+	promptDcloseRecoveryPlan(t, cwd, slug, phases, promptDcloseStr("wp-1"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "now waits for") {
+		t.Fatalf("the retry did not refuse dependencies_unmet: %q", answer[:min(len(answer), 200)])
+	}
+	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
+		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 300)])
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer[:min(len(answer), 300)])
+	}
+	if !strings.Contains(answer, "more dependency(ies)") {
+		t.Errorf("the bounded list did not name what it left out: %q", answer[:min(len(answer), 400)])
+	}
+}

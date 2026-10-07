@@ -678,11 +678,17 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 		if refusal := guard(); refusal != "" {
 			return promptDclosePlanOutcome{output: refusal}, nil
 		}
-		markerLanded, markerWarning := promptDcloseWriteLanded(writeMarker(p.Cwd, held, closePhaseID, markerNext))
+		markerErr := writeMarker(p.Cwd, held, closePhaseID, markerNext)
+		markerLanded, markerWarning := promptDcloseWriteLanded(markerErr)
 		if !markerLanded {
 			// The marker never reached its final path, so this close published nothing and the bare
 			// refusal is exact.
 			return promptDclosePlanOutcome{output: promptDcloseStateRefusal()}, nil
+		}
+		if markerWarning != "" {
+			// The shared state warning says only "the session state"; the artifact this close published
+			// is the recovery marker, so the line names it (CRW-930, c1).
+			markerWarning = promptDcloseMarkerPublishedWarning(markerErr)
 		}
 		published.marker = promptDclosePublication{landed: true, warning: markerWarning}
 		promptDcloseSeam(seams, func(s *promptDcloseSeams) func() { return s.afterRecoveryMarkerWrite })
@@ -743,6 +749,15 @@ func promptDcloseWriteLanded(err error) (bool, string) {
 // state, so the operator's verification target is right (CRW-869, finding 2).
 func promptDcloseGoalplanPublishedWarning(err error) string {
 	return "the goalplan was published but its directory could not be synced: " + err.Error()
+}
+
+// promptDcloseMarkerPublishedWarning is the durability line for the recovery marker write. The
+// marker is published inside the session state, so the shared state warning says only "the session
+// state" and a refusal that carried it would not identify the artifact this close published
+// (CRW-930, c1/c6: each published artifact is named). The file whose durability is in question is
+// still the session state, so the sentence keeps that shape.
+func promptDcloseMarkerPublishedWarning(err error) string {
+	return "the recovery marker was published but its directory could not be synced: " + err.Error()
 }
 
 // promptDclosePartialRefusal is a refusal whose trailing "Nothing was written." claim is replaced by
@@ -901,7 +916,10 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is now " + string(closed.Status) +
 			" (CYCLE-COMPLETION-01). The recovery marker was kept; restore that work-phase and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedDependenciesUnmet:
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " now waits for " + strings.Join(closed.Unmet, ", ") +
+		// The dependency list is detail and is bounded: this refusal always carries the inherited
+		// marker, so an unbounded list would push the publication accounting past the harness's cut
+		// (CRW-930, d2).
+		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " now waits for " + promptDcloseBoundedDetail(closed.Unmet, "dependency(ies)") +
 			" (CYCLE-COMPLETION-01). The recovery marker was kept; satisfy those work-phases and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedSuccessorLost:
 		// §51: a corrupt marker points at reset, not at a fix.
