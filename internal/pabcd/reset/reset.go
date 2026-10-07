@@ -253,6 +253,12 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 // resetLinkWalkLimit, and any other lstat or readlink error. That is the kernel's answer for the
 // link (existsSync is false) and the direction that keeps the link.
 //
+// The walk resolves the target through one concatenated pathname, so a target whose prefix grows
+// past the kernel's own single-pathname limit (PATH_MAX, 4096 on Linux and 1024 on XNU) answers
+// ENAMETOOLONG from the walk's own fstatat. That is one of the errors above: the walk cannot decide
+// the target, and the answer is absent, which keeps the link. The walk never hands such a target to
+// the root-path judgement, which is reserved for a target that really leaves the root.
+//
 // The hop count starts at one because the caller already read this link's target with readlink:
 // the kernel counts that link as the first traversal it allows for the whole resolution, so a chain
 // of resetLinkWalkLimit() links inside the target makes one more than the ceiling and must not
@@ -282,9 +288,6 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			// there, so ask the kernel here and answer absent when it cannot search. This is the
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
-			if resetLinkWalkPathTooLong(resetLinkWalkSearchableName(walked)) {
-				return resetLinkWalkFollowPresent(dir, name), true
-			}
 			if !resetLinkWalkSearchable(dir, walked) {
 				return false, true
 			}
@@ -297,15 +300,6 @@ func resetLinkWalkTarget(dir *os.File, name, target string) (exists, inside bool
 			continue
 		}
 		path := resetLinkWalkPath(walked, component)
-		if resetLinkWalkPathTooLong(path) {
-			// The walk resolves the target through one concatenated pathname, and this one has reached
-			// the limit the kernel applies to a single pathname (ENAMETOOLONG). The kernel resolves the
-			// candidate's own short link name through its chain instead, so it can still reach a target
-			// the walk cannot, and answering absent here would keep a link the oracle removes. Ask the
-			// kernel the same question it answers for the oracle — one following stat of the leaf, which
-			// issues no open from this code — and take its verdict.
-			return resetLinkWalkFollowPresent(dir, name), true
-		}
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
 			return false, true
@@ -385,35 +379,6 @@ func resetLinkWalkSearchableName(walked []string) string {
 		return resetLinkWalkSearchProbe
 	}
 	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + resetLinkWalkSearchProbe
-}
-
-// resetLinkWalkPathTooLong reports whether a pathname the walk would hand to one fstatat has reached
-// the limit the kernel applies to a single pathname, where that call answers ENAMETOOLONG. The walk
-// concatenates the target's components into one pathname, while the kernel resolves the candidate's
-// short link name component by component, so a target past this limit is one the walk cannot decide
-// and must hand back rather than answer absent for.
-func resetLinkWalkPathTooLong(path string) bool {
-	return len(path) >= resetLinkWalkPathMax()
-}
-
-// resetLinkWalkFollowPresent answers whether the kernel can resolve the candidate link, by asking it
-// the same question the oracle's existsSync asks: one stat of the leaf name that follows the link.
-// The kernel resolves the link's own short target chain component by component, so it reaches targets
-// the walk cannot express in one pathname, and it needs no open from this code. Only the candidate's
-// own verdict is taken; the removal still acts on the leaf through the pinned descriptor, which
-// refuses a name that escapes the root.
-func resetLinkWalkFollowPresent(dir *os.File, name string) bool {
-	var st unix.Stat_t
-	return unix.Fstatat(int(dir.Fd()), name, &st, 0) == nil
-}
-
-// resetLinkWalkPathMax is the longest pathname one fstatat call may carry: the kernel's own PATH_MAX,
-// which is 4096 on Linux and 1024 on XNU.
-func resetLinkWalkPathMax() int {
-	if runtime.GOOS == "darwin" {
-		return 1024
-	}
-	return 4096
 }
 
 // resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point

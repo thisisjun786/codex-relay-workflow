@@ -599,13 +599,14 @@ func TestResetLinkPermReadsALongTargetWhole(t *testing.T) {
 	}
 }
 
-// TestResetLinkPermALongChainOfShortLinksIsStillResolved: the walk resolves a target through one
-// concatenated pathname, and the kernel applies its own limit to a single pathname (ENAMETOOLONG).
-// A chain whose cumulative name crosses that limit is one the walk cannot decide, while the kernel
-// resolves the candidate's short link name component by component and reaches the target, so the
-// walk must hand it back rather than answer absent for it. This is the regression the walk-only
-// return introduced, found in the pre-merge evaluation.
-func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
+// TestResetLinkPermALongChainIsDecidedInsideTheWalk: the walk resolves a target through one
+// concatenated pathname, and the kernel applies its own limit to a single pathname
+// (ENAMETOOLONG). A chain whose cumulative prefix crosses that limit is one the walk cannot
+// decide, so A3's rule for an in-root lstat error applies and the walk answers absent, which keeps
+// the link. The judgement must decide it there and must not hand it to the root-path judgement:
+// that would open the directories A2 forbids, and a renamed pinned directory would turn the
+// verdict into a reset-wide refusal instead of an absent target.
+func TestResetLinkPermALongChainIsDecidedInsideTheWalk(t *testing.T) {
 	root := t.TempDir()
 	sessions := filepath.Join(root, ".crw", "sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {
@@ -648,11 +649,11 @@ func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
 	if err := os.Symlink("next", "a.json"); err != nil {
 		t.Fatal(err)
 	}
-	// The oracle's answer: a stat of the short link name, which the kernel resolves component by
-	// component.
-	_, oracleErr := os.Stat(filepath.Join(sessions, "a.json"))
-	if oracleErr != nil {
-		t.Fatalf("the control must resolve: %v", oracleErr)
+	// The kernel resolves the short link name component by component and reaches the file, while the
+	// walk cannot express that target in one pathname: this divergence keeps the link, the direction
+	// the defect file records, and the control below pins that the kernel really does resolve it.
+	if _, err := os.Stat(filepath.Join(sessions, "a.json")); err != nil {
+		t.Fatalf("the control must resolve through the kernel: %v", err)
 	}
 	crw := filepath.Join(root, ".crw")
 	parent, err := os.OpenRoot(crw)
@@ -669,8 +670,8 @@ func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	// The verdict must be the kernel's, the descriptor stat must not be asked for an in-root target,
-	// and a renamed pinned directory must not turn the answer into a refusal.
+	// The verdict must be the walk's own absent, the descriptor stat must not be asked for an in-root
+	// target, and a renamed pinned directory must not turn the answer into a refusal.
 	calls := 0
 	stat := func(name string) (os.FileInfo, error) {
 		calls++
@@ -678,15 +679,14 @@ func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
 	}
 	got, err := resetLinkTargetExistsWith(pinned, "a.json", stat)
 	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v (a long chain must be absent or present, not a refusal)", err)
+		t.Fatalf("resetLinkTargetExists: %v (a target inside the root must be absent or present, not a refusal)", err)
 	}
-	if got != (oracleErr == nil) {
-		t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
+	if got {
+		t.Errorf("exists = true, want false: the walk cannot express this target in one pathname and answers absent")
 	}
 	if calls != 0 {
-		t.Errorf("root stat calls = %d, want 0: an in-root target must be decided without it", calls)
+		t.Errorf("root stat calls = %d, want 0: the target must not reach the root-path judgement", calls)
 	}
-	// A renamed pinned directory must not change that verdict.
 	if err := os.Rename(sessions, filepath.Join(root, ".crw", "moved")); err != nil {
 		t.Fatal(err)
 	}
@@ -702,5 +702,93 @@ func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("root stat calls = %d after the rename, want 0", calls)
+	}
+}
+
+// TestResetLinkPermALongChainToAnOutOfRootTargetKeepsTheLink: the length case must not be answered
+// by following the candidate's own chain, because a following stat of the leaf reports the target of
+// a chain that really leaves the root, and the judgement would then remove a link whose out-of-root
+// target the contract refuses to act on once the pinned directory was renamed. The walk cannot
+// express this target in one pathname, so A3's rule applies and the verdict is absent: the link is
+// kept, and the root-path judgement is never reached.
+func TestResetLinkPermALongChainToAnOutOfRootTargetKeepsTheLink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessions := filepath.Join(root, ".crw", "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const depth = 18
+	name := strings.Repeat("d", 240)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(sessions); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+	for i := 0; i < depth; i++ {
+		if err := os.Mkdir(name, 0o755); err != nil {
+			t.Fatalf("mkdir depth %d: %v", i, err)
+		}
+		if err := os.Symlink(name+"/next", "next"); err != nil {
+			t.Fatalf("symlink depth %d: %v", i, err)
+		}
+		if err := os.Chdir(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The deepest link leaves the root.
+	if err := os.Symlink(outside, "next"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("next", "a.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(sessions, "a.json")); err != nil {
+		t.Fatalf("the control must resolve through the kernel: %v", err)
+	}
+	crw := filepath.Join(root, ".crw")
+	parent, err := os.OpenRoot(crw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	observed, err := parent.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := resetPin(parent, "sessions", observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	calls := 0
+	stat := func(name string) (os.FileInfo, error) {
+		calls++
+		return pinned.Stat(name)
+	}
+	if err := os.Rename(sessions, filepath.Join(root, ".crw", "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resetLinkTargetExistsWith(pinned, "a.json", stat)
+	if err != nil {
+		t.Fatalf("resetLinkTargetExists: %v (a renamed pin must not turn this into a refusal)", err)
+	}
+	if got {
+		t.Errorf("exists = true, want false: the link must be kept, not removed for an out-of-root target")
+	}
+	if calls != 0 {
+		t.Errorf("root stat calls = %d, want 0: the length case must be decided by the walk", calls)
 	}
 }
