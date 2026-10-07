@@ -33,7 +33,9 @@ const recordFile = "pin.json"
 const fetchTimeout = 120 * time.Second
 
 // maxArchiveBytes bounds what is read into memory: the archive is verified and unpacked from the
-// same bytes, so nothing can change between the digest and the unpack.
+// same file, so nothing can change between the digest and the unpack. It bounds the downloaded
+// archive, not what stays in memory: the archive is streamed to a file under temp_root and only the
+// executable member is held while it is unpacked.
 const maxArchiveBytes = 256 << 20
 
 // stagingPrefix names the directory an install stages into under tools_root. It stays inside the
@@ -59,6 +61,11 @@ type Seams struct {
 	Now func() time.Time
 	// Getenv reads the environment the configuration is resolved from; nil means os.Getenv.
 	Getenv func(string) string
+	// BeforeRepair is called once by an install after it has prepared the copy it will rename into
+	// place and before it takes the pin's lock, so a test can order two overlapping installs
+	// deterministically. It must not wait on work that is itself blocked on the lock. nil means no
+	// hook, which is the production value.
+	BeforeRepair func()
 }
 
 func (s *Seams) platform() (string, string) {
@@ -98,6 +105,24 @@ func (s *Seams) urlBase() string {
 		return strings.TrimSuffix(s.URLBase, "/")
 	}
 	return ReleaseBase
+}
+
+// supported reports whether this host has an archive for the pin. It is the single platform rule
+// install, path and list read, so all three agree on which pins this host can run.
+func supported(pin Pin, seams *Seams) bool {
+	goos, goarch := seams.platform()
+	return pin.Supports(goos, goarch)
+}
+
+// platformRefusal answers the unsupported_platform refusal when this host has no archive for the
+// pin, and nil when it does. install and path both use it, so the two agree on the platform rule and
+// its wording, and neither answers with a binary this host cannot run.
+func platformRefusal(pin Pin, seams *Seams) error {
+	if supported(pin, seams) {
+		return nil
+	}
+	goos, goarch := seams.platform()
+	return refuse("unsupported_platform", usageExit, "%s has no archive for %s", pin.describe(), platformName(goos, goarch))
 }
 
 // failure is a refused command: the reason the product names, a detail a person reads, and the
@@ -161,8 +186,11 @@ type listRow struct {
 	Archive    string `json:"archive"`
 	SHA256     string `json:"sha256"`
 	Executable string `json:"executable"`
-	Installed  bool   `json:"installed"`
-	Path       string `json:"path"`
+	// Supported is whether this host can run the pin's archive. A pin this host cannot run is
+	// never reported as installed, whatever files the tools root holds.
+	Supported bool   `json:"supported"`
+	Installed bool   `json:"installed"`
+	Path      string `json:"path"`
 }
 
 // listReport is the crw tools list document.
@@ -234,7 +262,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, seams *Se
 		}
 	case "path":
 		var path string
-		path, runErr = installedPath(pin, toolsRoot)
+		// The platform rule is checked before the installed-path fast path, exactly as install
+		// checks it, so a tools root shared or restored from another host never hands back a binary
+		// this host cannot run.
+		if runErr = platformRefusal(pin, seams); runErr == nil {
+			path, runErr = installedPath(pin, toolsRoot)
+		}
 		if runErr == nil {
 			fmt.Fprintf(stdout, "%s\n", path)
 		}
@@ -261,23 +294,30 @@ func runList(seams *Seams, stdout, stderr io.Writer) int {
 		return usageExit
 	}
 	toolsRoot := resolved[crwconfig.RootTools].Path
+	goos, goarch := seams.platform()
 	report := listReport{Pins: make([]listRow, 0, len(Pins))}
 	for _, pin := range Pins {
 		row := listRow{
 			Name: pin.Name, Version: pin.Version, Archive: pin.Archive, SHA256: pin.SHA256,
 			Executable: pin.Executable,
 		}
-		path, err := installedPath(pin, toolsRoot)
-		switch {
-		case err == nil:
-			row.Installed, row.Path = true, path
-		case !isNotInstalled(err):
-			// The install state could not be established (an unreadable record, an unreadable
-			// directory): reporting "not installed" here would be a false answer, so the failure
-			// is reported and the command exits non-zero rather than claiming a state it did not
-			// read.
-			fmt.Fprintf(stderr, "crw tools list: error: %v\n", err)
-			return statusOf(err)
+		row.Supported = pin.Supports(goos, goarch)
+		// A pin this host has no archive for is never reported as installed: whatever files a
+		// shared tools root holds, this host cannot run them, so the install state is not read at
+		// all and the row stays installed:false with an empty path.
+		if row.Supported {
+			path, err := installedPath(pin, toolsRoot)
+			switch {
+			case err == nil:
+				row.Installed, row.Path = true, path
+			case !isNotInstalled(err):
+				// The install state could not be established (an unreadable record, an unreadable
+				// directory): reporting "not installed" here would be a false answer, so the failure
+				// is reported and the command exits non-zero rather than claiming a state it did not
+				// read.
+				fmt.Fprintf(stderr, "crw tools list: error: %v\n", err)
+				return statusOf(err)
+			}
 		}
 		report.Pins = append(report.Pins, row)
 	}
