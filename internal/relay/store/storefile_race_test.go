@@ -260,6 +260,32 @@ func TestStoreFileRace_siblingDiscoverySkipsANonRegularDatabase(t *testing.T) {
 	}
 }
 
+// TestStoreFileRace_repeatedRefusalsDoNotExhaustDescriptors pins the cost of the artifact
+// refusal: a path this process already knows as a store file is refused before it is opened, so
+// verifying the same store-file artifact again and again does not leave a descriptor behind each
+// time.
+func TestStoreFileRace_repeatedRefusalsDoNotExhaustDescriptors(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "relay.sqlite3")
+	s := openRaceStore(t, path)
+	defer func() { _ = s.Close() }()
+
+	// The first refusal is allowed to cost one descriptor (it is the one that teaches the
+	// registry the sidecars' identities); every later one must not.
+	if _, _, _, err := HashArtifact(context.Background(), path, []string{root}, false); err == nil {
+		t.Fatal("the store file was hashed instead of refused")
+	}
+	before := openDescriptorCount(t)
+	for range 25 {
+		if _, _, _, err := HashArtifact(context.Background(), path, []string{root}, false); err == nil {
+			t.Fatal("the store file was hashed instead of refused")
+		}
+	}
+	if after := openDescriptorCount(t); after != before {
+		t.Fatalf("repeated store-file refusals grew the process's descriptors: %d -> %d (CRW-880)", before, after)
+	}
+}
+
 // TestStoreFileRace_hashArtifactRefusesAStoreFileThisProcessOpened is defect 3: the artifact
 // reader refuses a store file this process holds or opened, hands the descriptor to the
 // registry instead of closing it, and still hashes an ordinary artifact.

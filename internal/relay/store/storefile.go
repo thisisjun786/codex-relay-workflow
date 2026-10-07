@@ -186,7 +186,14 @@ func recordStoreFilePath(resolved string) {
 func holdsStoreFileIdentity(device, inode uint64) bool {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
-	if _, ok := heldStoreFiles.byKey[storeFileKey{device, inode}]; ok {
+	return holdsStoreFileIdentityLocked(device, inode)
+}
+
+// holdsStoreFileIdentityLocked is holdsStoreFileIdentity with the registry lock already held. It
+// stats and never opens. The caller holds the lock.
+func holdsStoreFileIdentityLocked(device, inode uint64) bool {
+	key := storeFileKey{device, inode}
+	if _, ok := heldStoreFiles.byKey[key]; ok {
 		return true
 	}
 	for path := range heldStoreFiles.recorded {
@@ -207,13 +214,36 @@ func holdsStoreFileIdentity(device, inode uint64) bool {
 	return false
 }
 
-// keepStoreFileDescriptor keeps a descriptor this process must not close reachable for the life
-// of the process. The artifact reader hands one here instead of closing it (CRW-880).
-func keepStoreFileDescriptor(fd int, name string) {
+// closeOrKeepStoreFileDescriptor closes fd unless its identity is a store file this process holds
+// or opened, in which case the descriptor is kept reachable instead: closing any descriptor of
+// such a file drops this process's POSIX locks on it (CRW-880, I-563). The decision and the close
+// are made under the registry lock, and store.open takes that same lock to record a path before it
+// connects, so a store opened while the caller was reading is still recognised here.
+func closeOrKeepStoreFileDescriptor(fd int, name string) {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
-	clearStoreFileNonblock(fd)
-	heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, os.NewFile(uintptr(fd), name))
+	if identity, measured := fstatIdentity(fd); measured && holdsStoreFileIdentityLocked(identity.device, identity.inode) {
+		clearStoreFileNonblock(fd)
+		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, os.NewFile(uintptr(fd), name))
+		return
+	}
+	_ = syscall.Close(fd)
+}
+
+// knownStoreFileIdentityAt is the identity of the path itself, without following a symbolic link
+// and without opening anything. The artifact reader asks it before it opens, so a path this
+// process already knows as a store file is refused without producing a descriptor that would have
+// to be kept unclosed for the life of the process (CRW-880).
+func knownStoreFileIdentityAt(path string) (storeFileKey, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return storeFileKey{}, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return storeFileKey{}, false
+	}
+	return storeFileKey{uint64(stat.Dev), uint64(stat.Ino)}, true
 }
 
 // storeFileKeyOf is the identity of the file a path names, without opening it. ok is false when

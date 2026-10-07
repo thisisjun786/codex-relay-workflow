@@ -80,19 +80,22 @@ func HashArtifact(ctx context.Context, declared string, roots []string, allowLea
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
+	// A path this process already knows as a store file is refused before it is opened, so the
+	// refusal produces no descriptor that would have to be kept unclosed for the life of the
+	// process (CRW-880). A store file reached by a name the registry does not know is still
+	// refused below, on the opened descriptor.
+	if key, known := knownStoreFileIdentityAt(declared); known && holdsStoreFileIdentity(key.device, key.inode) {
+		return "", 0, ArtifactBinding{}, refuse(ReasonScopeEscape, "%s is a relay store file this process holds or opened, so it is refused rather than read and closed", pyvalue.StrRepr(declared))
+	}
 	fd, err := pinnedOpen(declared)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
-	// Every ordinary return closes the descriptor. A store file this process holds or opened is
-	// the one exception: it is handed to the registry instead, because closing any descriptor of
-	// such a file drops this process's POSIX locks on it (CRW-880, I-563).
-	kept := false
-	defer func() {
-		if !kept {
-			_ = syscall.Close(fd)
-		}
-	}()
+	// The descriptor is closed on every return, unless it turns out to name a store file this
+	// process holds or opened: closing any descriptor of such a file drops this process's POSIX
+	// locks on it, so that one is kept reachable instead (CRW-880, I-563). The decision is made
+	// under the registry lock by closeOrKeepStoreFileDescriptor.
+	defer closeOrKeepStoreFileDescriptor(fd, declared)
 	actual, err := descriptorPath(fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
@@ -110,13 +113,10 @@ func HashArtifact(ctx context.Context, declared string, roots []string, allowLea
 	if mode&syscall.S_IFMT != syscall.S_IFREG {
 		return "", 0, ArtifactBinding{}, refuse(ReasonNotARegularFile, "%s is not a regular file", pyvalue.StrRepr(declared))
 	}
-	// An artifact whose identity is a store file this process holds or opened is refused rather
-	// than read. Reading it means holding a descriptor of a file whose POSIX locks this process
-	// already holds, and closing that descriptor - which the deferred close would do - drops
-	// those locks. The descriptor is handed to the registry, which never closes it (CRW-880).
+	// An artifact whose opened descriptor's identity is a store file this process holds or opened
+	// is refused rather than read (CRW-880): the deferred close above keeps its descriptor instead
+	// of closing it, so the refusal and the descriptor handover are one decision.
 	if holdsStoreFileIdentity(uint64(before.dev), uint64(before.ino)) {
-		keepStoreFileDescriptor(fd, declared)
-		kept = true
 		return "", 0, ArtifactBinding{}, refuse(ReasonScopeEscape, "%s is a relay store file this process holds or opened, so it is refused rather than read and closed", pyvalue.StrRepr(declared))
 	}
 	binding := ArtifactBinding{Mode: BestEffortDetection, Detail: "lease not attempted", Declared: declared, Root: root}
