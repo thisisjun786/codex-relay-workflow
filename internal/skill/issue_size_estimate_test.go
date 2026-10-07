@@ -99,8 +99,8 @@ func TestIssueSizeEstimateReadsTheRightSections(t *testing.T) {
 
 func TestIssueSizeEstimateScalesOverTheCeiling(t *testing.T) {
 	code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), nil)
-	if code != 1 || at(r, "decision") != "split_recommended" || at(r, "assignable") != false {
-		t.Errorf("exit %d, decision %v, assignable %v: %s", code, at(r, "decision"), at(r, "assignable"), out)
+	if code != 0 || at(r, "decision") != "over_line" {
+		t.Errorf("exit %d, decision %v: %s", code, at(r, "decision"), out)
 	}
 	found := false
 	for _, reason := range atList(r, "reasons") {
@@ -128,7 +128,7 @@ func TestIssueSizeEstimateCeiling(t *testing.T) {
 		want    int
 	}{
 		{"stated", 2000, 0, 2000},
-		{"zero is used as stated", 0, 1, 0},
+		{"zero is used as stated", 0, 0, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), map[string]any{"size_ceiling": test.ceiling})
@@ -144,7 +144,7 @@ func TestIssueSizeEstimateCeiling(t *testing.T) {
 
 // An estimate large enough that a naive int64 product would overflow is still compared exactly.
 func TestIssueSizeEstimateLargeEstimateDoesNotOverflow(t *testing.T) {
-	if code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 2000000000000000줄"), nil); code != 1 || at(r, "decision") != "split_recommended" {
+	if code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 2000000000000000줄"), nil); code != 0 || at(r, "decision") != "over_line" {
 		t.Errorf("exit %d, decision %v: %s", code, at(r, "decision"), out)
 	}
 }
@@ -160,12 +160,13 @@ func TestIssueSizeNoEstimateIsUnchanged(t *testing.T) {
 	}
 }
 
-// A user-approved exception makes the scaled-over-ceiling reason assignable again.
+// A user-approved exception is recorded beside the scaled-over-ceiling reason; the answer stays
+// advisory and the decision does not change.
 func TestIssueSizeEstimateException(t *testing.T) {
 	exception := map[string]any{"issue": "CRW-SYN", "approved_by": "Reviewer", "approved_on": "2026-10-06", "statement": "Keep it as one issue."}
 	code, r, out := sizeEstimateCheck(t, sizeEstimateBody("약 450줄"), map[string]any{"exception": exception})
-	if code != 0 || at(r, "assignable") != true || at(r, "decision") != "split_recommended" || at(r, "exception_record") == nil {
-		t.Errorf("exit %d, assignable %v, decision %v: %s", code, at(r, "assignable"), at(r, "decision"), out)
+	if code != 0 || at(r, "decision") != "over_line" || at(r, "exception_record") == nil {
+		t.Errorf("exit %d, decision %v: %s", code, at(r, "decision"), out)
 	}
 }
 
