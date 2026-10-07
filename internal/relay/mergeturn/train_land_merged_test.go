@@ -323,6 +323,113 @@ func TestTrainLandDoesNotRepromoteAnOccupiedTarget(t *testing.T) {
 	}
 }
 
+// TestTrainMatrixGuardReadsOnlyTheMatrixBlock: the guard must judge the matrix's own keys, not any
+// "include"/"exclude" text elsewhere in the job — a step input or an env entry named that way is not
+// a matrix change, and a normal head must not be refused merge_target_unreadable for it
+// (CRW-897, answer 2; pre-merge evaluation d2).
+func TestTrainMatrixGuardReadsOnlyTheMatrixBlock(t *testing.T) {
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// an env entry and a step input named include, beside the unchanged matrix
+	withNoise := strings.Replace(string(repository), "    strategy:", "\n    env:\n      include: ci\n    strategy:", 1)
+	if withNoise == string(repository) {
+		t.Fatal("the fixture did not add an env include")
+	}
+	jobs, err := TrainJobsFromWorkflow(withNoise)
+	if err != nil {
+		t.Fatalf("a workflow with an env include key: %v", err)
+	}
+	if strings.Join(jobs, ",") != strings.Join(TrainExpectedJobs, ",") {
+		t.Fatalf("jobs = %v, want the workflow's own jobs", jobs)
+	}
+	// and through verify the head is accepted
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.proof.workflow = withNoise
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
+		t.Fatalf("a head with an env include key: %v", err)
+	}
+}
+
+// TestTrainMatrixGuardRefusesAnExtraAxis: any matrix key that is not part adds or recombines legs the
+// part list does not name, so it is refused rather than read as the part list alone
+// (CRW-897, answer 2; pre-merge evaluation d1).
+func TestTrainMatrixGuardRefusesAnExtraAxis(t *testing.T) {
+	base := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix:\n        part: [lint, test-1]\n"
+	if _, err := TrainJobsFromWorkflow(base); err != nil {
+		t.Fatalf("a part-only matrix: %v", err)
+	}
+	for _, tc := range []struct{ name, added string }{
+		{"an extra axis", "        os: [ubuntu, macos]\n"},
+		{"a block include", "        include:\n          - part: audit\n"},
+		{"an inline include", "        include: [{part: audit}]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := TrainJobsFromWorkflow(base + tc.added); err == nil {
+				t.Fatal("a matrix key that is not part was read as the part list alone")
+			}
+		})
+	}
+}
+
+// TestTrainMatrixGuardScopesToTheMatrixKeys: the guard must judge the matrix's own keys, not an
+// "include" that appears in a step input, an env value or a run script elsewhere in the job. Those
+// are not matrix keys, and a normal head must still be verified (CRW-897, answer 2; evaluation d2).
+func TestTrainMatrixGuardScopesToTheMatrixKeys(t *testing.T) {
+	// an "include:" inside the job but outside its matrix block is not a matrix key
+	job := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    env:\n      include: ci\n    strategy:\n      matrix:\n        part: [lint, test-1]\n"
+	jobs, err := TrainJobsFromWorkflow(job)
+	if err != nil {
+		t.Fatalf("an include key outside the matrix: %v", err)
+	}
+	if strings.Join(jobs, ",") != "validate,go-product (lint),go-product (test-1)" {
+		t.Fatalf("jobs = %v, want the part legs", jobs)
+	}
+	// an "include:" in a step input, after the matrix, is not a matrix key either
+	after := job + "    steps:\n      - uses: actions/setup-go\n        with:\n          include: all\n"
+	if _, err := TrainJobsFromWorkflow(after); err != nil {
+		t.Fatalf("an include key in a step input: %v", err)
+	}
+	// and the real workflow still reads
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, err := TrainJobsFromWorkflow(string(repository))
+	if err != nil {
+		t.Fatalf("the repository's own ci.yml: %v", err)
+	}
+	if strings.Join(real, ",") != strings.Join(TrainExpectedJobs, ",") {
+		t.Fatalf("the repository's jobs = %v, want TrainExpectedJobs", real)
+	}
+}
+
+// TestTrainMatrixGuardRefusesANonPartKey: a matrix key that is not part adds or recombines legs the
+// part list does not name, so the reader refuses it rather than reporting the part list alone
+// (CRW-897, answer 2; evaluation d1).
+func TestTrainMatrixGuardRefusesANonPartKey(t *testing.T) {
+	base := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix:\n        part: [lint, test-1]\n"
+	for _, tc := range []struct {
+		name  string
+		added string
+	}{
+		{"an extra axis", "        os: [ubuntu, macos]\n"},
+		{"a block include", "        include:\n          - part: audit\n"},
+		{"an inline include", "        include: [{part: audit}]\n"},
+		{"a block exclude", "        exclude:\n          - part: lint\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := TrainJobsFromWorkflow(base + tc.added); err == nil {
+				t.Fatal("a matrix key that is not part was read as the part list alone")
+			}
+		})
+	}
+}
+
 // TestTrainVerifyRefusesAMergedMember: verify keeps taking open pull requests only, so a member the
 // forge already marked merged is refused there with nothing written (CRW-897, answer 1).
 func TestTrainVerifyRefusesAMergedMember(t *testing.T) {

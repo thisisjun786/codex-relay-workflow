@@ -193,15 +193,27 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 	return parts, nil
 }
 
-// trainMatrixHasUnreadableKey reports whether a job body carries an include or exclude key: either
-// recombines or drops legs, so the leg names a run reports are no longer the part list. The key is
-// recognised at any indentation and whatever its value looks like — "include:" and
-// "include: [{part: audit}]" are the same statement — because an inline list would otherwise slip
-// past a check that only looked for the bare block form.
+// trainMatrixHasUnreadableKey reports whether the go-product job's strategy.matrix carries a key this
+// reader cannot compute legs from. The leg names a run reports come from the matrix, and this text
+// scan reads them only from the part list: an include or exclude list, or any other axis, recombines
+// or adds legs, so it is refused rather than read as the part list alone — the fail-open this reader
+// exists to close (CRW-897, answer 2). Only the matrix block's own keys are judged, so an "include:"
+// in a step input or an env entry elsewhere in the job is not a matrix key.
 func trainMatrixHasUnreadableKey(body string) bool {
-	for _, line := range strings.Split(body, "\n") {
+	_, after, found := strings.Cut(body, "\n      matrix:\n")
+	if !found {
+		return false
+	}
+	for _, line := range strings.Split(after, "\n") {
 		bare := trainStripComment(line)
-		if key, ok := trainJobKey(strings.TrimSpace(bare)); ok && (key == "include" || key == "exclude") {
+		if bare == "" {
+			continue
+		}
+		if !strings.HasPrefix(bare, "        ") || strings.HasPrefix(bare, "         ") {
+			// the matrix block ends at the first line at or above its own key indent
+			return false
+		}
+		if key, ok := trainJobKey(strings.TrimPrefix(bare, "        ")); ok && key != "part" {
 			return true
 		}
 	}
