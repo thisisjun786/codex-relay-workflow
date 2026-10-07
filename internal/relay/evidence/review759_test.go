@@ -409,7 +409,7 @@ func TestEvidenceReview759UnreadableRunIsNoEvidenceOnItsOwn(t *testing.T) {
 	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
 		t.Fatalf("a run that confirmed its tests is evidence, want no problem, got %v", problems)
 	}
-// And an unreadable leg beside a substitute that ran that leg is answered by the substitute.
+	// And an unreadable leg beside a substitute that ran that leg is answered by the substitute.
 	checks[1] = review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testUnreadable": true})
 	checks = append(checks,
 		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
