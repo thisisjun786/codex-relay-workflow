@@ -16,7 +16,7 @@ and no widening of its scope.
 The unit is the merge, not the diff. One issue is the work that one merge into one
 integration target finishes, and its criteria are the ones that merge can satisfy.
 
-A second issue and PR is forced when any of these holds, because each is a different merge:
+A second issue and delivery is forced when any of these holds, because each is a different merge:
 
 - the change lands in a different target repository, which is a different merge; a
   repository that is only read, validated or depended on is not a target
@@ -70,7 +70,7 @@ parallel. A line count is only a rough reference, never a boundary; the [work-un
 rules](../../../../../POLICY.md#work-units-review-and-integration) own that rule and this page
 applies it. Real parallelism comes
 from the independence described above. If the only thing separating two candidate parts is
-that they touch different files, they are one PR. A large single-landing change is one
+that they touch different files, they are one delivery. A large single-landing change is one
 issue, and three one-line changes in three repositories are three.
 
 Where the two rules seem to point opposite ways, the concept decides. The independent-verifiability
@@ -162,7 +162,7 @@ discovered by the worker at assignment, after the plan claimed to be complete.
 
 ## Align a delivered issue
 
-An issue that already has a PR is reconciled before anything new is assigned to it. Read
+An issue that already has a delivery is reconciled before anything new is assigned to it. Read
 three things first: the scope agreed when it was assigned, including its history; the
 criteria still open, measured against what its linked PRs actually merged; and its
 current owner and status. Then write one of these four outcomes before any reassignment.
@@ -177,7 +177,7 @@ current owner and status. Then write one of these four outcomes before any reass
   is no longer active, recover ownership or obtain an authorized reassignment before any
   scope change or dispatch. A live assignment is never narrowed or split before its owner
   has seen the change.
-- Its delivery PR merged and criteria are still open. Move the open criteria to a new
+- Its delivery merged and criteria are still open. A criterion inside the issue's own promise reopens the same issue key ([After the merge](../../crw-run/references/merge-readiness.md#late-review-threads)); move only the criteria outside it to a new
   issue with the merged one as its prerequisite, narrow this issue to what actually
   merged, record the narrowing on the issue, and only then may it be Done. A PR that
   satisfied part of the accepted scope belongs here, and what it delivered stays

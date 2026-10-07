@@ -210,10 +210,10 @@ Workspace ownership:
   replaces it; `go env GOFLAGS` reads back what is in effect.
   Local runs: the packages the change touches, under the settings above. The packet's
   `Verification:` line names any other check the repository requires locally (a lint or contract
-  check, say), and this rule replaces none of those. The full test suite is the hosted CI of the same
-  head, as a scoped override of the user's for tasks run under this skill, not a general rule: it
-  applies only when the packet states it, after the packet's writer has confirmed that the hosted CI
-  of that head runs the whole suite (a CI that is partial or selected by changed paths does not
+  check, say), and this rule replaces none of those. The full test suite is the local full verification of the same
+  tree, as a scoped override of the user's for tasks run under this skill, not a general rule: it
+  applies only when the packet states it, after the packet's writer has confirmed that the local
+  full verification of that tree runs the whole suite (a check that is partial or selected by changed paths does not
   qualify). The packet then records where the repository's contribution rules ask for a full local
   run and that the override covers it, and the child reports the CI run, with its id and head,
   instead of claiming a local pass. A packet that does not state the override leaves the
@@ -241,7 +241,7 @@ Workspace ownership:
   heavy command at a time. A command the limit ends is reported with its value and status, and the
   child does not raise the limit to get past it. Where
   `systemd-run --user` or the memory controller is missing, the command is not run unlimited: the
-  child says so and relies on the hosted CI of the same head]
+  child says so and relies on the local full verification of the same tree]
 - Processes you start: [carry this rule in the packet's own words, because the child works from
   the packet and may never read this reference. Other tasks build and test on this host at the same
   time, and a command line does not say whose process it is, so a kill that selects by pattern ends
@@ -574,7 +574,7 @@ field in brackets where that reduced shape names it differently.
   packet states the socket path limit, in the `Capacity and large artifacts:` line.
 - Go build resources — the `Go build resources:` line under `Workspace ownership:`, for a task that
   builds or tests Go code: the shared build cache directory and the module cache decision,
-  `GOFLAGS=-p=4`, local runs on the changed packages with the whole suite left to the hosted CI of
+  `GOFLAGS=-p=4`, local runs on the changed packages with the whole suite left to the local full verification of
   the same head (the `Verification:` line says the same), and the memory limit with its value, its
   starting memory floor and the rule against running unlimited. A packet without them leaves the
   child a cache of its own and the Go command's default parallelism. [A Non-PR packet names them in
@@ -775,7 +775,7 @@ SCOPE
 
 VERIFY
 - <commands confirmed to exist at the baseline, the acceptance example, the data boundary>
-- <local runs on the packages the change touches; what hosted CI on the same head stands in for, and what this child does not verify>
+- <local runs on the packages the change touches; what local full verification on the same tree stands in for, and what this child does not verify>
 
 STOP WHEN
 - Done: <the delivery is in place (the task branch pushed, or a pull request that is open where SCOPE names one), the repository's named verification passes on its head, the one-time reviews are finished or
@@ -874,7 +874,7 @@ host values filled in.
    a `pgrep`, `ps` or `lsof` lookup). Record the pid of every long command or run it under `timeout`, and confirm a recorded pid is still
    your process before you signal it, because a pid is reused after its process exits. A process you did not start is reported with its
    pid and working directory and left running. Run Go under the build resources SCOPE gives: the shared build cache (never `go clean
-   -cache`), `GOFLAGS=-p=4`, `-count=1` for a result you cite, and the changed packages locally, with the hosted CI of the same head standing in for the whole
+   -cache`), `GOFLAGS=-p=4`, `-count=1` for a result you cite, and the changed packages locally, with the local full verification of the same tree standing in for the whole
    suite where SCOPE states that override. A heavy command (the race detector, a large `-count`, a load reproduction) runs alone, one at
    a time, inside the memory scope and above the free-memory floor SCOPE states; a command the limit ends is reported, and you do not raise
    the limit to get past it.
@@ -959,7 +959,7 @@ SCOPE
 VERIFY
 - `go test -count=1 -v ./internal/testsupport/storeseed/ ./internal/relay/adapter/` (the seed's only caller), `make lint`, `go vet ./...`,
   `GOOS=darwin go vet ./...`, `git diff --check`. Each was confirmed to exist at the baseline. Tests use temporary synthetic data only.
-- Hosted CI on the same head stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
+- The local full verification of the same tree stands in for `make test`; you run the packages you changed, with `-count=1`, not the whole suite.
 
 STOP WHEN
 - Done: the pull request is open, the repository's named verification passes on its head, the
