@@ -11,6 +11,7 @@ package migrate
 // activation or startup path calls this.
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
@@ -511,31 +512,41 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 	return migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
 }
 
+// migrateReviewFollowupShapeProbe is how many bytes the early shape check may hold before it gives up and lets the
+// decoder stream the rest: a record whose leading whitespace runs longer than this is judged by the decoder, which
+// skips whitespace without holding it.
+const migrateReviewFollowupShapeProbe = 64 << 10
+
 // migrateReviewFollowupDecodeManifest reads one record as a receipt within limit bytes and returns the artifactManifest
 // entries it names. ok is false, with no entries, for a record that is not one JSON object with a non-empty
 // artifactManifest array, for one with data after that object, and for one that is longer than limit. The key is read by its
 // exact spelling from the decoded object, as the receipt reader's own map lookup does, so a record whose key differs in case
-// is not judged a receipt here either; the bytes the decoder consumed are compared with limit afterwards, because the
-// decoder consumes the whitespace after the object and a trailing run would otherwise let a record past the bound be judged
-// by content. The judgement is the array's presence and length, never the shape of its entries: an entry that is not an
-// object with a string path and kind names no dependency, and an array of such entries is still a receipt, so a receipt
-// this run cannot read in full keeps the referrer's place instead of falling back to plan order.
+// is not judged a receipt here either. The judgement is the array's presence and length, never the shape of its entries: an
+// entry that is not an object with a string path and kind names no dependency, and an array of such entries is still a
+// receipt, so a receipt this run cannot read in full keeps the referrer's place instead of falling back to plan order.
+//
+// Nothing here holds the record: the scan looks at every planned file under evidence/, so an artifact of hundreds of
+// megabytes must not be pulled into memory to find out it holds no manifest. The first byte that is not JSON whitespace
+// decides the common case, and the rest is decoded as it arrives, through the receipt reader's own UTF-8 normalisation
+// (source.DecodeUTF8, as gate/js.go's readFile and decodeJSON take a record's bytes). That normalisation is what the
+// reader itself applies, so a manifest path holding a byte sequence that is not UTF-8 names the plan file whose name the
+// reader's own text holds; decoding the raw bytes would name a file that is not in the plan and drop the reference.
 func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
-	data, err := io.ReadAll(io.LimitReader(r, limit+1))
-	if err != nil || int64(len(data)) > limit {
+	limited := &io.LimitedReader{R: r, N: limit + 1}
+	rest, isObject := migrateReviewFollowupShape(limited)
+	if !isObject {
 		return nil, false
 	}
-	// The record is read through the receipt reader's own UTF-8 normalisation (source.DecodeUTF8, as gate/js.go's
-	// readFile and decodeJSON take a record's bytes), so a byte that is not UTF-8 becomes the replacement text the
-	// reader itself sees, and a manifest path holding one names the plan file the reader's text holds. Decoding the raw
-	// bytes instead would drop that reference, and the record it names would keep plan order and publish after the
-	// receipt that refers to it (CRW-879).
-	dec := json.NewDecoder(strings.NewReader(source.DecodeUTF8(data)))
+	dec := json.NewDecoder(&migrateReviewFollowupNormalisingReader{src: rest})
 	var object map[string]json.RawMessage
 	if dec.Decode(&object) != nil {
 		return nil, false
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	// limit+1 bytes were consumed, so the record is longer than the receipt reader's own bound and is not judged here.
+	if limited.N == 0 {
 		return nil, false
 	}
 	raw, present := object["artifactManifest"]
@@ -565,6 +576,98 @@ func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateRev
 		manifest = append(manifest, entry)
 	}
 	return manifest, true
+}
+
+// migrateReviewFollowupShape decides whether a record can be a JSON object without reading it whole, and returns the
+// bytes it read with the rest of the record behind them. A record that cannot be one is refused after its first
+// non-whitespace byte, so an artifact of any size costs one byte here; only a record whose leading whitespace alone
+// fills the probe is handed to the decoder unjudged.
+func migrateReviewFollowupShape(r io.Reader) (io.Reader, bool) {
+	probe := make([]byte, migrateReviewFollowupShapeProbe)
+	n, err := io.ReadFull(r, probe)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, false
+	}
+	probe = probe[:n]
+	for _, c := range probe {
+		switch c {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{':
+			return io.MultiReader(bytes.NewReader(probe), r), true
+		default:
+			return nil, false
+		}
+	}
+	// Nothing but whitespace so far: the decoder reads the rest, and refuses a record that is not one JSON object.
+	return io.MultiReader(bytes.NewReader(probe), r), true
+}
+
+// migrateReviewFollowupNormalisingReader reads a record as the receipt reader's own text: each maximal invalid subpart of
+// its bytes becomes one U+FFFD (source.DecodeUTF8), so the decoder sees the string the reader itself would see. It
+// converts one chunk at a time and carries a rune the chunk ended in the middle of, so a multi-byte sequence split across
+// a chunk boundary is still one rune.
+type migrateReviewFollowupNormalisingReader struct {
+	src  io.Reader
+	buf  []byte
+	rest []byte
+	held []byte
+}
+
+func (n *migrateReviewFollowupNormalisingReader) Read(p []byte) (int, error) {
+	for len(n.rest) == 0 {
+		if n.buf == nil {
+			n.buf = make([]byte, 64<<10)
+		}
+		m, err := n.src.Read(n.buf)
+		if m == 0 && err == nil {
+			return 0, io.ErrNoProgress
+		}
+		if m > 0 {
+			raw := append(n.held, n.buf[:m]...)
+			cut := migrateReviewFollowupComplete(raw)
+			n.held = append(n.held[:0], raw[cut:]...)
+			n.rest = []byte(source.DecodeUTF8(raw[:cut]))
+		}
+		if err != nil {
+			if len(n.rest) == 0 && len(n.held) == 0 {
+				return 0, err
+			}
+			if len(n.rest) == 0 {
+				n.rest = []byte(source.DecodeUTF8(n.held))
+				n.held = n.held[:0]
+			}
+			break
+		}
+	}
+	written := copy(p, n.rest)
+	n.rest = n.rest[written:]
+	return written, nil
+}
+
+// migrateReviewFollowupComplete is the length of b that ends on a rune boundary: an incomplete multi-byte sequence at
+// the end is left out so the next chunk can finish it.
+func migrateReviewFollowupComplete(b []byte) int {
+	for i := len(b); i > 0 && i > len(b)-4; i-- {
+		c := b[i-1]
+		if c < 0x80 {
+			return len(b)
+		}
+		if c >= 0xC0 {
+			want := 2
+			switch {
+			case c >= 0xF0:
+				want = 4
+			case c >= 0xE0:
+				want = 3
+			}
+			if len(b)-(i-1) >= want {
+				return len(b)
+			}
+			return i - 1
+		}
+	}
+	return len(b)
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the

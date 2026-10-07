@@ -6,12 +6,15 @@ package migrate
 // pins and fails on the code before CRW-879 for the reason its name gives.
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"maps"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -295,17 +298,56 @@ func TestMigrateApplyReviewFollowupOrdersACycleTheSameWayOnEveryRun(t *testing.T
 	}
 }
 
-// R1g: the receipt reader takes a record's bytes through the UTF-8 normalisation it uses (source.DecodeUTF8, as
-// gate/js.go's readFile and decodeJSON do), so a manifest path holding a byte that is not UTF-8 names the plan file whose
-// name the reader's own text holds. The sequence is a truncated three-byte run, which the reader's rule (WHATWG) turns
-// into one replacement character where Go's own decode of the raw bytes makes two: judging the raw bytes would then name
-// a file that is not in the plan, and the record it should refer to would keep plan order and publish after the receipt
-// that refers to it.
+// R1g: a record that cannot be a receipt is refused without being read whole. The receipt reader's bound is the size of
+// the largest string the oracle could hold, far larger than any record, and this scan looks at every planned file under
+// evidence/: an artifact of hundreds of megabytes must not be pulled into memory, expanded into text, or even read
+// through, just to find out it holds no manifest. The counter pins how much the judgement actually pulls.
+func TestMigrateApplyReviewFollowupRefusesALargeRecordWithoutReadingIt(t *testing.T) {
+	for name, record := range map[string][]byte{
+		// Bytes that cannot be UTF-8 text at all, which the reader's own normaliser would expand by half again.
+		"not text": bytes.Repeat([]byte{0xff}, 8<<20),
+		// Valid JSON that is not an object: a decoder would read all of it before failing on the type.
+		"not an object": append([]byte("["), bytes.Repeat([]byte{'0', ','}, 4<<20)...),
+		"a bare string": append([]byte("\""), bytes.Repeat([]byte{'x'}, 8<<20)...),
+		// A number, which a decoder must read to the end to know it has ended.
+		"a bare number": append([]byte("1"), bytes.Repeat([]byte{'2'}, 8<<20)...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			counted := &migrateReviewFollowupCountingReader{data: record}
+			manifest, ok := migrateReviewFollowupDecodeManifest(counted, migrateReviewFollowupReceiptReadCap)
+			if ok || manifest != nil {
+				t.Errorf("a record that is not a JSON object is not a receipt: ok=%v manifest=%v", ok, manifest)
+			}
+			if counted.read > 64<<10 {
+				t.Errorf("the judgement read %d bytes of a %d byte record that cannot be a receipt", counted.read, len(record))
+			}
+		})
+	}
+}
+
+// migrateReviewFollowupCountingReader counts the bytes a judgement actually pulls from a record.
+type migrateReviewFollowupCountingReader struct {
+	data []byte
+	read int
+}
+
+func (c *migrateReviewFollowupCountingReader) Read(p []byte) (int, error) {
+	if c.read >= len(c.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, c.data[c.read:])
+	c.read += n
+	return n, nil
+}
+
+// R1h: the streaming reader must give exactly the text the receipt reader's own normaliser gives, whatever the record
+// holds and however the reads are cut. A record split in the middle of a multi-byte sequence, or holding bytes that are
+// not UTF-8 at all, is where a chunk-at-a-time conversion could disagree with the whole-buffer one.
+// R1g2: the end-to-end case: a receipt whose manifest path holds bytes that are not UTF-8 names the plan file the
+// reader's own text holds, so the artifact must publish before a plain record of the same rank. Decoding the raw bytes
+// would name a file that is not in the plan and leave the artifact in plan order.
 func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T) {
 	_, r, p := apPlan(t, map[string]string{
-		// The receipt names the identity file through the truncated run, and the plan holds the name the reader's own
-		// text gives it. b.json is a plain record beside the receipt, so plan order puts it before the artifact: only a
-		// reference the reader itself would resolve lifts the artifact ahead of it.
 		"evidence/s/a.json":                "{\"artifactManifest\":[{\"path\":\"z/identit" + string([]byte{0xe2, 0x82}) + "y.json\",\"kind\":\"artifact-identity\"}]}",
 		"evidence/s/b.json":                "{\"plain\":true}",
 		"evidence/s/z/identit\uFFFDy.json": "i",
@@ -322,4 +364,59 @@ func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T
 	if identity > plain {
 		t.Errorf("the reader's own text names the identity file, so it must publish before a plain record: %v", got)
 	}
+}
+
+func TestMigrateApplyReviewFollowupNormalisesAsTheReaderDoes(t *testing.T) {
+	records := [][]byte{
+		[]byte("{\"a\":1}"),
+		[]byte("{}"),
+		[]byte(""),
+		append([]byte("{\"a\":\""), 0xff),
+		append(append([]byte("{\"a\":\""), 0xff), []byte("\"}")...),
+		append(append([]byte("{\"a\":\""), 0xe2, 0x82), []byte("\"}")...),
+		append(append([]byte("{\"a\":\""), 0xe2, 0x82, 0xac), []byte("\"}")...),
+		append(append([]byte("{\"a\":\""), 0xf0, 0x9f, 0x92), []byte("\"}")...),
+		append(append([]byte("{\"a\":\""), 0xed, 0xa0, 0x80), []byte("\"}")...),
+		append(append([]byte("{\"a\":\""), 0xc2), []byte("A\"}")...),
+		append([]byte("{\"a\":\""), bytes.Repeat([]byte{0x80}, 9)...),
+		append(append([]byte("{\"a\":\""), bytes.Repeat([]byte{0xe2}, 7)...), []byte("\"}")...),
+		append([]byte("{\"a\":\""), bytes.Repeat([]byte{0xf0, 0x9f}, 5)...),
+	}
+	for _, record := range records {
+		want := source.DecodeUTF8(record)
+		for _, chunk := range []int{1, 2, 3, 4, 5, 7, 64, 4096} {
+			r := &migrateReviewFollowupNormalisingReader{src: &migrateReviewFollowupChunkReader{data: record, chunk: chunk}}
+			got, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("record %q at chunk %d: %v", record, chunk, err)
+			}
+			if string(got) != want {
+				t.Errorf("record %q at chunk %d: got %q, want %q", record, chunk, got, want)
+			}
+		}
+	}
+}
+
+// migrateReviewFollowupChunkReader hands out a record in fixed-size pieces, so a rune that straddles a piece boundary is
+// exercised.
+type migrateReviewFollowupChunkReader struct {
+	data  []byte
+	chunk int
+	at    int
+}
+
+func (c *migrateReviewFollowupChunkReader) Read(p []byte) (int, error) {
+	if c.at >= len(c.data) {
+		return 0, io.EOF
+	}
+	n := c.chunk
+	if n > len(p) {
+		n = len(p)
+	}
+	if c.at+n > len(c.data) {
+		n = len(c.data) - c.at
+	}
+	copy(p, c.data[c.at:c.at+n])
+	c.at += n
+	return n, nil
 }
