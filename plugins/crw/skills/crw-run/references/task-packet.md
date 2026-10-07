@@ -120,9 +120,7 @@ Context:
 
 Authorized execution:
 - Sandbox/permission profile and approval policy: [agreed values]
-- Delivery: [where the assignment covers publication, a child-owned PR opened for review, not
-  left in draft: branch, pushed head, and that PR's own review cycle. Otherwise local commits or
-  a frozen diff. Publication is never inferred from the delivery line alone]
+- Delivery: [where the assignment covers publication, the task branch and the head pushed for the integrator, with its local verification record; a pull request is opened only where the assignment names one (an external contribution, or a relay pull request already in flight), non-draft, with that pull request's own review cycle. Otherwise local commits or a frozen diff. Publication is never inferred from the delivery line alone]
 - External actions: [actions covered by the assignment and shared defaults, with any narrower user limits]
 - Integration owner/target: [coordinator and verified destination; copy the applicable dev default or explicit delivery limit]
 - Operations clauses carried to this child: [OPS-5.5 and OPS-9 from
@@ -325,8 +323,8 @@ Execution:
   reach you: once your result is accepted the coordinator holds the candidate instead, and after the merge it is
   new work, except that an in-scope one reopens your issue ([Late review threads](merge-readiness.md#late-review-threads)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
-- Where the assignment names the independent code review, run it once per pull request: `crw review --base <the pull request's base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence> --post-summary --pr <number>`,
-  after every CI job is green on that head and before you emit. The command keeps the run rules itself: the same
+- Where the assignment names the independent code review, run it once per head (and per pull request, when the head is one): `crw review --base <the pull request's base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence> --post-summary --pr <number>`,
+  after the local full verification passes on that head and before you emit. The command keeps the run rules itself: the same
   patch-id is never reviewed again (a repeat answers `already_reviewed` and calls no model), one review runs at a time on the host
   (concurrency 1), and a daily cap bounds the starts, which you do not raise. A review that could not run at all
   because of the account or the configuration (quota, authentication, an unknown model) or because the runner itself failed

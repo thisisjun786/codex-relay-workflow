@@ -279,7 +279,7 @@ requested again and no later run is awaited.
 Read the finding against this issue's scope (its initial specification, its criteria and its promise) whoever
 the reviewer is, and read the grade as the reviewer wrote it only as a label.
 
-- A finding inside this issue's scope is fixed on this pull request, or answered from the code with evidence,
+- A finding inside this issue's scope is fixed in this change, or answered from the code with evidence,
   before the receipt, whatever its grade. "Outside the edit region" and "not introduced by this pull request"
   are not reasons to pass one.
 - A P0 and any security finding (Devin `"kind": "security"`, anything from the Codex security review) are fixed
@@ -477,7 +477,7 @@ current-head readiness, and proposes the rest.
 
 Whether a finding is fixed before the merge is decided first by this issue's scope
 (its initial specification, its criteria and its promise): a finding that belongs to
-this issue is fixed on this pull request whatever grade the reviewer gave it, and a
+this issue is fixed in this change whatever grade the reviewer gave it, and a
 reviewer's grade never moves a finding into or out of that rule. A P0 and a security
 finding are the standing exceptions the other way: they are fixed before the merge
 whether or not they belong to this issue, and `not_applicable` answers one only with
@@ -647,7 +647,7 @@ disagreement between the two readings returns the candidate to the child fail-cl
 
 ## Recheck, integrate, and record
 
-Immediately before merging, reread the PR's base/head, relevant CI/review state,
+Immediately before integrating, reread the candidate's base and head (the pull request's, where one exists), relevant CI/review state,
 and newly arrived findings. Reconcile changes since the review; refresh only the
 proof they invalidate. A relevant unresolved finding still matters even if its
 author is an optional reviewer. Use the repository's merge method and the host's
