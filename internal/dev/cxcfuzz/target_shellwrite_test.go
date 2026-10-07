@@ -4,6 +4,7 @@ package cxcfuzz
 
 import (
 	"bytes"
+	"encoding/json"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -193,11 +194,12 @@ func TestShellwritePythonLiteralForms(t *testing.T) {
 	}
 }
 
-// c7 d3 (CRW-908 generation 2): every literal form the generator emits for a destination evaluates in
-// Python 3 to exactly that destination. The check runs the real interpreter when python3 is on PATH and
-// skips with a message otherwise; it walks the actual destination pools of both targets, so the quote,
-// backslash and brace paths the pre-merge evaluation named are covered. Red first on the generation-1
-// head: /m/a'b and /m/a\b in the single-quoted and f forms do not evaluate to the destination.
+// c7 d2/d3/d4 (CRW-908 generation 2): every Python program the generator can emit names the destination
+// in a literal that evaluates in Python 3 to exactly that destination, over the actual destination pools
+// of BOTH targets. The check runs the real interpreter when python3 is on PATH and skips with a message
+// otherwise. It walks every program shellWritePrograms returns, not only the literal helper's output, so a
+// program assembled wrongly is caught; the earlier version evaluated the helper alone and missed the
+// slash-escape and append branches (c7 d4).
 func TestShellwriteLiteralFormsEvaluateInPython(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -207,28 +209,88 @@ func TestShellwriteLiteralFormsEvaluateInPython(t *testing.T) {
 	// before any interpreter sees it, so a ROOT-prefixed form is evaluated with the case root in place of
 	// the placeholder - the substitution the campaign makes - against the destination it then names.
 	root := t.TempDir()
-	dests := append([]string{}, shellWritePathFragments()...)
-	dests = append(dests,
-		rootPlaceholder+"/codex-home/memories/n.md", rootPlaceholder+"/codex-home/memories",
-		rootPlaceholder+"/codex-home/memories/a b.md", rootPlaceholder+"/codex-home/memories/a'b.md",
-		rootPlaceholder+"/codex-home/memories/{x}.md", rootPlaceholder+"/codex-home/memories/a\\b.md",
-		"{x}.md", "/m/a}b", "/m/{a}b", "/m/a\nb", "/m/a\rb", "/m/a\r\nb",
-	)
-	for _, dest := range dests {
+	for _, dest := range shellWriteDests() {
 		want := strings.ReplaceAll(dest, rootPlaceholder, root)
-		for _, form := range shellWritePythonLiteralForms(dest) {
-			t.Run(form, func(t *testing.T) {
-				substituted := strings.ReplaceAll(form, rootPlaceholder, root)
-				got, err := pythonLiteralValue(python, substituted)
+		for _, command := range shellWritePrograms(dest) {
+			if command.interpreter != "python3" {
+				continue
+			}
+			t.Run(command.program, func(t *testing.T) {
+				program := strings.ReplaceAll(command.program, rootPlaceholder, root)
+				got, err := pythonProgramDests(python, program)
 				if err != nil {
-					t.Fatalf("the form %q for %q does not evaluate in Python: %v", form, dest, err)
+					t.Fatalf("the program %q for %q does not run in Python: %v", command.program, dest, err)
 				}
-				if got != want {
-					t.Fatalf("the form %q evaluates to %q, want %q", form, got, want)
+				if len(got) == 0 {
+					t.Fatalf("the program %q for %q names no path", command.program, dest)
+				}
+				found := false
+				for _, named := range got {
+					if named == want {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("the program %q names %q, want it to name %q", command.program, got, want)
 				}
 			})
 		}
 	}
+}
+
+// shellWriteDests is every destination the two targets' pools can put in a program: the shellwrite
+// fragments and the memorygate destinations, built by the generators themselves rather than copied by
+// hand, so a destination added to either pool is covered (c7 d4).
+func shellWriteDests() []string {
+	dests := append([]string{}, shellWritePathFragments()...)
+	// The memorygate destinations, taken from the generator's own pool so every alias form, home form and
+	// link-chain path is included.
+	for _, dest := range memoryGateDests() {
+		dests = append(dests, dest)
+	}
+	return dests
+}
+
+// pythonProgramDests is the destination literal each Python write in the program names, read back by the
+// real interpreter: Python parses the program with its own ast module and evaluates the literal with eval
+// in an empty namespace, so the value is exactly what Python gives that literal - an f literal, a raw
+// literal and a bytes literal alike. Nothing is executed and no file is touched. The argument that names
+// the destination is the one the reader reads: the first for open, the last for Path (the earlier parts
+// are a fixed prefix), and the second for os.rename and shutil.copy/copyfile. A program Python cannot
+// parse is an error, not an empty list, so a syntax error is reported rather than read as agreement.
+func pythonProgramDests(python, program string) ([]string, error) {
+	const driver = `import ast, json, sys` + "\n" +
+		`tree = ast.parse(sys.argv[1])` + "\n" +
+		`seen = []` + "\n" +
+		`def value(node):` + "\n" +
+		`    v = eval(compile(ast.Expression(node), "<literal>", "eval"), {"__builtins__": {}})` + "\n" +
+		`    return v.decode("utf-8", "surrogateescape") if isinstance(v, bytes) else v` + "\n" +
+		`def name_of(node):` + "\n" +
+		`    if isinstance(node, ast.Name):` + "\n" +
+		`        return node.id` + "\n" +
+		`    if isinstance(node, ast.Attribute):` + "\n" +
+		`        return node.attr` + "\n" +
+		`    return ""` + "\n" +
+		`for node in ast.walk(tree):` + "\n" +
+		`    if not isinstance(node, ast.Call):` + "\n" +
+		`        continue` + "\n" +
+		`    name = name_of(node.func)` + "\n" +
+		`    if name == "open" and node.args:` + "\n" +
+		`        seen.append(value(node.args[0]))` + "\n" +
+		`    elif name == "Path" and node.args:` + "\n" +
+		`        seen.append(value(node.args[-1]))` + "\n" +
+		`    elif name in ("rename", "copy", "copyfile") and len(node.args) > 1:` + "\n" +
+		`        seen.append(value(node.args[1]))` + "\n" +
+		`sys.stdout.buffer.write(json.dumps(seen).encode())`
+	out, err := exec.Command(python, "-c", driver, program).Output()
+	if err != nil {
+		return nil, err
+	}
+	var dests []string
+	if err := json.Unmarshal(out, &dests); err != nil {
+		return nil, err
+	}
+	return dests, nil
 }
 
 // pythonLiteralValue is what Python 3 evaluates a literal to, run through the real interpreter. The

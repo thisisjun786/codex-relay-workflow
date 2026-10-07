@@ -138,20 +138,12 @@ func memoryGateGenerateToolNames() []string {
 // grammar is the shellwrite generator's own.
 func memoryGateGenerate(rng *rand.Rand, size int) any {
 	memories := rootPlaceholder + "/codex-home/memories"
-	backup := rootPlaceholder + "/codex-home/memories-backup"
 	fs := []any{
 		memoryGateDir("codex-home/memories"), memoryGateDir("codex-home/memories-backup"), memoryGateDir("work"),
 	}
-	dests := []string{
-		memories + "/n.md", memories, memories + "/extensions/ad_hoc/notes/x.md",
-		backup + "/n.md", "../codex-home/memories/n.md", memories + "/a b.md", memories + "/a'b.md",
-		// A destination holding a brace pair, so the doubled-brace f literal the shell-write program
-		// builder emits for a brace reaches a generated command (CRW-908).
-		memories + "/{x}.md",
-	}
-	for i, alias := range []string{"alias", "alias\n", "alias\r", "alias ", "alias'", "alias\""} {
+	dests := memoryGateDests()
+	for i, alias := range memoryGateAliases() {
 		fs = append(fs, memoryGateLink("work/"+alias, memoryGateTarget(i, "../codex-home/memories", memories)))
-		dests = append(dests, alias+"/x.md", "./"+alias+"/x.md")
 	}
 	if rng.Intn(2) == 0 {
 		// The home-prefixed destinations must resolve under the case's own HOME (${ROOT}/home), so the
@@ -172,6 +164,33 @@ func memoryGateGenerate(rng *rand.Rand, size int) any {
 		dests = append(dests, "c0/x.md")
 	}
 	return pyjson.Object{{Key: "fs", Value: fs}, {Key: "payload", Value: memoryGatePayload(rng, dests, size)}}
+}
+
+// memoryGateAliases are the link names the scenario builds: plain, and names carrying the characters a
+// path reader trips on.
+func memoryGateAliases() []string {
+	return []string{"alias", "alias\n", "alias\r", "alias ", "alias'", "alias\""}
+}
+
+// memoryGateDests is the destination pool the generator draws from, so a test can walk the pool itself
+// instead of copying entries by hand. The relative and home forms are always listed; the link-chain path
+// is added only when the generator builds a chain, so the pool here is the whole of what a generated
+// command can be handed.
+func memoryGateDests() []string {
+	memories := rootPlaceholder + "/codex-home/memories"
+	backup := rootPlaceholder + "/codex-home/memories-backup"
+	dests := []string{
+		memories + "/n.md", memories, memories + "/extensions/ad_hoc/notes/x.md",
+		backup + "/n.md", "../codex-home/memories/n.md", memories + "/a b.md", memories + "/a'b.md",
+		// A destination holding a brace pair, so the doubled-brace f literal the shell-write program
+		// builder emits for a brace reaches a generated command (CRW-908).
+		memories + "/{x}.md",
+	}
+	for _, alias := range memoryGateAliases() {
+		dests = append(dests, alias+"/x.md", "./"+alias+"/x.md")
+	}
+	dests = append(dests, "~/link/x.md", "$HOME/link/x.md", "$CODEX_HOME/memories/n.md", rootPlaceholder+"/work/link/x.md", "work/link/x.md", "c0/x.md")
+	return dests
 }
 
 // memoryGateTarget alternates a link target between the relative form and the case root's absolute

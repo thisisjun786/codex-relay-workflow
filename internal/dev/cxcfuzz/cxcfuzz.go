@@ -211,6 +211,10 @@ func Campaign(cfg Config) (Summary, error) {
 		summary.Cases++
 		verdict, goOut, oracleOut, input, err := run.one()
 		switch {
+		case errors.As(err, new(RemovalError)):
+			// A root that survived its removal is reported, never counted: the caller must see which root
+			// was left and why, and the run must not continue as if the case had merely been refused.
+			return summary, err
 		case errors.Is(err, Timeout{}):
 			summary.Timeouts++
 			continue
@@ -239,6 +243,9 @@ func Campaign(cfg Config) (Summary, error) {
 		}
 		shrinker := &shrinkRun{campaign: run, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
 		shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
+		if shrinker.removal != nil {
+			return summary, shrinker.removal
+		}
 		if err := writeDivergence(cfg.Out, Divergence{
 			Kind:    verdict.Kind,
 			Input:   canonical(shrunk),
@@ -360,10 +367,18 @@ type shrinkRun struct {
 	verdict   Verdict
 	goOut     string
 	oracleOut string
+	// removal is the first removal failure a candidate hit. The shrinker asks keep many times, and a
+	// root that survived is a fact about the host, not a property of the candidate, so it is reported
+	// rather than folded into the keep decision.
+	removal error
 }
 
 func (s *shrinkRun) keep(candidate any) bool {
 	verdict, goOut, oracleOut, err := s.campaign.evaluate(candidate)
+	var removal RemovalError
+	if errors.As(err, &removal) && s.removal == nil {
+		s.removal = err
+	}
 	if err != nil || verdict.Kind != s.verdict.Kind {
 		return false
 	}
