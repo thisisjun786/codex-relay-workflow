@@ -3150,25 +3150,6 @@ func shellWriteUnnamedDottedKindWith(rs []rune, i int, binds shellWriteCopyImpor
 	return 0
 }
 
-// shellWriteUnnamedDottedKind is the frame kind of a call whose name the builtin reader matched but which hangs off a
-// dot: a method named open writes to its receiver and this reader names no destination for it, and any other name is no
-// such call.
-func shellWriteUnnamedDottedKind(rs []rune, i int) byte {
-	j := i
-	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
-		j--
-	}
-	end := j
-	for j > 0 && shellWriteCopyIdentRune(rs[j-1]) {
-		j--
-	}
-	switch string(rs[j:end]) {
-	case "open":
-		return 'q'
-	}
-	return 0
-}
-
 // shellWriteUnnamedDottedModule reports whether a dotted call's receiver names a module the program imported, so the
 // call is module.open(path, mode) rather than Path.open(mode): the reader names the name before the dot and asks the
 // program's own import bindings (a name bound by an import statement holds a module, not a Path).
@@ -3224,18 +3205,6 @@ func shellWriteUnnamedBinds(rs []rune, i, j int) bool {
 		}
 	}
 	return false
-}
-
-// shellWriteUnnamedWordBefore is the identifier run that ends at or before rs[j], or "" when none stands there.
-func shellWriteUnnamedWordBefore(rs []rune, j int) string {
-	end := j + 1
-	for j >= 0 && shellWriteCopyIdentRune(rs[j]) {
-		j--
-	}
-	if end == j+1 {
-		return ""
-	}
-	return string(rs[j+1 : end])
 }
 
 // shellWriteUnnamedTarget reports whether an assignment binds the name that ends at j: the next rune that is not a blank
