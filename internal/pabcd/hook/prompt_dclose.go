@@ -310,10 +310,13 @@ func promptDcloseClose(p PromptSubmitPayload, held state.State, turn, closePhase
 		next.DcloseRecovery = promptDcloseMarker(held, closePhaseID, plan.markerNext)
 	}
 	if refusal := guard(); refusal != "" {
-		// No warning can be outstanding here: this guard evaluates the same state the identical
-		// guard accepted before the marker write, and the marker write preserves every record class
-		// the guard checks, so the bare refusal is exact (CRW-869).
-		return promptDcloseOutcome{refusal: refusal}
+		// The guard re-reads the session file, so it can fail on a read error even though the
+		// identical guard accepted before the marker write: the marker and the plan may already be on
+		// disk, with a directory-sync warning collected for either. An answer that denied that would
+		// hide a partial commit the operator has to know about, so the refusal names the published
+		// artifacts through the same partial-refusal text the state write below uses (CRW-930). With
+		// no earlier warning the bare refusal is returned unchanged.
+		return promptDcloseOutcome{refusal: promptDclosePartialRefusal(refusal, warnings)}
 	}
 	landed, stateWarning := promptDcloseWriteLanded(state.WriteState(p.Cwd, next))
 	if !landed {
