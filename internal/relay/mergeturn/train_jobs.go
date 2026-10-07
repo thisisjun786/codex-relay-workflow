@@ -166,11 +166,17 @@ func trainStripComment(line string) string {
 }
 
 // trainWorkflowMatrixParts reads the go-product job's strategy.matrix.part list as text. The list is
-// looked for inside that job's own block, so a workflow that declares no job after it still reads.
+// looked for inside that job's own block, so a workflow that declares no job after it still reads. A
+// matrix that also carries an include or exclude key is refused: those keys add or remove legs whose
+// names this text scan cannot compute, and reading only the part list would report an unchanged job
+// set for a head that added a leg — the fail-open this reader exists to close (CRW-897, answer 2).
 func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 	body, found := trainJobBody(workflow, trainProductJob)
 	if !found {
 		return nil, errors.New("the workflow holds no " + trainProductJob + " job")
+	}
+	if trainMatrixHasUnreadableKey(body) {
+		return nil, errors.New("the workflow's " + trainProductJob + " matrix carries an include or exclude list, whose legs this reader cannot read key by key")
 	}
 	_, matrix, found := strings.Cut(body, "\n        part: [")
 	if !found {
@@ -185,6 +191,18 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	return parts, nil
+}
+
+// trainMatrixHasUnreadableKey reports whether a job body carries a matrix-level include or exclude
+// key: either recombines or drops legs, so the leg names a run reports are no longer the part list.
+func trainMatrixHasUnreadableKey(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		bare := trainStripComment(line)
+		if bare == "        include:" || bare == "        exclude:" {
+			return true
+		}
+	}
+	return false
 }
 
 // trainJobBody is the text of one job's block: from its header line to the next job's header, or to

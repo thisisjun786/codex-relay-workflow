@@ -116,6 +116,111 @@ func TestTrainLandRefusesAMergedMemberThatMoved(t *testing.T) {
 	}
 }
 
+// TestTrainLandExcludesTheLeaderWhoseTurnWasReturned: the issue's own recovery path — a member that
+// moves between verify and land has its turn taken out of the lane, and the leader is the member whose
+// turn is the holding lane turn, so it is returned rather than withdrawn. Land must then record the
+// rest and name the returned leader in the landed event, not refuse the bundle (CRW-897, answer 1).
+func TestTrainLandExcludesTheLeaderWhoseTurnWasReturned(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 1", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 1: %v", err)
+	}
+	leaderTurn := rows[0].Get("turn_id").(string)
+	// the leader's own parent returns the holding lane turn, which is what a moved leader needs
+	answer, err := w.m.Release(w.ctx, leaderTurn, trLeader, "returned", "the leader moved after verify", "")
+	if err != nil {
+		t.Fatalf("returning the leader's turn: %v", err)
+	}
+	released, _ := answer["released"].(map[string]any)
+	if released == nil || released["state"] != "returned" {
+		t.Fatalf("release answer = %v, want the leader's turn released as returned", answer)
+	}
+	if state := w.turn(leaderTurn).State; state != "returned" {
+		t.Fatalf("the leader's turn = %s, want returned", state)
+	}
+	// its pull request also moved, which must not refuse the bundle: the turn is out of the lane
+	w.forge.pulls[101] = TrainPullRequest{Number: 101, State: "closed", Merged: trainLandMergedTrue(), BaseRef: "main", HeadSHA: "head-lead-moved"}
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+
+	landed, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err != nil {
+		t.Fatalf("land with a returned leader: %v", err)
+	}
+	if landed["state"] != "landed" {
+		t.Fatalf("state after land = %v, want landed", landed["state"])
+	}
+	// the two waiting members landed; the returned leader did not
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 2 {
+		t.Fatalf("landed turns = %d, want 2", n)
+	}
+	if state := w.turn(leaderTurn).State; state != "returned" {
+		t.Fatalf("the excluded leader's turn = %s, want returned", state)
+	}
+	// the landed event names the returned leader, and the mapping holds the two survivors
+	detail := w.eventDetail(train, "landed")
+	excluded, _ := detail["excluded"].([]any)
+	if len(excluded) != 1 {
+		t.Fatalf("the landed event's excluded list = %v, want the leader", detail["excluded"])
+	}
+	entry, _ := excluded[0].(map[string]any)
+	if entry["turnId"] != leaderTurn || entry["prNumber"] != float64(101) || entry["state"] != "returned" {
+		t.Fatalf("the excluded entry = %v", entry)
+	}
+	if reason, _ := entry["closeReason"].(string); !strings.Contains(reason, "moved after verify") {
+		t.Fatalf("the excluded entry names no reason: %v", entry)
+	}
+	members, _ := detail["members"].([]any)
+	if len(members) != 2 {
+		t.Fatalf("the landed mapping holds %d members, want 2", len(members))
+	}
+}
+
+// TestTrainJobReaderRefusesAnUnreadableMatrix: a go-product matrix that carries an include or exclude
+// list recombines or drops legs, so the part list is no longer the leg set a run reports; the reader
+// refuses it rather than reporting an unchanged job set (CRW-897, answer 2).
+func TestTrainJobReaderRefusesAnUnreadableMatrix(t *testing.T) {
+	base := "\njobs:\n  validate:\n    runs-on: ubuntu\n  go-product:\n    strategy:\n      matrix:\n        part: [lint, test-1]\n"
+	// the part-only matrix still reads
+	if _, err := TrainJobsFromWorkflow(base); err != nil {
+		t.Fatalf("a part-only matrix: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		line string
+	}{
+		{"an include list", "        include:\n          - part: audit\n"},
+		{"an exclude list", "        exclude:\n          - part: lint\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workflow := base + strings.ReplaceAll(tc.line, "\n", "\n")
+			if _, err := TrainJobsFromWorkflow(workflow); err == nil {
+				t.Fatal("a matrix with include/exclude was read as the part list alone")
+			}
+		})
+	}
+	// through verify it is merge_target_unreadable, never a pass
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	withInclude := strings.Replace(string(repository), "\n        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]\n",
+		"\n        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]\n        include:\n          - part: audit\n", 1)
+	if withInclude == string(repository) {
+		t.Fatal("the fixture did not add an include list")
+	}
+	w.proof.workflow = withInclude
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); trReason(err) != "merge_target_unreadable" {
+		t.Fatalf("a matrix with an include list at verify: %v", err)
+	}
+}
+
 // TestTrainVerifyRefusesAMergedMember: verify keeps taking open pull requests only, so a member the
 // forge already marked merged is refused there with nothing written (CRW-897, answer 1).
 func TestTrainVerifyRefusesAMergedMember(t *testing.T) {
