@@ -30,6 +30,136 @@ func auditListReview822State(t *testing.T) string {
 	return filepath.Join(state, "crw", "manage")
 }
 
+// C5: the token after --round is a value, so a command line that carries -h there is not a
+// help request — and then the configuration refusal Run makes must still apply. Run skips
+// its own refusal because it sees -h anywhere in the arguments, so the list reader makes the
+// same refusal itself once its parse has decided the input is not help.
+func TestAuditListReview822ValueHelpIsRefusedWithAnUnusableConfig(t *testing.T) {
+	coreTempHome(t)
+	coreConfigAt(t, coreConfigDocument(t, "not an object"))
+
+	// The exact refusal Run prints, from a command line Run itself refuses.
+	_, _, runErr := coreRunManage(t, "audit", "round", "status", "--name", "r1")
+	if !strings.Contains(runErr, "crw manage: error:") {
+		t.Fatalf("Run did not refuse a broken file: %q", runErr)
+	}
+
+	for _, args := range [][]string{
+		{"audit", "list", "--round", "-h"},
+		{"audit", "list", "--issue", "-h"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != usageExit {
+			t.Errorf("%q: exit %d, want %d: %s", args, code, usageExit, errOut)
+		}
+		if out != "" {
+			t.Errorf("%q: printed %q, want no listing", args, out)
+		}
+		if errOut != runErr {
+			t.Errorf("%q: said %q, want Run's message %q", args, errOut, runErr)
+		}
+	}
+
+	// A real help request reads no configuration and keeps working.
+	code, out, errOut := coreRunManage(t, "audit", "list", "--help")
+	if code != 0 || !strings.Contains(out, auditListUsage) {
+		t.Errorf("audit list --help under a broken file: exit %d %q %q", code, out, errOut)
+	}
+}
+
+// C5: with a configuration this product can use, -h after --round is the round name it is.
+func TestAuditListReview822ValueHelpIsARoundNameWithAUsableConfig(t *testing.T) {
+	coreTempHome(t)
+	state := auditListReview822State(t)
+	coreConfigAt(t, coreConfigDocument(t, map[string]any{"state_dir": state}))
+	auditListReview822WriteRoundBody(t, state, "-h", auditListReview822RoundBody("-h"))
+	auditListReview822WriteRoundBody(t, state, "r1", auditListReview822RoundBody("r1"))
+
+	e, _, _ := auditTestEnv(t)
+	spaced, code, raw := auditListCommandDocument(t, e, "--round", "-h")
+	if code != 0 {
+		t.Fatalf("--round -h exited %d, want 0", code)
+	}
+	if strings.Contains(raw, "usage:") {
+		t.Errorf("--round -h printed the usage: %q", raw)
+	}
+	if len(spaced.Rounds) != 1 || spaced.Rounds[0].Round != "-h" {
+		t.Errorf("--round -h selected %+v, want the round named -h", spaced.Rounds)
+	}
+}
+
+// C6: every audit parser refuses a single-value option given twice, so an empty value cannot
+// be overwritten by a later one and escape the refusal. The repeatable --package still repeats.
+func TestAuditListReview822RepeatedOptionIsRefusedInEveryAuditParser(t *testing.T) {
+	e, out, errOut := auditTestEnv(t)
+	state := auditListReview822State(t)
+	ctx := context.Background()
+
+	// round start refuses the repeat before it reads a checkout or writes a round.
+	out.Reset()
+	errOut.Reset()
+	if code := auditRun(ctx, e, []string{"round", "start", "--name=", "--name=r1", "--package", "pkg/a"}); code != usageExit {
+		t.Errorf("round start with a repeated --name: exit %d, want %d: %q", code, usageExit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "given twice") {
+		t.Errorf("round start said %q, want it to refuse the repeated option", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", "rounds")); !os.IsNotExist(err) {
+		t.Errorf("round start wrote state despite the refusal: %v", err)
+	}
+
+	// grade refuses the repeat.
+	out.Reset()
+	errOut.Reset()
+	if code := auditRun(ctx, e, []string{"grade", "--bundle=a", "--bundle=b"}); code != usageExit {
+		t.Errorf("grade with a repeated --bundle: exit %d, want %d: %q", code, usageExit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "given twice") {
+		t.Errorf("grade said %q, want it to refuse the repeated option", errOut.String())
+	}
+
+	// pr refuses the repeat.
+	out.Reset()
+	errOut.Reset()
+	if code := auditRun(ctx, e, []string{"pr", "--max=1", "--max=2"}); code != usageExit {
+		t.Errorf("pr with a repeated --max: exit %d, want %d: %q", code, usageExit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "given twice") {
+		t.Errorf("pr said %q, want it to refuse the repeated option", errOut.String())
+	}
+
+	// The message names the option, and an unknown option is still unknown before it repeats.
+	if _, _, err := auditRoundParseStart([]string{"--name=a", "--name=b", "--package", "pkg/a"}); err == nil {
+		t.Error("auditRoundParseStart accepted a repeated --name")
+	} else if err.Error() != "the option --name is given twice" {
+		t.Errorf("auditRoundParseStart said %q, want it to name the option given twice", err)
+	}
+	if _, err := auditParseGradeArgs([]string{"--bundle=a", "--bundle=b"}); err == nil {
+		t.Error("auditParseGradeArgs accepted a repeated --bundle")
+	} else if err.Error() != "the option --bundle is given twice" {
+		t.Errorf("auditParseGradeArgs said %q, want it to name the option given twice", err)
+	}
+	if _, _, _, err := auditPRParseArgs([]string{"--max=1", "--max=2"}); err == nil {
+		t.Error("auditPRParseArgs accepted a repeated --max")
+	} else if err.Error() != "the option --max is given twice" {
+		t.Errorf("auditPRParseArgs said %q, want it to name the option given twice", err)
+	}
+
+	// --package is repeatable by design and keeps taking every value it is given.
+	_, multi, err := auditRoundParseStart([]string{"--name=r1", "--package=pkg/a", "--package=pkg/b"})
+	if err != nil {
+		t.Fatalf("auditRoundParseStart refused a repeated --package: %v", err)
+	}
+	if len(multi["package"]) != 2 || multi["package"][0] != "pkg/a" || multi["package"][1] != "pkg/b" {
+		t.Errorf("--package collected %v, want both values in order", multi["package"])
+	}
+
+	// A single empty value is still the parser's own refusal, not a repeat.
+	if _, _, err := auditRoundParseStart([]string{"--name=", "--package", "pkg/a"}); err == nil {
+		t.Error("auditRoundParseStart accepted an empty --name")
+	}
+}
+
 // auditListReview822WriteRoundBody writes one round file below a state directory with the
 // exact bytes given, so a test can put a document that is not a round there.
 func auditListReview822WriteRoundBody(t *testing.T, state, name, body string) {

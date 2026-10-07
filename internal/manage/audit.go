@@ -462,6 +462,7 @@ func auditRunGrade(ctx context.Context, e *Env, args []string) int {
 // argument, or a missing --bundle is an error naming what is wrong.
 func auditParseGradeArgs(args []string) (AuditJob, error) {
 	var job AuditJob
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		name := args[i]
 		if !strings.HasPrefix(name, "--") {
@@ -481,12 +482,28 @@ func auditParseGradeArgs(args []string) (AuditJob, error) {
 		}
 		switch key {
 		case "bundle":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Bundle = value
 		case "pair":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Pair = value
 		case "phase":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Phase = value
 		case "round":
+			if seen[key] {
+				return AuditJob{}, fmt.Errorf("the option --%s is given twice", key)
+			}
+			seen[key] = true
 			job.Round = value
 		default:
 			return AuditJob{}, fmt.Errorf("unknown option %s", name)

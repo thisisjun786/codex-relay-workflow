@@ -419,6 +419,9 @@ func auditRoundParseStart(args []string) (map[string]string, map[string][]string
 		}
 		switch key {
 		case "name", "packages":
+			if _, twice := values[key]; twice {
+				return nil, nil, fmt.Errorf("the option --%s is given twice", key)
+			}
 			values[key] = value
 		case "package":
 			multi[key] = append(multi[key], value)
