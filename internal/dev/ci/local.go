@@ -239,7 +239,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
 		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod), pins),
-		GoFlags:      localFullRunFlags(os.Getenv("GOFLAGS")),
+		GoFlags:      localEngineFlags(opts.Parallel),
 		GoEnv:        localIsolatedGoEnv,
 		Dependencies: dependencies,
 		OS:           localHostOS(),
@@ -247,26 +247,13 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 	}, nil
 }
 
-// localFullRunFlags is GOFLAGS without the flags that select or skip tests, so a full run runs every
-// test whatever the caller's GOFLAGS say.
-func localFullRunFlags(flags string) string {
-	var kept []string
-	for _, field := range strings.Fields(flags) {
-		if !localSelectsTests(field) {
-			kept = append(kept, field)
-		}
+// localEngineFlags is the GOFLAGS every step runs with: the engine's own parallelism. The caller's
+// GOFLAGS never reach a step, so the record names the engine's value.
+func localEngineFlags(parallel int) string {
+	if parallel <= 0 {
+		parallel = 4
 	}
-	return strings.Join(kept, " ")
-}
-
-// localSelectsTests reports whether a GOFLAGS field selects, skips or shortens tests.
-func localSelectsTests(field string) bool {
-	for _, name := range []string{"-run", "-skip", "-short", "-failfast", "-count", "-list", "-test.run", "-test.skip", "-test.short", "-test.failfast", "-test.count", "-test.list"} {
-		if field == name || strings.HasPrefix(field, name+"=") {
-			return true
-		}
-	}
-	return false
+	return fmt.Sprintf("-p=%d", parallel)
 }
 
 // localRepository is the origin remote's URL, the identity a record names. It is read from the
