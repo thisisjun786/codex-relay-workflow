@@ -47,6 +47,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source/session"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
 // promptOrchestrateHandle is handleOrchestrateCommand (hook.ts:860-937, 1287-1399). current is the
@@ -70,6 +71,19 @@ func promptOrchestrateHandle(p PromptSubmitPayload, current state.State, turn st
 	// read and reset is the operator's stand-down, so neither is refused by a broken binding.
 	if verb != fsm.VerbStatus && verb != fsm.VerbReset {
 		if _, err := session.Resolve(p.Cwd, p.SessionID); err != nil {
+			// A bound D-close reaches this before the bound handler, and a matching retry may already
+			// have published its marker and committed its goalplan, so the refusal names them rather
+			// than deny them (CRW-930, d1).
+			if verb == fsm.VerbD && current.Slug != "" {
+				closePhaseID := ""
+				if command.Attest != nil {
+					closePhaseID = text.Trim(command.Attest.WorkPhaseID)
+				}
+				// The entry text carries no "Nothing was written." claim of its own, so the publication
+				// sentences are appended rather than substituted.
+				return promptDcloseRefusalNaming(promptOrchestrateRefusal("SOURCE-ROOT: "+err.Error()),
+					promptDcloseRecoveryPublishedAt(p.Cwd, current.Slug, closePhaseID, current, state.MatchesDcloseRecovery(current, closePhaseID))), true
+			}
 			return promptOrchestrateRefusal("SOURCE-ROOT: " + err.Error()), true
 		}
 	}

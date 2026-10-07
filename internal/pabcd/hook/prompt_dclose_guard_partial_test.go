@@ -792,3 +792,115 @@ func TestPromptDcloseBusyRefusalSeparatesThePublicationSentences(t *testing.T) {
 		t.Errorf("the busy refusal did not separate the plan sentence: %q", answer)
 	}
 }
+
+// TestPromptDcloseLegacyMarkerDoesNotClaimACommittedPlan is the d2 case: a legacy marker records no
+// successor because the field was absent or malformed, not because the close had none. A plan whose
+// target is done with the cursor cleared is therefore not evidence that this close committed it, and
+// the legacy refusal must name the marker alone. The generation-3 head read the nil successor as an
+// authoritative "no successor" and claimed the goalplan too.
+func TestPromptDcloseLegacyMarkerDoesNotClaimACommittedPlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-legacy-marker"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, nil)
+	// A hand edit that leaves the committed shape but was not made by this close, plus the legacy
+	// marker: the successor field is unknown, so no shape can be read from it.
+	promptDcloseRecoveryPlan(t, cwd, slug, []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}, nil)
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+		s.DcloseRecovery.NextWorkPhaseID = nil
+		s.DcloseRecovery.Legacy = true
+	})
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "predates the successor field") {
+		t.Fatalf("the retry did not answer the legacy marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the legacy refusal did not name the inherited marker: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the legacy refusal claimed a goalplan it cannot prove this close wrote: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryUnreadableRereadNamesWhatTheFirstAttemptPublished is the d1 case for the
+// close's own stricter reread: the leading snapshot matched this close's marker, then the session
+// file became unreadable before the close's locked reread, which refuses. The first attempt's marker
+// and committed goalplan are on disk, so the refusal names them; the generation-3 head answered the
+// bare state refusal.
+func TestPromptDcloseRecoveryUnreadableRereadNamesWhatTheFirstAttemptPublished(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode this case needs")
+	}
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-unreadable-reread"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	sessionPath := filepath.Join(promptDcloseSessionsDir(cwd), "s1.json")
+	// The stamp takes the session lock first; on the close's own acquisition the file becomes
+	// unreadable, so ReadStateStrict fails while the leading snapshot already matched the marker.
+	lock := func(cwd, sessionID string, fn func() error) error {
+		if err := os.Chmod(sessionPath, 0o000); err != nil {
+			t.Fatalf("chmod the session file: %v", err)
+		}
+		return state.WithSessionLock(cwd, sessionID, fn)
+	}
+	answer, panicked := promptDcloseRunLocked(t, cwd, "s1", "t1", attest, lock)
+	_ = os.Chmod(sessionPath, 0o644)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Fatalf("the retry did not refuse at the strict reread: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the strict-reread refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the strict-reread refusal dropped the goalplan this close committed: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoverySourceRootRefusalNamesWhatTheFirstAttemptPublished is the d1 case for the
+// entry gate: a bound D-close whose pinned source binding no longer resolves is refused before the
+// bound handler runs. A matching retry's first attempt may already have published its marker and
+// committed its goalplan, so the refusal names them; the generation-3 head returned the bare
+// SOURCE-ROOT text.
+func TestPromptDcloseRecoverySourceRootRefusalNamesWhatTheFirstAttemptPublished(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-source-root"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	// A pinned worktree with no binding: the entry gate refuses before the bound handler.
+	other := t.TempDir()
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) { s.BoundSourceRoot = &other })
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "SOURCE-ROOT") {
+		t.Fatalf("the retry did not refuse at the entry gate: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the entry refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the entry refusal dropped the goalplan this close committed: %q", answer)
+	}
+}
+
+// TestPromptDcloseFreshSourceRootRefusalKeepsTheBareText is the control: a fresh close published
+// nothing, so its SOURCE-ROOT text is unchanged.
+func TestPromptDcloseFreshSourceRootRefusalKeepsTheBareText(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-fresh-source-root"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-fresh-source-root")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-fresh-source-root")
+	other := t.TempDir()
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) { s.BoundSourceRoot = &other })
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt))
+	if !strings.Contains(answer, "SOURCE-ROOT") {
+		t.Fatalf("the close did not refuse at the entry gate: %q", answer)
+	}
+	if strings.Contains(answer, promptDcloseMarkerPublishedSentence()) || strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("a fresh close claimed a publication it never made: %q", answer)
+	}
+}
