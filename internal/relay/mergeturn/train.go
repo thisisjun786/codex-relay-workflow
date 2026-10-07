@@ -1021,11 +1021,21 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 			return e
 		}
 		// the landing released the target: a ready turn that joined after the train opened takes the
-		// next lane turn in the same transaction (finding 5)
-		if _, e := s.promote(tx, row.TargetKey, at); e != nil {
-			return e
+		// next lane turn in the same transaction (finding 5). An external turn may already hold it —
+		// an excluded member's parent can return or withdraw its turn between verify and land, and a
+		// return promotes the next waiter — so the occupant is read first: promoting while another
+		// turn already holds the target would break the one-live-holder constraint and roll the
+		// whole landing back (CRW-897, answer 1).
+		occupant, occupantErr := s.Store.MergeTargetOccupant(tx, row.TargetKey)
+		if occupantErr != nil && !errors.Is(occupantErr, sql.ErrNoRows) {
+			return occupantErr
 		}
-		return e
+		if occupant.TurnID == "" {
+			if _, e := s.promote(tx, row.TargetKey, at); e != nil {
+				return e
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

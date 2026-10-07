@@ -193,12 +193,15 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 	return parts, nil
 }
 
-// trainMatrixHasUnreadableKey reports whether a job body carries a matrix-level include or exclude
-// key: either recombines or drops legs, so the leg names a run reports are no longer the part list.
+// trainMatrixHasUnreadableKey reports whether a job body carries an include or exclude key: either
+// recombines or drops legs, so the leg names a run reports are no longer the part list. The key is
+// recognised at any indentation and whatever its value looks like — "include:" and
+// "include: [{part: audit}]" are the same statement — because an inline list would otherwise slip
+// past a check that only looked for the bare block form.
 func trainMatrixHasUnreadableKey(body string) bool {
 	for _, line := range strings.Split(body, "\n") {
 		bare := trainStripComment(line)
-		if bare == "        include:" || bare == "        exclude:" {
+		if key, ok := trainJobKey(strings.TrimSpace(bare)); ok && (key == "include" || key == "exclude") {
 			return true
 		}
 	}
@@ -206,10 +209,15 @@ func trainMatrixHasUnreadableKey(body string) bool {
 }
 
 // trainJobBody is the text of one job's block: from its header line to the next job's header, or to
-// the end of the workflow. The header is matched with a trailing YAML comment stripped, so a
-// workflow that comments its job keys still reads.
+// the end of the workflow. The search runs inside the jobs block only, so a two-space key that sits
+// elsewhere in the workflow — an "env:" entry, say — is never mistaken for a job header. The header is
+// matched with a trailing YAML comment stripped, so a workflow that comments its job keys still reads.
 func trainJobBody(workflow, job string) (string, bool) {
-	lines := strings.SplitAfter(workflow, "\n")
+	body, inline, found := trainJobsBlock(workflow)
+	if !found || inline {
+		return "", false
+	}
+	lines := strings.SplitAfter(body, "\n")
 	start := -1
 	offset := 0
 	for i, line := range lines {
@@ -232,7 +240,7 @@ func trainJobBody(workflow, job string) (string, bool) {
 		}
 		end += len(line)
 	}
-	return workflow[start : start+end], true
+	return body[start : start+end], true
 }
 
 // trainWorkflowRefusal is answer 6's gate: the job set the head's .github/workflows/ci.yml declares

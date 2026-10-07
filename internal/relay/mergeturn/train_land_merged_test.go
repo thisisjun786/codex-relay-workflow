@@ -221,6 +221,108 @@ func TestTrainJobReaderRefusesAnUnreadableMatrix(t *testing.T) {
 	}
 }
 
+// TestTrainJobBodyIgnoresAKeyOutsideTheJobsBlock: a two-space key elsewhere in the workflow — an env
+// entry, say — is not a job header, so the go-product body is still read from the jobs block and a
+// normal head is not refused merge_target_unreadable (CRW-897, answer 2; pre-merge evaluation d2).
+func TestTrainJobBodyIgnoresAKeyOutsideTheJobsBlock(t *testing.T) {
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// an env entry named like the matrix job, before the jobs block
+	withEnv := strings.Replace(string(repository), "jobs:", "env:\n  go-product: ci\njobs:", 1)
+	if withEnv == string(repository) {
+		t.Fatal("the fixture did not add an env entry")
+	}
+	jobs, err := TrainJobsFromWorkflow(withEnv)
+	if err != nil {
+		t.Fatalf("a workflow with an env go-product key: %v", err)
+	}
+	if strings.Join(jobs, ",") != strings.Join(TrainExpectedJobs, ",") {
+		t.Fatalf("jobs with an env key = %v, want the workflow's own jobs", jobs)
+	}
+	// through verify the head is accepted, not refused: the env key must not be taken for the job
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.proof.workflow = withEnv
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
+		t.Fatalf("a head whose workflow has an env go-product key: %v", err)
+	}
+}
+
+// TestTrainJobReaderRefusesAnInlineMatrixInclude: an include list written inline on one line adds a
+// leg just as the block form does, so the reader must refuse it rather than read the part list alone
+// (CRW-897, answer 2; pre-merge evaluation d1).
+func TestTrainJobReaderRefusesAnInlineMatrixInclude(t *testing.T) {
+	repository, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withInline := strings.Replace(string(repository),
+		"        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]",
+		"        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]\n        include: [{part: audit}]", 1)
+	if withInline == string(repository) {
+		t.Fatal("the fixture did not add an inline include")
+	}
+	if _, err := TrainJobsFromWorkflow(withInline); err == nil {
+		t.Fatal("an inline include list was read as the part list alone")
+	}
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.proof.workflow = withInline
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); trReason(err) != "merge_target_unreadable" {
+		t.Fatalf("an inline include list at verify: %v", err)
+	}
+}
+
+// TestTrainLandDoesNotRepromoteAnOccupiedTarget: when a member that left the lane is returned, its
+// parent's return promotes the next waiter, so the target already has a holder by the time land runs.
+// Land must record the rest without promoting again — a second promotion would break the
+// one-live-holder constraint and roll the whole landing back (CRW-897, answer 1; evaluation d3).
+func TestTrainLandDoesNotRepromoteAnOccupiedTarget(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 1", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 1: %v", err)
+	}
+	leaderTurn := rows[0].Get("turn_id").(string)
+	// a ready turn that is not in the bundle waits behind the leader; returning the holding leader
+	// promotes it before land runs, so the target already has a holder
+	w.waiting("PRJ-M4", "task-m4", "head-m4", 104)
+	if _, err := w.m.Release(w.ctx, leaderTurn, trLeader, "returned", "the leader moved after verify", ""); err != nil {
+		t.Fatalf("returning the leader's turn: %v", err)
+	}
+	// the release promoted the next ready waiter, which is what leaves the target occupied
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'holding'"); n != 1 {
+		t.Fatalf("holding turns after the release = %d, want the promoted waiter", n)
+	}
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+
+	answer, err := w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err != nil {
+		t.Fatalf("land with an occupied target: %v", err)
+	}
+	if answer["state"] != "landed" {
+		t.Fatalf("state after land = %v, want landed", answer["state"])
+	}
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 2 {
+		t.Fatalf("landed turns = %d, want 2", n)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 1 {
+		t.Fatalf("landed events = %d, want 1", n)
+	}
+	// the waiting turn that was promoted still holds the target; land did not demote it
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'holding'"); n != 1 {
+		t.Fatalf("holding turns = %d, want exactly the promoted waiter", n)
+	}
+}
+
 // TestTrainVerifyRefusesAMergedMember: verify keeps taking open pull requests only, so a member the
 // forge already marked merged is refused there with nothing written (CRW-897, answer 1).
 func TestTrainVerifyRefusesAMergedMember(t *testing.T) {
