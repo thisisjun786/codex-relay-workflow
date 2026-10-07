@@ -183,6 +183,13 @@ on the receipt it keeps for its own send: the limit resolved from the record's p
 `requested` and `unobservable`, with `not_requested`, so a later reader of that stored receipt
 still sees what the send carried.
 
+**A resume does not install the value on a thread the host already has loaded.** The host answers a
+resume with the thread's current state, so a resume that transmits the limit to a loaded thread
+leaves that thread's own threshold as it was: the value takes effect at creation, or when the host
+loads the thread again (a `notLoaded` recipient). An accepted resume receipt therefore records that the
+limit was sent, not that it now applies. An operator who adds the value for a running child gets it
+on that child's next load.
+
 **The recommended value is 550000**, about 110,000 below the highest input observed to pass
 (664,238 tokens, 2026-10-06) and about 114,000 below the first observed failure. The margin is there
 because compaction is decided between samples, and one tool result can add a lot between two of

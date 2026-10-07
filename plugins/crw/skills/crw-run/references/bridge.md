@@ -242,6 +242,11 @@ on a relay resume too, where the value is resolved from the policy by the pair t
 states and the receipt is the only place the send can say what it carried. A resume that sent no
 limit records no such observation.
 
+The value applies where the host takes the configuration: at creation, or when the host loads a
+thread it did not have. A resume to a thread the host already holds answers with that thread's
+current state, so it does not install a new threshold; the receipt saying the limit was sent is not
+the same as the thread now compacting under it.
+
 **Write 550000.** The probe measured the mechanism, not this number: at
 `config.model_auto_compact_token_limit=4000` the host compacted, and 550000 is the value
 recommended for `inferhub/deepseek-v4.1-flash` because it sits about 110,000 below the highest

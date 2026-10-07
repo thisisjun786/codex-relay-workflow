@@ -1,6 +1,7 @@
 package policystore
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,5 +94,25 @@ func TestReadingShowsTheLimitOnThePairThatDeclaresIt(t *testing.T) {
 	}
 	if role.Pairs[1].AutoCompactTokenLimit != 0 {
 		t.Fatalf("a pair that declares no limit reports one: %+v", role.Pairs)
+	}
+}
+
+// A supplied limit is judged where it is supplied. Zero and null are not "no limit": they are
+// values that are not positive integers, and the same rule the policy file is held to applies to a
+// request that states one. Collapsing them into the absent representation would let the check
+// approve a document whose pair silently kept an older limit, or dropped the invalid one.
+func TestSetRolePairsRefusesASuppliedLimitThatIsNotAPositiveInteger(t *testing.T) {
+	for _, supplied := range []string{"0", "-1", "null", "1.5", "\"550000\""} {
+		t.Run(supplied, func(t *testing.T) {
+			raw := "{\"kind\":\"setRolePairs\",\"role\":\"child\",\"pairs\":[{\"model\":\"inferhub/deepseek-v4.1-flash\",\"reasoningEffort\":\"none\",\"autoCompactTokenLimit\":" + supplied + "}]}"
+			var change Change
+			if err := json.Unmarshal([]byte(raw), &change); err != nil {
+				t.Fatalf("a supplied limit must be judged by Check, not fail the decode: %v", err)
+			}
+			result := Check([]byte(legacyLimited), digestOf(legacyLimited), change)
+			if result.Valid {
+				t.Fatalf("autoCompactTokenLimit %s was accepted: %+v", supplied, result)
+			}
+		})
 	}
 }

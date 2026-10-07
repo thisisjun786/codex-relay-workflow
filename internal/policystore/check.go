@@ -315,8 +315,8 @@ func declaredLimits(entry pyjson.Object) map[string]map[string]any {
 // has one, and then no key is written at all, so a pair without a limit is written the way it
 // always was rather than gaining an explicit null.
 func limitFor(pair Pair, declared map[string]map[string]any) (any, bool) {
-	if pair.AutoCompactTokenLimit != 0 {
-		return pair.AutoCompactTokenLimit, true
+	if pair.limitPresent {
+		return pair.limit, true
 	}
 	byEffort, ok := declared[pair.Model]
 	if !ok {

@@ -70,6 +70,13 @@ type Pair struct {
 	// but it does belong to the pair, so a change that rebuilds a role's pairs has to carry it
 	// across for every pair it keeps.
 	AutoCompactTokenLimit int64
+	// limit is the same field exactly as a request spelled it, present only when the request named the
+	// key. A request that states zero, null, a fraction or a string has stated a value, and the rule
+	// the policy file is held to applies to it: the value is carried into the candidate document and
+	// refused there. Collapsing it into the absent representation would approve a document whose pair
+	// silently kept an older limit, or quietly dropped the invalid one.
+	limit        any
+	limitPresent bool
 	// conflict is why the two spellings of the effort could not be reconciled, or "" when they
 	// could. It is unexported because it is not part of the pair: it is how a mismatch reaches the
 	// check as a refused change rather than as a decode failure the API would answer as a bad
@@ -119,11 +126,16 @@ func (p *Pair) UnmarshalJSON(raw []byte) error {
 	p.Model = wire.Model
 	p.Effort, p.conflict = effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
 	if len(wire.AutoCompactTokenLimit) > 0 {
-		var limit int64
-		if err := json.Unmarshal(wire.AutoCompactTokenLimit, &limit); err != nil {
+		value, err := pyjson.Loads(string(wire.AutoCompactTokenLimit), pyjson.LoadOptions{Constants: true, Numbers: pyjson.SpelledNumbers})
+		if err != nil {
 			return err
 		}
-		p.AutoCompactTokenLimit = limit
+		p.limit, p.limitPresent = value, true
+		if spelled, ok := value.(json.Number); ok {
+			if parsed, err := strconv.ParseInt(string(spelled), 10, 64); err == nil {
+				p.AutoCompactTokenLimit = parsed
+			}
+		}
 	}
 	return nil
 }
@@ -159,6 +171,13 @@ func effortAlias(reasoningEffort string, reasoningPresent bool, effort string, e
 
 // MarshalJSON writes a pair as the policy document spells it.
 func (p Pair) MarshalJSON() ([]byte, error) {
+	if p.limitPresent {
+		return json.Marshal(struct {
+			Model                 string `json:"model"`
+			ReasoningEffort       string `json:"reasoningEffort"`
+			AutoCompactTokenLimit any    `json:"autoCompactTokenLimit"`
+		}{p.Model, p.Effort, p.limit})
+	}
 	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort, AutoCompactTokenLimit: p.AutoCompactTokenLimit})
 }
 
