@@ -91,6 +91,10 @@ type RegisterAnswer struct {
 }
 
 // RegisterFunc performs the registration step for one policy file.
+// path is the kernel spelling of the file (the value the command line's --execution-policy
+// receives), which the registerer passes to the installer unchanged and never encodes a second
+// time: the installer opens what it is given, so a record's surrogate escape must already have
+// been decoded to its byte.
 type RegisterFunc func(ctx context.Context, path string) RegisterAnswer
 
 // writeLocate and writePublish are the two steps a test replaces to drive a state it cannot
@@ -99,6 +103,9 @@ type RegisterFunc func(ctx context.Context, path string) RegisterAnswer
 var (
 	writeLocate  = Locate
 	writePublish = publishPolicy
+	// writeCandidate is the seam a test replaces to reach the moment between the backup and the
+	// publication: a cancellation there must publish nothing.
+	writeCandidate = candidateBytes
 )
 
 // WriteOptions are the seams a write runs with. A nil field takes the production value: the clock,
@@ -107,7 +114,15 @@ type WriteOptions struct {
 	Now      func() time.Time
 	Register RegisterFunc
 	Running  func(context.Context, LookupEnv) Running
+	// Publish replaces the policy file durably. It is the seam a caller in another package (the GUI
+	// route) uses to reach the publication and the restore, which the package-level writePublish seam
+	// cannot reach from outside policystore. A nil field takes publishPolicy.
+	Publish publishFunc
 }
+
+// publishFunc is the shape of the publication step: the temporary file, the fsync, the rename and
+// the directory fsync, answering whether the path now holds the new bytes.
+type publishFunc func(path string, data []byte, mode os.FileMode) (renamed bool, err error)
 
 // WriteRequest is one proposed write: the digest the caller read and the change it proposes.
 type WriteRequest struct {
@@ -126,11 +141,17 @@ type WriteResult struct {
 	RegisteredDigest string
 	FileDigest       string
 	Backup           string
-	Recovery         string
-	Restored         bool
-	Applied          string
-	Actions          []string
-	Step             string
+	// RecordBackup is the wiring record's own backup, taken by the installer beside the record. It is
+	// a different artifact from Backup, which holds the policy file's previous bytes.
+	RecordBackup string
+	// RestartRequired is the installer's advice about a bridge or relay service already running: it
+	// keeps the policy it started under until it is restarted.
+	RestartRequired string
+	Recovery        string
+	Restored        bool
+	Applied         string
+	Actions         []string
+	Step            string
 }
 
 // Write applies one change to the execution policy the wiring record names, and brings the record's
@@ -160,6 +181,10 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	running := opts.Running
 	if running == nil {
 		running = RunningDigest
+	}
+	publish := opts.Publish
+	if publish == nil {
+		publish = writePublish
 	}
 	if err := ctx.Err(); err != nil {
 		return WriteResult{Kind: WriteCancelled, Step: "start", Errors: []string{err.Error()}}
@@ -244,11 +269,17 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	if err := ctx.Err(); err != nil {
 		return WriteResult{Kind: WriteCancelled, Step: "backup", Backup: reported, Errors: []string{err.Error()}}
 	}
-	updated, err := candidateBytes(raw, request.Change)
+	updated, err := writeCandidate(raw, request.Change)
 	if err != nil {
 		return WriteResult{Kind: WriteInvalidPolicy, Backup: reported, Errors: []string{err.Error()}}
 	}
-	renamed, err := writePublish(encoded, updated, info.Mode())
+	// The last boundary before the replacement: a request that went away while the candidate was
+	// rendered must not publish. After this point cancellation is no longer honoured, because stopping
+	// there would leave the file and the wiring record naming different digests.
+	if err := ctx.Err(); err != nil {
+		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, Errors: []string{err.Error()}}
+	}
+	renamed, err := publish(encoded, updated, info.Mode())
 	if err != nil && !renamed {
 		return WriteResult{Kind: WriteFailed, Backup: reported, Errors: []string{"the execution policy could not be written: " + err.Error()}}
 	}
@@ -265,18 +296,21 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	// is decided as an untrusted answer by re-reading the file and the record, never left half-done.
 	decision, stop := context.WithTimeout(context.WithoutCancel(ctx), writeDecisionTimeout)
 	defer stop()
-	answer := register(decision, path)
-	outcome, parsed := registrationOutcome(answer)
+	// The registration receives the kernel spelling the command line's --execution-policy receives,
+	// not the record's surrogate-escaped spelling: the installer opens what it is given.
+	answer := register(decision, encoded)
+	envelope, parsed := registrationEnvelopeOf(answer)
+	outcome := envelope.Outcome
 	switch {
 	case answer.Err == nil && parsed && registrationSucceeded[outcome]:
-		return storedResult(decision, env, running, path, stored, reported, warnings, nil)
+		return storedResult(decision, env, running, path, stored, reported, envelope, warnings, nil)
 	case answer.Err == nil && parsed && registrationUnchanged[outcome]:
 		// The outcome says the registration did not update the record. Whether the record still names
 		// the bytes this run replaced is a separate fact, and only that fact makes a restore correct:
 		// record_absent and record_changed_underneath in particular can leave a record that names
 		// something else, or nothing at all.
 		if after := Locate(env); after.State == Registered && after.RegisteredDigest == original {
-			return restoreResult(encoded, path, raw, info.Mode(), original, reported, warnings, "the registration did not take the new policy: "+outcome)
+			return restoreResult(publish, encoded, path, raw, info.Mode(), original, reported, warnings, "the registration did not take the new policy: "+outcome)
 		}
 		return recoveryFrom(env, path, stored, reported, warnings, "the registration did not take the new policy: "+outcome)
 	}
@@ -287,17 +321,18 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	switch {
 	case fileErr == nil && fileNow == stored && recordNow.State == Registered && recordNow.RegisteredDigest == stored:
 		// (a) both durable effects happened; only the answer was lost.
-		return storedResult(decision, env, running, path, stored, reported, warnings, []string{detail})
+		return storedResult(decision, env, running, path, stored, reported, registrationEnvelope{}, warnings, []string{detail})
 	case recordNow.State == Registered && recordNow.RegisteredDigest == original:
 		// (b) the record still names the old bytes: put them back.
-		return restoreResult(encoded, path, raw, info.Mode(), original, reported, warnings, detail)
+		return restoreResult(publish, encoded, path, raw, info.Mode(), original, reported, warnings, detail)
 	default:
 		// (c) the two no longer describe one document, or the restore cannot be made.
-		digest := fileNow
 		if fileErr != nil {
-			digest = stored
+			// The file could not be read back, so what it holds was not established. Reporting the
+			// digest this run tried to write would present an intention as an observation.
+			detail += "; the policy file could not be read back: " + fileErr.Error()
 		}
-		return recoveryFrom(env, path, digest, reported, warnings, detail)
+		return recoveryFrom(env, path, fileNow, reported, warnings, detail)
 	}
 }
 
@@ -315,7 +350,10 @@ func recoveryFrom(env LookupEnv, path, fileDigest, backup string, warnings []str
 // storedResult is the answer for a write whose two durable effects both happened: the file holds the
 // new bytes and the record names them. applied is the read path's own rule, so the two answers
 // cannot disagree about whether the running relay has loaded the file.
-func storedResult(ctx context.Context, env LookupEnv, running func(context.Context, LookupEnv) Running, path, stored, backup string, warnings, extra []string) WriteResult {
+// envelope carries the facts a trusted registration answered with: the wiring record's backup and the
+// restart advice. A success established by re-reading (the lost-answer case) passes the zero envelope,
+// because nothing in an answer that was not trusted may be reported.
+func storedResult(ctx context.Context, env LookupEnv, running func(context.Context, LookupEnv) Running, path, stored, backup string, envelope registrationEnvelope, warnings, extra []string) WriteResult {
 	registered := stored
 	located := Locate(env)
 	established := located.State == Registered && located.RegisteredDigest != ""
@@ -342,6 +380,8 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 		RegisteredDigest: registered,
 		FileDigest:       stored,
 		Backup:           backup,
+		RecordBackup:     envelope.Backup,
+		RestartRequired:  envelope.RestartRequired,
 		Applied:          applied,
 		Actions:          AppliedActions(file, applied),
 		Warnings:         append(warnings, extra...),
@@ -353,8 +393,11 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 // only after the bytes on disk have been read back and confirmed and the restore's own durability
 // was established. A restore that cannot be made, or whose durability was not established, is a
 // recovery rather than a confirmed restore.
-func restoreResult(encoded, path string, raw []byte, mode os.FileMode, original, backup string, warnings []string, detail string) WriteResult {
-	renamed, err := writePublish(encoded, raw, mode)
+// A restore whose rename happened and whose directory could not be synced is still a restore: the
+// original bytes are on disk and the record names them, so the answer says so and warns that a power
+// loss may bring the new bytes back, in which case the next write refuses on the digest disagreement.
+func restoreResult(publish publishFunc, encoded, path string, raw []byte, mode os.FileMode, original, backup string, warnings []string, detail string) WriteResult {
+	renamed, err := publish(encoded, raw, mode)
 	if err != nil && !renamed {
 		digest, _ := digestAt(path)
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: digest, RegisteredDigest: original, Backup: backup,
@@ -368,12 +411,14 @@ func restoreResult(encoded, path string, raw []byte, mode os.FileMode, original,
 			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
 			Errors: []string{detail + "; the bytes could not be read back after the restore: " + readErr.Error()}}
 	case err != nil:
-		// The rename happened and the directory could not be synced: the original bytes are on disk
-		// and their survival through a power loss was not established, so this is not a confirmed
-		// restore.
-		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: original, Backup: backup,
-			Recovery: recoveryAdvice(path, backup), Warnings: warnings, Step: "restored",
-			Errors: []string{detail + "; the original bytes are back and the directory could not be synced (" + err.Error() + "), so the restore may not survive a power loss"}}
+		// The rename happened and the directory could not be synced: the original bytes are on disk and
+		// the record names them, so the two again describe one document. Their survival through a power
+		// loss was not established, and a host that loses power now may find the new bytes back - in
+		// which case the file and the record disagree and the next write is refused on that
+		// disagreement rather than acting on it.
+		return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
+			Backup: backup, Warnings: append(warnings, "the original bytes are back and the directory could not be synced ("+err.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
+			Errors: []string{detail}, Step: "restored"}
 	case confirmed != original:
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: original, Backup: backup,
 			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
@@ -394,21 +439,29 @@ func registerWithInstaller(ctx context.Context, path string) RegisterAnswer {
 	return RegisterAnswer{ExitCode: code, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 }
 
-// registrationOutcome reads the outcome field of the installer's JSON envelope. parsed is false when
-// the answer carries no readable envelope at all, which is itself a reason not to trust it.
-func registrationOutcome(answer RegisterAnswer) (string, bool) {
+// registrationEnvelope is the part of the installer's JSON answer this write reads: the outcome that
+// decides, the backup of the wiring record the registration took, and the restart advice. The policy
+// file's own backup is a different artifact and never travels here.
+type registrationEnvelope struct {
+	Outcome         string `json:"outcome"`
+	Backup          string `json:"backup"`
+	RestartRequired string `json:"restartRequired"`
+}
+
+// registrationEnvelope reads the installer's JSON envelope. parsed is false when the answer carries
+// no readable envelope at all, or names no outcome, which is itself a reason not to trust it.
+func registrationEnvelopeOf(answer RegisterAnswer) (registrationEnvelope, bool) {
 	if len(answer.Stdout) == 0 {
-		return "", false
+		return registrationEnvelope{}, false
 	}
-	var envelope map[string]any
+	var envelope registrationEnvelope
 	if err := json.Unmarshal(answer.Stdout, &envelope); err != nil {
-		return "", false
+		return registrationEnvelope{}, false
 	}
-	outcome, _ := envelope["outcome"].(string)
-	if outcome == "" {
-		return "", false
+	if envelope.Outcome == "" {
+		return registrationEnvelope{}, false
 	}
-	return outcome, true
+	return envelope, true
 }
 
 // describeAnswer is the detail a recovery answer carries about the answer that could not be trusted.

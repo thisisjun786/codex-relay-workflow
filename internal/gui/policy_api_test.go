@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
@@ -646,5 +647,96 @@ func TestPolicyWriteOmitsRegisteredWhenTheRecordCannotBeReadBack(t *testing.T) {
 	stored, _ := body["stored"].(map[string]any)
 	if digest, _ := stored["digest"].(string); digest == "" {
 		t.Fatal("the stored digest is not reported")
+	}
+}
+
+// --- CRW-867c: the registration answer's own facts reach the route ---
+
+// TestPolicyWriteReturnsTheRecordBackupAndRestartAdvice is R4 at the route: the installer's
+// record_updated envelope carries the wiring record's backup and the restart advice, and both must
+// come back on the registered object, separately from the policy file's own backup.
+func TestPolicyWriteReturnsTheRecordBackupAndRestartAdvice(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	const recordBackup = "/tmp/does-not-need-to-exist/crw-bridge-mcp.json.crw-20261007T000000Z.bak"
+	const restart = "the record now names the execution policy this run read; restart the relay service before the new policy takes effect"
+	policyWriteSeamsFor(t, func(_ context.Context, path string) policystore.RegisterAnswer {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rewritePolicyRecord(t, path, digestOf(string(raw)))
+		return policystore.RegisterAnswer{ExitCode: 0, Stdout: []byte(
+			"{\"outcome\": \"record_updated\", \"backup\": \"" + recordBackup + "\", \"restartRequired\": \"" + restart + "\"}")}
+	}, unavailablePolicyRunning)
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusOK {
+		t.Fatalf("POST /api/policy: %d %v", code, body)
+	}
+	registered, _ := body["registered"].(map[string]any)
+	if registered == nil {
+		t.Fatalf("the body carries no registered object: %v", body)
+	}
+	if registered["recordBackup"] != recordBackup {
+		t.Fatalf("registered.recordBackup = %v, want %q", registered["recordBackup"], recordBackup)
+	}
+	if registered["restartRequired"] != restart {
+		t.Fatalf("registered.restartRequired = %v, want the installer's advice", registered["restartRequired"])
+	}
+	// The top-level backup is the policy file's own backup, a different artifact from the record's.
+	policyBackup, _ := body["backup"].(string)
+	if policyBackup == "" {
+		t.Fatalf("the policy file's own backup is not reported: %v", body)
+	}
+	if policyBackup == recordBackup {
+		t.Fatal("the policy file backup and the wiring record backup are reported as one artifact")
+	}
+	if _, err := os.Stat(policyBackup); err != nil {
+		t.Fatalf("the reported policy backup does not exist: %v", err)
+	}
+}
+
+// TestPolicyWriteReportsTheRestoreWarning is the route half of R2: a restore whose directory could
+// not be synced answers register_failed with restored and the power-loss warning, and the caller
+// sees it. The seam fails only the SECOND publication (the restore); the first one really writes.
+func TestPolicyWriteReportsTheRestoreWarning(t *testing.T) {
+	policyHost(t, policyWritableText, true)
+	policyWriteSeamsFor(t, func(context.Context, string) policystore.RegisterAnswer {
+		return policystore.RegisterAnswer{ExitCode: 1, Stdout: []byte("{\"outcome\": \"record_absent\"}")}
+	}, unavailablePolicyRunning)
+	previous := policyWriteSeams
+	calls := 0
+	policyWriteSeams.Publish = func(path string, data []byte, mode os.FileMode) (bool, error) {
+		calls++
+		// The GUI package cannot reach policystore's unexported publishPolicy, so the seam writes the
+		// bytes itself: the first call publishes the candidate, the second restores the original.
+		if err := os.WriteFile(path, data, mode.Perm()); err != nil {
+			return false, err
+		}
+		if calls == 2 {
+			return true, errors.New("the directory could not be synced")
+		}
+		return true, nil
+	}
+	t.Cleanup(func() { policyWriteSeams = previous })
+	payload := "{\"expectedDigest\":\"" + digestOf(policyWritableText) + "\",\"change\":{\"kind\":\"removeException\",\"id\":\"legacy\"}}"
+	code, body := policyWriteResponse(t, policyServer(t), payload)
+	if code != http.StatusBadGateway || body["error"] != "register_failed" || body["restored"] != true {
+		t.Fatalf("a restore whose directory sync failed: %d %v", code, body)
+	}
+	warnings, _ := body["warnings"].([]any)
+	if len(warnings) == 0 {
+		t.Fatalf("the power-loss warning does not reach the caller: %v", body)
+	}
+	joined := ""
+	for _, w := range warnings {
+		text, _ := w.(string)
+		joined += text + " "
+	}
+	if !strings.Contains(joined, "power") {
+		t.Fatalf("the warning does not name the power-loss exposure: %q", joined)
+	}
+	if body["backup"] == nil || body["backup"] == "" {
+		t.Fatalf("the restore does not name the backup: %v", body)
 	}
 }

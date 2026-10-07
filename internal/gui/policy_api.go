@@ -59,6 +59,11 @@ type policyWriteRequest struct {
 // policyWriteDigest is one digest of the write result.
 type policyWriteDigest struct {
 	Digest string `json:"digest"`
+	// RecordBackup is the wiring record's own backup, taken by the installer. It is a different
+	// artifact from the top-level backup, which holds the policy file's previous bytes.
+	RecordBackup string `json:"recordBackup,omitempty"`
+	// RestartRequired is the installer's advice about a bridge or relay service already running.
+	RestartRequired string `json:"restartRequired,omitempty"`
 }
 
 // policyWriteBody is the 200 answer: what was stored, what the wiring record now names, whether the
@@ -90,6 +95,9 @@ type policyWriteErrorBody struct {
 	Backup           string   `json:"backup,omitempty"`
 	Recovery         string   `json:"recovery,omitempty"`
 	Step             string   `json:"step,omitempty"`
+	// Warnings carry what the outcome could not establish: a restore whose directory was not synced,
+	// for example, is still a restore but may not survive a power loss.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // envLookup is the process environment as a LookupEnv.
@@ -178,7 +186,8 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 	case policystore.WriteStored:
 		var registered *policyWriteDigest
 		if result.RegisteredDigest != "" {
-			registered = &policyWriteDigest{Digest: result.RegisteredDigest}
+			registered = &policyWriteDigest{Digest: result.RegisteredDigest,
+				RecordBackup: result.RecordBackup, RestartRequired: result.RestartRequired}
 		}
 		return Response{Status: http.StatusOK, Body: policyWriteBody{
 			Stored:     policyWriteDigest{Digest: result.StoredDigest},
@@ -195,14 +204,16 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 		return Response{Status: http.StatusUnprocessableEntity, Body: policyWriteErrorBody{
 			Error: "invalid_policy", Errors: emptyIfNil(result.Errors)}}, nil
 	case policystore.WriteRegisterFailed:
-		// The decided answer fixes this body: the file was put back, so restored is the whole
-		// message.
+		// The file was put back, so restored is the headline; the warnings and errors carry what the
+		// restore could not establish (a directory that was not synced, say) and the backup names the
+		// bytes that were put back.
 		return Response{Status: http.StatusBadGateway, Body: policyWriteErrorBody{
-			Error: "register_failed", Restored: result.Restored}}, nil
+			Error: "register_failed", Restored: result.Restored, Backup: result.Backup,
+			Warnings: result.Warnings, Errors: emptyIfNil(result.Errors)}}, nil
 	case policystore.WriteRecoveryNeeded:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
-			Backup: result.Backup, Recovery: result.Recovery}}, nil
+			Backup: result.Backup, Recovery: result.Recovery, Errors: emptyIfNil(result.Errors)}}, nil
 	case policystore.WriteCancelled:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "cancelled", Step: result.Step, Backup: result.Backup, FileDigest: result.FileDigest}}, nil
