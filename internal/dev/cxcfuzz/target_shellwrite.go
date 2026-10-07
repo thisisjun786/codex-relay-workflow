@@ -35,22 +35,14 @@ func shellwriteTarget() Target {
 }
 
 // shellWriteGo is the Go side: hook.ShellWriteDestinations, as a JSON array of strings. The case's
-// own root takes the place of the input's ${ROOT}, exactly as the shim substitutes its own.
+// own root takes the place of the input's ROOT placeholder in the decoded input's string values,
+// exactly as the shim substitutes its own before it reads the command.
 func shellWriteGo(input any, env Env) (any, error) {
 	command := ""
-	if value, found := field(input, "command"); found {
+	if value, found := field(substituteRootValue(input, env.Root), "command"); found {
 		command, _ = value.(string)
 	}
-	return shellWriteStrings(hook.ShellWriteDestinations(substituteRoot(command, env.Root))), nil
-}
-
-// substituteRoot replaces the input's ${ROOT} placeholder with one side's own case root, so the same
-// input names each side's tree and the answers compare equal after ReplaceRoot.
-func substituteRoot(text, root string) string {
-	if root == "" {
-		return text
-	}
-	return strings.ReplaceAll(text, rootPlaceholder, root)
+	return shellWriteStrings(hook.ShellWriteDestinations(command)), nil
 }
 
 func shellWriteStrings(dests []string) []any {
@@ -237,22 +229,92 @@ func shellWriteVerb(rng *rand.Rand, paths []string) string {
 	return verbs[rng.Intn(len(verbs))]
 }
 
-// shellWriteProgram is a python or node one-liner whose program text names the write.
+// shellWriteProgram is a python or node one-liner whose program text names the write. It carries
+// every Python spelling the issue required: open/Path writes, os.rename and shutil.copy/copyfile
+// with the destination second, each Python literal quoting form (including the f form around a
+// doubled brace), and a destination whose slash is written as one of the single-character escapes.
 func shellWriteProgram(rng *rand.Rand, paths []string) string {
 	dest := shellWritePath(rng, paths)
+	// Every program goes through shellWriteShellQuote: a destination from the pool may hold a double
+	// quote, a dollar, a backslash or a backtick, and a fixed double-quoted argument would let the
+	// shell rewrite the program before the interpreter ever saw it.
 	programs := []string{
-		"python3 -c \"open('" + dest + "','w').write('x')\"",
-		"python3 -c \"from pathlib import Path; Path('" + dest + "').write_text('x')\"",
-		"python3 -c \"from pathlib import Path; Path('/m','" + dest + "').write_bytes(b'x')\"",
-		"python3 -c \"open(r'" + dest + "','a')\"",
-		"py -c \"open('" + dest + "','w')\"",
-		"python3 -c\"open('" + dest + "','w')\"",
-		"node -e \"require('fs').writeFileSync('" + dest + "','x')\"",
-		"node --eval \"require('fs').createWriteStream('" + dest + "')\"",
-		"node -e\"require('fs').appendFileSync('" + dest + "','x')\"",
-		"node -e \"require('fs').open('" + dest + "','w',()=>{})\"",
+		"python3 -c " + shellWriteShellQuote("open('"+dest+"','w').write('x')"),
+		"python3 -c " + shellWriteShellQuote("from pathlib import Path; Path('"+dest+"').write_text('x')"),
+		"python3 -c " + shellWriteShellQuote("from pathlib import Path; Path('/m','"+dest+"').write_bytes(b'x')"),
+		"python3 -c " + shellWriteShellQuote("open(r'"+dest+"','a')"),
+		"py -c " + shellWriteShellQuote("open('"+dest+"','w')"),
+		"python3 -c" + shellWriteShellQuote("open('"+dest+"','w')"),
+		"node -e " + shellWriteShellQuote("require('fs').writeFileSync('"+dest+"','x')"),
+		"node --eval " + shellWriteShellQuote("require('fs').createWriteStream('"+dest+"')"),
+		"node -e" + shellWriteShellQuote("require('fs').appendFileSync('"+dest+"','x')"),
+		"node -e " + shellWriteShellQuote("require('fs').open('"+dest+"','w',()=>{})"),
+	}
+	// The destination is the second argument of os.rename and shutil.copy/copyfile, so a reader
+	// that only reads the first argument of a call names the source and misses the write.
+	for _, literal := range shellWritePythonLiteralForms(dest) {
+		programs = append(programs,
+			"python3 -c "+shellWriteShellQuote("import os; os.rename(\"/w/old.md\", "+literal+")"),
+			"python3 -c "+shellWriteShellQuote("import shutil; shutil.copy(\"/w/old.md\", "+literal+")"),
+			"python3 -c "+shellWriteShellQuote("import shutil; shutil.copyfile(\"/w/old.md\", "+literal+")"),
+		)
+	}
+	// The slash of a destination written as an escape: a reader that does not decode the escape
+	// names no path, or names the raw text.
+	for _, escaped := range shellWritePythonEscapeForms(dest) {
+		programs = append(programs, "python3 -c "+shellWriteShellQuote("open(\""+escaped+"\",\"w\")"))
 	}
 	return programs[rng.Intn(len(programs))]
+}
+
+// shellWriteShellQuote wraps a program so a real shell hands it to the interpreter unchanged. The
+// generator emits a command a reader lexes, but a form the shell cannot pass through is not the
+// write form the issue asked for: a single-quoted argument holding an unescaped single quote ends
+// at that quote, and the interpreter then receives a truncated program. A program without a single
+// quote takes the plain single-quoted form; otherwise it takes a double-quoted form with the four
+// characters the shell still reads inside double quotes escaped.
+func shellWriteShellQuote(program string) string {
+	if !strings.Contains(program, "'") {
+		return "'" + program + "'"
+	}
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(program)
+	return "\"" + escaped + "\""
+}
+
+// shellWritePythonLiteralForms is every quoting form the generator uses for a Python string
+// literal: the four quote characters Python accepts, and the r, b, u and f prefixes. An f literal
+// is sometimes wrapped in a doubled brace, because a brace inside an f-string is an expression
+// unless it is doubled, and a reader that walks replacement fields must still find the path.
+func shellWritePythonLiteralForms(word string) []string {
+	return []string{
+		"'" + word + "'",
+		"\"" + word + "\"",
+		"'''" + word + "'''",
+		"\"\"\"" + word + "\"\"\"",
+		"r'" + word + "'",
+		"b'" + word + "'",
+		"u'" + word + "'",
+		"f'" + word + "'",
+		"f'{{" + word + "}}'",
+		"f\"\"\"{{" + word + "}}\"\"\"",
+	}
+}
+
+// shellWritePythonEscapeForms writes the first slash of a destination as each single-character
+// escape Python accepts for it. A destination with no slash has no such form, and the returned
+// slice is nil then.
+func shellWritePythonEscapeForms(word string) []string {
+	at := strings.IndexByte(word, '/')
+	if at < 0 {
+		return nil
+	}
+	head, tail := word[:at], word[at+1:]
+	return []string{
+		head + `\x2f` + tail,
+		head + `\u002f` + tail,
+		head + `\057` + tail,
+		head + `\N{SOLIDUS}` + tail,
+	}
 }
 
 // shellWriteHeredoc is a heredoc whose body names a path that must not count as a destination, and
@@ -270,7 +332,8 @@ func shellWriteHeredoc(rng *rand.Rand, paths []string) string {
 	return operator + " > " + shellWritePath(rng, paths) + "\n" + shellWritePath(rng, paths) + "\n" + terminator + "\necho x > " + shellWritePath(rng, paths)
 }
 
-// shellWriteNested hides the write one level down, in a shell -c, an eval or an xargs.
+// shellWriteNested hides the write one level down: in a shell -c, an eval, an xargs, a subshell or
+// brace group, or a command substitution written with $( ) or with backticks.
 func shellWriteNested(rng *rand.Rand, paths []string) string {
 	inner := "echo hi > " + shellWritePath(rng, paths)
 	forms := []string{
@@ -282,6 +345,10 @@ func shellWriteNested(rng *rand.Rand, paths []string) string {
 		"su -c '" + inner + "'",
 		"echo " + shellWritePath(rng, paths) + " | xargs -I{} tee {}",
 		"xargs -n1 tee " + shellWritePath(rng, paths),
+		"(" + inner + ")",
+		"{ " + inner + "; }",
+		"x=$(" + inner + ")",
+		"y=`" + inner + "`",
 	}
 	return forms[rng.Intn(len(forms))]
 }
