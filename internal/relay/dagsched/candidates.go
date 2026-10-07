@@ -2,20 +2,22 @@ package dagsched
 
 import (
 	"context"
+	"database/sql"
 	"sort"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
-// The read facade the integration command needs from the scheduler (CRW-965). internal/relay/integrate
-// imports this package and never the other way, so the scheduler keeps owning the predicates and the
-// integration command reads them instead of copying them. The functions here add no behaviour of their
-// own: they name what the scheduler already computes, for a caller outside the package.
+// The read and write facade of the integration batch (CRW-965). The batch lives in this package so its tests can
+// use the same plan, acceptance and mark fixtures as the scheduler's own tests. A candidate is an accepted
+// implementation node whose active acceptance is current: the node is live, its relationship is active and on the
+// generation the acceptance stands on, and the scheduler's staleness judgment (spec, consumed inputs and criteria)
+// finds nothing wrong. Every judgment is the scheduler's own; the batch reads them and never restates them.
 
-// Candidate is one accepted implementation node the integration command may merge: the node, the
-// acceptance that stands for its result, and the head, relationship, event, revision and generation the
-// acceptance stands on. It is what the batch merges and what the merged mark is keyed on.
+// Candidate is one accepted implementation node a batch may merge, and the identity its merged mark is keyed on:
+// the acceptance, its event, its revision hash, its generation and the head it stands on. A batch freezes these
+// before it touches git, and the mark names the frozen acceptance and event, never whatever is current later.
 type Candidate struct {
 	PlanID, NodeID, AcceptanceID string
 	RelationshipID               string
@@ -24,10 +26,9 @@ type Candidate struct {
 	HeadSHA, Repository          string
 }
 
-// AcceptedCandidates is the plan's live implementation nodes that hold an active acceptance with a head
-// and have not landed on every target yet, in node-id order so two calls agree. A node that already
-// integrated is left out (there is nothing to merge), and so is a node the plan holds: the integration
-// command advances no node the plan paused or ended.
+// AcceptedCandidates is the plan's ready accepted implementation candidates, in node-id order so two calls agree.
+// A node that already integrated is left out, and so is one that is stale, whose relationship is not active or is
+// not on the generation its acceptance stands on, or that the plan holds (paused, cancelled or archived).
 func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Candidate, error) {
 	q := s.Store.Q(ctx)
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
@@ -58,9 +59,26 @@ func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Cand
 		if landed {
 			continue
 		}
+		stale, err := s.staleOf(ctx, q, plan, snap, n)
+		if err != nil {
+			return nil, err
+		}
+		if stale != nil {
+			continue
+		}
+		rel, found, err := currentRelationshipOf(ctx, q, plan, n.NodeID)
+		if err != nil {
+			return nil, err
+		}
+		if !found || rel.Status != "active" || rel.Superseded {
+			continue
+		}
 		stand, err := s.standOf(ctx, q, acc)
 		if err != nil {
 			return nil, err
+		}
+		if stand.Generation != rel.Generation {
+			continue
 		}
 		out = append(out, Candidate{PlanID: plan, NodeID: n.NodeID, AcceptanceID: acc.AcceptanceID, RelationshipID: stand.RelationshipID,
 			EventID: stand.EventID, RevisionHash: stand.RevisionHash, Generation: stand.Generation, HeadSHA: stand.Head, Repository: acc.Repository})
@@ -68,32 +86,82 @@ func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Cand
 	return out, nil
 }
 
-// MarkMerged records the parent's merged mark for the revision an accepted head stands on, exactly as
-// the parent's own assignment-mark does: the same table, the same columns and the same actor, so every
-// reader of integratedAt cannot tell the two apart. The integration batch records it once it has
-// verified the merged tree and moved the local integration branch. It returns the event the mark names.
-func (s *Scheduler) MarkMerged(ctx context.Context, plan, node, actor, evidence string) (string, error) {
+// MarkFrozen writes the parent's merged mark for one frozen candidate. The actor must be the parent of the node's
+// relationship (notParentHeldBy, the check dag-accept makes), the acceptance must still be the frozen one and not
+// stale, and the mark names the frozen event: a mark that cannot be written is refused, and the batch records it as
+// pending.
+func (s *Scheduler) MarkFrozen(ctx context.Context, f Candidate, actor, evidence string) (string, error) {
 	q := s.Store.Q(ctx)
-	acc, found, err := loadActiveAcceptance(ctx, q, plan, node)
+	snap, _, err := dag.SnapshotAt(ctx, q, f.PlanID, 0)
 	if err != nil {
 		return "", err
 	}
-	if !found || acc.HeadSHA == "" {
-		return "", refuse(contract.RefusalDispositionConflict, "node %s has no accepted head to mark merged", node)
+	n, ok := nodeOf(snap, f.NodeID)
+	if !ok {
+		return "", refuse(contract.RefusalStaleMarkContext, "node %s is no longer in plan %s", f.NodeID, f.PlanID)
 	}
-	stand, err := s.standOf(ctx, q, acc)
+	rel, found, err := currentRelationshipOf(ctx, q, f.PlanID, f.NodeID)
 	if err != nil {
 		return "", err
+	}
+	if !found {
+		return "", refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to mark", f.NodeID)
+	}
+	if rel.ParentTaskID != actor {
+		return "", notParentHeldBy(actor, rel)
+	}
+	acc, found, err := loadActiveAcceptance(ctx, q, f.PlanID, f.NodeID)
+	if err != nil {
+		return "", err
+	}
+	if !found || acc.AcceptanceID != f.AcceptanceID {
+		return "", refuse(contract.RefusalStaleMarkContext, "the active acceptance of %s is no longer the one the batch merged (%s)", f.NodeID, f.AcceptanceID)
+	}
+	stale, err := s.staleOf(ctx, q, f.PlanID, snap, n)
+	if err != nil {
+		return "", err
+	}
+	if stale != nil {
+		return "", refuse(contract.RefusalStaleMarkContext, "node %s is stale: its merged mark waits for the node to be current", f.NodeID)
 	}
 	view := s.assignmentView(ctx)
-	if _, err := view.Mark(ctx, stand.RelationshipID, "merged", evidence, actor, stand.EventID); err != nil {
+	if _, err := view.Mark(ctx, rel.ID, "merged", evidence, actor, f.EventID); err != nil {
 		return "", err
 	}
-	return stand.EventID, nil
+	return f.EventID, nil
 }
 
-// CandidateTargets are the targets a node's active acceptance has to land on, the same set the scheduler
-// judges for integration. A node with no active acceptance has none.
+// IntegrationWrite runs the write of an integration stage inside one transaction after the coordinator-epoch fence
+// dag-accept uses (fence, the same check): a stale epoch is refused before anything is written. The write sees the
+// transaction's context.
+func (s *Scheduler) IntegrationWrite(ctx context.Context, plan, actor string, write func(txCtx context.Context) error) error {
+	return s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		if err := s.fence(txCtx, s.Store.Q(txCtx), plan, actor); err != nil {
+			return err
+		}
+		return write(txCtx)
+	})
+}
+
+// Successors maps each node of a plan to the nodes that depend on it through the plan's edges, sorted. The batch
+// uses it to leave a failing candidate's dependants out with it.
+func (s *Scheduler) Successors(ctx context.Context, plan string) (map[string][]string, error) {
+	snap, _, err := dag.SnapshotAt(ctx, s.Store.Q(ctx), plan, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, e := range snap.Edges {
+		out[e.FromNodeID] = append(out[e.FromNodeID], e.ToNodeID)
+	}
+	for k := range out {
+		sort.Strings(out[k])
+	}
+	return out, nil
+}
+
+// CandidateTargets are the targets a node's active acceptance has to land on, the same set the scheduler judges for
+// integration. A node with no active acceptance has none.
 func (s *Scheduler) CandidateTargets(ctx context.Context, plan, node string) ([]Target, error) {
 	q := s.Store.Q(ctx)
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)

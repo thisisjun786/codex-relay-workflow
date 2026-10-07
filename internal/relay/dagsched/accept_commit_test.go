@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -50,17 +51,27 @@ func (k *commitAcceptKit) report(plan, node string) accepted {
 	return r
 }
 
-// record writes a verification-record/1 naming a tree and a result.
+// record writes a sealed verification-record/1 in the CRW-964 writer's format (camelCase members, the digest the
+// writer computes), naming a tree and a result. The extra keys are the camelCase members a test changes: result,
+// pinMismatch.
 func (k *commitAcceptKit) record(tree, result string, extra map[string]any) string {
 	k.t.Helper()
-	doc := map[string]any{"schema": "verification-record/1", "repository": "owner/repo", "base_commit": k.base, "head_commit": k.head,
-		"tree": tree, "result": result, "reusable": true, "ci_digest": strings.Repeat("c", 64), "os": "linux", "arch": "amd64",
-		"tool_versions":      map[string]any{"go": "go1.27.1", "node": "v22", "gitleaks": "8.30.1", "staticcheck": "2026.1"},
-		"dependency_digests": map[string]any{"go.sum": strings.Repeat("d", 64), "web/package-lock.json": strings.Repeat("e", 64)}}
-	for key, value := range extra {
-		doc[key] = value
+	record := VerificationRecord{Runner: "local", Repository: "owner/repo", BaseCommit: k.base, HeadCommit: k.head, TreeHash: tree,
+		CiDigest: "", Tools: map[string]string{"go": "go1.27.1"}, Pins: map[string]string{}, GoFlags: "", GoEnv: "",
+		PinMismatch: []string{}, Dependencies: map[string]string{"go.sum": "", "web/package-lock.json": ""}, OS: runtime.GOOS, Arch: runtime.GOARCH,
+		Result: result, Jobs: []json.RawMessage{}}
+	if pins, ok := extra["pinMismatch"].([]string); ok {
+		record.PinMismatch = pins
 	}
-	raw, err := json.Marshal(doc)
+	if value, ok := extra["result"].(string); ok {
+		record.Result = value
+	}
+	keys, err := CommitVerificationKeys(context.Background(), k.repo.path, k.head)
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	record.CiDigest, record.Dependencies = keys.CiDigest, keys.Dependencies
+	raw, err := SealVerificationRecord(record)
 	if err != nil {
 		k.t.Fatal(err)
 	}
@@ -103,7 +114,7 @@ func TestCommitAcceptanceRecordsTheCommit(t *testing.T) {
 	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
-	res, err := k.acceptCommit(k.record(k.treeOf(k.head), "PASS", nil))
+	res, err := k.acceptCommit(k.record(k.treeOf(k.head), "pass", nil))
 	if err != nil {
 		t.Fatalf("accept by commit: %v", err)
 	}
@@ -133,7 +144,7 @@ func TestCommitAcceptanceReplays(t *testing.T) {
 	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
-	record := k.record(k.treeOf(k.head), "PASS", nil)
+	record := k.record(k.treeOf(k.head), "pass", nil)
 	first, err := k.acceptCommit(record)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +168,7 @@ func TestCommitAcceptanceRefusesACommitThatIsNotTheRuledHead(t *testing.T) {
 	other := k.repo.commit("other.txt", "other")
 	k.repo.git("checkout", "-q", "dev")
 	_, err := k.sched.Accept(context.Background(), "g", "I", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: "s", Model: "m", Effort: "none"},
-		Commit: &CommitRef{Head: other, Base: k.base, Checkout: k.repo.path, Record: k.record(k.treeOf(other), "PASS", nil)}})
+		Commit: &CommitRef{Head: other, Base: k.base, Checkout: k.repo.path, Record: k.record(k.treeOf(other), "pass", nil)}})
 	if got := refusalReasonOf(err); got != "head_not_receipt_head" {
 		t.Fatalf("reason %q (err %v)", got, err)
 	}
@@ -177,7 +188,7 @@ func TestCommitAcceptanceRefusesACommitThatDoesNotDescendFromTheBase(t *testing.
 	unrelated := k.repo.git("rev-parse", "HEAD")
 	k.repo.git("checkout", "-q", "dev")
 	_, err := k.sched.Accept(context.Background(), "g", "I", "parent", AcceptInput{RuleVersion: VerifierRule{SkillsDigest: "s", Model: "m", Effort: "none"},
-		Commit: &CommitRef{Head: k.head, Base: unrelated, Checkout: k.repo.path, Record: k.record(k.treeOf(k.head), "PASS", nil)}})
+		Commit: &CommitRef{Head: k.head, Base: unrelated, Checkout: k.repo.path, Record: k.record(k.treeOf(k.head), "pass", nil)}})
 	if got := refusalReasonOf(err); got != "merge_base_mismatch" {
 		t.Fatalf("reason %q (err %v)", got, err)
 	}
@@ -191,7 +202,7 @@ func TestCommitAcceptanceRefusesARecordOfAnotherTree(t *testing.T) {
 	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.report("g", "I")
-	_, err := k.acceptCommit(k.record(k.treeOf(k.base), "PASS", nil))
+	_, err := k.acceptCommit(k.record(k.treeOf(k.base), "pass", nil))
 	if got := refusalReasonOf(err); got != "revision_mismatch" {
 		t.Fatalf("reason %q (err %v)", got, err)
 	}
@@ -207,16 +218,15 @@ func TestCommitAcceptanceRefusesAFailedOrNonReusableRecord(t *testing.T) {
 		name  string
 		extra map[string]any
 	}{
-		{"fail", map[string]any{"result": "FAIL"}},
-		{"not reusable", map[string]any{"reusable": false}},
-		{"pin mismatch", map[string]any{"pin_mismatch": true}},
+		{"fail", map[string]any{"result": "fail"}},
+		{"pin mismatch", map[string]any{"pinMismatch": []string{"go"}}},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			k := newCommitAcceptKit(t)
 			k.report("g", "I")
-			_, err := k.acceptCommit(k.record(k.treeOf(k.head), "PASS", c.extra))
+			_, err := k.acceptCommit(k.record(k.treeOf(k.head), "pass", c.extra))
 			if got := refusalReasonOf(err); got != "disposition_conflict" {
 				t.Fatalf("reason %q (err %v)", got, err)
 			}
@@ -236,8 +246,6 @@ func TestCommitAcceptanceRefusesAMalformedRecord(t *testing.T) {
 	}{
 		{"not json", "{"},
 		{"wrong schema", `{"schema":"other/1","head_commit":"` + strings.Repeat("a", 40) + `","tree":"` + strings.Repeat("b", 40) + `","result":"PASS"}`},
-		{"no tree", `{"schema":"verification-record/1","head_commit":"` + strings.Repeat("a", 40) + `","result":"PASS"}`},
-		{"no result", `{"schema":"verification-record/1","head_commit":"` + strings.Repeat("a", 40) + `","tree":"` + strings.Repeat("b", 40) + `"}`},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
@@ -265,7 +273,7 @@ func TestCommitAcceptanceRefusesWhenTheRulingFixedNoHead(t *testing.T) {
 	t.Parallel()
 	k := newCommitAcceptKit(t)
 	k.reportNode("g", "I", acceptOpts{}) // no dag_verified_heads row
-	_, err := k.acceptCommit(k.record(k.treeOf(k.head), "PASS", nil))
+	_, err := k.acceptCommit(k.record(k.treeOf(k.head), "pass", nil))
 	if got := refusalReasonOf(err); got != "head_not_receipt_head" {
 		t.Fatalf("reason %q (err %v)", got, err)
 	}

@@ -886,4 +886,23 @@ BEGIN SELECT RAISE(ABORT, 'dag_acceptance_verifications rows are append-only: ne
 BEGIN SELECT RAISE(ABORT, 'dag_integration_batches rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_integration_batches_no_delete BEFORE DELETE ON dag_integration_batches
 BEGIN SELECT RAISE(ABORT, 'dag_integration_batches rows are append-only: never deleted'); END`,
+	`CREATE TABLE IF NOT EXISTS dag_integration_stages (
+    stage_id       TEXT PRIMARY KEY CHECK (stage_id <> ''),
+    batch_id       TEXT NOT NULL CHECK (batch_id <> ''),
+    plan_id        TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    stage          TEXT NOT NULL CHECK (stage IN ('intent', 'ref_moved', 'marked', 'mark_pending')),
+    node_id        TEXT NOT NULL,
+    acceptance_id  TEXT NOT NULL,
+    event_id       TEXT NOT NULL,
+    revision_hash  TEXT NOT NULL,
+    generation     INTEGER NOT NULL CHECK (generation >= 0),
+    head_sha       TEXT NOT NULL,
+    detail         TEXT NOT NULL,
+    recorded_by    TEXT NOT NULL CHECK (recorded_by <> ''),
+    recorded_at    TEXT NOT NULL
+)`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_update BEFORE UPDATE ON dag_integration_stages
+BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_integration_stages_no_delete BEFORE DELETE ON dag_integration_stages
+BEGIN SELECT RAISE(ABORT, 'dag_integration_stages rows are append-only: never deleted'); END`,
 }

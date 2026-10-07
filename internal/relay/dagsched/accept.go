@@ -264,7 +264,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		if head.SetDigest != n.CriteriaSetDigest {
 			return out, refuse(contract.RefusalCriteriaSetChanged, "the output was ruled against criteria %s and the plan fixed %s for %s", head.SetDigest, n.CriteriaSetDigest, node)
 		}
-		if prepared, err = s.prepareCommitAcceptance(ctx, *in.Commit, head.EventID); err != nil {
+		if prepared, err = s.prepareCommitAcceptance(ctx, *in.Commit, head, rel); err != nil {
 			return out, err
 		}
 	} else if in.PullRequest != nil {
@@ -324,6 +324,11 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return refuse(contract.RefusalCriteriaSetChanged, "the output was ruled against criteria %s and the plan fixed %s for %s", head.SetDigest, n.CriteriaSetDigest, node)
 		}
 		out.RelationshipID, out.Generation = rel.ID, rel.Generation
+		if commitPath && (head.EventID != prepared.event || head.RevisionHash != prepared.revision || rel.Generation != prepared.generation) {
+			// the proof stood on the event, revision and generation read before the transaction; a head that moved since is
+			// refused, never stored under the old proof (finding d9)
+			return refuse(contract.RefusalStaleGeneration, "the current head of generation %d changed while the commit was checked (event %s, checked %s): read the assignment again", rel.Generation, head.EventID, prepared.event)
+		}
 
 		// the same output accepted before: a replay, or the same acceptance re-ruled under re-registered criteria
 		var existing, state, ownDigest string

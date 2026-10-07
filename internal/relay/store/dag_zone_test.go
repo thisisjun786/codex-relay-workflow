@@ -81,6 +81,7 @@ var zoneInventory = map[string][]string{
 	// CRW-965 (appended statements): the verification record an acceptance was taken on, and one row per integration batch.
 	"dag_acceptance_verifications": {"acceptance_id", "record_digest", "record_json", "head_commit", "tree_sha", "base_commit", "recorded_by", "coordinator_epoch", "recorded_at"},
 	"dag_integration_batches":      {"batch_id", "plan_id", "repository", "integration_ref", "base_ref", "old_head", "new_head", "merged_json", "split_json", "verification_json", "recorded_by", "coordinator_epoch", "recorded_at"},
+	"dag_integration_stages":       {"stage_id", "batch_id", "plan_id", "stage", "node_id", "acceptance_id", "event_id", "revision_hash", "generation", "head_sha", "detail", "recorded_by", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

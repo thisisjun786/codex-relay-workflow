@@ -1,11 +1,10 @@
 package dagsched
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -36,49 +35,6 @@ type CommitRef struct {
 // VerificationRecordSchema is the schema tag a verification record must carry.
 const VerificationRecordSchema = "verification-record/1"
 
-// VerificationRecord is the part of verification-record/1 this build reads. The writer of the full
-// record belongs to the local-verification tooling issue; the field names below are the ones that issue
-// fixes, and DecodeVerificationRecord is the single place they are pinned. The integration command
-// reads the same document through this decoder, so a record means one thing in the relay.
-type VerificationRecord struct {
-	Schema   string `json:"schema"`
-	Head     string `json:"head_commit"`
-	Base     string `json:"base_commit"`
-	Tree     string `json:"tree"`
-	Result   string `json:"result"`
-	Reusable *bool  `json:"reusable"`
-	// PinMismatch is the tooling issue's mark that the tools did not match the pinned versions: a
-	// record that carries it is not reusable.
-	PinMismatch bool `json:"pin_mismatch"`
-	// The reuse keys are read so a record that names none is still readable; the record body itself is
-	// stored unchanged, so a later reader recomputes the digest from what the parent supplied.
-	Repository string `json:"repository"`
-	CiDigest   string `json:"ci_digest"`
-	OS         string `json:"os"`
-	Arch       string `json:"arch"`
-}
-
-// DecodeVerificationRecord reads a verification-record/1 and refuses a document that is not one or that
-// lacks a field the decision needs.
-func DecodeVerificationRecord(raw []byte) (VerificationRecord, error) {
-	var record VerificationRecord
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err := decoder.Decode(&record); err != nil {
-		return record, refuse(contract.RefusalMalformedReceipt, "the verification record is not a JSON document: %v", err)
-	}
-	if decoder.More() {
-		return record, refuse(contract.RefusalMalformedReceipt, "the verification record is one JSON object")
-	}
-	if record.Schema != VerificationRecordSchema {
-		return record, refuse(contract.RefusalMalformedReceipt, "the verification record names schema %q; this path reads %s", record.Schema, VerificationRecordSchema)
-	}
-	if record.Head == "" || record.Tree == "" || record.Result == "" {
-		return record, refuse(contract.RefusalMalformedReceipt, "the verification record names no head commit, tree or result")
-	}
-	return record, nil
-}
-
-// readVerificationRecord reads the record a --verification option names: the document itself, or @file.
 func readVerificationRecord(input string) ([]byte, error) {
 	if !strings.HasPrefix(input, "@") {
 		if err := store.EncodeUTF8(input); err != nil {
@@ -94,14 +50,6 @@ func readVerificationRecord(input string) ([]byte, error) {
 }
 
 // gitTreeOf reads the tree object of a commit in a checkout, through the clean-environment git helper
-// the base-refresh proof uses.
-func gitTreeOf(ctx context.Context, checkout, commit string) (string, error) {
-	out, err := runGit(ctx, checkout, nil, "rev-parse", commit+"^{tree}")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
-}
 
 // commitIsAncestor answers whether ancestor is an ancestor of descendant in the checkout.
 func commitIsAncestor(ctx context.Context, checkout, ancestor, descendant string) (bool, error) {
@@ -117,20 +65,24 @@ func commitIsAncestor(ctx context.Context, checkout, ancestor, descendant string
 	return false, err
 }
 
-// acceptCommitInput is the read side of the commit path: everything the checks produce, read before the
-// write transaction opens, exactly as the pull-request path reads its forge before it.
+// acceptCommitInput is the read side of the commit path: everything the checks produce, read before the write
+// transaction opens. The event, revision and generation are what the proof stood on; the transaction compares them
+// with the current head again (finding d9), and the head it stores is the one proved here.
 type acceptCommitInput struct {
-	ref       CommitRef
-	recordRaw []byte
-	record    VerificationRecord
-	tree      string
+	ref        CommitRef
+	recordRaw  []byte
+	record     VerificationRecord
+	tree       string
+	event      string
+	revision   string
+	generation int64
 }
 
-// prepareCommitAcceptance runs every check the commit path makes outside the write transaction: the
-// record is readable, the commit is the ruled head, it descends from the base, and the record names this
-// commit's tree with a PASS that may be reused. A failure here writes nothing.
-func (s *Scheduler) prepareCommitAcceptance(ctx context.Context, in CommitRef, headEvent string) (acceptCommitInput, error) {
-	out := acceptCommitInput{ref: in}
+// prepareCommitAcceptance runs every check the commit path makes outside the write transaction: the record is
+// readable and judged reusable for this commit's tree, base, ci.yml, dependencies and host (JudgeVerificationRecord),
+// the commit is the head the generation's ruling fixed, and it descends from the base. A failure here writes nothing.
+func (s *Scheduler) prepareCommitAcceptance(ctx context.Context, in CommitRef, head verifiedHead, rel relRow) (acceptCommitInput, error) {
+	out := acceptCommitInput{ref: in, event: head.EventID, revision: head.RevisionHash, generation: rel.Generation}
 	if in.Head == "" || in.Base == "" || in.Checkout == "" || in.Record == "" {
 		return out, refuse(contract.RefusalMalformedReceipt, "a pull-request-less acceptance names --commit, --base, --verification and --checkout")
 	}
@@ -144,27 +96,20 @@ func (s *Scheduler) prepareCommitAcceptance(ctx context.Context, in CommitRef, h
 	if err != nil {
 		return out, err
 	}
-	record, err := DecodeVerificationRecord(raw)
-	if err != nil {
-		return out, err
-	}
-	out.recordRaw, out.record = raw, record
+	out.recordRaw = raw
 
-	// the commit has to be the head the generation's ruling fixed. The event's own revision hash is the
-	// artifact manifest digest, not a commit, so the commit comes from dag_verified_heads.
+	// the commit has to be the head the generation's ruling fixed. The event's own revision hash is the artifact
+	// manifest digest, not a commit, so the commit comes from dag_verified_heads.
 	q := s.Store.Q(ctx)
-	ruled, source, err := acceptance.RulingHead(ctx, q, headEvent, "")
+	ruled, source, err := acceptance.RulingHead(ctx, q, head.EventID, "")
 	if err != nil {
 		return out, err
 	}
 	if source != "verified_heads" || ruled == "" {
-		return out, refuse(contract.RefusalHeadNotReceiptHead, "the ruling on event %s fixed no head commit, so no commit can be the head of that generation", headEvent)
+		return out, refuse(contract.RefusalHeadNotReceiptHead, "the ruling on event %s fixed no head commit, so no commit can be the head of that generation", head.EventID)
 	}
 	if !strings.EqualFold(ruled, in.Head) {
-		return out, refuse(contract.RefusalHeadNotReceiptHead, "the ruling on event %s fixed head %s and the call names %s", headEvent, ruled, in.Head)
-	}
-	if !strings.EqualFold(record.Head, in.Head) {
-		return out, refuse(contract.RefusalHeadNotReceiptHead, "the verification record names head %s and the call names %s", record.Head, in.Head)
+		return out, refuse(contract.RefusalHeadNotReceiptHead, "the ruling on event %s fixed head %s and the call names %s", head.EventID, ruled, in.Head)
 	}
 	// the commit descends from the base
 	if ancestor, err := commitIsAncestor(ctx, in.Checkout, in.Base, in.Head); err != nil {
@@ -172,25 +117,21 @@ func (s *Scheduler) prepareCommitAcceptance(ctx context.Context, in CommitRef, h
 	} else if !ancestor {
 		return out, refuse(contract.RefusalMergeBaseMismatch, "%s is not an ancestor of %s in %s: the commit does not descend from the base", in.Base, in.Head, in.Checkout)
 	}
-	// the record names this commit's tree
-	tree, err := gitTreeOf(ctx, in.Checkout, in.Head)
+	base, err := runGit(ctx, in.Checkout, nil, "rev-parse", "--verify", in.Base+"^{commit}")
 	if err != nil {
-		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not read the tree of %s in %s: %v", in.Head, in.Checkout, err)
+		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not resolve the base %s in %s: %v", in.Base, in.Checkout, err)
 	}
-	out.tree = tree
-	if !strings.EqualFold(record.Tree, tree) {
-		return out, refuse(contract.RefusalRevisionMismatch, "the verification record names tree %s and the tree of %s is %s", record.Tree, in.Head, tree)
+	keys, err := CommitVerificationKeys(ctx, in.Checkout, in.Head)
+	if err != nil {
+		return out, err
 	}
-	// a PASS the relay may reuse
-	if !strings.EqualFold(record.Result, "PASS") {
-		return out, refuse(contract.RefusalDispositionConflict, "the verification record of %s is %s: only a PASS is accepted", in.Head, record.Result)
+	keys.Base = strings.TrimSpace(base)
+	keys.OS, keys.Arch = runtime.GOOS, runtime.GOARCH
+	record, err := JudgeVerificationRecord(raw, keys)
+	if err != nil {
+		return out, err
 	}
-	if record.Reusable != nil && !*record.Reusable {
-		return out, refuse(contract.RefusalDispositionConflict, "the verification record of %s is not reusable", in.Head)
-	}
-	if record.PinMismatch {
-		return out, refuse(contract.RefusalDispositionConflict, "the verification record of %s records a tool pin mismatch, so it cannot be reused", in.Head)
-	}
+	out.tree, out.record = keys.Tree, record
 	return out, nil
 }
 
