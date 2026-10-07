@@ -297,22 +297,26 @@ func TestShellwriteShellQuoteSurvivesTheDestination(t *testing.T) {
 	}
 }
 
-// c2 (CRW-857): the generated programs carry the shell quoting, so the class the issue named
-// reaches the campaigns as a command a shell could run rather than as truncated text.
+// c2 (CRW-857): EVERY python/node program the generator emits carries the shell quoting, so the
+// class the issue named reaches the campaigns as a command a shell could run rather than as
+// truncated or rewritten text. The check is on the command the shell would parse, not on the
+// program text alone: the argument after the interpreter flag must be a well-formed quoted word.
 func TestShellwriteGeneratorQuotesItsPrograms(t *testing.T) {
 	rng := rand.New(rand.NewSource(17))
 	for i := 0; i < 5000; i++ {
 		program := shellWriteProgram(rng, shellWritePathFragments())
-		prefix := "python3 -c "
-		if !strings.HasPrefix(program, prefix) {
-			continue
-		}
-		quoted := program[len(prefix):]
-		if !strings.HasPrefix(quoted, "'") && !strings.HasPrefix(quoted, "\"") {
-			t.Fatalf("a python3 -c program is not shell-quoted: %q", program)
-		}
-		if strings.HasPrefix(quoted, "'") && strings.Count(quoted, "'") != 2 {
-			t.Fatalf("a single-quoted program holds a stray single quote: %q", program)
+		for _, prefix := range []string{"python3 -c", "py -c", "node -e", "node --eval"} {
+			if !strings.HasPrefix(program, prefix) {
+				continue
+			}
+			// The flag and the argument may be separated by a space or not; both are emitted.
+			quoted := strings.TrimSpace(strings.TrimPrefix(program, prefix))
+			if !strings.HasPrefix(quoted, "'") && !strings.HasPrefix(quoted, "\"") {
+				t.Fatalf("the %s program is not shell-quoted: %q", prefix, program)
+			}
+			if strings.HasPrefix(quoted, "'") && strings.Count(quoted, "'") != 2 {
+				t.Fatalf("a single-quoted program holds a stray single quote: %q", program)
+			}
 		}
 	}
 }

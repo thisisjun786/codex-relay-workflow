@@ -235,17 +235,20 @@ func shellWriteVerb(rng *rand.Rand, paths []string) string {
 // doubled brace), and a destination whose slash is written as one of the single-character escapes.
 func shellWriteProgram(rng *rand.Rand, paths []string) string {
 	dest := shellWritePath(rng, paths)
+	// Every program goes through shellWriteShellQuote: a destination from the pool may hold a double
+	// quote, a dollar, a backslash or a backtick, and a fixed double-quoted argument would let the
+	// shell rewrite the program before the interpreter ever saw it.
 	programs := []string{
-		"python3 -c \"open('" + dest + "','w').write('x')\"",
-		"python3 -c \"from pathlib import Path; Path('" + dest + "').write_text('x')\"",
-		"python3 -c \"from pathlib import Path; Path('/m','" + dest + "').write_bytes(b'x')\"",
-		"python3 -c \"open(r'" + dest + "','a')\"",
-		"py -c \"open('" + dest + "','w')\"",
-		"python3 -c\"open('" + dest + "','w')\"",
-		"node -e \"require('fs').writeFileSync('" + dest + "','x')\"",
-		"node --eval \"require('fs').createWriteStream('" + dest + "')\"",
-		"node -e\"require('fs').appendFileSync('" + dest + "','x')\"",
-		"node -e \"require('fs').open('" + dest + "','w',()=>{})\"",
+		"python3 -c " + shellWriteShellQuote("open('"+dest+"','w').write('x')"),
+		"python3 -c " + shellWriteShellQuote("from pathlib import Path; Path('"+dest+"').write_text('x')"),
+		"python3 -c " + shellWriteShellQuote("from pathlib import Path; Path('/m','"+dest+"').write_bytes(b'x')"),
+		"python3 -c " + shellWriteShellQuote("open(r'"+dest+"','a')"),
+		"py -c " + shellWriteShellQuote("open('"+dest+"','w')"),
+		"python3 -c" + shellWriteShellQuote("open('"+dest+"','w')"),
+		"node -e " + shellWriteShellQuote("require('fs').writeFileSync('"+dest+"','x')"),
+		"node --eval " + shellWriteShellQuote("require('fs').createWriteStream('"+dest+"')"),
+		"node -e" + shellWriteShellQuote("require('fs').appendFileSync('"+dest+"','x')"),
+		"node -e " + shellWriteShellQuote("require('fs').open('"+dest+"','w',()=>{})"),
 	}
 	// The destination is the second argument of os.rename and shutil.copy/copyfile, so a reader
 	// that only reads the first argument of a call names the source and misses the write.
