@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
 // The seams every signal reads through: package variables, so this issue adds no field to a type
@@ -190,13 +193,24 @@ type capacityWaiting struct {
 
 // capacityWaitingFor asks the relay for one plan's ready set: the ready nodes and the nodes
 // deferred for want of capacity, with the pass's slots and host memory bound. A relay that refuses
-// or answers something unreadable is the read failure reported as exit 3.
-func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (capacityWaiting, error) {
+// or answers something unreadable is the read failure reported as exit 3, except for the one
+// refusal a store with no DAG zone gives every plan: there the plan's own question has no answer to
+// read, so the reading is unmeasured rather than a failure (capacityZoneAbsent).
+func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, stateDir, plan string) (capacityWaiting, error) {
 	stdout, code, err := e.Relay(ctx, cfg, "dag-ready", "--plan", plan)
 	if err != nil {
 		return capacityWaiting{}, err
 	}
 	if code != 0 {
+		if capacityRefusalUnregisteredScope(stdout) {
+			absent, err := capacityZoneAbsent(ctx, stateDir)
+			if err != nil {
+				return capacityWaiting{}, err
+			}
+			if absent {
+				return capacityWaiting{}, nil
+			}
+		}
 		return capacityWaiting{}, fmt.Errorf("relay dag-ready --plan %s: exit %d", plan, code)
 	}
 	var reading struct {
@@ -256,6 +270,45 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan string) (
 		out.HostMemory = reading.Pass.HostMemory.State
 	}
 	return out, nil
+}
+
+// capacityRefusalUnregisteredScope reports whether the relay's answer is its refusal envelope for a
+// plan the store cannot resolve (reason unregistered_scope). Only that answer, with the store check
+// beside it, is the store that predates the DAG zone; a command that failed without the envelope
+// (a relay that did not answer, a store that records another socket) is not this case.
+func capacityRefusalUnregisteredScope(stdout []byte) bool {
+	var refusal struct {
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(stdout, &refusal); err != nil {
+		return false
+	}
+	return refusal.Error == "refused" && refusal.Reason == string(contract.RefusalUnregisteredScope)
+}
+
+// capacityZoneAbsent reports whether the store under stateDir holds no DAG zone: one of the tables a
+// branch reading needs is missing. A store that is absent or cannot be opened is not this case, so
+// the relay's refusal stays the read failure it is rather than reading as an unmeasured answer.
+func capacityZoneAbsent(ctx context.Context, stateDir string) (bool, error) {
+	handle, err := dagReviewOpenStore(ctx, stateDir)
+	if err != nil {
+		if errors.Is(err, ErrRelayStoreAbsent) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer handle.Close()
+	for _, table := range branchZoneTables {
+		present, err := handle.hasTable(ctx, table)
+		if err != nil {
+			return false, err
+		}
+		if !present {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // capacityReceiptWaitFor reads the relay store read-only: the median and count of the acknowledged

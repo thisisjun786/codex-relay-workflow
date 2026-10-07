@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The readings this issue fixes, each with the red test the issue body names. The fixture is
@@ -159,24 +160,50 @@ func capacityReview779Text(t *testing.T, f *branchFixture) string {
 	return out.String()
 }
 
-// C1: the whole reading is one snapshot. The plan's next revision retires the edge between C and D
-// while the reading is in flight, and the answer still comes from the revision the reading began on,
-// so both bundles survive. A reading that mixed two revisions would lose the second one.
+// C1: the whole reading is one snapshot. Each case commits, from another connection, a change that
+// lands after the reading has taken its snapshot, so the answer must come from the revision the
+// reading began on. The readings beside the plan are the ones a separate connection can change while
+// the plan itself is unchanged, which is what tells one snapshot apart from a reading that runs each
+// query on its own.
 func TestCapacityReview779OneSnapshot(t *testing.T) {
-	f := branchNewFixture(t, "CRW-1", "CRW-2")
-	capacityReview779Plan(f)
-	// The revision that retires the edge is described here and written by the seam, so it lands
-	// after the reading has taken its snapshot and before the readings beside the plan.
-	f.revision(2)
-	f.retireEdge("e2")
-	f.publishOpen()
-	capacityReview779Seam(t, f)
-	plan := f.run()
-	if plan.Verdict != capacityExpand {
-		t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
-	}
-	branchWant(t, branchSummaries(branchList(t, plan)),
-		"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+	t.Run("a revision that retires an edge while the plan is read", func(t *testing.T) {
+		f := branchNewFixture(t, "CRW-1", "CRW-2")
+		capacityReview779Plan(f)
+		// The revision that retires the edge is described here and written by the seam, so it lands
+		// after the reading has taken its snapshot and before the readings beside the plan.
+		f.revision(2)
+		f.retireEdge("e2")
+		f.publishOpen()
+		capacityReview779Seam(t, f)
+		plan := f.run()
+		if plan.Verdict != capacityExpand {
+			t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
+		}
+		branchWant(t, branchSummaries(branchList(t, plan)),
+			"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+	})
+
+	t.Run("a declaration that joins two bundles while the regions are read", func(t *testing.T) {
+		f := branchNewFixture(t, "CRW-1", "CRW-2")
+		capacityReview779Plan(f)
+		f.publishOpen()
+		// A and C declare the same place, from the fixture's own connection, while the reading is
+		// between the plan and the regions. A reading that let this commit land between its queries
+		// would join both bundles into the whole plan and report no candidate at all, so the two
+		// bundles surviving is what the one snapshot buys.
+		previous := branchReadSeam
+		branchReadSeam = func() {
+			f.region("A", "pkg/shared.go", "file", "", "edit", false)
+			f.region("C", "pkg/shared.go", "file", "", "edit", false)
+		}
+		t.Cleanup(func() { branchReadSeam = previous })
+		plan := f.run()
+		if plan.Verdict != capacityExpand {
+			t.Fatalf("the plan is %s, want %s", plan.Verdict, capacityExpand)
+		}
+		branchWant(t, branchSummaries(branchList(t, plan)),
+			"A+B pkg/A.go,pkg/B.go ready=2 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+	})
 }
 
 // C3: readiness is judged by node id. Two nodes implement the same issue, and the pass lists only
@@ -384,5 +411,68 @@ func TestCapacityReview779NoCandidatesIsAnEmptyList(t *testing.T) {
 	empty, ok := doc["branches"].([]any)
 	if !ok || len(empty) != 0 {
 		t.Fatalf("branches = %v, want an empty list", doc["branches"])
+	}
+}
+
+// C5: the whole command, not only the branch reader, answers a store without the DAG zone with an
+// unmeasured reading. The relay is the real binary and the store is a real store this build created,
+// so dag-ready refuses the missing zone with unregistered_scope exactly as it does in production: that
+// refusal is the missing zone rather than a read failure, so the command exits 0 and says what it
+// could not measure. A command that took the refusal for a failure would exit 3 and print nothing.
+func TestCapacityReview779StoreWithoutDagIsUnmeasuredThroughTheRealRelay(t *testing.T) {
+	coreTempHome(t)
+	dir := t.TempDir()
+	stateDir, relayDir := filepath.Join(dir, "state"), filepath.Join(dir, "relay")
+	for _, path := range []string{stateDir, relayDir} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A store this build creates carries the relay's own tables and no DAG zone, which is the store
+	// dag-ready answers unregistered_scope for.
+	socket := filepath.Join(dir, "app-server-control.sock")
+	testsupport.Create(t, filepath.Join(relayDir, relayReadStoreFile), socket, "go")
+
+	f := &branchFixture{t: t, dir: dir, stateDir: stateDir, relayDir: relayDir, nodes: map[string]string{}}
+	f.env = &Env{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Getenv: os.Getenv,
+		Now: func() time.Time { return branchTestNow }, Executable: testsupport.CRW(t)}
+	f.section = map[string]any{"plans": []map[string]any{{"plan": branchTestPlan, "project": branchTestProject, "parent": branchTestParent}}}
+	f.load()
+	f.cfg.Relay.Socket = socket
+	capacityTestSeams(t, 0, capacityTestClearStatus, nil)
+
+	config := capacityConfig
+	t.Cleanup(func() { capacityConfig = config })
+	capacityConfig = func(*Env) *Config { return f.cfg }
+	var out, errOut strings.Builder
+	f.env.Stdout, f.env.Stderr = &out, &errOut
+	if code := capacityCommand.Run(context.Background(), f.env, []string{"--branches-always", "--text"}); code != 0 {
+		t.Fatalf("a store without the DAG zone exited %d, want 0: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "branches unmeasured: ") {
+		t.Fatalf("--text does not name the unmeasured reading:\n%s", out.String())
+	}
+
+	out.Reset()
+	if code := capacityCommand.Run(context.Background(), f.env, []string{"--branches-always"}); code != 0 {
+		t.Fatalf("the JSON form exited %d, want 0: %s", code, errOut.String())
+	}
+	var doc struct {
+		Plans []struct {
+			Branches           json.RawMessage `json:"branches"`
+			BranchesUnmeasured string          `json:"branches_unmeasured"`
+		} `json:"plans"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
+		t.Fatalf("the judgement is not JSON: %v\n%s", err, out.String())
+	}
+	if len(doc.Plans) != 1 {
+		t.Fatalf("the report holds %d plans, want 1", len(doc.Plans))
+	}
+	if doc.Plans[0].BranchesUnmeasured == "" {
+		t.Fatal("a store without the DAG zone measured its branches")
+	}
+	if string(doc.Plans[0].Branches) != "null" {
+		t.Fatalf("branches = %s, want null beside the reason", doc.Plans[0].Branches)
 	}
 }

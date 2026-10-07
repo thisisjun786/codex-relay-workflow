@@ -209,7 +209,7 @@ func Capacity(ctx context.Context, e *Env, cfg *Config, dry bool) (CapacityRepor
 	}
 
 	for _, ref := range settings.Plans {
-		waiting, err := capacityWaitingFor(ctx, e, cfg, ref.Plan)
+		waiting, err := capacityWaitingFor(ctx, e, cfg, stateDir, ref.Plan)
 		if err != nil {
 			return CapacityReport{}, err
 		}
