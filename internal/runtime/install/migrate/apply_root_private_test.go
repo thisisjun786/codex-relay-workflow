@@ -37,15 +37,15 @@ func migrateRootPrivateWorkspace(t *testing.T) (string, *Pair) {
 // migrateRootPrivateFailRootCreation makes the publisher's destination-root creation fail after the mkdir: the root is
 // on disk with the mode the mkdir left it, and the call returns EIO as the parent-directory sync in EnsureChild does, so
 // the mode chmod EnsureProjectRoot runs next never happens. That is the state a run interrupted between the mkdir and
-// the chmod leaves, and the state a rerun then finds as an existing root. The creation reported made=true, because its
-// own mkdir did create the root: only the sync after it failed.
+// the chmod leaves, and the state a rerun then finds as an existing root. The call reports made=false and no root, as the
+// real EnsureChild does when its parent sync fails after a successful mkdir (roots.go:498-500).
 func migrateRootPrivateFailRootCreation(p *Publisher) {
 	create := p.ensureDest
 	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, bool, error) {
 		if _, made, err := create(pair, perm); err != nil {
 			return nil, made, err
 		}
-		return nil, true, unix.EIO
+		return nil, false, unix.EIO
 	}
 }
 
