@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -120,6 +121,19 @@ func TestGitHubPostGuardRefusesAnUnreadableShellProgram(t *testing.T) {
 	}
 }
 
+// TestGitHubPostGuardRefusesAScriptThatIsNotARegularFile: opening a FIFO read-only waits for a writer, so
+// a path that is not a regular file is refused before the open instead of hanging the hook.
+func TestGitHubPostGuardRefusesAScriptThatIsNotARegularFile(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	if err := syscall.Mkfifo(filepath.Join(cwd, "pipe.sh"), 0o600); err != nil {
+		t.Skipf("mkfifo is unavailable here: %v", err)
+	}
+	command := "bash pipe.sh"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "pipe.sh")
+}
+
 // TestGitHubPostGuardLeavesAScriptThatNamesNoPost: a script that names no post is not a target, as the
 // closed rule already leaves such a command alone.
 func TestGitHubPostGuardLeavesAScriptThatNamesNoPost(t *testing.T) {
@@ -130,6 +144,123 @@ func TestGitHubPostGuardLeavesAScriptThatNamesNoPost(t *testing.T) {
 	githubPostWrite(t, cwd, "reads.sh", "gh pr view 1\n")
 	for _, command := range []string{"bash quiet.sh", "sh reads.sh", "source quiet.sh", ". reads.sh"} {
 		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardReadsAScriptBehindASignedOption: a plus-prefixed option is an option too, so
+// bash +o errexit post.sh and bash +x post.sh read post.sh and must not be refused at the option word.
+func TestGitHubPostGuardReadsAScriptBehindASignedOption(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "clean.sh", "echo hi\n")
+	for _, command := range []string{
+		"bash +o errexit post.sh",
+		"bash +O extglob post.sh",
+		"bash +x post.sh",
+		"sh +x post.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+	for _, command := range []string{"bash +o errexit clean.sh", "bash +x clean.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardReadsAScriptBeforeATrailingOption: an option after the operand is an argument, so
+// bash post.sh -c runs post.sh and the guard still reads it.
+func TestGitHubPostGuardReadsAScriptBeforeATrailingOption(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	for _, command := range []string{"bash post.sh -c", "sh post.sh -c", "bash post.sh -x", "bash -x post.sh -c"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+}
+
+// TestGitHubPostGuardReadsAScriptAfterASeparator: everything after -- is an operand, so a script named
+// after the separator is still the program file even when its name starts with a dash.
+func TestGitHubPostGuardReadsAScriptAfterASeparator(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "-post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	for _, command := range []string{"bash -- -post.sh", "sh -- -post.sh", "bash -x -- -post.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "-post.sh:1")
+	}
+}
+
+// TestGitHubPostGuardReadsAScriptBehindABundledValueOption: -o and -O take their value from the next word
+// inside a bundle too (bash -eo errexit post.sh), so the value is not the program file.
+func TestGitHubPostGuardReadsAScriptBehindABundledValueOption(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "clean.sh", "echo hi\n")
+	for _, command := range []string{
+		"bash -eo errexit post.sh",
+		"bash -eO extglob post.sh",
+		"bash -xeo pipefail post.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+	for _, command := range []string{"bash -eo errexit clean.sh", "bash -eO extglob clean.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardJudgesAScriptArgument: a shell runs its own arguments, so a script that names no post
+// does not end the judgement: a post in the arguments is still refused.
+func TestGitHubPostGuardJudgesAScriptArgument(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "runner.sh", "\"$@\"\n")
+	githubPostWrite(t, cwd, "quiet.sh", "echo hi\n")
+	for _, command := range []string{
+		"bash runner.sh gh pr comment 1 -b plain",
+		"bash runner.sh gh api repos/o/r/issues/1/comments -f body=plain",
+		"bash quiet.sh gh pr comment 1 -b plain",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, githubPostWhereCommand)
+	}
+	// The control: a script that names no post with arguments that name none is not a target.
+	for _, command := range []string{"bash quiet.sh", "bash runner.sh ls -l"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardLeavesAShellReadingItsProgramFromStandardInput: -s takes the program from standard
+// input, so the first operand is an argument and not the program file; the guard must not read it as one.
+// A program the guard cannot read (standard input) is the same boundary as bash < file: the command text
+// names no post, so it is not a target.
+func TestGitHubPostGuardLeavesAShellReadingItsProgramFromStandardInput(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	for _, command := range []string{"bash -s post.sh", "sh -s post.sh", "bash -es post.sh", "bash -s", "bash < post.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+	piped := "cat post.sh | bash -s"
+	githubPostWant(t, githubPostShell(t, cwd, piped), piped, "", "")
+}
+
+// TestGitHubPostGuardReadsASourcedPathFile: source and the dot builtin search PATH for a name with no
+// slash before the working directory, so the file that runs may be the PATH one and the guard reads it.
+func TestGitHubPostGuardReadsASourcedPathFile(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	githubPostWrite(t, bin, "lib.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "lib.sh", "echo hi\n")
+	for _, command := range []string{"source lib.sh", ". lib.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, filepath.Join(bin, "lib.sh")+":1")
 	}
 }
 

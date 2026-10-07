@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -578,73 +579,137 @@ func githubPostPost(args []string, cwd string) (githubPostSite, bool, bool) {
 }
 
 // githubPostShellScript is CRW-875's rule: a shell that takes its program from a file makes the guard read
-// that file. bash, sh, zsh, dash and ksh with no -c take their first operand as the program, and source
-// and the dot builtin take a file. The file is judged by the closed rule, and a file the guard cannot read
-// is refused at the file name.
-func githubPostShellScript(words []string, cwd string) (site githubPostSite, denied, handled bool) {
+// that file. bash, sh, zsh, dash and ksh take their first operand as the program, and source and the dot
+// builtin take a file. The file is judged by the closed rule, and a file the guard cannot read is refused
+// at the file name.
+//
+// handled is true only for a refusal. A script the guard allows is not a verdict on the command: the
+// command text still carries the shell's own arguments, which the script may run ("$@"), so the caller
+// keeps judging it.
+func githubPostShellScript(words []string, cwd string) (githubPostSite, bool, bool) {
 	if len(words) < 2 {
 		return githubPostSite{}, false, false
 	}
-	switch githubPostProgram(words[0]) {
+	program := githubPostProgram(words[0])
+	switch program {
 	case "bash", "sh", "zsh", "dash", "ksh", "source", ".":
 	default:
 		return githubPostSite{}, false, false
 	}
-	for i := 1; i < len(words); i++ {
-		w := words[i]
-		if githubPostShellCommandWord(w) {
-			// -c (or a bundle holding it) takes the program as its own word, so no operand is the program.
-			return githubPostSite{}, false, false
+	name, ok := githubPostShellProgramFile(words)
+	if !ok {
+		return githubPostSite{}, false, false
+	}
+	if site, denied := githubPostJudgeScript(name, cwd); denied {
+		return site, true, true
+	}
+	// source and the dot builtin search PATH for a name with no slash before the working directory, so a
+	// file the working directory names may not be the one that runs. That file is judged too, and either
+	// one failing refuses the command.
+	if path, ok := githubPostSourcedPath(program, name); ok {
+		if site, denied := githubPostJudgeScript(path, cwd); denied {
+			return site, true, true
 		}
-		if strings.HasPrefix(w, "-") {
-			if githubPostShellValueOption(w) {
-				// -o, +o, -O, +O, --rcfile and --init-file name the next word as their value, so it is not
-				// the program file. An option the guard cannot resolve this way is not a value-taker, and a
-				// word it cannot place is read as the file, which refuses the script rather than passing it.
-				i++
-			}
-			continue
-		}
-		return githubPostJudgeScript(githubPostNormal(w), cwd)
 	}
 	return githubPostSite{}, false, false
 }
 
+// githubPostShellProgramFile is the program file operand of a shell command, and whether the command takes
+// its program from a file at all. -c takes a program string and -s takes it from standard input, so
+// neither names a file; -- ends the options, so the word after it is the program whatever it looks like;
+// an option written as its own word is skipped, and a value-taking one (-o, +o, -O, +O, --rcfile,
+// --init-file) also consumes the word after it, so an option's value is never read as the program file.
+func githubPostShellProgramFile(words []string) (string, bool) {
+	for i := 1; i < len(words); i++ {
+		w := words[i]
+		if w == "--" {
+			if i+1 < len(words) {
+				return githubPostNormal(words[i+1]), true
+			}
+			return "", false
+		}
+		if githubPostShellProgramWord(w) {
+			return "", false
+		}
+		if strings.HasPrefix(w, "-") || strings.HasPrefix(w, "+") {
+			if githubPostShellValueOption(w) {
+				i++
+			}
+			continue
+		}
+		return githubPostNormal(w), true
+	}
+	return "", false
+}
+
+// githubPostSourcedPath is the file a shell's source or dot builtin would read for a name with no slash: it
+// searches PATH first and falls back to the name in the working directory. The guard reads this file as
+// well as the working-directory one, so neither can hide a posting script from the other. PATH is the
+// guard's own environment, because the payload carries none, so this is a superset of what the shell runs.
+func githubPostSourcedPath(program, name string) (string, bool) {
+	if program != "source" && program != "." {
+		return "", false
+	}
+	if strings.ContainsRune(name, '/') {
+		return "", false
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		// The first regular file of that name is the one a shell reads; it need not be executable, as a
+		// sourced file is read rather than run.
+		candidate := filepath.Join(dir, name)
+		if candidate == name {
+			continue
+		}
+		if st, err := os.Stat(candidate); err == nil && st.Mode().IsRegular() {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+// githubPostShellProgramWord is whether a word is a single-dash option bundle that keeps the first operand
+// from being the program file: c takes the program as its own word (bash -c, sh -ec) and s reads it from
+// standard input (bash -s, bash -es). A long option such as --norc is not one.
+func githubPostShellProgramWord(w string) bool {
+	return len(w) > 1 && w[0] == '-' && w[1] != '-' && strings.ContainsAny(w[1:], "cs")
+}
+
 // githubPostShellValueOption is whether a shell option written as its own word takes the next word as its
-// value: -o and -O name an option or a shopt option, and --rcfile and --init-file name a file. An option
-// written attached (--rcfile=file) carries its own value, so it is not one.
+// value: -o and -O name an option or a shopt option, in a bundle too (bash -eo errexit), and --rcfile and
+// --init-file name a file. An option written attached (--rcfile=file) carries its own value, so it is not
+// one, and a long option such as --norc is not one either.
 func githubPostShellValueOption(w string) bool {
 	if strings.ContainsRune(w, '=') {
 		return false
 	}
-	switch w {
-	case "-o", "+o", "-O", "+O", "--rcfile", "--init-file":
-		return true
+	if strings.HasPrefix(w, "--") {
+		return w == "--rcfile" || w == "--init-file"
 	}
-	return false
-}
-
-// githubPostShellCommandWord is whether a word is a single-dash option bundle holding c (bash -c, sh -ec),
-// which makes the next word a program string rather than a file. A long option such as --norc is not one.
-func githubPostShellCommandWord(w string) bool {
-	return len(w) > 1 && w[0] == '-' && w[1] != '-' && strings.ContainsRune(w[1:], 'c')
+	// A single-dash bundle: o and O take the next word as their value, alone or inside a bundle
+	// (bash -o errexit, bash -eo errexit).
+	return strings.ContainsAny(w, "oO")
 }
 
 // githubPostJudgeScript reads the program file and judges it: a file it cannot read is refused at the file
-// name, a file that names no post is not a target, and a file that names a post is allowed only when every
-// executable line on its own is the one allowed post form or the read-and-record exception.
-func githubPostJudgeScript(name, cwd string) (githubPostSite, bool, bool) {
+// name, and a file that names a post is refused at the offending line unless every executable line on its
+// own is the one allowed post form or the read-and-record exception. A file the guard allows is not a
+// verdict on the whole command: the caller keeps judging the command's own text, because a shell runs the
+// arguments it is given and a script may run them too.
+func githubPostJudgeScript(name, cwd string) (githubPostSite, bool) {
 	content, ok := githubPostReadScript(name, cwd)
 	if !ok {
-		return githubPostSite{githubPostRuleUnread, name}, true, true
+		return githubPostSite{githubPostRuleUnread, name}, true
 	}
 	if !githubPostScriptNamesPost(content) {
-		return githubPostSite{}, false, true
+		return githubPostSite{}, false
 	}
 	if line, found := githubPostScriptBadLine(content, cwd); found {
-		return githubPostSite{githubPostRuleUnread, name + ":" + strconv.Itoa(line)}, true, true
+		return githubPostSite{githubPostRuleUnread, name + ":" + strconv.Itoa(line)}, true
 	}
-	return githubPostSite{}, false, true
+	return githubPostSite{}, false
 }
 
 // githubPostScriptNamesPost is whether a program file's text names a post: CRW-783's mention test (the
@@ -699,13 +764,25 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 		}
 		path = filepath.Join(base, path)
 	}
-	file, err := os.Open(filepath.Clean(path))
+	path = filepath.Clean(path)
+	// A path that is not a regular file is refused before the open: opening a FIFO read-only waits for a
+	// writer, which would hang the hook instead of denying the command. Stat follows a link without
+	// blocking, so a script reached through a link is still read.
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return "", false
 	}
 	defer file.Close()
 	st, err := file.Stat()
 	if err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	// The handle must be the file the path names now: another file swapped in between the check and the
+	// open would otherwise be read past it.
+	if now, err := os.Stat(path); err != nil || !os.SameFile(st, now) {
 		return "", false
 	}
 	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
@@ -1041,13 +1118,20 @@ func githubPostReadFile(name, cwd string) (string, bool) {
 	if err != nil || !githubPostUnderRoots(path) {
 		return "", false
 	}
-	file, err := os.Open(path)
+	// The resolved path holds no link of its own, so a link found at the open is one swapped in after the
+	// check: the open refuses it rather than following it past the containment decision.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return "", false
 	}
 	defer file.Close()
 	st, err := file.Stat()
 	if err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	// The handle must be the file the resolved path names now: a link or another file swapped in between
+	// the resolution and the open would otherwise be read past the containment check.
+	if now, err := os.Lstat(path); err != nil || !os.SameFile(st, now) {
 		return "", false
 	}
 	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
