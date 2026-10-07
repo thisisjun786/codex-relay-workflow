@@ -67,3 +67,27 @@ func TestMemlogReview748KeepsACleanLineByteForByte(t *testing.T) {
 		t.Errorf("the recorded cmd is %q, want %q", record.Top[0].Cmd, want)
 	}
 }
+
+// TestMemlogReview748KeepsAnAlreadyMaskedValueMasked pins that judging a word again never
+// un-masks part of a value an earlier argument already redacted. The whole word after
+// "--token" is that option's value, so it stays "***" even though it reads like a NAME=VALUE
+// pair whose name is credential-shaped.
+func TestMemlogReview748KeepsAnAlreadyMaskedValueMasked(t *testing.T) {
+	_, cfg := memlogState(t)
+	root := t.TempDir()
+	memlogWriteTree(t, root, []memlogProcSpec{{pid: 7, ppid: 1, rss: 4096,
+		args: []string{"svc", "--token", "secretCustomer42=abc"}}})
+	record, _ := memlogRunOnce(t, cfg, root, time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC))
+	if len(record.Top) != 1 {
+		t.Fatalf("top holds %d entries, want 1", len(record.Top))
+	}
+	cmd := record.Top[0].Cmd
+	for _, leak := range []string{"secretCustomer42", "abc"} {
+		if strings.Contains(cmd, leak) {
+			t.Errorf("the recorded cmd %q still carries %q", cmd, leak)
+		}
+	}
+	if want := "svc --token ***"; cmd != want {
+		t.Errorf("the recorded cmd is %q, want %q", cmd, want)
+	}
+}

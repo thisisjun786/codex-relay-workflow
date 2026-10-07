@@ -333,17 +333,24 @@ const memlogRedacted = "***"
 // over-masks the value of a credential option whose name is not itself a credential (the word
 // after it is masked as if it were a value), which is accepted: the alternative leaves the
 // second credential option's value in the clear.
+//
+// A word an earlier argument already masked stays masked: a value that happens to read as
+// NAME=VALUE is not rewritten into NAME=***, because that would put back a prefix of a value
+// the record had already hidden whole.
 func memlogRedactCommand(args []string) string {
 	tokens := append([]string(nil), args...)
+	masked := make([]bool, len(tokens))
 	for i := range args {
 		name, _, hasValue := strings.Cut(args[i], "=")
 		switch {
 		case hasValue:
-			if memlogNamesACredential(name) {
+			if memlogNamesACredential(name) && !masked[i] {
 				tokens[i] = name + "=" + memlogRedacted
+				masked[i] = true
 			}
 		case strings.HasPrefix(name, "-") && memlogNamesACredential(name) && i+1 < len(tokens):
 			tokens[i+1] = memlogRedacted
+			masked[i+1] = true
 		}
 	}
 	return memlogShorten(strings.Join(tokens, " "))
