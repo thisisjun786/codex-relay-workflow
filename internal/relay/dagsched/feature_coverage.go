@@ -168,7 +168,7 @@ func (s *Scheduler) FeatureCoverage(ctx context.Context, plan, issue string) (ou
 			// packet whose covers moved must not be credited by the pull request released for the old
 			// spec) - except that a revalidated acceptance stands under the criteria the plan holds now
 			// even though its execution and manifest are the original ones (CRW-839 pre-merge d2).
-			if p.RelationshipID, err = currentNodeExecution(txCtx, q, plan, n); err != nil {
+			if p.RelationshipID, err = currentNodeExecution(txCtx, q, plan, snap, n); err != nil {
 				return err
 			}
 			if p.RelationshipID != "" {
@@ -365,7 +365,7 @@ func containsID(list []string, want string) bool {
 // without this, ordinary cleanup would turn a complete feature incomplete. A relationship that was
 // superseded (superseded_by set) or cancelled (abandoned) counts for nothing, whatever it reached, and a
 // live execution is preferred over an archived one for the same node version.
-func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n dag.SnapNode) (string, error) {
+func currentNodeExecution(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (string, error) {
 	// The execution's active acceptance, with the criteria digest it stands on NOW: its newest
 	// revalidation, else the digest it was accepted with (effectiveCriteria, edges.go). A revalidation
 	// is how dag-accept re-judges an unchanged output under a plan whose criteria moved, and it keeps
@@ -413,11 +413,23 @@ func currentNodeExecution(ctx context.Context, q store.Querier, plan string, n d
 		// node whose issue_key was edited could otherwise be credited with another feature's revalidated
 		// execution carrying the same packet id and criteria digest. Both checks bind only where the
 		// execution records a packet; a node with no packet_id keeps the legacy meaning.
-		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest && packet == n.PacketID && (packet == "" || executionIssueIs(ctx, q, relationship, n.IssueKey)) {
+		if n.CriteriaSetDigest != "" && revalidated == n.CriteriaSetDigest && packet == n.PacketID && (packet == "" || executionIssueIs(ctx, q, relationship, n.IssueKey)) && consumedMovedOnlyByCriteria(n, snap, body) {
 			return relationship, nil
 		}
 	}
 	return "", rows.Err()
+}
+
+// consumedMovedOnlyByCriteria is whether the node differs from the version its execution consumed in its
+// criteria alone: the scheduler's own test (criteriaOnly). A spec change after a revalidation (covers, an
+// incoming edge, a title) fails it, so a revalidated output is credited only for the criteria it was
+// re-judged under (CRW-839 generation 4 review, P1).
+func consumedMovedOnlyByCriteria(n dag.SnapNode, snap dag.Snapshot, body string) bool {
+	var consumed map[string]any
+	if body == "" || json.Unmarshal([]byte(body), &consumed) != nil {
+		return false
+	}
+	return criteriaOnly(n, snap, consumed)
 }
 
 // executionIssueIs is whether the packet zone records this relationship as executing a node of issueKey.

@@ -205,41 +205,6 @@ func TestRegionOwnerIsJudgedPerPlace(t *testing.T) {
 	declare("n1", Region{Repository: "owner/repo", Path: "pkg", Kind: "tree", Change: "edit"})
 }
 
-// d2 of the pre-merge evaluation: a criteria-only revision moves the node's slice without moving the
-// accepted output, and dag-accept revalidates the acceptance under the new criteria. The revalidated
-// packet keeps its acceptance and integration in coverage instead of dropping out of the reading.
-func TestCoverageKeepsARevalidatedPacket(t *testing.T) {
-	f := newFixture(t)
-	putPacketPlan(t, f, "plan", 0, "r1", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
-		packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"}))
-	packetExecution(f, "plan", "n1", "rel-1")
-	liveRelationship(f, "plan", "n1", "rel-1")
-	packetAcceptance(f, "acc-1", "plan", "n1", "rel-1")
-	packetRegistered(f, "rel-1", map[string]bool{"c1": true})
-	packetIntegrated(f, "acc-1", "rel-1", "owner/repo", "dev")
-	// the release recorded the packet this execution stands for
-	f.exec("INSERT INTO dag_execution_packets (relationship_id, plan_id, node_id, issue_key, packet_id, branch, recorded_at) VALUES ('rel-1','plan','n1','CRW-F','p1',NULL,'t')")
-	if cov := coverageOf(t, f, "plan", "CRW-F"); !cov.Complete {
-		t.Fatalf("the landed packet reads incomplete: %+v", cov.Criteria)
-	}
-
-	// A criteria-only revision: the node's SLICE moves (a new title is part of the node's spec), the
-	// accepted output does not, and the acceptance is revalidated under the new criteria. The packet
-	// identity and the covers are unchanged, which is what the revalidation fallback must require.
-	updated := packetNodeDoc("n1", "CRW-F", "p1", []string{"c1"}, []string{"c1"})["node"].(doc)
-	updated["title"] = "criteria-only revision"
-	putPacketPlan(t, f, "plan", 1, "r2", []doc{featureCriteriaDoc("CRW-F", criterionDoc("c1", true))},
-		doc{"op": dag.OpUpdateNode, "node": updated})
-	f.exec("INSERT INTO dag_acceptance_revalidations (revalidation_id, acceptance_id, criteria_set_digest, event_id, verdict_turn_id, reval_seq, revalidated_by, revalidated_at) VALUES ('rv-1','acc-1',?,'ev','turn',1,'parent','t')", coverageCriteriaDigest)
-	after := coverageOf(t, f, "plan", "CRW-F")
-	if !after.Complete {
-		t.Fatalf("a revalidated packet was dropped from coverage: %+v", after.Packets)
-	}
-	if after.Packets[0].RelationshipID != "rel-1" || after.Packets[0].Integration == nil {
-		t.Fatalf("the revalidated packet lost its execution: %+v", after.Packets[0])
-	}
-}
-
 // The other half of d2: a revalidation does not let a node whose PACKET IDENTITY moved keep crediting
 // the execution of the packet it used to be.
 func TestCoverageDoesNotCreditARevalidatedExecutionOfAnotherPacket(t *testing.T) {

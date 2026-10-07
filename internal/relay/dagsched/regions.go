@@ -200,6 +200,21 @@ func checkPacketRegionOwner(ctx context.Context, q store.Querier, plan string, s
 				if mine.Repository != other.Repository {
 					continue
 				}
+				// A stated whole-repository hold overlaps every place its sibling takes, even a disjoint path
+				// (CRW-839 generation 4 review, P2): the place is the non-holder's path, or the whole
+				// repository when both hold it.
+				if mine.Exclusive || other.Exclusive {
+					key := mine.Repository + "\x00*"
+					switch {
+					case mine.Exclusive && !other.Exclusive:
+						key = mine.Repository + "\x00" + other.Path
+					case other.Exclusive && !mine.Exclusive:
+						key = mine.Repository + "\x00" + mine.Path
+					}
+					touch(key, n.NodeID, EffectiveGrade(mine) == GradeExclusive)
+					touch(key, id, EffectiveGrade(other) == GradeExclusive)
+					continue
+				}
 				place, tree, ok := commonPlace(mine, other)
 				if !ok {
 					continue
