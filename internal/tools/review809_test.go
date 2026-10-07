@@ -234,3 +234,32 @@ func TestToolsReview809KeepsAnotherCallsDirectory(t *testing.T) {
 		t.Fatalf("this call removed the directory the other install made: %v", statErr)
 	}
 }
+
+// C3, other-error side: only a vanished ancestor is retried. An error a recompute cannot fix, such
+// as a component whose parent is a regular file, is returned at once with what this call made
+// removed, exactly as before the change.
+func TestToolsReview809DoesNotRetryOtherErrors(t *testing.T) {
+	base := t.TempDir()
+	file := filepath.Join(base, "afile")
+	if err := os.WriteFile(file, []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	attempts := 0
+	review809Seam(t, func(string) { attempts++ })
+
+	created, err := createRoot(filepath.Join(file, "child"))
+	if err == nil {
+		t.Fatalf("createRoot answered success with %v under a regular file", created)
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("createRoot answered %v, which a recompute would be tried for", err)
+	}
+	// One walk only: the error is not one a recompute could clear.
+	if attempts > 1 {
+		t.Errorf("createRoot reached the mkdir %d times, want a single walk", attempts)
+	}
+	if len(created) != 0 {
+		t.Errorf("createRoot recorded %v for a call that failed", created)
+	}
+}
