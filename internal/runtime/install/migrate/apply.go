@@ -366,13 +366,20 @@ func (a *applyRun) writeFiles() error {
 			order = append(order, i)
 		}
 	}
-	refs, receipts := a.migrateApplyReviewReferences()
+	refs, receipts, deps := a.migrateApplyReviewReferences()
+	depths := migrateReviewFollowupDepths(deps)
 	slices.SortStableFunc(order, func(x, y int) int {
 		ix, iy := a.plan.Items[x], a.plan.Items[y]
 		if c := cmp.Compare(applyRank(ix), applyRank(iy)); c != 0 {
 			return c
 		}
-		return cmp.Compare(migrateApplyReviewSubRank(ix, refs, receipts), migrateApplyReviewSubRank(iy, refs, receipts))
+		if c := cmp.Compare(migrateApplyReviewSubRank(ix, refs, receipts), migrateApplyReviewSubRank(iy, refs, receipts)); c != 0 {
+			return c
+		}
+		// The reference chain decides inside the sub-rank: a record another receipt names is still a referrer when it is
+		// itself a receipt, so without this a chain of receipts would keep plan order and a receipt could publish before
+		// the artifact it names (CRW-879).
+		return cmp.Compare(depths[ix.Source], depths[iy.Source])
 	})
 	for _, i := range order {
 		if err := a.publishFile(i, a.plan.Items[i]); err != nil {
@@ -391,10 +398,11 @@ func (a *applyRun) writeFiles() error {
 // order that only knew the conventional qa-receipt.json name published a receipt under another name before the artifact it
 // refers to. A record that cannot be read, is past that bound or holds no manifest array is not judged by content, and one
 // carrying the conventional name keeps the place the name gave it, so an unreadable receipt still orders after its
-// dependencies. Nothing here decides what is copied or fails the run: a record this run cannot read contributes no key and
+// dependencies. deps is each receipt's own referenced paths, so a chain of records is ordered by its length rather than by
+// plan order. Nothing here decides what is copied or fails the run: a record this run cannot read contributes no key and
 // is reported by attention.
-func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]bool) {
-	refs, receipts = map[string]bool{}, map[string]bool{}
+func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]bool, deps map[string][]string) {
+	refs, receipts, deps = map[string]bool{}, map[string]bool{}, map[string][]string{}
 	for _, it := range a.plan.Items {
 		if !applyWrites(it) || applyDir(it) {
 			continue
@@ -410,6 +418,7 @@ func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]boo
 			receipts[it.Source] = true // an unreadable record keeps the name judgement and the order it gave
 		}
 		dir := classifyDirPart(it.Source)
+		var own []string
 		for _, e := range manifest {
 			if e.Kind != "verdict" && e.Kind != "artifact-identity" {
 				continue
@@ -419,9 +428,44 @@ func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]boo
 				rel = path.Clean(dir + "/" + rel)
 			}
 			refs[rel] = true
+			own = append(own, rel)
+		}
+		if len(own) > 0 {
+			deps[it.Source] = own
 		}
 	}
-	return refs, receipts
+	return refs, receipts, deps
+}
+
+// migrateReviewFollowupDepths is the longest reference chain below each record: 0 for a record that names nothing, and one
+// more than the deepest record it names. A record another receipt names is still a referrer when it is itself a receipt, so
+// without this a chain of receipts would keep plan order and a receipt could publish before the artifact it names
+// (CRW-879). A cycle is broken at the record already on the current path, which can only keep the order plan order gave.
+func migrateReviewFollowupDepths(deps map[string][]string) map[string]int {
+	depths := make(map[string]int, len(deps))
+	var walk func(source string, onPath map[string]bool) int
+	walk = func(source string, onPath map[string]bool) int {
+		if depth, done := depths[source]; done {
+			return depth
+		}
+		if onPath[source] {
+			return 0
+		}
+		onPath[source] = true
+		depth := 0
+		for _, dep := range deps[source] {
+			if d := walk(dep, onPath) + 1; d > depth {
+				depth = d
+			}
+		}
+		delete(onPath, source)
+		depths[source] = depth
+		return depth
+	}
+	for source := range deps {
+		walk(source, map[string]bool{})
+	}
+	return depths
 }
 
 // migrateReviewFollowupManifestEntry is one artifactManifest entry of a receipt: the relative path and the kind the receipt

@@ -238,3 +238,30 @@ func planItems(p *Plan) []ApplyItem {
 	}
 	return items
 }
+
+// R1e: a record that is both another receipt's artifact and a receipt itself still publishes after the artifact it names, so
+// a chain of receipts is ordered by its dependencies rather than by plan order.
+func TestMigrateApplyReviewFollowupOrdersAChainOfReceipts(t *testing.T) {
+	_, r, p := apPlan(t, map[string]string{
+		// a.json names z/verdict.json, which is itself a receipt and names z/identity.json beside it: both artifacts are
+		// referenced, so only the chain length can order them, and plan order would publish the middle record first.
+		"evidence/s/a.json":            "{\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}",
+		"evidence/s/z/verdict.json":    "{\"artifactManifest\":[{\"path\":\"z/identity.json\",\"kind\":\"artifact-identity\"}]}",
+		"evidence/s/z/z/identity.json": "{\"ok\":true}",
+	}, nil)
+	pub, leaves := migrateApplyReviewRenames(t)
+	if _, err := applyWith(r, p, pub); err != nil {
+		t.Fatal(err)
+	}
+	got := leaves()
+	// Plan order is a.json, z/verdict.json, z/z/identity.json; the chain must publish deepest artifact first.
+	deep, mid, top := slices.Index(got, "identity.json"), slices.Index(got, "verdict.json"), slices.Index(got, "a.json")
+	if deep < 0 || mid < 0 || top < 0 {
+		t.Fatalf("the chain must publish: %v", got)
+	}
+	if deep > mid || mid > top {
+		t.Errorf("a chain of receipts must publish deepest artifact first: %v", got)
+	}
+}
+
+// planItems wraps a plan's items as an ApplyResult so apItem can find one by source.
