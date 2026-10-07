@@ -54,6 +54,9 @@ func TestLocalReuse_a_record_that_does_not_match_the_plan_is_never_reused(t *tes
 		"a skipped step":      func(r *verificationRecord) { r.Jobs[0].Steps[1].Result = localSkipped },
 		"a failed step, pass": func(r *verificationRecord) { r.Jobs[0].Steps[1].Result = localFailed },
 		"a step missing":      func(r *verificationRecord) { r.Jobs[0].Steps = r.Jobs[0].Steps[:1] },
+		"a changed command":   func(r *verificationRecord) { r.Jobs[0].Steps[1].Command = "echo other" },
+		"a changed scope":     func(r *verificationRecord) { r.Jobs[0].Steps[1].Scope = "range" },
+		"a failed job, pass":  func(r *verificationRecord) { r.Jobs[0].Result = localFail },
 		"not sealed":          func(r *verificationRecord) { r.Sealed = false },
 		"a stale plan digest": func(r *verificationRecord) { r.PlanDigest = "sha256:stale" },
 	}

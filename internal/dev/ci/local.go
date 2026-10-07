@@ -180,7 +180,7 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 // versions, the dependency digests and the platform. It is computed from the verified commit, not
 // from the caller's working tree, so a dirty checkout does not change it (comment-c6).
 func localCurrentKeys(opts localOptions) (verificationRecord, error) {
-	head, err := localRev(opts.Root, opts.Commit)
+	head, err := localRev(opts.Root, opts.Commit+"^{commit}")
 	if err != nil {
 		return verificationRecord{}, err
 	}
@@ -294,7 +294,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 		os.RemoveAll(temp)
 	}
 	defer cleanup()
-	if out, err := runGit(opts.Root, "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
+	if out, err := runGit(opts.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
 		return verificationRecord{}, false, fmt.Errorf("creating the clean worktree: %w%s", err, localReason(string(out)))
 	}
 	opts.output = filepath.Join(temp, "runner", "output")

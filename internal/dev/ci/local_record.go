@@ -309,10 +309,19 @@ func planDigest(plan []localJob) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// localExpectedJob is one record job the plan produces, with its steps' kinds in order.
+// localExpectedJob is one record job the plan produces, with its steps as the plan states them.
 type localExpectedJob struct {
 	name  string
-	kinds []string
+	steps []localStep
+	names []string
+}
+
+// localStepName is the name a step carries in the record.
+func localStepName(step localStep) string {
+	if step.name != "" {
+		return step.name
+	}
+	return localStepLabel(step)
 }
 
 // localExpectedJobs is the record's jobs and steps the plan produces, leg by leg, as the engine
@@ -333,7 +342,8 @@ func localExpectedJobs(plan []localJob) []localExpectedJob {
 				if step.legs != nil && !localContains(step.legs, leg) {
 					continue
 				}
-				entry.kinds = append(entry.kinds, step.kind)
+				entry.steps = append(entry.steps, step)
+				entry.names = append(entry.names, localStepName(step))
 			}
 			out = append(out, entry)
 		}
@@ -342,8 +352,9 @@ func localExpectedJobs(plan []localJob) []localExpectedJob {
 }
 
 // localValidateReuse decides whether a record that matches every key may answer the run: it must be
-// sealed, made from this plan, match the plan one job and one step at a time, have every step passed
-// (or an allowed not-applicable step), and carry a result that the steps recompute to.
+// sealed, made from this plan, match the plan one job and one step at a time (name, command and
+// scope), have every job and step passed (or an allowed not-applicable step), and carry a result
+// that its steps recompute to.
 func localValidateReuse(reused verificationRecord, plan []localJob) (bool, string) {
 	if !reused.Sealed {
 		return false, "the record is not sealed"
@@ -361,14 +372,21 @@ func localValidateReuse(reused verificationRecord, plan []localJob) (bool, strin
 		if job.Name != want.name {
 			return false, fmt.Sprintf("job %d is %q, the plan has %q", i, job.Name, want.name)
 		}
-		if len(job.Steps) != len(want.kinds) {
-			return false, fmt.Sprintf("%s has %d steps, the plan has %d", job.Name, len(job.Steps), len(want.kinds))
+		if job.Result != localPassed {
+			return false, fmt.Sprintf("%s did not pass (%s)", job.Name, job.Result)
+		}
+		if len(job.Steps) != len(want.steps) {
+			return false, fmt.Sprintf("%s has %d steps, the plan has %d", job.Name, len(job.Steps), len(want.steps))
 		}
 		for n, step := range job.Steps {
+			planned := want.steps[n]
+			if step.Name != want.names[n] || step.Command != planned.command || step.Scope != planned.scope {
+				return false, fmt.Sprintf("%s step %d is not the plan's step %q", job.Name, n, want.names[n])
+			}
 			switch step.Result {
 			case localPassed:
 			case localNotApplicableResult:
-				if want.kinds[n] != localNotApplicable {
+				if planned.kind != localNotApplicable {
 					return false, fmt.Sprintf("%s / %s is not applicable, the plan runs it", job.Name, step.Name)
 				}
 			default:

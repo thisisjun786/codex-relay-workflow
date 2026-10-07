@@ -123,30 +123,21 @@ func localObserveToolIn(name, pathEnv string, goMod []byte) string {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return ""
 	}
-	env := []string{}
-	for _, kv := range os.Environ() {
-		if !localProbeIsolated(kv) {
-			env = append(env, kv)
+	// The probe runs with the steps' sealed environment: the same allowlist, GOTOOLCHAIN local and the
+	// engine's GOFLAGS, so the version it reads is the one a step reads.
+	cmd.Env = []string{"PATH=" + pathEnv, "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
+		"XDG_CACHE_HOME=" + filepath.Join(home, "cache"), "XDG_DATA_HOME=" + filepath.Join(home, "data"),
+		"XDG_STATE_HOME=" + filepath.Join(home, "state"), "TZ=UTC", "GOTOOLCHAIN=local", "GOFLAGS=-p=4"}
+	for _, name := range []string{"LANG", "TMPDIR"} {
+		if value, ok := os.LookupEnv(name); ok {
+			cmd.Env = append(cmd.Env, name+"="+value)
 		}
 	}
-	cmd.Env = append(env, "PATH="+pathEnv, "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, "config"),
-		"XDG_CACHE_HOME="+filepath.Join(home, "cache"), "XDG_DATA_HOME="+filepath.Join(home, "data"),
-		"XDG_STATE_HOME="+filepath.Join(home, "state"))
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return localParseToolVersion(name, string(out))
-}
-
-// localProbeIsolated reports whether an environment entry is one the probe replaces with its own.
-func localProbeIsolated(entry string) bool {
-	for _, name := range []string{"GOENV=", "GOTOOLCHAIN=", "PATH=", "HOME=", "XDG_CONFIG_HOME=", "XDG_CACHE_HOME=", "XDG_DATA_HOME=", "XDG_STATE_HOME="} {
-		if strings.HasPrefix(entry, name) {
-			return true
-		}
-	}
-	return false
 }
 
 // localLookPath is the executable a PATH names, or "" when no directory on it has one.
