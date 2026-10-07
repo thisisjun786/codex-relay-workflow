@@ -1,6 +1,7 @@
 package configguard
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -88,21 +89,29 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// marker API itself refuses unreadable records rather than replacing their consent data.
 	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
 	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}}
+	noManifest := func() (*DeactivateResult, error) {
+		markOptedOut()
+		r.NoManifest = true
+		return r, nil
+	}
+	// The first reading decides only whether and where to lock; the reading every decision below uses
+	// is taken after the lock is held (CRW-877).
 	raw, _ := readTextOrNull(manifestPath(deps.CodexHome))
 	if raw == nil {
-		markOptedOut()
-		return r, nil
+		return noManifest()
 	}
 	m := parseInstallManifest(*raw)
 	if m == nil {
-		markOptedOut()
-		return r, nil
+		return noManifest()
 	}
 	r.NoManifest = false
 	path := deps.ConfigPath
 	if path == "" {
 		path = m.ConfigPath
 	}
+	// lockedPath is the spelling the first reading chose; the re-read below must still name the same
+	// file for the held lock to be the lock over the manifest's own config file.
+	lockedPath := path
 	// One critical section for the whole command's writes to config.toml under the sidecar lock
 	// every CRW writer of config.toml takes (CRW-866), the shape of activate.go's
 	// activationSetKeyLocked: the drift check, the read, the restore, and the injected CLI calls
@@ -118,6 +127,25 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 		defer lock.Release()
 		path = lock.Target
+		// The manifest read before the lock answered only whether and where to lock. An activation
+		// that published while this command waited would otherwise be ignored, and the restore would
+		// be computed from a manifest that no longer describes the install: the drift hash, the table
+		// keys and the flags below all decide from this second reading. A manifest missing or
+		// unreadable here answers as the no-manifest branch above does.
+		fresh, _ := readTextOrNull(manifestPath(deps.CodexHome))
+		if fresh == nil {
+			return noManifest()
+		}
+		if m = parseInstallManifest(*fresh); m == nil {
+			return noManifest()
+		}
+		// The lock is held on the file the first reading named. A manifest that now names a different
+		// config file would have this deactivation apply one file's ownership records to another, so
+		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
+		// overrides the manifest in both readings, so only the derived path can disagree.
+		if deps.ConfigPath == "" && m.ConfigPath != lockedPath {
+			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
+		}
 	}
 	// The opt-out is recorded only once this deactivation is going to do its work: a busy lock
 	// refuses the command before this line, and a refusal must not leave self-healing off for an

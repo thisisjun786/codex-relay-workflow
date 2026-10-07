@@ -106,6 +106,12 @@ func CheckStartLikeFence(ctx context.Context, dbPath string) error {
 			return fenceRefused(why)
 		}
 	}
+	// A store whose writes are halted is refused before the in-place stamp read, so no statement is
+	// issued against a store the relay has already seen damaged (halt.go, CRW-848): the marker is a
+	// durable fact beside the store, and it stays until an operator clears it after a restore.
+	if state := HaltStateAt(resolved); state.Present {
+		return HaltRefusal(state)
+	}
 	// A command's preflight waits for a writer as its own open would.
 	meta, err := inPlaceMetadata(ctx, dbPath, ownership.LockWait)
 	if err != nil {
@@ -165,6 +171,16 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 	resolved, err := refuseLiveState(path)
 	if err != nil {
 		return nil, err
+	}
+	// A store whose writes are halted is judged before any writable statement runs (CRW-848): the
+	// schema script, the additive zone and the metadata seeds a writable open runs are writes, and a
+	// marker published between the command's preflight and this open must still stop them. A
+	// read-only command reads through the read-only opener, which writes nothing.
+	if state := HaltStateAt(resolved); state.Present {
+		if ReadOnlyCommand(ctx) {
+			return OpenReadOnlyStore(ctx, path)
+		}
+		return nil, HaltRefusal(state)
 	}
 	// The description a creating open placed EX, when this open created the store. It is handed
 	// to the writable open so the store's shared hold is a downgrade of that very description
