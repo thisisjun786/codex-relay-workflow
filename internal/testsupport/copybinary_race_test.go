@@ -20,7 +20,9 @@ import (
 
 // The shape of the ETXTBSY regression CRW-929 records, and its envelope: enough forkers and
 // copiers to reach the window between a copy's open and its last close, small enough to stay
-// inside the limits the issue sets (8 copiers x 40 copies, 64 MiB and one minute).
+// inside the limits the issue sets (up to 8 copiers x 40 copies, 64 MiB and one minute). The
+// copy count comes down from the source program's size, so the exercise fits that ceiling on a
+// host whose true(1) is the large BusyBox multi-call binary.
 const (
 	copyWriters    = 8
 	copyIterations = 40
