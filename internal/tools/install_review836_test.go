@@ -337,3 +337,96 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 		t.Fatalf("removeCreated removed a regular file whose identity matched the record: %v", err)
 	}
 }
+
+// C1, the location a recorded component is reached by: the recorded location must still reach the
+// directory after a component before a ".." has vanished, which is what the exhaustion cleanup
+// needs. The parent is read as text and resolved, so the location keeps the ".." instead of the
+// different directory filepath.Clean would name.
+func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	// The root spells a symbolic link and then a "..": the kernel resolves it to <base>/p, while a
+	// lexical clean would name <real>/p.
+	root := link + "/../p/q"
+	target := filepath.Join(base, "p")
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot under a link and a dot-dot: %v", err)
+	}
+	found := false
+	for _, made := range created {
+		if made.path != link+"/../p" {
+			continue
+		}
+		found = true
+		if made.resolved == "" || made.resolved == made.path {
+			t.Fatalf("the record reaches %q, which still traverses the link", made.resolved)
+		}
+		// The location reaches the directory this call made, and it does so by a path that no
+		// longer goes through the link.
+		info, statErr := os.Lstat(made.resolved)
+		if statErr != nil || !info.IsDir() {
+			t.Fatalf("the recorded location %q does not reach a directory: %v", made.resolved, statErr)
+		}
+	}
+	if !found {
+		t.Fatalf("createRoot recorded %v, want the dot-dot component", created)
+	}
+	removeCreated(created)
+	// The link is not this call's: it was there before the call and is never recorded.
+	for _, path := range []string{target, filepath.Join(target, "q")} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+	if _, statErr := os.Lstat(link); statErr != nil {
+		t.Errorf("the pre-existing link was removed: %v", statErr)
+	}
+}
+
+// The fail-closed side of the location: when the object at the spelled path cannot be read, no
+// identity can be established, and the parent's location must not be accepted in its place. That
+// location was read before the mkdir, so it may now name a different directory's parent -- a
+// directory this call never made -- and recording it would let the cleanup remove an unrelated
+// directory. Nothing is recorded and the error is answered instead.
+func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The peer's directory stands where the stale parent location points.
+	peer := filepath.Join(parent, "q")
+	if err := os.Mkdir(peer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	peerInfo, err := os.Lstat(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The component this call made is not at the spelled path any more.
+	spelled := filepath.Join(base, "gone", "q")
+
+	location, info, err := componentIdentity(spelled, parent)
+	if err == nil {
+		t.Fatalf("componentIdentity accepted the parent's location %q with %v while the spelled path could not be read", location, info)
+	}
+	if info != nil {
+		t.Fatalf("componentIdentity answered an identity %v while the spelled path could not be read", info)
+	}
+	if location != "" {
+		t.Fatalf("componentIdentity answered the location %q while the spelled path could not be read", location)
+	}
+	// The peer's directory is untouched and is not what the record would have named.
+	if os.SameFile(peerInfo, info) {
+		t.Fatalf("componentIdentity recorded the peer's directory %s", peer)
+	}
+}

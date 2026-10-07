@@ -209,13 +209,26 @@ type createRootRecord struct {
 	info     os.FileInfo
 }
 
-// componentParent answers the location the kernel resolves component's parent to, or "" when it
+// componentParent is component's parent as text: everything before the last separator, with nothing
+// cleaned. filepath.Dir cannot be used here, because it cleans the result and a clean would collapse
+// a ".." that has to stay in the path: the parent of "base/link/../p/q" is "base/link/../p" and not
+// the different directory "base/p" a clean names, and resolving the cleaned form would answer a
+// location that is not the one the mkdir acts on.
+func componentParent(component string) string {
+	trimmed := strings.TrimRight(component, string(os.PathSeparator))
+	if cut := strings.LastIndex(trimmed, string(os.PathSeparator)); cut > 0 {
+		return trimmed[:cut]
+	}
+	return ""
+}
+
+// parentLocation answers the location the kernel resolves component's parent to, or "" when it
 // cannot be resolved. It is read before the component's mkdir, while the spelling is known to reach
 // the parent, so the location keeps reaching the component after a segment above the parent -- a
 // "..", for instance -- vanishes, which is the race this walk handles.
-func componentParent(component string) string {
-	parent := filepath.Dir(component)
-	if parent == component {
+func parentLocation(component string) string {
+	parent := componentParent(component)
+	if parent == "" {
 		return ""
 	}
 	resolved, err := filepath.EvalSymlinks(parent)
@@ -225,40 +238,34 @@ func componentParent(component string) string {
 	return resolved
 }
 
-// componentIdentity reads the identity of the directory mkdir made at component -- or, on EEXIST,
-// of the directory standing there -- together with a location that reaches it. parent is the
-// resolved parent read before the mkdir, and it is tried first because it still reaches the
-// directory once a segment above the parent has vanished; the parent resolved again and the
-// spelling follow.
+// componentIdentity reads the identity of the directory the mkdir made at component -- or, on
+// EEXIST, of the directory standing there -- and answers the location that reaches it. parent is
+// the parent location read before the mkdir.
 //
-// The spelled path is what mkdir acted on, so a candidate that names a different object than the
-// spelling does is not this call's directory and is refused rather than recorded and removed later.
-// When the spelling can no longer be read at all, the parent's location is used, because that is
-// the only form that still names a directory this call made.
+// The spelled path is what the mkdir acted on, so the identity is read there first and is the
+// answer whenever it can be read. When it can be read, the parent's location is used only as the
+// same directory's other name, and only when the two are the same directory by os.SameFile: that is
+// the form that still reaches the directory after a segment above the parent has vanished. A
+// location that names a different object is never recorded, because the removal would then act on
+// an object this call never made.
+//
+// When the spelled path cannot be read at all, no identity can be established: the parent location
+// was read before the mkdir and may since name a different directory's parent, so accepting it would
+// let this call record -- and later remove -- an object it never made. Nothing is recorded, and the
+// directory is left alone rather than removed on a guess.
 func componentIdentity(component, parent string) (string, os.FileInfo, error) {
 	spelled, spelledErr := os.Lstat(component)
-	var candidates []string
+	if spelledErr != nil {
+		return "", nil, spelledErr
+	}
 	if parent != "" {
-		candidates = append(candidates, crwconfig.JoinRoot(parent, filepath.Base(component)))
-	}
-	if now := componentParent(component); now != "" {
-		candidates = append(candidates, crwconfig.JoinRoot(now, filepath.Base(component)))
-	}
-	candidates = append(candidates, component)
-	for _, candidate := range candidates {
-		info, err := os.Lstat(candidate)
-		if err != nil {
-			continue
+		location := crwconfig.JoinRoot(parent, filepath.Base(strings.TrimRight(component, string(os.PathSeparator))))
+		info, err := os.Lstat(location)
+		if err == nil && os.SameFile(spelled, info) {
+			return location, info, nil
 		}
-		if spelledErr == nil && !os.SameFile(spelled, info) {
-			continue
-		}
-		return candidate, info, nil
 	}
-	if spelledErr == nil {
-		return component, spelled, nil
-	}
-	return "", nil, spelledErr
+	return component, spelled, nil
 }
 
 // dropGone drops the record of a component the scan found missing when the component is really
@@ -268,7 +275,7 @@ func componentIdentity(component, parent string) (string, os.FileInfo, error) {
 // because the filesystem hands a freed directory's inode to the next directory made in its place
 // and the identity alone cannot then tell the peer's directory from this call's.
 func dropGone(created []createRootRecord, component string) []createRootRecord {
-	if componentParent(component) == "" {
+	if parentLocation(component) == "" {
 		return created
 	}
 	if _, err := os.Lstat(component); err == nil {
@@ -311,7 +318,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 			if createRootBeforeMkdir != nil {
 				createRootBeforeMkdir(component)
 			}
-			parent := componentParent(component)
+			parent := parentLocation(component)
 			err := os.Mkdir(component, 0o755)
 			switch {
 			case err == nil:
