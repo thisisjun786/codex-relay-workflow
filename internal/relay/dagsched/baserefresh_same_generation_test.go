@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // CRW-916. The lane case of a base refresh: the node's result was accepted, no bundle formed, and the merge lane has
@@ -283,6 +284,62 @@ func TestSameGenerationRefreshIsRefusedWhenANewerReportSupersedesTheAcceptedEven
 		t.Fatalf("the acceptance rows changed: %s", got)
 	}
 }
+
+// Criterion c1, the issue's own condition 3: a bundle leader that fell back to the single lane is carried by the
+// merge train's own open at the head the same-generation record names. The train reads the stand through
+// internal/relay/mergeturn/train.go's standFor -> trainStandRefusal, so the real merge-train-open is called here
+// over the scenario's store: a one-member bundle (the leader alone) is the single-lane answer, and the stand-head
+// check that decides it runs before that answer is returned.
+func TestABundleLeaderRefreshedInItsOwnGenerationOpensItsBundle(t *testing.T) {
+	t.Parallel()
+	s := newRefreshScenario(t)
+	head := s.sameGenerationRefresh()
+	ctx := context.Background()
+	forge := &trainForgeStub{pull: mergeturn.TrainPullRequest{Number: 7, State: "open", BaseRef: "dev", HeadSHA: head}}
+
+	// before the record the train refuses the leader: its acceptance stands on the accepted head, not on the head
+	// its pull request shows
+	if _, turn, err := s.askForTurn(); refusalReason(err) != "merge_candidate_moved" || turn != nil {
+		t.Fatalf("the turn before the record = %v %v, want merge_candidate_moved", err, turn)
+	}
+	res, err := s.record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.HeadSHA != head || res.Generation != s.accepted.Acceptance.ExecutionGeneration {
+		t.Fatalf("record = %+v, want the refreshed head at the acceptance's own generation", res)
+	}
+	_, turn, err := s.askForTurn()
+	if err != nil || turn == nil {
+		t.Fatalf("the turn after the record = %v %v", err, turn)
+	}
+	// merge-train-open, the real gate: the leader's own pull request alone, which is the single-lane answer
+	answer, err := forgeLaneService(s.sched, s.s, s.lanePulls()).Open(ctx, turn["turnId"].(string), "parent", s.repo.git("rev-parse", "dev"), []int64{7}, s.readers, forge)
+	if err != nil {
+		t.Fatalf("merge-train-open refused the leader the same-generation record carried: %v", err)
+	}
+	if answer["lane"] != "single" || answer["pullRequest"] != int64(7) {
+		t.Fatalf("the bundle answer = %v, want the single-lane answer for the leader's own pull request", answer)
+	}
+}
+
+// trainForgeStub is the forge the merge train reads: only the pull requests of a one-member bundle are read, so the
+// other three reads answer with a statement that is never reached.
+type trainForgeStub struct{ pull mergeturn.TrainPullRequest }
+
+func (f *trainForgeStub) PullRequest(_ context.Context, _ string, _ int64) (mergeturn.TrainPullRequest, error) {
+	return f.pull, nil
+}
+
+func (f *trainForgeStub) Run(_ context.Context, _, _ string) (mergeturn.TrainRun, error) {
+	return mergeturn.TrainRun{}, nil
+}
+
+func (f *trainForgeStub) Commit(_ context.Context, _, _ string) (mergeturn.TrainCommit, error) {
+	return mergeturn.TrainCommit{}, nil
+}
+
+func (f *trainForgeStub) Compare(_ context.Context, _, _, _ string) (string, error) { return "", nil }
 
 // supersedeSameGenerationReport adds a later report of the acceptance's generation that declares it replaces the
 // accepted revision, acknowledged and ruled verified under the plan's criteria, so the generation's head is that
