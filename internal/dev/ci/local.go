@@ -60,7 +60,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	base := flags.String("base", "", "the base commit the record names (default: merge-base with origin/dev)")
 	record := flags.String("record", localRecordDefault, "where to write the verification record")
 	reuse := flags.String("reuse", "", "answer this record instead of running, when every key matches")
-	heavyGate := flags.String("heavy-gate", "", "the heavy-check gate to run heavy steps through (default $@"+localHeavyGateEnv+")")
+	heavyGate := flags.String("heavy-gate", "", "the heavy-check gate to run heavy steps through (default $"+localHeavyGateEnv+")")
 	runner := flags.String("runner", "local", "where this run happened; the record names it")
 	keep := flags.Bool("keep", false, "keep the clean worktree for debugging")
 	description := "Run every job and step of .github/workflows/ci.yml locally, in a clean worktree of the\n" +
@@ -276,7 +276,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 					// and records the rest as skipped, which is itself a failure (answer 5).
 					entry.Result, entry.Reason = localSkipped, "an earlier step of this job did not pass"
 				default:
-					entry.Result, entry.Reason = localRunStep(opts, step, worktree, leg, env)
+					entry.Result, entry.Reason = localRunStep(opts, step, worktree, leg, env, record.Jobs)
 					if entry.Result != localPassed {
 						failed = true
 					}
@@ -305,8 +305,9 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	return record, false, nil
 }
 
-// localRunStep performs one step and returns its result and reason.
-func localRunStep(opts localOptions, step localStep, worktree, leg string, env []string) (string, string) {
+// localRunStep performs one step and returns its result and reason. done is the record's jobs so
+// far, which the aggregate step judges.
+func localRunStep(opts localOptions, step localStep, worktree, leg string, env []string, done []recordJob) (string, string) {
 	if step.tool != "" && !localToolPresent(step.tool, localPathEnv(env)) {
 		return localMissingTool, step.tool + " is not on PATH"
 	}
@@ -316,8 +317,13 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	case localGo, localNode:
 		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env))
 	case localAggregate:
-		// dev-gate: every prerequisite job must have succeeded, which is decided from the record's
-		// other jobs after they have run.
+		// dev-gate: every prerequisite job must have succeeded, judged from the jobs already
+		// recorded rather than from a hosted needs object.
+		for _, job := range done {
+			if job.Result != localPassed {
+				return localFailed, "prerequisite job " + job.Name + " did not pass"
+			}
+		}
 		return localPassed, "every prerequisite job succeeded"
 	}
 	command := step.command
@@ -326,8 +332,12 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 		dir = filepath.Join(worktree, step.workdir)
 	}
 	stepEnv := append(append([]string{}, env...), localStepEnvValues(step.env, opts, leg)...)
-	cmd := localCommand(opts.HeavyGate, step.heavy, command)
-	shell := exec.Command("bash", "-c", cmd)
+	// The command runs through bash -c, so a ci.yml run text that is a block scalar (a loop, a
+	// heredoc) runs as the runner runs it. A heavy step goes through the gate as
+	// <gate> bash -c <command>: the command is one argv element, never concatenated into a shell
+	// word, so a run text that carries its own quotes keeps them.
+	argv := localGateArgv(opts.HeavyGate, step.heavy, command)
+	shell := exec.Command(argv[0], argv[1:]...)
 	shell.Dir = dir
 	shell.Env = stepEnv
 	var output bytes.Buffer
@@ -342,12 +352,17 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	return localPassed, ""
 }
 
-// localCommand is the command a step runs: a heavy step goes through the gate when one is set.
-func localCommand(gate string, heavy bool, command string) string {
-	if heavy && strings.TrimSpace(gate) != "" {
-		return gate + " " + command
+// localGateArgv is the argv a step runs: bash -c <command>, with the heavy-check gate's own
+// words prepended for a heavy step. The command stays one argv element, so a ci.yml run text that
+// is a block scalar (a loop, a heredoc) or carries its own quotes reaches bash unchanged.
+func localGateArgv(gate string, heavy bool, command string) []string {
+	argv := []string{"bash", "-c", command}
+	if heavy {
+		if words := strings.Fields(gate); len(words) > 0 {
+			argv = append(words, argv...)
+		}
 	}
-	return command
+	return argv
 }
 
 // localStepEnv is the isolated environment every step runs in: HOME and the XDG directories point

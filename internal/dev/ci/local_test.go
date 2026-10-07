@@ -391,15 +391,22 @@ func TestLocal_removes_its_clean_worktree(t *testing.T) {
 	}
 }
 
-// The heavy gate wraps a heavy step's command and leaves a light one alone.
-func TestLocal_heavy_gate_wraps_only_heavy_steps(t *testing.T) {
-	if got := localCommand("gate.sh", true, "make lint"); got != "gate.sh make lint" {
-		t.Errorf("heavy command = %q", got)
+// The gate a heavy step goes through is prepended as argv, so a run text that is a block scalar
+// (a loop, a heredoc) keeps its own quoting and runs through bash -c as the runner runs it.
+func TestLocal_gate_prefixes_a_heavy_step_as_argv(t *testing.T) {
+	gate := localGateArgv("gate.sh --flag", true, "make lint")
+	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "bash", "-c", "make lint"})
+	light := localGateArgv("gate.sh", false, "make lint")
+	expectEqual(t, "a light step's argv", light, []string{"bash", "-c", "make lint"})
+	none := localGateArgv("", true, "make lint")
+	expectEqual(t, "no gate", none, []string{"bash", "-c", "make lint"})
+
+	// A block scalar keeps its newlines and its quotes: the command is one argv element.
+	block := localGateArgv("gate.sh", true, localDistBuilds)
+	if len(block) != 4 || block[3] != localDistBuilds {
+		t.Fatalf("the block scalar is not one argv element: %#v", block)
 	}
-	if got := localCommand("gate.sh", false, "make lint"); got != "make lint" {
-		t.Errorf("light command = %q", got)
-	}
-	if got := localCommand("", true, "make lint"); got != "make lint" {
-		t.Errorf("no gate: command = %q", got)
+	if !strings.Contains(block[3], "\n") {
+		t.Error("the block scalar's newlines were lost")
 	}
 }
