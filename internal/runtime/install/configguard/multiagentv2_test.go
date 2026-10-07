@@ -237,9 +237,19 @@ func TestMultiAgentV2AtomicRepair(t *testing.T) {
 	if os.SameFile(prior, after) || after.Mode().Perm() != 0600 || activationRead(t, alias) != "[features]\nmulti_agent_v2 = true\n" {
 		t.Fatal("repair rewrote the old inode or changed mode")
 	}
+	// The repair leaves no temporary debris: the home holds the published config.toml, the hard link
+	// that keeps the old inode's bytes, and the config.toml.crw-lock sidecar every CRW writer of
+	// config.toml takes and never unlinks (CRW-866, docs/port/decisions.md 7).
 	entries, err := os.ReadDir(home)
-	if err != nil || len(entries) != 2 {
-		t.Fatalf("temporary debris: %v, %v", entries, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if !reflect.DeepEqual(names, []string{"config.toml", "config.toml.crw-lock", "config.toml.hardlink"}) {
+		t.Fatalf("temporary debris: %v", names)
 	}
 }
 

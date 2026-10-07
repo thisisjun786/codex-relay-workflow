@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// The size check: reads an issue, counts the signals, answers ok or split_recommended and, for the
-// second, drafts a split. The tests go through Run (the call helper), the way crw-plan and crw-run
-// invoke the command.
+// The size check: reads an issue, counts the signals, answers ok or over_line and, for the second,
+// drafts a split. The answer is advisory: it never exits non-zero on the count alone. The tests go
+// through Run (the call helper), the way crw-plan and crw-run invoke the command.
 
 const issueSizeFixtures = "testdata/fixtures/issue-size"
 
@@ -118,30 +118,29 @@ func TestIssueSizeIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestIssueSizeAnswersOkAndSplitRecommended(t *testing.T) {
+func TestIssueSizeAnswersOkAndOverLine(t *testing.T) {
 	for _, test := range []struct {
-		id         string
-		exit       int
-		decision   string
-		assignable bool
+		id       string
+		exit     int
+		decision string
 	}{
-		{"CRW-265", 0, "ok", true},
-		{"CRW-184", 1, "split_recommended", false},
-		{"CRW-183", 1, "split_recommended", false},
+		{"CRW-265", 0, "ok"},
+		{"CRW-184", 0, "over_line"},
+		{"CRW-183", 0, "over_line"},
 	} {
 		code, out, errOut := sizeCall(fixtureIssue(t, test.id))
 		if code != test.exit || errOut != "" {
 			t.Fatalf("%s: exit %d, stderr %q\n%s", test.id, code, errOut, out)
 		}
 		r := decodeReport(t, out)
-		if at(r, "schema") != "crw-issue-size-check/1" || at(r, "issue") != test.id || at(r, "decision") != test.decision || at(r, "assignable") != test.assignable {
+		if at(r, "schema") != "crw-issue-size-check/2" || at(r, "issue") != test.id || at(r, "decision") != test.decision {
 			t.Errorf("%s: %s", test.id, out)
 		}
 		reasons := atList(r, "reasons")
 		if (test.decision == "ok") != (len(reasons) == 0) {
 			t.Errorf("%s: reasons %v do not match the decision %s", test.id, reasons, test.decision)
 		}
-		if _, has := r["proposal"]; has != (test.decision == "split_recommended") {
+		if _, has := r["proposal"]; has != (test.decision != "ok") {
 			t.Errorf("%s: proposal present = %v for %s", test.id, has, test.decision)
 		}
 		if atNum(t, r, "limits", "criteria_total") <= 0 || atNum(t, r, "limits", "research_criteria") <= 0 || atNum(t, r, "limits", "deliverables") <= 0 {
@@ -170,7 +169,7 @@ func TestIssueSizeLimitsAreInclusive(t *testing.T) {
 		exit    int
 		reasons int
 	}{
-		{8, 0, 0, 0}, {9, 0, 1, 1}, {5, 3, 0, 0}, {1, 3, 0, 0}, {1, 4, 1, 1}, {9, 4, 1, 2}, {1, 0, 0, 0},
+		{8, 0, 0, 0}, {9, 0, 0, 1}, {5, 3, 0, 0}, {1, 3, 0, 0}, {1, 4, 0, 1}, {9, 4, 0, 2}, {1, 0, 0, 0},
 	} {
 		code, out, errOut := sizeCall(structuredIssue("CRW-X", test.c, test.r, nil))
 		if code != test.exit || errOut != "" {
@@ -201,7 +200,7 @@ func TestIssueSizeException(t *testing.T) {
 	}
 	r := decodeReport(t, out)
 	record, _ := at(r, "exception_record").(string)
-	if at(r, "decision") != "split_recommended" || at(r, "assignable") != true || at(r, "exception", "approved_by") != "Reviewer" ||
+	if at(r, "decision") != "over_line" || at(r, "exception", "approved_by") != "Reviewer" ||
 		!strings.Contains(record, "CRW-X") || !strings.Contains(record, "Reviewer") || !strings.Contains(record, "2026-10-03") || !strings.Contains(record, "criteria_total 14 exceeds") {
 		t.Errorf("an approved exception keeps the finding and records the approval: %s", out)
 	}
@@ -347,7 +346,7 @@ func TestIssueSizeProposalShape(t *testing.T) {
 	for total := 9; total <= 40; total++ {
 		research := total / 3
 		code, out, _ := sizeCall(structuredIssue("CRW-X", total-research, research, nil))
-		if code != 1 {
+		if code != 0 {
 			t.Fatalf("%d criteria: exit %d", total, code)
 		}
 		r := decodeReport(t, out)
@@ -392,7 +391,7 @@ func TestIssueSizeProposalEdgesFollowRegions(t *testing.T) {
 	edges := func(paths ...string) []map[string]any {
 		input, _ := json.Marshal(map[string]any{"id": "CRW-X", "criteria": criteria(paths...)})
 		code, out, _ := sizeCall(string(input))
-		if code != 1 {
+		if code != 0 {
 			t.Fatalf("exit %d: %s", code, out)
 		}
 		var got []map[string]any
@@ -493,11 +492,11 @@ func TestIssueSizeDeliverables(t *testing.T) {
 		}
 		return out
 	}
-	for _, test := range []struct{ n, exit int }{{0, 0}, {7, 0}, {8, 1}} {
+	for _, test := range []struct{ n, exit, reasons int }{{0, 0, 0}, {7, 0, 0}, {8, 0, 1}} {
 		code, out, _ := sizeCall(structuredIssue("CRW-X", 3, 0, map[string]any{"deliverables": list(test.n)}))
 		r := decodeReport(t, out)
-		if code != test.exit || atNum(t, r, "signals", "deliverables") != test.n || len(atList(r, "reasons")) != test.exit {
-			t.Errorf("%d deliverables: exit %d (want %d) %s", test.n, code, test.exit, out)
+		if code != test.exit || atNum(t, r, "signals", "deliverables") != test.n || len(atList(r, "reasons")) != test.reasons {
+			t.Errorf("%d deliverables: exit %d (want %d) with %d reasons (want %d) %s", test.n, code, test.exit, len(atList(r, "reasons")), test.reasons, out)
 		}
 	}
 	// Not declared is not zero: the signal is null and no limit applies.
@@ -536,7 +535,7 @@ func TestIssueSizeDependsOn(t *testing.T) {
 	code, out, _ := sizeCall(issue(map[string][]string{"C4": {"C1"}, "C9": {"C4"}}))
 	r := decodeReport(t, out)
 	order := orderOf(r)
-	if code != 1 || len(order) != 2 || order[0]["from"] != "B1" || order[0]["to"] != "B2" || order[0]["reason"] != "prerequisite" ||
+	if code != 0 || len(order) != 2 || order[0]["from"] != "B1" || order[0]["to"] != "B2" || order[0]["reason"] != "prerequisite" ||
 		fmt.Sprint(order[0]["needs"]) != "[C4 needs C1]" || order[1]["from"] != "B2" || order[1]["to"] != "B3" || fmt.Sprint(order[1]["needs"]) != "[C9 needs C4]" {
 		t.Errorf("declared prerequisites between disjoint bundles: exit %d %v", code, order)
 	}
@@ -582,7 +581,7 @@ func TestIssueSizeProposalBranches(t *testing.T) {
 	// Fewer than two completion criteria: every item is a seed, and each is in exactly one bundle.
 	code, out, _ := sizeCall(structuredIssue("CRW-X", 1, 4, nil))
 	r := decodeReport(t, out)
-	if bundles := shapeOf(t, r, 5); code != 1 || len(bundles) != 2 {
+	if bundles := shapeOf(t, r, 5); code != 0 || len(bundles) != 2 {
 		t.Errorf("one completion criterion and four research rows: exit %d, bundles %v", code, bundles)
 	}
 	// Capacity: seven rows that all read like C1 cannot all join its bundle.
@@ -635,7 +634,7 @@ func TestIssueSizeNothingToDivide(t *testing.T) {
 	r := decodeReport(t, out)
 	bundles, bundlesOK := at(r, "proposal", "bundles").([]any)
 	order, orderOK := at(r, "proposal", "order").([]any)
-	if code != 1 || at(r, "decision") != "split_recommended" || at(r, "proposal", "status") != "none" || !bundlesOK || len(bundles) != 0 || !orderOK || len(order) != 0 {
+	if code != 0 || at(r, "decision") != "over_line" || at(r, "proposal", "status") != "none" || !bundlesOK || len(bundles) != 0 || !orderOK || len(order) != 0 {
 		t.Errorf("one criterion and 8 deliverables: exit %d %s", code, out)
 	}
 	reasons := atList(r, "reasons")
@@ -721,7 +720,7 @@ func TestIssueSizeDependsOnCombinations(t *testing.T) {
 	r := decodeReport(t, out)
 	edges := orderOf(r)
 	// The bundles name no file, so the unknown-region chain comes with the declared prerequisites.
-	if bundles := shapeOf(t, r, 9); code != 1 || len(bundles) != 3 || len(edges) != 3 || edges[0]["from"] != "B1" || edges[0]["to"] != "B2" || edges[0]["reason"] != "prerequisite" ||
+	if bundles := shapeOf(t, r, 9); code != 0 || len(bundles) != 3 || len(edges) != 3 || edges[0]["from"] != "B1" || edges[0]["to"] != "B2" || edges[0]["reason"] != "prerequisite" ||
 		edges[1]["from"] != "B1" || edges[1]["to"] != "B3" || edges[1]["reason"] != "prerequisite" || edges[2]["from"] != "B2" || edges[2]["to"] != "B3" || edges[2]["reason"] != "unknown_regions" {
 		t.Errorf("one criterion and eight rows that need it: exit %d, bundles %v, edges %v", code, bundles, edges)
 	}
@@ -992,7 +991,7 @@ func TestIssueSizeReadsDecoratedResearchHeadings(t *testing.T) {
 		body := "## 완료 기준\n1. a\n2. b\n\n## " + heading + "\n- r1\n- r2\n- r3\n- r4\n- r5\n"
 		code, out, _ := sizeCall(descriptionIssue(body))
 		r := decodeReport(t, out)
-		if code != 1 || atNum(t, r, "signals", "criteria") != 2 || atNum(t, r, "signals", "research_criteria") != 5 {
+		if code != 0 || atNum(t, r, "signals", "criteria") != 2 || atNum(t, r, "signals", "research_criteria") != 5 {
 			t.Errorf("%q: exit %d, signals %v", heading, code, at(r, "signals"))
 		}
 	}
@@ -1060,7 +1059,7 @@ func TestIssueSizeOnTheRecordedIssues(t *testing.T) {
 		t.Run(row.id, func(t *testing.T) {
 			wantDecision := "ok"
 			if oversized(row.lines, row.commits) {
-				wantDecision = "split_recommended"
+				wantDecision = "over_line"
 			}
 			if _, err := os.Stat(filepath.Join(issueSizeFixtures, row.id+".md")); err == nil {
 				if c, r := sizeSignals(t, fixtureIssue(t, row.id)); c != row.criteria || r != row.research {
@@ -1078,8 +1077,8 @@ func TestIssueSizeOnTheRecordedIssues(t *testing.T) {
 		})
 	}
 	for _, id := range []string{"CRW-184", "CRW-183"} {
-		if code, _, _ := sizeCall(fixtureIssue(t, id)); code != 1 {
-			t.Errorf("%s is not split_recommended", id)
+		if code, _, _ := sizeCall(fixtureIssue(t, id)); code != 0 {
+			t.Errorf("%s is not answered advisory (exit 0)", id)
 		}
 	}
 	for n := 260; n <= 272; n++ {

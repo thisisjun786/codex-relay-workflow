@@ -16,7 +16,7 @@ and no widening of its scope.
 The unit is the merge, not the diff. One issue is the work that one merge into one
 integration target finishes, and its criteria are the ones that merge can satisfy.
 
-A second issue and PR is forced when any of these holds:
+A second issue and PR is forced when any of these holds, because each is a different merge:
 
 - the change lands in a different target repository, which is a different merge; a
   repository that is only read, validated or depended on is not a target
@@ -26,8 +26,11 @@ A second issue and PR is forced when any of these holds:
   migrated store — so that part becomes a prerequisite issue and the rest depends on it;
 - part of the outcome is already delivered, or is owned by a live issue, so it is a
   prerequisite or evidence rather than new work;
-- a part could merge and be verified on its own while the rest stays unfinished, and the
-  rest still has an observable criterion of its own.
+
+A part that could merge and be verified on its own while the rest stays unfinished, and whose
+rest still has an observable criterion of its own, **may** be split off; being verifiable apart
+permits the split, it does not require one. The concept decides first: two parts of one concept
+stay in one issue even where each could be verified apart.
 
 Criteria that no merge establishes, such as installation, deployment, live behaviour or
 an external decision, are tracked as their own result under
@@ -44,12 +47,41 @@ State the contrast once, because the two rules meet here. If the earlier part pa
 checks alone and the later part passes only after the earlier one lands, split and record
 the relation. If neither part passes alone, they land together.
 
+The unit is the concept bundle, and the concept decides before the size does. Bundle parts
+that belong to one concept:
+
+- the same fault class or the same contract fixed in several files;
+- work that collects in one package, or in packages that share a test fixture;
+- follow-ups from one merged pull request (review or pair-evaluation findings);
+- pieces that have no independent value alone and continue in order;
+- one package's test reinforcement or parallelization.
+
+Do not bundle:
+
+- an open decision, or a decision document mixed with its implementation;
+- work unrelated to a security fix attached to that fix (a security fix stays small and fast; a
+  caller update, migration, configuration or test it needs to pass verification stays with it);
+- a part that reaches another project's exclusive area;
+- a part whose blocking would block the merge of the rest.
+
 Nothing else splits an issue: not file count, diff size, directory or module boundaries,
 equal sizing between issues, the number of review rounds, or a wish to run work in
-parallel. Real parallelism comes from the independence described above. If the only thing
-separating two candidate parts is that they touch different files, they are one PR. A
-large single-landing change is one issue, and three one-line changes in three
-repositories are three.
+parallel. A line count is only a rough reference, never a boundary; the [work-unit
+rules](../../../../../POLICY.md#work-units-review-and-integration) own that rule and this page
+applies it. Real parallelism comes
+from the independence described above. If the only thing separating two candidate parts is
+that they touch different files, they are one PR. A large single-landing change is one
+issue, and three one-line changes in three repositories are three.
+
+Where the two rules seem to point opposite ways, the concept decides. The independent-verifiability
+rule above forces a second issue only across a concept boundary: two parts of one concept stay in one
+issue even where each could be verified apart, and the fact that each could pass its own checks is not
+on its own a reason to split them. The forced-split list and the bundle list are read together, with
+the bundle list deciding whether the parts are one concept at all.
+
+A direct defect found in a pull request that is about that pull request's own change, a test
+gap in it or a document or pointer that contradicts it, is fixed in that pull request rather
+than split off. Only a finding about a different concept becomes a separate issue.
 
 Sibling issues that each add files to one Go package share a namespace the diff never shows: every
 pull request builds on its own base, git merges the files without a conflict, and two declarations
@@ -68,18 +100,21 @@ Linear returns it (`id`, `title`, `description`) and, where the plan knows them,
 deliverable outputs, one item each: a new package, a command family, a store table, a skill document) and `depends_on`
 (which criterion needs which earlier one; the planner writes it and the command never derives it). The command counts what
 the body states under the headings it knows (completion criteria, research reinforcement, deliverables, verification, scope, in Korean or
-English; the report names the headings it left unread, so write the criteria as list items or pipe-table rows under one of them, not under a bold label) and answers `ok` or `split_recommended` with its reasons. It is a count against limits read from recorded
+English; the report names the headings it left unread, so write the criteria as list items or pipe-table rows under one of them, not under a bold label) and answers `ok`, `over_line` or `over_line_accepted` with its reasons. It is a count against limits read from recorded
 delivery, not a judgment of the work: the same issue gets the same answer, and the report prints the limits it applied, so
-this page states none. Write an issue's separately deliverable outputs under a Deliverables heading at the same level as its
+this page states none. It also prints the concept-boundary questions and, when the body states one, the scaled line estimate
+with the CRW-739 ratio correction. Write an issue's separately deliverable outputs under a Deliverables heading at the same level as its
 other sections, so the count has something to read; an issue that declares none is reported as not measured, which is not zero.
 
-`ok` changes nothing. `split_recommended` reopens the boundary decision above for that issue and for nothing else, because size
-alone splits nothing. Read the draft as a guess at where the criteria fall apart and apply the boundary rules to each bundle:
+The answer is advisory: it never blocks a dispatch and never exits non-zero on the count alone, and the concept boundary above
+decides, not the count. `ok` changes nothing. `over_line` says the issue is over a baseline, and `over_line_accepted` says
+the same with a `--bundle-reason` recorded in the report, so the parent records why it accepted a bundle over the baseline.
+Read the draft as a guess at where the criteria fall apart and apply the boundary rules to each bundle:
 it becomes an issue only with an observable result of its own, verifiable apart or landing after a prerequisite, and the
 closing check records the order edges. A bundle that fails those rules is not an issue. Where the parts cannot pass
 verification apart, the issue stays one issue, and the plan reports the answer, the draft and that reason to the user instead of
-writing a split. Only the user can grant an exception: the user's own statement naming this issue, carried in the
-`exception` object the command validates, and passed on to `crw-run` with its record. Check an issue again after it is changed,
+writing a split. An `exception` object the command validates records the user's own statement naming this issue; it is kept in
+the report and passed on to `crw-run` with its record. Check an issue again after it is changed,
 and check every issue a split writes as an issue.
 
 ## Record the child pair
@@ -247,11 +282,11 @@ wrong row, and both are fixed here.
 | 20 | An unmerged delivery issue's owner is no longer active. | Ownership recovered or reassignment authorized first; 0 scope changes and 0 dispatch before that. | Align a delivered issue: owner inactive. |
 | 21 | Two duplicate issues name the same deliverable and one blocks the other. | 1 issue kept with its relations to outside work, the 1 edge between the duplicates dropped, 0 self-blocking issues. | Boundary change carries its relations. |
 | 22 | Two issues in different repositories block each other, neither verifies alone, and no standalone contract artifact exists. | 0 consolidations across targets, 0 invented prerequisites, plan reported blocked on the contract decision or redesign that would separate them. | Closing check: cross-target cycle. |
-| 23 | The target repository runs no required checks, one part can be reviewed and accepted on its own, and the unfinished remainder has an observable criterion of its own. | 2 issues split on reviewability apart, 0 issues split on the absence of a gate. | Reviewable apart where checks are absent. |
+| 23 | The target repository runs no required checks, one part can be reviewed and accepted on its own, and the unfinished remainder has an observable criterion of its own. | The split is permitted on reviewability apart where the concept boundary also separates the parts; 0 issues split on the absence of a gate alone. | Reviewable apart where checks are absent: a permission, not a duty. |
 | 24 | A proposed second issue would carry only the remainder of the work, with no result of its own. | 0 new issues; the work stays with the issue that names a deliverable, 0 issues whose only criterion is the rest. | Forbidden: no observable result of its own. |
 | 25 | A prior plan split the work by directory and the directories have since been reorganized. | Issues rematched by deliverable against accepted criteria, 0 issues recreated beside the old ones, 0 splits derived from the new layout. | Convergence: layout is not a deliverable. |
-| 26 | The size check answers `split_recommended` for an implementation issue and drafts four bundles; two of them can be verified apart and the other two only together. | 3 issues: each independent bundle its own issue, the coupled two as 1 issue keeping every criterion, order edges where the regions overlap; 0 issues written from the draft as given. | Size check: the draft is a guess, the boundary rules decide. |
-| 27 | `split_recommended` and no bundle can pass verification apart. | 1 issue, 0 splits; the answer, the draft and the reason reported to the user; it reaches dispatch only with the user's recorded exception. | Size check: parts that cannot pass apart stay one issue. |
+| 26 | The size check answers `over_line` for an implementation issue and drafts four bundles; two of them can be verified apart and the other two only together. | The concept boundary decides: each bundle that is its own concept may become its own issue, the coupled two stay 1 issue keeping every criterion, order edges where the regions overlap; being verifiable apart permits the split and does not require it; 0 issues written from the draft as given. | Size check: the draft is a guess, the boundary rules decide. |
+| 27 | `over_line` and no bundle can pass verification apart. | 1 issue, 0 splits; the answer, the draft and the reason reported to the user; it dispatches normally, with the `--bundle-reason` recorded when the parent accepts it over the baseline. | Size check: parts that cannot pass apart stay one issue; the answer never blocks. |
 | 28 | The size check answers `ok` for an issue that also needs a change in a second repository. | 2 issues by the repository rule; the answer changes nothing in the boundary rules. | Size check: `ok` changes nothing. |
 | 29 | An issue ports a module to another language, and the original's recorded outputs decide when it is done. | 1 issue with 1 child pair line, Sonnet (reference exists); 0 lines that name a model or an effort. | Record the child pair: the answer comes from a reference. |
 | 30 | A test fails about one run in twenty, and two earlier fixes did not remove the failure. | 1 issue with 1 child pair line, SOL (answer must be found): the cause is unknown and a measurement ends the work. | Record the child pair: the answer has to be found. |
