@@ -242,15 +242,19 @@ func parentLocation(component string) string {
 // EEXIST, of the directory standing there -- and answers the location that reaches it. parent is
 // the parent location read before the mkdir, and parentInfo is that directory's identity then.
 //
-// The spelled path is what the mkdir acted on, so the identity is read there first and is the
-// answer whenever it can be read. The parent's location is the second name tried, and it is accepted
-// only while it is provably the same directory: either the spelled path is readable and the two are
-// the same object by os.SameFile, or the spelling is unreadable and the parent is still the very
-// directory read before the mkdir, so the parent location names a slot the mkdir just filled. A
-// parent that changed, or a spelled path that disagrees with it, proves nothing about which object
-// the mkdir made, and nothing is recorded then -- a leak rather than removing another install's
-// directory.
-func componentIdentity(component, parent string, parentInfo os.FileInfo) (string, os.FileInfo, error) {
+// The spelled path is what the mkdir acted on, so the identity is read there first and is the answer
+// when the parent was not resolved. When a parent location was resolved, the two names are accepted
+// while they agree -- the spelled path is readable and both name the same object by os.SameFile --
+// or while the parent location alone is proven to be this call's: the slot it names was observed
+// empty immediately before the mkdir (childAbsent) and the parent is still the very directory read
+// then (parentInfo). Those two observations together say the mkdir filled that slot, which is what
+// keeps a directory this call made when a segment above the parent vanishes between the mkdir and
+// this read, and what refuses a slot a peer had already filled before the mkdir.
+//
+// When none of that holds, a link or a parent changed between the mkdir and this read, so neither
+// name proves which object the mkdir made; nothing is recorded, because a record would let the
+// cleanup remove an object this call never made. That is a leak rather than a wrong removal.
+func componentIdentity(component, parent string, parentInfo os.FileInfo, childAbsent bool) (string, os.FileInfo, error) {
 	spelled, spelledErr := os.Lstat(component)
 	if parent == "" {
 		if spelledErr != nil {
@@ -265,10 +269,8 @@ func componentIdentity(component, parent string, parentInfo os.FileInfo) (string
 			if os.SameFile(spelled, info) {
 				return location, info, nil
 			}
-		} else if parentInfo != nil {
-			// The spelling is unreadable because a segment above the parent vanished. The parent
-			// location still names the slot the mkdir filled, and it is trusted only while the
-			// parent is still the directory read before the mkdir.
+		}
+		if childAbsent && parentInfo != nil {
 			if now, parentErr := os.Lstat(parent); parentErr == nil && os.SameFile(parentInfo, now) {
 				return location, info, nil
 			}
@@ -277,8 +279,15 @@ func componentIdentity(component, parent string, parentInfo os.FileInfo) (string
 	if spelledErr != nil {
 		return "", nil, spelledErr
 	}
-	return component, spelled, nil
+	// The two names disagree and neither observation proves the slot is this call's, so which
+	// object the mkdir made is unknown. Nothing is recorded.
+	return "", nil, errTwoNamesDisagree
 }
+
+// errTwoNamesDisagree is the refusal componentIdentity answers when the spelled path and the parent
+// location name different objects and nothing proves which one the mkdir made. It is an ordinary
+// error, so the caller recomputes the walk rather than recording a location it cannot stand behind.
+var errTwoNamesDisagree = errors.New("the spelled path and the parent location name different objects")
 
 // childLocation answers where a component's directory stands under its parent's resolved location.
 func childLocation(component, parent string) string {
@@ -348,8 +357,12 @@ func createRoot(dir string) ([]createRootRecord, error) {
 			}
 			parent := parentLocation(component)
 			var parentInfo os.FileInfo
+			childAbsent := false
 			if parent != "" {
 				parentInfo, _ = os.Lstat(parent)
+				if _, err := os.Lstat(childLocation(component, parent)); errors.Is(err, fs.ErrNotExist) {
+					childAbsent = true
+				}
 			}
 			err := os.Mkdir(component, 0o755)
 			if err == nil && createRootAfterMkdir != nil {
@@ -361,7 +374,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// is read now and recorded with it. An identity that cannot be read is a component
 				// that vanished under this call, which the recompute below handles rather than a
 				// record that would let removeCreated remove whatever is there next.
-				location, info, statErr := componentIdentity(component, parent, parentInfo)
+				location, info, statErr := componentIdentity(component, parent, parentInfo, childAbsent)
 				if statErr != nil {
 					absent = statErr
 					break
@@ -374,7 +387,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// as missing and this call made it again below the re-made ancestor. Otherwise
 				// another install removed this call's directory and made its own, which is not
 				// this call's to remove.
-				location, info, statErr := componentIdentity(component, parent, parentInfo)
+				location, info, statErr := componentIdentity(component, parent, parentInfo, childAbsent)
 				switch {
 				case statErr != nil:
 					// The identity could not be read, so nothing here proves the directory changed
