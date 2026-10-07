@@ -113,6 +113,36 @@ func TestCheckpointReview788BaseRefreshedAcceptanceCounts(t *testing.T) {
 // project's integrations are still counted, in the full reading and under --project. On dev the
 // reason is returned once for the whole reading, so --project B reads A's acceptances and reports B
 // unmeasured too.
+// The two fixes interact: an acceptance that is judged integrated only BECAUSE its stand was
+// resolved, and whose satisfying observation then carries an unreadable instant, must leave its
+// project unmeasured rather than counted as zero. On the baseline the acceptance is judged on its
+// own generation, so it is skipped entirely and the project reads a measured zero — the wrong
+// answer for the right-looking reason.
+func TestCheckpointReview788BaseRefreshedUnreadableInstantIsUnmeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.plan("plan-1", "project-1", "node", [2]string{"owner/repo", "dev"})
+	f.execution("plan-1", "node", "relationship-1")
+	f.acceptance("plan-1", "node", "relationship-1", "acceptance-1", "event-1", "head-1", checkpointAt(1))
+	f.checkpointReview788Refresh("acceptance-1", "relationship-1", 2, "event-2", "revision-2", "head-2", checkpointAt(2))
+	f.checkpointReview788Mark("relationship-1", "event-2", "revision-2", 2, checkpointAt(2))
+	// The stand's satisfying observation exists, but its instant cannot be read.
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES ('observation-broken','acceptance-1','owner/repo','dev','head-2','tip',1,'ancestry',1,'not an instant')")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint before the base refresh")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint != nil {
+		t.Fatalf("an integrated acceptance with an unreadable instant was measured as %d", *report.Counts.IntegrationsSinceCheckpoint)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalIntegrations) {
+		t.Errorf("the integration signal is not unmeasured: %+v", report.Unmeasured)
+	}
+	if reason := report.UnmeasuredReasons[checkpointSignalIntegrations]; !strings.Contains(reason, "project-1") {
+		t.Errorf("the reason does not name the project: %q", reason)
+	}
+}
+
 func TestCheckpointReview788UnreadableInstantStaysInItsProject(t *testing.T) {
 	f := checkpointNewFixture(t)
 	// project-1: one integrated acceptance whose satisfying observation instant cannot be read.
