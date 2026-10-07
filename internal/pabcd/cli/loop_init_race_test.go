@@ -658,8 +658,10 @@ func TestLoopInitRefusesALinkedStateRootBeforeWriting(t *testing.T) {
 func loopInitFastWaits(t *testing.T) {
 	t.Helper()
 	pause := loopInitPlanWaitPause
+	deadline := loopInitPlanWaitDeadline
 	loopInitPlanWaitPause = func() { time.Sleep(time.Millisecond) }
-	t.Cleanup(func() { loopInitPlanWaitPause = pause })
+	loopInitPlanWaitDeadline = 5 * time.Second
+	t.Cleanup(func() { loopInitPlanWaitPause, loopInitPlanWaitDeadline = pause, deadline })
 }
 
 // loopDeadPID returns the pid of a process that has already exited, so a lock file naming it is an

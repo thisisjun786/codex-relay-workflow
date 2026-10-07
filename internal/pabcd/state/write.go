@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -252,56 +251,29 @@ func makeSessionsDir(cwd string) error {
 }
 
 // openSessionsDir returns cwd/.crw/sessions as an open descriptor, creating .crw and the sessions
-// directory through that same walk when they are missing. Every step from the filesystem root is opened
-// with O_NOFOLLOW, so a symbolic link in the way is refused (ErrStateRootSymlink) instead of followed,
-// and every create is made RELATIVE to the parent descriptor with Mkdirat, so no pathname write runs
-// before or beside the walk: the .gitignore is published through the new .crw descriptor, not by
-// pathname (CRW-646; a pathname create there could be redirected into a link swapped in after the
-// mkdir). A caller that writes through the returned descriptor cannot be redirected by a later rename
-// of a path component either. An existing .crw or sessions directory that is a real directory is
-// accepted; only the process that creates .crw publishes its .gitignore, exactly as crwdir.EnsureDir
-// does.
+// directory when they are missing. The state root is opened with O_NOFOLLOW|O_DIRECTORY, so a symbolic
+// link (or a file) in its place is refused as ErrStateRootSymlink instead of followed, and both the
+// sessions directory and the root's .gitignore are created RELATIVE to the held descriptors with
+// Mkdirat/Openat. A caller that writes through the returned descriptor therefore cannot be redirected
+// outside the workspace by a rename of a path component (CRW-646).
+//
+// Only the two components the session state owns are opened this way; cwd and its ancestors keep the
+// ordinary pathname resolution every other caller uses, so a search-only ancestor (mode 0111) is still
+// traversable and no new read permission is required. A .crw this call created publishes its .gitignore;
+// nothing is ever removed by pathname, so a concurrent writer's replacement is never destroyed.
 func openSessionsDir(cwd string) (*os.File, error) {
-	base, err := filepath.Abs(cwd)
-	if err != nil {
-		return nil, err
-	}
-	base, err = filepath.EvalSymlinks(base)
-	if err != nil {
-		return nil, err
-	}
-	parent, err := openRootDir()
-	if err != nil {
-		return nil, err
-	}
-	expected := "/"
-	for _, part := range strings.Split(strings.TrimPrefix(base, "/"), "/") {
-		if part == "" {
-			continue
-		}
-		expected = filepath.Join(expected, part)
-		next, _, err := ensureDirNoFollow(parent, part, expected)
-		_ = parent.Close()
-		if err != nil {
-			return nil, err
-		}
-		parent = next
-	}
-	// The state root is created through the walk and, only when this call created it, its .gitignore is
-	// published through the new descriptor. A .crw that is a link, a file or another non-directory entry
-	// is refused by the walk (ErrStateRootSymlink for a link), so nothing is written through it.
-	rootPath := filepath.Join(expected, crwdir.DirName)
-	root, created, err := ensureDirNoFollow(parent, crwdir.DirName, rootPath)
-	_ = parent.Close()
+	rootPath := filepath.Join(cwd, crwdir.DirName)
+	root, created, err := openOrCreateRootDir(cwd, rootPath)
 	if err != nil {
 		return nil, err
 	}
 	if created {
+		// A .gitignore that could not be published is not a reason to delete a file: rmdir removes an
+		// EMPTY DIRECTORY only and fails with ENOTDIR for a file or a symbolic link, so a concurrent
+		// writer's replacement is never destroyed (this is exactly crwdir.ensureDir's own cleanup).
 		if err := writeIgnoreAt(root, rootPath); err != nil {
 			_ = root.Close()
-			// rmdir, as crwdir.ensureDir does: it removes an empty directory only, so whatever a
-			// concurrent writer put there stays and this removal's own failure is ignored.
-			_ = os.Remove(rootPath)
+			_ = syscall.Rmdir(rootPath)
 			return nil, err
 		}
 	}
@@ -314,13 +286,23 @@ func openSessionsDir(cwd string) (*os.File, error) {
 	return sessions, nil
 }
 
-// openRootDir opens the filesystem root for the walk's first step.
-func openRootDir() (*os.File, error) {
-	fd, err := unix.Open("/", sessionsDirOpenFlags(), 0)
-	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: "/", Err: err}
+// openOrCreateRootDir opens cwd/.crw as a directory, creating it when it is absent. It reports whether
+// this call created it. The create is a pathname Mkdir (which answers EEXIST for a file, a directory or
+// a symbolic link in the way) and the open then refuses a link with O_NOFOLLOW, so a linked root is
+// never followed. Resolving cwd by pathname needs only search permission on its ancestors, so a
+// search-only ancestor keeps working exactly as it did before this change.
+func openOrCreateRootDir(cwd, rootPath string) (*os.File, bool, error) {
+	created := false
+	if err := os.Mkdir(rootPath, 0o777); err == nil {
+		created = true
+	} else if !errors.Is(err, fs.ErrExist) {
+		return nil, false, err
 	}
-	return os.NewFile(uintptr(fd), "/"), nil
+	dir, err := openDirNoFollow(nil, rootPath, rootPath)
+	if err != nil {
+		return nil, false, err
+	}
+	return dir, created, nil
 }
 
 // ensureDirNoFollow opens name under parent as a directory, creating it with Mkdirat relative to parent
@@ -334,14 +316,19 @@ func ensureDirNoFollow(parent *os.File, name, expected string) (*os.File, bool, 
 	if !errors.Is(err, fs.ErrNotExist) {
 		return nil, false, err
 	}
-	if mkErr := unix.Mkdirat(int(parent.Fd()), name, 0o777); mkErr != nil && !errors.Is(mkErr, fs.ErrExist) {
+	// created is true only when THIS call's Mkdirat made the directory: an EEXIST means another writer
+	// made it, and the caller must not treat that directory as its own to clean up.
+	created := false
+	if mkErr := unix.Mkdirat(int(parent.Fd()), name, 0o777); mkErr == nil {
+		created = true
+	} else if !errors.Is(mkErr, fs.ErrExist) {
 		return nil, false, &os.PathError{Op: "mkdir", Path: expected, Err: mkErr}
 	}
 	next, err = openDirNoFollow(parent, name, expected)
 	if err != nil {
 		return nil, false, err
 	}
-	return next, true, nil
+	return next, created, nil
 }
 
 // writeIgnoreAt publishes .crw/.gitignore through the descriptor of the .crw this call created, so the
@@ -365,16 +352,29 @@ func writeIgnoreAt(dir *os.File, dirPath string) error {
 // refusal rather than a generic error.
 var ErrStateRootSymlink = errors.New("state path must not be a symlink")
 
+// sessionsDirOpenFlags opens a state directory for reading its entries. O_RDONLY|O_DIRECTORY is what
+// the oracle's fs.open uses and needs only search permission on the ancestors the caller already
+// traverses; O_NOFOLLOW refuses a symbolic link at the opened component.
+func sessionsDirOpenFlags() int {
+	return unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+}
+
 // openDirNoFollow opens name under parent as a directory, refusing a symbolic link at that step. A
 // link is reported as ErrStateRootSymlink so the caller can name the refusal.
 func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {
-	fd, err := unix.Openat(int(parent.Fd()), name, sessionsDirOpenFlags(), 0)
+	var fd int
+	var err error
+	if parent == nil {
+		fd, err = unix.Open(name, sessionsDirOpenFlags(), 0)
+	} else {
+		fd, err = unix.Openat(int(parent.Fd()), name, sessionsDirOpenFlags(), 0)
+	}
 	if err != nil {
 		// The open answers ENOTDIR (or ELOOP) for a symbolic link, because O_NOFOLLOW stops at the link
 		// and a link is not a directory. Ask the kernel whether the entry IS a link, so the refusal can
 		// name it, and let any other failure stand as it is.
 		var st unix.Stat_t
-		if e := unix.Fstatat(int(parent.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); e == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		if e := lstatAt(parent, name, &st); e == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK {
 			return nil, fmt.Errorf("%w: %s", ErrStateRootSymlink, expected)
 		}
 		return nil, &os.PathError{Op: "open", Path: expected, Err: err}
@@ -396,6 +396,14 @@ func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {
 		return nil, errors.New("state path is not a directory: " + expected)
 	}
 	return f, nil
+}
+
+// lstatAt is Fstatat for a named entry under parent, or Lstat for a pathname when parent is nil.
+func lstatAt(parent *os.File, name string, st *unix.Stat_t) error {
+	if parent == nil {
+		return unix.Lstat(name, st)
+	}
+	return unix.Fstatat(int(parent.Fd()), name, st, unix.AT_SYMLINK_NOFOLLOW)
 }
 
 // createExclusive is writeFileSync(path, data, { flag: "wx" }): the file exists before it is written, and a failed write
