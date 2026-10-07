@@ -54,6 +54,12 @@ const storeFileHolderNoLockEnv = "CRW846_HOLDER_NO_LOCK"
 // fOFDSetLK is F_OFD_SETLK (0x25 on linux/amd64, asm-generic/fcntl.h); syscall does not export it.
 const fOFDSetLK = 0x25
 
+// storeFileHookLocks keeps the hook's descriptors reachable for the life of the process. A
+// descriptor left to the collector would be closed by os.File's finalizer, which releases the OFD
+// lock the diagnostic is meant to show -- the same hazard storefile.go's registry records. The
+// slice is only ever appended to, and only the hook appends.
+var storeFileHookLocks []*os.File
+
 // The holder frames its diagnostic block with these, so the parent reads it to its end without
 // knowing how many lines it holds.
 const (
@@ -156,6 +162,7 @@ func storeFileDropOwnLock(path string) {
 		fmt.Println("holder-hook-open:", err)
 		return
 	}
+	storeFileHookLocks = append(storeFileHookLocks, held)
 	lock := syscall.Flock_t{Type: syscall.F_RDLCK, Whence: 0, Start: 0, Len: 0}
 	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, held.Fd(), fOFDSetLK, uintptr(unsafe.Pointer(&lock))); errno != 0 {
 		fmt.Println("holder-hook-lock:", errno)
