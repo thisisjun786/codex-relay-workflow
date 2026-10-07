@@ -51,6 +51,13 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf 'echo x > " + root + "/a' | bash -c 'bash <>/dev/stdin'",
 		"printf 'echo x > " + root + "/a' | bash -c 'if bash -s then; then :; fi'",
 		"printf 'echo x > " + root + "/a' | bash -c 'if ! bash -s then; then :; fi'",
+		// CRW-894 c10, fourth round: (a) a lone - after -- is the standard-input operand; (b) a redirection
+		// between exec's -a and its argument; (c) a quoted -c or eval program is text; (d) an interpreter's
+		// script operand names a descriptor the command itself opened.
+		"printf 'echo x > " + root + "/a' | python3 -- -",
+		"printf 'echo x > " + root + "/a' | exec -a >/dev/null x bash",
+		"printf 'echo x > " + root + "/a' | bash -c 'eval \"0</dev/null; bash\"'",
+		"printf 'echo x > " + root + "/a' | python3 /dev/fd/3 3<&0 </dev/null",
 		"if python3 <<'PY'\nopen('" + root + "/a','w')\nPY\nthen :; fi",
 		"python3 3<<'PY' <&3\nopen('" + root + "/a','w')\nPY",
 	} {

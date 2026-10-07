@@ -706,3 +706,54 @@ func TestWorktreeDelPipeResidualC10c(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeResidualC10d is the pre-merge evaluation's fourth round, red first on head 8d7b38fe1. Four forms
+// inside this issue's promise still reached the piped program: (d1) a lone - after the end-of-options marker was read
+// as a file script operand, so python3 -- - read the pipe; (d2) a redirection written between exec's -a and its name
+// argument was consumed as that argument, so exec -a >/dev/null x bash hid the shell; (d3) the descriptor walk read a
+// -c or eval program's quoted text as a redirection of the outer command, so eval "0</dev/null; bash" lost the pipe
+// the inner shell inherits; (d4) an interpreter's script operand naming a descriptor the command itself opened was
+// read against descriptor 0 only, so python3 /dev/fd/3 3<&0 </dev/null read the pipe while the guard saw a file.
+// Each was reproduced with a harmless stand-in for the deletion in the host's zsh; no row runs a deletion, and the
+// guard reads text and runs nothing.
+func TestWorktreeDelPipeResidualC10d(t *testing.T) {
+	r := newDelRig(t)
+	// (d1) a lone - after -- is the standard-input operand.
+	for _, cmd := range []string{
+		"printf x | python3 -- -",
+		"printf x | python3 -O -- -",
+		"printf x | node -- -",
+	} {
+		worktreeDelPipeInterpreterDenied(t, r, cmd)
+	}
+	// (d2) a redirection between the wrapper's option and its argument belongs to the command.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | exec -a >/dev/null x bash",
+		"printf 'rm -rf ../repo' | exec -a 2>/dev/null x bash",
+		"printf 'rm -rf ../repo' | exec -a >/dev/null x sh",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	r.denied(t, "exec -a >/dev/null x rm -rf ../repo", "rm -r ../repo")
+	// (d3) a quoted -c or eval program is text, not a redirection of the outer command.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'eval \"0</dev/null; bash\"'")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'eval \"0</dev/null; bash -c bash\"'")
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | eval '0</dev/null; bash'")
+	// (d4) an interpreter's script operand names a descriptor of this command.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 /dev/fd/3 3<&0 </dev/null")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 /dev/fd/3 3<&0 0</dev/null")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 /dev/stdin </dev/null")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | php -f /dev/fd/3 3<&0 </dev/null")
+	// The controls keep their answers.
+	r.allowed(t,
+		"printf x | python3 -- script.py",
+		"printf x | python3 -- /dev/null",
+		"printf x | python3 script.py",
+		"printf x | python3 /dev/null",
+		"printf x | exec -a x cat",
+		"printf x | bash -c 'cat'",
+		"printf x | python3 -c 'print(1)'",
+		"printf x | python3 /dev/fd/3 3</dev/null",
+	)
+	r.intact(t)
+}
