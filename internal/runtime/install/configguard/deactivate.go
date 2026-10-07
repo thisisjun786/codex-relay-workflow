@@ -2,6 +2,7 @@ package configguard
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -43,6 +44,29 @@ func readTextOrNull(path string) (*string, error) {
 	}
 	s := string(b)
 	return &s, nil
+}
+
+// configLockPathsSameFile reports whether two spellings name one file on disk: the same string, or
+// two paths the kernel resolves to one device and inode. The manifest is allowed to name the config
+// file through a different spelling — CODEX_HOME behind a directory symlink, for example, which
+// crwdir's lock resolution leaves spelled through the alias because it follows only a symlink in
+// the final component — and a deactivation that treated that as a different file would refuse to
+// restore an install it owns. Anything that cannot be shown to be the same file (a path that does
+// not exist, or one that fails to stat) is not the same file: this comparison only ever widens
+// acceptance to files the kernel proves identical, never to an unreadable or absent path.
+func configLockPathsSameFile(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
 }
 
 // DecideKeyRestore is deactivate.ts's per-key decision table. backupKnown=false means
@@ -143,7 +167,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		// config file would have this deactivation apply one file's ownership records to another, so
 		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
 		// overrides the manifest in both readings, so only the derived path can disagree.
-		if deps.ConfigPath == "" && m.ConfigPath != lockedPath {
+		if deps.ConfigPath == "" && !configLockPathsSameFile(m.ConfigPath, lock.Target) {
 			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
 		}
 	}

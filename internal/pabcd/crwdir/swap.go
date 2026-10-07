@@ -221,8 +221,14 @@ func crwdirSwapPublish(target string, expected, next []byte, backupPath string, 
 // the sidecar file, which is created once and never unlinked (docs/port/decisions.md 7); release
 // unlocks and closes and leaves the file in place.
 type ConfigLock struct {
-	// Target is the resolved file the lock guards; the caller must read and publish that path, not
-	// the possibly-symlinked path it named, so two writers reaching one file share one lock.
+	// Target is the resolved file the lock guards: the caller's path with a symlink followed, so two
+	// writers reaching one file through different spellings share one lock. It is the lock's key and
+	// the identity a caller compares against, not a mandatory content path. A writer whose content
+	// path can change under an external runner reads and publishes through the caller's path instead
+	// (the rule CRW-891 gave the multi-agent repair and CRW-899 the activation), because the runner
+	// may atomically replace the caller's pathname while the lock still names the file the link
+	// pointed at when it was taken; the caller records that window as a limitation. Every other
+	// writer reads and publishes Target, which is the file the lock actually guards.
 	Target string
 	// Path is the sidecar the flock is held on.
 	Path string
