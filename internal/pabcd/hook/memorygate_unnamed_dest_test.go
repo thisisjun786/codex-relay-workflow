@@ -441,6 +441,46 @@ func TestMemoryGateUnnamedDestinationThirdPassShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationFourthPassShapes pins the shapes the fourth pre-merge evaluation found: an
+// interpolated open destination, an imported name the program later rebinds to a Path, a copy on a parenthesized module
+// receiver, an import_module alias, and a here-document owner whose interpreter option holds a quoted separator. The
+// controls pin the read-only opens the same reading must leave allowed.
+func TestMemoryGateUnnamedDestinationFourthPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"interpolated open destination", py("import os; root = \"" + root + "\"; open(f\"{root}/n.md\", \"w\").write(\"x\")")},
+		{"interpolated Path argument", py("from pathlib import Path; root = \"" + root + "\"; open(Path(f\"{root}/n.md\"), \"w\").write(\"x\")")},
+		{"imported name rebound to a Path", py("import io; from pathlib import Path; io = Path(\"" + m + "\"); io.write_text(\"x\")")},
+		{"imported name rebound then opened", py("import io; from pathlib import Path; io = Path(\"" + m + "\"); io.open(\"w\")")},
+		{"copy on a parenthesized module receiver", py("import shutil; (shutil).copy(\"/w/a\", \"" + m + "\")")},
+		{"import_module alias", py("from importlib import import_module as load; load(\"shutil\").copy(\"/w/a\", \"" + m + "\")")},
+		{"quoted separator in an interpreter option", "python3 -W \"a;b\" <<'PY'\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A read-only open whose second argument is a buffering count, a number or a name, is no write.
+		{"read-only open with a buffering name", py("from pathlib import Path; p = Path(\"" + m + "\"); buffering = -1; p.open(\"r\", buffering).read()")},
+		{"read-only open with a buffering number", py("from pathlib import Path; p = Path(\"" + m + "\"); p.open(\"r\", -1).read()")},
+		{"read-only open with a keyword buffering name", py("from pathlib import Path; p = Path(\"" + m + "\"); b = 0; p.open(\"r\", buffering=b).read()")},
+		{"module open read with a computed path", py("import io, os; io.open(os.path.join(\"" + root + "\", \"n.md\")).read()")},
+		{"module open read mode with a computed path", py("import io, os; io.open(os.path.join(\"" + root + "\", \"n.md\"), \"r\").read()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.

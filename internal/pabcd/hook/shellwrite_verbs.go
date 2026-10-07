@@ -1250,8 +1250,9 @@ func shellWriteCopyFunc(module, name string) bool {
 // (from shutil import copy). A name keeps every binding the program gave it, so a later rebinding does not erase the
 // reading an earlier call needs; nothing else is bound, so an unimported bare name names nothing.
 type shellWriteCopyImports struct {
-	alias map[string][]string
-	from  map[string][]string
+	alias    map[string][]string
+	from     map[string][]string
+	importer map[string]bool // a bare name bound to importlib.import_module, which reaches a module this reader cannot name
 }
 
 // shellWriteCopyBind records that a statement bound local to module, once per module.
@@ -1268,7 +1269,7 @@ func shellWriteCopyBind(binds map[string][]string, local, module string) {
 // program's imports beside its own, because an f-string replacement field and a literal passed to exec both run in the
 // scope that holds them (CRW-900 review).
 func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCopyImports {
-	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}}
+	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, importer: map[string]bool{}}
 	for _, binds := range []shellWriteCopyImports{outer, inner} {
 		for local, modules := range binds.alias {
 			for _, module := range modules {
@@ -1279,6 +1280,9 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 			for _, module := range modules {
 				shellWriteCopyBind(out.from, local, module)
 			}
+		}
+		for name := range binds.importer {
+			out.importer[name] = true
 		}
 	}
 	return out
@@ -1293,7 +1297,7 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 // several lines binds them all (CRW-900 review: dropping it would leave the destination of the call it binds unnamed,
 // which is the fail-open direction).
 func shellWriteCopyImportsOf(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
-	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}})
+	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, importer: map[string]bool{}})
 	words := []string{}
 	flush := func() {
 		if len(words) > 0 {
@@ -1368,6 +1372,12 @@ func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports)
 			name := item[0]
 			if item[1] != "" {
 				name = item[1]
+			}
+			if module == "importlib" && item[0] == "import_module" {
+				if binds.importer == nil {
+					binds.importer = map[string]bool{}
+				}
+				binds.importer[name] = true
 			}
 			if name != "" && shellWriteCopyFunc(module, item[0]) {
 				shellWriteCopyBind(binds.from, name, module)
@@ -2378,18 +2388,8 @@ func shellWriteUnnamedHerePrograms(command string, budget *shellWriteUnnamedBudg
 // only the program's standard input.
 func shellWriteUnnamedHereOwner(line string, at int) string {
 	start, end := 0, len(line)
-	for i := at - 1; i >= 0; i-- {
-		if shellWriteUnnamedSeparator(line[i]) {
-			start = i + 1
-			break
-		}
-	}
-	for i := at; i < len(line); i++ {
-		if shellWriteUnnamedSeparator(line[i]) {
-			end = i
-			break
-		}
-	}
+	start = shellWriteUnnamedOwnerStart(line, at)
+	end = shellWriteUnnamedOwnerEnd(line, at)
 	tokens := shellWriteUnnamedCommandWords(shellTokenize(line[start:end]))
 	if len(tokens) == 0 {
 		return ""
@@ -2408,6 +2408,51 @@ func shellWriteUnnamedHereOwner(line string, at int) string {
 		return "shell"
 	}
 	return ""
+}
+
+// shellWriteUnnamedOwnerStart is the byte the command that owns the here-document operator at byte at begins at: the
+// last unquoted command separator before it, plus one. A separator inside a quote (python3 -W "a;b" <<'PY') belongs to
+// the word that holds it and cuts nothing, so the verb is still read.
+func shellWriteUnnamedOwnerStart(line string, at int) int {
+	r, start := &worktreeDelQuoteReader{}, 0
+	for i := 0; i < at && i < len(line); i++ {
+		if r.escapes(line, i) {
+			i++
+			r.pair()
+			continue
+		}
+		if r.state == worktreeDelQuotePlain && shellWriteUnnamedSeparator(line[i]) {
+			start = i + 1
+		}
+		r.step(line[i])
+	}
+	return start
+}
+
+// shellWriteUnnamedOwnerEnd is the byte the command that owns the here-document operator at byte at ends at: the next
+// unquoted command separator at or after it.
+func shellWriteUnnamedOwnerEnd(line string, at int) int {
+	r := &worktreeDelQuoteReader{}
+	for i := 0; i < at && i < len(line); i++ {
+		if r.escapes(line, i) {
+			i++
+			r.pair()
+			continue
+		}
+		r.step(line[i])
+	}
+	for i := at; i < len(line); i++ {
+		if r.escapes(line, i) {
+			i++
+			r.pair()
+			continue
+		}
+		if r.state == worktreeDelQuotePlain && shellWriteUnnamedSeparator(line[i]) {
+			return i
+		}
+		r.step(line[i])
+	}
+	return len(line)
 }
 
 // shellWriteUnnamedCommandWords drops the here-document operator and the redirections that stand in front of a command,
@@ -2493,6 +2538,7 @@ type shellWriteUnnamedWalk struct {
 	wrote     bool // the walk saw a write at all, named or not, which the here-document rule needs
 	codexHome bool
 	literals  []string
+	assigned  map[string]bool // every name the program binds as an assignment target
 }
 
 // shellWriteUnnamedFrame is one bracket the walk opened: the call kind it holds, the argument spans read so far, and
@@ -2565,7 +2611,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 					// which this reader names for no open() method at all. A method named Path (x.Path(...)) is
 					// no pathlib.Path and names no destination. A method of any other name is read below.
 					kind = shellWriteUnnamedDottedKind(rs, i)
-					recvModule = kind == 'q' && shellWriteUnnamedDottedModule(rs, i, binds)
+					recvModule = kind == 'q' && shellWriteUnnamedDottedModule(rs, i, binds, w.assigned)
 				}
 				if kind == 0 && c == '(' && shellWriteExecCallee(rs, i, c) {
 					kind = 'e'
@@ -2579,7 +2625,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 				if kind == 0 && c == '(' {
 					// A write method of an expression that is no Path(<literal>) call: the destination is the
 					// receiver, which the reader cannot name.
-					kind = shellWriteUnnamedMethodAt(rs, i, binds)
+					kind = shellWriteUnnamedMethodAt(rs, i, binds, w.assigned)
 				}
 			}
 			stack = append(stack, shellWriteUnnamedFrame{kind: kind, name: name, start: i + 1, recvNamed: recvNamed, recvPath: recvPath, recvModule: recvModule})
@@ -2633,7 +2679,14 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			w.unnamed = true
 			return
 		}
-		_, mode := shellVerbOpenArgs(rs, spans)
+		path, mode := shellVerbOpenArgs(rs, spans)
+		if shellWriteEscapeField(path) {
+			// An interpolated path (open(f"{root}/n.md", "w")) is a destination this reader cannot read, whatever
+			// the literal text beside its replacement field says.
+			w.wrote = true
+			w.unnamed = true
+			return
+		}
 		if shellWriteUnnamedWrites(mode) {
 			w.wrote = true
 			if len(shellVerbOpenCall(rs, spans)) == 0 {
@@ -2649,6 +2702,11 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		if len(shellWriteUnnamedDest(rs, spans, 1, key)) == 0 {
 			w.unnamed = true
 		}
+	case 'C', 'N':
+		// A copy, rename or link call whose receiver the reader cannot name as a bare module ((shutil).copy(...)):
+		// the ordinary destination reader names no destination for this shape, so the call fails closed.
+		w.wrote = true
+		w.unnamed = true
 	case 'w', 't':
 		// write_text and write_bytes write to their receiver, which this reader names only for a Path(<literal>)
 		// call. touch and mkdir write to theirs too, and the reader names no destination for those two at all, so
@@ -2680,10 +2738,12 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			// A module's own open(path, mode) defaults to reading, so a missing mode is no write, and a number in
 			// the mode's place is that module's own numeric argument, which is no mode either.
 			writes = !shellVerbBlank(second) && !shellWriteUnnamedNumber(second) && shellWriteUnnamedWrites(second)
+		case shellWriteUnnamedModeLike(first):
+			// A mode-like first argument is a Path's own open(mode, buffering...): the mode is the first argument,
+			// and whatever follows it is a buffering count, never a mode.
+			writes = shellWriteUnnamedWrites(first)
 		case !shellVerbBlank(second) && !shellWriteUnnamedNumber(second):
 			writes = shellWriteUnnamedWrites(second) || !shellWriteUnnamedLiteral(second)
-		case shellWriteUnnamedModeLike(first):
-			writes = shellWriteUnnamedWrites(first)
 		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first) && !shellWriteUnnamedNumber(first):
 			writes = true // an argument the reader can read as neither a mode nor a path
 		}
@@ -2769,6 +2829,13 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 	if importStmt || inDef {
 		return
 	}
+	if shellWriteUnnamedTarget(rs, j) {
+		if w.assigned == nil {
+			w.assigned = map[string]bool{}
+		}
+		w.assigned[word] = true // the name is bound here, so an import's meaning for it no longer holds
+		return                  // an assignment or keyword-argument target binds the name; it is no write value
+	}
 	if mod, ok := shellWriteUnnamedAttribute(rs, i); ok {
 		if word == "import_module" && (mod == "importlib" || slices.Contains(binds.alias[mod], "importlib")) {
 			w.unnamed = true
@@ -2778,7 +2845,7 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 			w.unnamed = true
 			return
 		}
-		if shellWriteUnnamedModuleReceiver(mod, binds) {
+		if shellWriteUnnamedModuleReceiver(mod, binds, w.assigned) {
 			return // a module this reader reads its own way is left to the readers above
 		}
 	}
@@ -2786,8 +2853,11 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 		w.unnamed = true
 		return
 	}
-	if shellWriteUnnamedTarget(rs, j) {
-		return // an assignment or keyword-argument target binds the name; it is no write value
+	if binds.importer[word] {
+		// A name bound to importlib.import_module reaches a module this reader cannot name, so a call through it
+		// (load("shutil").copy(...)) is a write whose destination it cannot name.
+		w.unnamed = true
+		return
 	}
 	if shellWriteUnnamedCalled(rs, j) {
 		return // a call: its own frame reads it
@@ -2868,7 +2938,7 @@ func shellWriteUnnamedDottedKind(rs []rune, i int) byte {
 // shellWriteUnnamedDottedModule reports whether a dotted call's receiver names a module the program imported, so the
 // call is module.open(path, mode) rather than Path.open(mode): the reader names the name before the dot and asks the
 // program's own import bindings (a name bound by an import statement holds a module, not a Path).
-func shellWriteUnnamedDottedModule(rs []rune, i int, binds shellWriteCopyImports) bool {
+func shellWriteUnnamedDottedModule(rs []rune, i int, binds shellWriteCopyImports, assigned map[string]bool) bool {
 	j := i - 1
 	for j >= 0 && shellVerbSpaceRune(rs[j]) {
 		j--
@@ -2893,7 +2963,7 @@ func shellWriteUnnamedDottedModule(rs []rune, i int, binds shellWriteCopyImports
 	if end == j+1 {
 		return false
 	}
-	return shellWriteUnnamedModuleReceiver(string(rs[j+1:end]), binds)
+	return shellWriteUnnamedModuleReceiver(string(rs[j+1:end]), binds, assigned)
 }
 
 // shellWriteUnnamedTarget reports whether an assignment binds the name that ends at j: the next rune that is not a blank
@@ -3018,7 +3088,7 @@ func shellWriteUnnamedPathNamed(rs []rune, spans [][2]int) bool {
 // reads its own way owns (shutil.copy, os.rename, importlib.import_module) is left to shellWriteCopyModuleKind and
 // shellWriteUnnamedSpecial. A method named replace counts only with one argument, because str.replace needs two and
 // Path.replace takes one (CRW-900's rename), so an ordinary string's own replace is never refused.
-func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) byte {
+func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports, assigned map[string]bool) byte {
 	start := i - 1
 	for start >= 0 && shellVerbSpaceRune(rs[start]) {
 		start--
@@ -3031,18 +3101,32 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports) by
 		return 0
 	}
 	name := string(rs[start+1 : end])
-	if !shellWriteUnnamedMethod(name) {
-		return 0
-	}
 	receiver, ok := shellWriteUnnamedAttribute(rs, start+1)
 	if !ok {
 		return 0 // no dot before the name: a plain call, not a method
 	}
-	if shellWriteUnnamedModuleReceiver(receiver, binds) {
+	if shellWriteUnnamedModuleReceiver(receiver, binds, assigned) {
 		return 0
 	}
-	if name == "replace" && shellWriteUnnamedArgs(rs, i) != 1 {
-		return 0 // two or more arguments: a str's own replace, which writes no file
+	if name == "replace" {
+		if shellWriteUnnamedArgs(rs, i) != 1 {
+			return 0 // two or more arguments: a str's own replace, which writes no file
+		}
+	}
+	if receiver == "" {
+		// The receiver is an expression this reader cannot name as a bare name (a bracketed or parenthesized one,
+		// such as (shutil).copy(...)): the call may be a module's copy, rename or link function, whose destination
+		// the ordinary reader never names for such a receiver, so the capital kind marks it unnamed whatever its
+		// arguments say.
+		if shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name) {
+			if name == "renames" {
+				return 'N'
+			}
+			return 'C'
+		}
+	}
+	if !shellWriteUnnamedMethod(name) {
+		return 0
 	}
 	return shellWriteUnnamedMethodKind(name)
 }
@@ -3091,11 +3175,15 @@ func shellWriteUnnamedArgCount(rs []rune, spans [][2]int) int {
 	return count
 }
 
-// shellWriteUnnamedModuleReceiver reports whether the name a method hangs off is a module this reader reads its own way:
-// shutil, os or importlib, an alias an import bound to one of them, or any other name the program bound with an import
-// statement. The last case matters for a dotted open: a name the program imported holds a module, so X.open(path, mode)
-// is the module form, whose mode is its second argument, not a Path's own open(mode).
-func shellWriteUnnamedModuleReceiver(receiver string, binds shellWriteCopyImports) bool {
+// shellWriteUnnamedModuleReceiver reports whether the name a method hangs off is a module: shutil, os or importlib, an
+// alias an import bound to one of them, or any other name the program bound with an import statement. The last case
+// matters for a dotted open: a name the program imported holds a module, so X.open(path, mode) is the module form,
+// whose mode is its second argument, not a Path's own open(mode). A name the program later assigned is no module any
+// more (io = Path(...) rebinds it), so an assigned name is read as the Path or variable it now holds.
+func shellWriteUnnamedModuleReceiver(receiver string, binds shellWriteCopyImports, assigned map[string]bool) bool {
+	if assigned[receiver] {
+		return false
+	}
 	switch receiver {
 	case "shutil", "os", "importlib":
 		return true
