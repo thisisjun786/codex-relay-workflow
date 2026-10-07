@@ -14,6 +14,7 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: the commits a pull request adds to its base on a pull request, all fetched history on any other event ([scope](#secret-scanning)) |
 | `node --test port/cxc/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the staged skills' own Node tests, on Node 24.20.0, only when a staged skill path changed; a run that skips them is success |
+| `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir`, `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"` | `gui`: the screens under `web/` build and match the committed `internal/gui/assets` tree byte for byte, on Node 24.20.0, only when a watched path changed ([below](#the-gui-job)); `make gui` runs the same three commands locally |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
 | `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
 | `CGO_ENABLED=0 make dist` per target | `go-product` leg `dist`: static `crw` for linux/amd64, linux/arm64 and darwin/arm64, uploaded with `SHA256SUMS` |
@@ -32,9 +33,11 @@ evidence). There is no path selection, except [the temporary light mode](#the-te
 below. The Go product legs always ran whatever changed, so
 selecting the rest by changed paths saved little and put a job before every other one.
 
-The second exception is `skill-scripts-node`'s own path gate: it runs the staged skills' Node
-tests only when a staged skill path changed, and ends successfully without installing Node
-when none did.
+Two jobs gate themselves on changed paths. `skill-scripts-node` runs the staged skills' Node
+tests only when a staged skill path changed, and ends successfully without installing Node when
+none did. `gui` runs the screen verification only when `web/`, `internal/gui/assets/` or the gui
+definition changed ([the gui job](#the-gui-job)); it always exists, `dev-gate` waits on it, and
+anything its decision cannot read selects the full run.
 
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
 `make test` builds one `crw` for the run (`dist/test/crw`, release-shaped with `-trimpath`) and
@@ -83,7 +86,7 @@ chooses its commit.
 ## The body-only edit mirror
 
 No job reads a pull request's title or body, but a title or body edit fires the `edited` trigger
-again and used to rerun all eleven jobs on the same commit. Such a run now mirrors what the
+again and used to rerun every job on the same commit. Such a run now mirrors what the
 head has already proved.
 
 An `edited` event whose base did not change (`github.event.action == 'edited' &&
@@ -91,7 +94,7 @@ An `edited` event whose base did not change (`github.event.action == 'edited' &&
 running run instead of cancelling it, and a later push cancels it in turn. Every other event,
 a retarget included, still cancels obsolete runs.
 
-`validate`, `secrets`, `skill-scripts-node` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
+`validate`, `secrets`, `skill-scripts-node`, `gui` and each `go-product` leg then run `scripts/ci/edit_mirror.sh` as their first step,
 and only on such an edit. The script reads, with `gh api`, the newest created run of this workflow,
 of this pull request, of this repository, for the same `head_sha`, other than the run it is in, and
 mirrors the job when that run's same-named job's newest attempt concluded `success`. Creation order
@@ -100,6 +103,17 @@ rerun leaves alone. `run_started_at` is deliberately not the order, because reru
 failed jobs moves it forward and would let an older run outrank a newer one whose same-named job
 failed. It answers `mirrored=true` with the run id in its step output and its step summary, or
 `mirrored=false`.
+
+Two jobs carry more than their own conclusion. A `go-product` test leg is mirrored only when its
+own test step also concluded `success`, so [light mode](#the-temporary-light-mode) cannot carry an
+untested leg forward. The `gui` job is mirrored only when all four of its screen steps concluded
+`success` in the same newest attempt: a `gui` job that concluded success with the screens skipped
+(`gui_paths.sh` answered `changed=false`, so the job ended before Node was installed) is not
+mirrored. The job then makes its own changed-path decision again, and because the paths that
+decision watches are the same on a body-only edit it answers `changed=false` again and the job
+ends without installing Node: refusing the mirror does not run the screens, it stops the job from
+claiming screen evidence this head does not have. The four names the mirror reads are ci.yml's gui
+job step names, and a test holds the two lists to each other, so a rename on either side is red.
 
 Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
 condition the step already had. The full checkout is one of them, and the sparse checkout of
@@ -111,7 +125,7 @@ The lookup never fails the job, and an older run is never consulted: the newest 
 answers for the job. No candidate, a failure, a cancellation, a skip, a missing job,
 another head, workflow or repository, an unreadable API and the run itself all answer
 `mirrored=false`, and the job runs in full. `dev-gate`, the job names and the required check are
-unchanged, and the four jobs add only `actions: read` to the workflow's `contents: read`, which is
+unchanged, and the five jobs add only `actions: read` to the workflow's `contents: read`, which is
 what reading the runs and jobs endpoints needs.
 
 Mirroring is safe because it repeats a result this head already has. `dev` is strict, so a merge
@@ -133,8 +147,8 @@ The condition is one job-level `env` on `go-product`, `CRW_LIGHT_LEG`, holding
 !contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-')`.
 A dev push and a manual dispatch fail the first term, a labeled pull request fails the third, and
 `lint` and `dist` fail the fourth, so only the five test legs of an unlabeled pull request can
-be light. `validate`, `secrets`, `lint` and `dist` always run in full, and so does every
-event other than an unlabeled pull request, whatever the variable says.
+be light. `validate`, `secrets`, `skill-scripts-node`, `gui`, `lint` and `dist` always run in
+full, and so does every event other than an unlabeled pull request, whatever the variable says.
 
 A light leg keeps its own name and its own success. Its first step writes
 `light mode: this leg's tests run in full when the merge lane labels the pull request crw-lane`
@@ -164,6 +178,59 @@ label is not merge evidence, because that run's test legs did not run their test
 is a run of the same head, started after the label was added, that finished in success. The lane
 adds `crw-lane` when it takes its turn, before it refreshes the base, and removes it when it
 returns the turn without merging.
+
+## The gui job
+
+The screens are a Vite + React package under `web/`, and their build is committed under
+`internal/gui/assets` and embedded in the `crw` binary (`//go:embed all:assets`), so a source
+checkout with no Node still produces a `crw` that serves the dashboard. That makes the committed
+tree a build artifact that must track its source, and the `gui` job keeps the two from drifting
+apart.
+
+The job always exists and `dev-gate` waits on it. Its first step decides from the changed files:
+`scripts/ci/gui_paths.sh` compares a pull request's base with its head, or a push's replaced
+commit with the one it added, over `web/`, `internal/gui/assets/`, `.github/workflows/ci.yml`,
+`Makefile`, `scripts/ci/gui_paths.sh` and `internal/dev/ci/gui_drift.go`, and writes
+`changed=true` to its step output when any of them moved. A manual dispatch, a push that created
+the branch (its before is the all-zeros object, which is no commit) and any git failure also
+answer `changed=true`: the safe direction is the full run, because a screen change that is
+skipped is a committed tree that no longer matches its source.
+
+When the answer is `true` the job installs `actions/setup-go` (the drift check is a `crw-dev ci`
+subcommand) and `actions/setup-node` pinned by commit at Node 24.20.0, runs `npm ci` from the
+committed lockfile, `npm test`, a build into `$RUNNER_TEMP/gui-built`, and then
+`crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"`. When it is `false` the job ends
+successfully without installing Node. `make gui` runs the same three commands locally, and
+`make gui-assets` regenerates the committed tree after a `web/` change: it builds into
+`internal/gui/assets` (vite's configured `outDir`), so the result is what a contributor commits.
+
+The drift check compares three trees. The committed tree comes from git (`git ls-tree -r -l` and
+`git cat-file blob` at the named revision, `HEAD` by default) and never from the working tree. The
+fresh side is the directory `--built` names, which is required and must hold an `index.html`;
+naming the committed tree itself, a directory that was never built, or a tree that cannot be read
+is refused rather than passed, so a run without a build cannot compare the commit against itself.
+The third is the working tree at `internal/gui/assets`, which is what `//go:embed all:assets`
+actually compiles: an untracked file, a modification or a deletion there is refused even when the
+built and committed trees agree, so a local edit cannot be approved and then embedded. The trees
+are compared as sorted path-and-bytes pairs: a built file the commit does not hold, a committed
+file the build does not produce, a renamed asset (which is both) and a byte difference are each
+refused and named, and a screen asset at or over 2 MiB (2,097,152 bytes) is refused before the
+comparison. The size bound is exclusive and applies to both sides, so an asset of exactly
+2,097,152 bytes, whether the commit holds it or a rebuild produces it, is refused rather than
+passed, while 2,097,151 bytes pass on both sides. The refusal names `make gui-assets` as the
+regeneration command.
+`internal/dev/ci/gui_drift_test.go` pins each rejection and the pass;
+`internal/dev/ci/gui_paths_test.go` pins the decision.
+
+The job never reads `CRW_CI_MODE`, so [light mode](#the-temporary-light-mode) cannot skip the
+screen verification: an unlabeled light pull request runs this job exactly as a full one, and only
+the five `go-product` test legs can be light. It takes the same [body-only edit
+mirror](#the-body-only-edit-mirror) pair as the other four jobs, so a mirrored run stands the job
+down only when the newest attempt of that run's `gui` job concluded all four screen steps as
+`success` on the same head, which is the same-head screen evidence the mirror rule requires. A
+`gui` job that concluded success with the screens skipped is not mirrored: the job repeats its own
+changed-path decision and, with no watched path changed, ends without installing Node, so it
+claims no screen evidence rather than carrying a run that never verified them.
 
 ## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a

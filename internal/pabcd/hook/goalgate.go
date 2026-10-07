@@ -108,11 +108,11 @@ func goalGateRawLooksLikeRequestUserInput(raw string) bool {
 	return object != nil && object["hook_event_name"] == "PreToolUse" && object["tool_name"] == goalGateRequestUserInputTool
 }
 
-// goalGateApplyGoalCompleteGuard is applyGoalCompleteGuard (goal-gate.ts:201-299) for the update_goal row. This
-// issue registers the guard and the dispatcher's place for it; CRW-752 ports the body, so it answers nothing for
-// any input today, which is the oracle's answer for every update_goal the gate does not deny.
+// goalGateApplyGoalCompleteGuard is the goal-complete place of the dispatcher (goal-gate.ts:325): the row
+// CRW-379 registered, filled by CRW-752. The body is goalgate_complete.go; this call hands it the readers a hook
+// process has, which is the oracle's own environment (cxcInvocation reads process.env).
 func goalGateApplyGoalCompleteGuard(p goalGatePreToolUse, pabcdEnabled bool) string {
-	return ""
+	return goalCompleteApplyGuard(p, pabcdEnabled, goalCompleteProcessDeps())
 }
 
 // goalGateDeps is the readers the dispatcher uses, so that a test can fail one. The oracle injects the same three

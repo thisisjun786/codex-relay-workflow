@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
 
@@ -95,6 +96,11 @@ func ParseScanCliArgs(argv []string, cwd string) ScanCliParsed {
 	}
 	if a.SessionID == "" {
 		return ScanCliParsed{Error: "scan record: --session <id> is required (mutating command, no latest-session fallback)"}
+	}
+	// CRW-871: a non-canonical id is refused here, before the runner reads, locks or writes: the state
+	// library sanitises the key, so a raw id would rewrite a DIFFERENT session's file.
+	if !state.IsCanonicalSessionID(a.SessionID) {
+		return ScanCliParsed{Error: "scan record: " + sessionAliasRefusalText}
 	}
 	if !scanFinite(a.ContradictionCount) || a.ContradictionCount < 0 {
 		return ScanCliParsed{Error: "scan record: --contradictions must be a non-negative integer"}

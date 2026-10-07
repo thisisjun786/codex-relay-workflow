@@ -198,6 +198,85 @@ jobs:
           fi
           node --test "${files[@]}"
 
+  gui:
+    # The screens are built into the crw binary (internal/gui/assets, `//go:embed all:assets`), so
+    # the committed tree must be a fresh build of web/. This job always exists and dev-gate waits
+    # on it; it runs the full verification (Node 24.20.0, npm ci, the screen tests, a build and the
+    # byte-for-byte drift check) when a watched path changed, when the changed list could not be
+    # read, or on a manual dispatch, and otherwise ends without installing Node. Light mode never
+    # reaches it: the job reads no light condition at all, so an unlabeled light pull request runs
+    # the screens in full. The gui Makefile target runs the same three commands.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The mirror reads this repository's runs and jobs with the workflow's own token.
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # A body-only edit needs only the mirror script, and the script has to exist before the
+      # mirror decides, so it is fetched sparsely first. Every other run skips this step.
+      - name: Check out scripts/ci for the body-only edit mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Mirror the jobs this head already ran
+        id: mirror
+        if: ${{ github.event.action == 'edited' && !github.event.changes.base }}
+        run: bash scripts/ci/edit_mirror.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_NAME: gui
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.mirror.outputs.mirrored != 'true'
+        with:
+          # The drift check reads the committed tree with git, so the whole history has to be here.
+          fetch-depth: 0
+          persist-credentials: false
+      # The decision runs before Node is installed, so an unrelated change ends the job here. The
+      # script selects the full run for anything it cannot read, and it is unit-tested.
+      - name: Decide from the changed files whether the screens changed
+        id: paths
+        if: steps.mirror.outputs.mirrored != 'true'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: bash scripts/ci/gui_paths.sh
+      - if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # The same exact release the staged skill-script tests use: the built asset hashes are
+          # part of the committed tree, so the same commit must meet the same Node.
+          node-version: '24.20.0'
+      - name: Install the screen dependencies from the committed lockfile
+        if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        working-directory: web
+        run: npm ci
+      - name: Run the screen tests
+        if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        working-directory: web
+        run: npm test
+      # The build goes to a temporary tree, never to the committed internal/gui/assets, so the
+      # drift check compares the commit against a real rebuild rather than against itself.
+      - name: Build the screens into a fresh tree
+        if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        working-directory: web
+        run: npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir
+      - name: Refuse a committed tree that is not a fresh build
+        if: steps.paths.outputs.changed == 'true' && steps.mirror.outputs.mirrored != 'true'
+        run: go run -tags dev ./cmd/crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"
+
   go-product:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -306,7 +385,7 @@ jobs:
   # step's own script, never passed in the environment, whose size the runner bounds.
   dev-gate:
     if: always()
-    needs: [validate, secrets, skill-scripts-node, go-product]
+    needs: [validate, secrets, skill-scripts-node, gui, go-product]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
