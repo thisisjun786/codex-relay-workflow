@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
 )
 
 // The target is in the registry under its own name, so `crw-dev fuzz spawn` finds it, and its oracle
@@ -246,13 +247,9 @@ func TestSpawnGenerateNestsBySize(t *testing.T) {
 			t.Fatalf("size %d: the case nests %d deep, want %d", size, got, want)
 		}
 		// The depth is real nesting, not a run of characters inside a string: the canonical text the
-		// harness sends carries one array per level, which is what a JSON reader walks. The text's
-		// deepest containers are the case object plus the level chain, and the args array beside it.
-		want := size%span + 1
-		if want < 2 {
-			want = 2
-		}
-		if got := spawnTextDepth(t, canonical(document)); got != want {
+		// harness sends carries one array per level, which is what a JSON reader walks. The deepest
+		// containers are the case object, the args array, and the chain the argument is.
+		if got, want := spawnTextDepth(t, canonical(document)), size%span+2; got != want {
 			t.Fatalf("size %d: the case text nests %d containers deep, want %d", size, got, want)
 		}
 		seen[size%span] = true
@@ -273,21 +270,22 @@ func TestSpawnGenerateNestsBySize(t *testing.T) {
 	}
 	// The cap, not the bound, is what forbids a deeper case: a depth past what the cap allows is
 	// clamped rather than built, so no path silently degrades to a flat one.
-	deepest := spawnNestingLimit()
-	if got := spawnNestingBytes(deepest); got > spawnNestingMaxBytes() {
-		t.Fatalf("the deepest allowed depth costs %d bytes, past the cap %d", got, spawnNestingMaxBytes())
+	message := "$crw-dev"
+	deepest := spawnNestingLimit(message)
+	if got := spawnNestingBytes(message, deepest); got > spawnNestingMaxBytes(message) {
+		t.Fatalf("the deepest allowed depth costs %d bytes, past the cap %d", got, spawnNestingMaxBytes(message))
 	}
 	// The limit is the deepest the cap allows: one level more would cost more than the cap.
-	if got := spawnNestingBytes(deepest + 1); got <= spawnNestingMaxBytes() {
-		t.Fatalf("a depth one past the limit costs %d bytes, within the cap %d: the limit is too low", got, spawnNestingMaxBytes())
+	if got := spawnNestingBytes(message, deepest+1); got <= spawnNestingMaxBytes(message) {
+		t.Fatalf("a depth one past the limit costs %d bytes, within the cap %d: the limit is too low", got, spawnNestingMaxBytes(message))
 	}
-	if depth := spawnNestingDepth(1 << 40); depth > deepest {
+	if depth := spawnNestingDepth(1<<40, message); depth > deepest {
 		t.Fatalf("a huge size drew depth %d, past what the cap allows %d", depth, deepest)
 	}
 	// No size builds past the cap, and the deepest any size reaches is exactly the limit.
 	reached := 0
 	for size := 0; size < 3*(spawnNestingBoundWanted+spawnNestingSpread+1); size++ {
-		depth := spawnDocumentDepth(t, spawnMentionedFoldersInput(size))
+		depth := spawnDocumentDepth(t, spawnMentionedFoldersInput(rand.New(rand.NewSource(int64(size))), size))
 		if depth > deepest {
 			t.Fatalf("size %d built %d deep, past what the cap allows %d", size, depth, deepest)
 		}
@@ -314,6 +312,46 @@ func TestSpawnNestingStraddlesTheBound(t *testing.T) {
 	}
 	if !below || !above {
 		t.Fatalf("the drawn depths do not straddle the bound (below %v, above %v)", below, above)
+	}
+}
+
+// c3 (CRW-938): the nesting is added to the drawn message rather than replacing it, so the classifier
+// the target exists for keeps being driven on varied text. The pre-merge evaluation of head d33afe26
+// found the opposite - every MentionedFolders case carried one fixed mention - so this pins that the
+// message is still drawn and still reaches MentionedFolders at the bottom of the chain.
+func TestSpawnNestingKeepsTheDrawnMessage(t *testing.T) {
+	messages := map[string]bool{}
+	for seed := int64(0); seed < 256; seed++ {
+		document, ok := spawnMentionedCaseForSeed(t, seed, 5)
+		if !ok {
+			continue
+		}
+		args, _ := document.Lookup("args")
+		list, _ := args.([]any)
+		if len(list) != 1 {
+			t.Fatalf("seed %d: the case carries %d arguments, want the message alone", seed, len(list))
+		}
+		message, ok := spawnUnwrapArgument(list[0]).(string)
+		if !ok {
+			t.Fatalf("seed %d: the nested argument ends in %T, want the message", seed, spawnUnwrapArgument(list[0]))
+		}
+		messages[message] = true
+	}
+	if len(messages) < 16 {
+		t.Fatalf("the generator draws only %d distinct messages, so the nesting replaced the message", len(messages))
+	}
+	// The drawn message is what the two sides classify: the Go side reads it through the chain, and the
+	// answer names the folder the message mentions.
+	for _, message := range spawnWords() {
+		document := spawnNestingCase(message, 3)
+		value, err := spawnGo(document, Env{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := spawnSortedFolders(spawn.MentionedFolders(message))
+		if canonical(value) != canonical(want) {
+			t.Fatalf("the nested case answered %s for %q, want %s", canonical(value), message, canonical(want))
+		}
 	}
 }
 
@@ -420,42 +458,57 @@ func writeFakeSpawnOracle(t *testing.T) string {
 func spawnMentionedDocument(t *testing.T, size int) pyjson.Object {
 	t.Helper()
 	for seed := int64(0); seed < 1000; seed++ {
-		object, ok := spawnGenerate(rand.New(rand.NewSource(seed)), size).(pyjson.Object)
-		if !ok {
-			continue
+		if object, ok := spawnMentionedCaseForSeed(t, seed, size); ok {
+			return object
 		}
-		name, _ := object.Lookup("fn")
-		if text, _ := name.(string); text != spawnFnMentionedFolders {
-			continue
-		}
-		args, _ := object.Lookup("args")
-		list, _ := args.([]any)
-		if len(list) != 1 {
-			t.Fatalf("size %d: the case carries %d arguments, want the message alone", size, len(list))
-		}
-		return object
 	}
 	t.Fatalf("no seed drew a MentionedFolders case for size %d", size)
 	return nil
 }
 
-// spawnDocumentDepth is how many containers deep the case's nested value sits, counted through the
-// decoded document rather than read from a string: the value under the nesting key, one array per level
-// down to the innermost scalar.
+// spawnMentionedCaseForSeed is one generated case, when that seed draws a MentionedFolders case.
+func spawnMentionedCaseForSeed(t *testing.T, seed int64, size int) (pyjson.Object, bool) {
+	t.Helper()
+	object, ok := spawnGenerate(rand.New(rand.NewSource(seed)), size).(pyjson.Object)
+	if !ok {
+		return nil, false
+	}
+	name, _ := object.Lookup("fn")
+	if text, _ := name.(string); text != spawnFnMentionedFolders {
+		return nil, false
+	}
+	args, _ := object.Lookup("args")
+	list, _ := args.([]any)
+	if len(list) != 1 {
+		t.Fatalf("seed %d, size %d: the case carries %d arguments, want the message alone", seed, size, len(list))
+	}
+	return object, true
+}
+
+// spawnDocumentDepth is how many containers deep the case's argument sits, counted through the decoded
+// document rather than read from a string: args[0], one array per level down to the mention.
 func spawnDocumentDepth(t *testing.T, document pyjson.Object) int {
 	t.Helper()
-	value, found := document.Lookup(spawnNestingField)
+	args, found := document.Lookup("args")
 	if !found {
-		t.Fatalf("the case carries no %q field: %s", spawnNestingField, canonical(document))
+		t.Fatalf("the case carries no args: %s", canonical(document))
 	}
+	list, ok := args.([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("the case carries %s, want the one argument the classifier reads", canonical(document))
+	}
+	value := list[0]
 	depth := 0
 	for {
-		list, ok := value.([]any)
-		if !ok || len(list) != 1 {
+		chain, ok := value.([]any)
+		if !ok || len(chain) != 1 {
 			break
 		}
 		depth++
-		value = list[0]
+		value = chain[0]
+	}
+	if _, ok := value.(string); !ok {
+		t.Fatalf("the nested argument ends in %T, want the mention the classifier reads", value)
 	}
 	return depth
 }

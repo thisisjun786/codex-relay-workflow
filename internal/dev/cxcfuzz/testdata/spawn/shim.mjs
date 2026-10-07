@@ -37,10 +37,24 @@ function functions(hook) {
     InferRole: (agentType, message) => hook.inferRole(agentType, typeof message === "string" ? message : ""),
     IsV2SpawnInput: (toolInput) => hook.isV2SpawnInput(asObject(toolInput)),
     IsFullHistoryFork: (toolInput) => hook.isFullHistoryFork(asObject(toolInput)),
-    IsSpawnToolName: (name) => hook.isSpawnToolName(name),
-    IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
-    MentionedFolders: (message) => [...hook.mentionedFolders(typeof message === "string" ? message : "")],
-  };
+  IsSpawnToolName: (name) => hook.isSpawnToolName(name),
+  IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
+  MentionedFolders: (message) => {
+    const text = unwrapArgument(message);
+    return [...hook.mentionedFolders(typeof text === "string" ? crwToCxc(text) : "")];
+  },
+};
+
+// unwrapArgument follows a chain of one-element arrays down to the value at its end, the way the port's
+// spawnUnwrapArgument does: the generator nests the MentionedFolders argument to the depth a case drew,
+// so the two sides walk the same containers before the classifier sees the message. crwToCxc runs again
+// here because the translation above only reaches a top-level string argument, and it is idempotent.
+function unwrapArgument(value) {
+  while (Array.isArray(value) && value.length === 1) {
+    value = value[0];
+  }
+  return value;
+}
 }
 
 function asObject(value) {
