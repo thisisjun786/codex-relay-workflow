@@ -492,7 +492,7 @@ func TestMemoryGateUnnamedDestinationImportedOpenShapes(t *testing.T) {
 	for _, c := range []struct{ name, command string }{
 		{"builtins.open as a value", py("import builtins; f = builtins.open; f(\"" + m + "\", \"w\")")},
 		{"io.open as a value", py("import io; f = io.open; f(\"" + m + "\", \"w\")")},
-		{"staticmethod of the open builtin", py("import builtins; class C: f = staticmethod(builtins.open); C.f(\"" + m + "\", \"w\")")},
+		{"staticmethod of the open builtin", py("import builtins\nclass C:\n    f = staticmethod(builtins.open)\nC.f(\"" + m + "\", \"w\")")},
 		{"from-imported open alias", py("from io import open as o; o(\"" + m + "\", \"w\")")},
 		{"from builtins import open", py("from builtins import open as o; o(\"" + m + "\", \"w\")")},
 	} {
@@ -533,7 +533,7 @@ func TestMemoryGateUnnamedDestinationFifthPassShapes(t *testing.T) {
 		{"redirection before python -c", "2>/dev/null python3 -c " + shellWriteUnnamedQuote("import os; open(os.path.join(\""+root+"\", \"n.md\"), \"w\").write(\"x\")")},
 		{"leading redirection before the here-document owner", "2>/dev/null python3 <<'PY'\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
 		{"trailing redirection after the here-document owner", "python3 <<'PY' 2>/dev/null\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
-		{"imported name as a function parameter", py("import io; from pathlib import Path; def f(io):\n    io.write_text(\"x\")\nf(Path(\"" + m + "\"))")},
+		{"imported name as a function parameter", py("import io\nfrom pathlib import Path\ndef f(io):\n    io.write_text(\"x\")\nf(Path(\"" + m + "\"))")},
 		{"lone carriage return after an import", py("import os\rf = open\rf(\"" + m + "\", \"w\")")},
 		{"computed __import__ name", py("m = __import__(\"sh\" + \"util\"); m.copy(\"/w/a\", \"" + m + "\")")},
 		{"variable-held __import__", py("imp = __import__; m = imp(\"shutil\"); m.copy(\"/w/a\", \"" + m + "\")")},
@@ -619,6 +619,41 @@ func TestMemoryGateUnnamedDestinationSeventhPassShapes(t *testing.T) {
 		// A redirection that carries its own target leaves the verb alone, and a read-only program stays allowed.
 		{"redirection with its own target", "2>/dev/null python3 -c " + shellWriteUnnamedQuote("import os; open(os.path.join(\""+root+"\", \"n.md\")).read()")},
 		{"read-only variable receiver open with a buffering name", py("from pathlib import Path; p = Path(\"" + m + "\"); buffering = -1; p.open(\"r\", buffering).read()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
+// TestMemoryGateUnnamedDestinationEighthPassShapes pins the shapes the eighth pre-merge evaluation found: an imported
+// name rebound by an annotated assignment or a comprehension target, and a copy whose two arguments arrive through a
+// * unpacking. The controls pin the read-only program a raw f-string must not turn into a protected-area reference.
+func TestMemoryGateUnnamedDestinationEighthPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"annotated assignment rebinding an imported name", py("import io\nfrom pathlib import Path\nio: Path = Path(\"" + m + "\")\nio.write_text(\"x\")")},
+		{"comprehension target rebinding an imported name", py("import io\nfrom pathlib import Path\n[io.write_text(\"x\") for io in [Path(\"" + m + "\")]]")},
+		{"loop target rebinding an imported name", py("import io\nfrom pathlib import Path\nfor io in [Path(\"" + m + "\")]:\n    io.write_text(\"x\")")},
+		{"copy arguments through a star unpacking", py("import shutil\ns = shutil\nargs = (\"/w/a\", \"" + m + "\")\ns.copy(*args)")},
+		{"rename arguments through a double-star unpacking", py("import os\no = os\nkw = {\"src\": \"/w/a\", \"dst\": \"" + m + "\"}\no.rename(**kw)")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A raw f-string keeps its escapes, so a \x6d body is no memories segment: the program writes under /w and
+		// must pass.
+		{"raw f-string that decodes to no protected segment", py("import os\nlabel = rf\"/w/\\x6demories/x\"\nopen(os.path.join(\"/w\", \"n.md\"), \"w\")")},
+		{"literal dict copy with no arguments", py("d = {'a': 'memories'}\ne = d.copy()\nprint(e)")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {

@@ -2626,6 +2626,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 	if depth > shellWriteExecMaxDepth {
 		return
 	}
+	w.bindLoopTargets(rs)
 	binds := shellWriteCopyImportsOf(rs, outer)
 	var stack []shellWriteUnnamedFrame
 	var pending shellWriteUnnamedCall
@@ -2635,7 +2636,10 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 		case c == '\'' || c == '"':
 			if shellWriteFStringPrefix(rs, i) {
 				end, fields, _ := shellWriteFStringRegion(rs, i, 0)
-				w.literal(rs[i:end])
+				// The prefix runes before the quote belong to the literal (rf"...", fr"..."), so the reader
+				// decodes a raw f-string as raw: without them it would decode escapes Python preserves and could
+				// invent a protected segment the program does not hold.
+				w.literal(shellWriteUnnamedLiteralSpan(rs, i, end))
 				for _, f := range fields {
 					w.read(shellVerbWithoutComments(string(rs[f[0]:f[1]]), true), depth+1, binds)
 				}
@@ -2873,6 +2877,54 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 	}
 }
 
+// bindLoopTargets marks every name a for clause binds (for io in ...): a comprehension reads its element expression
+// before its own for clause stands, so the pre-pass binds those names before the walk reaches their use. A name bound
+// there is no module any more, so an import's meaning for it no longer holds. String literals are skipped, so a for
+// that only stands inside a string binds nothing.
+func (w *shellWriteUnnamedWalk) bindLoopTargets(rs []rune) {
+	for i := 0; i < len(rs); i++ {
+		if rs[i] == '\'' || rs[i] == '"' {
+			i = shellWriteTripleScanRegion(rs, i, true) - 1
+			continue
+		}
+		if !shellWriteCopyIdentRune(rs[i]) {
+			continue
+		}
+		j := i
+		for j < len(rs) && shellWriteCopyIdentRune(rs[j]) {
+			j++
+		}
+		if string(rs[i:j]) != "for" {
+			i = j - 1
+			continue
+		}
+		k := j
+		for k < len(rs) && shellVerbSpaceRune(rs[k]) {
+			k++
+		}
+		start := k
+		for k < len(rs) && shellWriteCopyIdentRune(rs[k]) {
+			k++
+		}
+		if k == start {
+			continue
+		}
+		name := string(rs[start:k])
+		m := k
+		for m < len(rs) && shellVerbSpaceRune(rs[m]) {
+			m++
+		}
+		if m+2 > len(rs) || string(rs[m:m+2]) != "in" || m+2 < len(rs) && shellWriteCopyIdentRune(rs[m+2]) {
+			continue
+		}
+		if w.assigned == nil {
+			w.assigned = map[string]bool{}
+		}
+		w.assigned[name] = true
+		i = j - 1
+	}
+}
+
 // literal records the decoded value of one string literal the program holds.
 func (w *shellWriteUnnamedWalk) literal(arg []rune) {
 	if value, ok := shellVerbLiteral(arg); ok {
@@ -2920,7 +2972,7 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 		w.assigned[word] = true
 		return
 	}
-	if shellWriteUnnamedTarget(rs, j) {
+	if shellWriteUnnamedTarget(rs, j) || shellWriteUnnamedBinds(rs, i, j) {
 		if w.assigned == nil {
 			w.assigned = map[string]bool{}
 		}
@@ -3074,6 +3126,44 @@ func shellWriteUnnamedDottedModule(rs []rune, i int, binds shellWriteCopyImports
 		return false
 	}
 	return shellWriteUnnamedModuleReceiver(string(rs[j+1:end]), binds, assigned)
+}
+
+// shellWriteUnnamedBinds reports whether the name that ends at j is bound by a form the assignment test does not read:
+// an annotated assignment (io: Path = ...), a loop or comprehension target (for io in ...), or a lambda parameter
+// (lambda io: ...). Each binds the name in its scope, so an import's meaning for it no longer holds there.
+func shellWriteUnnamedBinds(rs []rune, i, j int) bool {
+	k := j
+	for k < len(rs) && shellVerbSpaceRune(rs[k]) {
+		k++
+	}
+	if k < len(rs) && rs[k] == ':' {
+		return true // an annotated assignment: the annotation follows the name
+	}
+	// A lambda parameter list: the name stands between lambda and its colon, with no bracket of its own.
+	for b := i - 1; b >= 0 && rs[b] != '\n' && rs[b] != ';' && rs[b] != ':'; b-- {
+		if word := shellWriteUnnamedWordBefore(rs, b); word == "lambda" {
+			return true
+		}
+	}
+	// A loop or comprehension target: for NAME in ... binds NAME.
+	for b := i - 1; b >= 0 && rs[b] != '\n' && rs[b] != ';' && rs[b] != ')' && rs[b] != ']'; b-- {
+		if word := shellWriteUnnamedWordBefore(rs, b); word == "for" {
+			return true
+		}
+	}
+	return false
+}
+
+// shellWriteUnnamedWordBefore is the identifier run that ends at or before rs[j], or "" when none stands there.
+func shellWriteUnnamedWordBefore(rs []rune, j int) string {
+	end := j + 1
+	for j >= 0 && shellWriteCopyIdentRune(rs[j]) {
+		j--
+	}
+	if end == j+1 {
+		return ""
+	}
+	return string(rs[j+1 : end])
 }
 
 // shellWriteUnnamedTarget reports whether an assignment binds the name that ends at j: the next rune that is not a blank
@@ -3244,24 +3334,62 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports, as
 			return 0 // two or more arguments: a str's own replace, which writes no file
 		}
 	}
+	// A method the reader reads as one of the Path write methods (rename, replace, symlink_to, ...) is read by its own
+	// rule: its destination is the receiver or its one argument.
+	if shellWriteUnnamedMethod(name) {
+		return shellWriteUnnamedMethodKind(name)
+	}
 	// A copy, rename or link method on a receiver this reader does not know to be something else - a variable
 	// (s = shutil; s.copy(...)), a bracketed or parenthesized expression ((shutil).copy(...)) - is a call the
 	// ordinary destination reader never names a destination for, so the capital kind marks it unnamed whatever its
-	// arguments say. A receiver the reader does know (a string's own replace, a list's copy) is left to the rules
-	// above, so the common false positive of a dict's or list's copy is only reached when the program names nothing
-	// the reader can place.
-	// Every one of these functions takes two arguments, so a call with fewer is a same-named method of something
-	// else (a dict's or list's own copy() takes none) and is no filesystem write.
-	if shellWriteUnnamedArgs(rs, i) >= 2 && (shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name)) {
+	// arguments say. Every one of these functions takes two arguments, so a call with fewer is a same-named method of
+	// something else (a dict's or list's own copy() takes none) and is no filesystem write; a * or ** argument may
+	// supply both.
+	if shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name) {
+		if shellWriteUnnamedArgs(rs, i) < 2 && !shellWriteUnnamedUnpackedCall(rs, i) {
+			return 0 // too few arguments: a same-named method of a dict or a list, which writes no file
+		}
 		if name == "renames" {
 			return 'N'
 		}
 		return 'C'
 	}
-	if !shellWriteUnnamedMethod(name) {
-		return 0
+	return 0
+}
+
+// shellWriteUnnamedUnpackedCall reports whether the call whose opening bracket is at rs[i] passes a * or ** argument,
+// which may supply more arguments than the reader can count (s.copy(*args) supplies both of copy's).
+func shellWriteUnnamedUnpackedCall(rs []rune, i int) bool {
+	depth, start := 0, i+1
+	for j := i; j < len(rs); j++ {
+		switch c := rs[j]; {
+		case c == '\'' || c == '"':
+			j = shellWriteTripleScanRegion(rs, j, true) - 1
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			if depth--; depth == 0 {
+				return shellWriteUnnamedStarArg(rs[start:j])
+			}
+		case c == ',' && depth == 1:
+			if shellWriteUnnamedStarArg(rs[start:j]) {
+				return true
+			}
+			start = j + 1
+		}
 	}
-	return shellWriteUnnamedMethodKind(name)
+	return false
+}
+
+// shellWriteUnnamedStarArg reports whether one argument span opens with a * or ** unpacking.
+func shellWriteUnnamedStarArg(arg []rune) bool {
+	for _, r := range arg {
+		if shellVerbSpaceRune(r) {
+			continue
+		}
+		return r == '*'
+	}
+	return false
 }
 
 // shellWriteUnnamedArgs counts the arguments of the call whose opening bracket is at rs[i]: the top-level commas that
