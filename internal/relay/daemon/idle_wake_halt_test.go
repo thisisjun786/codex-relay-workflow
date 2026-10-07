@@ -101,10 +101,10 @@ func TestIdleWakeHalt_a_failed_head_read_is_the_observation_site(t *testing.T) {
 	idleWakeHaltDamage(t, s, false)
 	w := d.idle
 	w.begin()
-	w.hold(context.Background(), &idleHost{}, idleNow)
 	report := Report{Notes: []string{}}
-	if !w.haltStore(context.Background(), &report) {
-		t.Fatal("the pass did not hand its unapplied head read to the halt")
+	w.hold(context.Background(), &report, &idleHost{}, idleNow)
+	if !w.halted {
+		t.Fatal("the pass did not end at the halt for its unapplied head read")
 	}
 	report.Notes = append(report.Notes, w.take()...)
 	if len(halt.calls) != 1 || halt.calls[0].site != idleHaltSiteObservation {
@@ -129,10 +129,10 @@ func TestIdleWakeHalt_a_failure_the_halt_does_not_claim_keeps_its_note(t *testin
 	idleWakeHaltDamage(t, s, false)
 	w := d.idle
 	w.begin()
-	w.hold(context.Background(), &idleHost{}, idleNow)
 	report := Report{Notes: []string{}}
-	if w.haltStore(context.Background(), &report) {
-		t.Fatal("the halt claimed a failure outside its class")
+	w.hold(context.Background(), &report, &idleHost{}, idleNow)
+	if w.halted {
+		t.Fatal("the pass ended at a halt that did not claim its failure")
 	}
 	if len(halt.calls) != 1 {
 		t.Fatalf("the halt was handed %d failures, want the one the pass could not apply", len(halt.calls))
@@ -173,5 +173,56 @@ func TestIdleWakeHalt_the_daemons_own_halt_is_the_one_wired(t *testing.T) {
 		if d.idle.halt(context.Background(), &Report{}, idleHaltSiteWrite, errors.New("probe")) {
 			t.Fatal("the wired halt claimed a failure outside its class")
 		}
+	}
+}
+
+// TestIdleWakeHalt_a_batch_of_reports_stops_at_the_detection: the halt is consulted as each failure
+// happens, so a report batch does not keep writing after a corrupting one. The first report's wake
+// fails, the halt stands, and the second report issues no statement at all (I-564).
+func TestIdleWakeHalt_a_batch_of_reports_stops_at_the_detection(t *testing.T) {
+	t.Parallel()
+	halt := &idleWakeHalt{answer: true}
+	host := &idleHost{reports: []delivery.IdleReport{
+		{ThreadID: idleThread, Status: "idle"},
+		{ThreadID: "second-thread", Status: "idle"},
+	}}
+	d, s := idleWakeHaltDaemon(t, host, halt)
+	idleWakeHaltDamage(t, s, true)
+	report := Report{Notes: []string{}}
+	d.idle.begin()
+	d.idle.idle(context.Background(), &report, host, idleNow)
+	if !d.idle.halted {
+		t.Fatal("the pass did not end at the halt for its failed wake write")
+	}
+	if len(halt.calls) != 1 {
+		t.Fatalf("the halt was handed %d failures, want the one detection", len(halt.calls))
+	}
+	// The second report wrote nothing: only the first report's failure is noted, and the second is
+	// not attempted, so no statement follows the halt.
+	report.Notes = append(report.Notes, d.idle.take()...)
+	if n := idleWakeHaltNote(report, "not applied"); n != 1 {
+		t.Fatalf("the batch reported %d wake failures, want only the detection: %v", n, report.Notes)
+	}
+}
+
+// TestIdleWakeHalt_a_later_failure_is_not_masked: the failure the pass hands to the halt is the one it
+// has just met, not the first one it met. Keeping the first would let an earlier ordinary failure (a
+// locked database, say) hide a later corrupting one, and the store would take the writes of the
+// passes after it (CRW-904 correction, d1).
+func TestIdleWakeHalt_a_later_failure_is_not_masked(t *testing.T) {
+	t.Parallel()
+	halt := &idleWakeHalt{answer: true}
+	d, _ := idleWakeHaltDaemon(t, &idleHost{}, halt)
+	w := d.idle
+	w.begin()
+	first := errors.New("SQL logic error: database is locked (5)")
+	second := errors.New("SQL logic error: database disk image is malformed (11)")
+	w.unapplied(idleHaltSiteObservation, first)
+	w.unapplied(idleHaltSiteWrite, second)
+	if !w.haltStore(context.Background(), &Report{}) {
+		t.Fatal("the pass did not reach the halt for the failure it had just met")
+	}
+	if len(halt.calls) != 1 || halt.calls[0].err != second || halt.calls[0].site != idleHaltSiteWrite {
+		t.Fatalf("the halt was handed %+v, want the later failure at the write site", halt.calls)
 	}
 }

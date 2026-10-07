@@ -414,9 +414,14 @@ func (d *Service) markWakeSpent(ctx context.Context, eventID string) error {
 	return err
 }
 
-// spendWake deletes a wake that has been answered.
+// spendWake deletes the wake that has been answered. Only a wake the claim spent is deleted: the row
+// the claim marked is the one this attempt was released by, and its deadline is the one the answer
+// owes. An unspent wake is a different wait's: a delivery that was settled busy again can be woken by
+// a fresh idle report, and a reconciliation of the *earlier* attempt must not consume that wake before
+// its own attempt is claimed, because doing so would drop the head back to its timer with its priority
+// marker gone (CRW-904 correction, d3). A wake that is never claimed is ended by abandonWake instead.
 func (d *Service) spendWake(ctx context.Context, eventID string) error {
-	_, err := execSQL(ctx, d.Store, "DELETE FROM delivery_wakes WHERE event_id = ?", eventID)
+	_, err := execSQL(ctx, d.Store, "DELETE FROM delivery_wakes WHERE event_id = ? AND spent_at IS NOT NULL", eventID)
 	return err
 }
 
@@ -1284,9 +1289,12 @@ func (d *Service) deferBusy(ctx context.Context, eventID string, row Row, now fl
 		if err != nil || changed != 1 {
 			return err
 		}
-		// This answer spent the wake: the delivery waits the backoff again, and a wake row left behind
-		// would make it due on the next tick.
-		if err := d.spendWake(ctx, eventID); err != nil {
+		// This answer ended the wake the delivery carried into the attempt the recipient's idle edge
+		// released: the lifecycle read found the recipient busy before the claim, so no attempt of this
+		// delivery was ever made and the wake is unspent. Its deadline has already been taken above
+		// (due = min(original, recomputed)), so the row is dropped rather than kept, or it would make
+		// the delivery due again on the next tick.
+		if err := d.abandonWake(ctx, eventID); err != nil {
 			return err
 		}
 		if err := d.recordFailureIn(ctx, eventID, "parent_busy", stamp, "the recipient is mid-turn and is never interrupted", row.S("relationship_id"), nil, nil, nil, nil, when); err != nil {

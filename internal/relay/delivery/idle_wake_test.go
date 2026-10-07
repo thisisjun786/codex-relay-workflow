@@ -387,3 +387,55 @@ func TestIdleWake_a_reconciled_busy_answer_keeps_the_earlier_deadline(t *testing
 		t.Fatal("the answered attempt left its wake behind")
 	}
 }
+
+// CRW-904 (correction, d3): a reconciliation of an earlier busy attempt must not consume the wake
+// that belongs to the next attempt. The wake is keyed by event, and a delivery that settled busy
+// again keeps its attempt_count until the next claim, so the old attempt's promotion still matches
+// the row. Deleting the new wake there drops the head back to its timer with its priority marker
+// gone, before the attempt the wake released was ever claimed.
+func TestIdleWake_a_reconciliation_does_not_consume_the_next_attempts_wake(t *testing.T) {
+	t.Parallel()
+	w := newScaleWorld(t, 1)
+	f := w.f
+	w.busy(true)
+	event := w.emit(0)
+	busyFor(t, f, event, 1, 10)
+	// The head is woken and its attempt is claimed, and the transport settles it busy again: the
+	// attempt is answered, so its wake is spent, and the delivery waits the recomputed backoff.
+	if !w.wake(scaleParent) {
+		t.Fatal("the idle report woke no head")
+	}
+	// The recipient is idle at the lifecycle read, so the attempt is claimed, and the transport
+	// answers busy after the claim: the attempt is answered with a busy answer.
+	w.busy(false)
+	f.host.script = []string{"busy"}
+	w.pass()
+	row := f.row(event)
+	if row.S("state") != DeferredBusy {
+		t.Fatalf("the delivery is %s, want %s after the busy answer", row.S("state"), DeferredBusy)
+	}
+	request := f.one("SELECT request_id FROM attempts WHERE event_id = ?", event).S("request_id")
+	if request == "" {
+		t.Fatal("the claimed attempt left no request row")
+	}
+	// The recipient reports idle again: a new wake is written for the attempt that will come next.
+	if !w.wake(scaleParent) {
+		t.Fatal("the second idle report woke no head")
+	}
+	if !f.woken(event) {
+		t.Fatal("the second wake was not recorded")
+	}
+	// The earlier attempt is reconciled with the same busy receipt before the next claim. That is an
+	// answer to an attempt that was already answered, and it must leave the new wake alone.
+	f.host.ledger[request] = Obj{{Key: "status", Value: FailedStatus}, {Key: "rpcError", Value: Obj{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active"}}}, {Key: "retrySafe", Value: true}}
+	rc := NewReconciler(f.delivery)
+	if _, err := rc.ReconcileAttempt(f.ctx, request, f.host, at(f.clock.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if !f.woken(event) {
+		t.Fatal("the reconciliation consumed the wake written for the next attempt")
+	}
+	if !slices.Contains(f.eligible(), event) {
+		t.Fatal("the woken head is no longer due: its wake was consumed before the next claim")
+	}
+}

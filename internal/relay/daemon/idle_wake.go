@@ -66,6 +66,10 @@ type idleWake struct {
 	// one the failure was seen at: the wake is this pass's own write, the head read an observation.
 	unappliedErr  error
 	unappliedSite string
+	// halted is whether this pass has ended at the daemon's halt. It is the pass's own latch: once the
+	// store is halted, the rest of the pass issues no statement at all (I-564), so the batch of reports
+	// stops at the failure rather than continuing to write (CRW-904 correction, d1).
+	halted bool
 	// halt is the daemon's own halt (CRW-848, Daemon.halted), reached through the method the daemon
 	// satisfies rather than named: that code is newer than this node's baseline, where the pass and the
 	// daemon meet. On the baseline the method does not exist, so this stays nil and the pass only
@@ -93,24 +97,35 @@ func (w *idleWake) begin() {
 	w.woken, w.opened, w.released = 0, 0, 0
 	w.notes = nil
 	w.unappliedErr, w.unappliedSite = nil, ""
+	w.halted = false
 }
 
-// unapplied keeps the first store failure the pass could not apply, for the daemon's halt.
+// unapplied records the store failure the pass has just failed to apply, for the daemon's halt. It
+// overwrites, because the halt is consulted the moment the failure happens: keeping the first failure
+// would let an earlier non-corrupting one (SQLITE_BUSY, say) mask a later corrupting one, and the
+// store would then take the writes of the passes after it (CRW-904 correction, d1).
 func (w *idleWake) unapplied(site string, err error) {
-	if w.unappliedErr == nil {
-		w.unappliedErr, w.unappliedSite = err, site
-	}
+	w.unappliedErr, w.unappliedSite = err, site
 }
 
-// haltStore hands the pass's first unapplied store failure to the daemon's own halt and answers
-// whether the tick ended: a failure of the class that stops the store ends the tick there, so nothing
-// after this pass writes anything, and every other failure leaves the pass exactly as it was, with the
-// note it already wrote. A build without the halt answers false and the note stands alone.
+// haltStore hands the failure the pass has just met to the daemon's own halt and answers whether the
+// tick ended: a failure of the class that stops the store ends the tick there, so nothing after this
+// pass writes anything, and every other failure leaves the pass exactly as it was, with the note it
+// already wrote. It is called after every failure rather than once at the end of the pass, so no
+// earlier failure can mask a later corrupting one and no statement is issued after the halt. A build
+// without the halt answers false and the note stands alone.
 func (w *idleWake) haltStore(ctx context.Context, r *Report) bool {
 	if w.unappliedErr == nil || w.halt == nil {
 		return false
 	}
-	return w.halt(ctx, r, w.unappliedSite, w.unappliedErr)
+	if !w.halt(ctx, r, w.unappliedSite, w.unappliedErr) {
+		return false
+	}
+	// The halt stands: nothing else in this tick writes. Clear the failure so the daemon does not
+	// consult the halt a second time for the same detection.
+	w.unappliedErr, w.unappliedSite = nil, ""
+	w.halted = true
+	return true
 }
 
 // take hands the notes this pass collected to the caller and clears them, so a tick that ends at the
@@ -125,12 +140,17 @@ func (w *idleWake) take() []string {
 // thread whose head is not waiting out a busy backoff changes nothing: WakeBusyHead writes only for
 // the deferred-busy head that is still inside its backoff, so a younger delivery, a recipient with
 // no backlog, and a report about a head that is already due are all no-ops.
-func (w *idleWake) idle(ctx context.Context, host Host, now float64) {
+func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) {
 	reporter, ok := host.(idleReports)
 	if !ok {
 		return
 	}
 	for _, report := range reporter.IdleReports() {
+		if w.halted {
+			// The store is halted: this pass issues no further statement, so the reports after the
+			// detection wait for the next daemon (I-564).
+			break
+		}
 		if report.Status != "idle" && report.Status != "notLoaded" {
 			continue
 		}
@@ -139,8 +159,13 @@ func (w *idleWake) idle(ctx context.Context, host Host, now float64) {
 			w.notes = append(w.notes, "idle report for "+report.ThreadID+" not applied: "+err.Error())
 			// The wake is this pass's own write: a store that answers a failure of the halting class
 			// ends the tick here rather than letting the delivery pass and the supervisor channel write
-			// into a store the relay has seen damaged (I-564). Any other failure keeps its note.
+			// into a store the relay has seen damaged (I-564). Any other failure keeps its note. The
+			// halt is consulted now, not once at the end of the batch, so no later report is written
+			// after the detection and no earlier failure can mask it.
 			w.unapplied(idleHaltSiteWrite, err)
+			if w.haltStore(ctx, r) {
+				break
+			}
 			continue
 		}
 		if wrote {
@@ -155,7 +180,7 @@ func (w *idleWake) idle(ctx context.Context, host Host, now float64) {
 // deadline, as section 82 says. The hold is this relay's own (ThreadHeld): a watch or the bridge's
 // retention may already subscribe the thread, but that owner can release it mid-backlog, so the
 // backlog takes a reference of its own rather than borrowing one (CRW-904 d4).
-func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
+func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) {
 	subscriptions, ok := host.(idleSubscriptions)
 	if !ok {
 		return
@@ -164,8 +189,10 @@ func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 	if err != nil {
 		w.notes = append(w.notes, "busy heads not read: "+err.Error())
 		// The waiting heads are read out of the store: a corrupting read is the observation site, as
-		// the observation pass's own census read is (I-564).
+		// the observation pass's own census read is (I-564). The halt is consulted now, so the rest of
+		// the pass issues no statement.
 		w.unapplied(idleHaltSiteObservation, err)
+		w.haltStore(ctx, r)
 		return
 	}
 	wanted := map[string]string{}

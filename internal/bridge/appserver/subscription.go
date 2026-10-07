@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -163,6 +164,27 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 	c.mu.Unlock()
 	if resume {
 		if _, err := c.request(ctx, conn, "thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}); err != nil {
+			// The reply is missing, but the resume may already have landed: a refusal the server
+			// answered is an RPCError and subscribes nothing, while a timeout or a lost socket after
+			// the write can leave a real subscription on this connection with nobody owning it. The
+			// hold is recorded in that case so the ordinary release path unsubscribes it, and the error
+			// is still returned, so the caller does not treat the subscription as established
+			// (CRW-904 correction, d2). Without this the subscription survives until the socket dies.
+			var refused *RPCError
+			if !errors.As(err, &refused) {
+				c.mu.Lock()
+				m.mu.Lock()
+				if !m.stopping && c.conn == conn {
+					current := m.root(thread)
+					current.connection = conn
+					current.busyHeld = true
+					current.busyOn = conn
+					m.start()
+				}
+				m.mu.Unlock()
+				c.mu.Unlock()
+				m.signal()
+			}
 			return err
 		}
 	}

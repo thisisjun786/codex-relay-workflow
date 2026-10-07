@@ -138,12 +138,14 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	// every recipient the pass leaves waiting out a busy backoff. Both are no-ops on a host that
 	// does not offer them: every scripted double, and every transport that is not the App Server.
 	d.idle.begin()
-	d.idle.idle(ctx, d.Host, now)
+	d.idle.idle(ctx, &r, d.Host, now)
 	// A store failure the idle pass could not apply is handed to this daemon's own halt before
 	// anything else writes: the delivery pass and the supervisor channel below would otherwise write
-	// into a store the relay has just seen damaged (I-564). A failure that is not the halting class
-	// leaves the pass and this tick exactly as they were, with the note the pass wrote.
-	if d.idle.haltStore(ctx, &r) {
+	// into a store the relay has just seen damaged (I-564). The pass consults the halt itself as each
+	// failure happens (so a batch of reports stops at the detection), and this is the same decision
+	// asked once more for the pass as a whole; a failure that is not the halting class leaves the pass
+	// and this tick exactly as they were, with the note the pass wrote.
+	if d.idle.halted || d.idle.haltStore(ctx, &r) {
 		r.Notes = append(r.Notes, d.idle.take()...)
 		return r, nil
 	}
@@ -151,8 +153,8 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
 		return r, err
 	}
-	d.idle.hold(ctx, d.Host, now)
-	if d.idle.haltStore(ctx, &r) {
+	d.idle.hold(ctx, &r, d.Host, now)
+	if d.idle.halted || d.idle.haltStore(ctx, &r) {
 		r.Notes = append(r.Notes, d.idle.take()...)
 		return r, nil
 	}
