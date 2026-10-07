@@ -327,6 +327,70 @@ func TestTrainLandRefusesAnExcludedMemberUnderCorrection(t *testing.T) {
 	}
 }
 
+// CRW-906 generation 2, d2: acceptance uniqueness is per node and output, not per repository and pull
+// request or per repository and head, so two accepted nodes can name the same commit. The gate must ask
+// every matching relationship, not the newest one: a turn is refused when any of them is correcting the
+// very head it holds.
+func TestTheLaneGateAsksEveryMatchingAcceptance(t *testing.T) {
+	w := newFx(t)
+	// rel-a-live stands on its live generation and sorts first, so a lookup that took one arbitrary
+	// match would take it; rel-z-correcting has a correction open over the same head
+	w.ucLaneRelationship("rel-a-live", 1)
+	w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES ('acc-rel-a-live', 'plan-x', 'node-live', 'manifest-live', 'rel-a-live', 1, 'ev-live', 'rev-live', 'crit-1', 'verified', 'head-a', ?, 1, 'bound', 'turn-1', '{}', ?, 0, '2023-11-14T22:13:19.000000+00:00', 'active')",
+		fxRepo, alpha.TaskID)
+	w.ucLaneRelationship("rel-z-correcting", 2)
+	turn := store.MergeTurnsRow{TurnID: "mtn-two", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a head two nodes accept, one of them under correction, was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-z-correcting") {
+		t.Fatalf("the refusal does not name the correcting relationship: %s", refusal.Detail)
+	}
+}
+
+// CRW-906 generation 2, d3: the excluded member's hold must not clear just because the correction was
+// accepted over. Exclusion changes the accounting, not the bundle tree: the verified tree still carries the
+// member head it was verified on, so once the acceptance stands on a corrected head the bundle no longer
+// holds what the plan accepts for that member and must be rebuilt and verified.
+func TestTrainLandRefusesAnExcludedMemberWhoseAcceptanceMovedOn(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 2: %v", err)
+	}
+	memberTurn := rows[0].Get("turn_id").(string)
+	if _, err := w.m.Withdraw(w.ctx, memberTurn, "task-m2"); err != nil {
+		t.Fatalf("withdrawing the member's turn: %v", err)
+	}
+	// dag-accept --supersedes moved the acceptance onto the corrected result: the relationship and the
+	// acceptance stand on the same generation again, so no correction is open, and the head it stands on
+	// is the corrected one the verified bundle does not carry.
+	w.exec("UPDATE relationships SET execution_generation = 2 WHERE relationship_id = 'rel-task-m2'")
+	w.exec("UPDATE dag_acceptances SET execution_generation = 2, head_sha = 'head-m2-corrected' WHERE relationship_id = 'rel-task-m2' AND state = 'active'")
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	_, err = w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a land of a bundle whose excluded member's acceptance moved on: %v", err)
+	}
+	if !strings.Contains(err.Error(), "head-m2-corrected") || !strings.Contains(err.Error(), "rebuild and verify") {
+		t.Fatalf("the refusal does not name the stand and the way on: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+		t.Fatalf("a refused land wrote %d landed event(s)", n)
+	}
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+		t.Fatalf("a refused land landed %d turn(s)", n)
+	}
+}
+
 // ucCount is the number of rows a query answers, for the writes a refusal must not leave behind.
 func (w *fx) ucCount(query string, args ...any) int64 {
 	w.t.Helper()

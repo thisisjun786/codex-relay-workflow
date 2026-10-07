@@ -997,7 +997,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		// left the lane is excluded above and is not re-read, so its parent revoking the acceptance
 		// does not refuse the rest of the bundle.
 		for _, m := range leftMembers {
-			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+			if e := trainExcludedMemberRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
 				return e
 			}
 		}

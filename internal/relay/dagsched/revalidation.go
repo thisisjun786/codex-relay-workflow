@@ -486,10 +486,32 @@ func (s *Scheduler) refuseRevalidation(ctx context.Context, q store.Querier, pla
 // generation is open. The reading is the same conservative one the verdict writer makes when a ruling
 // rests on a merge turn (registry.RestsOn): a turn of the assignment that is merging, unknown or landed
 // counts, whatever head it names.
+//
+// The turn is resolved by every identity a claim may carry, because --relationship and --pr are both
+// optional on merge-turn-request: the relationship, the pull request, or the head the turn holds. The
+// lane's own gate resolves the same three (mergeturn.underCorrectionRefusal), and a guard that read only
+// the relationship would miss the turn a successful merge-turn-check had just authorized.
 func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q store.Querier, acc Acceptance) error {
+	heads, err := s.stoodOn(ctx, q, acc)
+	if err != nil {
+		return err
+	}
+	clauses := []string{"relationship_id = ?"}
+	args := []any{acc.RelationshipID}
+	for _, head := range heads {
+		if head == "" {
+			continue
+		}
+		clauses = append(clauses, "(lower(repository) = lower(?) AND candidate_head = ?)")
+		args = append(args, acc.Repository, head)
+	}
+	if acc.PRNumber > 0 {
+		clauses = append(clauses, "(lower(repository) = lower(?) AND pr_number = ?)")
+		args = append(args, acc.Repository, acc.PRNumber)
+	}
 	var turn, state, head string
 	found, err := queryOne(ctx, q, "SELECT turn_id, state, candidate_head FROM merge_turns"+
-		" WHERE relationship_id = ? AND state IN ('merging','unknown','landed') ORDER BY requested_at, turn_id LIMIT 1", []any{acc.RelationshipID}, &turn, &state, &head)
+		" WHERE state IN ('merging','unknown','landed') AND ("+strings.Join(clauses, " OR ")+") ORDER BY requested_at, turn_id LIMIT 1", args, &turn, &state, &head)
 	if err != nil || !found {
 		return err
 	}

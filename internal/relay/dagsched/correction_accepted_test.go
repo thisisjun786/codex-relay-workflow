@@ -264,6 +264,49 @@ func TestAHandOpenedGenerationOfAnAcceptedCurrentResultIsStillRefused(t *testing
 
 // The reason a generation was opened under is what states the correction, and the stale route keeps its own
 // Criterion c1, the safety bound of the accepted-current route: a correction is not recorded over an
+// Criterion c1, generation 2, d1: the guard resolves the merge turn by every identity a claim may carry.
+// --relationship and --pr are both optional on merge-turn-request, and a successful merge-turn-check has
+// already authorized the merge of H before the correction is recorded. A guard that read only the
+// relationship would miss that turn and admit the record, and the later Land refusal cannot undo a merge
+// the forge was already authorized to make.
+func TestACorrectionIsNotRecordedOverATurnThatNamesNoRelationship(t *testing.T) {
+	t.Parallel()
+	for _, identity := range []string{"pull request", "head"} {
+		t.Run("a merging turn identified by its "+identity, func(t *testing.T) {
+			k, accepted := rvSettledSharedRoot(t)
+			rid := accepted["B"].RelationshipID
+			prepared := k.rvPrepare("sr", "B")
+			acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+			// the acceptance records the repository, the pull request and the head the turn may name
+			k.exec("UPDATE dag_acceptances SET repository = 'owner/repo', head_sha = 'head-b', pr_number = 5 WHERE relationship_id = ?", rid)
+			// the turn names no relationship: the guard must resolve it from the pull request or the head
+			k.exec("INSERT INTO merge_turns (turn_id, target_key, repository, base_ref, project_key, holder_task_id, holder_host_id, relationship_id, pr_number, candidate_head, state, tenure, requested_at, updated_at)"+
+				" VALUES ('mtn-pr-only', 'tgt', 'owner/repo', 'dev', 'P-TEST', 'parent', 'host', NULL, ?, 'head-b', 'merging', 1, 't', 't')",
+				prNumberFor(identity))
+			_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+			if refusalReason(err) != "disposition_conflict" {
+				t.Fatalf("a correction over a merging turn identified by its %s = %v, want disposition_conflict", identity, err)
+			}
+			if !strings.Contains(err.Error(), "on its way to the base") || !strings.Contains(err.Error(), "mtn-pr-only") {
+				t.Fatalf("the refusal does not name the turn and the reason: %v", err)
+			}
+			if got := acExecution(k, "B", 2); got != "" {
+				t.Fatalf("the refused correction wrote the execution %q", got)
+			}
+		})
+	}
+}
+
+// prNumberFor is the pull request the turn records for the case named: the acceptance's, or NULL so the
+// head is the only identity left.
+func prNumberFor(identity string) any {
+	if identity == "pull request" {
+		return int64(5)
+	}
+	return nil
+}
+
+// Criterion c1, the safety bound of the accepted-current route: a correction is not recorded over an
 // accepted head a merge turn of the same relationship is already carrying to the base. The relay reads the
 // forge, not the merge, so a turn that is merging or of unknown effect may already have landed the head
 // outside the relay; naming that head as the one being repaired would leave the merge unrecorded and the
