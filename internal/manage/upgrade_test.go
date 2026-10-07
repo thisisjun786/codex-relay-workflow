@@ -104,8 +104,12 @@ type upgradeHarnessOptions struct {
 	breakPointer bool
 	// mutateConfig makes the fake update append to the configuration file.
 	mutateConfig bool
-	// unreadableConfigAfter makes the fake update leave the configuration file unreadable.
+	// unreadableConfigAfter makes the fake update leave the configuration file unreadable without
+	// changing its contents, so the post-check cannot tell whether it changed.
 	unreadableConfigAfter bool
+	// deleteConfigAfter makes the fake update remove the configuration file the snapshot read, which
+	// is a change the post-check can state exactly.
+	deleteConfigAfter bool
 	// breakInstalledStart makes the runtime the update produces fail to start the service, so the
 	// restart has to fall back.
 	breakInstalledStart bool
@@ -241,6 +245,9 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 		b.WriteString("  printf 'changed\\n' >> \"$CODEX_HOME/config.toml\"\n")
 	}
 	if opts.unreadableConfigAfter {
+		b.WriteString("  chmod 000 \"$CODEX_HOME/config.toml\"\n")
+	}
+	if opts.deleteConfigAfter {
 		b.WriteString("  rm -f \"$CODEX_HOME/config.toml\"\n")
 	}
 	if opts.produceRuntime {

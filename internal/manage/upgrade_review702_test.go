@@ -233,12 +233,17 @@ func upgradeReview702StatusReads(h *upgradeEnv) int {
 // resolve to a directory the service cannot be started from (a runtime whose relay executable is
 // missing, say). The service is stopped by then, so the restart falls back to the runtime the
 // pointer named before the stop rather than leaving the relay down, and the record names the
-// runtime the service came back on.
+// runtime the service came back on. The recovery is kept, but the run must not report success: the
+// runtime the update installed is not the one in service, so the pointer and the running code
+// disagree, which is a mismatch.
 func TestUpgradeReview702RestartsFromThePreviousRuntimeWhenTheNewOneWillNotStart(t *testing.T) {
 	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
 		produceRuntime: true, pointAtIt: true, breakInstalledStart: true})
-	if code := h.run("--release-dir", h.release); code != 0 {
-		t.Fatalf("exit %d, want 0; the service came back on the previous runtime, so the run is a success: %+v", code, h.recordOf(t))
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the installed runtime is not in service: %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+		t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
 	}
 	if !h.calledFrom(filepath.Join(h.installed, "bin", "codex-session-relay"), "service start") {
 		t.Errorf("the pointer's runtime was not tried: %q", h.callLines())
@@ -251,9 +256,30 @@ func TestUpgradeReview702RestartsFromThePreviousRuntimeWhenTheNewOneWillNotStart
 	}
 }
 
-// TestUpgradeReview702UnreadableConfigIsNotAChange: a configuration file the post-check cannot read
-// is not a configuration change. An update failure must keep its own exit code, and the record must
-// not claim config_changed.
+// TestUpgradeReview702ConfigDeletionWinsOverUpdateFailure: the snapshot only proceeded when it read
+// a configuration file, so a file that is gone afterwards is a change the run can state exactly. It
+// outranks the update failure, and the record names both reasons.
+func TestUpgradeReview702ConfigDeletionWinsOverUpdateFailure(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		installExit: 1, deleteConfigAfter: true})
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonConfigChanged {
+		t.Errorf("reason %q, want %q", got, upgradeReasonConfigChanged)
+	}
+	reasons := upgradeReview702Reasons(t, h)
+	for _, want := range []string{upgradeReasonUpdateFailed, upgradeReasonConfigChanged} {
+		if !slices.Contains(reasons, want) {
+			t.Errorf("the record does not name %q: %v", want, reasons)
+		}
+	}
+}
+
+// TestUpgradeReview702UnreadableConfigIsNotAChange: a configuration file that exists but cannot be
+// read is not a configuration change: the run cannot tell whether it changed, so it is a post-check
+// finding of its own. An update failure keeps its own exit code, and the record must not claim
+// config_changed.
 func TestUpgradeReview702UnreadableConfigIsNotAChange(t *testing.T) {
 	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
 		installExit: 1, unreadableConfigAfter: true})
@@ -320,8 +346,11 @@ func TestUpgradeReview702IncompletePromotionIsChecked(t *testing.T) {
 	t.Run("the pointer names another runtime", func(t *testing.T) {
 		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
 			produceRuntime: true, installExit: 3})
-		if code := h.run("--release-dir", h.release); code != upgradeExitUpdateFailed {
-			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitUpdateFailed, h.recordOf(t))
+		if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+			t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
 		}
 		if got := h.recordOf(t).Reasons; !slices.Contains(got, upgradeReasonRuntimeMismatch) {
 			t.Errorf("the pointer does not name the runtime the update promoted, so it is a mismatch: %v", got)

@@ -238,10 +238,11 @@ func (r *upgradeRunState) execute() (int, string) {
 	return r.outcome(updateCode, updateReason, post)
 }
 
-// outcome is the run's final status and reason, in the decided order: a configuration change the
-// post-check found outranks a failed update, which in turn outranks the post-check's other
-// findings. Every reason that applied is kept in the record, so a run that both failed to update
-// and changed the configuration names both.
+// outcome is the run's final status and reason, in the decided order: the post-check's own findings
+// outrank a failed update, which in turn outranks its other findings. A configuration change comes
+// first, then the pointer-and-runtime mismatch the post-check exists to catch; both are exit 4, so a
+// failed update can never hide either. Every reason that applied is kept in the record, so a run
+// that both failed to update and changed the configuration names both.
 func (r *upgradeRunState) outcome(updateCode int, updateReason string, post upgradePostCheck) (int, string) {
 	if updateCode != 0 {
 		r.reasons = append(r.reasons, updateReason)
@@ -250,6 +251,8 @@ func (r *upgradeRunState) outcome(updateCode int, updateReason string, post upgr
 	switch {
 	case post.configChanged:
 		return upgradeExitPostCheck, upgradeReasonConfigChanged
+	case post.mismatch:
+		return upgradeExitPostCheck, upgradeReasonRuntimeMismatch
 	case updateCode != 0:
 		return updateCode, updateReason
 	case post.code != 0:

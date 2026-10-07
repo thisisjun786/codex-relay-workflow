@@ -436,6 +436,11 @@ type upgradePostCheck struct {
 	reason        string
 	reasons       []string
 	configChanged bool
+	// mismatch reports that the post-check found the pointer and the runtime in service disagreeing
+	// with the runtime the update installed. It is carried apart from the other findings because the
+	// decided order lets it outrank a failed update, which a service that merely came up slowly does
+	// not.
+	mismatch bool
 }
 
 // postCheck is step 8: the pointer must name the runtime the update installed and that runtime's
@@ -448,12 +453,23 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 	case err != nil:
 		r.note(upgradeStepPostCheck, nil, 1, "", err)
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		post.mismatch = true
 	case r.promoted && r.installed == "":
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update named no runtime it installed, so nothing shows the pointer names what it installed"))
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		post.mismatch = true
 	case r.promoted && !upgradeSameDirectory(pointer, r.installed):
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		post.mismatch = true
+	case r.promoted && r.startFrom != "" && !upgradeSameDirectory(r.startFrom, r.installed):
+		// The pointer names the runtime the update installed, but the service did not come back on it:
+		// the restart fell back to the runtime the pointer named before the stop. A pointer that names
+		// one runtime while the service runs another is the disagreement this step exists to catch, so
+		// the recovery is recorded as a mismatch rather than a success.
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the service came back on %s, not %s, the runtime the update installed", r.startFrom, r.installed))
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		post.mismatch = true
 	default:
 		// The version is compared only against a runtime the update put in service. An update that
 		// did not land leaves the pointer on the runtime it replaced, whose version is the previous
@@ -464,6 +480,7 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 			if err != nil || code != 0 || got != r.version {
 				r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
 				post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+				post.mismatch = true
 			}
 		}
 	}
@@ -474,11 +491,15 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 	if runtime != "" && !r.waitForService(runtime) {
 		post.reasons = append(post.reasons, upgradeReasonPostCheck)
 	}
-	// A configuration file the post-check could not read is not a configuration change: only a
-	// digest that was read and differs is. An unreadable one is a post-check finding of its own, so
-	// it never takes the exit code away from an update failure that would otherwise report it.
+	// A configuration file the snapshot read and that is now gone is a change the run can state
+	// exactly. A file that still exists but cannot be read is not a change: the run cannot tell
+	// whether it differs, so that is a post-check finding of its own rather than a claimed change.
 	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
 	switch {
+	case errors.Is(err, os.ErrNotExist):
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file is gone"))
+		post.reasons = append(post.reasons, upgradeReasonConfigChanged)
+		post.configChanged = true
 	case err != nil:
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file could not be read: %w", err))
 		post.reasons = append(post.reasons, upgradeReasonPostCheck)
