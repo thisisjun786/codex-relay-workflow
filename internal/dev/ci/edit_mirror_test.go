@@ -926,8 +926,9 @@ func editMirrorExpectEqual(t *testing.T, label string, got, want any) {
 
 // A gui job concludes success without verifying the screens when gui_paths.sh answered
 // changed=false: the job ends before Node is installed, its four screen steps are skipped, and its
-// check still reads success. A body-only edit after such a run must run the screens in full, so the
-// gui job is mirrored only when the same newest attempt concluded all four screen steps as success.
+// check still reads success. A body-only edit after such a run must not carry that success forward,
+// so the gui job is mirrored only when the same newest attempt concluded all four screen steps as
+// success.
 // The four names are ci.yml's; the step-name test below holds the script's list to them.
 func TestEditMirror_the_gui_job_is_mirrored_only_when_the_screens_were_verified(t *testing.T) {
 	run := editMirrorRun(1111, "2026-10-06T06:00:00Z")

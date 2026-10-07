@@ -109,8 +109,11 @@ own test step also concluded `success`, so [light mode](#the-temporary-light-mod
 untested leg forward. The `gui` job is mirrored only when all four of its screen steps concluded
 `success` in the same newest attempt: a `gui` job that concluded success with the screens skipped
 (`gui_paths.sh` answered `changed=false`, so the job ended before Node was installed) is not
-mirrored, and the screens run in full. The four names the mirror reads are ci.yml's gui job step
-names, and a test holds the two lists to each other, so a rename on either side is red.
+mirrored. The job then makes its own changed-path decision again, and because the paths that
+decision watches are the same on a body-only edit it answers `changed=false` again and the job
+ends without installing Node: refusing the mirror does not run the screens, it stops the job from
+claiming screen evidence this head does not have. The four names the mirror reads are ci.yml's gui
+job step names, and a test holds the two lists to each other, so a rename on either side is red.
 
 Every later step of those jobs carries `steps.mirror.outputs.mirrored != 'true'`, joined with any
 condition the step already had. The full checkout is one of them, and the sparse checkout of
@@ -225,8 +228,9 @@ the five `go-product` test legs can be light. It takes the same [body-only edit
 mirror](#the-body-only-edit-mirror) pair as the other four jobs, so a mirrored run stands the job
 down only when the newest attempt of that run's `gui` job concluded all four screen steps as
 `success` on the same head, which is the same-head screen evidence the mirror rule requires. A
-`gui` job that concluded success with the screens skipped is not mirrored, and the screens run in
-full.
+`gui` job that concluded success with the screens skipped is not mirrored: the job repeats its own
+changed-path decision and, with no watched path changed, ends without installing Node, so it
+claims no screen evidence rather than carrying a run that never verified them.
 
 ## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
