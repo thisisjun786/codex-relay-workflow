@@ -308,6 +308,48 @@ func pythonLiteralValue(python, literal string) (string, error) {
 	return string(out), nil
 }
 
+// c7 d2 (CRW-908 generation 2): the escape-form programs are covered too. shellWritePrograms emits, for a
+// destination with a slash, one program per single-character escape Python accepts for the slash; each one
+// must evaluate in Python to the destination, because the escape IS the literal body and its leading
+// backslash is what Python decodes to the slash. Escaping that backslash again would make Python read the
+// escape's letters as the path, which is the regression the review found.
+func TestShellwriteEscapeFormsEvaluateInPython(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH, so the escape forms cannot be evaluated here")
+	}
+	dest := "/m/a"
+	wantEscapes := map[string]bool{"\\x2f": false, "\\u002f": false, "\\057": false, "\\N{SOLIDUS}": false}
+	seen := 0
+	for _, command := range shellWritePrograms(dest) {
+		if command.interpreter != "python3" || !strings.Contains(command.program, "open(") {
+			continue
+		}
+		for escape := range wantEscapes {
+			if !strings.Contains(command.program, escape) {
+				continue
+			}
+			seen++
+			wantEscapes[escape] = true
+			got, err := pythonProgramDests(python, command.program)
+			if err != nil {
+				t.Fatalf("the escape program %q does not run in Python: %v", command.program, err)
+			}
+			if len(got) != 1 || got[0] != dest {
+				t.Fatalf("the escape program %q names %q, want [%s]", command.program, got, dest)
+			}
+		}
+	}
+	if seen != len(wantEscapes) {
+		t.Fatalf("%d escape programs were emitted, want %d: %v", seen, len(wantEscapes), wantEscapes)
+	}
+	for escape, found := range wantEscapes {
+		if !found {
+			t.Errorf("the escape %q has no program", escape)
+		}
+	}
+}
+
 // c7 d1 (CRW-908 generation 2): the generator emits BOTH the separated and the attached spelling of the
 // interpreter flag, exactly as it did before the program list was restructured: `python3 -c <program>`
 // and `python3 -c<program>`, `node -e <program>` and `node -e<program>`, and `node --eval <program>`,

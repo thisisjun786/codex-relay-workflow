@@ -118,6 +118,9 @@ func CheckCase(target Target, c Case) (problem string) {
 
 // joinProblem folds a cleanup problem into a replay's own problem, so neither hides the other.
 func joinProblem(problem, cleanup string) string {
+	if cleanup == "" {
+		return problem
+	}
 	if problem == "" {
 		return cleanup
 	}

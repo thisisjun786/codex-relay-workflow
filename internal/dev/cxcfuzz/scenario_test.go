@@ -340,6 +340,68 @@ func TestScenariosRemoveTheRootOfARefusedBuildWithASealedDirectory(t *testing.T)
 	}
 }
 
+// c7 d2 (CRW-908 generation 2): the caller-level cleanup and error preservation is exercised, not only
+// the direct Scenarios call. A RemovalError must survive refusedOutcome and joinCleanup and reach the
+// caller as itself, and the shrinker must keep the first one it sees, because the defects this correction
+// addresses were exactly these upper layers swallowing the removal failure.
+func TestRemovalErrorReachesTheCaller(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(t.TempDir(), "base")
+	if err := os.Mkdir(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	removal := RemovalError{Root: root, Refused: errors.New("a link left the root"), Err: errors.New("permission denied")}
+	// A refusal that also failed to remove its root is answered as itself, not as a refused case.
+	if got := refusedOutcome(removal); !errors.As(got, new(RemovalError)) {
+		t.Fatalf("refusedOutcome turned a RemovalError into %v", got)
+	}
+	// A cleanup failure folded into a run's error is kept, alone or beside another error.
+	if got := joinCleanup(nil, removal); !errors.As(got, new(RemovalError)) {
+		t.Fatalf("joinCleanup dropped a removal failure: %v", got)
+	}
+	if got := joinCleanup(errors.New("a worker died"), removal); !errors.As(got, new(RemovalError)) {
+		t.Fatalf("joinCleanup dropped a removal failure beside another error: %v", got)
+	}
+	if got := joinCleanup(removal, nil); !errors.As(got, new(RemovalError)) {
+		t.Fatalf("joinCleanup dropped the removal failure it was given first: %v", got)
+	}
+	// A cleanup that succeeds adds nothing.
+	if got := joinCleanup(nil, nil); got != nil {
+		t.Fatalf("joinCleanup invented an error: %v", got)
+	}
+	// A deferred cleanup failure is wrapped as a removal failure, so a caller that preserves removal
+	// failures preserves it too.
+	sealed := filepath.Join(base, "sealed")
+	if err := os.Mkdir(sealed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(base, 0o700) }()
+	probe := filepath.Join(base, "probe")
+	privileged := os.Remove(probe) == nil
+	if !privileged {
+		if err := CleanupCaseRoot(sealed); !errors.As(err, new(RemovalError)) {
+			t.Fatalf("a deferred cleanup failure was not a RemovalError: %v", err)
+		}
+	}
+}
+
+// c7 d2 (CRW-908 generation 2): CheckCase folds a cleanup problem into the replay problem instead of
+// dropping it, so a case root that outlived replay is reported to the caller.
+func TestCheckCaseReportsACleanupProblem(t *testing.T) {
+	if got := joinProblem("", "the case root was not removed"); got != "the case root was not removed" {
+		t.Fatalf("a cleanup problem alone was %q", got)
+	}
+	if got := joinProblem("go x, oracle y", "the case root was not removed"); !strings.Contains(got, "go x, oracle y") || !strings.Contains(got, "was not removed") {
+		t.Fatalf("a cleanup problem hid or replaced the replay problem: %q", got)
+	}
+	if got := joinProblem("go x, oracle y", ""); got != "go x, oracle y" {
+		t.Fatalf("an empty cleanup problem changed the replay problem: %q", got)
+	}
+}
+
 // removeSealedForTest makes a test's own base removable again, so a red run does not leave a sealed
 // directory behind for the test framework to trip over.
 func removeSealedForTest(base string) error {
@@ -358,20 +420,36 @@ func removeSealedForTest(base string) error {
 // c7 d1 (CRW-908 generation 2): a removal that still fails is its own error that names the root and is
 // not a refused case. The base denies the write that removing the root itself needs, so the removal
 // fails after the helper has already made everything under the root removable; the error must name the
-// root and must not be a plain refusal a target may run on.
+// root and must not be a plain refusal a target may run on. A process that may bypass the base's mode
+// (root, or CAP_DAC_OVERRIDE) removes the root anyway, which is the correct outcome, so the test proves
+// the precondition first and skips rather than failing where the mode cannot deny the removal.
 func TestScenariosRemovalFailureIsItsOwnError(t *testing.T) {
 	base, root := caseRoot(t)
 	if err := PrepareRoot(root); err != nil {
 		t.Fatal(err)
 	}
+	// The precondition: a directory that the base's mode would keep from being removed. It is made while
+	// the base is still writable, so the only question is whether this process may remove it afterwards.
+	probe := filepath.Join(base, "probe")
+	if err := os.Mkdir(probe, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(base, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	// Restore the base before the test framework removes it.
 	defer func() { _ = os.Chmod(base, 0o700) }()
+	privileged := os.Remove(probe) == nil
 	_, err := Scenarios(root, fsInput(fsEntry("escape", "symlink", "", "../../outside", 0)))
 	if err == nil {
 		t.Fatal("a link that leaves the case root was materialised")
+	}
+	if privileged {
+		// The mode cannot deny the removal here, so the root was removed and the confinement error is
+		// the whole answer. Only the guarantee that the root is gone is checkable.
+		if _, statErr := os.Stat(root); statErr == nil {
+			t.Fatalf("a privileged removal left the case root %s behind", root)
+		}
+		t.Skip("this process may bypass the base's mode, so the removal was not denied")
 	}
 	var removal RemovalError
 	if !errors.As(err, &removal) {
