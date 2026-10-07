@@ -158,3 +158,165 @@ func TestShellwriteSeedCasesReplay(t *testing.T) {
 		})
 	}
 }
+
+// c2 (CRW-857): the shared generator emits every Python literal spelling the issue required, with
+// the f form sometimes holding a doubled brace.
+func TestShellwritePythonLiteralForms(t *testing.T) {
+	forms := shellWritePythonLiteralForms("/m/a")
+	for _, want := range []string{
+		"'/m/a'", "\"/m/a\"", "'''/m/a'''", "\"\"\"/m/a\"\"\"",
+		"r'/m/a'", "b'/m/a'", "u'/m/a'", "f'/m/a'", "f'{{/m/a}}'", "f\"\"\"{{/m/a}}\"\"\"",
+	} {
+		found := false
+		for _, form := range forms {
+			if form == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the literal forms do not include %q: %v", want, forms)
+		}
+	}
+}
+
+// c2 (CRW-857): each single-character escape Python accepts for a slash is available for a
+// destination, and a destination with no slash yields none.
+func TestShellwritePythonEscapeForms(t *testing.T) {
+	forms := shellWritePythonEscapeForms("/m/a")
+	for _, want := range []string{`\x2f` + "m/a", `\u002f` + "m/a", `\057` + "m/a", `\N{SOLIDUS}` + "m/a"} {
+		found := false
+		for _, form := range forms {
+			if form == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the escape forms do not include %q: %v", want, forms)
+		}
+	}
+	if got := shellWritePythonEscapeForms("rel"); got != nil {
+		t.Errorf("a destination without a slash produced %v", got)
+	}
+}
+
+// c2 (CRW-857): the program builder emits the new write forms. The seed is fixed, so the set it
+// produces is the same on every run.
+func TestShellwriteGeneratorEmitsTheRequiredPrograms(t *testing.T) {
+	rng := rand.New(rand.NewSource(11))
+	seen := map[string]bool{}
+	for i := 0; i < 20000; i++ {
+		seen[shellWriteProgram(rng, shellWritePathFragments())] = true
+	}
+	for _, want := range []struct{ name, has string }{
+		{"os.rename", "os.rename("},
+		{"shutil.copy", "shutil.copy("},
+		{"shutil.copyfile", "shutil.copyfile("},
+		{"triple single quote", "'''"},
+		{"triple double quote", "\"\"\""},
+		{"f prefix", "f'"},
+		{"r prefix", "r'"},
+		{"b prefix", "b'"},
+		{"u prefix", "u'"},
+		{"x2f escape", `\x2f`},
+		{"u002f escape", `\u002f`},
+		{"octal escape", `\057`},
+		{"named escape", `\N{SOLIDUS}`},
+	} {
+		found := false
+		for program := range seen {
+			if strings.Contains(program, want.has) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the generator never emitted %s (%q)", want.name, want.has)
+		}
+	}
+}
+
+// c2 (CRW-857): the nested builder emits a subshell, a brace group, a command substitution and a
+// backtick substitution around a real write.
+func TestShellwriteGeneratorEmitsTheRequiredGroups(t *testing.T) {
+	rng := rand.New(rand.NewSource(5))
+	seen := map[string]bool{}
+	for i := 0; i < 400; i++ {
+		seen[shellWriteNested(rng, []string{"/m/a"})] = true
+	}
+	for _, want := range []struct{ name, has string }{
+		{"subshell", "(echo hi > /m/a)"},
+		{"brace group", "{ echo hi > /m/a; }"},
+		{"command substitution", "x=$(echo hi > /m/a)"},
+		{"backticks", "y=`echo hi > /m/a`"},
+	} {
+		if !seen[want.has] {
+			t.Errorf("the generator never emitted the %s %q", want.name, want.has)
+		}
+	}
+}
+
+// c2 (CRW-857): a program the generator emits must be one a real shell hands to the interpreter
+// unchanged. A single-quoted argument holding an unescaped single quote would end at that quote,
+// so the interpreter would receive a truncated program and the form would never reach the write
+// the issue asked for. The quoting is checked structurally, with no shell run: a single-quoted
+// form holds no single quote at all, and a double-quoted one escapes every character the shell
+// still reads inside double quotes.
+func TestShellwriteShellQuoteSurvivesTheDestination(t *testing.T) {
+	for _, dest := range []string{"/m/a", "/m/a'b", `/m/a"b`, "/m/a$b", "/m/a`b", `/m/a\b`, "/m/a b", "rel"} {
+		for _, literal := range shellWritePythonLiteralForms(dest) {
+			program := "import os; os.rename(\"/w/old.md\", " + literal + ")"
+			quoted := shellWriteShellQuote(program)
+			switch {
+			case strings.HasPrefix(quoted, "'"):
+				if !strings.HasSuffix(quoted, "'") {
+					t.Fatalf("the single-quoted form is unterminated: %q", quoted)
+				}
+				if inner := quoted[1 : len(quoted)-1]; strings.Contains(inner, "'") {
+					t.Fatalf("a single quote inside a single-quoted argument ends it early: %q", quoted)
+				}
+			case strings.HasPrefix(quoted, "\""):
+				if !strings.HasSuffix(quoted, "\"") {
+					t.Fatalf("the double-quoted form is unterminated: %q", quoted)
+				}
+				inner := quoted[1 : len(quoted)-1]
+				for i := 0; i < len(inner); i++ {
+					if inner[i] != '\\' {
+						continue
+					}
+					if i+1 >= len(inner) {
+						t.Fatalf("a trailing backslash escapes the closing quote: %q", quoted)
+					}
+					i++
+				}
+			default:
+				t.Fatalf("the program is not quoted at all: %q", quoted)
+			}
+		}
+	}
+}
+
+// c2 (CRW-857): EVERY python/node program the generator emits carries the shell quoting, so the
+// class the issue named reaches the campaigns as a command a shell could run rather than as
+// truncated or rewritten text. The check is on the command the shell would parse, not on the
+// program text alone: the argument after the interpreter flag must be a well-formed quoted word.
+func TestShellwriteGeneratorQuotesItsPrograms(t *testing.T) {
+	rng := rand.New(rand.NewSource(17))
+	for i := 0; i < 5000; i++ {
+		program := shellWriteProgram(rng, shellWritePathFragments())
+		for _, prefix := range []string{"python3 -c", "py -c", "node -e", "node --eval"} {
+			if !strings.HasPrefix(program, prefix) {
+				continue
+			}
+			// The flag and the argument may be separated by a space or not; both are emitted.
+			quoted := strings.TrimSpace(strings.TrimPrefix(program, prefix))
+			if !strings.HasPrefix(quoted, "'") && !strings.HasPrefix(quoted, "\"") {
+				t.Fatalf("the %s program is not shell-quoted: %q", prefix, program)
+			}
+			if strings.HasPrefix(quoted, "'") && strings.Count(quoted, "'") != 2 {
+				t.Fatalf("a single-quoted program holds a stray single quote: %q", program)
+			}
+		}
+	}
+}

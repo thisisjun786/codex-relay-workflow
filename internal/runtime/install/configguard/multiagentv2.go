@@ -189,9 +189,13 @@ func SetMultiAgentV2State(deps MultiAgentV2Deps, version MultiAgentVersion) (*Mu
 			return nil, err
 		}
 		defer lock.Release()
-		// target is the file the lock guards: the caller's path with a symlink followed, so two
-		// writers reaching one file through different spellings share one lock.
-		path = lock.Target
+		// The lock is keyed by lock.Target, the caller's path with a symlink followed, so two writers
+		// reaching one file through different spellings share one lock. The content path stays the
+		// caller's (CRW-891), unlike the other writers of config.toml: the runner below may atomically
+		// replace the caller's pathname, and the post-image read and the repair publish must then
+		// follow the path that names the live config rather than the target the link pointed at when
+		// the lock was taken. When that replacement happened the lock guarded the old target while the
+		// repair went to the caller's path; the result reports the state read through that path.
 	}
 	pre, _, err := activationReadFile(path)
 	if err != nil {
