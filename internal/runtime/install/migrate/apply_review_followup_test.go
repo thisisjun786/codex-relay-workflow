@@ -7,6 +7,7 @@ package migrate
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -243,7 +244,6 @@ func TestMigrateApplyReviewFollowupBoundsTheRecordNotTheObject(t *testing.T) {
 	}
 }
 
-// planItems wraps a plan's items as an ApplyResult so apItem can find one by source.
 func planItems(p *Plan) []ApplyItem {
 	items := make([]ApplyItem, len(p.Items))
 	for i, it := range p.Items {
@@ -277,4 +277,49 @@ func TestMigrateApplyReviewFollowupOrdersAChainOfReceipts(t *testing.T) {
 	}
 }
 
-// planItems wraps a plan's items as an ApplyResult so apItem can find one by source.
+// R1f: the key a cycle gets is the plan's own, not the order a Go map happened to hand the records over. Two records that
+// name each other cannot be ordered against one another, but a rerun of the same plan must still publish them the same
+// way, or the same input has two orders and neither is the one the report describes.
+func TestMigrateApplyReviewFollowupOrdersACycleTheSameWayOnEveryRun(t *testing.T) {
+	deps := map[string][]string{"a.json": {"b.json"}, "b.json": {"a.json"}}
+	want := migrateReviewFollowupDepths(deps)
+	for i := 0; i < 200; i++ {
+		if got := migrateReviewFollowupDepths(deps); !maps.Equal(got, want) {
+			t.Fatalf("the same plan must give the same key on every run: %v, then %v", want, got)
+		}
+	}
+	// A record that names nothing is still 0, and a chain is still one longer than what it names.
+	chain := map[string][]string{"a.json": {"b.json"}, "b.json": {"c.json"}}
+	if got := migrateReviewFollowupDepths(chain); got["c.json"] != 0 || got["b.json"] != 1 || got["a.json"] != 2 {
+		t.Errorf("a chain must keep its depth: %v", got)
+	}
+}
+
+// R1g: the receipt reader takes a record's bytes through the UTF-8 normalisation it uses (source.DecodeUTF8, as
+// gate/js.go's readFile and decodeJSON do), so a manifest path holding a byte that is not UTF-8 names the plan file whose
+// name the reader's own text holds. The sequence is a truncated three-byte run, which the reader's rule (WHATWG) turns
+// into one replacement character where Go's own decode of the raw bytes makes two: judging the raw bytes would then name
+// a file that is not in the plan, and the record it should refer to would keep plan order and publish after the receipt
+// that refers to it.
+func TestMigrateApplyReviewFollowupReadsAPathAsTheReceiptReaderDoes(t *testing.T) {
+	_, r, p := apPlan(t, map[string]string{
+		// The receipt names the identity file through the truncated run, and the plan holds the name the reader's own
+		// text gives it. b.json is a plain record beside the receipt, so plan order puts it before the artifact: only a
+		// reference the reader itself would resolve lifts the artifact ahead of it.
+		"evidence/s/a.json":                "{\"artifactManifest\":[{\"path\":\"z/identit" + string([]byte{0xe2, 0x82}) + "y.json\",\"kind\":\"artifact-identity\"}]}",
+		"evidence/s/b.json":                "{\"plain\":true}",
+		"evidence/s/z/identit\uFFFDy.json": "i",
+	}, nil)
+	pub, leaves := migrateApplyReviewRenames(t)
+	if _, err := applyWith(r, p, pub); err != nil {
+		t.Fatal(err)
+	}
+	got := leaves()
+	identity, plain := slices.Index(got, "identit\uFFFDy.json"), slices.Index(got, "b.json")
+	if identity < 0 || plain < 0 {
+		t.Fatalf("both records must publish: %v", got)
+	}
+	if identity > plain {
+		t.Errorf("the reader's own text names the identity file, so it must publish before a plain record: %v", got)
+	}
+}

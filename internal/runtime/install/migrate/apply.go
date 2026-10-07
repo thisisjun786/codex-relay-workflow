@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -440,8 +441,16 @@ func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]boo
 // migrateReviewFollowupDepths is the longest reference chain below each record: 0 for a record that names nothing, and one
 // more than the deepest record it names. A record another receipt names is still a referrer when it is itself a receipt, so
 // without this a chain of receipts would keep plan order and a receipt could publish before the artifact it names
-// (CRW-879). A cycle is broken at the record already on the current path, which can only keep the order plan order gave.
+// (CRW-879). The walk starts from the records in sorted order, so the same plan gives the same keys on every run: a walk
+// driven by Go's map order cached the first depth it reached for a record on a cycle, and two runs of one plan then gave
+// that cycle two different keys and published it in two orders. A cycle is broken at the record already on the current
+// path, so a record that names another keeps one key per cycle and the order stays the plan's.
 func migrateReviewFollowupDepths(deps map[string][]string) map[string]int {
+	sources := make([]string, 0, len(deps))
+	for source := range deps {
+		sources = append(sources, source)
+	}
+	slices.Sort(sources)
 	depths := make(map[string]int, len(deps))
 	var walk func(source string, onPath map[string]bool) int
 	walk = func(source string, onPath map[string]bool) int {
@@ -462,7 +471,7 @@ func migrateReviewFollowupDepths(deps map[string][]string) map[string]int {
 		depths[source] = depth
 		return depth
 	}
-	for source := range deps {
+	for _, source := range sources {
 		walk(source, map[string]bool{})
 	}
 	return depths
@@ -512,16 +521,21 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 // object with a string path and kind names no dependency, and an array of such entries is still a receipt, so a receipt
 // this run cannot read in full keeps the referrer's place instead of falling back to plan order.
 func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
-	limited := &io.LimitedReader{R: r, N: limit + 1}
-	dec := json.NewDecoder(limited)
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil || int64(len(data)) > limit {
+		return nil, false
+	}
+	// The record is read through the receipt reader's own UTF-8 normalisation (source.DecodeUTF8, as gate/js.go's
+	// readFile and decodeJSON take a record's bytes), so a byte that is not UTF-8 becomes the replacement text the
+	// reader itself sees, and a manifest path holding one names the plan file the reader's text holds. Decoding the raw
+	// bytes instead would drop that reference, and the record it names would keep plan order and publish after the
+	// receipt that refers to it (CRW-879).
+	dec := json.NewDecoder(strings.NewReader(source.DecodeUTF8(data)))
 	var object map[string]json.RawMessage
 	if dec.Decode(&object) != nil {
 		return nil, false
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return nil, false
-	}
-	if read := limit + 1 - limited.N; read > limit {
 		return nil, false
 	}
 	raw, present := object["artifactManifest"]
