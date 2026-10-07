@@ -1074,6 +1074,111 @@ func TestPumpReview776LegacyAcceptedWithAChangedBodyIsNotCompleted(t *testing.T)
 	}
 }
 
+// An unsettled pre-change record whose names are a prefix of today's queue is still found, so an
+// attempt that may already have gone is reconciled instead of re-sent under a new id.
+func TestPumpReview776LegacyPrefixNameSetIsReconciled(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	// The upgrade left an unsettled attempt for [a.txt] alone; b.txt arrived afterwards.
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "b-body")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("a-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	reconciled := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
+			reconciled = true
+		}
+		if (call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend) && deliverSendRequestIDOf(t, call) == newID {
+			t.Errorf("the round sent under the new id %q instead of reconciling the prefix attempt", newID)
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the prefix attempt %q was not reconciled: %v", oldID, deliverSendToolsOf(t, log))
+	}
+}
+
+// A legacy pin taken for an unsettled record whose text the ledger no longer matches carries no
+// per-member digest, so an accepted reconciliation cannot complete a notice nobody sent.
+func TestPumpReview776LegacyPinCarriesNoDigestForAChangedBody(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "outcome_unknown"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("the old body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1")
+	if !ok {
+		t.Fatal("the unsettled record was not pinned")
+	}
+	if legacy, _ := pin["legacy"].(bool); !legacy {
+		t.Errorf("the pin is not marked legacy: %v", pin)
+	}
+	if sha, present := pin["sha256"]; present {
+		if m, _ := sha.(map[string]any); len(m) != 0 {
+			t.Errorf("a legacy pin carries per-member digests it cannot justify: %v", m)
+		}
+	}
+}
+
+// A move never deletes a notice the producer wrote after the round read the file: the queue name is
+// taken aside in one atomic rename and only this move's own aside name is ever removed.
+func TestPumpReview776MoveNeverDeletesANewerNotice(t *testing.T) {
+	dir := t.TempDir()
+	destDir := filepath.Join(dir, "dest")
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")
+	if err := os.WriteFile(source, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The round read "old"; the producer then replaces the name with a newer notice before the move.
+	if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, moved, err := pumpReview776QueueMoveVerified(dir, "aaaaaaaaaaaaaaaa.txt", destDir, pumpReview776TestDigest("old")); err != nil || moved {
+		t.Fatalf("a replaced notice moved: moved=%v err=%v", moved, err)
+	}
+	if raw, err := os.ReadFile(source); err != nil || string(raw) != "new" {
+		t.Errorf("the producer's newer notice was disturbed: %q %v", raw, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if len(names) != 2 || names[0] != "aaaaaaaaaaaaaaaa.txt" || names[1] != "dest" {
+		t.Errorf("the queue holds %v, want the notice and dest/ only", names)
+	}
+}
+
 // A move never replaces an entry that is already there: a second same-named notice takes a name of
 // its own and the earlier one survives untouched.
 func TestPumpReview776MoveNeverReplacesAnExistingEntry(t *testing.T) {
