@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // The seams every signal reads through: package variables, so this issue adds no field to a type
@@ -276,6 +275,30 @@ func capacityWaitingFor(ctx context.Context, e *Env, cfg *Config, plan, zoneReas
 	return out, nil
 }
 
+// capacityWaitingNodeIDs is the node ids a reading counts as waiting: the ready nodes and the nodes
+// deferred for want of a slot. The branch reading judges readiness by node id, and it takes these ids
+// from the pass that answered for its own plan revision or, when that pass answered for another one,
+// from its own reading of the snapshot, so the same extraction serves both.
+func capacityWaitingNodeIDs(reading dagsched.Reading) []string {
+	nodes := map[string]struct{}{}
+	for _, node := range reading.Ready {
+		if node.NodeID != "" {
+			nodes[node.NodeID] = struct{}{}
+		}
+	}
+	for _, node := range reading.Nodes {
+		if node.Reason == capacityDeferNoCapacity && node.NodeID != "" {
+			nodes[node.NodeID] = struct{}{}
+		}
+	}
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // capacityZoneReason reads the store's DAG zone tables, read-only and without repairing anything, and
 // returns why a branch reading cannot be measured: "" when every table the reading needs is present,
 // otherwise the reason a store that predates the zone — or one an interrupted install left partial —
@@ -342,14 +365,17 @@ func capacityZoneFailure(stdout []byte) bool {
 }
 
 // capacityReceiptWaitFor reads the relay store read-only: the median and count of the acknowledged
-// deliveries that reached one parent in the window, leaving out the interrupted ones.
+// deliveries that reached one parent in the window, leaving out the interrupted ones. The store is
+// opened through the relay-read helper, which resolves the path the way SQLite does, so a configured
+// state spelling that carries a symlink or a .. component reads the same store dag-ready and the
+// branch reading read rather than another one a cleaned path would name (CRW-865).
 func capacityReceiptWaitFor(ctx context.Context, stateDir, parent string, since time.Time) (CapacityReceiptWait, error) {
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(stateDir, "relay.sqlite3")+"?mode=ro")
+	handle, err := relayReadOpenStore(ctx, stateDir)
 	if err != nil {
 		return CapacityReceiptWait{}, err
 	}
-	defer db.Close()
-	rows, err := db.QueryContext(ctx,
+	defer handle.Close()
+	rows, err := handle.QueryContext(ctx,
 		"SELECT d.created_at, a.ack_at FROM deliveries d"+
 			" JOIN acks a ON a.event_id = d.event_id"+
 			" JOIN events e ON e.event_id = d.event_id"+

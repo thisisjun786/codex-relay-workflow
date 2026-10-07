@@ -87,6 +87,14 @@ func capacityReview779ChainLive() []string {
 // capacityReview779Relationship is the relationship the fixture binds one node to.
 func capacityReview779Relationship(node string) string { return "rel-" + node }
 
+// capacityReview779ProjectParent registers one live parent for the fixture's project. The relay's own
+// readiness judges a node with no registered parent as defer:ownership_unverified, so a test that reads
+// the ready set from the store rather than from the fake relay registers the parent the release needs.
+func capacityReview779ProjectParent(f *branchFixture) {
+	f.exec("INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, created_at, updated_at) VALUES ('binding-parent','parent','project',?,'task-parent','host',NULL,NULL,'active',1,?,?)",
+		branchTestProject, branchTestStamp(0), branchTestStamp(0))
+}
+
 // capacityReview779MergedMark records the parent's merged mark on one generation of a node's event,
 // which is what the relay's integration judgement asks for beside a contained observation.
 func capacityReview779MergedMark(f *branchFixture, node string, generation int) {
@@ -217,15 +225,16 @@ func TestCapacityReview779OneSnapshot(t *testing.T) {
 	})
 }
 
-// C1/C2: the reading reports the plan the snapshot holds, at its head. The ready pass answers for
-// revision 1, and a revision that cancels D lands after the pass and before the snapshot. The reading
-// must report the graph it read (D gone, so C+D is not a bundle and C alone is below the floor), and it
-// must not carry the pass's readiness onto a revision the pass never saw: a node the pass counted as
-// ready in a plan that no longer holds it is not evidence about the plan that does.
+// C1/C2: the reading reports the plan the snapshot holds, at its head, and reads its readiness there.
+// The ready pass answers for revision 1 with A and B both waiting; a later revision lands after the pass
+// and before the snapshot. The reading must report the graph it read and the readiness that belongs to
+// it, which is neither the pass's stale count (2) nor a blanket false (0): in both cases A is ready and
+// B waits on A, so the bundle is 1 of 2.
 func TestCapacityReview779ReadingFollowsTheSnapshotHead(t *testing.T) {
 	t.Run("the graph is the one the snapshot holds", func(t *testing.T) {
 		f := branchNewFixture(t, "CRW-1", "CRW-2")
 		capacityReview779Plan(f)
+		capacityReview779ProjectParent(f)
 		// The pass answers for revision 1; revision 2 cancels D.
 		f.passRevision = 1
 		f.revision(2)
@@ -239,16 +248,18 @@ func TestCapacityReview779ReadingFollowsTheSnapshotHead(t *testing.T) {
 		// The cancelled D is gone, so C+D is no longer a bundle and C alone is below the floor: only
 		// A+B is left. A reading that reconstructed the revision the pass answered for would still
 		// report both bundles.
-		branchWant(t, branchSummaries(branchList(t, plan)), "A+B pkg/A.go,pkg/B.go ready=0 edges=1")
+		branchWant(t, branchSummaries(branchList(t, plan)), "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
 	})
 
-	t.Run("a readiness from another revision is not carried over", func(t *testing.T) {
+	t.Run("the readiness is read at the snapshot's revision", func(t *testing.T) {
 		f := branchNewFixture(t, "CRW-1", "CRW-2")
 		capacityReview779Plan(f)
-		// The pass answers for revision 1; revision 2 pauses C, which leaves both bundles as they
-		// were. The graph is unchanged, so the only thing that could differ is the readiness: the
-		// pass counted A and B as waiting for a plan revision this reading does not hold, so the
-		// reading reports no waiting node rather than a count it cannot support.
+		capacityReview779ProjectParent(f)
+		// The pass answers for revision 1 and counts both A and B as waiting; revision 2 pauses C,
+		// which leaves both bundles as they were. The graph is unchanged, so the readiness is the only
+		// thing that can differ: the pass's stale 2 is not this revision's answer, and a node cleared
+		// to a false the reading never measured is not either. Reading it at the snapshot's revision
+		// gives the one answer the graph supports.
 		f.passRevision = 1
 		f.revision(2)
 		f.pauseNode("C")
@@ -256,7 +267,7 @@ func TestCapacityReview779ReadingFollowsTheSnapshotHead(t *testing.T) {
 		capacityReview779PassSeam(t, f)
 		plan := f.run()
 		branchWant(t, branchSummaries(branchList(t, plan)),
-			"A+B pkg/A.go,pkg/B.go ready=0 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
+			"A+B pkg/A.go,pkg/B.go ready=1 edges=1", "C+D pkg/C.go,pkg/D.go ready=0 edges=1")
 	})
 }
 

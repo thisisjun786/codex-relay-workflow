@@ -300,13 +300,18 @@ func branchAttach(ctx context.Context, e *Env, cfg *Config, stateDir, plan, verd
 			return err
 		}
 		// The plan's ready pass is a reading of its own, taken before this snapshot. When it answered for
-		// another revision its readiness describes a plan this snapshot does not hold, so the reading does
-		// not carry that count over: the graph and the marks beside it are the snapshot's, and a readiness
-		// the pass never stated for them would be a claim the reading cannot support. The nodes are then
-		// reported as not waiting, which under-states readiness rather than over-stating it; the plan's own
-		// waiting list and verdict are the pass's answer and are unchanged (CRW-865).
+		// another revision its readiness describes a plan this snapshot does not hold, so the reading
+		// re-reads the ready set from the snapshot itself: a node the pass marked ready in a graph that
+		// no longer holds it, or one cleared to a false the reading never measured, would both be claims
+		// about a plan that is not there. The re-read runs on this snapshot's querier, so the readiness
+		// and the graph come from one revision. The plan's own waiting list and verdict are the pass's
+		// answer and are unchanged (CRW-865).
 		if planRevision != 0 && planRevision != revision {
-			waitingNodes = nil
+			reading, err := (&dagsched.Scheduler{Store: st}).Ready(ctx, q, plan, dagsched.ReadyOptions{})
+			if err != nil {
+				return err
+			}
+			waitingNodes = capacityWaitingNodeIDs(reading)
 		}
 		if branchReadSeam != nil {
 			branchReadSeam()
