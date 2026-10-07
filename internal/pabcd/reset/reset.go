@@ -391,25 +391,6 @@ func resetLinkWalkSearchableName(walked []string) string {
 	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + resetLinkWalkSearchProbe
 }
 
-// resetLinkWalkPathTooLong reports whether a pathname the walk would hand to one fstatat has
-// reached the limit the kernel applies to a single pathname, where that call answers ENAMETOOLONG.
-// The walk concatenates the target's components into one pathname, while the kernel resolves the
-// candidate's short link name component by component, so a target past this limit is one the walk
-// cannot keep inside the root and must hand to the descriptor stat and the root-path judgement
-// instead of deciding it.
-func resetLinkWalkPathTooLong(path string) bool {
-	return len(path) >= resetLinkWalkPathMax()
-}
-
-// resetLinkWalkPathMax is the longest pathname one fstatat call may carry: the kernel's own PATH_MAX,
-// which is 4096 on Linux and 1024 on XNU.
-func resetLinkWalkPathMax() int {
-	if runtime.GOOS == "darwin" {
-		return 1024
-	}
-	return 4096
-}
-
 // resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point
 // is only whether the kernel may look it up, which it answers with ENOENT or EACCES.
 const resetLinkWalkSearchProbe = ".crw822searchprobe"
