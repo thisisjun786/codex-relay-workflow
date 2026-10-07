@@ -84,8 +84,13 @@ func capacityReview779MergedMark(f *branchFixture, node string, generation int) 
 // capacityReview779Observe records one observation of a named head for one node's acceptance, so a
 // test can pin that an observation of another head does not resolve the node.
 func capacityReview779Observe(f *branchFixture, node, head string, seq int, ancestor bool) {
+	capacityReview779ObserveIn(f, node, branchTestRepo, "dev", head, seq, ancestor)
+}
+
+// capacityReview779ObserveIn records one observation of a named head in a named target.
+func capacityReview779ObserveIn(f *branchFixture, node, repository, baseRef, head string, seq int, ancestor bool) {
 	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,?)",
-		"observation-"+node+"-"+branchItoa(seq), "acceptance-"+node, branchTestRepo, "dev", head, "tip",
+		"observation-"+node+"-"+repository+"-"+baseRef+"-"+branchItoa(seq), "acceptance-"+node, repository, baseRef, head, "tip",
 		dagReviewFlag(ancestor), "ancestry", seq, branchTestStamp(0))
 }
 
@@ -246,16 +251,30 @@ func TestCapacityReview779BaseRefreshedAcceptanceIsIntegrated(t *testing.T) {
 
 // C4: a node that has to land in two targets is integrated only when both contain it.
 func TestCapacityReview779IntegrationNeedsEveryTarget(t *testing.T) {
-	f := branchNewFixture(t, "CRW-1", "CRW-2")
-	// C hands its result to a second branch as well, and only the first one observed the landing:
-	// the canon asks for every target, so C is not landed and stays live.
-	capacityReview779Chain(f, "release")
-	f.accepted("C")
-	f.executed("C")
-	f.mergedMark(capacityReview779Relationship("C"))
-	f.observation("C", 1, true)
-	f.publish()
-	branchWant(t, branchSummaries(branchList(t, f.run())), capacityReview779ChainLive()...)
+	t.Run("only the first target observed", func(t *testing.T) {
+		f := branchNewFixture(t, "CRW-1", "CRW-2")
+		// C hands its result to a second branch as well, and only the first one observed the landing:
+		// the canon asks for every target, so C is not landed and stays live.
+		capacityReview779Chain(f, "release")
+		f.accepted("C")
+		f.executed("C")
+		f.mergedMark(capacityReview779Relationship("C"))
+		f.observation("C", 1, true)
+		f.publish()
+		branchWant(t, branchSummaries(branchList(t, f.run())), capacityReview779ChainLive()...)
+	})
+
+	t.Run("both targets observed", func(t *testing.T) {
+		f := branchNewFixture(t, "CRW-1", "CRW-2")
+		capacityReview779Chain(f, "release")
+		f.accepted("C")
+		f.executed("C")
+		f.mergedMark(capacityReview779Relationship("C"))
+		capacityReview779ObserveIn(f, "C", branchTestRepo, "dev", "head-C", 1, true)
+		capacityReview779ObserveIn(f, "C", branchTestRepo, "release", "head-C", 1, true)
+		f.publish()
+		branchWant(t, branchSummaries(branchList(t, f.run())), capacityReview779ChainIntegrated()...)
+	})
 }
 
 // C2: a cancelled node is not a live node, so the edge it carried joins nothing and the node it

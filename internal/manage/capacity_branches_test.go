@@ -332,15 +332,6 @@ func (f *branchFixture) observation(node string, seq int, ancestor bool) *branch
 	return f
 }
 
-// observationIn records one integration observation of a node's acceptance in a named target.
-func (f *branchFixture) observationIn(node, repository, baseRef string, seq int, ancestor bool) *branchFixture {
-	f.t.Helper()
-	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,?)",
-		"observation-"+node+"-"+repository+"-"+baseRef+"-"+branchItoa(seq), "acceptance-"+node, repository, baseRef, "head-"+node, "tip",
-		dagReviewFlag(ancestor), "ancestry", seq, branchTestStamp(0))
-	return f
-}
-
 // publish writes the relay answer and the state the judgement reads, replaces the seams, and
 // releases the store writer so the read-only open under test sees a settled file.
 func (f *branchFixture) publish() *branchFixture {
