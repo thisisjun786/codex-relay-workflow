@@ -334,7 +334,7 @@ const auditListUsage = "usage: crw manage audit list [--round R] [--issue K] [--
 // document and exits 1; a failed output write is exit 3, because a truncated document must
 // not read as a whole one.
 func auditListRun(ctx context.Context, e *Env, args []string) int {
-	if auditListHelpRequested(args) {
+	if auditOptionsHelpRequested(args) {
 		fmt.Fprintln(e.Stdout, auditListUsage)
 		return 0
 	}
@@ -374,11 +374,11 @@ func auditListRun(ctx context.Context, e *Env, args []string) int {
 	return 0
 }
 
-// auditListHelpRequested reports whether the arguments ask for the usage. Help is the first
-// argument being "help", or -h or --help standing where an option is expected. The token an
-// option consumes is a value whatever it is, so --round help names the round help and
-// --round --help is a missing value rather than a help request.
-func auditListHelpRequested(args []string) bool {
+// auditOptionsHelpRequested reports whether a subcommand's arguments ask for its usage. Help
+// is the first argument being "help", or -h or --help standing where an option is expected.
+// The token an option consumes is a value whatever it is, so --round help names the round
+// help and --round --help is a missing value rather than a help request.
+func auditOptionsHelpRequested(args []string) bool {
 	if len(args) > 0 && args[0] == "help" {
 		return true
 	}

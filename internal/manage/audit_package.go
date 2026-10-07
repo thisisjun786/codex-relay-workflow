@@ -665,11 +665,16 @@ func auditPkgParseArgs(args []string, allowed map[string]bool) (map[string]strin
 // packages the round still holds pending or failed, and writes each result back into the
 // round file before releasing the lock.
 func auditPkgRun(ctx context.Context, e *Env, args []string) int {
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" || arg == "help" {
-			fmt.Fprintln(e.Stdout, auditPkgUsage)
-			return 0
-		}
+	if auditOptionsHelpRequested(args) {
+		fmt.Fprintln(e.Stdout, auditPkgUsage)
+		return 0
+	}
+	// A -h this parse reads as a value is not a help request, so Run's own skip does not
+	// apply to it; the configuration refusal is made here, in Run's words and status, so a
+	// file this product cannot use never lets the command run on the defaults.
+	if err := coreConfigError(e); err != nil {
+		fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+		return usageExit
 	}
 	values, err := auditPkgParseArgs(args, map[string]bool{"round": true, "next": true, "head": true})
 	round := values["round"]

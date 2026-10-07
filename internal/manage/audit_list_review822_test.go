@@ -160,6 +160,97 @@ func TestAuditListReview822RepeatedOptionIsRefusedInEveryAuditParser(t *testing.
 	}
 }
 
+// C5: a real help request works under a configuration file this product cannot use, even when
+// the help word is the subcommand's own first argument. Run consults the audit command's own
+// help rule, so a nested help reaches the reader instead of being refused by Run's own
+// narrower -h/--help check, while a -h the reader consumes as a value is still refused.
+func TestAuditListReview822NestedHelpWorksWithAnUnusableConfig(t *testing.T) {
+	coreTempHome(t)
+	coreConfigAt(t, coreConfigDocument(t, "not an object"))
+
+	for _, args := range [][]string{
+		{"audit", "list", "help"},
+		{"audit", "list", "--help"},
+		{"audit", "list", "-h"},
+		{"audit", "package", "help"},
+		{"audit", "help"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != 0 {
+			t.Errorf("%q: exit %d, want 0: %s", args, code, errOut)
+		}
+		if !strings.Contains(out, "usage:") {
+			t.Errorf("%q: the usage is missing from %q", args, out)
+		}
+	}
+
+	// A -h a reader consumes as a value is not a help request, so the configuration is still
+	// refused, in Run's words and with Run's status.
+	_, _, runErr := coreRunManage(t, "audit", "round", "status", "--name", "r1")
+	if !strings.Contains(runErr, "crw manage: error:") {
+		t.Fatalf("Run did not refuse a broken file: %q", runErr)
+	}
+	for _, args := range [][]string{
+		{"audit", "list", "--round", "-h"},
+		{"audit", "list", "--issue", "-h"},
+		{"audit", "package", "--round", "-h"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != usageExit {
+			t.Errorf("%q: exit %d, want %d: %s", args, code, usageExit, errOut)
+		}
+		if out != "" {
+			t.Errorf("%q: printed %q, want no output", args, out)
+		}
+		if errOut != runErr {
+			t.Errorf("%q: said %q, want Run's message %q", args, errOut, runErr)
+		}
+	}
+}
+
+// C3: the package subcommand reads its flags the same way list does, so a help word in a
+// value slot is a value and the repeated-option refusal applies to it rather than the usage.
+func TestAuditListReview822PackageValueHelpIsNotHelp(t *testing.T) {
+	e, out, errOut := auditTestEnv(t)
+	state := auditListReview822State(t)
+	auditListReview822WriteRoundBody(t, state, "help", auditListReview822RoundBody("help"))
+
+	// The second --round takes help as its value, so the repeat is refused rather than the
+	// usage printed.
+	out.Reset()
+	errOut.Reset()
+	if code := auditRun(context.Background(), e, []string{"package", "--round=", "--round", "help"}); code != usageExit {
+		t.Errorf("package --round= --round help: exit %d, want %d: %q", code, usageExit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "given twice") {
+		t.Errorf("package said %q, want it to refuse the repeated option", errOut.String())
+	}
+	if strings.Contains(out.String(), "usage:") {
+		t.Errorf("package printed the usage instead of refusing: %q", out.String())
+	}
+
+	// A single --round help names the round help: no usage, and the command proceeds to its
+	// own work rather than answering with the usage.
+	out.Reset()
+	errOut.Reset()
+	auditRun(context.Background(), e, []string{"package", "--round", "help"})
+	if strings.Contains(out.String(), "usage:") {
+		t.Errorf("package --round help printed the usage: %q", out.String())
+	}
+
+	// A real help request still prints the usage.
+	for _, args := range [][]string{{"help"}, {"--help"}, {"-h"}} {
+		out.Reset()
+		errOut.Reset()
+		if code := auditRun(context.Background(), e, append([]string{"package"}, args...)); code != 0 {
+			t.Errorf("package %q: exit %d, want 0", args, code)
+		}
+		if !strings.Contains(out.String(), auditPkgUsage) {
+			t.Errorf("package %q printed %q, want the usage", args, out.String())
+		}
+	}
+}
+
 // auditListReview822WriteRoundBody writes one round file below a state directory with the
 // exact bytes given, so a test can put a document that is not a round there.
 func auditListReview822WriteRoundBody(t *testing.T, state, name, body string) {
