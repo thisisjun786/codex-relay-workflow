@@ -376,6 +376,18 @@ func TestGitHubPostGuardReadsAScriptBehindAWrapperOrInAList(t *testing.T) {
 	// A wrapper over the directly executed script is judged the same way.
 	githubPostWant(t, githubPostShell(t, cwd, "sudo ./post.sh"), "sudo ./post.sh", githubPostRuleUnread, "./post.sh:1")
 	githubPostWant(t, githubPostShell(t, cwd, "timeout 30 ./post.sh"), "timeout 30 ./post.sh", githubPostRuleUnread, "./post.sh:1")
+	// A grouping word, a control word and a trailing option do not hide the shell either.
+	for _, command := range []string{
+		"(bash post.sh)",
+		"{ bash post.sh; }",
+		"for i in 1; do bash post.sh; done",
+		"while true; do bash post.sh; done",
+		"bash post.sh 2>/dev/null",
+		"bash post.sh >/dev/null",
+		"bash -n post.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
 	// The controls: a wrapper over a script that names no post, commands that run no script, and a wrapper
 	// whose option makes it run nothing, stay allowed.
 	for _, command := range []string{
