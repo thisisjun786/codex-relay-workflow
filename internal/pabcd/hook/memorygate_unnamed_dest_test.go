@@ -517,6 +517,49 @@ func TestMemoryGateUnnamedDestinationImportedOpenShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationFifthPassShapes pins the shapes the fifth pre-merge evaluation and the independent
+// review found: a copy, rename or link call or value on a receiver the reader does not know (a variable holding a
+// module, a parenthesized one), a shell redirection before or after the interpreter, an imported name reused as a
+// function parameter, a lone carriage return ending an import statement, a computed or variable-held __import__, and
+// an interpolated exec argument. The controls pin the read-only interpolated open the same reading must leave allowed.
+func TestMemoryGateUnnamedDestinationFifthPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"copy on a variable holding a module", py("import shutil; s = shutil; s.copy(\"/w/a\", \"" + m + "\")")},
+		{"copy value from a parenthesized receiver", py("import shutil, os; f = (shutil).copy; f(\"/w/a\", os.path.join(\"" + root + "\", \"n.md\"))")},
+		{"rename on a variable holding a module", py("import os; o = os; o.rename(\"/w/a\", \"" + m + "\")")},
+		{"redirection before python -c", "2>/dev/null python3 -c " + shellWriteUnnamedQuote("import os; open(os.path.join(\""+root+"\", \"n.md\"), \"w\").write(\"x\")")},
+		{"leading redirection before the here-document owner", "2>/dev/null python3 <<'PY'\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
+		{"trailing redirection after the here-document owner", "python3 <<'PY' 2>/dev/null\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\").write(\"x\")\nPY"},
+		{"imported name as a function parameter", py("import io; from pathlib import Path; def f(io):\n    io.write_text(\"x\")\nf(Path(\"" + m + "\"))")},
+		{"lone carriage return after an import", py("import os\rf = open\rf(\"" + m + "\", \"w\")")},
+		{"computed __import__ name", py("m = __import__(\"sh\" + \"util\"); m.copy(\"/w/a\", \"" + m + "\")")},
+		{"variable-held __import__", py("imp = __import__; m = imp(\"shutil\"); m.copy(\"/w/a\", \"" + m + "\")")},
+		{"interpolated exec argument", py("exec(\"import os; r = os.environ['CODEX_HOME']; open(f\\\"{r}/memories/n.md\\\", \\\"w\\\")\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// An interpolated path read with the default or an explicit read mode is no write at all.
+		{"interpolated path read with no mode", py("import os; open(f\"{os.environ['CODEX_HOME']}/memories/n.md\").read()")},
+		{"interpolated path read mode", py("import os; open(f\"{os.environ['CODEX_HOME']}/memories/n.md\", \"r\").read()")},
+		{"redirection with a literal destination", "2>/dev/null python3 -c " + shellWriteUnnamedQuote("open(\""+m+"\", \"r\").read()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.

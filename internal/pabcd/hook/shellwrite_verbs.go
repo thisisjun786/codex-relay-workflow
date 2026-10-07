@@ -2309,7 +2309,9 @@ func (b *shellWriteUnnamedBudget) take(n int) int {
 // and the commands a nested shell -c or eval runs, including the here-documents that nested program reads.
 func shellWriteUnnamedSegment(segment string, budget *shellWriteUnnamedBudget, points func(string) bool, out []shellWriteUnnamedSource) []shellWriteUnnamedSource {
 	for _, command := range shellVerbSubsegments(segment) {
-		tokens := shellVerbSkipWrappers(shellTokenize(command))
+		// A redirection may stand before the verb (2>/dev/null python3 -c ...), so the redirection words go first:
+		// the verb and its program are read from what is left.
+		tokens := shellWriteUnnamedCommandWords(shellTokenize(command))
 		if script, ok := shellWriteFStringPythonScript(tokens); ok {
 			out = append(out, shellWriteUnnamedSource{text: script})
 			if un := shellVerbUnescape(script); un != script {
@@ -2472,7 +2474,19 @@ func shellWriteUnnamedCommandWords(tokens []string) []string {
 	for len(tokens) > 0 && (strings.Contains(tokens[0], "<<") || worktreeDelRedirectWord(tokens[0])) {
 		tokens = tokens[1:]
 	}
-	return shellVerbSkipWrappers(tokens)
+	tokens = shellVerbSkipWrappers(tokens)
+	// A redirection may also stand after the command (python3 <<'PY' 2>/dev/null), so the words that follow the
+	// verb are trimmed too: only the verb and its own operands are kept. Only a word shaped like a redirection is
+	// trimmed, never a quoted program that merely holds << in its text (bash -c 'python3 <<PY ...').
+	for len(tokens) > 1 {
+		last := tokens[len(tokens)-1]
+		if worktreeDelRedirectWord(last) {
+			tokens = tokens[:len(tokens)-1]
+			continue
+		}
+		break
+	}
+	return tokens
 }
 
 // shellWriteUnnamedPythonStdin reports whether a Python interpreter with these arguments reads its program from its
@@ -2601,7 +2615,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 			end := shellWriteTripleScanRegion(rs, i, true)
 			w.literal(shellWriteUnnamedLiteralSpan(rs, i, end))
 			i = end - 1
-		case c == '\n' || c == ';':
+		case c == '\n' || c == '\r' || c == ';':
 			if len(stack) == 0 {
 				importStmt, firstWord = false, true
 			}
@@ -2694,10 +2708,13 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		}
 		path, mode := shellVerbOpenArgs(rs, spans)
 		if shellWriteEscapeField(path) {
-			// An interpolated path (open(f"{root}/n.md", "w")) is a destination this reader cannot read, whatever
-			// the literal text beside its replacement field says.
-			w.wrote = true
-			w.unnamed = true
+			// An interpolated path (open(f"{root}/n.md", "w")) is a destination this reader cannot read. The mode
+			// still decides whether the call writes: an interpolated path read with the default or a read mode is
+			// no write at all.
+			if shellWriteUnnamedWrites(mode) {
+				w.wrote = true
+				w.unnamed = true
+			}
 			return
 		}
 		if shellWriteUnnamedWrites(mode) {
@@ -2794,7 +2811,10 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			w.unnamed = true
 		}
 	case 'i':
-		if name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 0, "name")); ok && (name == "shutil" || name == "os") {
+		// __import__(name) reaches a module this reader cannot name when the name is not a literal it knows
+		// (__import__("sh" + "util")), and the two modules that carry a write function when it is.
+		name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 0, "name"))
+		if !ok || name == "shutil" || name == "os" {
 			w.wrote = true
 			w.unnamed = true
 		}
@@ -2803,6 +2823,12 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			arg := rs[span[0]:span[1]]
 			if shellVerbBlank(arg) {
 				continue
+			}
+			if shellWriteEscapeField(arg) {
+				// An interpolated exec argument (exec(f"...")) is a program this reader cannot read.
+				w.wrote = true
+				w.unnamed = true
+				break
 			}
 			program, ok := shellVerbLiteral(arg)
 			if !ok {
@@ -2842,12 +2868,21 @@ func shellWriteUnnamedLiteralSpan(rs []rune, i, end int) []rune {
 // name - is a write whose destination the reader cannot name. A name inside an import statement binds a name and calls
 // nothing; a name a def header's parameter list binds is no write value either; and a name an assignment binds is the
 // target, not the builtin (open = print binds open, it does not read it).
-func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDef bool, binds shellWriteCopyImports) {
+func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDefParam bool, binds shellWriteCopyImports) {
 	word := string(rs[i:j])
 	if word == "CODEX_HOME" {
 		w.codexHome = true
 	}
-	if importStmt || inDef {
+	if importStmt {
+		return
+	}
+	if inDefParam {
+		// A def header's parameter binds the name in the function's scope, so an import's meaning for it no longer
+		// holds there (def f(io): io.write_text(...) is a Path's method, not the io module's).
+		if w.assigned == nil {
+			w.assigned = map[string]bool{}
+		}
+		w.assigned[word] = true
 		return
 	}
 	if shellWriteUnnamedTarget(rs, j) {
@@ -2857,12 +2892,23 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 		w.assigned[word] = true // the name is bound here, so an import's meaning for it no longer holds
 		return                  // an assignment or keyword-argument target binds the name; it is no write value
 	}
+	if word == "__import__" && !shellWriteUnnamedCalled(rs, j) {
+		// The __import__ builtin taken as a value (imp = __import__) reaches a module this reader cannot name.
+		w.unnamed = true
+		return
+	}
 	if mod, ok := shellWriteUnnamedAttribute(rs, i); ok {
 		if word == "import_module" && (mod == "importlib" || slices.Contains(binds.alias[mod], "importlib")) {
 			w.unnamed = true
 			return
 		}
 		if shellWriteCopyKind(mod, word, binds) != 0 && !shellWriteUnnamedCalled(rs, j) {
+			w.unnamed = true
+			return
+		}
+		if mod == "" && !shellWriteUnnamedCalled(rs, j) && (shellWriteCopyFunc("shutil", word) || shellWriteCopyFunc("os", word)) {
+			// A copy, rename or link function taken off a receiver the reader cannot name as a bare name
+			// (f = (shutil).copy) is a write function value whose destination it cannot name.
 			w.unnamed = true
 			return
 		}
@@ -3141,17 +3187,17 @@ func shellWriteUnnamedMethodAt(rs []rune, i int, binds shellWriteCopyImports, as
 			return 0 // two or more arguments: a str's own replace, which writes no file
 		}
 	}
-	if receiver == "" {
-		// The receiver is an expression this reader cannot name as a bare name (a bracketed or parenthesized one,
-		// such as (shutil).copy(...)): the call may be a module's copy, rename or link function, whose destination
-		// the ordinary reader never names for such a receiver, so the capital kind marks it unnamed whatever its
-		// arguments say.
-		if shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name) {
-			if name == "renames" {
-				return 'N'
-			}
-			return 'C'
+	// A copy, rename or link method on a receiver this reader does not know to be something else - a variable
+	// (s = shutil; s.copy(...)), a bracketed or parenthesized expression ((shutil).copy(...)) - is a call the
+	// ordinary destination reader never names a destination for, so the capital kind marks it unnamed whatever its
+	// arguments say. A receiver the reader does know (a string's own replace, a list's copy) is left to the rules
+	// above, so the common false positive of a dict's or list's copy is only reached when the program names nothing
+	// the reader can place.
+	if shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name) {
+		if name == "renames" {
+			return 'N'
 		}
+		return 'C'
 	}
 	if !shellWriteUnnamedMethod(name) {
 		return 0
