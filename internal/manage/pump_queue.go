@@ -162,6 +162,11 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 	switch out.Class {
 	case deliverClassAccepted:
 		// The membership is durable before any move, so a crash between the moves is recoverable.
+		// A cancelled round records no membership: the pin stays and the next round replays the
+		// accepted receipt from the ledger.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		st.QueueAccepted[thread] = append([]string(nil), batch.names...)
 		delete(st.QueueAttempt, thread)
 		if err := st.pumpSave(cfg); err != nil {
@@ -391,9 +396,17 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		// name the producer replaced while the delivery was in flight is not moved either: the
 		// delivery carried the pinned text, so moving the replacement would drop a notice nobody has
 		// delivered. That notice stays queued and forms its own batch under its own id.
-		if current, readErr := pumpReview776QueueReadNotices(dir, pin.Names); readErr != nil || pumpReview776QueueBody(current) != pin.Body {
+		current, readErr := pumpReview776QueueReadNotices(dir, pin.Names)
+		unchanged := readErr == nil && pumpReview776QueueBody(current) == pin.Body
+		if !unchanged {
 			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted batch's notices changed; nothing moved to sent/", thread))
-		} else {
+		}
+		// The membership and its save are durable effects, so a cancelled round makes neither; the pin
+		// stays and the next round replays the accepted receipt from the ledger.
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		if unchanged {
 			st.QueueAccepted[thread] = append([]string(nil), pin.Names...)
 		}
 		delete(st.QueueAttempt, thread)
