@@ -484,3 +484,72 @@ func TestAuditDraftsReview744GradeHoldsTheDraftsLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// C1: two jobs naming one bundle directory in different spellings are refused before anything
+// runs, because they would race over the same grade.json and the same prompt. The spelling does
+// not decide identity: a link and a relative form name the same directory as the real path.
+func TestAuditDraftsReview744GradeRefusesAliasedJobs(t *testing.T) {
+	e, _, _ := auditTestEnv(t)
+	base := t.TempDir()
+	bundle := filepath.Join(base, "real-bundle")
+	auditDraftsReview744BundleAt(t, bundle)
+	link := filepath.Join(base, "linked-bundle")
+	if err := os.Symlink(bundle, link); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}, {Bundle: link}}); err == nil {
+		t.Fatal("a bundle and a link to it were accepted as two jobs")
+	}
+	t.Chdir(base)
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: "real-bundle"}, {Bundle: bundle}}); err == nil {
+		t.Fatal("a relative and an absolute spelling of one bundle were accepted as two jobs")
+	}
+	if _, err := os.Stat(filepath.Join(state, "audit", auditLedgerFile)); !os.IsNotExist(err) {
+		t.Errorf("a ledger was written for a refused batch: %v", err)
+	}
+}
+
+// C1: a grade whose ledger row was never recorded leaves no result for an older ok row to be
+// drafted from. The row and the grade file are one record, and this run replaced the file
+// before its append failed, so the file is removed rather than left where the older row's
+// reader looks: the bundle then reports no usable grade.json instead of the newer run's defect.
+func TestAuditDraftsReview744FailedRecordVoidsTheBundle(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the file permission this test needs does not stop root")
+	}
+	state := t.TempDir()
+	bundle := filepath.Join(t.TempDir(), "bundle-unrecorded")
+	auditDraftsReview744BundleAt(t, bundle)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 1})
+	e, _, _ := auditTestEnv(t)
+	// R1 is graded and recorded: the bundle's ok row, with no defects.
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle, Round: "r1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// R2 grades the same bundle again, leaves a usable P1 result and times out, and the ledger
+	// cannot be appended to, so the run fails and its row is never recorded.
+	ledger := filepath.Join(state, "audit", auditLedgerFile)
+	if err := os.Chmod(ledger, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ledger, 0o600) })
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "1")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle, Round: "r2"}}); err == nil {
+		t.Fatal("a grade whose ledger row could not be recorded reported success")
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{Round: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 0 || len(report.Updated) != 0 {
+		t.Fatalf("the unrecorded regrade still produced a draft: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, auditGradeFile) {
+		t.Fatalf("the ok row is not named as carrying no usable grade: %+v", report.Skipped)
+	}
+}

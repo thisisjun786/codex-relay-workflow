@@ -108,19 +108,24 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		return nil, auditGraderUnconfiguredError{}
 	}
 	bundles := make([]*auditBundle, len(jobs))
-	seen := make(map[string]int, len(jobs))
+	seen := make([]auditBundleID, 0, len(jobs))
 	for i, job := range jobs {
 		bundle, err := auditReadBundle(job.Bundle)
 		if err != nil {
 			return nil, err
 		}
 		// Two jobs naming one bundle would race over the same grade.json and the same
-		// prompt, so the second is refused rather than silently sharing the directory.
-		key := filepath.Clean(job.Bundle)
-		if first, ok := seen[key]; ok {
-			return nil, fmt.Errorf("jobs %d and %d name the same bundle %s", first, i, job.Bundle)
+		// prompt, so the second is refused rather than silently sharing the directory. The
+		// spelling does not decide that: a link to a bundle, a relative form and a trailing
+		// separator all name the one directory the jobs would write into, so the same
+		// resolution the drafts surface groups ledger rows by is used here too.
+		key := auditBundleIDOf(job.Bundle)
+		for first, have := range seen {
+			if auditBundleIDSame(have, key) {
+				return nil, fmt.Errorf("jobs %d and %d name the same bundle %s", first, i, job.Bundle)
+			}
 		}
-		seen[key] = i
+		seen = append(seen, key)
 		bundles[i] = bundle
 	}
 	// The grade file and the ledger row that names it are one record: this run replaces
@@ -153,9 +158,31 @@ func AuditGrade(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob) ([]Au
 		}
 	}
 	if err := auditRecord(e, cfg, results); err != nil {
+		// The grade file and the ledger row that names it are one record, and this run has
+		// already replaced the file. A row that was never recorded must not leave a file an
+		// older ok row of the same bundle would be drafted from, so the replacement is taken
+		// back and the bundle reports no usable grade at all: failing to record is not a
+		// result, and a later reader fails closed rather than reading another run's defects.
+		for i := range results {
+			auditDiscardUnrecordedGrade(e, results[i].Bundle)
+		}
 		return nil, err
 	}
 	return results, nil
+}
+
+// auditDiscardUnrecordedGrade removes the grade file a run that could not record its ledger
+// row left in a bundle, so the file and the row stay one record. A bundle that is already gone
+// or carries no file is left alone, and a removal that fails is reported on stderr rather than
+// silently swallowed: the caller has already failed, and a stale file is the one state a later
+// reader must not be able to draft from.
+func auditDiscardUnrecordedGrade(e *Env, bundle string) {
+	if bundle == "" {
+		return
+	}
+	if err := os.Remove(filepath.Join(bundle, auditGradeFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(e.Stderr, "crw manage audit: %s: %s could not be discarded: %v\n", bundle, auditGradeFile, err)
+	}
 }
 
 // auditGradeOne writes the prompt into the bundle, runs the grader there under the time

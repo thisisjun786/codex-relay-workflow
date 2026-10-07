@@ -501,45 +501,62 @@ func auditDraftBundleOf(row auditLedgerRow) error {
 	return nil
 }
 
+// auditBundleID is one bundle spelling resolved to what makes two spellings one bundle: the
+// cleaned path, and the file the kernel resolves the path to when it exists.
+type auditBundleID struct {
+	cleaned string
+	info    os.FileInfo
+}
+
+// auditBundleIDOf resolves one bundle spelling. A spelling that exists is identified by the
+// file it is, so a relative form, a trailing separator and a link to one directory are one
+// bundle; a spelling that names no directory is compared by its cleaned path, because nothing
+// is left to resolve. The same resolution decides which jobs of one grade may run and which
+// ledger rows are one bundle, so a batch and the drafts surface agree on identity.
+func auditBundleIDOf(bundle string) auditBundleID {
+	cleaned := filepath.Clean(bundle)
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		info = nil
+	}
+	return auditBundleID{cleaned: cleaned, info: info}
+}
+
+// auditBundleIDSame reports whether two resolved spellings name one bundle. A spelling that
+// resolves to a file is one bundle only with a spelling resolving to the same file, so a link
+// and its target are one bundle and a directory that has since gone is not confused with it.
+func auditBundleIDSame(a, b auditBundleID) bool {
+	switch {
+	case a.info != nil && b.info != nil:
+		return os.SameFile(a.info, b.info)
+	case a.info == nil && b.info == nil:
+		return a.cleaned == b.cleaned
+	}
+	return false
+}
+
 // auditDraftBundleIDs names the bundle each ledger row points at, so two spellings of one
 // directory are one bundle. A grader may write the same directory as a relative path, with a
-// trailing separator, or through a link, while the grade.json it left is one file: when the
-// directory exists the rows are grouped by the file os.Stat resolves them to (os.SameFile),
-// and when it does not exist they are grouped by the cleaned path. An empty Bundle names no
-// bundle and carries -1.
+// trailing separator, or through a link, while the grade.json it left is one file. An empty
+// Bundle names no bundle and carries -1.
 func auditDraftBundleIDs(rows []auditLedgerRow) []int {
-	type bundle struct {
-		cleaned string
-		info    os.FileInfo
-	}
 	ids := make([]int, len(rows))
-	groups := make([]bundle, 0, len(rows))
+	groups := make([]auditBundleID, 0, len(rows))
 	for i, row := range rows {
 		ids[i] = -1
 		if row.Bundle == "" {
 			continue
 		}
-		cleaned := filepath.Clean(row.Bundle)
-		info, err := os.Stat(cleaned)
-		if err != nil {
-			info = nil
-		}
 		id := -1
+		resolved := auditBundleIDOf(row.Bundle)
 		for g, have := range groups {
-			switch {
-			case have.info != nil && info != nil:
-				if os.SameFile(have.info, info) {
-					id = g
-				}
-			case have.info == nil && info == nil && have.cleaned == cleaned:
+			if auditBundleIDSame(have, resolved) {
 				id = g
-			}
-			if id >= 0 {
 				break
 			}
 		}
 		if id < 0 {
-			groups = append(groups, bundle{cleaned: cleaned, info: info})
+			groups = append(groups, resolved)
 			id = len(groups) - 1
 		}
 		ids[i] = id
