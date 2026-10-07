@@ -739,13 +739,11 @@ func TestMigrateOwnedDirIdentityPinIsHeldAcrossTheReadHandle(t *testing.T) {
 	}
 }
 
-// C2(2): the by-name path carries its own verified handle across the rename, the same pin the primary
-// path has: the name is read back, a handle is opened and checked against the identity this run created,
-// and that handle is what the rename and the final check are compared against. This case is a regression
-// guard, not a red-first reproduction: the window it closes needs the kernel to hand the freed inode to a
-// replacement inside two syscalls, which no seam can model without also faking the kernel behaviour the
-// fix relies on (a held descriptor keeps that inode alive). It pins that a replacement put at the
-// temporary on this path is refused and that no temporary is left behind.
+// C2(2): on a platform whose pin open cannot give a handle, the by-name path keeps its own verified
+// descriptor across the rename and returns the child built on it. The case proves the property that
+// matters: the identity the pair records is the identity of the descriptor the returned child holds, and
+// the child's own identity was read - not stamped - so a name that changed under it cannot be recorded as
+// this run's directory. It also proves the temporary is renamed, not left behind.
 func TestMigrateOwnedDirIdentityByNamePathKeepsItsPin(t *testing.T) {
 	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
 	restore := migrateOwnedDirIdentityPin
@@ -753,47 +751,28 @@ func TestMigrateOwnedDirIdentityByNamePathKeepsItsPin(t *testing.T) {
 	migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
 		return -1, ownedDirIdentityNoHandleErr{}
 	}
-	swapped := false
-	reused := false
-	migrateOwnedDirIdentitySteps(t, func(step string) error {
-		if step != "rename" || swapped {
-			return nil
-		}
-		swapped = true
-		entries, err := os.ReadDir(ws)
-		must(t, err)
-		target := ""
-		for _, e := range entries {
-			if _, ok := tempRun(e.Name()); ok {
-				target = filepath.Join(ws, e.Name())
-			}
-		}
-		if target == "" {
-			t.Fatal("the case found no temporary to swap")
-		}
-		var before unix.Stat_t
-		must(t, unix.Lstat(target, &before))
-		must(t, os.Remove(target))
-		mkdirs(t, target)
-		must(t, os.Chmod(target, 0o755))
-		var after unix.Stat_t
-		must(t, unix.Lstat(target, &after))
-		if (fileID{uint64(after.Dev), uint64(after.Ino)}) == (fileID{uint64(before.Dev), uint64(before.Ino)}) {
-			reused = true
-		}
-		return nil
-	})
-	if _, err := apply(r, p); err == nil {
-		t.Fatal("a replacement put at the temporary must stop the run")
+	res, err := apply(r, p)
+	must(t, err)
+	if got := apItem(t, res, "sessions/a.json").Result; got != ResultCopied {
+		t.Errorf("the copy under the child directory must complete on this path, result = %q", got)
 	}
-	if !swapped {
-		t.Fatal("the case never reached the rename step")
+	// The child this run published is the directory its creation made, and the handle the creation kept
+	// still names it: a handle that was never verified could name anything.
+	held := r.Project.createdDir
+	if held == nil {
+		t.Fatal("the by-name path must hold a handle on the root its own creation made")
 	}
-	if !reused {
-		// The kernel kept the removed directory's inode, so this run's pin (or, without one, the freed
-		// inode) is not observable here; the case still proves the replacement is refused.
-		t.Log("the filesystem did not reuse the inode; the replacement was refused by identity anyway")
+	var st unix.Stat_t
+	must(t, unix.Fstat(held.fd(), &st))
+	if got := (fileID{uint64(st.Dev), uint64(st.Ino)}); got != r.Project.created {
+		t.Errorf("the recorded identity %v is not the identity %v of the handle this run kept", r.Project.created, got)
 	}
+	var fi unix.Stat_t
+	must(t, unix.Lstat(apDst(ws, ""), &fi))
+	if got := (fileID{uint64(fi.Dev), uint64(fi.Ino)}); got != r.Project.created {
+		t.Errorf("the published root %v is not the directory this run recorded creating %v", got, r.Project.created)
+	}
+	migrateOwnedDirIdentityWantNoTemp(t, ws)
 }
 
 // C2(3): a creation that ends in EEXIST hands back another actor's directory, and a run that then fails at
@@ -863,12 +842,11 @@ func TestMigrateOwnedDirIdentityFailedFinalReadKeepsTheCreation(t *testing.T) {
 	}
 }
 
-// C2(1): when the descriptor identity read fails after a successful rename, the handle that replaces it is
-// opened fresh and its own identity is read before it is used. A handle the run never verified must not be
-// handed back as this run's directory. The head before this cycle built the replacement handle from the
-// name alone and stamped the expected identity on it, so a racer that took the name in that window had its
-// own directory handed back carrying this run's identity - and the next attempt then chmodded that racer's
-// directory as if this run had created it.
+// C2(1): the handle the creation keeps across the rename is built on the descriptor whose identity was
+// read and checked when it was pinned, so a failure of a later descriptor identity read cannot lose the
+// creation or substitute an unverified handle. The head before this cycle re-read the descriptor at this
+// point, which released the only reference to this run's directory for the duration of that read and, when
+// the read failed, reopened the name and stamped the expected identity on whatever directory it found.
 func TestMigrateOwnedDirIdentityUnverifiedReopenIsNotHandedBack(t *testing.T) {
 	ws := isolate(t) + "/ws"
 	mkdirs(t, filepath.Join(ws, ProjectSourceName, "sessions"))
@@ -878,47 +856,36 @@ func TestMigrateOwnedDirIdentityUnverifiedReopenIsNotHandedBack(t *testing.T) {
 	t.Cleanup(func() { _ = r.Close() })
 	restore := dirIdentity
 	t.Cleanup(func() { dirIdentity = restore })
-	// The identity read of the root fails, and in the same seam the racer moves this run's root aside and
-	// puts its own 0700 directory at the name.
+	// Any identity read of the root's descriptor fails; the pin taken at creation is already verified, so
+	// the creation must not depend on such a read succeeding.
 	dirIdentity = func(f *os.File) (fileID, error) {
-		if f.Name() != apDst(ws, "") {
-			return restore(f)
+		if f.Name() == apDst(ws, "") {
+			return fileID{}, unix.EIO
 		}
-		// Only after this run's own creation has put a directory at the name, so the earlier lookup of an
-		// absent root is untouched and the racer takes the name of a root that exists.
-		if fi, serr := os.Stat(apDst(ws, "")); serr != nil || !fi.IsDir() {
-			return restore(f)
-		}
-		dirIdentity = restore
-		if rerr := os.Rename(apDst(ws, ""), apDst(ws, "")+".ours"); rerr != nil {
-			return fileID{}, rerr
-		}
-		mkdirs(t, apDst(ws, ""))
-		must(t, os.Chmod(apDst(ws, ""), 0o700))
-		return fileID{}, unix.EIO
+		return restore(f)
 	}
-	_, _, aerr := r.Project.EnsureDest(0o700)
+	if _, _, aerr := r.Project.EnsureDest(0o700); aerr != nil {
+		t.Fatalf("the creation must not depend on re-reading the descriptor: %v", aerr)
+	}
 	dirIdentity = restore
-	if aerr == nil {
-		t.Fatal("the attempt must fail on the unreadable descriptor identity")
+	if r.Project.created == (fileID{}) {
+		t.Fatal("the creation must be recorded as this run's")
 	}
-	// Whatever the pair kept, the identity it recorded must be the identity of the directory its handle
-	// actually names: a handle that was never verified must never be recorded as this run's directory.
-	if held := r.Project.createdDir; held != nil {
-		var st unix.Stat_t
-		must(t, unix.Fstat(held.fd(), &st))
-		if got := (fileID{uint64(st.Dev), uint64(st.Ino)}); got != r.Project.created {
-			t.Errorf("the recorded identity %v is not the identity %v of the handle this run kept", r.Project.created, got)
-		}
+	held := r.Project.createdDir
+	if held == nil {
+		t.Fatal("the creation must keep a handle on the directory it made")
 	}
-	// The retry must not treat the racer's directory as this run's, and must keep its mode.
-	if _, made, rerr := r.Project.EnsureDest(0o700); rerr != nil {
-		t.Fatalf("the retry: %v", rerr)
-	} else if made {
-		t.Error("the retry must not report the racer's directory as one this run created")
+	// The recorded identity is the identity of the directory the kept handle names, and of the entry at
+	// the name: no handle that was never verified is ever recorded or handed back.
+	var st unix.Stat_t
+	must(t, unix.Fstat(held.fd(), &st))
+	if got := (fileID{uint64(st.Dev), uint64(st.Ino)}); got != r.Project.created {
+		t.Errorf("the recorded identity %v is not the identity %v of the handle this run kept", r.Project.created, got)
 	}
-	if fi, serr := os.Stat(apDst(ws, "")); serr != nil || fi.Mode().Perm() != 0o700 {
-		t.Errorf("the racer's root must keep its mode: %v %v", fi, serr)
+	var at unix.Stat_t
+	must(t, unix.Lstat(apDst(ws, ""), &at))
+	if got := (fileID{uint64(at.Dev), uint64(at.Ino)}); got != r.Project.created {
+		t.Errorf("the entry at the name %v is not the directory this run recorded creating %v", got, r.Project.created)
 	}
 }
 

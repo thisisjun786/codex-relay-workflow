@@ -893,13 +893,11 @@ func (d *Dir) migrateOwnedDirIdentityChild(name string, fd int, want fileID, per
 		}
 	}
 	if fd >= 0 {
-		// The handle the creation holds is the one whose identity was read and checked when it was pinned.
-		child, nerr := newDir(fd, d.join(name))
-		if nerr == nil {
-			return child, err
-		}
-		// newDir closed the descriptor it was handed, so this call must not close that number again.
-		fd = -1
+		// The pin's identity was read and checked when it was opened, and it has been held ever since, so
+		// the handle is built on it directly. Reading the descriptor again here would mean releasing the
+		// only reference to this run's directory for the duration of that read, which is exactly the window
+		// the pin exists to close; a failure of that read would also lose the creation.
+		return newDirWith(fd, d.join(name), want), err
 	}
 	opened, oerr := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if oerr != nil {
