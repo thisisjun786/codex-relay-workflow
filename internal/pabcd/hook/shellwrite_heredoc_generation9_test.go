@@ -95,6 +95,47 @@ func TestShellWriteHeredocGeneration9ShellBody(t *testing.T) {
 	}
 }
 
+// The blind pre-merge evaluation of head a742344da found four more defects inside this issue's own promise, so the
+// same generation closes them: a backslash-newline in an unquoted terminator is joined by the shell before delimiter
+// matching (the collector compared physical lines only), an escaped quote in plain state opened a bogus quoted span
+// that hid both real operators, and rule G4's hidden-operator check ran over a Node program body as if it were outer
+// shell text. The rows below are red on a742344da.
+
+// TestShellWriteHeredocGeneration9PreMergeDenied is the denied case: each bypass the evaluation found is denied.
+func TestShellWriteHeredocGeneration9PreMergeDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a continued terminator joins before matching", "cat <<EOF\nsafe\nE\\\nOF\npython3 <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"an escaped quote opens no quoted span", "echo \\' <<'DATA'\ntext\nDATA\npython3 <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path or the fail-closed reason", row.command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9PreMergeControls is the invariant case: the shell never joins a quoted terminator, so
+// the here-document that follows stays inside the data body, and a Node program body is read by Node, so a string that
+// looks like a shell substitution inside it is no command.
+func TestShellWriteHeredocGeneration9PreMergeControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a quoted terminator is not joined, so the body stays data", "cat <<'EOF'\nsafe\nE\\\nOF\npython3 <<'PY'\nopen('" + mem + "/a','w')\nPY"},
+		{"a node program body is read by node", "node <<'EOF'\nconsole.log(\"$(cat <<INNER)\");\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+}
+
 // TestShellWriteHeredocGeneration9HereString pins rule K4: <<< is a here-string, so a plain data here-string needs no
 // grant and is not collected as a here-document.
 func TestShellWriteHeredocGeneration9HereString(t *testing.T) {

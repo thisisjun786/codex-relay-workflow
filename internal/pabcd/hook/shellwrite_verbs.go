@@ -2312,8 +2312,13 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
 	}
 	u := utf16.Encode([]rune(command))
-	data := [][2]int{} // the bodies this walk judged data, which rule K5 leaves out of the hidden-operator check
+	bodies := [][2]int{} // every here-document body, which rule K5 leaves out of the hidden-operator check
 	for _, h := range shellWriteHeredocs(u) {
+		// A body is never outer-shell text: a data body is not read at all, and a program body is read by its own
+		// language (a shell body by the recursive call below, which runs its own check). Rule K5 blanks every body
+		// before the hidden-operator scan, or a `$( ... << ... )` inside a Node or Python string is misread as a shell
+		// command substitution the collector could not reach (CRW-765 correction 9).
+		bodies = append(bodies, [2]int{h.bodyAt, h.bodyEnd})
 		reading, kind := shellWriteHeredocClassify(h)
 		if reading == shellWriteHeredocRefused {
 			// Rule R0: the verb still holds an expansion, so it can name any program and the here-document is denied.
@@ -2324,9 +2329,7 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 			return shellWriteHeredocUnreadableWhat, true
 		}
 		if reading != shellWriteHeredocProgram {
-			// Data: the body is not read as a program, and its text is not a command either (rule K5).
-			data = append(data, [2]int{h.bodyAt, h.bodyEnd})
-			continue
+			continue // data: the body is not read as a program, and its text is not a command either (rule K5)
 		}
 		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
 			return shellWriteHeredocUnreadableWhat, true
@@ -2357,7 +2360,7 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 	// holding one is a line the reader cannot take apart and denies (rule U3: an interpreter-name test is no longer an
 	// allow condition). The check reads the text with the bodies already judged data blanked out (correction 9, rule
 	// K5), so a data body that documents a here-document is not mistaken for a command the shell runs.
-	if shellWriteHeredocHiddenOperator(shellWriteHeredocBlankSpans(u, data)) {
+	if shellWriteHeredocHiddenOperator(shellWriteHeredocBlankSpans(u, bodies)) {
 		return shellWriteHeredocUnreadableWhat, true
 	}
 	return shellWriteHeredocUnreadableNested(command, depth, budget)

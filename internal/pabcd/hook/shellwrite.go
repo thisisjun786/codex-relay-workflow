@@ -82,6 +82,14 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 			i = eol + 1
 			continue
 		}
+		if ch == '\\' {
+			// A backslash in plain state escapes the character after it, so an escaped quote is a literal character
+			// and opens no quoted span (CRW-765 correction 9). Reading `\'` as an opening quote let the span swallow
+			// a real << operator, so no here-document was collected and the interpreter program it carried was never
+			// read. The oracle's stripper keeps its own answer; this collector is the security reader.
+			i += 2
+			continue
+		}
 		if ch == '\'' || ch == '"' {
 			i = skipQuoted(command, i)
 			continue
@@ -167,6 +175,12 @@ func shellWriteHeredocDecls(header []uint16) []shellWriteHeredocDecl {
 			i = skipQuoted(header, i)
 			continue
 		}
+		if ch == '\\' {
+			// A backslash in plain state escapes the character after it, so an escaped quote opens no quoted span and
+			// cannot hide the << that follows it (CRW-765 correction 9, the collector's reading).
+			i += 2
+			continue
+		}
 		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) == '<' {
 			i += 3 // rule K4: <<< is a here-string, and its second and third < open no declaration
 			continue
@@ -189,29 +203,59 @@ func shellWriteHeredocBody(command []uint16, from int, d shellWriteHeredocDecl) 
 	body = []uint16{}
 	k := from
 	for k <= len(command) {
-		nl := shellNewline(command, k)
-		line := command[k:]
-		if nl != -1 {
-			line = command[k:nl]
+		// The shell joins a backslash-newline before it matches the delimiter, and it does so only when the delimiter
+		// is unquoted (a quoted delimiter makes the body literal). Comparing physical lines only let a terminator
+		// written as `E\<newline>OF` close the here-document in the shell while the collector absorbed the following
+		// interpreter program into the data body (CRW-765 correction 9).
+		line := []uint16{}
+		end := k
+		for {
+			nl := shellNewline(command, end)
+			part := command[end:]
+			if nl != -1 {
+				part = command[end:nl]
+			}
+			continued := nl != -1 && !d.quoted && shellWriteHeredocLineContinued(part)
+			if continued {
+				part = part[:len(part)-1]
+			}
+			line = append(line, part...)
+			end = nl
+			if !continued || nl == -1 {
+				break
+			}
+			end = nl + 1
 		}
-		cmp := line
+		// The shell joins the raw physical lines first and strips leading tabs from the joined line afterwards, which
+		// is what makes a `<<-` terminator written across a continuation reachable (CRW-765 correction 9).
 		if d.tabs {
-			cmp = shellWriteHeredocTrimTabs(cmp)
+			line = shellWriteHeredocTrimTabs(line)
 		}
-		if slices.Equal(cmp, d.delim) {
-			if nl == -1 {
+		if slices.Equal(line, d.delim) {
+			if end == -1 {
 				return body, len(command)
 			}
-			return body, nl + 1
+			return body, end + 1
 		}
-		body = append(body, cmp...)
+		body = append(body, line...)
 		body = append(body, '\n')
-		if nl == -1 {
+		if end == -1 {
 			return body, len(command)
 		}
-		k = nl + 1
+		k = end + 1
 	}
 	return body, len(command)
+}
+
+// shellWriteHeredocLineContinued reports whether a physical body line ends in an unescaped backslash, which the shell
+// reads as a line continuation before it matches the delimiter (CRW-765 correction 9). An even count of trailing
+// backslashes is a literal backslash and continues nothing.
+func shellWriteHeredocLineContinued(part []uint16) bool {
+	n := 0
+	for i := len(part) - 1; i >= 0 && part[i] == '\\'; i-- {
+		n++
+	}
+	return n%2 == 1
 }
 
 // shellWriteHeredocDelimiter reads the delimiter word at a << operator, removing its quoting and reporting whether the
