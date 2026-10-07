@@ -29,8 +29,14 @@ type VerifierRule struct {
 // AcceptInput is what a parent supplies to accept a node's result. Nothing in it names a head: for an implementation node the head is the one the relay reads from the forge, so a child's
 // statement can never become the accepted head (P-AV-2).
 type AcceptInput struct {
-	Event       string       // the event the parent verified; the current head of the generation when empty
-	PullRequest *PRRef       // required for an implementation node, forbidden for a non_pr node
+	Event       string // the event the parent verified; the current head of the generation when empty
+	PullRequest *PRRef // required for an implementation node, forbidden for a non_pr node
+	// Commit is the pull-request-less half (CRW-965): the commit to accept, the base it descends from,
+	// the local checkout that holds both, and the verification-record/1 the parent supplied. It is
+	// required for an implementation node accepted without a pull request and forbidden together with
+	// PullRequest. Every check and write it needs lives in accept_commit.go; the guards below only pick
+	// the path, so the pull-request path keeps its own reading and its own writes.
+	Commit      *CommitRef
 	Supersedes  string       // the acceptance this one replaces, when the node already has an active acceptance of another output
 	RuleVersion VerifierRule // every field required
 }
@@ -218,8 +224,16 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 		return out, err
 	}
 	implementation := n.Kind == dag.NodeImplementation
+	commitPath := in.Commit != nil
+	if commitPath && !implementation {
+		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it has no commit to accept", node, n.Kind)
+	}
+	if commitPath && in.PullRequest != nil {
+		return out, refuse(contract.RefusalMalformedReceipt, "an acceptance names either a pull request or a commit, never both")
+	}
 	var pr PullRequest
-	if implementation {
+	var prepared acceptCommitInput
+	if implementation && !commitPath {
 		if in.PullRequest == nil || in.PullRequest.Repository == "" || in.PullRequest.Number < 1 {
 			return out, refuse(contract.RefusalMalformedReceipt, "an implementation node is accepted on its pull request: name its repository (owner/name) and number")
 		}
@@ -233,6 +247,26 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return out, err
 		}
 		out.prRepository, out.baseRef = in.PullRequest.Repository, pr.BaseRef
+	} else if commitPath {
+		// the commit path reads what it needs before its write transaction, as the pull-request path reads
+		// its forge before it: the relationship and the head event, then the checks in the checkout
+		rel, found, err := currentRelationshipOf(ctx, q, plan, node)
+		if err != nil {
+			return out, err
+		}
+		if !found {
+			return out, refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to accept", node)
+		}
+		head, err := s.verifiedHead(ctx, q, rel, in.Event)
+		if err != nil {
+			return out, err
+		}
+		if head.SetDigest != n.CriteriaSetDigest {
+			return out, refuse(contract.RefusalCriteriaSetChanged, "the output was ruled against criteria %s and the plan fixed %s for %s", head.SetDigest, n.CriteriaSetDigest, node)
+		}
+		if prepared, err = s.prepareCommitAcceptance(ctx, *in.Commit, head.EventID); err != nil {
+			return out, err
+		}
 	} else if in.PullRequest != nil {
 		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it has no pull request to name", node, n.Kind)
 	}
@@ -321,9 +355,21 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 				return err
 			}
 			if implementation {
-				// the output is accepted already, on the pull request and at the head recorded then: a call that reads another pull request, or the same one at another head, is not a replay of it
-				if err := s.sameForgeReading(txCtx, tx, a, *in.PullRequest, pr); err != nil {
-					return err
+				if commitPath {
+					// the same output accepted before on the commit path: the replay is the same head with
+					// the same verification record. A call naming another record is not a replay of it.
+					digest, found, err := storedVerificationDigest(txCtx, tx, a.AcceptanceID)
+					if err != nil {
+						return err
+					}
+					if !found || digest != shaOf(prepared.recordRaw) {
+						return refuse(contract.RefusalDispositionConflict, "the output of %s was accepted with another verification record; accept a new output instead", node)
+					}
+				} else {
+					// the output is accepted already, on the pull request and at the head recorded then: a call that reads another pull request, or the same one at another head, is not a replay of it
+					if err := s.sameForgeReading(txCtx, tx, a, *in.PullRequest, pr); err != nil {
+						return err
+					}
 				}
 			}
 			effective, err := effectiveCriteria(txCtx, tx, a)
@@ -358,7 +404,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			return refuse(contract.RefusalStaleGeneration, "generation %d of %s is not recorded as an execution of %s (a correction is recorded with dag-correct before its result is accepted)%s", rel.Generation, rel.ID, node, s.unsentGenerationHint(txCtx, tx, rel))
 		}
 		// a new output: it supersedes the node's active acceptance only explicitly
-		if implementation && (pr.State != "open" || pr.IsDraft) {
+		if implementation && !commitPath && (pr.State != "open" || pr.IsDraft) {
 			return refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s%s: only an open, non-draft pull request is accepted", pr.Repository, pr.Number, pr.State, map[bool]string{true: " and a draft", false: ""}[pr.IsDraft])
 		}
 		var activeID string
@@ -379,11 +425,21 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			CriteriaSetDigest: head.SetDigest, Verdict: "verified", OutputManifestRef: head.ManifestRef, AckTier: head.AckTier, VerdictTurnID: head.VerdictTurn, RuleVersionJSON: ruleJSON, AcceptedByTask: actor,
 			CoordinatorEpoch: s.ExpectedEpoch, AcceptedAt: s.now(), SupersedesAcceptanceID: activeID, State: "active"}
 		if implementation {
-			repository, err := s.acceptTarget(txCtx, tx, current, node, in.PullRequest.Repository)
-			if err != nil {
-				return err
+			if commitPath {
+				// the commit path's target is the local checkout the caller named; its outgoing edges have
+				// to name the same path, compared as written
+				repository, err := s.acceptCommitTarget(txCtx, tx, current, node, in.Commit.Checkout)
+				if err != nil {
+					return err
+				}
+				a.HeadSHA, a.Repository, a.EvidenceDigest = prepared.ref.Head, repository, shaOf(prepared.recordRaw)
+			} else {
+				repository, err := s.acceptTarget(txCtx, tx, current, node, in.PullRequest.Repository)
+				if err != nil {
+					return err
+				}
+				a.HeadSHA, a.Repository, a.PRNumber, a.EvidenceDigest = pr.HeadSHA, repository, pr.Number, EvidenceDigest(EvidenceBodyOf(pr))
 			}
-			a.HeadSHA, a.Repository, a.PRNumber, a.EvidenceDigest = pr.HeadSHA, repository, pr.Number, EvidenceDigest(EvidenceBodyOf(pr))
 		}
 		a.AcceptanceID = AcceptanceDigest(a)
 		var supersedes, ref, head2, repo2, evidence2, pr2 any
@@ -403,9 +459,15 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 			a.AckTier, a.VerdictTurnID, a.RuleVersionJSON, a.AcceptedByTask, a.CoordinatorEpoch, a.AcceptedAt, supersedes, a.State); err != nil {
 			return err
 		}
-		// the acceptance row first: dag_acceptance_forge references it with an immediate foreign key
+		// the acceptance row first: dag_acceptance_forge and dag_acceptance_verifications both reference it with an immediate foreign key
 		if implementation {
-			if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?,?,?)", a.AcceptanceID, in.PullRequest.Repository, pr.Number); err != nil {
+			if commitPath {
+				// the verification record travels with the acceptance it justifies, so the replay identity
+				// and the batch's reuse rule have a readable source
+				if err := s.storeCommitVerification(txCtx, a.AcceptanceID, actor, prepared, s.ExpectedEpoch); err != nil {
+					return err
+				}
+			} else if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?,?,?)", a.AcceptanceID, in.PullRequest.Repository, pr.Number); err != nil {
 				return err
 			}
 		} else if out.SlotReleased, err = s.releaseSlot(txCtx, tx, plan, node, actor, "dag_accepted"); err != nil {
