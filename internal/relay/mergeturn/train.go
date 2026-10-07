@@ -346,7 +346,7 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		// reads above happen before it, and a generation opened in that gap would otherwise be recorded
 		// as an opened train: nothing is written for a member whose accepted result is under correction.
 		for _, m := range expectations {
-			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
 				return e
 			}
 		}
@@ -744,7 +744,7 @@ func (s *Service) Verify(ctx context.Context, train, actor, bundlePR, head, run,
 		// expectations above were read before the run and the chain were proved, and a generation opened
 		// in that gap would otherwise be recorded as verified: nothing is written for such a member.
 		for _, m := range expected {
-			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.AcceptedHead); e != nil {
 				return e
 			}
 		}
@@ -997,7 +997,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		// left the lane is excluded above and is not re-read, so its parent revoking the acceptance
 		// does not refuse the rest of the bundle.
 		for _, m := range leftMembers {
-			if e := trainExcludedMemberRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+			if e := trainExcludedMemberRefusal(tx, s.Store.Querier(tx), row.Repository, m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
 				return e
 			}
 		}

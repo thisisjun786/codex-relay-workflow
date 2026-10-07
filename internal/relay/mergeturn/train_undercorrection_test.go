@@ -360,6 +360,96 @@ func TestTheLaneGateAsksEveryMatchingAcceptance(t *testing.T) {
 // CRW-906 generation 2, d3: the excluded member's hold must not clear just because the correction was
 // CRW-906 generation 2, d3: the recheck inside the write transaction asks about the head the bundle
 // CRW-906 generation 2, d1: naming a relationship must not suppress the other identities. Acceptance
+// CRW-906 generation 2: a bundle member is refused when the head it carries is the result another
+// relationship is repairing, even though the member's own relationship is live. Acceptance uniqueness is
+// per node and output, so two accepted nodes can name the same commit, and the bundle must apply the same
+// rule the single lane does.
+func TestTrainRefusesAMemberWhoseHeadAnotherRelationshipIsRepairing(t *testing.T) {
+	w := newTr(t)
+	train := w.openedTrain()
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	w.ucOtherCorrection("rel-other", "head-m2")
+	_, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a member whose head another relationship is repairing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rel-other") {
+		t.Fatalf("the refusal does not name the repairing relationship: %v", err)
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'verified'"); n != 0 {
+		t.Fatalf("a refused verify wrote %d verified event(s)", n)
+	}
+}
+
+// ucOtherCorrection writes another relationship's active acceptance on a head with a correction
+// generation open over it: the shape the bundle gate must see through a member's own live relationship.
+func (w *tr) ucOtherCorrection(relationship, head string) {
+	w.t.Helper()
+	allowed := fmt.Sprintf("[%q]", trLeader)
+	w.exec("INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at)"+
+		" VALUES (?, 'ISS-1', 'active', ?, 'host-a', 'child-x', 'host-c', 2, '[]', ?, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')",
+		relationship, trLeader, allowed)
+	w.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at)"+
+		" VALUES (?, 2, ?, 'bound', 'turn-dispatch-x', 'needs_changes_revision', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')",
+		relationship, "correction-"+relationship)
+	w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES (?, 'plan-x', 'node-x', 'manifest-x', ?, 1, 'ev-x', 'rev-x', 'crit-x', 'verified', ?, ?, 1, 'bound', 'turn-x', '{}', ?, 0, '2026-10-01T00:00:00Z', 'active')",
+		"acc-"+relationship, relationship, head, trRepo, trLeader)
+	w.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, 'owner/repo', 1)", "acc-"+relationship)
+}
+
+// CRW-906 generation 2: an acceptance recorded before the forge rule keeps whatever target it was
+// accepted against — a local checkout included — while dag_acceptance_forge holds the owner/name a merge
+// turn is actually requested against. The gate matches the forge identity, not the stored target.
+func TestTheLaneGateMatchesTheForgeIdentityNotTheStoredTarget(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-local", 2)
+	w.ucLaneForge("rel-local", 7)
+	w.exec("UPDATE dag_acceptances SET repository = '/synthetic/checkout' WHERE relationship_id = 'rel-local'")
+	for _, turn := range []store.MergeTurnsRow{
+		{TurnID: "mtn-by-pr", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+			HolderTaskID: alpha.TaskID, CandidateHead: "head-a", PRNumber: sql.NullInt64{Int64: 7, Valid: true}, State: Holding},
+		{TurnID: "mtn-by-head", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+			HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Holding},
+	} {
+		refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+			t.Fatalf("%s: a turn matched by the forge identity rather than the stored target was not refused: %+v", turn.TurnID, refusal)
+		}
+		if !strings.Contains(refusal.Detail, "rel-local") {
+			t.Fatalf("%s: the refusal does not name the relationship: %s", turn.TurnID, refusal.Detail)
+		}
+	}
+}
+
+// CRW-906 generation 2: after dag-accept --supersedes the head an acceptance recorded belongs to no
+// active acceptance any more, so a turn held for it would otherwise merge exactly the result the
+// correction replaced.
+func TestTheLaneGateRefusesAHeadAnAcceptanceRecordedAndThenReplaced(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	w.ucLaneForge("rel-lane", 7)
+	// the acceptance that recorded head-a was replaced: a later one stands on the corrected head now
+	w.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE relationship_id = 'rel-lane'")
+	turn := store.MergeTurnsRow{TurnID: "mtn-replaced", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-a", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a turn holding a replaced head was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-lane") || !strings.Contains(refusal.Detail, "replaced") {
+		t.Fatalf("the refusal does not name the relationship and what happened: %s", refusal.Detail)
+	}
+}
+
+// CRW-906 generation 2, d1: naming a relationship must not suppress the other identities. Acceptance
 // uniqueness is per node and output, so two nodes can accept the same commit: a turn that names the
 // relationship which is NOT being corrected is still carrying a head another relationship is repairing,
 // and the gate must read that one too rather than trusting the name it was given.

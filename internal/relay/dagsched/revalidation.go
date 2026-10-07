@@ -516,7 +516,7 @@ func (s *Scheduler) refuseAcceptedHeadOnItsWayToTheBase(ctx context.Context, q s
 		return err
 	}
 	if found {
-		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve) and open the generation again",
+		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: merge turn %s of the relationship is %s on head %s, and a correction cannot be recorded over a head the forge may already have merged. Resolve that turn first (merge-turn-resolve, or merge-turn-unknown then merge-turn-resolve), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
 			acc.NodeID, short(turn), state, short(head))
 	}
 	// A live bundle is the second way the head may already be on the base. The parent merges a verified
@@ -556,7 +556,7 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		if !found {
 			continue
 		}
-		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then open the generation again",
+		return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is on its way to the base already: bundle %s is live and carries head %s as a member, so its merge may already be on the forge and a correction cannot be recorded over it. Close the bundle first (merge-train-close), then record this same generation again with the manifest digest dag-correct --prepare already printed: it is not yet recorded, and opening another generation would skip it",
 			acc.NodeID, short(train), short(head))
 	}
 	return nil
