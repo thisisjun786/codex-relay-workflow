@@ -502,3 +502,91 @@ func TestToolsReview836KeepsItsRecordWhenAnEexistReadCannotReachTheSpelling(t *t
 		}
 	}
 }
+
+// C2, not-a-directory side: only a directory is ever this call's to remove. The record here names
+// the regular file standing at the path and claims that file's own identity, so nothing but the
+// directory check keeps the removal from deleting it: a record whose identity matches is not by
+// itself a licence to remove whatever is there.
+func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "a", "b")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.IsDir() {
+		t.Fatal("the test did not place a regular file at the recorded path")
+	}
+	created := []createRootRecord{{path: target, resolved: target, info: info}}
+
+	removeCreated(created)
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("removeCreated removed a regular file whose identity matched the record: %v", err)
+	}
+}
+
+// C1, the location a recorded component is reached by: the recorded location must still reach the
+// directory after a component before a ".." has vanished, which is what the exhaustion cleanup
+// needs. The parent is read as text and resolved, so the location keeps the ".." instead of the
+// different directory filepath.Clean would name.
+func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	inner := filepath.Join(real, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	// The link points one level down, so "link/.." is <base>/real and not <base>: the kernel
+	// resolves the root to <base>/real/p, while a lexical clean of "link/../p" would name <base>/p.
+	if err := os.Symlink(inner, link); err != nil {
+		t.Fatal(err)
+	}
+	root := link + "/../p/q"
+	target := filepath.Join(real, "p")
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot under a link and a dot-dot: %v", err)
+	}
+	found := false
+	for _, made := range created {
+		if made.path != link+"/../p" {
+			continue
+		}
+		found = true
+		if made.resolved == "" || made.resolved == made.path {
+			t.Fatalf("the record reaches %q, which still traverses the link", made.resolved)
+		}
+		info, statErr := os.Lstat(made.resolved)
+		if statErr != nil || !info.IsDir() {
+			t.Fatalf("the recorded location %q does not reach a directory: %v", made.resolved, statErr)
+		}
+	}
+	if !found {
+		t.Fatalf("createRoot recorded %v, want the dot-dot component", created)
+	}
+	removeCreated(created)
+	// The link is not this call's: it was there before the call and is never recorded.
+	for _, path := range []string{target, filepath.Join(target, "q")} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+	// A clean of the spelling would have named <base>/p, which this call never made.
+	if _, statErr := os.Lstat(filepath.Join(base, "p")); statErr == nil {
+		t.Errorf("the root was resolved by a lexical clean to %s", filepath.Join(base, "p"))
+	}
+	if _, statErr := os.Lstat(link); statErr != nil {
+		t.Errorf("the pre-existing link was removed: %v", statErr)
+	}
+}
