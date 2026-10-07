@@ -37,8 +37,9 @@ func TestWithSessionLockContextCancelledCreatesNoLock(t *testing.T) {
 // owns the lock, the waiter exhausts its retry budget, and the invocation's context is cancelled in the
 // window just before the acquisition failure is returned. The call must answer the context's own error,
 // not fs.ErrExist, because a cancelled invocation that never took the lock writes nothing and answers 130
-// rather than reporting the busy error with code 1. The cancellation is fired from the give-up seam, so
-// the case needs no sleep and does not depend on the retry schedule.
+// rather than reporting the busy error with code 1. The cancellation is fired from the give-up seam, and
+// the case passes an empty retry schedule so it reaches the give-up on the first failed create: the case
+// needs no sleep and does not depend on the oracle's real waits.
 func TestWithSessionLockContextCancelledAtTheGiveUpAnswersInterrupted(t *testing.T) {
 	cwd := t.TempDir()
 	if err := makeSessionsDir(cwd); err != nil {
@@ -57,7 +58,7 @@ func TestWithSessionLockContextCancelledAtTheGiveUpAnswersInterrupted(t *testing
 	defer func() { sessionLockBeforeGiveUp = previous }()
 
 	ran := false
-	err := WithSessionLockContext(ctx, cwd, "s", func() error { ran = true; return nil })
+	err := orchestrateInterruptLockContext(ctx, cwd, "s", func() error { ran = true; return nil }, time.Sleep, []time.Duration{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("a lock that gave up under a cancelled invocation returned %v; want context.Canceled", err)
 	}
@@ -67,7 +68,8 @@ func TestWithSessionLockContextCancelledAtTheGiveUpAnswersInterrupted(t *testing
 }
 
 // TestWithSessionLockContextGiveUpWithALiveContextKeepsTheBusyError is the control: the same give-up
-// under a live context still reports the acquisition error, so WithSessionLock's contract is unchanged.
+// under a live context still reports the acquisition error, so WithSessionLock's contract is unchanged. It
+// passes the same empty schedule, so the control adds no real wait either.
 func TestWithSessionLockContextGiveUpWithALiveContextKeepsTheBusyError(t *testing.T) {
 	cwd := t.TempDir()
 	if err := makeSessionsDir(cwd); err != nil {
@@ -80,7 +82,7 @@ func TestWithSessionLockContextGiveUpWithALiveContextKeepsTheBusyError(t *testin
 	defer func() { _ = removeFile(lockPath) }()
 
 	ran := false
-	err := WithSessionLockContext(context.Background(), cwd, "s", func() error { ran = true; return nil })
+	err := orchestrateInterruptLockContext(context.Background(), cwd, "s", func() error { ran = true; return nil }, time.Sleep, []time.Duration{})
 	if !errors.Is(err, fs.ErrExist) {
 		t.Fatalf("a live lock that gave up returned %v; want fs.ErrExist", err)
 	}

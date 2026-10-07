@@ -24,7 +24,7 @@ func WithSessionLock(cwd, sessionID string, fn func() error) error {
 var sessionLockBeforeGiveUp func()
 
 func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
-	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep)
+	return orchestrateInterruptLockContext(context.Background(), cwd, sessionID, fn, sleep, nil)
 }
 
 // WithSessionLockContext is WithSessionLock for a caller that can be interrupted (the orchestrate row under cmd/crw
@@ -33,10 +33,13 @@ func withSessionLock(cwd, sessionID string, fn func() error, sleep func(time.Dur
 // no context passes context.Background(), which is what WithSessionLock does: its behaviour and its sleep seam are
 // unchanged.
 func WithSessionLockContext(ctx context.Context, cwd, sessionID string, fn func() error) error {
-	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep)
+	return orchestrateInterruptLockContext(ctx, cwd, sessionID, fn, time.Sleep, nil)
 }
 
-func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration)) error {
+// orchestrateInterruptLockContext is the acquisition both entries share. retryDelays is a test seam: a
+// caller that has to reach the give-up passes a short schedule so the case does not burn the oracle's
+// real waits (CRW-922); nil means LOCK_RETRY_DELAYS_MS, which is what both entries above pass.
+func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string, fn func() error, sleep func(time.Duration), retryDelays []time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -45,6 +48,10 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 	}
 	lockPath := StatePath(cwd, sessionID) + ".lock"
 	delays := [...]time.Duration{5, 10, 15, 20, 25, 30, 35, 40, 35, 35} // milliseconds: LOCK_RETRY_DELAYS_MS
+	schedule := delays[:]
+	if retryDelays != nil {
+		schedule = retryDelays
+	}
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -53,7 +60,7 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, fs.ErrExist) || attempt >= len(delays) {
+		if !errors.Is(err, fs.ErrExist) || attempt >= len(schedule) {
 			if sessionLockBeforeGiveUp != nil {
 				sessionLockBeforeGiveUp()
 			}
@@ -67,7 +74,7 @@ func orchestrateInterruptLockContext(ctx context.Context, cwd, sessionID string,
 			}
 			return err
 		}
-		delay := delays[attempt] * time.Millisecond
+		delay := schedule[attempt] * time.Millisecond
 		if ctx.Done() == nil {
 			sleep(delay) // a context that can never end keeps the caller's seam
 			continue
