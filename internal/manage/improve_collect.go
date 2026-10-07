@@ -560,6 +560,9 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 		discard()
 		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
 	}
+	// The destination is compared first, so an input moved onto the output's place is named as the
+	// output it now is (the issue's decided answer 3); a path that reaches a different file without
+	// reaching the destination is named as the changed input (answer 2).
 	if err := ids.improveIdentityRefuse(fresh.Dest, held); err != nil {
 		discard()
 		return err

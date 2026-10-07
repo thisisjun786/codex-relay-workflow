@@ -385,8 +385,11 @@ func TestImproveReview799RetargetedSourceAliasIsRefused(t *testing.T) {
 	if !retargeted {
 		t.Fatalf("the pre-rename check ran without the seam: exit %d, stderr %q", code, stderr)
 	}
-	if code != 1 || !strings.Contains(stderr, improveReasonInputChanged) {
-		t.Fatalf("a source alias retargeted after recording: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonInputChanged)
+	// The retargeted alias reaches the destination, so the refusal names either the changed input or
+	// the output that is now an input: both are correct, and what matters is that the run refuses
+	// and the file is untouched.
+	if code != 1 || !(strings.Contains(stderr, improveReasonInputChanged) || strings.Contains(stderr, improveReasonOutputIsInput)) {
+		t.Fatalf("a source alias retargeted after recording: exit %d, stderr %q, want a named refusal", code, stderr)
 	}
 	after, err := os.ReadFile(out)
 	if err != nil {
@@ -838,6 +841,84 @@ func TestImproveReview799SearchOnlyDirectoriesAreAccepted(t *testing.T) {
 	}
 	if _, err := os.Stat(bundle); err != nil {
 		t.Errorf("the bundle was not written: %v", err)
+	}
+}
+
+// TestImproveReview799OutputUnderARepointedInputDirectoryIsRefused covers the containment rule when
+// the input's own spelling is a link that is re-pointed: the destination is judged against the
+// directory the input is in now, not against the directory the recording saw.
+func TestImproveReview799OutputUnderARepointedInputDirectoryIsRefused(t *testing.T) {
+	s := improveTestSetup(t)
+	first := filepath.Join(s.root, "first")
+	second := filepath.Join(s.root, "second")
+	sub := filepath.Join(second, "sub")
+	for _, dir := range []string{first, sub} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(s.root, "current")
+	if err := os.Symlink(first, link); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	// A configured directory input: the guard records the directory the spelling reaches.
+	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: link}}}
+	ids := improveIdentityNew(true)
+	defer ids.improveIdentityClose()
+	if err := ids.improveIdentityRecord(section); err != nil {
+		t.Fatalf("the recording: %v", err)
+	}
+	// The link now reaches the other directory, so a destination under it is inside the input.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(second, link); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(sub, "bundle.json")
+	if err := ids.improveIdentityRefuse(dest, nil); err == nil {
+		t.Errorf("a destination under the directory the input now reaches was not refused")
+	}
+}
+
+// TestImproveReview799LinkedSearchOnlyDirectoryIsAccepted covers a configured store directory whose
+// last component is a link to a search-only directory: the type is read from the file the path
+// reaches, so it is opened with the search-only bit rather than read-only. root ignores the bits,
+// so the test skips there.
+func TestImproveReview799LinkedSearchOnlyDirectoryIsAccepted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this test relies on")
+	}
+	root := t.TempDir()
+	real := filepath.Join(root, "private-state")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "state-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(real, 0o755) })
+	// The directory may be searched but not read. Its type is read from the file the spelling
+	// reaches, so it is opened with the search-only bit rather than refused for want of a read
+	// permission the collection never needs.
+	if err := os.Chmod(real, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: link}}}
+	ids := improveIdentityNew(true)
+	defer ids.improveIdentityClose()
+	if err := ids.improveIdentityRecord(section); err != nil {
+		t.Fatalf("recording a directory reached through a link to a search-only directory: %v", err)
+	}
+	held := false
+	for _, entry := range ids.entries {
+		if entry.path == link && entry.info != nil && entry.info.IsDir() {
+			held = entry.file != nil
+		}
+	}
+	if !held {
+		t.Errorf("the linked search-only directory was not opened and held as an input")
 	}
 }
 

@@ -126,7 +126,10 @@ func improveOpenInput(path string) (*os.File, error) {
 	if runtime.GOOS == "darwin" {
 		search = darwinOExec
 	}
-	if info, err := os.Lstat(path); err == nil && info.IsDir() {
+	// The type is taken from the file the path reaches, not from the spelling: a configured
+	// directory reached through a symbolic link is still a directory, and opening it read-only
+	// would need a read permission the read itself does not.
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		fd, err := unix.Open(path, search|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 		if err != nil {
 			return nil, &os.PathError{Op: "open", Path: path, Err: err}
@@ -294,10 +297,12 @@ func (ids *improveIdentitySet) improveIdentityRefuse(dest string, parent os.File
 		return fmt.Errorf("%s: the output %s could not be examined: %w", improveReasonOutputUnreadable, dest, err)
 	}
 	for _, entry := range ids.entries {
-		resolved := entry.resolved
-		if entry.info == nil {
-			resolved = improveIdentityResolved(entry.path)
-		}
+		// The input's own spelling is resolved again here, at the moment of the comparison, rather
+		// than reusing the spelling recorded earlier: a configured path can be a link that now
+		// reaches a different directory, and the destination has to be judged against the
+		// directory the input is in now. The recorded identity still decides whether the
+		// destination is one of the inputs.
+		resolved := improveIdentityResolved(entry.path)
 		if resolved == "" {
 			continue
 		}
