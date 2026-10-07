@@ -350,3 +350,95 @@ func TestManifestTargetsKernelOrderCallerPathEscapes(t *testing.T) {
 		}
 	})
 }
+
+// TestManifestTargetsKernelOrderTrailingSeparator is the pre-merge evaluation's d3: a plain target with
+// a trailing separator names the same file the oracle's path.resolve names, so it must be judged as
+// today. The concatenation must not leave the separator on the Stat below.
+func TestManifestTargetsKernelOrderTrailingSeparator(t *testing.T) {
+	root := targetTestRoot(t, `null`, `null`, `[]`)
+	targetTestWrite(t, root, "mcp.json", `{"mcpServers":{}}`)
+	targetTestWrite(t, root, "plain.js", "data")
+	t.Run("manifest_mcp_servers_file", func(t *testing.T) {
+		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"mcpServers":"./mcp.json/"}`)
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, []TargetIssue{}) {
+			t.Fatalf("issues: %+v %v; want none (the oracle resolves the separator away)", got, err)
+		}
+	})
+	t.Run("hook_command_target", func(t *testing.T) {
+		root := targetTestRoot(t, `"node \"${PLUGIN_ROOT}/plain.js/\""`, `null`, `[]`)
+		targetTestWrite(t, root, "plain.js", "data")
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, []TargetIssue{}) {
+			t.Fatalf("issues: %+v %v; want none (the oracle resolves the separator away)", got, err)
+		}
+	})
+	t.Run("mcp_js_argument", func(t *testing.T) {
+		targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"mcpServers":"./.mcp.json"}`)
+		targetTestWrite(t, root, ".mcp.json", `{"mcpServers":{"t":{"args":["./plain.js/"]}}}`)
+		if got, err := ValidateManifestTargets(root); err != nil || !reflect.DeepEqual(got, []TargetIssue{}) {
+			t.Fatalf("issues: %+v %v; want none (the oracle resolves the separator away)", got, err)
+		}
+	})
+}
+
+// TestManifestTargetsKernelOrderOneRootGoverning is the pre-merge evaluation's d2: the manifest and
+// every target it declares must be judged against ONE root. A plugin root spelled through a link and a
+// '..' selects the manifest lexically and would otherwise resolve its targets physically, mixing two
+// different plugin roots in one validation.
+func TestManifestTargetsKernelOrderOneRootGoverning(t *testing.T) {
+	base := t.TempDir()
+	lexical := filepath.Join(base, "root")
+	physical := filepath.Join(base, "outside")
+	for _, dir := range []string{lexical, filepath.Join(physical, "deep")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("..", "outside", "deep"), filepath.Join(lexical, "sublink")); err != nil {
+		t.Fatal(err)
+	}
+	// The manifest sits in the LEXICAL directory; the physical root is the other one.
+	targetTestWrite(t, lexical, ".codex-plugin/plugin.json", `{"hooks":["./hook.json"]}`)
+	targetTestWrite(t, physical, ".codex-plugin/plugin.json", `{"hooks":["./hook.json"]}`)
+	targetTestWrite(t, lexical, "hook.json", `{"hooks":{}}`)
+	targetTestWrite(t, physical, "hook.json", `{"hooks":{}}`)
+	root := lexical + string(filepath.Separator) + "sublink" + string(filepath.Separator) + ".."
+	// One root governs: the physical one (the walk resolves the link and climbs from where it led).
+	// The manifest and the hook file both live there, so the verdict is clean either way -- what this
+	// pins is that the manifest is not read from the lexical directory while the target is judged
+	// against the physical one.
+	got, err := ValidateManifestTargets(root)
+	if err != nil || !reflect.DeepEqual(got, []TargetIssue{}) {
+		t.Fatalf("issues: %+v %v; want none (one root governs)", got, err)
+	}
+	// Remove the physical manifest: with one governing root the whole validation now finds no
+	// manifest, rather than reading the lexical one and judging its targets against another root.
+	if err := os.Remove(filepath.Join(physical, ".codex-plugin", "plugin.json")); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ValidateManifestTargets(root)
+	if err != nil || !reflect.DeepEqual(got, []TargetIssue{}) {
+		t.Fatalf("issues: %+v %v; want none (the lexical manifest must not be read)", got, err)
+	}
+}
+
+// TestManifestTargetsKernelOrderDriftMCPCallerPathEscapes is the pre-merge evaluation's d1 on the
+// drift:mcp caller: a manifest mcpServers reference that spells a link followed by '..' must reach the
+// outside file, not an inside decoy of the same name.
+func TestManifestTargetsKernelOrderDriftMCPCallerPathEscapes(t *testing.T) {
+	root, _ := kernelOrderFixture(t)
+	kernelOrderBadLink(t, root)
+	if err := os.WriteFile(filepath.Join(root, "..", "outside", "mcp.json"), []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetTestWrite(t, root, "mcp.json", `{"mcpServers":{"decoy":{"args":[]}}}`)
+	manifestPath := filepath.Join(root, ".codex-plugin", "plugin.json")
+	targetTestWrite(t, root, ".codex-plugin/plugin.json", `{"mcpServers":"./sublink/../mcp.json"}`)
+	manifest, err := harnessDriftReadJSON(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := harnessDriftMCPCheck(root, manifest)
+	if check.Severity != HarnessFail || !strings.Contains(check.Evidence, "resolves outside the plugin root") {
+		t.Fatalf("drift:mcp check: %+v; want a FAIL naming the escape", check)
+	}
+}

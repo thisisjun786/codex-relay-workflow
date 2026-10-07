@@ -66,7 +66,9 @@ const (
 // object reads its members as undefined, exactly as JavaScript does.
 func HarnessDriftChecks(pluginRoot string) []HarnessCheck {
 	checks := make([]HarnessCheck, 0, 3)
-	manifest, err := harnessDriftReadJSON(filepath.Join(pluginRoot, harnessDriftManifestRelative))
+	// The manifest is read through the same resolution the drift:mcp reference below is judged
+	// with, so one root governs the whole check (CRW-937).
+	manifest, err := harnessDriftReadJSON(targetResolve(pluginRoot, harnessDriftManifestRelative))
 	if err != nil {
 		checks = append(checks, harnessDriftManifestFailure(err))
 	} else {
@@ -117,7 +119,12 @@ func harnessDriftMCPCheck(pluginRoot string, manifest any) HarnessCheck {
 	// Node passes the decoded string to the filesystem as hookTrustEntriesFSPath holds it (a lone
 	// surrogate becomes U+FFFD), and path.join keeps a trailing separator, which existsSync then
 	// rejects for a regular file (doctor.ts:565-566); filepath.Join cleans it away, so put it back.
-	path := filepath.Join(pluginRoot, hookTrustEntriesFSPath(text))
+	//
+	// Concatenated, not joined (CRW-937): filepath.Join would also clean a '..' the reference spelled
+	// after a symlink, so the containment check below would judge a different file than the kernel
+	// does -- the same defect this issue fixes in the manifest-target walk, and the reason the two
+	// MCP judgements have to resolve a reference the same way.
+	path := pluginRoot + string(filepath.Separator) + hookTrustEntriesFSPath(text)
 	if strings.HasSuffix(text, "/") && !strings.HasSuffix(path, "/") {
 		path += "/"
 	}

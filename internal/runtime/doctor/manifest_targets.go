@@ -239,6 +239,8 @@ func targetEscapesRoot(root, target string) bool {
 	return p != r && !strings.HasPrefix(p, strings.TrimSuffix(r, string(filepath.Separator))+string(filepath.Separator))
 }
 func targetResolve(root, rel string) string {
+	// One leading "./" is removed, exactly as the oracle's rel.replace(/^\.\//, "") does: what
+	// follows decides whether the result is absolute.
 	rel = strings.TrimPrefix(rel, "./")
 	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel)
@@ -246,7 +248,15 @@ func targetResolve(root, rel string) string {
 	// Concatenated, not joined: filepath.Join would Clean the result and drop a '..' the caller
 	// spelled after a symlink, so the containment check would resolve a different file than the
 	// kernel does (CRW-937). manifestTargetsRealpath walks every component in order.
-	return root + string(filepath.Separator) + rel
+	sep := string(filepath.Separator)
+	abs := strings.TrimRight(root, sep) + sep + rel
+	// A trailing separator names the same file to the oracle's path.resolve, which drops it, so
+	// leaving it on the Stat below would report a present file as missing. harnessDriftMCPCheck
+	// keeps its own separator, because its oracle call is path.join, which keeps one.
+	if strings.HasSuffix(abs, sep) {
+		abs = strings.TrimRight(abs, sep)
+	}
+	return abs
 }
 func targetCheck(issues *[]TargetIssue, kind TargetKind, root, rel, missing string) error {
 	abs := targetResolve(root, rel)
@@ -363,7 +373,10 @@ func targetString(v any) string {
 // manifest has no findings; malformed JSON stops validation with its kind.
 func ValidateManifestTargets(pluginRoot string) ([]TargetIssue, error) {
 	issues := []TargetIssue{}
-	path := filepath.Join(pluginRoot, ".codex-plugin/plugin.json")
+	// The manifest is read through the SAME resolution as every target it declares, so one root
+	// governs the whole validation (CRW-937): joining it here would clean a root spelled through a
+	// link and a '..' back to its lexical directory and mix two roots in one judgement.
+	path := targetResolve(pluginRoot, ".codex-plugin/plugin.json")
 	if _, err := os.Stat(targetNodeText(path)); err != nil {
 		return issues, nil
 	}
