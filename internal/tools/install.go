@@ -249,23 +249,54 @@ func parentLocation(component string) string {
 // location that names a different object is never recorded, because the removal would then act on
 // an object this call never made.
 //
-// When the spelled path cannot be read at all, no identity can be established: the parent location
-// was read before the mkdir and may since name a different directory's parent, so accepting it would
-// let this call record -- and later remove -- an object it never made. Nothing is recorded, and the
-// directory is left alone rather than removed on a guess.
-func componentIdentity(component, parent string) (string, os.FileInfo, error) {
+// When the spelled path cannot be read, the directory the mkdir made is still reached through the
+// parent this call recorded, if that parent is still provably this call's: its recorded location is
+// read and compared with os.SameFile against the identity taken when the parent was made, and only a
+// match licenses the child's location. That is what keeps a directory this call made from being
+// dropped from the record when a segment above the parent vanishes between the mkdir and this read.
+// Nothing is recorded when the parent cannot be verified, because a location that might name another
+// install's directory must never be removed.
+func componentIdentity(component, parent string, created []createRootRecord) (string, os.FileInfo, error) {
 	spelled, spelledErr := os.Lstat(component)
-	if spelledErr != nil {
-		return "", nil, spelledErr
+	if spelledErr == nil {
+		if parent != "" {
+			location := crwconfig.JoinRoot(parent, filepath.Base(strings.TrimRight(component, string(os.PathSeparator))))
+			if info, err := os.Lstat(location); err == nil && os.SameFile(spelled, info) {
+				return location, info, nil
+			}
+		}
+		return component, spelled, nil
 	}
-	if parent != "" {
+	// The spelling cannot be read. When the parent this call made is still the directory standing
+	// at its own recorded location, the child's location inside it is this call's too.
+	if parent := recordedParentLocation(created, component); parent != "" {
 		location := crwconfig.JoinRoot(parent, filepath.Base(strings.TrimRight(component, string(os.PathSeparator))))
-		info, err := os.Lstat(location)
-		if err == nil && os.SameFile(spelled, info) {
+		if info, err := os.Lstat(location); err == nil && info.IsDir() {
 			return location, info, nil
 		}
 	}
-	return component, spelled, nil
+	return "", nil, spelledErr
+}
+
+// recordedParentLocation answers the location of the directory this call recorded as component's
+// parent, or "" when that parent is not in the record or is no longer the directory this call made.
+// The comparison is against the identity taken when the parent was made, so a parent another install
+// has since replaced does not license anything.
+func recordedParentLocation(created []createRootRecord, component string) string {
+	parent := componentParent(component)
+	if parent == "" {
+		return ""
+	}
+	for _, made := range created {
+		if made.path != parent || made.resolved == "" {
+			continue
+		}
+		info, err := os.Lstat(made.resolved)
+		if err == nil && os.SameFile(made.info, info) {
+			return made.resolved
+		}
+	}
+	return ""
 }
 
 // dropGone drops the record of a component the scan found missing when the component is really
@@ -282,6 +313,17 @@ func dropGone(created []createRootRecord, component string) []createRootRecord {
 		return created
 	}
 	return dropCreated(created, component)
+}
+
+// dropGoneComponents drops the record of every component the scan found missing that is really
+// gone. The scan reports the components missing outermost first, and each is decided on its own:
+// a component whose parent is reachable and that is not there is one this call no longer owns,
+// while one whose parent has vanished is unreachable rather than absent and keeps its record.
+func dropGoneComponents(created []createRootRecord, components []string) []createRootRecord {
+	for _, component := range components {
+		created = dropGone(created, component)
+	}
+	return created
 }
 
 // createRoot makes dir and every missing ancestor of it, recording only the components this call
@@ -312,7 +354,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 		var absent error
 		components := rootComponents(dir)
 		if len(components) > 0 {
-			created = dropGone(created, components[0])
+			created = dropGoneComponents(created, components)
 		}
 		for _, component := range components {
 			if createRootBeforeMkdir != nil {
@@ -326,7 +368,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// is read now and recorded with it. An identity that cannot be read is a component
 				// that vanished under this call, which the recompute below handles rather than a
 				// record that would let removeCreated remove whatever is there next.
-				location, info, statErr := componentIdentity(component, parent)
+				location, info, statErr := componentIdentity(component, parent, created)
 				if statErr != nil {
 					absent = statErr
 					break
@@ -339,7 +381,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// as missing and this call made it again below the re-made ancestor. Otherwise
 				// another install removed this call's directory and made its own, which is not
 				// this call's to remove.
-				location, info, statErr := componentIdentity(component, parent)
+				location, info, statErr := componentIdentity(component, parent, created)
 				if statErr == nil && sameRecordedDirectory(created, component, info) {
 					// The directory is still the one this call made, and the walk resolved it
 					// again, so the location it resolves to now is the better one to keep.

@@ -284,7 +284,7 @@ func TestToolsReview836IdentityRefusesALocationThatNamesAnotherObject(t *testing
 	}
 
 	// first is the parent read before the mkdir; the mkdir then ran through the repointed link.
-	location, info, err := componentIdentity(filepath.Join(link, "q"), first)
+	location, info, err := componentIdentity(filepath.Join(link, "q"), first, nil)
 	if err != nil {
 		t.Fatalf("componentIdentity under a repointed parent: %v", err)
 	}
@@ -345,17 +345,19 @@ func TestToolsReview836RemoveCreatedLeavesANonDirectoryAlone(t *testing.T) {
 func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing.T) {
 	base := t.TempDir()
 	real := filepath.Join(base, "real")
-	if err := os.Mkdir(real, 0o755); err != nil {
+	inner := filepath.Join(real, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(base, "link")
-	if err := os.Symlink(real, link); err != nil {
+	// The link points one level down, so "link/.." is <base>/real and not <base>: the kernel
+	// resolves the root to <base>/real/p, while a lexical clean of "link/../p" would name <base>/p.
+	// The two differ, which is what lets this test tell the resolved parent from the cleaned one.
+	if err := os.Symlink(inner, link); err != nil {
 		t.Fatal(err)
 	}
-	// The root spells a symbolic link and then a "..": the kernel resolves it to <base>/p, while a
-	// lexical clean would name <real>/p.
 	root := link + "/../p/q"
-	target := filepath.Join(base, "p")
+	target := filepath.Join(real, "p")
 
 	created, err := createRoot(root)
 	if err != nil {
@@ -387,6 +389,10 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
 		}
 	}
+	// A clean of the spelling would have named <base>/p, which this call never made.
+	if _, statErr := os.Lstat(filepath.Join(base, "p")); statErr == nil {
+		t.Errorf("the root was resolved by a lexical clean to %s", filepath.Join(base, "p"))
+	}
 	if _, statErr := os.Lstat(link); statErr != nil {
 		t.Errorf("the pre-existing link was removed: %v", statErr)
 	}
@@ -415,7 +421,7 @@ func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *test
 	// The component this call made is not at the spelled path any more.
 	spelled := filepath.Join(base, "gone", "q")
 
-	location, info, err := componentIdentity(spelled, parent)
+	location, info, err := componentIdentity(spelled, parent, nil)
 	if err == nil {
 		t.Fatalf("componentIdentity accepted the parent's location %q with %v while the spelled path could not be read", location, info)
 	}
@@ -428,5 +434,48 @@ func TestToolsReview836IdentityFailsClosedWhenTheSpelledPathIsUnreadable(t *test
 	// The peer's directory is untouched and is not what the record would have named.
 	if os.SameFile(peerInfo, info) {
 		t.Fatalf("componentIdentity recorded the peer's directory %s", peer)
+	}
+}
+// C1, the read-failure side: a segment above the parent can vanish between the mkdir and the
+// identity read, which leaves the directory this call just made in place but no longer reachable by
+// the spelling. It is still this call's, so the record must keep it -- reached through the parent
+// this call recorded, whose own recorded location is verified before it is trusted.
+func TestToolsReview836KeepsADirectoryTheSpellingCanNoLongerReach(t *testing.T) {
+	component, root, target := review836RaceHost(t)
+
+	// Let the walk succeed, then remove the component before the ".." so the spelling of everything
+	// below it stops resolving while the directories themselves are still there.
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot under a fresh root: %v", err)
+	}
+	if err := os.Remove(component); err != nil {
+		t.Fatal(err)
+	}
+	spelledQ := root
+	if _, statErr := os.Lstat(spelledQ); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("the fixture did not make the spelling unresolvable: %v", statErr)
+	}
+
+	// A component the spelling can no longer reach is still read through the recorded parent.
+	location, info, err := componentIdentity(spelledQ, parentLocation(spelledQ), created)
+	if err != nil {
+		t.Fatalf("componentIdentity with an unresolvable spelling and a recorded parent: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("componentIdentity answered a %v", info.Mode().Type())
+	}
+	madeQ := filepath.Join(target, "q")
+	madeInfo, statErr := os.Lstat(madeQ)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !os.SameFile(madeInfo, info) {
+		t.Fatalf("componentIdentity answered %s, which is not the directory this call made (%s)", location, madeQ)
+	}
+	// The verified fallback is the location that keeps the cleanup able to remove it.
+	removeCreated([]createRootRecord{{path: spelledQ, resolved: location, info: info}})
+	if _, statErr := os.Lstat(madeQ); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("%s survived the cleanup through its recorded location: %v", madeQ, statErr)
 	}
 }
