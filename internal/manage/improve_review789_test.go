@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The review789 tests cover the six P1 defects of the merged PR #789 (CRW-722): crw manage
@@ -21,12 +23,19 @@ import (
 // source. It mirrors the run tests' helper, so a test can set an extra key such as issue_list.
 func improveReview789Configure(t *testing.T, s *improveTestState, manageState string, improve map[string]any) {
 	t.Helper()
+	improveReview789ConfigureSource(t, s, manageState, s.stateDir, improve)
+}
+
+// improveReview789ConfigureSource is improveReview789Configure with the relay source directory
+// named explicitly, so one test can collect from more than one synthetic store.
+func improveReview789ConfigureSource(t *testing.T, s *improveTestState, manageState, relayDir string, improve map[string]any) {
+	t.Helper()
 	section := map[string]any{}
 	for key, value := range improve {
 		section[key] = value
 	}
 	if _, ok := section["sources"]; !ok {
-		section["sources"] = map[string]any{"relay": map[string]any{"path": s.stateDir}}
+		section["sources"] = map[string]any{"relay": map[string]any{"path": relayDir}}
 	}
 	improveTestConfig(t, s, map[string]any{"manage": map[string]any{
 		"state_dir": manageState,
@@ -182,8 +191,12 @@ func TestImproveReview789EightCasesAreOneCandidate(t *testing.T) {
 	// CRW-739 already covers the friction. The run below collects again with the issue list in
 	// place and proposes into an empty drafts directory, so the zero drafts come from the
 	// suppression path rather than from the draft the earlier run already wrote.
+	//
+	// The exported item carries the fingerprint the draft was registered under, which is the
+	// linkage the real export has; its title is deliberately not the candidate's, so the title
+	// comparison cannot be what suppresses it.
 	issues := filepath.Join(s.root, "issues.json")
-	improveTestWrite(t, issues, improveReview789IssueList("CRW-739", "size overrun", ""))
+	improveTestWrite(t, issues, improveReview789IssueList("CRW-739", "size estimate correction", auditDraftFingerprint(improveKindSplit, "size overrun")))
 	empty := filepath.Join(s.root, "manage-state-suppressed")
 	improveReview789Configure(t, s, empty, map[string]any{"issue_list": issues})
 	improveReview789Collect(t, s)
@@ -368,21 +381,23 @@ func TestImproveReview789SplitWithoutScopeHasNoProject(t *testing.T) {
 
 // TestImproveReview789BlankEvidenceMakesNoSighting covers decided answer 3's edge: an origin
 // location that is blank is not an origin, so a record whose evidence list is blank entries plus
-// one real location makes the one sighting it has rather than a sighting with an empty head.
+// one real location makes the one sighting it has rather than a sighting with an empty head. The
+// bundle carries the blank entries directly, because no collector writes one.
 func TestImproveReview789BlankEvidenceMakesNoSighting(t *testing.T) {
-	s := improveTestSetup(t)
-	manageState := filepath.Join(s.root, "manage-state")
-	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
-		improveReview789SeedSplit(t, db, "rel-a", "CRW-1", "project-a", "size overrun", "ev-a")
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "project-a", "rel-a", "size overrun", 1, "", "   ", "events:rel-a"),
 	})
-	improveReview789Configure(t, s, manageState, map[string]any{})
-
-	improveReview789Collect(t, s)
-	report := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
 	if len(report.Created) != 1 {
 		t.Fatalf("created = %+v, want one draft", report.Created)
 	}
-	doc := improveReview789Draft(t, manageState, report.Created[0].Fingerprint)
+	doc := improveProposeTestDraft(t, w, report.Created[0].Fingerprint)
 	for _, sighting := range doc.Seen {
 		if strings.TrimSpace(sighting.Head) == "" {
 			t.Errorf("the draft carries a sighting with no origin location: %+v", doc.Seen)
@@ -495,6 +510,68 @@ func improveReview789FaultRecord(count int, lastSeen string) improveRecord {
 	return improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
 		What: "a signature", Count: count, FirstAt: "2026-10-06T01:00:00Z", LastAt: lastSeen,
 		Evidence: []string{"fault:f1"}}
+}
+
+// improveReview789StoreAt builds one synthetic relay store at an explicit path, so a test can
+// collect from more than one store.
+func improveReview789StoreAt(t *testing.T, dbPath string, f func(t *testing.T, db *sql.DB)) {
+	t.Helper()
+	opened, err := store.Open(context.Background(), dbPath, "")
+	if err != nil {
+		t.Fatalf("the synthetic store at %s: %v", dbPath, err)
+	}
+	f(t, opened.DB)
+	if err := opened.Close(); err != nil {
+		t.Fatalf("closing the synthetic store at %s: %v", dbPath, err)
+	}
+}
+
+// TestImproveReview789DistinctStoresCountEachOccurrence covers the review finding that an
+// occurrence's origin has to name the store it was read from: two stores can carry the same
+// reason at the same row number, so without the store in the origin the second store's row reads
+// as an occurrence already seen and its sighting and project count are lost.
+func TestImproveReview789DistinctStoresCountEachOccurrence(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	secondDir := filepath.Join(s.root, "state-b")
+	if err := os.MkdirAll(secondDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secondDB := filepath.Join(secondDir, "relay.sqlite3")
+	improveReview789StoreAt(t, s.dbPath, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T01:00:00Z','rel-a','ev-a','manifest_forbidden','first')")
+	})
+	improveReview789StoreAt(t, secondDB, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO refusals (at, relationship_id, event_id, reason, detail) VALUES ('2026-10-06T02:00:00Z','rel-b','ev-b','manifest_forbidden','second')")
+	})
+
+	// The first store's bundle, proposed into the drafts directory.
+	improveReview789ConfigureSource(t, s, manageState, s.stateDir, map[string]any{})
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+	if doc := improveReview789Draft(t, manageState, fingerprint); len(doc.Seen) != 1 {
+		t.Fatalf("the first draft carries %d seen entries, want one: %+v", len(doc.Seen), doc.Seen)
+	}
+
+	// The second store's bundle. Its refusal is at the same row number as the first store's, so
+	// only the store token tells the two occurrences apart.
+	improveReview789ConfigureSource(t, s, manageState, secondDir, map[string]any{})
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", second.Updated)
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 2 {
+		t.Errorf("the draft carries %d seen entries, want one per store occurrence (2): %+v", len(doc.Seen), doc.Seen)
+	}
+	if !strings.Contains(doc.Body, "- owner_unknown (2)") {
+		t.Errorf("the merged draft does not count the second store's occurrence:\n%s", doc.Body)
+	}
 }
 
 // TestImproveReview789AggregateCountIsNotUnderstated covers the review finding that a record which

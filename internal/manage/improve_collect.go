@@ -718,6 +718,26 @@ func improveStorePath(configured string) (string, error) {
 	return configured, nil
 }
 
+// improveStoreIdentity is the stable token one store's rows are read under, so an occurrence's
+// origin names the store it came from: the store's own store_id, or the resolved file path when
+// a store carries none. A row number is unique only inside one store, so two stores can carry
+// the same reason at the same row number and, without this token, the second store's row would
+// read as an occurrence already seen.
+func improveStoreIdentity(ctx context.Context, s *store.Store) (string, error) {
+	rows, err := s.All(ctx, "SELECT value FROM schema_meta WHERE key = 'store_id'")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if id := strings.TrimSpace(row.Text("value")); id != "" {
+			return id, nil
+		}
+	}
+	// A store whose identity row is missing is named by the file it was read from, so two
+	// different files still read as two different origins.
+	return improveResolvedPath(s.Path)
+}
+
 // improveReadRelay reads the relay store read-only and normalizes its refusal, fault,
 // generation and split rows. The store is opened with store.OpenInPlace, which never
 // creates a -wal or -shm sidecar, and read through ReadSnapshot's one deferred snapshot.
@@ -729,6 +749,13 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 	defer func() { _ = read.Close() }()
 	rows := 0
 	err = read.ReadSnapshot(ctx, func(ctx context.Context, s *store.Store) error {
+		// An occurrence's origin has to name the store it was read from. A row number is unique
+		// only inside one store: two stores can carry the same reason at the same row number, and
+		// without the store the second one's row reads as an occurrence already seen.
+		token, err := improveStoreIdentity(ctx, s)
+		if err != nil {
+			return err
+		}
 		refusals, err := s.All(ctx, "SELECT id, at, relationship_id, reason, detail FROM refusals ORDER BY id")
 		if err != nil {
 			return err
@@ -738,7 +765,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			reason := row.Text("reason")
 			acc.improveAdd(improveRecord{Kind: improveKindRefusal, Key: reason, What: reason, Count: 1,
 				FirstAt: row.Text("at"), LastAt: row.Text("at"),
-				Evidence: []string{fmt.Sprintf("refusals:%d", improveRowInt(row, "id"))}})
+				Evidence: []string{fmt.Sprintf("refusals:%s:%d", token, improveRowInt(row, "id"))}})
 		}
 
 		faults, err := s.All(ctx, "SELECT fault_id, fault_class, signature, scope_key, occurrence_count, first_seen_at, last_seen_at FROM fault_ledger ORDER BY fault_id")
@@ -750,7 +777,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			acc.improveAdd(improveRecord{Kind: improveKindFault, Key: row.Text("fault_class"), Where: row.Text("scope_key"),
 				What: row.Text("signature"), Count: improveRowInt(row, "occurrence_count"),
 				FirstAt: row.Text("first_seen_at"), LastAt: row.Text("last_seen_at"),
-				Evidence: []string{"fault:" + row.Text("fault_id")}})
+				Evidence: []string{"fault:" + token + ":" + row.Text("fault_id")}})
 		}
 
 		generations, err := s.All(ctx, "SELECT relationship_id, execution_generation, reason, opened_at FROM generations ORDER BY relationship_id, execution_generation")
@@ -762,7 +789,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			reason := row.Text("reason")
 			acc.improveAdd(improveRecord{Kind: improveKindGeneration, Key: reason, Where: row.Text("relationship_id"),
 				What: reason, Count: 1, FirstAt: row.Text("opened_at"), LastAt: row.Text("opened_at"),
-				Evidence: []string{fmt.Sprintf("generations:%s:%d", row.Text("relationship_id"), improveRowInt(row, "execution_generation"))}})
+				Evidence: []string{fmt.Sprintf("generations:%s:%s:%d", token, row.Text("relationship_id"), improveRowInt(row, "execution_generation"))}})
 		}
 
 		// The criteria-registration round trip is in the journal: every registration records
@@ -783,7 +810,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			acc.improveAdd(improveRecord{Kind: improveKindCriteria, Key: row.Text("subject"), Where: digest,
 				What: "registered", Count: size,
 				FirstAt: row.Text("at"), LastAt: row.Text("at"),
-				Evidence: []string{fmt.Sprintf("journal:%d", improveRowInt(row, "seq"))}})
+				Evidence: []string{fmt.Sprintf("journal:%s:%d", token, improveRowInt(row, "seq"))}})
 		}
 
 		// The current set is what canonical_criteria holds; a digest the journal already carries
@@ -795,7 +822,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		rows += len(criteria)
 		for _, row := range criteria {
 			rid, digest := row.Text("relationship_id"), row.Text("set_digest")
-			evidence := "canonical_criteria:" + rid + ":" + digest
+			evidence := "canonical_criteria:" + token + ":" + rid + ":" + digest
 			if acc.improveAnnotate(improveKindCriteria, rid, digest, evidence) {
 				continue
 			}
@@ -868,7 +895,7 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 			// scope leaves it empty, and the issue key stays in the record's evidence rather than
 			// taking the project's place.
 			key := improveSplitKey(project)
-			evidence := []string{"events:" + row.Text("event_id")}
+			evidence := []string{"events:" + token + ":" + row.Text("event_id")}
 			// The reply that answered this blockage is cited as the source of the reason the
 			// record carries, so the reason is substantiated rather than asserted.
 			if answer := answerEvents[improveParseBlockedKey{relationship: relationship, event: row.Text("event_id")}]; answer != "" {
