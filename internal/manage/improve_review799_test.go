@@ -397,12 +397,13 @@ func TestImproveReview799RetargetedSourceAliasIsRefused(t *testing.T) {
 	}
 }
 
-// TestImproveReview799DraftAppearingAfterThePlanIsPinned covers the refresh the collection runs
-// after each reader: a draft that appears while a reader runs is recorded again, so the guard still
-// refuses a destination that names the file it links to. The window between two enumerations has no
-// seam of its own, so the refresh step is driven directly, as the collection drives it.
-func TestImproveReview799DraftAppearingAfterThePlanIsPinned(t *testing.T) {
+// TestImproveReview799DraftAppearingDuringTheReadIsPinned covers the refresh the collection runs
+// after each reader: a draft that appears while the drafts reader runs is recorded again, so the
+// guard still refuses a destination that names the file it links to. The whole collection runs, so
+// the reader itself consumes the draft and the refresh the collection performs is what pins it.
+func TestImproveReview799DraftAppearingDuringTheReadIsPinned(t *testing.T) {
 	s := improveTestSetup(t)
+	improveReview799Store(t, s)
 	drafts := filepath.Join(s.root, "drafts")
 	archive := filepath.Join(s.root, "archive")
 	for _, dir := range []string{drafts, archive} {
@@ -412,23 +413,76 @@ func TestImproveReview799DraftAppearingAfterThePlanIsPinned(t *testing.T) {
 	}
 	target := filepath.Join(archive, "new.json")
 	improveTestWrite(t, target, "{\"schema\":\"crw-issue-draft/1\",\"fingerprint\":\"new\",\"project\":\"p\",\"title\":\"t\"}\n")
+	improveTestConfig(t, s, map[string]any{"manage": map[string]any{"improve": map[string]any{
+		"sources": map[string]any{
+			"relay": map[string]any{"path": s.stateDir},
+			"draft": map[string]any{"path": drafts},
+		},
+	}}})
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The draft appears exactly where the collection re-examines the inputs after the first reader
+	// returns, so the drafts reader that follows takes it, and the refresh has to pin it. The
+	// destination names the file that draft links to, which is the file the bundle must not
+	// replace.
+	appeared := false
+	previous := improveInputAfterRead
+	improveInputAfterRead = func() {
+		if appeared {
+			return
+		}
+		appeared = true
+		if err := os.Symlink(target, filepath.Join(drafts, "new.json")); err != nil {
+			t.Errorf("creating the draft: %v", err)
+		}
+	}
+	t.Cleanup(func() { improveInputAfterRead = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", target)
+	if !appeared {
+		t.Fatalf("the post-read check ran without the seam: exit %d, stderr %q", code, stderr)
+	}
+	if code != 1 || !strings.Contains(stderr, improveReasonOutputIsInput) {
+		t.Fatalf("a draft that appeared during the read: exit %d, stderr %q, want the named refusal %s", code, stderr, improveReasonOutputIsInput)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("the refused run removed the draft: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("the refused run replaced the draft the reader took: %q -> %q", before, after)
+	}
+}
+
+// TestImproveReview799ConfiguredDirectoryIsPinned covers the configured directories the issue names
+// as inputs: each is opened and held like any other input, so a destination that is a file inside
+// one of them, or that replaces one, is refused by identity rather than by spelling alone.
+func TestImproveReview799ConfiguredDirectoryIsPinned(t *testing.T) {
+	s := improveTestSetup(t)
+	drafts := filepath.Join(s.root, "drafts")
+	if err := os.MkdirAll(drafts, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	section := improveSection{Sources: map[string]improveSourceConfig{improveKindDraft: {Path: drafts}}}
 	ids := improveIdentityNew(true)
 	defer ids.improveIdentityClose()
 	if err := ids.improveIdentityRecord(section); err != nil {
-		t.Fatalf("the first recording: %v", err)
+		t.Fatalf("the recording: %v", err)
 	}
-	if err := ids.improveIdentityRefuse(target, nil); err != nil {
-		t.Fatalf("the destination was refused before the draft appeared: %v", err)
+	held := false
+	for _, entry := range ids.entries {
+		if entry.path == drafts && entry.info != nil && entry.info.IsDir() {
+			held = entry.file != nil
+		}
 	}
-	if err := os.Symlink(target, filepath.Join(drafts, "new.json")); err != nil {
-		t.Skipf("symbolic links are unavailable here: %v", err)
+	if !held {
+		t.Errorf("the configured drafts directory was not opened and held as an input")
 	}
-	if err := ids.improveIdentityRefresh(section); err != nil {
-		t.Fatalf("the refresh after the reader: %v", err)
-	}
-	if err := ids.improveIdentityRefuse(target, nil); err == nil {
-		t.Errorf("a draft that appeared after the first recording was not refused")
+	// A destination inside the directory is refused, and so is one that shares the directory's
+	// identity.
+	if err := ids.improveIdentityRefuse(filepath.Join(drafts, "bundle.json"), nil); err == nil {
+		t.Errorf("a destination inside the configured directory was not refused")
 	}
 }
 

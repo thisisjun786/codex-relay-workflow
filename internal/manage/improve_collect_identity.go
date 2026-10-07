@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -87,40 +88,56 @@ func improveIdentityResolved(path string) string {
 	return resolved
 }
 
-// improveIdentityPin fills the entry's identity. A directory is recorded by the identity the
-// kernel reports for it, with no descriptor held: the readers open files rather than the configured
-// directories themselves, and a directory that may be searched but not read is a valid
-// configuration this must not refuse. A file is pinned through a descriptor, so its inode cannot be
-// reused before the rename; the open does not block on a FIFO, so a special file cannot hang the
-// collection before the reader reaches it. A path that is absent leaves the entry with its name
-// alone; a path that exists but cannot be examined is a refusal, because an input the collection
-// cannot pin is one it cannot prove it will not overwrite.
+// improveIdentityPin fills the entry's identity through a descriptor, so the inode cannot be reused
+// before the bundle is renamed and the identity stays comparable until then. Every input is opened,
+// the configured directories included: a directory is opened with the search-only bit, so one that
+// may be searched but not read is a valid configuration rather than a refusal, and its descriptor
+// is held like any other input's. The open does not block, so a special file such as a FIFO cannot
+// hang the collection before a reader or a refusal is reached. A path that is absent leaves the
+// entry with its name alone; a path that exists but cannot be opened or examined is a refusal,
+// because an input the collection cannot pin is one it cannot prove it will not overwrite.
 func improveIdentityPin(entry *improveIdentityEntry) error {
-	info, err := os.Stat(entry.path)
+	file, err := improveOpenInput(entry.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return nil
 	case err != nil:
-		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, err)
-	case info.IsDir():
-		entry.info = info
-		return nil
-	}
-	fd, err := unix.Open(entry.path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-	switch {
-	case errors.Is(err, unix.ENOENT):
-		return nil
-	case err != nil:
 		return fmt.Errorf("%s: the input %s could not be opened to record its identity: %w", improveReasonInputChanged, entry.path, err)
 	}
-	file := os.NewFile(uintptr(fd), entry.path)
-	pinned, statErr := file.Stat()
+	info, statErr := file.Stat()
 	if statErr != nil {
 		_ = file.Close()
 		return fmt.Errorf("%s: the input %s could not be examined to record its identity: %w", improveReasonInputChanged, entry.path, statErr)
 	}
-	entry.info, entry.file = pinned, file
+	entry.info, entry.file = info, file
 	return nil
+}
+
+// improveOpenInput opens an input without blocking and without requiring more than reaching it
+// needs. A directory is opened with the search-only bit (Linux O_PATH, Darwin O_EXEC), which needs
+// only search permission on its ancestors; anything else is opened read-only but non-blocking, so a
+// FIFO or a device does not wait for a writer. The platform headers give the search-only bit
+// different names, and named numeric constants keep this one file buildable for both release
+// platforms: Linux O_PATH is 0x200000, and Darwin's O_EXEC is 0x40000000.
+func improveOpenInput(path string) (*os.File, error) {
+	const linuxOPath = 0x200000
+	const darwinOExec = 0x40000000
+	search := linuxOPath
+	if runtime.GOOS == "darwin" {
+		search = darwinOExec
+	}
+	if info, err := os.Lstat(path); err == nil && info.IsDir() {
+		fd, err := unix.Open(path, search|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+		if err != nil {
+			return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		}
+		return os.NewFile(uintptr(fd), path), nil
+	}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(fd), path), nil
 }
 
 // improveIdentityAdd records a path as an input. A path already recorded keeps the identity it was
