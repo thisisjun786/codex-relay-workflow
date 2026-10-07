@@ -499,7 +499,7 @@ A finding BLOCKS, and is never conditionally accepted, when it is any of these:
 - a material regression this change introduced;
 - an unmet required review gate or the repository's named verification.
 
-A blocking finding is fixed on this pull request, or the candidate is reported
+A blocking finding is fixed in this change, or the candidate is reported
 blocked. One that arrives after the child has finished its rounds is raised to the
 parent rather than absorbed silently, and the parent decides whether it belongs to
 this issue or to a successor.

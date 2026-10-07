@@ -106,7 +106,7 @@ blocker, not permission to reset state, bypass a guard or claim the Loop is acti
    recheck candidate/base and verify landing. Update the coordination record and
    issue state within existing authority, then release newly ready successors. Each
    Run pass returns to this Loop; it does not end the parent objective.
-   Keep one implementation issue per PR today, under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration); a child report or green CI alone is not Done.
+   Keep one implementation issue per delivery today (a task branch and its head, or a pull request where one is named), under the repository's [work-unit rules](../../../../POLICY.md#work-units-review-and-integration); a child report or green CI alone is not Done.
 
 Keep the record current after meaningful transitions, with the latest evidence and
 next action rather than a growing transcript. Give concise progress updates under

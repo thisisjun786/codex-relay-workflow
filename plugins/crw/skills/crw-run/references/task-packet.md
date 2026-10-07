@@ -323,7 +323,7 @@ Execution:
   reach you: once your result is accepted the coordinator holds the candidate instead, and after the merge it is
   new work, except that an in-scope one reopens your issue ([Late review threads](merge-readiness.md#late-review-threads)). See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
-- Where the assignment names the independent code review, run it once per head (and per pull request, when the head is one): `crw review --base <the pull request's base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence> --post-summary --pr <number>`,
+- Where the assignment names the independent code review, run it once per head: `crw review --base <the base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence>`; when the head is a pull request and its summary belongs on it, add `--post-summary --pr <number>`,
   after the local full verification passes on that head and before you emit. The command keeps the run rules itself: the same
   patch-id is never reviewed again (a repeat answers `already_reviewed` and calls no model), one review runs at a time on the host
   (concurrency 1), and a daily cap bounds the starts, which you do not raise. A review that could not run at all
@@ -982,6 +982,8 @@ list of findings, because the block is what lets a restarted child find its own 
 repository, the packet carries the text of OPS-5.5 and OPS-9 as the Launch packet does; where it can, SCOPE cites them by id.
 
 ### One issue in both formats
+
+This example predates the push-only procedure. It records a pull request delivery as it was written then, and its delivery lines are not the current procedure.
 
 The issue is the one delivered as pull request #255, titled "the seed refuses a bound generation without a dispatch turn again":
 the test seed `storeseed.RecordRelationship` had lost a refusal the store method it replaced made, so a test could start from a

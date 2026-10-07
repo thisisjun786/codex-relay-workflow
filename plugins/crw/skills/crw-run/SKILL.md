@@ -339,7 +339,8 @@ owner that could not be proved from two the store reports, and a disposition tha
 read from one the store holds as contested. It carries no escalation value, because a review
 round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
 increase concurrency; an issue the [size check](#check-the-size-before-dispatch) flags is reconciled through `crw-plan`'s boundary rules before dispatch, when the concept boundary separates it and a useful split fits the authorized scope.
-One issue runs as one packet and one pull request today, and a batch keeps those
+One issue runs as one packet and one delivery today (a task branch and its head for the
+integrator, or a pull request where one is named), and a batch keeps those
 separate pairs, under the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping)
 and the [work-unit rules](../../../../POLICY.md#work-units-review-and-integration). Several
 packets for one feature are allowed by policy but are not switched on until their
@@ -953,8 +954,7 @@ vocabulary names is reported as a blocker against the state that does apply, und
 A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
-before reporting or recording the issue complete. Read back the one delivery PR's
-actual merge, intended repository/branch and landing revision. For legacy multi-PR
+before reporting or recording the issue complete. Read back the one delivery's landing: the commit on the intended branch (the integrator's fast-forward) with its repository and branch, or the pull request's actual merge where one was named. For legacy multi-PR
 scope, verify the reconciled deliveries and their combined coverage instead. Retain
 existing accepted operational criteria and never infer completion from an automatic status alone.
 
