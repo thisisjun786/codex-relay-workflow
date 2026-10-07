@@ -78,6 +78,8 @@ var zoneInventory = map[string][]string{
 	// CRW-736 (appended statement): the user-decision record, one column per field of crw-user-decision/1
 	// with the object and array fields as JSON text.
 	"dag_user_decisions": {"decision_id", "fingerprint", "kind", "context", "options_json", "recommendation_json", "blocking_json", "needed_by", "origin_json", "source_json", "authority_json", "state", "raised_at", "raised_via", "seen_json", "answered_at", "answered_by", "answered_via", "answer_text", "applied_at", "applied_event", "applied_generation", "withdrawn_reason", "expired_reason"},
+	// CRW-904 (appended statement): the idle-edge wake of a delivery that waits out a busy backoff.
+	"delivery_wakes": {"event_id", "woken_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -599,7 +601,11 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 // pendingWriters are the zone tables whose first writer is a later issue of the DAG project: no production query names them
 // yet. The list is exactly those tables: a table gains a query and leaves this list in the same change, and a table with neither
 // is dead schema.
-var pendingWriters = map[string]string{}
+var pendingWriters = map[string]string{
+	// CRW-904 adds delivery_wakes with the store-zone statement; the delivery service's query for it
+	// arrives in the next commit of this change, which removes this entry.
+	"delivery_wakes": "CRW-904 delivery service (the idle-edge wake)",
+}
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
 	t.Parallel()

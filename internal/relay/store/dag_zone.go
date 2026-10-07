@@ -846,4 +846,18 @@ BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed b
     expired_reason      TEXT NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS dag_user_decisions_fingerprint ON dag_user_decisions (fingerprint)`,
+	// CRW-904: the idle-edge wake of a delivery that waits out a busy backoff. A row here says one
+	// thing: this deferred-busy delivery was woken by its recipient's thread/status/changed to idle
+	// (or notLoaded), so it is due now and keeps the head of its recipient's line until it is
+	// claimed. It is a zone table rather than a column of deliveries because a shipped statement is
+	// never edited (the swap gate compares the stored text of every object) and because the marker
+	// has to survive a daemon restart. The table is not append-only: the wake is spent where it is
+	// spent, so the claim and the next busy deferral delete the row. The wake never moves
+	// deliveries.next_eligible_at, which is what keeps due = min(original, recomputed) true for an
+	// attempt that meets the recipient busy again. A wake row whose delivery has left deferred_busy
+	// for another reason is inert: every reader of this table pairs it with that state.
+	`CREATE TABLE IF NOT EXISTS delivery_wakes (
+    event_id  TEXT PRIMARY KEY CHECK (event_id <> ''),
+    woken_at  TEXT NOT NULL CHECK (woken_at <> '')
+)`,
 }
