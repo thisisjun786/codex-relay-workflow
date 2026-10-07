@@ -663,6 +663,38 @@ func TestMemoryGateUnnamedDestinationEighthPassShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationNinthPassShapes pins the shapes the ninth pre-merge evaluation found: a function
+// value that stands in a for iterable or a lambda default is a value, not a binding; a tuple loop target binds its
+// names; and a literal pathlib.Path call is still named, so its write_text is no unnamed write.
+func TestMemoryGateUnnamedDestinationNinthPassShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"function value in a for iterable", py("import os\nfor x in [open]:\n    pass\nprint(\"" + m + "\")")},
+		{"function value as a lambda default", py("import os\nf = lambda g=open: g\nprint(\"" + m + "\")")},
+		{"tuple loop target rebinding an imported name", py("import io\nfrom pathlib import Path\n[(io.write_text(\"x\")) for (io,) in [(Path(\"" + m + "\"),)]]")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A literal pathlib.Path call is a named destination: the ordinary check decides it, not this one.
+		{"literal Path write_text", py("from pathlib import Path\nPath(\"" + m + "\").write_text(\"x\")")},
+		{"literal Path write_bytes", py("from pathlib import Path\nPath(\"" + m + "\").write_bytes(b\"x\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Target == unnamedDestWant {
+				t.Errorf("%q must not be this check's case: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.

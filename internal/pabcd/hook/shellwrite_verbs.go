@@ -2671,7 +2671,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 					// A method named open (p.open("w")) is not the builtin: its destination is the receiver,
 					// which this reader names for no open() method at all. A method named Path (x.Path(...)) is
 					// no pathlib.Path and names no destination. A method of any other name is read below.
-					kind = shellWriteUnnamedDottedKind(rs, i)
+					kind = shellWriteUnnamedDottedKindWith(rs, i, binds, w.assigned)
 					recvModule = kind == 'q' && shellWriteUnnamedDottedModule(rs, i, binds, w.assigned)
 				}
 				if kind == 0 && c == '(' && shellWriteExecCallee(rs, i, c) {
@@ -2902,15 +2902,13 @@ func (w *shellWriteUnnamedWalk) bindLoopTargets(rs []rune) {
 		for k < len(rs) && shellVerbSpaceRune(rs[k]) {
 			k++
 		}
-		start := k
-		for k < len(rs) && shellWriteCopyIdentRune(rs[k]) {
-			k++
-		}
-		if k == start {
+		// The target is a bare name (for io in ...) or a tuple of names ((io,) in ...); a comprehension reads its
+		// element before its own for clause stands, so every name the target lists is bound before the walk.
+		names, after := shellWriteUnnamedTargetNames(rs, k)
+		if len(names) == 0 {
 			continue
 		}
-		name := string(rs[start:k])
-		m := k
+		m := after
 		for m < len(rs) && shellVerbSpaceRune(rs[m]) {
 			m++
 		}
@@ -2920,9 +2918,61 @@ func (w *shellWriteUnnamedWalk) bindLoopTargets(rs []rune) {
 		if w.assigned == nil {
 			w.assigned = map[string]bool{}
 		}
-		w.assigned[name] = true
+		for _, name := range names {
+			w.assigned[name] = true
+		}
 		i = j - 1
 	}
+}
+
+// shellWriteUnnamedTargetNames is every name a for clause's target binds, read from k: a bare name, or the names a
+// parenthesised or bracketed tuple lists (with nested tuples and a trailing comma). It returns the names and the
+// offset just after the target.
+func shellWriteUnnamedTargetNames(rs []rune, k int) ([]string, int) {
+	names := []string{}
+	if k < len(rs) && (rs[k] == '(' || rs[k] == '[') {
+		open, depth := rs[k], 0
+		for m := k; m < len(rs); m++ {
+			switch {
+			case rs[m] == open:
+				depth++
+			case rs[m] == ')' || rs[m] == ']':
+				if depth--; depth == 0 {
+					return append(names, shellWriteUnnamedNamesIn(rs, k+1, m)...), m + 1
+				}
+			}
+		}
+		return names, k
+	}
+	start := k
+	for k < len(rs) && shellWriteCopyIdentRune(rs[k]) {
+		k++
+	}
+	if k == start {
+		return names, k
+	}
+	return []string{string(rs[start:k])}, k
+}
+
+// shellWriteUnnamedNamesIn is every bare name that stands at the top level of a tuple target's text.
+func shellWriteUnnamedNamesIn(rs []rune, from, to int) []string {
+	names, depth := []string{}, 0
+	for i := from; i < to; i++ {
+		switch c := rs[i]; {
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+		case depth == 0 && shellWriteCopyIdentRune(c):
+			j := i
+			for j < to && shellWriteCopyIdentRune(rs[j]) {
+				j++
+			}
+			names = append(names, string(rs[i:j]))
+			i = j - 1
+		}
+	}
+	return names
 }
 
 // literal records the decoded value of one string literal the program holds.
@@ -3078,6 +3128,28 @@ func shellWriteUnnamedDotted(rs []rune, i int) bool {
 	return j > 0 && rs[j-1] == '.'
 }
 
+// shellWriteUnnamedDottedKindWith is shellWriteUnnamedDottedKind with the program's import bindings: a method named
+// Path on a module the program imported (pathlib.Path(...)) is pathlib.Path and names a destination, while a method
+// named Path on anything else is no pathlib.Path and names none.
+func shellWriteUnnamedDottedKindWith(rs []rune, i int, binds shellWriteCopyImports, assigned map[string]bool) byte {
+	j := i
+	for j > 0 && shellVerbSpaceRune(rs[j-1]) {
+		j--
+	}
+	end := j
+	for j > 0 && shellWriteCopyIdentRune(rs[j-1]) {
+		j--
+	}
+	name := string(rs[j:end])
+	if name == "open" {
+		return 'q'
+	}
+	if name == "Path" && shellWriteUnnamedDottedModule(rs, i, binds, assigned) {
+		return 'p'
+	}
+	return 0
+}
+
 // shellWriteUnnamedDottedKind is the frame kind of a call whose name the builtin reader matched but which hangs off a
 // dot: a method named open writes to its receiver and this reader names no destination for it, and any other name is no
 // such call.
@@ -3136,19 +3208,19 @@ func shellWriteUnnamedBinds(rs []rune, i, j int) bool {
 	for k < len(rs) && shellVerbSpaceRune(rs[k]) {
 		k++
 	}
-	if k < len(rs) && rs[k] == ':' {
-		return true // an annotated assignment: the annotation follows the name
+	if k >= len(rs) || rs[k] != ':' {
+		return false
 	}
-	// A lambda parameter list: the name stands between lambda and its colon, with no bracket of its own.
-	for b := i - 1; b >= 0 && rs[b] != '\n' && rs[b] != ';' && rs[b] != ':'; b-- {
-		if word := shellWriteUnnamedWordBefore(rs, b); word == "lambda" {
+	// An annotated assignment (io: Path = ...) binds the name, and only when an = follows the annotation in the same
+	// statement: a dict key, a slice or a lambda header carries a colon but binds nothing here. A loop or
+	// comprehension target is read by the pre-pass, and a lambda's own parameter by the = after it, so neither is
+	// decided here.
+	for m := k + 1; m < len(rs) && rs[m] != '\n' && rs[m] != '\r' && rs[m] != ';'; m++ {
+		if rs[m] == '=' && (m+1 >= len(rs) || rs[m+1] != '=') {
 			return true
 		}
-	}
-	// A loop or comprehension target: for NAME in ... binds NAME.
-	for b := i - 1; b >= 0 && rs[b] != '\n' && rs[b] != ';' && rs[b] != ')' && rs[b] != ']'; b-- {
-		if word := shellWriteUnnamedWordBefore(rs, b); word == "for" {
-			return true
+		if rs[m] == ':' {
+			return false // a second colon: a slice or a nested annotation, not this name's assignment
 		}
 	}
 	return false
