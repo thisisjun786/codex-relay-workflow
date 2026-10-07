@@ -40,6 +40,79 @@ func orchestrateDcloseCancelAllDoneAtC(t *testing.T, cwd, id, slug string) {
 	orchestrateDcloseSeedReceipt(t, cwd, id, epoch)
 }
 
+// TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing pins the check that guards the IDLE
+// state write when the goalplan lock wrote nothing: the all-done branch whose PABCD row is already
+// recorded. The ledger read still precedes that write, so the cancellation is fired by the same
+// after-read seam the F2 case uses, and a check moved in front of that read cannot see it.
+func TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id, slug := "dclose-cancel-idlewrite", "dclose-cancel-idlewrite-plan"
+	orchestrateDcloseCancelAllDoneAtC(t, cwd, id, slug)
+	cur := state.ReadState(cwd, id)
+	if err := orchestrateDcloseAppendPabcdRow(cwd, cur, cur.CheckEpoch, nil, orchestrateDcloseAttest(id)); err != nil {
+		t.Fatal(err)
+	}
+	before := statusTree(t, cwd)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reads := 0
+	seam := orchestrateDcloseSeam{afterLedgerRead: func() {
+		reads++
+		cancel()
+	}}
+	got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", state.ReadState(cwd, id), orchestrateDcloseAttest(id), false, seam)
+	after := statusTree(t, cwd)
+	if !errors.Is(err, context.Canceled) || got != (CliResult{}) || !reflect.DeepEqual(before, after) {
+		t.Fatalf("a close cancelled before its IDLE state write answered (%+v, %v) with phase %s; want context.Canceled with the zero result and nothing written",
+			got, err, state.ReadState(cwd, id).Phase)
+	}
+	if reads != 1 {
+		t.Fatalf("the close ran the after-read seam %d time(s); want the all-done branch's ledger read once", reads)
+	}
+	if s := state.ReadState(cwd, id); s.Phase != state.PhaseC {
+		t.Fatalf("phase = %s; the cancelled close must not have published IDLE", s.Phase)
+	}
+}
+
+// TestOrchestrateDcloseCancelBeforeTheFinalizationRowWritesNothing pins the check that guards the
+// finalization pass's own PABCD row, which is that pass's first durable effect on a recovery retry that
+// owes only that row. The first lock writes nothing and the state is already IDLE, so the finalization
+// callback is entered with wrote false; the seam cancels at its pre-write check, which is the second
+// check of this invocation (the first lock callback's entry check is the first).
+func TestOrchestrateDcloseCancelBeforeTheFinalizationRowWritesNothing(t *testing.T) {
+	cwd := orchestrateDcloseTestCwd(t)
+	id, slug := "dclose-cancel-finrow", "dclose-cancel-finrow-plan"
+	orchestrateDcloseCancelIdleRetrySeed(t, cwd, id, slug)
+	cur := state.ReadState(cwd, id)
+	if !state.MatchesDcloseRecovery(cur, "wp-1") {
+		t.Fatalf("the seeded retry does not match the request: %+v", cur.DcloseRecovery)
+	}
+	before := statusTree(t, cwd)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checks := 0
+	seam := orchestrateDcloseSeam{interrupt: func() {
+		checks++
+		if checks == 2 {
+			cancel()
+		}
+	}}
+	got, err := orchestrateDcloseContext(ctx, cwd, id, "wp-1", cur, orchestrateDcloseAttest(id), true, seam)
+	after := statusTree(t, cwd)
+	if !errors.Is(err, context.Canceled) || got != (CliResult{}) || !reflect.DeepEqual(before, after) {
+		t.Fatalf("a recovery retry cancelled before its finalization row answered (%+v, %v) after %d check(s); want context.Canceled with the zero result and nothing written",
+			got, err, checks)
+	}
+	if checks != 2 {
+		t.Fatalf("the close ran %d pre-write check(s); want the first lock's entry check and the finalization row's", checks)
+	}
+	if n := orchestrateDcloseDoneRows(t, cwd, id); n != 0 {
+		t.Fatalf("the cancelled finalization wrote %d PABCD close row(s)", n)
+	}
+}
+
 // orchestrateDcloseCancelIdleRetrySeed seeds the recovery retry that owes only the PABCD close row: the
 // target work-phase is already closed and its goalplan row already recorded, the state is already IDLE
 // with the marker that names it, and the C -> IDLE row the finalization pass still owes was never
