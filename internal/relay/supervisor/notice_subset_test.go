@@ -186,7 +186,7 @@ func nsNotice() map[string]any {
 }
 
 func nsLive() map[string]any {
-	return map[string]any{"sender": "parent", "recipient": "supervisor", "projectKey": "PRJ-1"}
+	return map[string]any{"sender": "parent", "recipient": "supervisor", "recipientScopeKind": "initiative", "projectKey": "PRJ-1"}
 }
 
 func TestNoticeSubset_Compose(t *testing.T) {

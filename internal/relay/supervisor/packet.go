@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -137,4 +138,76 @@ func (c *Channel) Compose(ctx context.Context, o Obligation, r Resolution, at st
 }
 func (p Packet) ID() string {
 	return pyvalue.Str(py.Item(py.Item(map[string]any(p), "envelope"), "messageId"))
+}
+
+// recipientScopeKindRecorded reports whether a stored relay-envelope/1 packet's recipient object
+// already carries scopeKind. A packet stored before the field existed does not, and the restatement
+// comparisons drop the newly composed field so that adding it alone never restates a message whose
+// content moved in nothing else. A packet this reader cannot understand answers true: the whole
+// comparison then stands, and such a row is restated exactly as it was before the field existed.
+func recipientScopeKindRecorded(packet string) bool {
+	decoded, err := pyjson.Loads(packet, pyjson.LoadOptions{Python: true, RangeErrors: true})
+	if err != nil {
+		return true
+	}
+	return recipientScopeKindPresent(decoded)
+}
+
+// recipientScopeKindPresent is recipientScopeKindRecorded over an already decoded packet.
+func recipientScopeKindPresent(decoded any) bool {
+	top, ok := py.Object(decoded)
+	if !ok {
+		return true
+	}
+	envelope, found := top.Lookup("envelope")
+	if !found {
+		return true
+	}
+	region, ok := py.Object(envelope)
+	if !ok {
+		return true
+	}
+	recipient, found := region.Lookup("recipient")
+	if !found {
+		return true
+	}
+	object, ok := py.Object(recipient)
+	if !ok {
+		return true
+	}
+	_, has := object.Lookup("scopeKind")
+	return has
+}
+
+// packetWithoutRecipientScopeKind is packet with recipient.scopeKind removed, as a copy. It is the
+// value a restatement comparison uses when the stored packet predates the field, so the caller's
+// packet - which a restatement for some other change writes - is left as it is.
+func packetWithoutRecipientScopeKind(packet map[string]any) map[string]any {
+	envelope, ok := packet["envelope"].(map[string]any)
+	if !ok {
+		return packet
+	}
+	recipient, ok := envelope["recipient"].(map[string]any)
+	if !ok {
+		return packet
+	}
+	if _, has := recipient["scopeKind"]; !has {
+		return packet
+	}
+	out := make(map[string]any, len(packet))
+	for key, value := range packet {
+		out[key] = value
+	}
+	region := make(map[string]any, len(envelope))
+	for key, value := range envelope {
+		region[key] = value
+	}
+	person := make(map[string]any, len(recipient))
+	for key, value := range recipient {
+		person[key] = value
+	}
+	delete(person, "scopeKind")
+	region["recipient"] = person
+	out["envelope"] = region
+	return out
 }

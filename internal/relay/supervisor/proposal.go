@@ -118,6 +118,15 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	if err != nil {
 		return false, err
 	}
+	// A packet stored before recipient.scopeKind existed carries no such field, so the freshly
+	// composed one always differs. Compare without it there: adding the field alone is not a
+	// change to the message, and a restatement made for something else still writes it.
+	if !recipientScopeKindRecorded(row.Packet) {
+		comparison, err = canonicalPacket(packetWithoutRecipientScopeKind(current))
+		if err != nil {
+			return false, err
+		}
+	}
 	if comparison == row.Packet && eventID == row.EventID.String && (!row.SubmissionNo.Valid && report.submission == 0 || row.SubmissionNo.Valid && row.SubmissionNo.Int64 == report.submission) {
 		return false, nil
 	}
