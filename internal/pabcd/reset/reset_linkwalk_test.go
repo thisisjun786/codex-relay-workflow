@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -228,17 +229,101 @@ func TestResetLinkWalkJudgesLikeToday(t *testing.T) {
 	}
 }
 
-// TestResetLinkWalkKeepsTheDescriptorPathWhenReadlinkFails: resetLinkTargetExists is only reached
-// for a name that exists, and Readlink fails for anything that is not a link, so that case keeps
-// today's flow, the descriptor path. The judgement therefore never uses the root's path name for
-// it, and a renamed pinned directory does not turn a present entry into a refusal.
-func TestResetLinkWalkKeepsTheDescriptorPathWhenReadlinkFails(t *testing.T) {
+// TestResetLinkWalkAnUnreadableLinkTargetIsAbsent: the judgement is only reached for a name the
+// caller saw as a link, and readlink then fails when the leaf stopped being one or when the
+// descriptor cannot reach it. Both are absent — the kernel cannot resolve the link either, which is
+// what existsSync asks — and neither is answered from the root's own path, so a renamed pinned
+// directory cannot turn it into a refusal and the removal never acts on a swapped leaf. This row is
+// the one expectation CRW-927 changes here.
+func TestResetLinkWalkAnUnreadableLinkTargetIsAbsent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, sessions string)
+	}{
+		{"the_leaf_stopped_being_a_link", func(t *testing.T, sessions string) {
+			// The caller saw a link, and by the time the judgement reads it the leaf is a regular
+			// file: readlinkat answers EINVAL. The link is unlinked first, because writing through the
+			// name would follow it and leave the link in place.
+			if err := os.Remove(filepath.Join(sessions, "a.json")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sessions, "a.json"), []byte("replaced"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"the_descriptor_cannot_reach_it", func(t *testing.T, sessions string) {
+			if err := os.Chmod(sessions, 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(sessions, 0o755) })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "the_descriptor_cannot_reach_it" && os.Geteuid() == 0 {
+				t.Skip("mode bits do not deny search to root")
+			}
+			base := t.TempDir()
+			sessions := filepath.Join(base, "sessions")
+			if err := os.Mkdir(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sessions, "keep.txt"), []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("keep.txt", filepath.Join(sessions, "a.json")); err != nil {
+				t.Fatal(err)
+			}
+			parent, err := os.OpenRoot(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			observed, err := parent.Lstat("sessions")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pinned, err := resetPin(parent, "sessions", observed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pinned.Close()
+			// Rename the pinned directory away and put a fresh one at its path, so the root-path
+			// judgement would refuse.
+			moved := filepath.Join(base, "moved")
+			if err := os.Rename(sessions, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, moved)
+			got, err := resetLinkTargetExists(pinned, "a.json")
+			if err != nil {
+				t.Fatalf("resetLinkTargetExists: %v (an in-root failure must be absent, not a refusal)", err)
+			}
+			if got {
+				t.Error("exists = true, want false: the target could not be read")
+			}
+		})
+	}
+}
+
+// TestResetLinkWalkAnUnreadableCandidateIsAbsentAndResetContinues: the removal caller records a
+// candidate it cannot lstat as absent rather than returning an error, so one unreadable candidate
+// does not stop the reset before the ones after it.
+func TestResetLinkWalkAnUnreadableCandidateIsAbsentAndResetContinues(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("mode bits do not deny search to root")
+	}
 	base := t.TempDir()
 	sessions := filepath.Join(base, "sessions")
 	if err := os.Mkdir(sessions, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sessions, "regular.txt"), []byte("regular"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sessions, "a.json"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "b.json"), []byte("b"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	parent, err := os.OpenRoot(base)
@@ -255,18 +340,26 @@ func TestResetLinkWalkKeepsTheDescriptorPathWhenReadlinkFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	if err := os.Rename(sessions, filepath.Join(base, "moved")); err != nil {
+	if err := os.Chmod(sessions, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(sessions, 0o755); err != nil {
+	t.Cleanup(func() { _ = os.Chmod(sessions, 0o755) })
+	result := ResetResult{Removed: []string{}, Absent: []string{}}
+	if err := resetRmIfExists(pinned, "a.json", "a.json", &result); err != nil {
+		t.Fatalf("resetRmIfExists: %v (an unreadable candidate must be absent, not an error)", err)
+	}
+	if !slices.Equal(result.Absent, []string{"a.json"}) {
+		t.Errorf("absent = %v, want [a.json]", result.Absent)
+	}
+	// The reset must still reach the candidates after it.
+	if err := os.Chmod(sessions, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got, err := resetLinkTargetExists(pinned, "regular.txt")
-	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v", err)
+	if err := resetRmIfExists(pinned, "b.json", "b.json", &result); err != nil {
+		t.Fatalf("b.json: %v (the reset must continue)", err)
 	}
-	if !got {
-		t.Error("exists = false, want true: the descriptor path still names the entry")
+	if !slices.Equal(result.Removed, []string{"b.json"}) {
+		t.Errorf("removed = %v, want [b.json]", result.Removed)
 	}
 }
 

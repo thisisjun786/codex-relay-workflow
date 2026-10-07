@@ -134,14 +134,19 @@ func resetPin(parent *os.Root, name string, observed os.FileInfo) (*resetLinkWal
 // resetRmIfExists is reset.ts rmIfExists. existsSync follows a link, so a link
 // whose target exists is removed (the link itself, never its target) and a
 // dangling one is absent and stays; a non-link is removed with its contents.
+// A candidate the pinned descriptor cannot even lstat is absent too, which is the
+// oracle's answer (existsSync is false for a name the kernel cannot resolve) and
+// the direction that keeps the link, so one unreadable candidate no longer stops
+// the reset before the ones after it.
 func resetRmIfExists(pinned *resetLinkWalkPin, name, display string, result *ResetResult) error {
 	info, err := pinned.Lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
+	if err != nil {
+		// A candidate the pinned descriptor cannot even lstat is absent: the kernel cannot resolve
+		// the name either, which is the oracle's answer (existsSync is false), and it is the
+		// direction that keeps the link, so one unreadable candidate no longer stops the reset
+		// before the candidates after it.
 		result.Absent = append(result.Absent, display)
 		return nil
-	}
-	if err != nil {
-		return err
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
 		if err := pinned.RemoveAll(name); err != nil {
@@ -208,16 +213,14 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 		if exists, inside := resetLinkWalkTarget(pinned.dir, target); inside {
 			return exists, nil
 		}
-	} else {
-		// The target could not be read through the pinned descriptor, so the walk never showed it
-		// leaving the root. The kernel cannot resolve the link either, which is what the oracle's
-		// existsSync asks, so the descriptor stat decides a name that is not a link (a bare leaf, so
-		// it opens nothing) and every other failure is absent. Sending it to the root-path judgement
-		// instead would let an in-root access error refuse the whole reset and would use the
-		// directory-opening path the judgement must not use.
-		if _, err := statRoot(name); err == nil {
-			return true, nil
-		}
+	}
+	// The target could not be read through the pinned descriptor, and the walk therefore never showed
+	// it leaving the root: an access error, a leaf that stopped being a link, or a link that vanished.
+	// The kernel cannot resolve the link either, which is what the oracle's existsSync asks, so it is
+	// absent and the link is kept. Handing it to the descriptor stat would answer present for a leaf a
+	// writer swapped, and the root-path judgement would let an in-root access error refuse the whole
+	// reset and would use the directory-opening path the judgement must not use.
+	if readErr != nil {
 		return false, nil
 	}
 	// Only a target the walk proved leaves the root keeps the older flow: the descriptor first, which

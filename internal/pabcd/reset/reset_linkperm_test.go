@@ -460,55 +460,75 @@ func TestResetLinkPermVerdictsMatchStatWithoutARename(t *testing.T) {
 // reached for it — a renamed pinned directory would turn that judgement into an error and stop the
 // reset, and it opens the directories the judgement must not open. The kernel cannot resolve such a
 // link either, so absent is the oracle's answer and the link is kept.
-func TestResetLinkPermAnUnreadableTargetIsAbsentNotARefusal(t *testing.T) {
+func TestResetLinkPermAnUnreadableCandidateIsAbsentAndTheRemovalContinues(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("mode bits do not deny search to root")
 	}
-	base := t.TempDir()
-	sessions := filepath.Join(base, "sessions")
-	if err := os.Mkdir(sessions, 0o755); err != nil {
+	// The reset pins the sessions directory first and judges its candidates after, so a directory
+	// that loses search permission in between reaches a candidate the descriptor cannot lstat. Such a
+	// candidate must be recorded absent — the kernel cannot resolve the name either, which is the
+	// oracle's answer, and the link is kept — and the removal must carry on to the candidates after
+	// it instead of ending the whole reset. The removal caller is exercised directly with the pin
+	// taken first, which is the order the production code uses.
+	root := t.TempDir()
+	crw := filepath.Join(root, ".crw")
+	sessions := filepath.Join(crw, "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sessions, "keep.txt"), []byte("keep"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sessions, "a.json"), []byte("a"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("keep.txt", filepath.Join(sessions, "a.json")); err != nil {
+	if err := os.WriteFile(filepath.Join(sessions, "b.json"), []byte("b"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	parent, err := os.OpenRoot(base)
+	parent, err := os.OpenRoot(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer parent.Close()
-	observed, err := parent.Lstat("sessions")
+	observed, err := parent.Lstat(".crw")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := resetPin(parent, "sessions", observed)
+	pinned, err := resetPin(parent, ".crw", observed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pinned.Close()
-	// Rename the pinned directory away and put a fresh one at its path, so the root-path judgement
-	// would refuse, then deny search on the pinned directory, so the target cannot be read through
-	// the descriptor either.
-	moved := filepath.Join(base, "moved")
-	if err := os.Rename(sessions, moved); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(sessions, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(moved, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(moved, 0o755) })
-	got, err := resetLinkTargetExists(pinned, "a.json")
+	info, err := pinned.Lstat("sessions")
 	if err != nil {
-		t.Fatalf("resetLinkTargetExists: %v (an in-root failure must be absent, not a refusal)", err)
+		t.Fatal(err)
 	}
-	if got {
-		t.Error("exists = true, want false: the target cannot be read")
+	inner, err := resetPin(pinned.Root, "sessions", info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inner.Close()
+	if err := os.Chmod(sessions, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sessions, 0o755) })
+	result := ResetResult{Removed: []string{}, Absent: []string{}}
+	if err := resetRmIfExists(inner, "a.json", "a.json", &result); err != nil {
+		t.Fatalf("resetRmIfExists: %v (an unreadable candidate must be absent, not a refusal)", err)
+	}
+	if !slices.Equal(result.Absent, []string{"a.json"}) {
+		t.Errorf("absent = %v, want [a.json]", result.Absent)
+	}
+	// The candidate must still be there: restore search so the check can read the directory again.
+	if err := os.Chmod(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(sessions, "a.json")); err != nil {
+		t.Errorf("the candidate must be kept: %v", err)
+	}
+	// The candidates after it must still be judged and removed.
+	if err := resetRmIfExists(inner, "b.json", "b.json", &result); err != nil {
+		t.Fatalf("b.json: %v (the removal must continue)", err)
+	}
+	if !slices.Equal(result.Removed, []string{"b.json"}) {
+		t.Errorf("removed = %v, want [b.json]", result.Removed)
 	}
 }
 
