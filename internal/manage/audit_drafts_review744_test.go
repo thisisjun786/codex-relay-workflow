@@ -632,3 +632,90 @@ func TestAuditDraftsReview744ResolvedBundleSurvivesItsLink(t *testing.T) {
 		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
 	}
 }
+
+// C1: a batch that is refused while it is taking its markers must leave no marker behind for the
+// bundles it never graded, so an unchanged, recorded grade keeps drafting.
+func TestAuditDraftsReview744RefusedBatchLeavesNoMarker(t *testing.T) {
+	state := t.TempDir()
+	good := filepath.Join(t.TempDir(), "bundle-good")
+	auditDraftsReview744BundleAt(t, good)
+	bad := filepath.Join(t.TempDir(), "bundle-bad")
+	auditDraftsReview744BundleAt(t, bad)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "")
+	// The first bundle is graded and recorded, so it has a usable result and no marker.
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}}); err != nil {
+		t.Fatal(err)
+	}
+	// The marker store cannot be written to any more, so the second job's marker cannot be taken
+	// and the batch is refused before any worker starts. The first bundle was graded and recorded
+	// before this, so it has a usable result and no marker, and it must still draft afterwards.
+	pending := filepath.Join(state, "audit", auditPendingDir)
+	if err := os.Chmod(pending, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(pending, 0o700) })
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: good}, {Bundle: bad}}); err == nil {
+		t.Fatal("a batch whose marker could not be taken was accepted")
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 1 {
+		t.Fatalf("the recorded grade must still draft: %+v", report)
+	}
+}
+
+// C1: the marker is never opened through a path the bundle controls, so a link planted at its
+// name cannot make a grade create a file outside the state directory.
+func TestAuditDraftsReview744MarkerIsNotOpenedThroughTheBundle(t *testing.T) {
+	state := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	auditDraftsReview744BundleAt(t, bundle)
+	// A link at the marker's name inside the bundle points outside it. The marker no longer lives
+	// there, so grading neither follows nor creates that target.
+	if err := os.Symlink(outside, filepath.Join(bundle, ".crw-audit-pending")); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
+		t.Errorf("the marker path created something outside the state directory: %v", err)
+	}
+}
+
+// C1: the kernel resolves the path before anything is read, so a spelling that carries a link and
+// then ".." names the directory the caller's path names, not the one a lexical clean picks.
+func TestAuditDraftsReview744BundlePathResolvesLikeTheKernel(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(real, "B"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(base, "work")
+	if err := os.MkdirAll(filepath.Join(work, "B"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "child"), filepath.Join(work, "link")); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	// The kernel reads "link/../B" as real/B, while a lexical clean would name work/B. The spelling
+	// is joined by hand, because filepath.Join would clean it before the resolver ever saw it.
+	got := auditBundleResolvedPath(work + "/link/../B")
+	want := auditBundleResolvedPath(filepath.Join(real, "B"))
+	if got != want {
+		t.Errorf("the resolved path is %q, want the directory the kernel names, %q", got, want)
+	}
+}

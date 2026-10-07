@@ -253,25 +253,28 @@ func auditLedgerRowsRecorded(e *Env, cfg *Config, mark int64, torn bool) int {
 func auditBundleResolvedPath(bundle string) string {
 	// The kernel resolves a path component by component, so a link followed by ".." names the
 	// link target's parent. The whole spelling is asked for first for that reason: cleaning it
-	// would collapse "link/../B" to "work/B" and read a directory the caller's path does not
-	// name. A path whose leaf does not exist yet is resolved as far as it does and the rest is
-	// rejoined, so the answer is the same before and after a bundle is built.
-	abs, err := filepath.Abs(bundle)
+	// would collapse "link/../B" to "work/B" and name a directory the caller's path does not.
+	if resolved, err := filepath.EvalSymlinks(bundle); err == nil {
+		return auditBundleAbs(resolved)
+	}
+	// The path does not exist yet, so the kernel has nothing to resolve for its leaf. Its parent
+	// is resolved and the leaf rejoined, which answers the same before and after a bundle is
+	// built, so a marker taken for a build and the grade that adopts it name one file.
+	cleaned := filepath.Clean(bundle)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(cleaned))
 	if err != nil {
-		return filepath.Clean(bundle)
+		return auditBundleAbs(bundle)
 	}
-	rest := ""
-	for head := abs; ; {
-		if resolved, err := filepath.EvalSymlinks(head); err == nil {
-			return filepath.Join(resolved, rest)
-		}
-		parent := filepath.Dir(head)
-		if parent == head {
-			return abs
-		}
-		rest = filepath.Join(filepath.Base(head), rest)
-		head = parent
+	return filepath.Join(parent, filepath.Base(cleaned))
+}
+
+// auditBundleAbs is a path's absolute form, or its cleaned form when the working directory itself
+// cannot be read.
+func auditBundleAbs(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
 	}
+	return filepath.Clean(path)
 }
 
 // auditPendingDir is where a grade's in-flight markers live, below the audit state directory.
