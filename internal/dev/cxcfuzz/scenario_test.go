@@ -318,6 +318,37 @@ func TestScenariosStillAllowTheConfinedControls(t *testing.T) {
 	}
 }
 
+// c1 (CRW-908): a '..' inside a not-yet-existing remainder is refused. The link {a -> nope/../x} names a
+// component that does not exist yet, so the kernel cannot apply the '..' to it; the resolution is refused
+// rather than left to the kernel to answer differently later. Red first: the old builder stored the raw
+// text and cleaned only for its own check, so the entry was accepted.
+func TestScenariosRefuseARemainderDotDot(t *testing.T) {
+	base, root := caseRoot(t)
+	if _, err := Scenarios(root, fsInput(fsEntry("a", "symlink", "", "nope/../x", 0))); err == nil {
+		t.Fatal("a '..' behind a component that does not exist yet was materialised")
+	}
+	if err := emptyBase(base); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// c1 (CRW-908): a link cycle is refused rather than resolved. Red first: the old check cleaned the two
+// targets lexically and never followed them, so both links were created and only a later resolution could
+// have discovered the cycle.
+func TestScenariosRefuseALinkCycle(t *testing.T) {
+	base, root := caseRoot(t)
+	input := fsInput(
+		fsEntry("a", "symlink", "", "b", 0),
+		fsEntry("b", "symlink", "", "a", 0),
+	)
+	if _, err := Scenarios(root, input); err == nil {
+		t.Fatal("a link cycle was materialised")
+	}
+	if err := emptyBase(base); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // c1 (CRW-908): a link k levels deep that points at the case root, followed by k+1 '..', walks above the
 // root. The target is written as ${ROOT}/. and not as a bare ${ROOT}: rootSubstitutedPath substitutes
 // only a target that opens with the placeholder AND a separator, so a bare placeholder would be stored
