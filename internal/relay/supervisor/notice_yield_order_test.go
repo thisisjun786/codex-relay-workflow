@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -53,6 +54,11 @@ func orderMessageAgain(t *testing.T, w *noticeYieldWorld, id, packet, stagedAt s
 		id, "s-"+id, packet, stagedAt, stagedAt, w.event)
 	return id
 }
+
+// orderLineSQL is the busy-backoff delivery row the shared predicate names as a held line, bound by
+// the instant its backoff ends. A case inserts it through a seam to make the line be held at a
+// moment the attempt has already passed.
+const orderLineSQL = "INSERT INTO deliveries (event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,next_eligible_at,created_at,updated_at) VALUES ('event-1','rel-1','receipt','supervisor','supervisor','deferred_busy',1,?,'t','t')"
 
 // orderHeads is the head selection the daemon pass runs, by message id.
 func orderHeads(t *testing.T, w *noticeYieldWorld, now float64) []string {
@@ -262,5 +268,76 @@ func TestNoticeYieldOrder_a_notice_in_flight_still_blocks_the_message_behind_it(
 	// yielded out of the way either, so the younger message is refused for it rather than sent.
 	if row := w.message(t, notice); row.State != "sending" {
 		t.Fatalf("the in-flight notice moved: %+v", row)
+	}
+}
+
+// TestNoticeYieldOrder_a_yield_under_the_claim_leaves_the_notices_eligibility_alone and its fence
+// twin below pin the two refusals that are raised after the attempt's own preflight: a head can
+// appear between the check and the claim (the window the claim's write lock closes), and again
+// between the claim and the transport start (the window the fence closes). Both raise the line
+// yield, and the daemon's deferral must leave that one refusal alone wherever it is raised - a
+// regression that dropped the type at either site would put the notice back on the 60-second
+// backoff the yield exists to avoid, and these cases feed the real refusal through deferAutoFault
+// to catch it.
+func TestNoticeYieldOrder_a_yield_under_the_claim_leaves_the_notices_eligibility_alone(t *testing.T) {
+	t.Parallel()
+	w := newNoticeYieldWorld(t)
+	id := w.stagedNotice(t)
+	// Given: no head when the attempt's check runs, and a writer that inserts the holding delivery
+	// between that check and the claim's read, so the yield is raised under the claim.
+	w.c.beforeClaimRead = func(tx context.Context) {
+		w.c.beforeClaimRead = nil
+		if _, err := w.s.Q(tx).ExecContext(tx, orderLineSQL, orderNow+120); err != nil {
+			t.Error(err)
+		}
+	}
+	before := w.message(t, id)
+	// When: the notice is attempted, and the daemon defers the refusal the claim answered with.
+	yieldErr := w.channel.Attempt(w.ctx, id, orderNow, "relay")
+	if !orderRefused(yieldErr) {
+		t.Fatalf("notice attempt %v", yieldErr)
+	}
+	if err := w.c.deferAutoFault(w.ctx, id, orderNow, yieldErr); err != nil {
+		t.Fatal(err)
+	}
+	// Then: the claim-time yield is not backed off, and the notice is left exactly as it was.
+	if after := w.message(t, id); after != before {
+		t.Fatalf("the claim-time yield moved the notice: %+v -> %+v", before, after)
+	}
+}
+
+// TestNoticeYieldOrder_a_yield_at_the_transport_fence_leaves_the_notices_eligibility_alone is the
+// same case asked of the fence: the head appears after the claim committed and before the transport
+// started, so the refusal comes from the transport start rather than from the claim.
+func TestNoticeYieldOrder_a_yield_at_the_transport_fence_leaves_the_notices_eligibility_alone(t *testing.T) {
+	t.Parallel()
+	w := newNoticeYieldWorld(t)
+	id := w.stagedNotice(t)
+	// Given: no head at the claim, and a writer that inserts it in the fence's window.
+	w.c.beforeTransport = func() {
+		w.c.beforeTransport = nil
+		if _, err := w.s.DB.ExecContext(w.ctx, orderLineSQL, orderNow+120); err != nil {
+			t.Error(err)
+		}
+	}
+	// When: the notice is attempted, and the daemon defers the refusal the fence answered with.
+	yieldErr := w.channel.Attempt(w.ctx, id, orderNow, "relay")
+	if !orderRefused(yieldErr) {
+		t.Fatalf("notice attempt %v", yieldErr)
+	}
+	before := w.message(t, id)
+	if err := w.c.deferAutoFault(w.ctx, id, orderNow, yieldErr); err != nil {
+		t.Fatal(err)
+	}
+	// Then: the fence's yield is not backed off either, and the attempt stays recorded as sending
+	// nothing rather than as a fault.
+	if after := w.message(t, id); after != before {
+		t.Fatalf("the transport-fence yield moved the notice: %+v -> %+v", before, after)
+	}
+	if row := w.message(t, id); row.NextEligibleAt.Valid || row.State != "queued" {
+		t.Fatalf("the transport-fence yield moved the notice: %+v", row)
+	}
+	if len(w.host.sends) != 0 {
+		t.Fatalf("the notice opened %d turns while a delivery held the line", len(w.host.sends))
 	}
 }
