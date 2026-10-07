@@ -256,9 +256,10 @@ func TestThreadHold_a_refused_resume_holds_nothing(t *testing.T) {
 }
 
 // CRW-904 (correction, d2): a hold whose resume was transmitted but never answered can leave a real
-// subscription with nobody owning it. The reply is missing, so the caller must not treat the
-// subscription as established, but the hold is still recorded: the ordinary release path then
-// unsubscribes it, instead of the subscription surviving until the socket dies.
+// subscription behind. The reply is missing, so the caller must not treat the subscription as
+// established - the daemon has to retry, and must not believe it holds a subscription the recipient's
+// reports never reach - but the subscription is still owned: the ordinary release path unsubscribes
+// it once the backlog empties, instead of it surviving until the socket dies.
 func TestThreadHold_a_transmitted_resume_without_a_reply_keeps_an_owned_hold(t *testing.T) {
 	c, host := holdClient(t)
 	// The host applies the resume and withholds its answer past the acknowledgement deadline. The
@@ -270,16 +271,18 @@ func TestThreadHold_a_transmitted_resume_without_a_reply_keeps_an_owned_hold(t *
 	if err == nil {
 		t.Fatal("a resume with no answer was reported as an established hold")
 	}
-	if !c.ThreadHeld("thread-1") {
-		t.Fatal("the subscription the host applied is owned by nobody, so no release can drop it")
+	// Not held: an unanswered resume is not evidence the connection receives the thread, so the
+	// daemon retries rather than believing a subscription the reports never reach.
+	if c.ThreadHeld("thread-1") {
+		t.Fatal("an unanswered resume was recorded as an established hold")
 	}
 	close(release)
-	// The backlog empties: the hold is released and the ordinary worker unsubscribes it.
+	// The backlog empties: the release drops the subscription the resume may have made.
 	c.ReleaseThread("thread-1")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
-		t.Fatalf("the released hold did not unsubscribe the subscription the resume made: %v", err)
+		t.Fatalf("the released hold did not unsubscribe the subscription the unanswered resume made: %v", err)
 	}
 	if c.ThreadHeld("thread-1") {
 		t.Fatal("the released hold is still recorded")

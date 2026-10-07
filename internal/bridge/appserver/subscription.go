@@ -25,14 +25,23 @@ type subscriptionRoot struct {
 	// recipient's status changes to this connection. It is deliberately not retainedOn: that field is
 	// the bridge's retention of a never-run root, and releasing one must never drop the other. It
 	// holds no gate and owns no watch, so the delivery's own WatchTurn is admitted while it stands.
-	busyHeld         bool
-	busyOn           *websocket.Conn
-	due              time.Time
-	delay            time.Duration
-	releasing        bool
-	releasePending   bool
-	cleanupErrors    int
-	cleanupAbandoned bool
+	busyHeld bool
+	busyOn   *websocket.Conn
+	// busyUnconfirmed is a resume this relay sent but whose answer never arrived: the host may have
+	// applied it, so the connection may carry a real subscription, but nobody knows. It is kept exactly
+	// as busyHeld is kept - ready and prune treat it as not releasable, and the release worker
+	// unsubscribes it once ReleaseThread drops it - so an applied resume is never left unowned. It is
+	// deliberately not busyHeld: receivesOn and ThreadHeld must not read it as an established
+	// subscription, or the retry the caller needs would be suppressed and the daemon would believe it
+	// holds a subscription the recipient's reports never reach (CRW-904 correction, d1 and d2).
+	busyUnconfirmed   bool
+	busyUnconfirmedOn *websocket.Conn
+	due               time.Time
+	delay             time.Duration
+	releasing         bool
+	releasePending    bool
+	cleanupErrors     int
+	cleanupAbandoned  bool
 }
 
 // TurnWatch holds the root's mutation gate until Finish. Its context fences all
@@ -177,8 +186,12 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 				if !m.stopping && c.conn == conn {
 					current := m.root(thread)
 					current.connection = conn
-					current.busyHeld = true
-					current.busyOn = conn
+					// Unconfirmed, not held: the subscription is kept alive so the ordinary release
+					// worker can unsubscribe it once the backlog empties, while receivesOn and
+					// ThreadHeld keep answering "not established", so the caller retries and the
+					// daemon never believes it holds a subscription the reports do not reach.
+					current.busyUnconfirmed = true
+					current.busyUnconfirmedOn = conn
 					m.start()
 				}
 				m.mu.Unlock()
@@ -201,6 +214,10 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 	current.connection = conn
 	current.busyHeld = true
 	current.busyOn = conn
+	// A resume that has now been acknowledged supersedes an earlier unconfirmed one on this socket:
+	// the subscription is established, and the release path owns it through busyHeld alone.
+	current.busyUnconfirmed = false
+	current.busyUnconfirmedOn = nil
 	m.start()
 	m.mu.Unlock()
 	c.mu.Unlock()
@@ -220,6 +237,8 @@ func (c *Client) ReleaseThread(thread string) {
 	if r := m.roots[thread]; r != nil {
 		r.busyHeld = false
 		r.busyOn = nil
+		r.busyUnconfirmed = false
+		r.busyUnconfirmedOn = nil
 	}
 	m.mu.Unlock()
 	m.signal()
@@ -360,7 +379,7 @@ func (m *subscriptionManager) unreserve(thread string, r *subscriptionRoot) {
 	m.signal()
 }
 func (m *subscriptionManager) prune(thread string, r *subscriptionRoot) {
-	if r.refs == 0 && r.retainedOn == nil && !r.busyHeld && !r.releasing && !r.releasePending && m.roots[thread] == r {
+	if r.refs == 0 && r.retainedOn == nil && !r.busyHeld && !r.busyUnconfirmed && !r.releasing && !r.releasePending && m.roots[thread] == r {
 		delete(m.roots, thread)
 	}
 }
@@ -476,6 +495,12 @@ func (m *subscriptionManager) lost(ws *websocket.Conn) {
 			r.busyHeld = false
 			r.busyOn = nil
 		}
+		// An unconfirmed resume lives on the connection in the same way: the socket that may have
+		// subscribed it is gone, so nothing is owed an unsubscribe for it.
+		if r.busyUnconfirmedOn == ws {
+			r.busyUnconfirmed = false
+			r.busyUnconfirmedOn = nil
+		}
 		kept := r.watches[:0]
 		for _, w := range r.watches {
 			if w.connection == ws {
@@ -492,7 +517,7 @@ func (m *subscriptionManager) lost(ws *websocket.Conn) {
 	m.signal()
 }
 func (m *subscriptionManager) ready(r *subscriptionRoot) bool {
-	if r.retainedOn != nil || r.busyHeld || r.refs != len(r.watches) || time.Now().Before(r.due) {
+	if r.retainedOn != nil || r.busyHeld || r.busyUnconfirmed || r.refs != len(r.watches) || time.Now().Before(r.due) {
 		return false
 	}
 	for _, w := range r.watches {

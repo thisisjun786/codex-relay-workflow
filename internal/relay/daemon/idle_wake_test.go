@@ -413,3 +413,35 @@ func TestIdleWake_a_note_is_reported_once(t *testing.T) {
 		t.Fatalf("the tick reported %d wake notes and %d hold notes, want one of each: %v", wakes, holds, report.Notes)
 	}
 }
+
+// CRW-904 (correction, d1 and d2): a resume whose answer never arrived may still have subscribed the
+// recipient. The relay must not read it as an established hold - the caller retries, and the daemon
+// does not believe it holds a subscription the reports never reach - but it must still own the
+// subscription, so the backlog emptying releases it.
+func TestIdleWake_an_unanswered_hold_is_retried_and_released(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{holdErr: errors.New("the resume answer never arrived")}
+	d, _ := idleDaemon(t, host)
+	ctx := context.Background()
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if host.holdTries != 1 {
+		t.Fatalf("the first tick made %d hold attempts, want one", host.holdTries)
+	}
+	if _, held := d.idle.holds[idleParent]; held {
+		t.Fatal("an unanswered resume was recorded as an established hold")
+	}
+	// The attempt is remembered for the release sweep, because the host may have applied the resume.
+	if _, attempted := d.idle.attempted[idleParent]; !attempted {
+		t.Fatal("the unanswered resume is owned by nobody, so nothing will unsubscribe it")
+	}
+	// The backlog empties: the release sweep drops the subscription the resume may have made.
+	exec(t, d.Store, "UPDATE deliveries SET state = 'dispatched' WHERE event_id = ?", idleEvent)
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(host.releases, idleThread) {
+		t.Fatalf("releases %v, want the unanswered hold released once the backlog emptied", host.releases)
+	}
+}

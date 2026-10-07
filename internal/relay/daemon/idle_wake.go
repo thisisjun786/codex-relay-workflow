@@ -56,6 +56,12 @@ type idleSubscriptions interface {
 type idleWake struct {
 	daemon *Daemon
 	holds  map[string]string
+	// attempted is every recipient this pass has called HoldThread for since its last release, by
+	// recipient task id, whether or not the resume was answered. It is what the release sweep walks:
+	// a resume whose answer never arrived may still have subscribed the recipient, and the relay owns
+	// that subscription until ReleaseThread drops it, so the backlog emptying must release it too
+	// (CRW-904 correction, d1). ReleaseThread is harmless when nothing is held.
+	attempted map[string]string
 	// refused is when a recipient's hold may be tried again, by recipient task id: a resume the host
 	// refused is not retried on every tick, because the backoff is that recipient's trigger until its
 	// own deadline (CRW-904 d3).
@@ -83,7 +89,7 @@ type idleWake struct {
 }
 
 func newIdleWake(d *Daemon) *idleWake {
-	w := &idleWake{daemon: d, holds: map[string]string{}, refused: map[string]float64{}}
+	w := &idleWake{daemon: d, holds: map[string]string{}, attempted: map[string]string{}, refused: map[string]float64{}}
 	if halter, ok := any(d).(interface {
 		halted(context.Context, *Report, string, error) bool
 	}); ok {
@@ -211,6 +217,17 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 		delete(w.holds, recipient)
 		w.released++
 	}
+	// A recipient this pass tried to hold but whose resume was never answered is released the same
+	// way: the host may have applied that resume, so the relay owns the subscription until
+	// ReleaseThread drops it. The map is cleared here, so the next pass starts from what it holds.
+	for recipient, thread := range w.attempted {
+		if _, waiting := wanted[recipient]; waiting {
+			continue
+		}
+		subscriptions.ReleaseThread(thread)
+		delete(w.attempted, recipient)
+		w.released++
+	}
 	for recipient := range w.refused {
 		if _, waiting := wanted[recipient]; !waiting {
 			delete(w.refused, recipient)
@@ -238,10 +255,14 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 		}
 		if err := subscriptions.HoldThread(ctx, thread); err != nil {
 			w.notes = append(w.notes, "subscription for "+thread+" not opened: "+err.Error())
+			// The resume may have reached the host even though its answer did not: the recipient stays
+			// in the release sweep, so the backlog emptying unsubscribes it (CRW-904 correction, d1).
+			w.attempted[recipient] = thread
 			w.refused[recipient] = w.holdRetryAt(now, deadlines[recipient])
 			continue
 		}
 		delete(w.refused, recipient)
+		delete(w.attempted, recipient)
 		w.holds[recipient] = thread
 		w.opened++
 	}
