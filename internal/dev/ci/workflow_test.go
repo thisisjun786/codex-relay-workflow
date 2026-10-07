@@ -307,6 +307,54 @@ func alternation(words []string) string {
 	return strings.Join(quoted, "|")
 }
 
+// commandWindow is the command a shell would run from the line at i: the line itself, plus the
+// lines it continues into. A line ending in a backslash continues on the next one, and a `run:`
+// block scalar (`|`, `|-`, `>`, `>-`, ...) carries its whole command in the body below it. Reading
+// only one physical line would see `node \\` / `--test` and a folded `node` / `--test` as two
+// fragments and report neither, so another workflow could run the staged tests with no finding
+// (CRW-939, the seventh generation-2 evaluation of d1). The caller reports the line where the
+// command starts, so the finding still names one place.
+func commandWindow(physical []string, i int) string {
+	joined := physical[i]
+	if key, ok := blockScalarKey(physical[i]); ok {
+		for j := i + 1; j < len(physical); j++ {
+			body := physical[j]
+			if strings.TrimSpace(body) == "" {
+				continue
+			}
+			if indentOf(body) <= key {
+				break
+			}
+			joined += " " + strings.TrimSpace(body)
+		}
+		return joined
+	}
+	for strings.HasSuffix(strings.TrimRight(joined, " \t"), "\\") && i+1 < len(physical) {
+		joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), "\\") + " " + strings.TrimSpace(physical[i+1])
+		i++
+	}
+	return joined
+}
+
+// blockScalarKey reports the indentation of the key when line opens a block scalar (`key: |`,
+// `- run: >-`), and whether it does.
+func blockScalarKey(line string) (int, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return 0, false
+	}
+	value := trimmed[strings.LastIndex(trimmed, ":")+1:]
+	if !regexp.MustCompile(`^[ \t]*[|>][-+]?[ \t]*$`).MatchString(value) {
+		return 0, false
+	}
+	return indentOf(line), true
+}
+
+// indentOf counts the leading blanks of a line.
+func indentOf(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
+}
+
 // pythonInWorkflow is the lines of the workflow file, numbered, that install or run Python or name
 // a path below a skills directory. A line that starts with # is a comment and is skipped; a
 // trailing # is read as part of the line, because a # inside quotes hides nothing from the shell.
@@ -324,7 +372,8 @@ func pythonInWorkflow(file, text string) []string {
 	var found []string
 	admitted := filepath.Base(file) == skillScriptsNodeFile
 	inJobs, inSkillScriptsNode := false, false
-	for number, line := range lines(text) {
+	physical := lines(text)
+	for number, line := range physical {
 		// A key at column 0 is a top-level key: it opens or closes the jobs block, and the job
 		// exception lives only inside it. A workflow-level `env:` value whose key happens to be
 		// skill-scripts-node shares the two-space key shape, so without this the exception would
@@ -341,7 +390,10 @@ func pythonInWorkflow(file, text string) []string {
 			}
 		}
 		code := strings.TrimSpace(line)
-		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTest.MatchString(code)
+		// The token checks read the whole command the shell would run from this line, so a run split
+		// across a continuation or a block scalar is not read as two harmless fragments.
+		command := commandWindow(physical, number)
+		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTest.MatchString(command)
 		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || (skillPath && !inSkillScriptsNode)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
@@ -623,6 +675,28 @@ func TestWorkflow_a_skills_root_split_across_lines_is_still_a_finding(t *testing
 	}
 	if found := pythonInWorkflow("ci.yml", string(data)); len(found) != 0 {
 		t.Errorf("the real ci.yml is refused: %v", found)
+	}
+}
+
+// A command whose tokens sit on different physical lines is the same command to the shell: a
+// backslash continuation, and a YAML folded scalar, both hand `node --test` to the shell. A reader
+// that scans each physical line on its own sees neither token pair, so another workflow could run
+// the staged tests with no finding (CRW-939, the seventh generation-2 evaluation of d1).
+func TestWorkflow_a_split_node_test_command_is_still_a_finding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"backslash continuation": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          node \\\n            --test\n",
+		"folded scalar":          "name: extra\n\njobs:\n  other:\n    steps:\n      - run: >-\n          node\n          --test\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
+			t.Errorf("%s: extra.yml splits a node --test run across lines and is not refused", name)
+		}
 	}
 }
 

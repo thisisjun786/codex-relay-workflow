@@ -266,6 +266,17 @@ function parserImportsBeforeParsing(source) {
   const offenders = [];
   for (const [i, line] of code.entries()) {
     for (const text of importStatements(line)) {
+      // The header a statement shares its line with governs it: an inline `finally: import x` or
+      // `except SystemExit: import x` runs while --help unwinds, so the reader must not walk past it
+      // to the enclosing function (CRW-939, the seventh generation-2 evaluation of d2).
+      const clause = line.slice(0, line.indexOf(text)).replace(/^.*;[ \t]*/, "").trim();
+      if (/^finally\b/.test(clause) || (/^except\b/.test(clause) && catchesSystemExit(clause))) {
+        const modules = importedModules(text);
+        if (modules === null || modules.some((mod) => PARSER_IMPORTS.includes(mod))) {
+          offenders.push(`line ${i + 1}: ${text}`);
+        }
+        continue;
+      }
       // `parse_args()` lives inside main(), so an import deferred inside a def body placed after
       // the parse runs only once that body is reached; every other import runs while the module
       // loads or before the parse in main(), so it precedes --help. An import under a module-level
@@ -424,6 +435,22 @@ test("the parser-import check reads module-level imports placed after the parse"
   // The control: the real file's `except ImportError` cannot catch SystemExit, so its import is
   // deferred and stays clean.
   const typedExcept = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError:\n        from repomap_class import RepoMap\n";
+  // A header and its import can share one line, and the header still governs it: an inline
+  // `finally: import networkx` or `except SystemExit: import networkx` runs while --help unwinds,
+  // so reading only the lines above the import would wrongly defer it (CRW-939, the seventh
+  // generation-2 evaluation of d2).
+  for (const shape of [
+    "def main():\n    try:\n        args = parser.parse_args()\n    finally: import networkx\n",
+    "def main():\n    try:\n        args = parser.parse_args()\n    except SystemExit: import networkx\n",
+    "def main():\n    try:\n        args = parser.parse_args()\n    except: import networkx\n",
+  ]) {
+    assert.ok(parserImportsBeforeParsing(shape).offenders.length > 0,
+      `${JSON.stringify(shape)}: an inline handler body runs while --help unwinds`);
+  }
+  // The control: an inline import in a body that cannot catch SystemExit still defers.
+  const inlineImportError = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError: from repomap_class import RepoMap\n";
+  assert.deepEqual(parserImportsBeforeParsing(inlineImportError).offenders, [],
+    "an inline except ImportError body stays clean");
   // A handler that can catch the SystemExit argparse raises for --help runs before the caller sees
   // it, so its import is not deferred either: a bare `except`, `except BaseException` and a tuple
   // naming either one all run (CRW-939, the sixth generation-2 evaluation of d2). A handler that
