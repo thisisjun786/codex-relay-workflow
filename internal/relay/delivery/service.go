@@ -467,11 +467,20 @@ type IdleWakeHold struct {
 	Deadline          float64
 }
 
-// IdleWakeRecipients is every recipient with such a head at now, one entry per recipient: the
+// IdleWakeRecipients is every recipient with a waiting head at now, one entry per recipient: the
 // recipients the daemon has to hold a subscription for, so an idle report for one of them can be
 // seen at all.
+//
+// A recipient whose head has run past its deadline is still waiting: the wake it may still receive is
+// what ends the wait early, and a delivery that is due but not yet attempted (the parent's share was
+// spent elsewhere this tick) is the same backlog as one inside its backoff. Absence from this set is
+// what the daemon reads as "the backlog emptied or the delivery was delivered", so the predicate is
+// the waiting head rather than the line-blocking one: a due row that the scheduler has not reached
+// must not drop its subscription before it is delivered (CRW-904 correction, d2).
 func (d *Service) IdleWakeRecipients(ctx context.Context, now float64) ([]IdleWakeHold, error) {
-	rows, err := all(ctx, d.Store, "SELECT bh.recipient_task_id AS recipient_task_id, bh.recipient_thread_id AS recipient_thread_id, bh.next_eligible_at AS next_eligible_at FROM "+busyHeadSQL+" bh", d.busyHeadArgs(now)...)
+	rows, err := all(ctx, d.Store, "SELECT d.recipient_task_id AS recipient_task_id, d.recipient_thread_id AS recipient_thread_id, MIN(COALESCE(d.next_eligible_at, ?)) AS next_eligible_at"+dueFrom+
+		" WHERE d.state = ? AND d.hold_reason IS NULL AND d.recipient_thread_id IS NOT NULL AND +e.stage = 'final' AND r.status = 'active' AND r.superseded_by IS NULL"+
+		" GROUP BY d.recipient_task_id", now, DeferredBusy)
 	if err != nil {
 		return nil, err
 	}
@@ -564,7 +573,14 @@ func (d *Service) dueRecipients(ctx context.Context, parent string, now float64,
 		return nil, nil
 	}
 	join, where, args := d.eligibility(now)
-	rows, err := all(ctx, d.Store, "SELECT d.recipient_task_id AS recipient_task_id"+dueFrom+join+where+" AND r.parent_task_id = ? GROUP BY d.recipient_task_id ORDER BY d.recipient_task_id <= ?, d.recipient_task_id LIMIT ?", append(args, parent, after, limit)...)
+	// CRW-904: a recipient holding an unspent wake comes first, before the rotation. The wake is the
+	// recipient's own idle edge opening the turn this delivery was waiting for, and the issue's answer
+	// is that the scheduler attempts the woken head at that parent's next turn: without this the
+	// rotation can spend the parent's whole share on other recipients' queues and leave the woken head
+	// unattempted for a turn, which is the wait the wake exists to end. The rotation below still orders
+	// everything else, so a woken recipient that is served does not move any other recipient's place
+	// (the cursor is a recipient id, not a position).
+	rows, err := all(ctx, d.Store, "SELECT d.recipient_task_id AS recipient_task_id, MAX(CASE WHEN dw.event_id IS NOT NULL AND dw.spent_at IS NULL AND d.state = '"+DeferredBusy+"' THEN 1 ELSE 0 END) AS woken"+dueFrom+join+where+" AND r.parent_task_id = ? GROUP BY d.recipient_task_id ORDER BY woken DESC, d.recipient_task_id <= ?, d.recipient_task_id LIMIT ?", append(args, parent, after, limit)...)
 	var out []string
 	for _, r := range rows {
 		out = append(out, r.S("recipient_task_id"))

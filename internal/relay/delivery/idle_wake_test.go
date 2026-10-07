@@ -388,6 +388,68 @@ func TestIdleWake_a_reconciled_busy_answer_keeps_the_earlier_deadline(t *testing
 	}
 }
 
+// CRW-904 (correction, d1): the woken head is attempted at the parent's next turn, before the
+// rotation. With the default share of two attempts, a parent whose two other recipients sort before
+// the woken one would otherwise spend its whole turn elsewhere and leave the head to its timer.
+func TestIdleWake_a_woken_head_is_taken_before_the_parents_rotation(t *testing.T) {
+	t.Parallel()
+	w := newScaleWorld(t, 3)
+	f := w.f
+	w.busy(true)
+	// The parent's own completion head waits out a backoff, and its three children each hold a due
+	// request that sorts before it.
+	head := w.emit(0)
+	busyFor(t, f, head, 1, 10)
+	for i, r := range w.rels {
+		event := w.create(i)
+		w.queue(event, Revision, r.child)
+		f.clock.Advance(1)
+	}
+	// The recipient reports idle: the head is woken, still 10 s inside its backoff.
+	if !w.wake(scaleParent) {
+		t.Fatal("the idle report woke no head")
+	}
+	w.busy(false)
+	f.delivery.Policy.MaxSendsPerParentPerTick = 2
+	w.pass()
+	// The woken head took the turn, ahead of the rotation's earlier recipients: it is the first send,
+	// and it is attempted although its deadline is still 10 s away.
+	order := w.sentOrder()
+	if len(order) == 0 || order[0] != head {
+		t.Fatalf("the turn attempted %v, want the woken head %s first", order, head)
+	}
+	if !slices.Contains(order, head) {
+		t.Fatalf("the woken head was not attempted at all: %v", order)
+	}
+}
+
+// CRW-904 (correction, d2): the subscription is kept while a delivery to that recipient is still
+// waiting, whether or not the backoff still blocks the line. A due row the scheduler has not reached
+// yet is the same backlog, and dropping the subscription there would unsubscribe a recipient whose
+// reports the relay still needs.
+func TestIdleWake_a_due_waiting_recipient_keeps_its_subscription(t *testing.T) {
+	t.Parallel()
+	w := newScaleWorld(t, 1)
+	f := w.f
+	w.busy(true)
+	event := w.emit(0)
+	deadline := busyFor(t, f, event, 1, 10)
+	// The head is not woken and its deadline passes: it is due, but the scheduler has not attempted
+	// it. The recipient is still waiting, so the daemon still holds its subscription.
+	f.clock.T = deadline + 1
+	heads, err := f.delivery.IdleWakeRecipients(f.ctx, f.clock.Now())
+	mustDo(t, err)
+	found := false
+	for _, head := range heads {
+		if head.RecipientTaskID == scaleParent {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a due waiting recipient left the hold set (%v), so its subscription would be dropped", heads)
+	}
+}
+
 // CRW-904 (correction, d3): a reconciliation of an earlier busy attempt must not consume the wake
 // that belongs to the next attempt. The wake is keyed by event, and a delivery that settled busy
 // again keeps its attempt_count until the next claim, so the old attempt's promotion still matches

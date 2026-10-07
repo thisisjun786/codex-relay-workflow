@@ -28,16 +28,19 @@ type idleWakeHaltCall struct {
 	err  error
 }
 
-// idleWakeHaltDamage breaks the zone table the idle pass writes and reads, so the pass's own
-// statement fails with a store error the way a damaged store answers one. original_deadline is the
-// column the wake's insert names and the head set's join does not, so replacing the table fails the
-// write and, once the table is gone, the join as well.
-func idleWakeHaltDamage(t *testing.T, s *store.Store, keepTable bool) {
+// idleWakeHaltDamage breaks the tables the idle pass writes and reads, so the pass's own statement
+// fails with a store error the way a damaged store answers one. keepWake leaves the wake table in a
+// shape its insert refuses (original_deadline is missing), so the failure is the pass's own write
+// while the head read still answers; without it the wake table is gone too, so the head read is the
+// failure instead.
+func idleWakeHaltDamage(t *testing.T, s *store.Store, keepWake bool) {
 	t.Helper()
 	exec(t, s, "DROP TABLE delivery_wakes")
-	if keepTable {
+	if keepWake {
 		exec(t, s, "CREATE TABLE delivery_wakes (event_id TEXT PRIMARY KEY, spent_at TEXT)")
+		return
 	}
+	exec(t, s, "ALTER TABLE deliveries RENAME TO deliveries_intact")
 }
 
 func idleWakeHaltDaemon(t *testing.T, host *idleHost, halt *idleWakeHalt) (*Daemon, *store.Store) {
