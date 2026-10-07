@@ -496,6 +496,52 @@ func auditDraftBundleOf(row auditLedgerRow) error {
 	return nil
 }
 
+// auditDraftBundleIDs names the bundle each ledger row points at, so two spellings of one
+// directory are one bundle. A grader may write the same directory as a relative path, with a
+// trailing separator, or through a link, while the grade.json it left is one file: when the
+// directory exists the rows are grouped by the file os.Stat resolves them to (os.SameFile),
+// and when it does not exist they are grouped by the cleaned path. An empty Bundle names no
+// bundle and carries -1.
+func auditDraftBundleIDs(rows []auditLedgerRow) []int {
+	type bundle struct {
+		cleaned string
+		info    os.FileInfo
+	}
+	ids := make([]int, len(rows))
+	groups := make([]bundle, 0, len(rows))
+	for i, row := range rows {
+		ids[i] = -1
+		if row.Bundle == "" {
+			continue
+		}
+		cleaned := filepath.Clean(row.Bundle)
+		info, err := os.Stat(cleaned)
+		if err != nil {
+			info = nil
+		}
+		id := -1
+		for g, have := range groups {
+			switch {
+			case have.info != nil && info != nil:
+				if os.SameFile(have.info, info) {
+					id = g
+				}
+			case have.info == nil && info == nil && have.cleaned == cleaned:
+				id = g
+			}
+			if id >= 0 {
+				break
+			}
+		}
+		if id < 0 {
+			groups = append(groups, bundle{cleaned: cleaned, info: info})
+			id = len(groups) - 1
+		}
+		ids[i] = id
+	}
+	return ids
+}
+
 // auditDraftLoad reads one draft file. A missing file, malformed JSON or another schema is an
 // error: a draft this product cannot trust is never appended to or marked.
 func auditDraftLoad(path string) (*auditDraft, error) {
@@ -692,12 +738,13 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 	// or failed leaves its own grade.json in the bundle, so a row that named it must not be
 	// drafted from that file. Every older row is named and skipped rather than given the newest
 	// audit's defects as sightings it never made.
-	newest := map[string]int{}
-	for i, row := range rows {
-		if row.Bundle == "" {
+	bundles := auditDraftBundleIDs(rows)
+	newest := map[int]int{}
+	for i := range rows {
+		if bundles[i] < 0 {
 			continue
 		}
-		newest[row.Bundle] = i
+		newest[bundles[i]] = i
 	}
 	// A torn line is the fragment auditAppendLine leaves on its own line when it separates an
 	// interrupted append from the rows after it, so it is counted rather than treated as a row.
@@ -712,7 +759,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		if !matches {
 			continue
 		}
-		if owner, ok := newest[row.Bundle]; ok && owner != i {
+		if owner, ok := newest[bundles[i]]; ok && owner != i {
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
 				Reason: "the bundle was graded again after this row, so its " + auditGradeFile + " is that later audit's"})
 			continue

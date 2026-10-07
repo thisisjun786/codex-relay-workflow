@@ -239,3 +239,119 @@ func TestAuditDraftsReview744NonEnglishWhatGetsAnEnglishTitle(t *testing.T) {
 		}
 	}
 }
+
+// C1: two spellings of one bundle directory are one bundle, so an ok row is not drafted from
+// the grade.json a later timed-out regrade of the same directory left behind.
+func TestAuditDraftsReview744BundlePathAliasesAreOneBundle(t *testing.T) {
+	state := auditDraftHome(t)
+	bundle := filepath.Join(t.TempDir(), "bundle-aliased")
+	if err := os.MkdirAll(bundle, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// R1 succeeded and found nothing, naming the bundle without a trailing separator.
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		bundle: bundle,
+	})
+	// R2 graded the same directory again, timed out, and named it with a trailing separator.
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r2", gradedAt: "2026-02-01T00:00:00Z",
+		bundle: bundle + string(filepath.Separator), status: auditStatusTimeout,
+		defects: []AuditDefect{{Severity: "P1", What: "a defect the timed out regrade left", Where: "a.go:1"}},
+	})
+	report := auditDraftsReview744Run(t, "--round", "r1")
+	if len(report.Created) != 0 || len(report.Updated) != 0 {
+		t.Fatalf("the aliased regrade still produced a draft: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
+		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	}
+}
+
+// C1: the same directory reached through a link is one bundle, because os.Stat resolves both
+// to the same file.
+func TestAuditDraftsReview744BundleLinkIsOneBundle(t *testing.T) {
+	state := auditDraftHome(t)
+	base := t.TempDir()
+	bundle := filepath.Join(base, "real-bundle")
+	if err := os.MkdirAll(bundle, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "linked-bundle")
+	if err := os.Symlink(bundle, link); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r1", gradedAt: "2026-01-01T00:00:00Z",
+		bundle: bundle,
+	})
+	auditDraftFixture(t, state, auditDraftFixtureRow{
+		mode: auditModePR, subject: "s", head: "h", round: "r2", gradedAt: "2026-02-01T00:00:00Z",
+		bundle: link, status: auditStatusTimeout,
+		defects: []AuditDefect{{Severity: "P1", What: "a defect the timed out regrade left", Where: "a.go:1"}},
+	})
+	report := auditDraftsReview744Run(t, "--round", "r1")
+	if len(report.Created) != 0 || len(report.Updated) != 0 {
+		t.Fatalf("the linked regrade still produced a draft: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
+		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	}
+}
+
+// C2: a posted draft is frozen for every writer, not only for audit drafts. The improve
+// surface rewrites an existing draft of its own source, and advances an audit draft's seen
+// section; for a posted draft it must append the new sightings and change nothing else, so
+// the issue the management session already opened still describes the file it opened.
+func TestAuditDraftsReview744ImproveProposePostedDraftOnlyGrowsSeen(t *testing.T) {
+	for _, source := range []string{improveProposeSource, auditDraftSource} {
+		t.Run(source, func(t *testing.T) {
+			w := improveProposeTestSetup(t)
+			improveProposeTestConfigure(t, w, map[string]any{})
+			dir := filepath.Join(w.stateDir, "drafts")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			key := auditDraftFingerprint(improveKindSplit, improveProposeTestFriction)
+			posted := &auditDraft{
+				Schema: auditDraftSchema, Fingerprint: key, Source: source,
+				Project: "project-a", Title: "a posted defect", Severity: "P1",
+				Labels: []string{source, "P1"}, State: auditDraftStatePosted, Posted: "CRW-1",
+				Body: "## What\n\na defect\n\n## Projects\n\n- project-a: 1\n\n## Evidence\n\n- events:rel-a\n",
+				Seen: []auditDraftSeen{{Mode: auditModePR, Subject: "s", Head: "h", At: "2026-10-01T00:00:00Z"}},
+			}
+			path := filepath.Join(dir, key+".json")
+			if err := auditDraftSave(path, posted); err != nil {
+				t.Fatal(err)
+			}
+			before := auditDraftsReview744RawKeys(t, path)
+			bundle := improveProposeTestBundle(t, w, improveProposeTestEightCases())
+			code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+			if code != 0 {
+				t.Fatalf("propose: exit %d, stderr %s", code, stderr)
+			}
+			report := improveProposeTestReport(t, stdout)
+			if len(report.Updated) != 1 {
+				t.Fatalf("updated = %+v, want the posted draft to grow", report.Updated)
+			}
+			after := auditDraftsReview744RawKeys(t, path)
+			for field, value := range before {
+				if field == "seen" {
+					continue
+				}
+				got, ok := after[field]
+				if !ok {
+					t.Errorf("the posted draft lost its %s field", field)
+					continue
+				}
+				if string(got) != string(value) {
+					t.Errorf("the posted draft %s changed from %s to %s", field, value, got)
+				}
+			}
+			seenBefore, seenAfter := auditDraftsReview744Seen(t, before), auditDraftsReview744Seen(t, after)
+			if len(seenAfter) <= len(seenBefore) {
+				t.Errorf("the seen list went from %d to %d entries, want it to grow", len(seenBefore), len(seenAfter))
+			}
+		})
+	}
+}
