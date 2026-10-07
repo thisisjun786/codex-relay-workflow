@@ -221,10 +221,11 @@ func TestConfigLockPathsPinnedRefusesARetargetedDirectoryAlias(t *testing.T) {
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
 
-// The fifth-generation d1 case, pinned through the public entry point: the pinned file's DIRECTORY is
-// replaced after the pin, and the manifest then names the file the replacement points at. The
-// comparison must refuse — the pin's identities are the ones captured at lock time, so a directory
-// read again would have accepted the replacement and restored under the wrong lock.
+// The fifth-generation d1 case, pinned at the helper: the pinned file's DIRECTORY is replaced after
+// the pin, and the comparison is asked about the file the replacement points at. The pin's captured
+// identities are the ones from lock time, so a helper that re-resolved the pinned path as a
+// comparison target would have accepted the replacement. The public entry point's behaviour for the
+// same replacement is pinned by the two sixth-generation tests below, which drive Deactivate.
 func TestConfigLockPathsRefusesAPinnedDirectoryReplacedAfterThePin(t *testing.T) {
 	home := configLockActivationHome(t)
 	dirA := filepath.Join(home, "A")
