@@ -1147,27 +1147,28 @@ func improveReview789FaultAt(count int, lastSeen, origin string) improveRecord {
 		Evidence: []string{origin}}
 }
 
-// TestImproveReview789AggregateGrowthOnAKnownOriginIsAdded covers the review finding that an
-// aggregate whose count grew while its origin stayed the same lost that growth once another store's
-// occurrences were also counted: the whole project's count was clamped to the larger of the stored
-// sum and this bundle's sum, so the increase on an origin the draft already carried was dropped.
-// Each origin's own count is now recorded with it, so only the growth is added.
-func TestImproveReview789AggregateGrowthOnAKnownOriginIsAdded(t *testing.T) {
+// TestImproveReview789MultiOriginAggregateKeepsItsTotal covers the review finding that a record
+// which reports several origins lost the count it carries: the record's own total is what the
+// bundle says the friction was seen, so merging it into an existing draft must add the whole count,
+// shared among the origins, rather than one per origin.
+func TestImproveReview789MultiOriginAggregateKeepsItsTotal(t *testing.T) {
 	w := improveProposeTestSetup(t)
 	improveProposeTestConfigure(t, w, map[string]any{})
-
-	// Store A: five occurrences at one origin.
+	// An existing draft for the same friction, one occurrence at its own origin.
 	first := improveProposeTestBundle(t, w, []improveRecord{
-		improveReview789FaultAt(5, "2026-10-06T01:00:00Z", "fault:store-a:f1"),
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 1, "fault:store-a:f0"),
 	})
 	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
 		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
 	}
-	// Store B: five more, at its own origin. The two stores' occurrences add.
-	second := improveProposeTestBundle(t, w, []improveRecord{
-		improveReview789FaultAt(5, "2026-10-06T02:00:00Z", "fault:store-b:f2"),
-	})
-	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+
+	// One record whose count is seven and which names two new origins: its whole count is new, so
+	// the stored one occurrence plus these seven is eight.
+	record := improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
+		What: "a signature", Count: 7, FirstAt: "2026-10-06T01:00:00Z", LastAt: "2026-10-06T01:00:00Z",
+		Evidence: []string{"fault:store-a:f1", "fault:store-a:f2"}}
+	bundle := improveProposeTestBundle(t, w, []improveRecord{record})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
 	if code != 0 {
 		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
 	}
@@ -1175,25 +1176,11 @@ func TestImproveReview789AggregateGrowthOnAKnownOriginIsAdded(t *testing.T) {
 	if len(report.Updated) != 1 {
 		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
 	}
-	fingerprint := report.Updated[0].Fingerprint
-	if doc := improveProposeTestDraft(t, w, fingerprint); !strings.Contains(doc.Body, "- owner_unknown (10)") {
-		t.Fatalf("the draft does not count both stores:\n%s", doc.Body)
+	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if !strings.Contains(doc.Body, "- owner_unknown (8)") {
+		t.Errorf("the merge did not add the record's whole count across its origins:\n%s", doc.Body)
 	}
-
-	// Store A's own row grows to eight, with no new origin: three more occurrences.
-	third := improveProposeTestBundle(t, w, []improveRecord{
-		improveReview789FaultAt(8, "2026-10-06T03:00:00Z", "fault:store-a:f1"),
-	})
-	code, stdout, stderr = improveProposeTestRun(t, w, "--bundle", third)
-	if code != 0 {
-		t.Fatalf("the third propose: exit %d, stderr %s", code, stderr)
-	}
-	report = improveProposeTestReport(t, stdout)
-	if len(report.Updated) != 1 {
-		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
-	}
-	doc := improveProposeTestDraft(t, w, fingerprint)
-	if !strings.Contains(doc.Body, "- owner_unknown (13)") {
-		t.Errorf("the draft lost the growth on the origin it already carried:\n%s", doc.Body)
+	if len(doc.Seen) != 3 {
+		t.Errorf("the draft carries %d seen entries, want one per origin (3): %+v", len(doc.Seen), doc.Seen)
 	}
 }
