@@ -3,10 +3,12 @@
 package cxcfuzz
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,21 +90,34 @@ func TestScenariosBuildTheSameTreeInBothRoots(t *testing.T) {
 	}
 }
 
-// A path outside the root is refused and nothing is materialised.
+// A path outside the root is refused and the case root is removed, so nothing is materialised.
 func TestScenariosRefuseAPathOutsideTheRoot(t *testing.T) {
 	for _, path := range []string{"/etc/passwd", "../escape", "a/../../escape"} {
-		root := t.TempDir()
+		base := t.TempDir()
+		root := filepath.Join(base, "case")
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := Scenarios(root, fsInput(fsEntry(path, "file", "x", "", 0o644))); err == nil {
 			t.Fatalf("%q was materialised", path)
 		}
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != 0 {
-			t.Fatalf("%q left %v", path, entries)
+		if err := emptyBase(base); err != nil {
+			t.Fatalf("%q: %v", path, err)
 		}
 	}
+}
+
+// emptyBase checks that a refusal removed the case root and created nothing beside it: the base holds
+// no entry at all, so nothing the input named stands outside the case root.
+func emptyBase(base string) error {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("the refusal left %v under %s", entries, base)
+	}
+	return nil
 }
 
 // A symlink target outside the root is refused.
@@ -207,16 +222,126 @@ func TestScenariosStillRefuseATargetOutsideTheRoot(t *testing.T) {
 	// The link stands at work/abs, so a relative escape has to climb two levels: one "../" from
 	// work/abs still lands inside the case root and is legitimately allowed.
 	for _, target := range []string{"/etc/passwd", rootPlaceholder + "/../outside", rootPlaceholder + "/../escape", "../../outside"} {
-		root := t.TempDir()
+		base := t.TempDir()
+		root := filepath.Join(base, "case")
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := Scenarios(root, fsInput(fsEntry("work/abs", "symlink", "", target, 0))); err == nil {
 			t.Fatalf("the target %q was materialised", target)
 		}
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			t.Fatal(err)
+		if err := emptyBase(base); err != nil {
+			t.Fatalf("the target %q: %v", target, err)
 		}
-		if len(entries) != 0 {
-			t.Fatalf("the target %q left %v", target, entries)
+	}
+}
+
+// caseRoot makes a case root under a base of its own, so a test can prove that a refusal left nothing
+// outside it: an escape would land in the base or above it.
+func caseRoot(t *testing.T) (base, root string) {
+	t.Helper()
+	base = t.TempDir()
+	root = filepath.Join(base, "case")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return base, root
+}
+
+// c1 (CRW-908): a link is judged against the tree built so far, so a later entry cannot walk out through
+// an earlier entry's link. {a -> .} resolves to the case root, and {b -> a/../escape} then applies its
+// '..' after that link has been followed, one level above the root. Red first: the old check cleaned the
+// target lexically - turning a/../escape into escape, inside the root - and saw every entry before any
+// was built, so both were allowed and the kernel resolved b outside the case root.
+func TestScenariosRefuseALinkThatEscapesThroughAnEarlierLink(t *testing.T) {
+	base, root := caseRoot(t)
+	input := fsInput(
+		fsEntry("a", "symlink", "", ".", 0),
+		fsEntry("b", "symlink", "", "a/../escape", 0),
+	)
+	if _, err := Scenarios(root, input); err == nil {
+		t.Fatal("a link that walks out through an earlier link was materialised")
+	}
+	if err := emptyBase(base); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// c1 (CRW-908): the absolute form of the same escape. {abs -> ${ROOT}/.} resolves to the case root and
+// {esc -> abs/../q} applies its '..' after that link, one level above it.
+func TestScenariosRefuseAnAbsoluteSelfLinkThenDotDot(t *testing.T) {
+	base, root := caseRoot(t)
+	input := fsInput(
+		fsEntry("abs", "symlink", "", rootPlaceholder+"/.", 0),
+		fsEntry("esc", "symlink", "", "abs/../q", 0),
+	)
+	if _, err := Scenarios(root, input); err == nil {
+		t.Fatal("an absolute self link followed by '..' was materialised")
+	}
+	if err := emptyBase(base); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// c1 (CRW-908): a link k levels deep that points at the case root, followed by k+1 '..', walks above the
+// root. Red first: the lexical check saw the '..' collapse against the link's nominal name and stayed
+// inside, while the kernel followed the link to the root first and then climbed out of it.
+func TestScenariosRefuseADeepLinkToTheRootThenDotDot(t *testing.T) {
+	for _, depth := range []int{1, 2, 3} {
+		t.Run(strconv.Itoa(depth), func(t *testing.T) {
+			base, root := caseRoot(t)
+			entries := make([]pyjson.Object, 0, depth+2)
+			deepest := ""
+			for i := 0; i < depth; i++ {
+				deepest = filepath.Join(deepest, "d"+strconv.Itoa(i))
+				entries = append(entries, fsEntry(deepest, "dir", "", "", 0o755))
+			}
+			link := filepath.Join(deepest, "root")
+			entries = append(entries,
+				fsEntry(link, "symlink", "", rootPlaceholder, 0),
+				fsEntry("esc", "symlink", "", link+"/"+strings.Repeat("../", depth+1)+"q", 0),
+			)
+			if _, err := Scenarios(root, fsInput(entries...)); err == nil {
+				t.Fatalf("a %d-deep link to the root followed by %d '..' was materialised", depth, depth+1)
+			}
+			if err := emptyBase(base); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// c1 (CRW-908): the controls stay allowed. A relative link into the case tree, an absolute
+// ROOT-prefixed link, and the 45-link chain the memorygate generator builds all still resolve inside
+// the case root.
+func TestScenariosStillAllowTheConfinedControls(t *testing.T) {
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	const chain = 45
+	entries := []pyjson.Object{
+		fsEntry("codex-home/memories", "dir", "", "", 0o755),
+		fsEntry("work/link", "symlink", "", "../codex-home/memories", 0),
+		fsEntry("work/abs", "symlink", "", rootPlaceholder+"/codex-home/memories", 0),
+	}
+	for i := 0; i < chain; i++ {
+		target := "c" + strconv.Itoa(i+1)
+		if i == chain-1 {
+			target = "../codex-home/memories"
+		}
+		entries = append(entries, fsEntry("work/c"+strconv.Itoa(i), "symlink", "", target, 0))
+	}
+	if n, err := Scenarios(root, fsInput(entries...)); err != nil || n != len(entries) {
+		t.Fatalf("%d entries, %v", n, err)
+	}
+	for _, link := range []string{"work/link", "work/abs", "work/c0", "work/c44"} {
+		resolved, err := filepath.EvalSymlinks(filepath.Join(root, link))
+		if err != nil {
+			t.Fatalf("%s: %v", link, err)
+		}
+		if want := filepath.Join(root, "codex-home", "memories"); resolved != want {
+			t.Fatalf("%s resolves to %q, want %q", link, resolved, want)
 		}
 	}
 }
