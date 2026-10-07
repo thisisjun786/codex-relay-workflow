@@ -489,6 +489,13 @@ var migrateOwnedDirMkdirat = unix.Mkdirat
 // run, and only a test sets it.
 var migrateOwnedDirIdentityAt func(step string) error
 
+// migrateOwnedDirIdentityLstat reads the identity of a name inside a directory without following a link
+// at it. It is a variable so a case can model a host whose read of a name it just created fails; no other
+// code replaces it.
+var migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+	return unix.Fstatat(dirfd, name, st, unix.AT_SYMLINK_NOFOLLOW)
+}
+
 // migrateOwnedDirIdentityFchmodat gives a name a mode without following a link at it. It is a variable
 // so a case can model a kernel whose fchmodat cannot express no-follow - Linux before fchmodat2 answers
 // EOPNOTSUPP - which the creation answers with the same chmod and no flag, after checking that no link
@@ -614,22 +621,27 @@ func migrateOwnedDirIdentityStep(step string) error {
 // run, or a squatter - so one fresh name is tried before the run is stopped. The identity is read at the
 // name just created, so a later cleanup can prove the entry it removes is still this run's directory.
 func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, error) {
-	var err error
+	var last error
 	for range 2 {
 		tmp := tempName(rand.Text(), 1)
-		if err = migrateOwnedDirMkdirat(d.fd(), tmp, perm); err != nil {
+		if err := migrateOwnedDirMkdirat(d.fd(), tmp, perm); err != nil {
 			if !errors.Is(err, unix.EEXIST) {
-				break
+				return "", fileID{}, &fs.PathError{Op: "mkdir", Path: d.join(tmp), Err: err}
 			}
+			last = &fs.PathError{Op: "mkdir", Path: d.join(tmp), Err: err}
 			continue
 		}
+		// This run's own name exists now, and it is read back before anything else runs. A read that
+		// fails removes the directory this run just made, so a creation it cannot account for leaves no
+		// directory behind for a later run to have to recognise.
 		var st unix.Stat_t
-		if err = unix.Fstatat(d.fd(), tmp, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			return "", fileID{}, &fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}
+		if err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); err != nil {
+			rm := d.migrateOwnedDirIdentityDrop(tmp, fileID{})
+			return "", fileID{}, errors.Join(&fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}, rm)
 		}
 		return tmp, fileID{uint64(st.Dev), uint64(st.Ino)}, nil
 	}
-	return "", fileID{}, &fs.PathError{Op: "mkdir", Path: d.path, Err: err}
+	return "", fileID{}, last
 }
 
 // migrateOwnedDirIdentityChmod gives the temporary name exactly perm through a chmod that asks for no
@@ -700,19 +712,29 @@ func (d *Dir) migrateOwnedDirIdentityRenamed(child *Dir, name string) error {
 	return nil
 }
 
-// migrateOwnedDirIdentityDrop removes this run's temporary directory, addressed by the identity read when
-// the name was created. A name already gone is the outcome wanted, and so is a name whose entry is no
-// longer that directory - something else took the name, so it is not this run's to remove, and
-// OlderTemps reports it like any other leftover. Anything else is reported, because a temporary left
-// behind is a directory a later run would have to recognise and never does.
+// migrateOwnedDirIdentityDrop removes this run's temporary directory, and removes nothing it cannot show
+// is this run's. want is the identity read at the name when this run created it; the entry must still be
+// that directory. A zero want means that read did not happen, which is only the case when it failed
+// immediately after this run's own mkdirat made the name: the entry must then be a directory of this
+// process, which is the best proof available for a name created a moment ago, and it is the same
+// directory-of-this-process fact the creation itself is checked against. A name already gone, and a name
+// whose entry is not this run's, are both the outcome wanted - that entry is not this run's to remove,
+// and OlderTemps reports it like any other leftover. A read that fails otherwise is reported, because a
+// temporary left behind is a directory a later run would have to recognise and never does.
 func (d *Dir) migrateOwnedDirIdentityDrop(tmp string, want fileID) error {
 	var st unix.Stat_t
-	switch err := unix.Fstatat(d.fd(), tmp, &st, unix.AT_SYMLINK_NOFOLLOW); {
+	switch err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &st); {
 	case errors.Is(err, unix.ENOENT):
 		return nil
 	case err != nil:
 		return &fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}
-	case uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR || (fileID{uint64(st.Dev), uint64(st.Ino)}) != want:
+	case uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR:
+		return nil
+	case want != (fileID{}):
+		if (fileID{uint64(st.Dev), uint64(st.Ino)}) != want {
+			return nil
+		}
+	case st.Uid != uint32(os.Geteuid()):
 		return nil
 	}
 	if err := unix.Unlinkat(d.fd(), tmp, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {

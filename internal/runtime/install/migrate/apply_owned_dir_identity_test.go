@@ -369,3 +369,28 @@ func TestMigrateOwnedDirIdentityRerunWithTheSamePinnedPairFinishesTheRoot(t *tes
 		t.Errorf("the retry must finish the root this run made, note = %q", ai.Note)
 	}
 }
+
+// C1: a creation whose name this run cannot read back leaves no directory behind. The read that takes
+// the identity of the name this run just made is the one step between the mkdirat and the cleanup
+// defer, so a failure there must remove the directory this run made rather than leave it.
+func TestMigrateOwnedDirIdentityUnreadableTemporaryLeavesNothing(t *testing.T) {
+	restore := migrateOwnedDirIdentityLstat
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = restore })
+	calls := 0
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		if calls++; calls == 1 {
+			return unix.EIO
+		}
+		return restore(dirfd, name, st)
+	}
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a temporary this run cannot read back must stop the run")
+	}
+	// The root's own creation is what failed, so the root does not exist and nothing of this run's is
+	// left in the worktree.
+	if _, err := os.Lstat(apDst(ws, "")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a failed creation must leave no directory: %v", err)
+	}
+	migrateOwnedDirIdentityWantNoTemp(t, ws)
+}
