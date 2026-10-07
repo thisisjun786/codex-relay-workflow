@@ -184,6 +184,14 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"a here-document body holding a bare relay program", "cat <<EOF\ncodex-session-relay dag-ready --plan p\nEOF", false},
 		{"a relay command after a here-document closes", "cat <<'EOF' > notes.txt\ncrw relay dag-release --plan p1\nEOF\ncrw relay dag-release --plan p2", true},
 		{"a quoted argument on a real relay call", `codex-session-relay dag-ready --plan "p 1"`, true},
+		// A command substitution runs its own commands even inside a double-quoted string, so a
+		// relay command there is an invocation; a comment is not a command at all.
+		{"a relay command in a double-quoted substitution", `printf '%s\n' "$(codex-session-relay dag-ready --plan p1)"`, true},
+		{"a relay command in a bare substitution", "out=$(crw relay dag-release --plan p1)", true},
+		{"a relay command in a backtick substitution", "out=`crw relay dag-release --plan p1`", true},
+		{"a relay command after a comment on the line", "cat docs/relay/example.md # example; crw relay dag-release --plan p1", false},
+		{"a commented relay command at the start of a line", "true\n# crw relay dag-release --plan p1\ntrue", false},
+		{"a relay command before a comment", "crw relay dag-release --plan p1 # note; crw relay dag-ready --plan p2", true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -539,5 +547,39 @@ func TestDagHostReview775ReportedListKeepsOnlyWhatTheResumeReads(t *testing.T) {
 	// The next check reads nothing behind that offset, so it reports nothing either.
 	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
 		t.Fatalf("the next check reported a refusal behind the resume offset: %+v", found)
+	}
+}
+
+// A first-sight reading that skips a historical refusal still marks its call id: a duplicate of that
+// same answer appended during the scan is not a new refusal, since the refusal was already in the
+// rollout before the reading began. The duplicate-outputs reading reports the repeated answer.
+func TestDagHostReview775HistoryRefusalDuplicateIsNotNew(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	answer := dagHostToolOutput(t, "call-B", `{"error":"refused","reason":"stale_coordinator_epoch"}`)
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostToolCall(t, "call-A", "crw relay dag-ready --plan p1"),
+		dagHostToolCall(t, "call-B", "crw relay dag-release --plan p1"),
+		answer)
+	f.close()
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	appended := false
+	dagHostAfterBoundary = func(path string) {
+		if path != rollout || appended {
+			return
+		}
+		appended = true
+		dagHostAppendRollout(t, rollout, answer)
+	}
+	t.Cleanup(func() { dagHostAfterBoundary = nil })
+
+	first := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+	if len(first) != 0 {
+		t.Fatalf("a historical refusal's duplicate answer was reported as new: %+v", first)
+	}
+	second := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+	if len(second) != 0 {
+		t.Fatalf("the next check reported the historical refusal: %+v", second)
 	}
 }

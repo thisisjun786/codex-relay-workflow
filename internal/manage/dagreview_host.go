@@ -317,10 +317,13 @@ func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool,
 		if reported[refusal.callID] {
 			continue
 		}
+		// The id is recorded whatever the refusal's verdict: a refusal this reading treats as history
+		// is one this reading has seen, so a duplicate of its answer appended during the same scan is
+		// not a new refusal. The duplicate-outputs reading is the one that reports a repeated answer.
+		reported[refusal.callID] = true
 		if firstSight && refusal.outputStart < reading.boundary {
 			continue
 		}
-		reported[refusal.callID] = true
 		out = append(out, refusal)
 	}
 	return out
@@ -440,11 +443,14 @@ var (
 )
 
 // dagHostCommandUnits splits a tool call's argument text into the simple command units a shell would
-// run: a newline, ;, &&, ||, | or $( starts one. A separator inside a quoted string is data, not a
-// separator, and a here-document's body is not a command at all, so a relay command written inside
-// an example the parent only read (rg's pattern, cat's document) is never mistaken for a command the
-// parent ran. A unit keeps its own text, quotes included, for the word reading that follows; text
-// the reader cannot read to its end (an unterminated quote) stays one unit and is never split.
+// run: a newline, ;, &&, ||, |, $( or a backtick starts one. A separator inside a quoted string is
+// data, not a separator, and a here-document's body is not a command at all, so a relay command
+// written inside an example the parent only read (rg's pattern, cat's document) is never mistaken
+// for a command the parent ran. A command substitution runs its own commands even inside a
+// double-quoted string, so "$(relay ...)" is an invocation while a separator inside the same quotes
+// is still data; only a single-quoted string is wholly inert. A # that starts a word begins a
+// comment to the end of the line. A unit keeps its own text, quotes included, for the word reading
+// that follows; text the reader cannot read to its end (an unterminated quote) is never split.
 func dagHostCommandUnits(text string) []string {
 	var units []string
 	var unit strings.Builder
@@ -455,30 +461,53 @@ func dagHostCommandUnits(text string) []string {
 		unit.Reset()
 	}
 	body := dagHostWithoutHeredocs(text)
+	inDouble := false
+	wordStart := true
 	for i := 0; i < len(body); {
-		switch c := body[i]; {
+		c := body[i]
+		switch {
 		case c == '\\' && i+1 < len(body):
 			unit.WriteString(body[i : i+2])
 			i += 2
-		case c == '\'' || c == '"':
-			end := dagHostQuotedEnd(body, i, c)
+			wordStart = false
+		case !inDouble && c == '\'':
+			end := dagHostQuotedEnd(body, i, '\'')
 			unit.WriteString(body[i:end])
 			i = end
-		case c == '\n' || c == ';':
+			wordStart = false
+		case c == '"':
+			unit.WriteByte(c)
+			inDouble = !inDouble
+			i++
+			wordStart = false
+		case c == '#' && wordStart && !inDouble:
+			// A comment runs to the end of the line; the newline that ends it still separates units.
+			for i < len(body) && body[i] != '\n' {
+				i++
+			}
+		case !inDouble && (c == '\n' || c == ';'):
 			flush()
 			i++
-		case c == '|' || c == '&':
+			wordStart = true
+		case !inDouble && (c == '|' || c == '&'):
 			flush()
 			i++
 			if i < len(body) && (body[i] == '|' || body[i] == '&') {
 				i++
 			}
+			wordStart = true
 		case c == '$' && i+1 < len(body) && body[i+1] == '(':
 			flush()
 			i += 2
+			wordStart = true
+		case c == '`':
+			flush()
+			i++
+			wordStart = true
 		default:
 			unit.WriteByte(c)
 			i++
+			wordStart = c == ' ' || c == '\t' || c == '\r'
 		}
 	}
 	flush()
