@@ -481,6 +481,42 @@ func TestMemoryGateUnnamedDestinationFourthPassShapes(t *testing.T) {
 	}
 }
 
+// TestMemoryGateUnnamedDestinationImportedOpenShapes pins the shapes the independent review found: the open builtin
+// reached through another module's name, as a value (f = builtins.open, f = io.open), as a staticmethod, and as a
+// from-imported alias (from io import open as o). The controls pin the call forms the same reading must leave allowed
+// or read by their own frame.
+func TestMemoryGateUnnamedDestinationImportedOpenShapes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"builtins.open as a value", py("import builtins; f = builtins.open; f(\"" + m + "\", \"w\")")},
+		{"io.open as a value", py("import io; f = io.open; f(\"" + m + "\", \"w\")")},
+		{"staticmethod of the open builtin", py("import builtins; class C: f = staticmethod(builtins.open); C.f(\"" + m + "\", \"w\")")},
+		{"from-imported open alias", py("from io import open as o; o(\"" + m + "\", \"w\")")},
+		{"from builtins import open", py("from builtins import open as o; o(\"" + m + "\", \"w\")")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A read-only call through the same names names no write, so it stays allowed.
+		{"read-only io.open call", py("import io; io.open(\"" + m + "\", \"r\").read()")},
+		{"read-only from-imported open alias", py("from io import open as o; o(\"" + m + "\", \"r\").read()")},
+		{"read-only builtins.open call", py("import builtins; builtins.open(\"" + m + "\", \"r\").read()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
 // TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
 // computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
 // protected-area condition alone decides.

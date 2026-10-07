@@ -1253,6 +1253,7 @@ type shellWriteCopyImports struct {
 	alias    map[string][]string
 	from     map[string][]string
 	importer map[string]bool // a bare name bound to importlib.import_module, which reaches a module this reader cannot name
+	opener   map[string]bool // a bare name bound to the open builtin through another module (from io import open as o)
 }
 
 // shellWriteCopyBind records that a statement bound local to module, once per module.
@@ -1269,7 +1270,7 @@ func shellWriteCopyBind(binds map[string][]string, local, module string) {
 // program's imports beside its own, because an f-string replacement field and a literal passed to exec both run in the
 // scope that holds them (CRW-900 review).
 func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCopyImports {
-	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, importer: map[string]bool{}}
+	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, importer: map[string]bool{}, opener: map[string]bool{}}
 	for _, binds := range []shellWriteCopyImports{outer, inner} {
 		for local, modules := range binds.alias {
 			for _, module := range modules {
@@ -1284,6 +1285,9 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 		for name := range binds.importer {
 			out.importer[name] = true
 		}
+		for name := range binds.opener {
+			out.opener[name] = true
+		}
 	}
 	return out
 }
@@ -1297,7 +1301,7 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 // several lines binds them all (CRW-900 review: dropping it would leave the destination of the call it binds unnamed,
 // which is the fail-open direction).
 func shellWriteCopyImportsOf(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
-	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, importer: map[string]bool{}})
+	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}, importer: map[string]bool{}, opener: map[string]bool{}})
 	words := []string{}
 	flush := func() {
 		if len(words) > 0 {
@@ -1378,6 +1382,14 @@ func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports)
 					binds.importer = map[string]bool{}
 				}
 				binds.importer[name] = true
+			}
+			if item[0] == "open" {
+				// from io import open as o, from builtins import open: the name is the open builtin through
+				// another module, and the reader names no destination for such a value.
+				if binds.opener == nil {
+					binds.opener = map[string]bool{}
+				}
+				binds.opener[name] = true
 			}
 			if name != "" && shellWriteCopyFunc(module, item[0]) {
 				shellWriteCopyBind(binds.from, name, module)
@@ -2618,6 +2630,9 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 					kind = shellWriteCopyModuleKind(rs, i, binds)
 				}
 				if kind == 0 && c == '(' {
+					kind = shellWriteUnnamedFromOpen(rs, i, binds)
+				}
+				if kind == 0 && c == '(' {
 					kind = shellWriteUnnamedSpecial(rs, i)
 				}
 				if kind == 0 && c == '(' {
@@ -2705,6 +2720,14 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		// the ordinary destination reader names no destination for this shape, so the call fails closed.
 		w.wrote = true
 		w.unnamed = true
+	case 'O':
+		// A call through a name bound to the open builtin through another module (from io import open as o): the
+		// ordinary destination reader names an open() destination only for the open spelling, so the call is a write
+		// whose destination it cannot name whenever its mode writes. mode= names the mode in either form.
+		if shellWriteUnnamedUnpacked(rs, spans) || shellWriteUnnamedWrites(shellWriteUnnamedArg(rs, spans, 1, "mode")) {
+			w.wrote = true
+			w.unnamed = true
+		}
 	case 'w', 't':
 		// write_text and write_bytes write to their receiver, which this reader names only for a Path(<literal>)
 		// call. touch and mkdir write to theirs too, and the reader names no destination for those two at all, so
@@ -2843,6 +2866,13 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 			w.unnamed = true
 			return
 		}
+		if word == "open" && !shellWriteUnnamedCalled(rs, j) {
+			// A name named open taken off a receiver as a value - f = builtins.open, f = io.open - is the open
+			// builtin through another name, and the reader names no destination for such a value. A call
+			// (io.open(path, mode)) is left to its own frame.
+			w.unnamed = true
+			return
+		}
 		if shellWriteUnnamedModuleReceiver(mod, binds, w.assigned) {
 			return // a module this reader reads its own way is left to the readers above
 		}
@@ -2866,7 +2896,7 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 		w.unnamed = true
 		return
 	}
-	if word != "open" && len(binds.from[word]) == 0 {
+	if word != "open" && len(binds.from[word]) == 0 && !binds.opener[word] {
 		return
 	}
 	w.unnamed = true
@@ -3219,6 +3249,17 @@ func shellWriteUnnamedMethodKind(name string) byte {
 		return 'r'
 	}
 	return 'l'
+}
+
+// shellWriteUnnamedFromOpen is the frame kind of a call to a name the program bound to the open builtin through another
+// module (from io import open as o). The ordinary destination reader names an open() destination only for the open
+// spelling, so a call through the alias is a write whose destination this reader cannot name whenever its mode writes.
+func shellWriteUnnamedFromOpen(rs []rune, i int, binds shellWriteCopyImports) byte {
+	word, ok := shellWriteUnnamedCallee(rs, i)
+	if !ok || !binds.opener[word] {
+		return 0
+	}
+	return 'O'
 }
 
 // shellWriteUnnamedSpecial reads the callee of the call whose bracket is at i when it is one of the dynamic routes this
