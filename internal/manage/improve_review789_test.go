@@ -1088,3 +1088,112 @@ func TestImproveReview789AggregateCountAddsAcrossStores(t *testing.T) {
 		t.Errorf("the merged draft does not add the second store's occurrences to the first's:\n%s", doc.Body)
 	}
 }
+
+// TestImproveReview789SymlinkedParentDotDotIsOneLocation covers the review finding that a source
+// path spelled through a symlinked directory followed by ".." was cleaned before its links were
+// resolved, so the origin named a file the read never touched and the same occurrence was counted
+// again when the real path was used. The kernel resolves a link and a following ".." in the order
+// they are written, so the reader must resolve the caller's own spelling.
+func TestImproveReview789SymlinkedParentDotDotIsOneLocation(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	project := filepath.Join(s.root, "data", "project")
+	if err := os.MkdirAll(filepath.Join(project, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(project, "interventions.jsonl")
+	improveTestWrite(t, real, "{\"signal\":\"stalled\",\"at\":\"2026-10-06T01:00:00Z\"}\n")
+	fixtures := filepath.Join(s.root, "fixtures")
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(project, "nested"), filepath.Join(fixtures, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// The caller's own spelling: the link is followed first, so ".." leaves the link's target.
+	spelled := fixtures + "/link/../interventions.jsonl"
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {})
+
+	improveReview789Configure(t, s, manageState, map[string]any{
+		"sources": map[string]any{"intervention": map[string]any{"path": spelled}},
+	})
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+
+	// The same file, named by its real path: the same occurrence, so nothing new.
+	improveReview789Configure(t, s, manageState, map[string]any{
+		"sources": map[string]any{"intervention": map[string]any{"path": real}},
+	})
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Created) != 0 || len(second.Updated) != 0 {
+		t.Errorf("the real-path recollect created %d and updated %d, want neither", len(second.Created), len(second.Updated))
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 1 {
+		t.Errorf("the draft carries %d seen entries, want one for the one file: %+v", len(doc.Seen), doc.Seen)
+	}
+}
+
+// improveReview789FaultAt is one fault ledger record of a bundle whose origin names the store it
+// was read from, so a test can model the same friction seen in more than one store.
+func improveReview789FaultAt(count int, lastSeen, origin string) improveRecord {
+	return improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
+		What: "a signature", Count: count, FirstAt: "2026-10-06T01:00:00Z", LastAt: lastSeen,
+		Evidence: []string{origin}}
+}
+
+// TestImproveReview789AggregateGrowthOnAKnownOriginIsAdded covers the review finding that an
+// aggregate whose count grew while its origin stayed the same lost that growth once another store's
+// occurrences were also counted: the whole project's count was clamped to the larger of the stored
+// sum and this bundle's sum, so the increase on an origin the draft already carried was dropped.
+// Each origin's own count is now recorded with it, so only the growth is added.
+func TestImproveReview789AggregateGrowthOnAKnownOriginIsAdded(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+
+	// Store A: five occurrences at one origin.
+	first := improveProposeTestBundle(t, w, []improveRecord{
+		improveReview789FaultAt(5, "2026-10-06T01:00:00Z", "fault:store-a:f1"),
+	})
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+	// Store B: five more, at its own origin. The two stores' occurrences add.
+	second := improveProposeTestBundle(t, w, []improveRecord{
+		improveReview789FaultAt(5, "2026-10-06T02:00:00Z", "fault:store-b:f2"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+	if code != 0 {
+		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
+	}
+	fingerprint := report.Updated[0].Fingerprint
+	if doc := improveProposeTestDraft(t, w, fingerprint); !strings.Contains(doc.Body, "- owner_unknown (10)") {
+		t.Fatalf("the draft does not count both stores:\n%s", doc.Body)
+	}
+
+	// Store A's own row grows to eight, with no new origin: three more occurrences.
+	third := improveProposeTestBundle(t, w, []improveRecord{
+		improveReview789FaultAt(8, "2026-10-06T03:00:00Z", "fault:store-a:f1"),
+	})
+	code, stdout, stderr = improveProposeTestRun(t, w, "--bundle", third)
+	if code != 0 {
+		t.Fatalf("the third propose: exit %d, stderr %s", code, stderr)
+	}
+	report = improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, fingerprint)
+	if !strings.Contains(doc.Body, "- owner_unknown (13)") {
+		t.Errorf("the draft lost the growth on the origin it already carried:\n%s", doc.Body)
+	}
+}

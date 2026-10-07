@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -61,11 +62,6 @@ type improveProposeCandidate struct {
 	// exists adds only the sightings this run newly recorded to that project's count. It does not
 	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
-
-	// seenCounts is how many occurrences each sighting stands for. A record that aggregates its
-	// occurrences into one origin reports its own count; a record with an origin per occurrence
-	// reports one each.
-	seenCounts map[auditDraftSeen]int
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -387,20 +383,18 @@ func improveProposeAddSightings(candidate *improveProposeCandidate, project stri
 	if candidate.seenProjects == nil {
 		candidate.seenProjects = map[auditDraftSeen]string{}
 	}
-	if candidate.seenCounts == nil {
-		candidate.seenCounts = map[auditDraftSeen]int{}
-	}
 	owner := improveProposeProjectKey(project)
 	for _, sighting := range sightings {
+		// The count an aggregating record stands for is carried on the sighting's subject, which the
+		// occurrence identity ignores: a later run can then read what this origin reported before and
+		// add only the growth, instead of replacing the whole project's count.
+		sighting.Subject = improveProposeSubjectWithWeight(sighting.Subject, weight)
 		if improveProposeSeenHas(candidate.seen, sighting) {
 			continue
 		}
 		candidate.seen = append(candidate.seen, sighting)
 		if _, ok := candidate.seenProjects[sighting]; !ok {
 			candidate.seenProjects[sighting] = owner
-		}
-		if _, ok := candidate.seenCounts[sighting]; !ok {
-			candidate.seenCounts[sighting] = weight
 		}
 	}
 }
@@ -633,9 +627,10 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 	for _, sighting := range candidate.seen {
 		owner := improveProposeProjectKey(candidate.seenProjects[sighting])
 		at := improveProposeSeenIndex(seen, sighting)
+		_, weight := improveProposeSubjectWeight(sighting.Subject)
 		if at < 0 {
 			seen = append(seen, sighting)
-			added[owner] += improveProposeSightingCount(candidate, sighting)
+			added[owner] += weight
 			continue
 		}
 		// The occurrence is already recorded. Its owner in this run may differ from the stored one:
@@ -646,29 +641,52 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		// text (a refusal's reason, a fault's class), and such a record never names a project, so
 		// reading its subject as one would invent a project and count the occurrence twice.
 		was := auditDraftOwnerUnknown
+		wasWeight := 1
 		if candidate.Kind == improveKindSplit {
 			was = improveProposeProjectKey(seen[at].Subject)
+		} else {
+			// Only an aggregating source carries a count on its subject, and only its growth is new.
+			_, wasWeight = improveProposeSubjectWeight(seen[at].Subject)
 		}
 		seen[at].Subject = sighting.Subject
 		seen[at].At = sighting.At
+		if weight > wasWeight {
+			added[owner] += weight - wasWeight
+		}
 		// A stored owner this run's own evidence names as an issue key is not moved here: the merge
 		// already drops that false project and carries its occurrences to the unknown owner, so
 		// moving them again would count the same occurrence twice.
 		if was != owner && !issueKeys[was] {
-			count := improveProposeSightingCount(candidate, sighting)
-			moved[was] -= count
-			moved[owner] += count
+			moved[was] -= weight
+			moved[owner] += weight
 		}
 	}
 	return seen, added, moved
 }
 
-// improveProposeSightingCount is how many occurrences one of a candidate's sightings stands for.
-func improveProposeSightingCount(candidate improveProposeCandidate, sighting auditDraftSeen) int {
-	if count := candidate.seenCounts[sighting]; count > 0 {
-		return count
+// improveProposeWeightMarker separates a sighting's subject from the count an aggregating record
+// stands for. The occurrence identity clears the subject, so the marker never affects which
+// occurrences are the same; it only lets a later run read back what the origin reported before.
+const improveProposeWeightMarker = " x"
+
+// improveProposeSubjectWithWeight is a sighting's subject with the count an aggregating record
+// stands for. A record that stands for one occurrence carries its subject unchanged.
+func improveProposeSubjectWithWeight(subject string, weight int) string {
+	if weight <= 1 {
+		return subject
 	}
-	return 1
+	return subject + improveProposeWeightMarker + strconv.Itoa(weight)
+}
+
+// improveProposeSubjectWeight is a sighting's subject and the count it carries: the count an
+// aggregating record reported when this occurrence was recorded, or one.
+func improveProposeSubjectWeight(subject string) (string, int) {
+	if at := strings.LastIndex(subject, improveProposeWeightMarker); at >= 0 {
+		if weight, err := strconv.Atoi(subject[at+len(improveProposeWeightMarker):]); err == nil && weight > 0 {
+			return subject[:at], weight
+		}
+	}
+	return subject, 1
 }
 
 // improveProposeSuppressed reports whether an exported issue already covers a candidate: the issue
