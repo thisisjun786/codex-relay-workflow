@@ -177,21 +177,47 @@ func TestEvidenceReview759MirrorStepIsNotEvidence(t *testing.T) {
 
 	// The contrast, end to end: a real body-only edit produces a run whose leg is marked (mirror
 	// step success, test step skipped) beside an earlier run of the same head that ran that leg's
-	// tests. The substitute rule exempts it, so the collector's own reading finds nothing.
-	exempted, _ := Collect(fixedForge(&collectorScript{
-		threads: 1, unresolved: map[int]bool{},
-		runs: []any{
-			map[string]any{"id": 8, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request", "run_started_at": "2026-10-07T06:00:00Z"},
-			map[string]any{"id": 9, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request", "run_started_at": "2026-10-07T07:00:00Z"},
-		},
-		jobs: map[int][]any{
-			8: {review759RanLeg(61)},
-			9: {review759MirroredJob(62, "skipped")},
-		},
-	}), "owner/name", 7)
+	// tests. Both runs carry the required dev-gate, so the light reading actually fires on the
+	// judged run and the substitute rule is what decides. Without the earlier run the same shape is
+	// refused, which is what makes this a discriminating contrast rather than a vacuous one.
+	run := func(id int, started string) map[string]any {
+		return map[string]any{"id": id, "name": "CI", "head_sha": collectorHead, "workflow_id": 100,
+			"event": "pull_request", "run_started_at": started}
+	}
+	devGate := func(id int) map[string]any {
+		return map[string]any{"id": id, "name": "dev-gate", "run_attempt": 1, "status": "completed",
+			"conclusion": "success", "started_at": "2026-10-07T06:00:00Z"}
+	}
+	collect := func(runs []any, jobs map[int][]any) map[string]any {
+		snapshot, _ := Collect(fixedForge(&collectorScript{
+			threads: 1, unresolved: map[int]bool{}, runs: runs, jobs: jobs,
+		}), "owner/name", 7)
+		return snapshot
+	}
+	exempted := collect(
+		[]any{run(8, "2026-10-07T06:00:00Z"), run(9, "2026-10-07T07:00:00Z")},
+		map[int][]any{8: {devGate(60), review759RanLeg(61)}, 9: {devGate(62), review759MirroredJob(63, "skipped")}},
+	)
 	if exempted["verdict"] != Ready {
 		t.Fatalf("the earlier run's own test run exempts the mirrored leg, want %s, got %s: %v",
 			Ready, exempted["verdict"], exempted["problems"])
+	}
+	// The negative control: the mirrored run alone, with nothing on the head that ran that leg.
+	alone := collect(
+		[]any{run(9, "2026-10-07T07:00:00Z")},
+		map[int][]any{9: {devGate(62), review759MirroredJob(63, "skipped")}},
+	)
+	if alone["verdict"] != NotReady {
+		t.Fatalf("a mirrored leg with no earlier run that ran its tests must stay not ready, got %s: %v",
+			alone["verdict"], alone["problems"])
+	}
+	// The refusal is the light reading itself, which is what makes the pair above discriminating.
+	codes := map[string]bool{}
+	for _, raw := range listOf(alone["problems"]) {
+		codes[strOf(mapOf(raw)["code"])] = true
+	}
+	if !codes[ChecksStale] {
+		t.Fatalf("the negative control must refuse through %s, got %v", ChecksStale, alone["problems"])
 	}
 }
 
