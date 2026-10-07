@@ -214,7 +214,19 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 	if iterations < 1 {
 		iterations = 1
 	}
-	result.Attempted = copyWriters * iterations
+	attempted := copyWriters * iterations
+	// The counters the writers and forkers add to are local and read only through atomic.LoadInt64
+	// when the result is built, so marshalling the result can never race a writer that the timeout
+	// left running.
+	var written, busy, forkStarts int64
+	snapshot := func() copyRaceResult {
+		return copyRaceResult{
+			Busy:      atomic.LoadInt64(&busy),
+			Written:   atomic.LoadInt64(&written),
+			Attempted: attempted,
+			Forked:    atomic.LoadInt64(&forkStarts),
+		}
+	}
 	root := t.TempDir()
 	stop := make(chan struct{})
 	var forkers sync.WaitGroup
@@ -229,7 +241,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 				default:
 				}
 				if err := exec.Command(source).Run(); err == nil {
-					atomic.AddInt64(&result.Forked, 1)
+					atomic.AddInt64(&forkStarts, 1)
 				}
 			}
 		}()
@@ -256,7 +268,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 					fail("copying to %s: %v", target, err)
 					return
 				}
-				atomic.AddInt64(&result.Written, info.Size())
+				atomic.AddInt64(&written, info.Size())
 				// CopyBinary asks for 0755 and this process's umask may clear the owner's execute bit,
 				// which would make running the copy fail with EACCES and be read as a copy failure. The
 				// exercise is the inherited write descriptor, not the mode (the caller-contract test
@@ -273,7 +285,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 				run.Args[0] = filepath.Base(source)
 				if err := run.Run(); err != nil {
 					if errors.Is(err, syscall.ETXTBSY) {
-						atomic.AddInt64(&result.Busy, 1)
+						atomic.AddInt64(&busy, 1)
 						continue
 					}
 					fail("running %s: %v", target, err)
@@ -290,7 +302,7 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 		// A stuck copy holds syscall.ForkLock, so the forkers are not waited for here: they could not
 		// fork again while it is held. The parent's kill is what ends this process.
 		close(stop)
-		return result, fmt.Errorf("the copies did not finish within %s: a copy is stuck", copyRunaway)
+		return snapshot(), fmt.Errorf("the copies did not finish within %s: a copy is stuck", copyRunaway)
 	}
 	close(stop)
 	// The forker shutdown is bounded too, with its own budget: closing stop ends a forker that is
@@ -300,8 +312,9 @@ func copyRace(t *testing.T, copyFile func(source, path string) error, source str
 	select {
 	case <-forked:
 	case <-time.After(copyForkerStop):
-		return result, fmt.Errorf("the forkers did not stop within %s after stop was closed: a fork is stuck", copyForkerStop)
+		return snapshot(), fmt.Errorf("the forkers did not stop within %s after stop was closed: a fork is stuck", copyForkerStop)
 	}
+	result = snapshot()
 	result.Elapsed = time.Since(start)
 	failuresMu.Lock()
 	defer failuresMu.Unlock()
