@@ -67,6 +67,9 @@ type upgradeEnv struct {
 	// runtime directory the fake update reports it produced.
 	previous  string
 	installed string
+	// other is a runtime that is neither the one the pointer names before the run nor the one the
+	// update produces, used to show that a pointer moved to a third runtime is refused.
+	other string
 
 	// script is the fake, and now is the clock every run reads.
 	script string
@@ -99,6 +102,10 @@ type upgradeHarnessOptions struct {
 	produceRuntime bool
 	// pointAtIt makes the fake update move the owned pointer to that directory.
 	pointAtIt bool
+	// pointAtOther makes the fake update move the owned pointer to a runtime that is neither the one
+	// the pointer named before the run nor the one the update produces, as a concurrent install or
+	// rollback would.
+	pointAtOther bool
 	// breakPointer makes the fake update remove the owned pointer, as an update that died between
 	// committing the new selection and placing the link would.
 	breakPointer bool
@@ -113,6 +120,10 @@ type upgradeHarnessOptions struct {
 	// breakInstalledStart makes the runtime the update produces fail to start the service, so the
 	// restart has to fall back.
 	breakInstalledStart bool
+	// installedStartAlreadyRunning makes the runtime the update produces answer its start with the
+	// service already up, as it does when something started that runtime between the stop and the
+	// restart.
+	installedStartAlreadyRunning bool
 	// stopExit is the status the fake service stop ends with.
 	stopExit int
 	// statusAnswers is the matchesRunning answer for each service status read, the last one
@@ -158,6 +169,7 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 		pointerLink:   filepath.Join(root, "current"),
 		previous:      filepath.Join(root, "bin-"+upgradeArchiveVersion+"-000000000000"),
 		installed:     filepath.Join(root, "bin-"+upgradeArchiveVersion+"-111111111111"),
+		other:         filepath.Join(root, "bin-"+upgradeArchiveVersion+"-222222222222"),
 		now:           started}
 	h.script = h.fakeScript(opts)
 	h.writeFakes(opts)
@@ -168,6 +180,7 @@ func upgradeHarness(t *testing.T, opts upgradeHarnessOptions) *upgradeEnv {
 		previous = opts.version
 	}
 	h.installRuntime(h.previous, previous)
+	h.installRuntime(h.other, previous)
 	h.installPointer(opts.pointer)
 	return h
 }
@@ -223,6 +236,12 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 		// The runtime the update produced cannot start the service: its relay executable fails.
 		b.WriteString("  [ \"$dir\" = " + coreShellQuote(filepath.Join(h.installed, "bin")) + " ] && exit 1\n")
 	}
+	if opts.installedStartAlreadyRunning {
+		// The service is already up on the runtime the update produced: start refuses with
+		// already_running rather than launching a second one. The started marker is set so a status
+		// read reports a service that is really up.
+		b.WriteString("  [ \"$dir\" = " + coreShellQuote(filepath.Join(h.installed, "bin")) + " ] && { printf '%s\\n' \"$dir\" > " + coreShellQuote(h.started) + "; printf '%s\\n' " + coreShellQuote("{\"ok\":false,\"reason\":\"already_running\"}") + "; exit 2; }\n")
+	}
 	b.WriteString("  printf '%s\\n' \"$dir\" > " + coreShellQuote(h.started) + "\n")
 	b.WriteString("  exit 0;;\n")
 	b.WriteString("*\"service status\"*)\n")
@@ -240,6 +259,9 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	b.WriteString("*\"install update\"*)\n")
 	if opts.breakPointer {
 		b.WriteString("  rm -f " + coreShellQuote(h.pointerLink) + "\n")
+	}
+	if opts.pointAtOther {
+		b.WriteString("  ln -sfn " + coreShellQuote(h.other) + " " + coreShellQuote(h.pointerLink) + "\n")
 	}
 	if opts.mutateConfig {
 		b.WriteString("  printf 'changed\\n' >> \"$CODEX_HOME/config.toml\"\n")

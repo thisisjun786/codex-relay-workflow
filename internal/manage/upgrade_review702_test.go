@@ -357,3 +357,40 @@ func TestUpgradeReview702IncompletePromotionIsChecked(t *testing.T) {
 		}
 	})
 }
+
+// TestUpgradeReview702ServiceAlreadyRunningIsNotAFailure: the runtime the update installed is
+// already up when the restart runs, as it is when something started it between the stop and the
+// restart. Its start answers already_running rather than launching a second one; that is the runtime
+// the service is on, not a failed launch to fall back from, so the run must not report the healthy
+// new runtime as a mismatch.
+func TestUpgradeReview702ServiceAlreadyRunningIsNotAFailure(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		produceRuntime: true, pointAtIt: true, installedStartAlreadyRunning: true})
+	if code := h.run("--release-dir", h.release); code != 0 {
+		t.Fatalf("exit %d, want 0; the service is up on the runtime the update installed: %+v", code, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reasons; slices.Contains(got, upgradeReasonRuntimeMismatch) {
+		t.Errorf("a service already running on the installed runtime was recorded as a mismatch: %v", got)
+	}
+	if got := h.recordOf(t).StartFrom; got != h.installed {
+		t.Errorf("the record says the service is on %q, want the installed runtime %q", got, h.installed)
+	}
+}
+
+// TestUpgradeReview702PointerMovedToAThirdRuntimeIsAMismatch: an update that failed is a rollback
+// only when the pointer still names the runtime it replaced. A pointer left on some other runtime
+// was changed by something other than this run, and nothing here can show what is in service, so it
+// is a mismatch rather than a rollback.
+func TestUpgradeReview702PointerMovedToAThirdRuntimeIsAMismatch(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		installExit: 1, pointAtOther: true})
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+		t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
+	}
+	if got := h.recordOf(t).Reasons; !slices.Contains(got, upgradeReasonRuntimeMismatch) {
+		t.Errorf("a pointer on a third runtime was accepted as a rollback: %v", got)
+	}
+}

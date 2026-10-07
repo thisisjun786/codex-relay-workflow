@@ -391,7 +391,10 @@ func upgradeInstalledRuntime(answer string) string {
 // it still resolves; a pointer that does not resolve, or a start that does not succeed, falls back
 // to the runtime the pointer named before the stop, which is what the service was running. A
 // pointer left on an unusable runtime therefore cannot leave the relay down. Every attempt is
-// recorded, and startFrom is the runtime the service came back on.
+// recorded, and startFrom is the runtime the service is on: the one whose start succeeded, or the
+// one whose start answered that the service was already running. A service already up holds the
+// lock, so no other runtime can start either, and falling back would only name a runtime the
+// service is not on.
 func (r *upgradeRunState) start() {
 	var candidates []string
 	if pointer, err := upgradePointerTarget(r.e); err == nil {
@@ -419,6 +422,12 @@ func (r *upgradeRunState) start() {
 		r.note(upgradeStepStart, argv, code, "started from "+from+": "+runtime+"\n"+out+stderr, err)
 		if err == nil && code == 0 {
 			r.startFrom = runtime
+			r.serviceUp = true
+			return
+		}
+		if err == nil && upgradeServiceAlreadyRunning(out) {
+			r.startFrom = runtime
+			r.serviceUp = true
 			return
 		}
 		if i+1 == len(candidates) {
@@ -427,6 +436,19 @@ func (r *upgradeRunState) start() {
 			r.startFrom = runtime
 		}
 	}
+}
+
+// upgradeServiceAlreadyRunning reports whether a start answer says the service was already up. That
+// is not a failed launch: the service holds the lock, so this is the runtime it is on, and the
+// status the post-check reads next is what decides whether it is the runtime the update installed.
+func upgradeServiceAlreadyRunning(out string) bool {
+	var answer struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(out), &answer) != nil {
+		return false
+	}
+	return answer.Reason == "already_running"
 }
 
 // upgradePostCheck is what step 8 established: the status and reason it reports, every reason it
@@ -444,8 +466,10 @@ type upgradePostCheck struct {
 }
 
 // postCheck is step 8: the pointer must name the runtime the update installed and that runtime's
-// crw must report the version the archive carried, the service must come up running and matching
-// within the wait budget, and the configuration file must be unchanged.
+// crw must report the version the archive carried, or - when the update did not put a runtime in
+// service - the pointer must still name the runtime it replaced, which is the rollback. The service
+// must come up running and matching on that runtime within the wait budget, and the configuration
+// file must be unchanged.
 func (r *upgradeRunState) postCheck() upgradePostCheck {
 	var post upgradePostCheck
 	pointer, err := upgradePointerTarget(r.e)
@@ -462,12 +486,20 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
 		post.mismatch = true
-	case r.promoted && r.startFrom != "" && !upgradeSameDirectory(r.startFrom, r.installed):
+	case r.promoted && r.serviceUp && !upgradeSameDirectory(r.startFrom, r.installed):
 		// The pointer names the runtime the update installed, but the service did not come back on it:
 		// the restart fell back to the runtime the pointer named before the stop. A pointer that names
 		// one runtime while the service runs another is the disagreement this step exists to catch, so
 		// the recovery is recorded as a mismatch rather than a success.
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the service came back on %s, not %s, the runtime the update installed", r.startFrom, r.installed))
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		post.mismatch = true
+	case !r.promoted && r.previous != "" && !upgradeSameDirectory(pointer, r.previous):
+		// The update put no runtime in service, so the pointer has to still name the runtime it
+		// replaced: that is the rollback, and its version is the previous one by design. A pointer
+		// that names anything else was changed by something other than this run's update, and nothing
+		// here can show what is in service, so the run refuses rather than calling it a rollback.
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update did not put a runtime in service, and the pointer names %s, not %s, the runtime it replaced", pointer, r.previous))
 		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
 		post.mismatch = true
 	default:

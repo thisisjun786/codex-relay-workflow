@@ -177,6 +177,10 @@ type upgradeRunState struct {
 	installed string
 	previous  string
 	startFrom string
+	// serviceUp reports whether a start attempt left the service up - its own start succeeded, or the
+	// service was already running. It is what lets the post-check tell the runtime the service is
+	// really on from the last runtime it merely tried.
+	serviceUp bool
 	// promoted reports whether the update put a runtime in service (the installer's OK or
 	// Incomplete), which is what the post-check compares the pointer and the version with. An
 	// update that did not land leaves the pointer on the runtime it replaced, which is a correct
