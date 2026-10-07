@@ -1056,11 +1056,35 @@ func promptDcloseSameJSONString(stored any, want *string) bool {
 	return ok && want != nil && got == *want
 }
 
-// promptDclosePendingText is the oracle's pending.map((t) => t.id (t.title)).join("; ").
+// promptDclosePendingText is the oracle's pending.map((t) => t.id (t.title)).join("; "), bounded.
+//
+// The oracle's own listing is unbounded, and the harness cuts an answer over MaxContext (32000
+// UTF-16 units) at 31936 and appends "[truncated]". The port appends this close's publication
+// accounting after the listing, so an unbounded listing would let a refusal drop exactly the part
+// the operator has to act on - the artifacts this close already published (CRW-930, c6). The count
+// precedes the listing, so the listing is detail: it is cut at a stated budget in UTF-16 units and
+// the tasks left out are named by their number. A refusal over the budget still names every
+// published artifact. Found by the pre-merge evaluation of the generation-2 head.
 func promptDclosePendingText(pending []goalplan.GoalplanTask) string {
+	// The budget leaves room for the refusal's own text (the count, the guidance, the publication
+	// sentences) inside the harness's 31936-unit cut with a wide margin.
+	const budget = 8000
 	open := make([]string, 0, len(pending))
-	for _, task := range pending {
-		open = append(open, task.ID+" ("+task.Title+")")
+	used := 0
+	for i, task := range pending {
+		item := task.ID + " (" + task.Title + ")"
+		sep := 0
+		if i > 0 {
+			sep = len("; ")
+		}
+		// len is bytes, which is never below the item's UTF-16 unit count, so the budget is
+		// conservative for non-ASCII titles too.
+		if used+sep+len(item) > budget {
+			open = append(open, "... ("+promptDcloseCount(len(pending)-i)+" more task(s))")
+			break
+		}
+		used += sep + len(item)
+		open = append(open, item)
 	}
 	return strings.Join(open, "; ")
 }

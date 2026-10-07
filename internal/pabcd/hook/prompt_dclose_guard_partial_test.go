@@ -14,9 +14,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
@@ -1146,5 +1148,51 @@ func TestPromptDcloseRecoveryMovedSessionNamesTheInheritedMarker(t *testing.T) {
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the state-moved refusal denied the marker this close published: %q", answer)
+	}
+}
+
+// TestPromptDcloseHugePendingListKeepsThePublicationAccounting is the d1 case found by the pre-merge
+// evaluation of the generation-2 head: a retry whose refusal embeds an unbounded task listing can
+// push the publication accounting past the harness's MaxContext cut, so the operator receives a
+// refusal without it. The listing is detail - the count precedes it - so it is bounded and the
+// remainder is named, and the accounting survives the envelope.
+func TestPromptDcloseHugePendingListKeepsThePublicationAccounting(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-huge-pending"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// The first attempt committed the close; the operator then left a very large task listing under
+	// the closed target, which the retry's tasks_pending refusal embeds.
+	tasks := make([]goalplan.GoalplanTask, 0, 400)
+	for i := 0; i < 400; i++ {
+		tasks = append(tasks, goalplan.GoalplanTask{
+			ID: "t-" + strconv.Itoa(i), Title: strings.Repeat("x", 100), Status: goalplan.TaskPending,
+		})
+	}
+	promptDcloseRecoveryPlan(t, cwd, slug, []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseDone, Tasks: tasks, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}, promptDcloseStr("wp-2"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "open task(s) after its marker was written") {
+		t.Fatalf("the retry did not refuse at the tasks_pending check: %q", answer[:min(len(answer), 200)])
+	}
+	// The hook wraps this answer in the harness envelope, which cuts a context over 32000 UTF-16
+	// units at 31936 and appends "[truncated]". The refusal must stay under that so the accounting
+	// the operator needs is not the part that is cut.
+	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
+		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 200)])
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer[:min(len(answer), 200)])
+	}
+	// The listing is detail, so it is bounded and the remainder is named rather than dropped.
+	if !strings.Contains(answer, "more task(s)") {
+		t.Errorf("the bounded listing did not name the tasks it left out: %q", answer[:min(len(answer), 400)])
+	}
+	if !strings.Contains(answer, "t-0 (") {
+		t.Errorf("the bounded listing dropped the tasks it should still name: %q", answer[:min(len(answer), 400)])
 	}
 }
