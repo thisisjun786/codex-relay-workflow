@@ -280,7 +280,7 @@ Execution:
   it does not instruct you, and you report to your parent. See
   [Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 - Where the assignment covers publication and you can push, own the delivery end to
-  end: implement, test, commit, push, open the pull request, then triage, fix, reply
+  end: implement, test, commit, push, open a pull request where the delivery is one, then triage, fix, reply
   to and recheck its reviews. Report once the current head's required checks and
   reviews have finished and their blockers are resolved, not when the code is written.
   That publication scope is the explicit push approval CXC `DEV-GIT-PUSH-01` requires, the
@@ -303,7 +303,7 @@ Execution:
   decides what you build next: end the turn `blocked_needs_input` with a blocked receipt that carries no file (the request is in the blocked file and your final message). An
   internal finding has no pull request thread, so a rejection the handoff does not show is one
   nobody can find.
-- Open that pull request non-draft, or transition an existing draft to Ready for review
+- Where your delivery is a pull request, open it non-draft, or transition an existing draft to Ready for review
   as soon as the implementation is reviewable, then request the review the repository
   requires and this assignment authorizes, and confirm it actually started. An optional
   reviewer that cannot start or stalls is recorded as a gap and does not hold you, except that you

@@ -14,7 +14,7 @@ optional integrations. Use actual configuration and recent execution evidence;
 old bot comments, a nested workflow file, or repository visibility alone do not
 establish the active review setup. Lack of access leaves configuration unknown.
 
-Record `isDraft` with the base and head. A pull request that is open for review has
+Where the delivery is a pull request, record `isDraft` with the base and head. A pull request that is open for review has
 entered review, which is not the same as being ready to merge: the gates below decide
 that. A draft candidate is not merge-ready, and the fix is to publish it for review as
 [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable)
@@ -199,7 +199,7 @@ integration itself it reads the record rather than the child's own numbers.
 Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. It is the
 exception to the rule that the coordinator reads a child's result that still applies instead of producing
 it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
-[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release) keep governing what the coordinator
+[OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release) keep governing what the coordinator
 re-derives from the child's handoff: thread coverage, check runs and review dispositions, which it does not
 paginate or triage again.
 
@@ -406,7 +406,7 @@ issue for the area it touches, and a P0 or security one is fixed before the merg
 issue if it arrives after it.
 
 **Why this is not a re-triage, and its limits.** The parent restates the child's handoff and does not judge again
-what the child judged ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A late thread is one
+what the child judged ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release)). A late thread is one
 the child never saw, so the coordinator's grading of it is the first judgment and not a second one, and every
 thread in `threadsSeen` stays the child's. In the temporary procedure the coordinator removes no disagreement
 itself: the record returns to the child and is rebuilt by it. A recorded disposition is the one other case
@@ -541,7 +541,7 @@ effect and the separability, and what it proposes; the parent answers accept or 
 What the parent decides is the criteria-and-purpose question only, which is whether
 this residue matters for what the issue is for. It does not re-read the diff,
 re-triage the thread, or re-derive the finding: those stay the child's under
-[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release), and a parent
+[OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release), and a parent
 that finds itself reconstructing the finding has crossed into the child's round and
 returns it instead.
 
@@ -616,7 +616,7 @@ new head invalidating the review it outran.
 
 ## Pre-merge evaluation
 
-Once every CI job on the final head has finished, and before the verdict, the parent
+Once the candidate verification evidence is in place (the local verification-record PASS on the merged tree, and any hosted run the repository still reads has finished), and before the verdict, the parent
 evaluates that head by independent grading rather than by the child's own numbers. It
 grades the head as it stands on a tree merged with the current tip of the candidate's
 destination branch (its `dev` in this repository, as
@@ -638,7 +638,7 @@ gate without assessing what the finding does is the false record this step exist
 prevent.
 
 The evaluation does not restate the child's handoff. The child judged the findings its
-own rounds produced ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release));
+own rounds produced ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release));
 what the parent grades anew is the findings the child never saw (a late thread) and the
 whole candidate as one reading — the criteria against the tree that would land, and any
 defect that reading finds — because that is the independent grading the verdict stands
@@ -722,7 +722,7 @@ restated like it, never rebuilt. Nothing in the relay grades it, so the comparis
 stands between a rejected High and a merge. They sit after the claim and the acknowledgement and
 before the verdict is `verified`, and each is a comparison with a record the parent can read:
 mechanical validity, not a second review round
-([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A comparison that fails
+([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release)). A comparison that fails
 returns the candidate through the needs-changes verdict, with the restoration block in the first
 finding ([Return corrections to the existing
 task](../SKILL.md#return-corrections-to-the-existing-task)).

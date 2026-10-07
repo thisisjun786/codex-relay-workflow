@@ -260,10 +260,10 @@ operation under the [work-unit rules](../../../../../POLICY.md#work-units-review
 not a standing one-to-one rule: several packets for one feature are allowed by policy and
 switch on when their support lands.
 
-Keep review fixes on the same issue and PR. A necessary replacement PR retains
+Keep review fixes on the same issue and delivery. A necessary replacement PR retains
 the superseded link and names the one current delivery PR; it does not create a
 second simultaneous delivery for the issue. A new change after that delivery
-has merged gets a new issue and PR. Research, design, or operational work with
+has landed gets a new issue and delivery. Research, design, or operational work with
 no repository change uses an explicit non-PR result and verification; do not
 create an empty PR merely to fit the rule.
 
@@ -438,9 +438,9 @@ something read from its binding rather than from what anyone called it.
 
 | Role | Verifies | Merges | Updates in Linear | Complete when |
 |---|---|---|---|---|
-| Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
+| Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
 | Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
-| Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the current head's required checks have passed, its required reviews have finished and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that pull request, under [Implementation Done](#implementation-done) |
+| Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the current head's required checks have passed, its required reviews have finished and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that pull request, under [Implementation Done](#implementation-done) |
 
 The tables say what each level answers for. What the supervisor spends its time on is the level
 above them: it talks with Jun, carries the requests he approves down to the parents, decides which
@@ -1063,7 +1063,7 @@ as an implied promise.
 
 A merge turn and an edit agreement are different things. Agreeing on an edit grants no merge
 permission and creates no new project scope, and the merge itself stays with the owning parent
-under [OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release). Use the shared
+under [OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-integrates-and-does-not-release). Use the shared
 [Coordination message](../../crw-run/references/task-packet.md#coordination-message), reference the
 values the existing relationship already holds instead of recopying them, and prefer one message
 carrying a real state change over a heartbeat carrying none.
