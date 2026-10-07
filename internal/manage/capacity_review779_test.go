@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -500,9 +501,9 @@ func capacityReview779PartialZoneStore(t *testing.T, path string) {
 
 // capacityReview779RealRelayFixture is a fixture whose relay is the real binary and whose store is a
 // real store this build created, so the refusal and the failure a missing DAG zone produce are the
-// ones production produces. seed, when given, runs against the store's path before the command reads
-// it.
-func capacityReview779RealRelayFixture(t *testing.T, seed func(t *testing.T, path string)) *branchFixture {
+// ones production produces. seed, when given, runs against the store's path and the socket its
+// ownership record names, before the command reads it.
+func capacityReview779RealRelayFixture(t *testing.T, seed func(t *testing.T, path, socket string)) *branchFixture {
 	t.Helper()
 	coreTempHome(t)
 	dir := t.TempDir()
@@ -517,7 +518,7 @@ func capacityReview779RealRelayFixture(t *testing.T, seed func(t *testing.T, pat
 	// A store this build creates carries the relay's own tables and no DAG zone.
 	testsupport.Create(t, path, socket, "go")
 	if seed != nil {
-		seed(t, path)
+		seed(t, path, socket)
 	}
 	f := &branchFixture{t: t, dir: dir, stateDir: stateDir, relayDir: relayDir, nodes: map[string]string{}}
 	f.env = &Env{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Getenv: os.Getenv,
@@ -616,8 +617,62 @@ func TestCapacityReview779StoreWithoutDagIsUnmeasuredThroughTheRealRelay(t *test
 // report nothing. The local table check runs before the relay is asked, so the plan reports the
 // unmeasured reading instead.
 func TestCapacityReview779PartialDagZoneIsUnmeasuredThroughTheRealRelay(t *testing.T) {
-	f := capacityReview779RealRelayFixture(t, func(t *testing.T, path string) {
+	f := capacityReview779RealRelayFixture(t, func(t *testing.T, path, _ string) {
 		capacityReview779PartialZoneStore(t, path)
 	})
 	capacityReview779WantUnmeasured(t, f)
+}
+
+// capacityReview779ZoneMissingTable writes a store carrying the whole DAG zone with one named table
+// dropped, so a case can pin that the local check covers that table on its own. The zone is installed
+// by opening the store for writing under the socket its ownership record names, and the drop leaves
+// the store settled with no write-ahead log for the read-only open under test.
+func capacityReview779ZoneMissingTable(t *testing.T, path, socket, missing string) {
+	t.Helper()
+	ctx := context.Background()
+	opened, err := store.Open(ctx, path, socket)
+	if err != nil {
+		t.Fatalf("install the DAG zone: %v", err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatalf("close the writer: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DROP TABLE " + missing); err != nil {
+		db.Close()
+		t.Fatalf("drop %s: %v", missing, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(path + suffix); err == nil {
+			t.Fatalf("the fixture left %s beside the store", filepath.Base(path+suffix))
+		}
+	}
+}
+
+// C5: the promise covers each of the five DAG tables on its own, so the local check is pinned table
+// by table: a zone that is whole except for one of them must still report the unmeasured reading, in
+// both forms and with and without --branches-always. A check that looked for one table only would
+// pass the all-missing and the dag_plans-only cases and fail here.
+func TestCapacityReview779EachMissingDagTableIsUnmeasured(t *testing.T) {
+	for _, table := range branchZoneTables {
+		t.Run(table, func(t *testing.T) {
+			f := capacityReview779RealRelayFixture(t, func(t *testing.T, path, socket string) {
+				capacityReview779ZoneMissingTable(t, path, socket, table)
+			})
+			capacityReview779WantUnmeasured(t, f)
+			code, out, errOut := capacityReview779RunCommand(t, f, "--branches-always", "--text")
+			if code != 0 {
+				t.Fatalf("--branches-always exited %d, want 0: %s", code, errOut)
+			}
+			if !strings.Contains(out, "branches unmeasured: ") {
+				t.Fatalf("--branches-always does not name the unmeasured reading:\n%s", out)
+			}
+		})
+	}
 }
