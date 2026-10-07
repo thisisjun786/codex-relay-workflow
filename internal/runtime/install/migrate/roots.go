@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +30,7 @@ type Pair struct {
 	Source, Dest         *Dir
 	parent               *Dir   // holds Dest, where EnsureDest creates it
 	created              fileID // the identity of Dest when this process's own creation put it there
+	createdDir           *Dir   // the handle held on that directory, so its inode cannot be reused
 }
 
 // Roots are the pinned roots of a scope: Project (W/.codexclaw to W/.crw), User (U to V) and Codex (C, whose files are mapped in place).
@@ -126,7 +126,7 @@ func (r *Roots) Close() error {
 	var err error
 	for _, p := range []*Pair{r.Project, r.User} {
 		if p != nil {
-			err = errors.Join(err, p.Source.Close(), p.Dest.Close(), p.parent.Close())
+			err = errors.Join(err, p.Source.Close(), p.Dest.Close(), p.createdDir.Close(), p.parent.Close())
 		}
 	}
 	return errors.Join(err, r.Codex.Close())
@@ -157,8 +157,13 @@ func (p *Pair) EnsureDest(perm uint32) (*Dir, bool, error) {
 	d, made, err := p.parent.EnsureChild(name, perm)
 	if made && d != nil {
 		// The rename put this pair's own directory at the name, so this identity is this run's from here
-		// on, whether or not a later step of the creation succeeded.
+		// on, whether or not a later step of the creation succeeded. The handle is held, not closed, so
+		// the inode this identity names cannot be freed and reused by another directory before the run
+		// ends: a name whose entry carries this identity is the directory this process created.
 		p.created = d.id
+		if err == nil {
+			p.createdDir = d
+		}
 	}
 	if err != nil {
 		if d != nil {
@@ -513,55 +518,33 @@ var migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t)
 	return unix.Fstatat(dirfd, name, st, unix.AT_SYMLINK_NOFOLLOW)
 }
 
-// migrateOwnedDirIdentityHandleFlag opens a directory as a handle with no permission on the directory
-// itself. It is O_PATH on Linux; the constant is written here because the port builds for platforms that
-// do not declare it, and migrateOwnedDirIdentityPin never passes it anywhere but Linux.
-const migrateOwnedDirIdentityHandleFlag = 0x200000
+// ownedDirIdentityNoHandleErr is the answer of a platform whose open cannot pin a directory without
+// read permission. It is a type rather than a package-level errors.New call so a platform file adds no
+// initializer that runs at program start.
+type ownedDirIdentityNoHandleErr struct{}
 
-// migrateOwnedDirIdentityEmptyPath names the empty path fchmodat2 takes with AT_EMPTY_PATH, so the mode
-// is changed through the descriptor. Written here for the same reason as the handle flag.
-const migrateOwnedDirIdentityEmptyPath = 0x1000
+func (ownedDirIdentityNoHandleErr) Error() string {
+	return "this platform cannot pin a directory without read permission"
+}
 
-// errMigrateOwnedDirIdentityNoHandle says this platform has no open that returns a directory handle
-// without permission on the directory, so the creation uses the checked by-name chmod instead.
-var errMigrateOwnedDirIdentityNoHandle = errors.New("this platform cannot pin a directory without read permission")
+// ownedDirIdentityNoHandle reports whether err is that answer.
+func ownedDirIdentityNoHandle(err error) bool {
+	var target ownedDirIdentityNoHandleErr
+	return errors.As(err, &target)
+}
 
 // migrateOwnedDirIdentityPin opens the temporary name as a directory, following no link at it, without
-// needing any permission on the directory itself, and returns the pinned descriptor. A regular file, a
+// needing read permission on the directory itself, and returns the pinned descriptor. A regular file, a
 // link, or a directory this run did not create is refused by the open or by the check that follows it,
 // before any mode is given, so a mode is never changed on an entry this run did not create. A platform
-// with no such open answers errMigrateOwnedDirIdentityNoHandle, and the creation then checks the name
-// immediately before a by-name no-follow chmod and records the two-syscall window that leaves.
+// with no such open answers ownedDirIdentityNoHandle, and the creation then checks the name immediately
+// before a by-name no-follow chmod and carries the two-syscall window that leaves as a residual.
 // It is a variable so a case can model a host whose pin fails; no other code replaces it.
 var migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
-	if runtime.GOOS != "linux" {
-		return -1, errMigrateOwnedDirIdentityNoHandle
+	if !ownedDirIdentityHandleOK {
+		return -1, ownedDirIdentityNoHandleErr{}
 	}
-	return unix.Openat(dirfd, name, migrateOwnedDirIdentityHandleFlag|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-}
-
-// migrateOwnedDirIdentityFchmodat2 changes a directory's mode through its descriptor with fchmodat2 and
-// AT_EMPTY_PATH. It is a variable so a case can model a kernel that does not have fchmodat2 (Linux before
-// 6.5 answers ENOSYS, which the runtime call reports as EOPNOTSUPP); no other code replaces it.
-var migrateOwnedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
-	return unix.Fchmodat(fd, "", perm, migrateOwnedDirIdentityEmptyPath)
-}
-
-// migrateOwnedDirIdentityFchmod gives the pinned directory exactly perm through its descriptor. The
-// descriptor is used rather than the name so a name swapped in the meantime cannot redirect the mode,
-// and a descriptor needs no read permission, so a umask that removed the owner's read or write bit
-// cannot stop this. Linux takes fchmodat2 where the kernel has it (6.5 and later); any other error it
-// answers is tried on the /proc/self/fd path, which is the same call a libc fchmod makes on a
-// descriptor, so a kernel or filesystem that lacks the flag is still served and its own failure is
-// reported. It is a variable so a case can model each answer; no other code replaces it.
-var migrateOwnedDirIdentityFchmod = func(fd int, perm uint32) error {
-	err := migrateOwnedDirIdentityFchmodat2(fd, perm)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, unix.ENOSYS), errors.Is(err, unix.EOPNOTSUPP), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EINVAL):
-	}
-	return unix.Chmod("/proc/self/fd/"+strconv.Itoa(fd), perm)
+	return unix.Openat(dirfd, name, ownedDirIdentityHandleFlag|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 }
 
 // EnsureChild creates the subdirectory name unless it exists, pins it, and syncs this directory so the
@@ -695,7 +678,7 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32)
 	fd, err := migrateOwnedDirIdentityPin(d.fd(), tmp)
 	switch {
 	case err == nil:
-	case errors.Is(err, errMigrateOwnedDirIdentityNoHandle), errors.Is(err, unix.EINVAL), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EOPNOTSUPP):
+	case ownedDirIdentityNoHandle(err), errors.Is(err, unix.EINVAL), errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.EOPNOTSUPP):
 		return d.migrateOwnedDirIdentityClaimByName(tmp, want, perm)
 	default:
 		return err
@@ -708,19 +691,25 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32)
 	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &st, want); err != nil {
 		return err
 	}
-	if err := migrateOwnedDirIdentityFchmod(fd, perm); err != nil {
+	if err := ownedDirIdentityFchmod(fd, perm); err != nil {
 		return &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 	}
-	// The mode is made durable on the directory itself before its name is published, so a crash
-	// cannot leave the final name durable with the corrected mode lost - the state this issue exists
-	// to make recoverable. The handle above is opened without permission and cannot be synced, so the
-	// directory is opened for reading now that it carries perm and that handle is synced.
-	sync, err := unix.Openat(d.fd(), tmp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	return d.migrateOwnedDirIdentitySyncMode(tmp)
+}
+
+// migrateOwnedDirIdentitySyncMode makes the mode of the directory this run created durable before its
+// name is published, so a crash cannot leave the final name durable with the corrected mode lost - the
+// state this issue exists to make recoverable. The handle above needs no permission on the directory and
+// cannot be synced, so the directory is opened for reading now that it carries perm and that handle is
+// synced. A platform whose mode step had no descriptor to open here is read back by name first, because
+// the name cannot have been swapped while the mode was given through a handle on that very directory.
+func (d *Dir) migrateOwnedDirIdentitySyncMode(tmp string) error {
+	fd, err := unix.Openat(d.fd(), tmp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return &fs.PathError{Op: "open", Path: d.join(tmp), Err: err}
 	}
-	defer unix.Close(sync)
-	if err := unix.Fsync(sync); err != nil {
+	defer unix.Close(fd)
+	if err := unix.Fsync(fd); err != nil {
 		return &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
 	}
 	return nil
@@ -741,11 +730,25 @@ func (d *Dir) migrateOwnedDirIdentityClaimByName(tmp string, want fileID, perm u
 	err := unix.Fchmodat(d.fd(), tmp, perm, unix.AT_SYMLINK_NOFOLLOW)
 	switch {
 	case err == nil:
-		return nil
 	case errors.Is(err, unix.EOPNOTSUPP), errors.Is(err, unix.ENOTSUP):
 		return refuse(ReasonUnsupported, d.join(tmp), "this kernel cannot chmod a name without following a link")
+	default:
+		return &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 	}
-	return &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
+	// The mode is read back at the name before the name is published, so this path carries the same
+	// guarantee the handle path gets from the descriptor: the name is renamed into place only once it
+	// carries exactly perm.
+	var after unix.Stat_t
+	if err := migrateOwnedDirIdentityLstat(d.fd(), tmp, &after); err != nil {
+		return &fs.PathError{Op: "lstat", Path: d.join(tmp), Err: err}
+	}
+	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &after, want); err != nil {
+		return err
+	}
+	if uint32(after.Mode)&0o7777 != perm {
+		return refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(after.Mode)&0o7777, perm))
+	}
+	return d.migrateOwnedDirIdentitySyncMode(tmp)
 }
 
 // migrateOwnedDirIdentityOwned refuses a descriptor or a name that is not the directory this run created:

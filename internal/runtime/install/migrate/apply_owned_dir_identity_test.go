@@ -293,13 +293,18 @@ func TestMigrateOwnedDirIdentityUnreadableTemporaryIsLeftAndReported(t *testing.
 
 // C2(4): a kernel whose fchmodat2 is absent (Linux before 6.5 answers ENOSYS, which the runtime call
 // reports as EOPNOTSUPP) still creates the directory, through the descriptor-bound /proc/self/fd chmod
-// rather than a by-name chmod a swapped link could redirect. The head before this cycle refused such a
-// kernel as unsupported.
+// rather than a by-name chmod a swapped link could redirect. On this platform the pin always answers a
+// handle, so the mode is always given through one; the case also pins that the fallback stays bound to
+// the descriptor by swapping the name for a hard link right after the mode is set, which the reopen
+// then refuses. The head before this cycle refused such a kernel as unsupported.
 func TestMigrateOwnedDirIdentityFchmodat2AbsentUsesTheDescriptorPath(t *testing.T) {
-	restore2 := migrateOwnedDirIdentityFchmodat2
-	t.Cleanup(func() { migrateOwnedDirIdentityFchmodat2 = restore2 })
+	if !ownedDirIdentityHandleOK {
+		t.Skip("this platform has no descriptor-bound mode handle")
+	}
+	restore2 := ownedDirIdentityFchmodat2
+	t.Cleanup(func() { ownedDirIdentityFchmodat2 = restore2 })
 	tries := 0
-	migrateOwnedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
+	ownedDirIdentityFchmodat2 = func(fd int, perm uint32) error {
 		tries++
 		return unix.EOPNOTSUPP
 	}
@@ -309,6 +314,25 @@ func TestMigrateOwnedDirIdentityFchmodat2AbsentUsesTheDescriptorPath(t *testing.
 	}
 	if tries == 0 {
 		t.Error("the creation never tried the descriptor-bound chmod")
+	}
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, "sessions"), 0o755)
+	migrateOwnedDirIdentityWantNoTemp(t, apDst(ws, ""))
+}
+
+// C2(4): on a platform whose open cannot pin a directory without read permission, the creation checks
+// the name immediately before the by-name no-follow chmod instead, and still ends at the requested mode
+// with no temporary behind. The pin is forced to its no-handle answer, which is what that platform
+// returns by itself.
+func TestMigrateOwnedDirIdentityWithoutAHandleStillCreates(t *testing.T) {
+	restore := migrateOwnedDirIdentityPin
+	t.Cleanup(func() { migrateOwnedDirIdentityPin = restore })
+	migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
+		return -1, ownedDirIdentityNoHandleErr{}
+	}
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	if _, err := apply(r, p); err != nil {
+		t.Fatalf("a platform without a mode handle must still create the directory: %v", err)
 	}
 	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
 	migrateOwnedDirIdentityWantRaw(t, apDst(ws, "sessions"), 0o755)
@@ -483,4 +507,60 @@ func TestMigrateOwnedDirIdentityReplacedRootIsNotAdoptedOnRetry(t *testing.T) {
 	must(t, err)
 	migrateOwnedDirIdentityWantRaw(t, root, 0o700)
 	migrateOwnedDirIdentityWantKeptNote(t, res, ".")
+}
+
+// C2(3): a run interrupted while creating the destination root leaves its temporary in the directory that
+// holds the root, and the next run reports it there. The classifier walks only the destination root and
+// what is below it, so without this the leftover was invisible to the report even though OlderTemps names
+// it. The head before this cycle reported nothing for it.
+func TestMigrateOwnedDirIdentityRootTemporaryIsReportedOnTheNextRun(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	restore := migrateOwnedDirIdentityLstat
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = restore })
+	calls := 0
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		if calls++; calls == 1 {
+			return unix.EIO
+		}
+		return restore(dirfd, name, st)
+	}
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("the case needs the root creation to fail")
+	}
+	migrateOwnedDirIdentityLstat = restore
+	// The next run is a new process: its own roots and its own plan.
+	again, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = again.Close() })
+	plan, err := classify(again)
+	must(t, err)
+	found := false
+	for _, it := range plan.Items {
+		if _, ok := tempRun(it.Destination); ok && it.Disposition == DispSkip {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the next run must report the root's leftover temporary in the plan, got %d items", len(plan.Items))
+	}
+}
+
+// C2(1): a root this process created keeps its identity for the whole run, so a name that later holds a
+// different directory is never taken for it. The handle the creation made is held until the roots close,
+// which is what stops the kernel from freeing that inode and handing it to another directory.
+func TestMigrateOwnedDirIdentityCreatedRootHandleIsHeld(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	if _, err := apply(r, p); err != nil {
+		t.Fatal(err)
+	}
+	if r.Project.createdDir == nil {
+		t.Fatal("the run must hold the handle of the root its own creation made")
+	}
+	if r.Project.createdDir.id != r.Project.created {
+		t.Errorf("the held handle is %v, want the recorded identity %v", r.Project.createdDir.id, r.Project.created)
+	}
+	// The name still holds that very directory, and the handle still pins it.
+	if fi, err := os.Stat(apDst(ws, "")); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("the root must be the directory this run created: %v %v", fi, err)
+	}
 }
