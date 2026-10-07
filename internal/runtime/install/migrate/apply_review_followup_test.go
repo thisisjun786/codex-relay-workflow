@@ -297,26 +297,29 @@ func TestMigrateApplyReviewFollowupOrdersACycleTheSameWayOnEveryRun(t *testing.T
 	}
 }
 
-// R1g: the judgement must not hold a record. The receipt reader's bound is the size of the largest string the oracle
-// could hold, far larger than any record, and this scan looks at every planned file under evidence/, so an ordinary
-// artifact of tens of megabytes must be judged without being kept: the bytes it allocates must stay far below the
-// record, whatever shape the record has and whether or not it turns out to be a receipt.
+// R1g: a record that is not a receipt must be judged without being held. The receipt reader's bound is the size of the
+// largest string the oracle could hold, far larger than any record, and this scan looks at every planned file under
+// evidence/, so an ordinary artifact of tens of megabytes must cost a bounded pass rather than a copy of itself. A
+// record that does mention the manifest key is a receipt the reader itself would read, so it is read the same way.
 func TestMigrateApplyReviewFollowupJudgesALargeRecordWithoutHoldingIt(t *testing.T) {
 	big := bytes.Repeat([]byte{'x'}, 16<<20)
 	notText := bytes.Repeat([]byte{0xff}, 16<<20)
 	for name, c := range map[string]struct {
 		record []byte
 		want   bool
+		// bounded is true when the judgement must not hold the record: it cannot be a receipt, so nothing of it needs
+		// to be kept. A record that mentions the manifest key is read as the receipt reader reads it.
+		bounded bool
 	}{
 		// A record that cannot be a JSON object at all, refused from its first byte.
-		"not text":      {record: notText},
-		"not an object": {record: append([]byte("["), big...)},
+		"not text":      {record: notText, bounded: true},
+		"not an object": {record: append([]byte("["), big...), bounded: true},
 		// Leading whitespace that alone is larger than any probe: the walk must stream it, not buffer it.
-		"long leading whitespace": {record: append(bytes.Repeat([]byte{' '}, 8<<20), []byte("{\"a\":1}")...)},
+		"long leading whitespace": {record: append(bytes.Repeat([]byte{' '}, 8<<20), []byte("{\"a\":1}")...), bounded: true},
 		// A whole JSON object with no manifest: valid, but this order holds nothing of it.
-		"an object with no manifest": {record: []byte("{\"payload\":\"" + string(big) + "\"}")},
-		// A whole JSON object whose manifest is there but too large for this order to hold: still a receipt.
-		"a manifest past the cap": {
+		"an object with no manifest": {record: []byte("{\"payload\":\"" + string(big) + "\"}"), bounded: true},
+		// A whole JSON object whose manifest is there and large: a receipt, read the way the reader reads it.
+		"a receipt with a large manifest": {
 			record: []byte("{\"artifactManifest\":[{\"path\":\"" + string(big) + "\",\"kind\":\"verdict\"}]}"),
 			want:   true,
 		},
@@ -333,7 +336,7 @@ func TestMigrateApplyReviewFollowupJudgesALargeRecordWithoutHoldingIt(t *testing
 			if !c.want && manifest != nil {
 				t.Errorf("a refused record must return no manifest: %v", manifest)
 			}
-			if grew := after.TotalAlloc - before.TotalAlloc; grew > 8<<20 {
+			if grew := after.TotalAlloc - before.TotalAlloc; c.bounded && grew > 8<<20 {
 				t.Errorf("the judgement allocated %d bytes of a %d byte record", grew, len(c.record))
 			}
 		})

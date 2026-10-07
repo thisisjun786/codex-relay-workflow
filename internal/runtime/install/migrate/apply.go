@@ -11,7 +11,7 @@ package migrate
 // activation or startup path calls this.
 
 import (
-	"bufio"
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
@@ -513,6 +513,14 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 	return migrateReviewFollowupDecodeManifest(f, migrateReviewFollowupReceiptReadCap)
 }
 
+// migrateReviewFollowupManifestTrigger is the byte run that makes a record worth decoding: the opening quote and the
+// start of the manifest key. The receipt reader spells the key `artifactManifest`, and a key written with an escape
+// (`artifact\u004danifest`) starts with the same bytes, so a record holding the key in either spelling trips this.
+const migrateReviewFollowupManifestTrigger = "\"artifact"
+
+// migrateReviewFollowupManifestKey is the member a receipt's references live in, as the receipt reader spells it.
+const migrateReviewFollowupManifestKey = "artifactManifest"
+
 // migrateReviewFollowupDecodeManifest reads one record as a receipt within limit bytes and returns the artifactManifest
 // entries it names. ok is false, with no entries, for a record that is not one JSON object with a non-empty
 // artifactManifest array, for one with data after that object, and for one that is longer than limit. The key is read by its
@@ -521,29 +529,46 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) ([]migrateRevie
 // entry that is not an object with a string path and kind names no dependency, and an array of such entries is still a
 // receipt, so a receipt this run cannot read in full keeps the referrer's place instead of falling back to plan order.
 //
-// The scan looks at every planned file under evidence/ and the bound is the receipt reader's own, which is the size of
-// the largest string the oracle could hold, so nothing here may hold a whole record: an ordinary artifact of a few
-// hundred megabytes would exhaust memory before the judgement found it held no manifest (found by the pre-merge
-// evaluation of an earlier head). The record is therefore walked as it arrives and only the member the judgement needs
-// is kept, so the memory this costs is the size of that member rather than of the record.
-func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
-	raw, present, ok := migrateReviewFollowupManifestMember(r, limit)
-	if !ok || !present {
+// The record is decoded by encoding/json, which is what the receipt reader itself uses, so every JSON rule the reader
+// applies is applied here too: a duplicate key keeps the last value, an escaped key is the key the reader's map lookup
+// reads, a member of any other type is refused as the reader refuses it, and data after the object or a malformed value is
+// refused rather than framed by hand. There is no cap of this order's own: a receipt the reader can read is a receipt here,
+// and none of its references is dropped.
+//
+// The scan looks at every planned file under evidence/, and the receipt reader's bound is the size of the largest string
+// the oracle could hold, so before anything is held the record is only scanned for the bytes the key starts with. An
+// ordinary artifact that cannot be a receipt does not mention the key and costs one pass of bounded reads; a record that
+// does is read within the bound the reader itself applies, so the memory this costs is the memory the reader spends when
+// it judges that same record.
+func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migrateReviewFollowupManifestEntry, bool) {
+	if !migrateReviewFollowupMentionsManifestKey(rs, limit) {
 		return nil, false
 	}
-	if raw == nil {
-		// The record is a receipt — it holds a non-empty artifactManifest — but that member is larger than this
-		// judgement will hold. Its references are then unknown, which is the same fallback an unreadable record gets:
-		// the record keeps the referrer's place, so its dependencies still publish first.
-		return nil, true
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		return nil, false
 	}
-	// The member's own bytes are the receipt reader's text: it takes a record's bytes through its UTF-8 normalisation
-	// (source.DecodeUTF8, as gate/js.go's readFile and decodeJSON do), so a manifest path holding bytes that are not
-	// UTF-8 names the plan file the reader's own text holds, and decoding the raw bytes would name a file that is not
-	// in the plan. Normalising the member alone is the same as normalising the record: an invalid subpart ends at the
-	// first byte that cannot continue it, and every byte of JSON syntax is ASCII.
-	if !utf8.Valid(raw) {
-		raw = []byte(source.DecodeUTF8(raw))
+	data, err := io.ReadAll(io.LimitReader(rs, limit+1))
+	if err != nil || int64(len(data)) > limit {
+		return nil, false
+	}
+	// The record is the receipt reader's own text: it reads a record's bytes through its UTF-8 normalisation
+	// (source.DecodeUTF8, as gate/js.go's readFile and decodeJSON do), so a manifest path holding bytes that are not UTF-8
+	// names the plan file the reader's own text holds, and decoding the raw bytes would name a file that is not in the
+	// plan. A record that is already UTF-8 is decoded as it stands.
+	if !utf8.Valid(data) {
+		data = []byte(source.DecodeUTF8(data))
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var object map[string]json.RawMessage
+	if dec.Decode(&object) != nil {
+		return nil, false
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	raw, present := object[migrateReviewFollowupManifestKey]
+	if !present {
+		return nil, false
 	}
 	// The array itself is decoded element by element, so one entry of an unexpected shape does not refuse the receipt.
 	var items []json.RawMessage
@@ -570,341 +595,33 @@ func migrateReviewFollowupDecodeManifest(r io.Reader, limit int64) ([]migrateRev
 	return manifest, true
 }
 
-// migrateReviewFollowupMemberCap bounds the artifactManifest member this judgement holds. The paths and kinds it needs
-// are tiny, so a member past this is one whose references this order does not use; the record is still a receipt, and
-// the walk still frames the member to its end without keeping it.
-const migrateReviewFollowupMemberCap = 1 << 20
-
-// migrateReviewFollowupManifestMember walks one record as a single JSON object and returns the raw bytes of its
-// artifactManifest member, so the judgement can read one member of a record without holding the record itself. The scan
-// looks at every planned file under evidence/ within the receipt reader's bound, and an ordinary artifact of a few
-// hundred megabytes must not be pulled into memory before it is found to hold no manifest. It reports false for a record
-// that is not one JSON object, for one with data after that object, for one longer than limit, and for one with no
-// artifactManifest member; a member other than the one asked for is skipped without being held.
-//
-// This walk only frames the record: the member it returns is decoded and validated by the caller, and the rest of the
-// record is never interpreted, so a record the decoder would refuse is still refused. A member past
-// migrateReviewFollowupMemberCap is reported as a nil member with true, so the caller knows the record is a receipt
-// without holding an unbounded value.
-func migrateReviewFollowupManifestMember(r io.Reader, limit int64) (member []byte, present, ok bool) {
-	limited := &io.LimitedReader{R: r, N: limit + 1}
-	s := &migrateReviewFollowupScan{br: bufio.NewReader(limited)}
-	if err := s.skipSpace(); err != nil {
-		return nil, false, false
-	}
-	if c, err := s.br.ReadByte(); err != nil || c != '{' {
-		return nil, false, false
-	}
+// migrateReviewFollowupMentionsManifestKey reports whether a record's bytes hold the run the manifest key starts with,
+// within the receipt reader's bound. It keeps a window of that run's length rather than the record, so a large artifact
+// that is not a receipt costs no memory here; a record that does mention the key is read and decoded by the caller.
+func migrateReviewFollowupMentionsManifestKey(rs io.ReadSeeker, limit int64) bool {
+	trigger := []byte(migrateReviewFollowupManifestTrigger)
+	limited := &io.LimitedReader{R: rs, N: limit + 1}
+	buf := make([]byte, 64<<10)
+	matched := 0
 	for {
-		if err := s.skipSpace(); err != nil {
-			return nil, false, false
-		}
-		c, err := s.br.ReadByte()
-		if err != nil {
-			return nil, false, false
-		}
-		switch c {
-		case '}':
-			// The object ended: the member is absent, and nothing may follow the record.
-			return member, present, present && s.atEnd(limited)
-		case '"':
-			key, err := s.key()
-			if err != nil {
-				return nil, false, false
-			}
-			if err := s.skipSpace(); err != nil {
-				return nil, false, false
-			}
-			if c, err := s.br.ReadByte(); err != nil || c != ':' {
-				return nil, false, false
-			}
-			if err := s.skipSpace(); err != nil {
-				return nil, false, false
-			}
-			if key == "artifactManifest" {
-				present = true
-				var tooLarge bool
-				if member, tooLarge, err = s.value(migrateReviewFollowupMemberCap); err != nil {
-					return nil, false, false
+		n, err := limited.Read(buf)
+		for _, c := range buf[:n] {
+			if c == trigger[matched] {
+				matched++
+				if matched == len(trigger) {
+					return true
 				}
-				if tooLarge {
-					member = nil // the record is a receipt, but this order will not hold that member
-				}
-			} else if err := s.skipValue(); err != nil {
-				return nil, false, false
-			}
-		default:
-			return nil, false, false
-		}
-		if err := s.skipSpace(); err != nil {
-			return nil, false, false
-		}
-		c, err = s.br.ReadByte()
-		if err != nil {
-			return nil, false, false
-		}
-		switch c {
-		case ',':
-			continue
-		case '}':
-			return member, present, present && s.atEnd(limited)
-		default:
-			return nil, false, false
-		}
-	}
-}
-
-// atEnd reports whether the record ended here, within the bound: data after the object and a record past the bound are
-// both refused, as the receipt reader refuses them.
-func (s *migrateReviewFollowupScan) atEnd(limited *io.LimitedReader) bool {
-	if err := s.skipSpace(); err != nil {
-		return errors.Is(err, io.EOF) && limited.N > 0
-	}
-	return false
-}
-
-// migrateReviewFollowupScan frames a JSON record without holding it: it reads bytes one at a time and keeps only what a
-// caller asks it to capture.
-type migrateReviewFollowupScan struct {
-	br *bufio.Reader
-}
-
-func (s *migrateReviewFollowupScan) skipSpace() error {
-	for {
-		c, err := s.br.ReadByte()
-		if err != nil {
-			return err
-		}
-		switch c {
-		case ' ', '\t', '\n', '\r':
-			continue
-		}
-		return s.br.UnreadByte()
-	}
-}
-
-// key reads an object key and returns the string the decoder would read, so the caller compares the same text the
-// receipt reader's own map lookup compares. The raw token is handed to encoding/json rather than unescaped by hand,
-// because an escape such as \u004d is part of the key the reader sees and a hand-rolled unescaper would miss it.
-func (s *migrateReviewFollowupScan) key() (string, error) {
-	raw := []byte{'"'}
-	for {
-		c, err := s.br.ReadByte()
-		if err != nil {
-			return "", err
-		}
-		if len(raw) >= migrateReviewFollowupKeyCap {
-			return "", errors.New("key is too long")
-		}
-		raw = append(raw, c)
-		switch c {
-		case '\\':
-			c, err = s.br.ReadByte()
-			if err != nil {
-				return "", err
-			}
-			if len(raw) >= migrateReviewFollowupKeyCap {
-				return "", errors.New("key is too long")
-			}
-			raw = append(raw, c)
-		case '"':
-			var key string
-			if err := json.Unmarshal(raw, &key); err != nil {
-				return "", err
-			}
-			return key, nil
-		}
-	}
-}
-
-// skipValue reads one JSON value without holding it, so a member this judgement does not need costs no memory.
-func (s *migrateReviewFollowupScan) skipValue() error {
-	c, err := s.br.ReadByte()
-	if err != nil {
-		return err
-	}
-	switch c {
-	case '"':
-		return s.skipStringBody()
-	case '{', '[':
-		return s.skipComposite(c)
-	default:
-		for {
-			c, err = s.br.ReadByte()
-			if err != nil {
-				return err
-			}
-			if migrateReviewFollowupTokenByte(c) {
 				continue
 			}
-			return s.br.UnreadByte()
+			matched = 0
+			if c == trigger[0] {
+				matched = 1
+			}
 		}
-	}
-}
-
-func (s *migrateReviewFollowupScan) skipStringBody() error {
-	for {
-		c, err := s.br.ReadByte()
 		if err != nil {
-			return err
-		}
-		switch c {
-		case '\\':
-			if _, err = s.br.ReadByte(); err != nil {
-				return err
-			}
-		case '"':
-			return nil
+			return false
 		}
 	}
-}
-
-func (s *migrateReviewFollowupScan) skipComposite(open byte) error {
-	close := byte('}')
-	if open == '[' {
-		close = ']'
-	}
-	depth := 1
-	for depth > 0 {
-		c, err := s.br.ReadByte()
-		if err != nil {
-			return err
-		}
-		switch c {
-		case '"':
-			if err := s.skipStringBody(); err != nil {
-				return err
-			}
-		case '{', '[':
-			depth++
-		case '}', ']':
-			depth--
-			if depth == 0 && c != close {
-				return errors.New("mismatched delimiter")
-			}
-		}
-	}
-	return nil
-}
-
-// value frames one JSON value as it arrives and returns its raw bytes up to cap: tooLarge reports a value that grew
-// past cap, which the caller treats as a member it will not hold. The value is framed to its end either way, so the
-// record's syntax is still checked and the walk stops at the right place; only the bytes past cap are not kept.
-func (s *migrateReviewFollowupScan) value(cap int) (raw []byte, tooLarge bool, err error) {
-	var b []byte
-	keep := func(c byte) {
-		if len(b) < cap {
-			b = append(b, c)
-		} else {
-			tooLarge = true
-		}
-	}
-	c, err := s.br.ReadByte()
-	if err != nil {
-		return nil, false, err
-	}
-	switch c {
-	case '"':
-		keep(c)
-		for {
-			c, err = s.br.ReadByte()
-			if err != nil {
-				return nil, false, err
-			}
-			keep(c)
-			if c == '\\' {
-				if c, err = s.br.ReadByte(); err != nil {
-					return nil, false, err
-				}
-				keep(c)
-				continue
-			}
-			if c == '"' {
-				return b, tooLarge, nil
-			}
-		}
-	case '{', '[':
-		keep(c)
-		close := byte('}')
-		if c == '[' {
-			close = ']'
-		}
-		depth := 1
-		for depth > 0 {
-			c, err = s.br.ReadByte()
-			if err != nil {
-				return nil, false, err
-			}
-			keep(c)
-			switch c {
-			case '"':
-				for {
-					c, err = s.br.ReadByte()
-					if err != nil {
-						return nil, false, err
-					}
-					keep(c)
-					if c == '\\' {
-						if c, err = s.br.ReadByte(); err != nil {
-							return nil, false, err
-						}
-						keep(c)
-						continue
-					}
-					if c == '"' {
-						break
-					}
-				}
-			case '{', '[':
-				depth++
-			case '}', ']':
-				depth--
-				if depth == 0 && c != close {
-					return nil, false, errors.New("mismatched delimiter")
-				}
-			}
-		}
-		return b, tooLarge, nil
-	default:
-		keep(c)
-		for {
-			c, err = s.br.ReadByte()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					return b, tooLarge, nil
-				}
-				return nil, false, err
-			}
-			if !migrateReviewFollowupTokenByte(c) {
-				if err := s.br.UnreadByte(); err != nil {
-					return nil, false, err
-				}
-				return b, tooLarge, nil
-			}
-			keep(c)
-		}
-	}
-}
-
-// migrateReviewFollowupKeyCap bounds an object key this walk will hold, so a record whose key is itself enormous is
-// refused rather than buffered. No manifest key in a plan's evidence is anywhere near it.
-const migrateReviewFollowupKeyCap = 64 << 10
-
-// migrateReviewFollowupTokenByte reports whether c can appear in a JSON number, true, false or null.
-func migrateReviewFollowupTokenByte(c byte) bool {
-	switch {
-	case c >= '0' && c <= '9':
-		return true
-	case c >= 'a' && c <= 'z':
-		return true
-	case c >= 'A' && c <= 'Z':
-		return true
-	}
-	switch c {
-	case '+', '-', '.':
-		return true
-	}
-	return false
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the
