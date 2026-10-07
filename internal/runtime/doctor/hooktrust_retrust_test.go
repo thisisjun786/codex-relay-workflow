@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -79,10 +80,16 @@ func (f *retrustFixture) write(path, content string) {
 
 func (f *retrustFixture) writeExec(path, content string) {
 	f.t.Helper()
+	// The result is a program the tests run, so the write and the chmod that makes it one are
+	// taken under syscall.ForkLock: a fork in that window would inherit the descriptor and leave
+	// the path unexecutable (ETXTBSY, golang/go#22315).
+	syscall.ForkLock.RLock()
 	f.write(path, content)
 	if err := os.Chmod(path, 0o755); err != nil {
+		syscall.ForkLock.RUnlock()
 		f.t.Fatal(err)
 	}
+	syscall.ForkLock.RUnlock()
 }
 
 func (f *retrustFixture) read(path string) string {

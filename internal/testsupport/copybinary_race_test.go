@@ -121,6 +121,10 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 		failures = append(failures, fmt.Sprintf(format, args...))
 	}
 	start := time.Now()
+	// One deadline covers the whole exercise, the copies and the forker shutdown together, so a
+	// stalled copy or a stalled fork cannot hang the test past copyRunaway (the issue's one-minute
+	// ceiling).
+	deadline := start.Add(copyRunaway)
 	var writers sync.WaitGroup
 	for i := 0; i < copyWriters; i++ {
 		writers.Add(1)
@@ -154,15 +158,23 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 	go func() { writers.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(copyRunaway):
+	case <-time.After(time.Until(deadline)):
 		// A stuck copy holds syscall.ForkLock, so the forkers are not waited for here: they could not
 		// fork again while it is held. The failure is the answer either way.
 		close(stop)
 		t.Fatalf("the exercise did not finish within the %s runaway ceiling: a copy is stuck", copyRunaway)
 	}
-	elapsed = time.Since(start)
 	close(stop)
-	forkers.Wait()
+	// The forker shutdown is bounded too: closing stop ends a forker that is between execs, but one
+	// already inside exec.Command(source).Run() must return on its own, so it shares the deadline.
+	forked := make(chan struct{})
+	go func() { forkers.Wait(); close(forked) }()
+	select {
+	case <-forked:
+	case <-time.After(time.Until(deadline)):
+		t.Fatalf("the forkers did not stop within the %s runaway ceiling: a fork is stuck", copyRunaway)
+	}
+	elapsed = time.Since(start)
 	failuresMu.Lock()
 	defer failuresMu.Unlock()
 	if len(failures) > 0 {
