@@ -9,7 +9,7 @@
 // the rules of contract/schema/cxc/name-substitution.json the way the corpus recorders and
 // internal/role/spawn/testdata/inline/record.mjs apply them. The answer needs no translation at all.
 import { createInterface } from "node:readline";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,74 +20,94 @@ import { join } from "node:path";
 // import would time out a worker that answered its handshake.
 //
 // The load must not run under the caller's environment. The pool hands the worker the caller's
-// environment (Campaign passes os.Environ() through NewPool), so the worker first creates a temporary
-// root of its own under the harness TMPDIR and points HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and
-// TMPDIR at it; only then does it import the oracle. The oracle's module initialization therefore runs
-// under a root this worker owns and removes, and every case's own work still runs after run() has put
-// the five homes under request.root.
+// environment (Campaign passes os.Environ() through NewPool), so before every import attempt the worker
+// creates a fresh temporary root of its own under the harness TMPDIR and points HOME, CODEX_HOME,
+// CRW_HOME, CODEXCLAW_HOME and TMPDIR at it. The oracle's module initialization therefore runs under a
+// root this worker owns and removes again when the attempt ends. Each case then gets its own homes: run
+// puts the five variables under request.root before the classifier is called, after the load has
+// finished, so a case's own work reads the case's tree and not the load root.
 //
 // A load that fails is remembered, not fatal: the worker still starts, still answers the pool's
 // start-up handshake (a null input with an empty root) with the refusal, and answers a later request
 // with an error envelope, so a missing or hidden oracle tree reads as an answer rather than as a dead
-// worker. The retry per request keeps the doctor shim's property that a tree which appears later is
-// picked up.
+// worker. A retry for a tree that appears later makes a new owned root of its own; a name an earlier
+// attempt used is never reused.
+//
+// The directories the load root may be created under, captured here before any request can replace
+// TMPDIR. The harness TMPDIR comes first; Node's own temporary directory and the conventional /tmp are
+// the fallbacks, because Node's tmpdir() also reads TMPDIR and a caller that named a TMPDIR which does
+// not exist would otherwise leave the worker no place to make its root.
+const loadBases = [process.env.TMPDIR, tmpdir(), "/tmp"].filter((path) => typeof path === "string" && path !== "");
 const loadHomes = ["home", "codex-home", "crw-home", "codexclaw-home", "tmp"];
-let loadRoot = null;
 let oracleTable = null;
 let oracleLoadError = null;
 
-// ownLoadRoot creates the temporary root the oracle's module initialization runs under, once, and
-// points the five variables at it. releaseLoadRoot removes it again, so the root's lifetime is exactly
-// the import: the worker keeps no tree behind under the harness TMPDIR, and a retry re-creates the same
-// root before its own import rather than inheriting whatever the caller left in the environment.
-function ownLoadRoot() {
-  if (loadRoot === null) {
-    loadRoot = makeLoadRoot();
-  }
-  for (const name of loadHomes) {
-    mkdirSync(join(loadRoot, name), { recursive: true });
-  }
-  process.env.HOME = join(loadRoot, "home");
-  process.env.CODEX_HOME = join(loadRoot, "codex-home");
-  process.env.CRW_HOME = join(loadRoot, "crw-home");
-  process.env.CODEXCLAW_HOME = join(loadRoot, "codexclaw-home");
-  process.env.TMPDIR = join(loadRoot, "tmp");
-  return loadRoot;
+// setHomes points the five variables a case's homes live in at one root.
+function setHomes(root) {
+  process.env.HOME = join(root, "home");
+  process.env.CODEX_HOME = join(root, "codex-home");
+  process.env.CRW_HOME = join(root, "crw-home");
+  process.env.CODEXCLAW_HOME = join(root, "codexclaw-home");
+  process.env.TMPDIR = join(root, "tmp");
 }
 
-function releaseLoadRoot() {
-  if (loadRoot === null) return;
+// recordLoadRoot appends the root one import attempt used to the file CXCFUZZ_LOAD_ROOTS names, when
+// the harness sets it, so a test can read back which roots the worker created. With the variable unset
+// the worker does no such write.
+function recordLoadRoot(root) {
+  const path = process.env.CXCFUZZ_LOAD_ROOTS;
+  if (typeof path !== "string" || path === "") return;
   try {
-    rmSync(loadRoot, { recursive: true, force: true });
+    appendFileSync(path, root + "\n");
   } catch {
-    // The root is this worker's own scratch: a failure to remove it must not stop the worker.
+    // A record that cannot be written must not stop the worker.
   }
 }
 
-// makeLoadRoot creates the worker's own temporary root, under the harness TMPDIR when that directory
-// exists and under the process's temporary directory otherwise, so a worker still starts when the
-// caller named a TMPDIR that is not there.
-function makeLoadRoot() {
-  const candidates = [process.env.TMPDIR, tmpdir(), "/tmp"].filter((path) => typeof path === "string" && path !== "");
+// ownLoadRoot creates a fresh, exclusively owned root for one import attempt and points the five
+// variables at it. Every attempt calls mkdtempSync, which creates a new 0700 directory and fails rather
+// than following a pathname that already exists: a name an earlier attempt used is never reused, so a
+// retry cannot inherit a pathname another process has since replaced with a symlink, and no import ever
+// creates a directory through a path this worker does not own. The caller removes the root again when
+// the attempt ends, so its lifetime is exactly the import.
+function ownLoadRoot() {
   let lastError = null;
-  for (const base of candidates) {
+  for (const base of loadBases) {
+    let root = null;
     try {
-      return mkdtempSync(join(base, "crw-spawn-load-"));
+      root = mkdtempSync(join(base, "crw-spawn-load-"));
     } catch (error) {
       lastError = error;
+      continue;
     }
+    recordLoadRoot(root);
+    for (const name of loadHomes) {
+      mkdirSync(join(root, name), { recursive: true });
+    }
+    setHomes(root);
+    return root;
   }
   throw lastError ?? new Error("no temporary directory to create the oracle load root under");
 }
 
-async function loadOracle() {
-  ownLoadRoot();
+// releaseLoadRoot removes one attempt's root. The root is this worker's own scratch: a failure to
+// remove it must not stop the worker.
+function releaseLoadRoot(root) {
   try {
-    const root = process.env.ORACLE_ROOT;
-    if (!root) throw new Error("ORACLE_ROOT is not set");
-    return functions(await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js")));
+    rmSync(root, { recursive: true, force: true });
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+async function loadOracle() {
+  const root = ownLoadRoot();
+  try {
+    const base = process.env.ORACLE_ROOT;
+    if (!base) throw new Error("ORACLE_ROOT is not set");
+    return functions(await import("file://" + join(base, "subagent-config", "dist", "spawn-attach-hook.js")));
   } finally {
-    releaseLoadRoot();
+    releaseLoadRoot(root);
   }
 }
 
@@ -189,30 +209,31 @@ function answer(table, input) {
   return value;
 }
 
-// run isolates one case before the oracle is consulted. The harness hands the worker pool the
-// caller's environment (Campaign passes os.Environ() through NewPool), so without this step the
-// worker would answer under the real HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and TMPDIR. The
-// echo, memorygate and doctor shims each put those five under request.root per request; this does
-// the same. An input that is not an object is answered with the refusal first and touches nothing
-// else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe that
-// must never read or write a home. The isolation below is put in place before the oracle is
-// consulted, so both a case's own work and the oracle's module initialization - which is deferred to
-// the first case that arrives (see oracle()) - run under the case's root rather than the caller's
-// environment.
+// run isolates one case and answers it. The harness hands the worker pool the caller's environment
+// (Campaign passes os.Environ() through NewPool), so without this step a case would answer under the
+// real HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and TMPDIR. The echo, memorygate and doctor shims
+// each put those five under request.root per request; this does the same, so a case's own work reads
+// the case's tree. An input that is not an object is answered with the refusal first and touches
+// nothing else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe
+// that must never read or write a home. The oracle is consulted before the case's homes are set,
+// because loading it runs the oracle's module initialization under a root of the worker's own (see
+// loadOracle); setting the case's homes first would be overwritten by that root and then left pointing
+// at a directory the worker has already removed.
 async function run(request) {
   const input = request.input;
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     return refusal();
   }
+  // The oracle is consulted before the case's homes are set, because loading it runs the oracle's module
+  // initialization under the worker's own root (see loadOracle). Setting the case's homes first would be
+  // overwritten by that root and then left pointing at a directory this worker has already removed, so
+  // the classifier would read a tree that is not the case's.
+  const table = await oracle();
   const root = typeof request.root === "string" ? request.root : "";
   if (root !== "") {
-    process.env.HOME = root + "/home";
-    process.env.CODEX_HOME = root + "/codex-home";
-    process.env.CRW_HOME = root + "/crw-home";
-    process.env.CODEXCLAW_HOME = root + "/codexclaw-home";
-    process.env.TMPDIR = root + "/tmp";
+    setHomes(root);
   }
-  return answer(await oracle(), input);
+  return answer(table, input);
 }
 
 // The answer both sides give an input outside the grammar. It is answered rather than thrown,

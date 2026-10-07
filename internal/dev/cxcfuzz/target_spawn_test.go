@@ -610,6 +610,172 @@ func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
 	}
 }
 
+// c8 (CRW-938): a retry makes a fresh, exclusively owned root, so a name an earlier attempt used is never
+// reused. The first attempt's root is removed when its import fails; a later process that replaces that
+// pathname with a symlink must not be followed, because mkdtempSync never reuses a name and the retry takes
+// a new one. Red against a worker that kept its root pathname and recreated directories through it: the
+// symlink target would receive the five homes. The same call also pins that a case after a successful retry
+// answers under its own request root rather than under the import root.
+func TestSpawnRetryMakesAFreshOwnedRoot(t *testing.T) {
+	requireNode(t)
+	workerTmp := t.TempDir()
+	record := filepath.Join(t.TempDir(), "load-roots.txt")
+	victim := t.TempDir()
+	oracle := filepath.Join(t.TempDir(), "late-oracle")
+
+	pool := spawnFakePool(t, oracle, append(append(os.Environ(), spawnDecoyEnv(t.TempDir())...),
+		"TMPDIR="+workerTmp, "CXCFUZZ_LOAD_ROOTS="+record))
+	defer func() { _ = pool.Close() }()
+
+	// The first import fails: the oracle tree is not there yet. The handshake is still answered.
+	got, err := pool.Call("null", "")
+	if err != nil {
+		t.Fatalf("the handshake answered no reply: %v", err)
+	}
+	if strings.TrimSpace(got) != canonical(spawnRefusal) {
+		t.Fatalf("the handshake answered %s, want the refusal %s", got, canonical(spawnRefusal))
+	}
+	first := spawnLoadRoots(t, record)
+	if len(first) != 1 {
+		t.Fatalf("the worker recorded %v, want one load root", first)
+	}
+	if !strings.HasPrefix(first[0], workerTmp+string(os.PathSeparator)) {
+		t.Fatalf("the load root %s is not under the harness TMPDIR %s", first[0], workerTmp)
+	}
+	// The failed attempt's root is gone, and another process takes the name over with a symlink.
+	if _, err := os.Stat(first[0]); !os.IsNotExist(err) {
+		t.Fatalf("the first load root %s was not removed (stat: %v)", first[0], err)
+	}
+	if err := os.Symlink(victim, first[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	// The tree appears, so the next request retries the import and answers the case.
+	writeSpawnOracleAt(t, oracle)
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The classifier ran under the case's own root, not under the import root: the fake oracle answers
+	// the five variables in place, so the answer is the case root's five paths.
+	value, err := decode(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, ok := value.([]any)
+	if !ok {
+		t.Fatalf("the case after the retry answered %s, want the case root's five paths", reply)
+	}
+	want := spawnHomePaths(root)
+	sort.Strings(want)
+	if len(list) != len(want) {
+		t.Fatalf("the case after the retry answered %v, want the case root's %v", list, want)
+	}
+	for i, item := range list {
+		if name, _ := item.(string); name != want[i] {
+			t.Fatalf("the case after the retry answered %v, want the case root's %v", list, want)
+		}
+	}
+
+	// The retry made its own new root and never reused the taken-over name: the symlink target is untouched.
+	roots := spawnLoadRoots(t, record)
+	if len(roots) != 2 {
+		t.Fatalf("the worker recorded %v, want a second load root", roots)
+	}
+	if roots[0] == roots[1] {
+		t.Fatalf("the retry reused the load root %s", roots[0])
+	}
+	if files := spawnTree(t, victim); len(files) != 0 {
+		t.Fatalf("the retry created directories through the taken-over pathname: %v", files)
+	}
+}
+
+// c8 (CRW-938): a case that follows a successful import retry answers under its own request root. The
+// import runs under a root of the worker's own, and that root is removed before the classifier is called,
+// so a worker that set the case's homes first and then loaded would hand the classifier the import root's
+// paths instead of the case's. Red against that order: the answer names the removed import root.
+func TestSpawnCaseAfterRetryAnswersUnderItsOwnRoot(t *testing.T) {
+	requireNode(t)
+	workerTmp := t.TempDir()
+	oracle := filepath.Join(t.TempDir(), "late-oracle")
+	pool := spawnFakePool(t, oracle, append(append(os.Environ(), spawnDecoyEnv(t.TempDir())...), "TMPDIR="+workerTmp))
+	defer func() { _ = pool.Close() }()
+
+	if _, err := pool.Call("null", ""); err != nil {
+		t.Fatalf("the handshake answered no reply: %v", err)
+	}
+	writeSpawnOracleAt(t, oracle)
+	root := t.TempDir()
+	if err := PrepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := pool.Call(spawnMentionedFoldersCase(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := decode(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, ok := value.([]any)
+	if !ok {
+		t.Fatalf("the case answered %s, want the five paths", reply)
+	}
+	want := spawnHomePaths(root)
+	sort.Strings(want)
+	if len(list) != len(want) {
+		t.Fatalf("the case answered %v, want the case root's %v", list, want)
+	}
+	for i, item := range list {
+		if name, _ := item.(string); name != want[i] {
+			t.Fatalf("the case answered %v, want the case root's %v", list, want)
+		}
+	}
+}
+
+// spawnLoadRoots reads the load roots the worker recorded, one path per line.
+func spawnLoadRoots(t *testing.T, record string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the worker recorded no load root: %v", err)
+	}
+	var roots []string
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if line != "" {
+			roots = append(roots, line)
+		}
+	}
+	return roots
+}
+
+// writeSpawnOracleAt writes the stand-in spawn-attach-hook module under an existing root, so a test can
+// make the oracle tree appear after a worker has already failed to load it. Its mentionedFolders answers
+// the five variables in place at call time, which is how a test reads back the environment the classifier
+// ran under.
+func writeSpawnOracleAt(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "subagent-config", "dist")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "export function mentionedFolders() {\n" +
+		"  return new Set([process.env.HOME, process.env.CODEX_HOME, process.env.CRW_HOME, process.env.CODEXCLAW_HOME, process.env.TMPDIR]);\n" +
+		"}\n" +
+		"export function inferRole() { return \"\"; }\n" +
+		"export function isV2SpawnInput() { return false; }\n" +
+		"export function isFullHistoryFork() { return false; }\n" +
+		"export function isSpawnToolName() { return false; }\n" +
+		"export function isCollaborationToolName() { return false; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "spawn-attach-hook.js"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // c8 (CRW-938): the worker's own load root is removed when the worker stops, so the harness leaves no
 // tree behind under the caller's TMPDIR. The handshake alone is enough to prove the load happened; the
 // listing after Close proves the root is gone.
@@ -630,17 +796,13 @@ func TestSpawnOracleLoadRootIsRemoved(t *testing.T) {
 	}
 }
 
-// c1 (CRW-938): the oracle is loaded eagerly, under the caller's environment, so that load is safe only while
-// the oracle's module initialization does no home I/O. This measures what the harness can observe of that,
-// against the real oracle tree: the five homes point at a decoy directory that does not exist yet, the
-// handshake is answered, and afterwards neither the decoy nor anything under it may exist. A load that needed
-// a home would have had to create one, and a load that read one would have had nothing to read.
-//
-// What this cannot observe is a read the oracle swallows: the harness sees a worker's filesystem and answers,
-// not its syscalls, so a failed read under a missing home leaves no trace. The claim the code makes is
-// therefore limited to what is measured here - the load creates nothing and needs no home - and the earlier
-// evaluation's objection that a function-call-time environment check cannot show this is why the check is on
-// the load itself rather than on the environment at one moment.
+// c1 (CRW-938): the real oracle tree loads and answers, and the caller's homes are left alone. The worker
+// creates a root of its own under the harness TMPDIR for the import (see TestSpawnOracleLoadRunsUnderAnOwnedRoot),
+// so this measures the two things a test can see of the caller's side: the decoy homes the worker was handed
+// still do not exist and nothing was created under them, and a case after the load still answers under its own
+// case root rather than under a decoy. What it cannot see is a read the oracle swallows - the harness observes
+// a worker's filesystem and its answers, not its syscalls - so the claim it supports is that the load needs no
+// caller home and creates nothing there.
 func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
 	requireNode(t)
 	hook := filepath.Join(DefaultOracleRoot, "subagent-config", "dist", "spawn-attach-hook.js")

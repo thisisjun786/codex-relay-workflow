@@ -175,8 +175,8 @@ func spawnFunctionNames() []string {
 }
 
 // spawnGenerate builds one input: {"fn": name, "args": [...]}. It is deterministic for a given rng.
-// size drives the MentionedFolders case's nesting depth, which is the one structural parameter this
-// target has to reach a boundary with.
+// size drives the length of a MentionedFolders case's mention text; the target makes no depth claim
+// (see spawnMentionedFoldersInput).
 func spawnGenerate(rng *rand.Rand, size int) any {
 	names := spawnFunctionNames()
 	name := names[rng.Intn(len(names))]
