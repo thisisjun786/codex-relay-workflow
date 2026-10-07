@@ -46,10 +46,9 @@ var relayHelperMemoMu sync.Mutex
 var relayHelperMemo = map[*Env]string{}
 
 // relayHelperForget drops one Env's remembered state directory. Run calls it when the
-// invocation ends, so a process that embeds Run and calls it many times - the GUI's run-state
-// screen polls the read commands every few seconds - keeps no Env, with the streams and the
-// document it carries, reachable past its run. The memo's other behaviour is unchanged: within
-// one invocation the same Env still asks the doctor once.
+// invocation ends, so a process that embeds Run and calls it many times keeps no Env, with the
+// streams and the document it carries, reachable past its run. The memo's other behaviour is
+// unchanged: within one invocation the same Env still asks the doctor once.
 func relayHelperForget(e *Env) {
 	relayHelperMemoMu.Lock()
 	delete(relayHelperMemo, e)

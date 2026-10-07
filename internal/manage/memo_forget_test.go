@@ -28,6 +28,8 @@ func memoForgetFakeProcess(t *testing.T, doctorState string, exit int) (record s
 // memoForgetClear drops every entry of the three Env-keyed memos, so the test starts from a
 // known size whatever the tests before it left behind: a test that drives a command handler
 // directly instead of Run resolves the relay state through an Env that nothing ever forgets.
+// It replaces the maps rather than deleting keys, which is safe because no test in this package
+// calls t.Parallel: a concurrent Run would otherwise lose the entry it is still using.
 func memoForgetClear() {
 	relayHelperMemoMu.Lock()
 	relayHelperMemo = map[*Env]string{}
@@ -87,10 +89,11 @@ func memoForgetRun(args ...string) int {
 	return Run(context.Background(), args, strings.NewReader(""), &out, &errOut)
 }
 
-// Run forgets every Env-keyed memo of its invocation when it returns, so a process that calls
-// Run in a loop - the crw gui run-state screen polls it every five seconds - keeps no entry per
-// call. With no relay.state configured each of five Runs resolves the state through the doctor
-// answer, which is the path that fills relayHelperMemo; before the fix that memo holds five.
+// Run forgets every Env-keyed memo of its invocation when it returns, so a process that embeds
+// Run and calls it in a loop - the run-state screen a later issue adds does exactly this - keeps
+// no entry per call. With no relay.state configured each of five Runs resolves the state through
+// the doctor answer, which is the path that fills relayHelperMemo; before the fix that memo holds
+// five.
 func TestMemoForgetRunLeavesNoEntry(t *testing.T) {
 	coreTempHome(t)
 	record := memoForgetFakeProcess(t, filepath.Join(t.TempDir(), "relay-state"), 0)
