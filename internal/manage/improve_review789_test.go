@@ -1071,6 +1071,51 @@ func TestImproveReview789SymlinkedParentDotDotIsOneLocation(t *testing.T) {
 	}
 }
 
+// TestImproveReview789AggregateGrowthIsAdded covers the aggregate the fault ledger reports: one
+// row carries the count of every occurrence it merged, at one origin. A later reading that reports
+// a larger count at the same origin grows the stored count by that growth, and a rerun of the same
+// bundle leaves it alone.
+func TestImproveReview789AggregateGrowthIsAdded(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+
+	// A source that aggregates its occurrences into one row reports its own total at that one
+	// origin: the fault ledger's occurrence_count, at the fault's own id.
+	first := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:store-a:f1"),
+	})
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+
+	// The same origin now reports six occurrences. The origin is the one the draft already
+	// carries, so no sighting is added; the count the source itself reports is what grows.
+	second := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 6, "fault:store-a:f1"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
+	if code != 0 {
+		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
+	}
+	report := improveProposeTestReport(t, stdout)
+	if len(report.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to follow the origin's own count", report.Updated)
+	}
+	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if !strings.Contains(doc.Body, "- owner_unknown (6)") {
+		t.Errorf("the draft does not carry the count its own origin reports:\n%s", doc.Body)
+	}
+
+	// The same bundle again leaves the count as it is.
+	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", second); code != 0 {
+		t.Fatalf("the repeated propose: exit %d, stderr %s", code, stderr)
+	}
+	again := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
+	if !strings.Contains(again.Body, "- owner_unknown (6)") {
+		t.Errorf("rerunning the same bundle changed the aggregate count:\n%s", again.Body)
+	}
+}
+
 // TestImproveReview789EvidenceLessObservationsStayApart covers the rule the issue keeps for a
 // record that names no origin: such a record falls back to one sighting of its where, and nothing
 // else tells its observations apart, so two observations of one where at different times stay two

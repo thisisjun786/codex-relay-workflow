@@ -62,12 +62,13 @@ type improveProposeCandidate struct {
 	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
 
-	// seenKeepTime is whether this candidate's sightings are compared by their whole entry, time
-	// included, rather than by their origin. A record that names no origin falls back to one
-	// sighting of its where, and nothing else tells its observations apart, so the time stays part
-	// of what makes them the same occurrence. A record with origins is compared by the origin, so
-	// the moving time does not make every earlier occurrence look new.
-	seenKeepTime bool
+	// seenWhere is the set of this candidate's sightings that fall back to a record's where because
+	// it named no origin. Nothing tells such an observation apart but the time it was seen, so it
+	// is compared by its whole entry; a sighting made from an origin is compared by the origin, so
+	// the moving time does not make every earlier occurrence look new. The distinction is per
+	// sighting: one record without origins must not turn another record's origins into moving
+	// occurrences.
+	seenWhere map[auditDraftSeen]bool
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -330,19 +331,17 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			}
 			improveProposeAddProject(&current.Projects, project, count)
 			current.Evidence = append(current.Evidence, record.Evidence...)
-			current.seenKeepTime = current.seenKeepTime || fallback
-			improveProposeAddSightings(current, project, sightings)
+			improveProposeAddSightings(current, project, sightings, fallback)
 			continue
 		}
 		byKey[key] = len(candidates)
 		candidate := improveProposeCandidate{
 			Key: key, Kind: record.Kind, Title: title,
 			Impact: impact, Count: count,
-			Evidence:     append([]string(nil), record.Evidence...),
-			seenKeepTime: fallback,
+			Evidence: append([]string(nil), record.Evidence...),
 		}
 		improveProposeAddProject(&candidate.Projects, project, count)
-		improveProposeAddSightings(&candidate, project, sightings)
+		improveProposeAddSightings(&candidate, project, sightings, fallback)
 		candidates = append(candidates, candidate)
 	}
 	for i := range candidates {
@@ -395,13 +394,20 @@ func improveProposeProjectKey(project string) string {
 // added to it, so the map is what keeps a stored count and a grown seen list in step. A record that
 // merged several rows of one origin keeps the count that origin was first given, so two rows behind
 // one origin are not counted twice.
-func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen) {
+func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen, where bool) {
 	if candidate.seenProjects == nil {
 		candidate.seenProjects = map[auditDraftSeen]string{}
 	}
+	if candidate.seenWhere == nil {
+		candidate.seenWhere = map[auditDraftSeen]bool{}
+	}
 	owner := improveProposeProjectKey(project)
 	for _, sighting := range sightings {
-		if improveProposeSeenHas(candidate.seen, sighting, candidate.seenKeepTime) {
+		// A sighting is compared by its whole entry when it falls back to the record's where, and by
+		// its origin otherwise. The flag belongs to the sighting, so a record without origins cannot
+		// turn another record's origins into moving occurrences.
+		candidate.seenWhere[sighting] = candidate.seenWhere[sighting] || where
+		if improveProposeSeenHas(candidate.seen, sighting, candidate.seenWhere[sighting]) {
 			continue
 		}
 		candidate.seen = append(candidate.seen, sighting)
@@ -456,24 +462,44 @@ func improveProposeIssueIndex(bundle improveBundle) (keys, titles, fingerprints 
 	return keys, titles, fingerprints
 }
 
-// improveProposeBodySection is the text of one section of a stored improve body: from the last
-// occurrence of its heading to the last occurrence of the next one. The renderer writes the reason
-// into What first and the four sections in order after it, so a heading inside the reason is always
-// earlier than the section this feature wrote, and the last occurrence is the real one. Reading the
-// first occurrence would let a reason that quotes a heading be parsed as a project list or an
-// evidence list of its own.
-func improveProposeBodySection(body, heading, next string) (string, bool) {
-	start := strings.LastIndex(body, heading)
-	if start < 0 {
-		return "", false
-	}
-	rest := body[start+len(heading):]
-	if next != "" {
-		if end := strings.LastIndex(rest, next); end >= 0 {
-			rest = rest[:end]
+// improveProposeSectionHeadings are the four section headings the renderer writes, in the order it
+// writes them.
+var improveProposeSectionHeadings = []string{"## What\n\n", "## Where\n\n", "## Seen\n\n", "## Evidence\n\n"}
+
+// improveProposeSectionEnd is the offset where the section starting at start ends: the next
+// heading of the writer's own set, or the end of the body. Only the writer's headings end a
+// section, so a heading a reason, an evidence string or a sighting happens to contain is part of
+// the section's text rather than its end.
+func improveProposeSectionEnd(body string, start int) int {
+	end := len(body)
+	for _, heading := range improveProposeSectionHeadings {
+		if at := strings.Index(body[start:], heading); at >= 0 && start+at < end {
+			end = start + at
 		}
 	}
-	return rest, true
+	return end
+}
+
+// improveProposeBodySection is the text of one section of a stored improve body. The writer emits
+// the four sections in order, so a section is read from its heading to the next heading of that
+// set. For Where the reader takes the first heading whose text is a project list and whose next
+// heading is Seen: a reason that quotes a Where heading is followed by the writer's own Where, and
+// an evidence string that quotes one is followed by no Seen, so neither can be mistaken for the
+// section this feature wrote.
+func improveProposeBodySection(body, heading, next string) (string, bool) {
+	for at := 0; ; {
+		found := strings.Index(body[at:], heading)
+		if found < 0 {
+			return "", false
+		}
+		start := at + found
+		end := improveProposeSectionEnd(body, start+len(heading))
+		rest := body[start+len(heading) : end]
+		if next == "" || strings.HasPrefix(body[end:], next) {
+			return rest, true
+		}
+		at = start + len(heading)
+	}
 }
 
 // improveProposeParseProjects reads the projects a stored improve body names, so a later run
@@ -534,14 +560,33 @@ func improveProposeIssueKeys(evidence []string) map[string]bool {
 
 // improveProposeMergeProjects merges the projects a stored body names with the ones the new
 // candidate reached: a project's count is the count the draft already held plus the occurrences
-// this run newly recorded there, and a project the new run no longer carries keeps its count, so a
-// rewrite never drops a project and rerunning one bundle never grows a count.
+// this run newly recorded there, and never below what this run's own records report for it, so a
+// source that aggregates its occurrences into one row grows the count the source itself reports. A
+// project the new run no longer carries keeps its count, so a rewrite never drops a project and
+// rerunning one bundle never grows a count.
 //
 // One stored project is dropped: a key this run's own evidence names as an issue key. An earlier
 // build took the issue key of a split whose relationship carried no scope for the project, and an
 // issue key is never a project, so a draft written then must lose it on the next run rather than
 // keep a false owner. The key stays in the body's evidence as issue:<KEY>.
 func improveProposeMergeProjects(stored, current []improveProposeProject, added, moved map[string]int, issueKeys map[string]bool) []improveProposeProject {
+	// reported is what this run's own records report for each project. A record that merges several
+	// occurrences into one row reports its whole count at that one origin, and that count grows
+	// while the origin stays the same, so the sightings this run added are not the whole growth.
+	// The sightings keep a stored count in step; this keeps it from falling behind the source.
+	reported := map[string]int{}
+	for _, project := range current {
+		reported[project.Project] = project.Count
+	}
+	// projectCount is the stored count plus what this run newly recorded, raised to what the run's
+	// own records report so an aggregate's growth is not dropped.
+	projectCount := func(stored int, project string) int {
+		count := stored + added[project] + moved[project]
+		if count < reported[project] {
+			count = reported[project]
+		}
+		return count
+	}
 	out := make([]improveProposeProject, 0, len(stored))
 	carried := 0
 	for _, project := range stored {
@@ -566,13 +611,13 @@ func improveProposeMergeProjects(stored, current []improveProposeProject, added,
 		}
 	}
 	// Each project's count is what the draft held plus the occurrences this run newly recorded
-	// there, plus the occurrences that moved to or from it because their owner changed. A project
-	// whose occurrences all moved away carries no count and is not kept. Nothing else moves the
-	// count: an occurrence the draft already carries adds nothing, so rerunning one bundle leaves
-	// every stored count as it was.
+	// there, plus the occurrences that moved to or from it because their owner changed, and never
+	// less than what this run's records report for it. A project whose occurrences all moved away
+	// carries no count and is not kept. Nothing else moves the count: an occurrence the draft
+	// already carries adds nothing, so rerunning one bundle leaves every stored count as it was.
 	kept := out[:0]
 	for _, project := range out {
-		count := project.Count + added[project.Project] + moved[project.Project]
+		count := projectCount(project.Count, project.Project)
 		if count <= 0 {
 			continue
 		}
@@ -588,7 +633,7 @@ func improveProposeMergeProjects(stored, current []improveProposeProject, added,
 		}
 		if !found {
 			out = append(out, improveProposeProject{Project: project.Project,
-				Count: added[project.Project] + moved[project.Project]})
+				Count: projectCount(0, project.Project)})
 		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Project < out[b].Project })
@@ -608,7 +653,7 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 	moved = map[string]int{}
 	for _, sighting := range candidate.seen {
 		owner := improveProposeProjectKey(candidate.seenProjects[sighting])
-		at := improveProposeSeenIndex(seen, sighting, candidate.seenKeepTime)
+		at := improveProposeSeenIndex(seen, sighting, candidate.seenWhere[sighting])
 		if at < 0 {
 			seen = append(seen, sighting)
 			added[owner]++
