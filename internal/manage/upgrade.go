@@ -169,10 +169,10 @@ type upgradeRunState struct {
 	state   string
 	started time.Time
 
-	// digest is the verified archive's SHA-256, version the cleaned version the unpacked crw
-	// printed, installed the runtime directory the update reported it produced, previous the
-	// runtime the pointer named before the stop, and startFrom the runtime the restart used.
-	digest    string
+	// version is the cleaned version the unpacked crw printed, installed the runtime directory the
+	// update reported it produced, previous the runtime the pointer named before the stop, and
+	// startFrom the runtime the restart used. The verified archive's own digest is not kept: the
+	// sums step records it.
 	version   string
 	installed string
 	previous  string

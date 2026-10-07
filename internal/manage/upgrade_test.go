@@ -87,7 +87,10 @@ type upgradeHarnessOptions struct {
 	openAttempts int
 	// doctorUnavailable makes the doctor answer report contents it could not read.
 	doctorUnavailable bool
-	gh                map[string]upgradeGhAnswer
+	// doctorNoCount makes the doctor answer report readable contents that carry no open attempt
+	// count, which is the other half of the fail-closed guard.
+	doctorNoCount bool
+	gh            map[string]upgradeGhAnswer
 	// pointer is whether the owned pointer exists before the run.
 	pointer bool
 	// installExit is the status the fake update ends with.
@@ -190,6 +193,9 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	doctor := "{\"stateSelection\":{\"path\":" + jsonString(h.state) + "},\"contents\":{\"available\":true,\"openAttempts\":" + strconv.Itoa(opts.openAttempts) + "}}"
 	if opts.doctorUnavailable {
 		doctor = "{\"stateSelection\":{\"path\":" + jsonString(h.state) + "},\"contents\":{\"available\":false,\"openAttempts\":null}}"
+	}
+	if opts.doctorNoCount {
+		doctor = "{\"stateSelection\":{\"path\":" + jsonString(h.state) + "},\"contents\":{\"available\":true,\"openAttempts\":null}}"
 	}
 	answers := opts.statusAnswers
 	if len(answers) == 0 {

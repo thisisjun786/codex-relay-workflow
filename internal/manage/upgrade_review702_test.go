@@ -206,6 +206,16 @@ func TestUpgradeReview702OpenAttemptsFromDoctor(t *testing.T) {
 			t.Errorf("reason %q, want %q", got, upgradeReasonStoreRead)
 		}
 	})
+	t.Run("contents with no count refuse", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+			pointer: true, doctorNoCount: true})
+		if code := h.run("--release-dir", h.release, "--dry-run"); code != upgradeExitRefused {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitRefused, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonStoreRead {
+			t.Errorf("reason %q, want %q", got, upgradeReasonStoreRead)
+		}
+	})
 }
 
 // upgradeReview702StatusReads is how many times the run read the service status.

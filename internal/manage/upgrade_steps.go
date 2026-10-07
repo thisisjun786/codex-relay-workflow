@@ -120,7 +120,6 @@ func (r *upgradeRunState) verifySums() (string, int, string) {
 		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s does not match %s", name, upgradeSumsName))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	r.digest = strings.ToLower(got)
 	r.note(upgradeStepSums, nil, 0, want+"  "+name, nil)
 	if upgradeSumsVerified != nil {
 		upgradeSumsVerified(r.opts.ReleaseDir)
