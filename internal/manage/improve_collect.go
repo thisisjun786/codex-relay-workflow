@@ -298,22 +298,30 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
 	}
+	var plan improveOutputPlan
 	if out != "" {
-		plan, err := improvePlanOutput(out)
+		plan, err = improvePlanOutput(out)
 		if err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 			return 1
 		}
+		// The first output check runs here, before any source is read: the destination is
+		// compared against the inputs the configuration names, resolved the way the readers
+		// resolve them. The check before the rename repeats it against the identities the
+		// read recorded.
 		if err := improveRefuseInputOutput(plan.Dest, section); err != nil {
 			fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 			return 1
 		}
 	}
-	bundle, err := improveCollect(ctx, section)
+	bundle, ids, err := improveCollect(ctx, section)
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
 	}
+	// The descriptors stay open until the rename is done, so the inode of every input is held
+	// and its identity cannot be reused by another file while the bundle is written.
+	defer ids.improveIdentityClose()
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
@@ -333,64 +341,70 @@ func improveRunCollect(ctx context.Context, e *Env, args []string) int {
 		}
 		return 0
 	}
-	if err := improveWriteFile(out, data, section); err != nil {
+	if err := improveWriteFile(plan, ids, data); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage improve collect: error: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-// improveOutputPlan is a resolved output destination: the parent directory with its
-// symlinks followed, and the destination built from it. The guard and the write use the
-// same plan, so a destination that does not exist yet cannot slip past the containment
-// check through an unresolved spelling.
+// improveOutputPlan is a resolved output destination: the path resolved the way the readers
+// resolve theirs, its parent directory, and the parent's identity at the moment the plan was
+// taken. The guard and the write use the same plan, so a destination that does not exist yet
+// cannot slip past the containment check through an unresolved spelling, and a parent replaced
+// between the plan and the rename is caught by comparing the identity recorded here with the one
+// read again there.
 type improveOutputPlan struct {
+	Out    string
 	Dest   string
 	Parent string
+	parent os.FileInfo
 }
 
-// improvePlanOutput resolves an output path. The parent directory must exist and is
-// resolved with filepath.EvalSymlinks; a destination that already exists and is a symbolic
-// link is refused, because the rename would replace whatever it points at.
+// improvePlanOutput resolves an output path the way the readers resolve theirs: each component
+// from the left, a symbolic link followed where it stands before a later ".." is applied. A
+// parent directory that does not exist is refused, and a destination that already exists and is
+// a symbolic link is refused too, because the rename would replace whatever it points at. A
+// destination that cannot be examined for any reason other than its absence is refused as well:
+// a comparison that cannot be made is never a pass.
 func improvePlanOutput(out string) (improveOutputPlan, error) {
-	absolute, err := filepath.Abs(out)
+	if info, err := os.Lstat(out); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return improveOutputPlan{}, fmt.Errorf("%s: %s", improveReasonOutputSymlink, out)
+	}
+	dest, err := store.Realpath(out)
 	if err != nil {
 		return improveOutputPlan{}, err
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if err != nil {
+	parent := filepath.Dir(dest)
+	pinfo, err := os.Stat(parent)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return improveOutputPlan{}, fmt.Errorf("%s: %s: %w", improveReasonOutputParent, out, err)
+	case err != nil:
+		return improveOutputPlan{}, fmt.Errorf("%s: %s: %w", improveReasonOutputUnreadable, out, err)
+	case !pinfo.IsDir():
+		return improveOutputPlan{}, fmt.Errorf("%s: %s", improveReasonOutputParent, out)
 	}
-	dest := filepath.Join(parent, filepath.Base(absolute))
-	if info, err := os.Lstat(dest); err == nil && info.Mode()&os.ModeSymlink != 0 {
+	if info, err := os.Lstat(dest); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return improveOutputPlan{}, fmt.Errorf("%s: %s: %w", improveReasonOutputUnreadable, out, err)
+		}
+	} else if info.Mode()&os.ModeSymlink != 0 {
 		return improveOutputPlan{}, fmt.Errorf("%s: %s", improveReasonOutputSymlink, out)
 	}
-	return improveOutputPlan{Dest: dest, Parent: parent}, nil
+	return improveOutputPlan{Out: out, Dest: dest, Parent: parent, parent: pinfo}, nil
 }
 
-// improveRefuseInputOutput refuses a resolved destination that is an input the collection
-// opens or lies under one. Both sides are resolved, and an existing pair is also compared
-// with os.SameFile, so a hard link cannot pass the spelling comparison. The inputs include
-// the store file inside a configured relay or DAG directory, which is the file the collection
-// actually opens there and is not the configured path itself.
+// improveRefuseInputOutput refuses a resolved destination that is an input the collection opens
+// or lies under one. The inputs are resolved and recorded the way the collection records the ones
+// it reads — the store file the readers actually open, the directories they enumerate and the file
+// sources — so a destination is compared against recorded identities rather than against two
+// spellings of one name.
 func improveRefuseInputOutput(dest string, section improveSection) error {
-	for _, source := range improveInputPaths(section) {
-		if source == "" {
-			continue
-		}
-		resolved, err := improveResolvedPath(source)
-		if err != nil {
-			// An unresolvable source is reported by the source read itself.
-			continue
-		}
-		if dest == resolved || strings.HasPrefix(dest, improvePrefix(resolved)) {
-			return fmt.Errorf("%s: the output %s is the input %s the collection opens: a bundle never overwrites its own evidence", improveReasonOutputIsInput, dest, source)
-		}
-		if same, err := improveSameFile(dest, resolved); err == nil && same {
-			return fmt.Errorf("%s: the output %s is the input %s the collection opens: a bundle never overwrites its own evidence", improveReasonOutputIsInput, dest, source)
-		}
-	}
-	return nil
+	ids := improveIdentityNew()
+	defer ids.improveIdentityClose()
+	ids.improveIdentityRecord(section)
+	return ids.improveIdentityRefuse(dest, nil)
 }
 
 // improvePrefix is the directory prefix a containment check compares against: the resolved
@@ -404,100 +418,28 @@ func improvePrefix(dir string) string {
 	return dir + string(filepath.Separator)
 }
 
-// improveSameFile reports whether two paths name the same existing file.
-func improveSameFile(a, b string) (bool, error) {
-	ai, err := os.Stat(a)
-	if err != nil {
-		return false, err
-	}
-	bi, err := os.Stat(b)
-	if err != nil {
-		return false, err
-	}
-	return os.SameFile(ai, bi), nil
-}
+// improveResolvedPath is a path resolved the way the readers resolve theirs: each component from
+// the left, a symbolic link followed where it stands before a later ".." is applied. It is
+// store.Realpath, the rule store.InPlaceRead applies to a store's path, so a spelling that mixes
+// a link and ".." names the file the kernel would open rather than the different file
+// filepath.Clean would name.
+func improveResolvedPath(path string) (string, error) { return store.Realpath(path) }
 
-// improveInputPaths is every path the collection opens: every path the configuration names,
-// plus the files it reaches that the configuration does not name. For a relay or DAG source
-// that is the store file inside its directory, and for either source the database's own
-// write-ahead log and shared-memory index when they exist, because a store read examines them
-// and reads their committed frames. For a drafts directory, every entry the collection would
-// read, so a link to a file outside the directory is an input too.
-func improveInputPaths(section improveSection) []string {
-	paths := make([]string, 0, len(section.Sources)+8)
-	for _, source := range section.Sources {
-		paths = append(paths, source.Path)
-	}
-	paths = append(paths, section.IssueList)
-	for _, kind := range []string{improveKindRelay, improveKindDag} {
-		source := section.Sources[kind]
-		if source.Path == "" {
-			continue
-		}
-		opened, err := improveStorePath(source.Path)
-		if err != nil {
-			// A source path that cannot be resolved is reported by the source read itself.
-			continue
-		}
-		// The sidecars are the ones beside the resolved store, which is the file the read
-		// examines them next to (store.InPlaceRead resolves the path the same way).
-		resolved, err := improveResolvedPath(opened)
-		if err != nil {
-			resolved = opened
-		}
-		paths = append(paths, opened, resolved+"-wal", resolved+"-shm")
-	}
-	// A drafts source that is a directory is enumerated, so every entry the collection would
-	// read is an input; a link to a file elsewhere is reached that way.
-	if drafts := section.Sources[improveKindDraft].Path; drafts != "" {
-		if info, err := os.Stat(drafts); err == nil && info.IsDir() {
-			if entries, err := os.ReadDir(drafts); err == nil {
-				for _, entry := range entries {
-					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-						paths = append(paths, filepath.Join(drafts, entry.Name()))
-					}
-				}
-			}
-		}
-	}
-	return paths
-}
-
-// improveResolvedPath is a path with its symlinks followed, so two spellings of one file
-// compare equal. A path that does not exist yet is its resolved parent directory joined with
-// its final name, so a name reached through a symlinked directory still compares equal to the
-// same name spelled through that directory's target; EvalSymlinks alone fails on the missing
-// final component and would leave the parent's symlinks unresolved. A path whose parent cannot
-// be resolved either keeps its absolute spelling, which the source read reports.
-func improveResolvedPath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err == nil {
-		return resolved, nil
-	}
-	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if parentErr != nil {
-		return absolute, nil
-	}
-	return filepath.Join(parent, filepath.Base(absolute)), nil
-}
-
-// improveWriteFile writes the bundle in the resolved parent directory and renames it onto
-// the resolved destination. The temporary file is fsynced, and the refusal check runs again
-// immediately before the rename, so a parent replaced between the first check and the write
-// is still caught.
-func improveWriteFile(out string, data []byte, section improveSection) error {
-	plan, err := improvePlanOutput(out)
+// improveWriteFile writes the bundle in the resolved parent directory and renames it onto the
+// resolved destination. The temporary file is fsynced, and the output check runs again
+// immediately before the rename against the identities recorded when the inputs were read, so a
+// parent replaced, or an input moved onto the destination, between the plan and the rename is
+// still caught. The window between that last check and os.Rename itself is accepted: nothing
+// closes it without holding the destination's directory against every other writer.
+func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []byte) error {
+	fresh, err := improvePlanOutput(plan.Out)
 	if err != nil {
 		return err
 	}
-	if err := improveRefuseInputOutput(plan.Dest, section); err != nil {
-		return err
+	if plan.parent != nil && fresh.parent != nil && !os.SameFile(plan.parent, fresh.parent) {
+		return fmt.Errorf("%s: the parent directory of %s is not the directory the plan named", improveReasonOutputParent, plan.Out)
 	}
-	temp, err := os.CreateTemp(plan.Parent, "improve-bundle-*")
+	temp, err := os.CreateTemp(fresh.Parent, "improve-bundle-*")
 	if err != nil {
 		return err
 	}
@@ -520,15 +462,14 @@ func improveWriteFile(out string, data []byte, section improveSection) error {
 		os.Remove(name)
 		return err
 	}
-	fresh, err := improvePlanOutput(out)
-	if err != nil {
-		os.Remove(name)
-		return err
-	}
 	if improveInputBeforeRename != nil {
 		improveInputBeforeRename(fresh)
 	}
-	if err := improveRefuseInputOutput(fresh.Dest, section); err != nil {
+	if err := ids.improveIdentityRefuse(fresh.Dest, fresh.parent); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := ids.improveIdentityVerify(); err != nil {
 		os.Remove(name)
 		return err
 	}
@@ -596,10 +537,24 @@ func improveLoadSection(e *Env) (improveSection, error) {
 	return section, nil
 }
 
-// improveCollect reads every source and returns the bundle. It needs no Env of its own: the
-// relay and DAG sources are read from the store file each names, and every other source is a
-// file the configuration names.
-func improveCollect(ctx context.Context, section improveSection) (improveBundle, error) {
+// improveCollect reads every source and returns the bundle together with the identity of every
+// input it opened. It needs no Env of its own: the relay and DAG sources are read from the store
+// file each names, and every other source is a file the configuration names.
+//
+// Every input is opened and its identity recorded before any reader runs, and each descriptor
+// stays open until the caller has written and renamed the bundle, so an input moved aside between
+// the read and the rename is still recognised for what it is. After each reader returns the paths
+// it read are examined again, and one that names a different file refuses the run with
+// improveReasonInputChanged rather than writing a bundle of bytes that are no longer there. A
+// source the configuration names but the reader cannot read is reported as before; the caller
+// closes the set.
+func improveCollect(ctx context.Context, section improveSection) (improveBundle, *improveIdentitySet, error) {
+	ids := improveIdentityNew()
+	ids.improveIdentityRecord(section)
+	fail := func(err error) (improveBundle, *improveIdentitySet, error) {
+		ids.improveIdentityClose()
+		return improveBundle{}, nil, err
+	}
 	acc := improveNewAccumulator()
 	sources := []improveSourceRow{}
 
@@ -609,11 +564,14 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	} else {
 		dbPath, err := improveStorePath(relayPath)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindRelay, relayPath, err)
+			return fail(improveUnreadable(improveKindRelay, relayPath, err))
 		}
 		rows, err := improveReadRelay(ctx, dbPath, acc)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindRelay, relayPath, err)
+			return fail(improveUnreadable(improveKindRelay, relayPath, err))
+		}
+		if err := ids.improveIdentityVerify(); err != nil {
+			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindRelay, Path: relayPath, State: improveStateRead, Rows: rows})
 	}
@@ -624,11 +582,14 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	} else {
 		dbPath, err := improveStorePath(dagSource.Path)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindDag, dagSource.Path, err)
+			return fail(improveUnreadable(improveKindDag, dagSource.Path, err))
 		}
 		rows, err := improveReadDag(ctx, dbPath, dagSource, acc)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindDag, dagSource.Path, err)
+			return fail(improveUnreadable(improveKindDag, dagSource.Path, err))
+		}
+		if err := ids.improveIdentityVerify(); err != nil {
+			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindDag, Path: dagSource.Path, State: improveStateRead, Rows: rows})
 	}
@@ -639,7 +600,10 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	} else {
 		rows, err := improveReadAudit(auditPath, acc)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindAudit, auditPath, err)
+			return fail(improveUnreadable(improveKindAudit, auditPath, err))
+		}
+		if err := ids.improveIdentityVerify(); err != nil {
+			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindAudit, Path: auditPath, State: improveStateRead, Rows: rows})
 	}
@@ -650,7 +614,10 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	} else {
 		rows, err := improveReadInterventions(interventionPath, acc)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindIntervention, interventionPath, err)
+			return fail(improveUnreadable(improveKindIntervention, interventionPath, err))
+		}
+		if err := ids.improveIdentityVerify(); err != nil {
+			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindIntervention, Path: interventionPath, State: improveStateRead, Rows: rows})
 	}
@@ -661,7 +628,10 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	} else {
 		rows, err := improveReadDrafts(draftPath, acc)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindDraft, draftPath, err)
+			return fail(improveUnreadable(improveKindDraft, draftPath, err))
+		}
+		if err := ids.improveIdentityVerify(); err != nil {
+			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindDraft, Path: draftPath, State: improveStateRead, Rows: rows})
 	}
@@ -671,12 +641,15 @@ func improveCollect(ctx context.Context, section improveSection) (improveBundle,
 	} else {
 		rows, err := improveReadIssues(section.IssueList, acc)
 		if err != nil {
-			return improveBundle{}, improveUnreadable(improveKindIssue, section.IssueList, err)
+			return fail(improveUnreadable(improveKindIssue, section.IssueList, err))
+		}
+		if err := ids.improveIdentityVerify(); err != nil {
+			return fail(err)
 		}
 		sources = append(sources, improveSourceRow{Kind: improveKindIssue, Path: section.IssueList, State: improveStateRead, Rows: rows})
 	}
 
-	return improveBundle{Schema: improveBundleSchema, Sources: sources, Records: acc.improveFinish()}, nil
+	return improveBundle{Schema: improveBundleSchema, Sources: sources, Records: acc.improveFinish()}, ids, nil
 }
 
 // improveUnreadable is the named error of a configured source whose path cannot be read.
@@ -685,14 +658,17 @@ func improveUnreadable(kind, path string, err error) error {
 }
 
 // improveStorePath is the relay store file a configured source names: the path itself when
-// it is a file, or the store inside it when it is a directory.
+// it is a file, or the store inside it when it is a directory. The directory's name is joined
+// with crwconfig.JoinRoot, which cleans nothing, so a configured directory spelled through a
+// symbolic link and ".." keeps the meaning the kernel gives that spelling instead of the
+// different directory filepath.Join's clean would name.
 func improveStorePath(configured string) (string, error) {
 	info, err := os.Stat(configured)
 	if err != nil {
 		return "", err
 	}
 	if info.IsDir() {
-		return filepath.Join(configured, improveStoreFile), nil
+		return crwconfig.JoinRoot(configured, improveStoreFile), nil
 	}
 	return configured, nil
 }
