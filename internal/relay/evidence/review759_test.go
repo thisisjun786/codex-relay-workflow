@@ -19,6 +19,37 @@ import (
 	"testing"
 )
 
+// Two complementary light runs must not excuse each other. Each holds a leg the other skipped, so
+// under the "answers every skipped leg" rule alone each would be the other's substitute and both
+// gates would pass although neither run ran the whole suite. A substitute must also hold no skipped
+// leg of its own (CRW-946).
+func TestEvidenceReview759ComplementaryLightRunsAreNoSubstitute(t *testing.T) {
+	checks := []any{
+		crw824Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", 1, true),
+		crw824Entry("workflow-run:600:go-product (test-2)#0", "go-product (test-2)", "success", 1, false),
+		crw824Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+		crw824Entry("workflow-run:601:go-product (test-2)#0", "go-product (test-2)", "success", 1, true),
+	}
+	problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("two complementary light runs are no substitute, want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light refusal is the answer, got %q", problems[0].Detail)
+	}
+	// The contrast: one run that ran every leg is the evidence for both light runs.
+	complete := append(append([]any{}, checks...),
+		crw824Entry("workflow-run:602:dev-gate#0", "dev-gate", "success", 1, false),
+		crw824Entry("workflow-run:602:go-product (test-1)#0", "go-product (test-1)", "success", 1, false),
+		crw824Entry("workflow-run:602:go-product (test-2)#0", "go-product (test-2)", "success", 1, false),
+	)
+	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, complete); len(problems) != 0 {
+		t.Fatalf("a run that ran every leg is the evidence, want no problem, got %v", problems)
+	}
+}
+
 // The judged light run: dev-gate succeeded and the test leg skipped its work.
 func review759LightRun() []any {
 	return []any{

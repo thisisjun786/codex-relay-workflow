@@ -383,6 +383,13 @@ func testSkippedJobs(checks []any, run string, highest map[string]*big.Int) []st
 // step list the collector could not read leaves its own unreadable problem, which refuses the whole
 // reading before this predicate is consulted.
 //
+// The substitute must also be a run that skipped nothing of its own. Answering the judged run's
+// skipped legs alone would let two complementary light runs excuse each other: if run 600 skipped
+// test-1 while run 601 skipped test-2, each holds the leg the other is missing, and both gates would
+// pass although neither run ran the whole suite. Requiring the substitute's own legs to have run
+// refuses that pair, and it can only ever refuse more: a full run holds no skipped leg, so the
+// documented repair is untouched.
+//
 // The provider is read strictly where the branch rule pins the integration that answers the judged
 // check: the substitute run's gate must then carry a known provider inside that pinned set, because
 // a namesake from another integration does not answer this branch's gate and an unknown provider is
@@ -413,6 +420,10 @@ func testedElsewhere(checks []any, head, name, provider string, pinned, skipped 
 				continue
 			}
 		} else if provider != "" && candidateProvider != "" && candidateProvider != provider {
+			continue
+		}
+		// A run that skipped a leg of its own is itself a light run: it cannot vouch for another.
+		if len(testSkippedJobs(checks, candidate, highest)) > 0 {
 			continue
 		}
 		if ranEverySkippedLeg(checks, candidate, head, skipped, highest) {
