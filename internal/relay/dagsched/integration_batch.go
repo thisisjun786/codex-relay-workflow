@@ -200,6 +200,13 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 		for _, id := range in.Nodes {
 			c, ok := byNode[id]
 			if !ok {
+				landed, err := s.alreadyIntegratedNode(ctx, in.Plan, id)
+				if err != nil {
+					return nil, err
+				}
+				if landed {
+					return nil, refuse(contract.RefusalDispositionConflict, "node %s is already integrated into an integration target, so it has no candidate to merge again", id)
+				}
 				return nil, refuse(contract.RefusalDispositionConflict, "node %s is not a ready accepted candidate of plan %s", id, in.Plan)
 			}
 			pick = append(pick, c)
@@ -252,7 +259,8 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 			return err
 		}
 		for _, c := range candidates {
-			if err := s.stageRow(txCtx, in, batch, "intent", c, ""); err != nil {
+			// each frozen row names the criteria set the batch verifies the candidate under (CRW-965, parent decision d2)
+			if err := s.stageRow(txCtx, in, batch, "intent", c, c.CriteriaSetDigest); err != nil {
 				return err
 			}
 		}

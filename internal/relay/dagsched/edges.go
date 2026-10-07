@@ -326,12 +326,19 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 	}
 	// 7. a code pin needs the accepted head, the target and the pull request to read it from.
 	if e.PinsCodeHead {
-		var forge int
+		// A pull-request acceptance is read through its forge row and pull request; a commit acceptance (CRW-965) has
+		// its verification row and no pull request. Either one needs the accepted head and the edge's target.
+		var forge, verified int
 		hasForge, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{a.AcceptanceID}, &forge)
 		if err != nil {
 			return EdgeStatus{}, err
 		}
-		if a.HeadSHA == "" || a.PRNumber < 1 || !hasForge || a.Repository != e.TargetRepository {
+		hasVerification, err := queryOne(ctx, q, "SELECT 1 FROM dag_acceptance_verifications WHERE acceptance_id = ?", []any{a.AcceptanceID}, &verified)
+		if err != nil {
+			return EdgeStatus{}, err
+		}
+		readable := (hasForge && a.PRNumber >= 1) || (hasVerification && !hasForge)
+		if a.HeadSHA == "" || !readable || a.Repository != e.TargetRepository {
 			return blocked(BlockedAcceptanceIncomplete, "a pinned acceptance needs its head, its pull request and the edge's target"), nil
 		}
 	}

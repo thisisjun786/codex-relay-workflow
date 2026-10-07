@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The read and write facade of the integration batch (CRW-965). The batch lives in this package so its tests can
@@ -24,6 +25,24 @@ type Candidate struct {
 	EventID, RevisionHash        string
 	Generation                   int64
 	HeadSHA, Repository          string
+	// CriteriaSetDigest is the criteria set the acceptance stands on: a frozen batch row names it (CRW-965, parent decision d2).
+	CriteriaSetDigest string
+}
+
+// alreadyIntegratedNode is whether a node's active acceptance already landed on an integration target (CRW-965,
+// parent decision d2): such a node is never a candidate again, so an explicit request for it is refused by name.
+func (s *Scheduler) alreadyIntegratedNode(ctx context.Context, plan, node string) (bool, error) {
+	q := s.Store.Q(ctx)
+	acc, found, err := loadActiveAcceptance(ctx, q, plan, node)
+	if err != nil || !found || acc.HeadSHA == "" {
+		return false, err
+	}
+	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	if err != nil {
+		return false, err
+	}
+	landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc)
+	return landed, err
 }
 
 // AcceptedCandidates is the plan's ready accepted implementation candidates, in node-id order so two calls agree.
@@ -77,13 +96,32 @@ func (s *Scheduler) AcceptedCandidates(ctx context.Context, plan string) ([]Cand
 		if err != nil {
 			return nil, err
 		}
+		criteria, err := currentCriteriaDigest(ctx, q, acc)
+		if err != nil {
+			return nil, err
+		}
 		if stand.Generation != rel.Generation {
 			continue
 		}
 		out = append(out, Candidate{PlanID: plan, NodeID: n.NodeID, AcceptanceID: acc.AcceptanceID, RelationshipID: stand.RelationshipID,
-			EventID: stand.EventID, RevisionHash: stand.RevisionHash, Generation: stand.Generation, HeadSHA: stand.Head, Repository: acc.Repository})
+			EventID: stand.EventID, RevisionHash: stand.RevisionHash, Generation: stand.Generation, HeadSHA: stand.Head, Repository: acc.Repository,
+			CriteriaSetDigest: criteria})
 	}
 	return out, nil
+}
+
+// currentCriteriaDigest is the criteria set a candidate is verified under: the one its latest revalidation names, else
+// the one its acceptance stands on (CRW-965, parent decision d2).
+func currentCriteriaDigest(ctx context.Context, q store.Querier, acc Acceptance) (string, error) {
+	var digest string
+	found, err := queryOne(ctx, q, "SELECT criteria_set_digest FROM dag_acceptance_revalidations WHERE acceptance_id = ? ORDER BY reval_seq DESC LIMIT 1", []any{acc.AcceptanceID}, &digest)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return digest, nil
+	}
+	return acc.CriteriaSetDigest, nil
 }
 
 // MarkFrozen writes the parent's merged mark for one frozen candidate. The actor must be the parent of the node's
