@@ -21,6 +21,7 @@ import {
   decodeCheck,
   decodePolicy,
   draftForException,
+  draftForExceptionEdit,
   draftForNewException,
   exceptionRoleOptions,
   lostWriteNotice,
@@ -31,6 +32,7 @@ import {
   pairModelLabel,
   policyEfforts,
   policyView,
+  pendingAllowedModel,
   previewChange,
   removeExceptionLabel,
   roleControlsLabel,
@@ -44,11 +46,14 @@ import {
   screenEffortUnavailable,
   screenExceptionDraft,
   screenLoaded,
+  screenLoadFailed,
   screenCatalogLoaded,
   screenMayEdit,
   screenReadStarted,
   screenSaving,
   screenReread,
+  screenRetryRead,
+  runSave,
   screenSaveFinished,
   screenSaveStarted,
   initialScreen,
@@ -645,6 +650,163 @@ test("one pending change at a time: another row's edit cannot replace the live o
   assert.equal(screenMayEdit(state, "allowed:B"), true);
   state = screenAllowedDraft(state, "B", ["low", "max"]);
   assert.equal((state.change as { model: string }).model, "B");
+});
+
+// The five defects the eighth pre-merge evaluation found.
+
+test("runSave drives the whole check-then-write round trip", async () => {
+  // d5: the asynchronous sequence was only reachable inside the React component. runSave is that
+  // sequence, outside React, so a fake transport can drive every branch the promise names.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const payloads: Array<{ expectedDigest: string }> = [];
+
+  // A check the server accepts, then a write that lands.
+  const ok = await runSave(state, {
+    check: async (payload) => { payloads.push(payload); return { status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: ["allowed.anthropic/opus"] } }; },
+    write: async (payload) => { payloads.push(payload); return { status: 200, body: { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] } }; },
+  });
+  assert.equal(ok.saved, true, "a stored digest is a success");
+  assert.equal(ok.reread, true, "the file moved, so the caller re-reads");
+  assert.equal(ok.state.notice?.tone, "ok");
+  assert.equal(payloads[0].expectedDigest, "a".repeat(64), "both calls carry the digest that was read");
+  assert.equal(payloads.length, 2, "the check runs before the write");
+  assert.equal(ok.state.change, null, "the saved change is no longer pending");
+
+  // A stale check never reaches the write, keeps the inputs and asks for a keeping re-read.
+  const stale = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: false, errors: ["the file moved"], currentDigest: "c".repeat(64), stale: true, diff: [] } }),
+    write: async () => { throw new Error("the write must not run after a stale check"); },
+  });
+  assert.equal(stale.saved, false);
+  assert.equal(stale.reread, true);
+  assert.equal(stale.rereadKeepsInputs, true, "a conflict keeps the inputs across the re-read");
+  assert.equal(stale.state.notice?.tone, "err");
+
+  // An invalid check is an error notice and no write.
+  const invalid = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: false, errors: ["an allowed entry needs at least one effort"], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("the write must not run after a refused check"); },
+  });
+  assert.equal(invalid.saved, false);
+  assert.equal(invalid.reread, false, "a plain refusal does not re-read");
+  assert.ok(invalid.state.notice?.errors.includes("an allowed entry needs at least one effort"));
+
+  // A 409 stale_digest from the write keeps the inputs; a 422 is an error; a 502 reports the restore.
+  const conflict = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => ({ status: 409, body: { error: "stale_digest", currentDigest: "c".repeat(64) } }),
+  });
+  assert.equal(conflict.saved, false);
+  assert.equal(conflict.rereadKeepsInputs, true);
+  assert.ok(conflict.state.notice?.text.includes("changed elsewhere"));
+  const refused = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => ({ status: 422, body: { error: "invalid_policy", errors: ["an exception needs a cwd"] } }),
+  });
+  assert.equal(refused.saved, false);
+  assert.equal(refused.state.notice?.tone, "err");
+  assert.equal(refused.rereadKeepsInputs, false);
+  const failed = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => ({ status: 502, body: { error: "register_failed", restored: true } }),
+  });
+  assert.equal(failed.saved, false);
+  assert.equal(failed.state.notice?.restored, true);
+
+  // A transport that dies before the write answers is unknown, not a failure: re-read and keep.
+  const lost = await runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => { throw new Error("connection lost"); },
+  });
+  assert.equal(lost.saved, false);
+  assert.equal(lost.reread, true);
+  assert.equal(lost.rereadKeepsInputs, true);
+  assert.ok(lost.state.notice?.text.includes("unknown"));
+
+  // A check that cannot be reached at all is an error notice and no write.
+  const unreachable = await runSave(state, {
+    check: async () => { throw new Error("backend unreachable"); },
+    write: async () => { throw new Error("must not run"); },
+  });
+  assert.equal(unreachable.saved, false);
+  assert.equal(unreachable.state.notice?.tone, "err");
+
+  // A save with nothing pending is a no-op, so a stray call cannot write.
+  const idle = await runSave(screenLoaded(initialScreen(), reading()), { check: async () => { throw new Error("must not run"); }, write: async () => { throw new Error("must not run"); } });
+  assert.equal(idle.saved, false);
+  assert.equal(idle.reread, false);
+});
+
+test("a model the Add control proposed gets its own editor before saving", () => {
+  // d1: only a model already in the file had a row, so a just-added model's effort could not be set
+  // until an unwanted approval had been saved and edited. The pending model now has its own row.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["none"] }] }));
+  state = screenPropose(state, { kind: "setAllowed", model: "B", efforts: ["none"] });
+  assert.equal(pendingAllowedModel(state, state.reading as PolicyReading), "B", "the new model is pending");
+  // It has an editor, and its entries come from the pending change rather than the (absent) file row.
+  assert.deepEqual(allowedEntriesOf(state, "B", []), ["none"]);
+  state = screenAllowedDraft(state, "B", ["high"]);
+  assert.deepEqual((state.change as { efforts: string[] }).efforts, ["high"], "the effort is set before saving");
+  // A model already in the file is not the pending one: it has its own row above.
+  assert.equal(pendingAllowedModel(screenLoaded(initialScreen(), reading()), reading()), null);
+  assert.equal(pendingAllowedModel(screenPropose(screenLoaded(initialScreen(), reading()), { kind: "setAllowed", model: "anthropic/opus", efforts: ["max"] }), reading()), null, "a listed model is not the pending row");
+});
+
+test("reopening an exception editor starts from the pending change, not the file", () => {
+  // d2: Edit rebuilt the draft from the file, so a second edit replaced the pending model and cwd
+  // with the old ones. It now starts from the pending setException for that id.
+  const exception = { id: "legacy", role: "parent", model: "A", reasoningEffort: "high", cwd: ["/srv/old"] };
+  let state = screenLoaded(initialScreen(), reading({ exceptions: [exception] }));
+  state = screenPropose(state, { kind: "setException", id: "legacy", role: "parent", model: "B", effort: "max", cwd: ["/srv/new"] });
+  const reopened = draftForExceptionEdit(state, exception);
+  assert.equal(reopened.model, "B", "the pending model is kept");
+  assert.equal(reopened.effort, "max");
+  assert.deepEqual(reopened.cwd, ["/srv/new"], "the pending cwd is kept");
+  // A second edit that only changes the effort still carries the pending model and cwd.
+  const second = changeFromExceptionDraft({ ...reopened, effort: "xhigh" });
+  assert.equal((second as { model: string }).model, "B");
+  assert.deepEqual((second as { cwd: string[] }).cwd, ["/srv/new"]);
+  // With nothing pending, Edit opens the file's own values.
+  const fresh = draftForExceptionEdit(screenLoaded(initialScreen(), reading({ exceptions: [exception] })), exception);
+  assert.equal(fresh.model, "A");
+  assert.deepEqual(fresh.cwd, ["/srv/old"]);
+});
+
+test("the retry after a failed conflict re-read keeps the operator's inputs", () => {
+  // d3: the automatic re-read a conflict starts keeps the inputs, but when that read failed the
+  // Retry button ran the explicit re-read, which clears them. Retry now keeps them.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max", "high"]);
+  // The conflict path keeps the pending change and the typed text, then the read fails.
+  const kept = screenLoaded(state, reading({ digest: "b".repeat(64) }), true);
+  assert.equal((kept.change as { model: string }).model, "anthropic/opus");
+  const failed = screenLoadFailed(kept, "The execution policy could not be read.");
+  assert.equal(failed.reading, null);
+  // Retry keeps them; the explicit re-read is the one that drops them.
+  const retried = screenRetryRead(failed);
+  assert.equal((retried.change as { model: string }).model, "anthropic/opus", "Retry keeps the pending change");
+  assert.deepEqual(retried.allowedDraft.get("anthropic/opus"), ["max", "high"], "and the typed text");
+  assert.equal(screenReread(failed).change, null, "the explicit re-read still drops them");
+});
+
+test("a removal preview does not promise a default a role does not have", () => {
+  // d4: the preview said the scope returns to the role default even when the file declares no pair
+  // for that role, where a request under that scope is actually refused.
+  const childOnly = reading({
+    roles: [{ name: "child", expectation: "", pairs: [{ model: "m", reasoningEffort: "high" }] }],
+    exceptions: [{ id: "legacy", role: "parent", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] }],
+  });
+  const undeclared = previewChange(childOnly, { kind: "removeException", id: "legacy" });
+  assert.ok(undeclared.fallback, "the preview carries a sentence");
+  assert.ok(!undeclared.fallback?.includes("role default"), "no default is promised for an undeclared role");
+  assert.ok(undeclared.fallback?.includes("refused"), "it says what actually happens");
+  // A declared role still gets the default sentence.
+  const declared = previewChange(reading(), { kind: "removeException", id: "legacy" });
+  assert.ok(declared.fallback?.includes("parent role default"));
 });
 
 test("the open exception editor can propose its own change", () => {

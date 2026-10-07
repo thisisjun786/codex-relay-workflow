@@ -16,20 +16,17 @@ import {
   allowedNewOf,
   catalogNotice,
   changeFromExceptionDraft,
-  checkNotice,
-  decodeCheck,
   decodePolicy,
   editExceptionLabel,
-  draftForException,
+  draftForExceptionEdit,
   draftForNewException,
-  lostWriteNotice,
   modelOptionLabel,
   modelOptions,
-  noticeForWrite,
   pairEffortLabel,
   pairModelLabel,
   policyEfforts,
   policyView,
+  pendingAllowedModel,
   previewChange,
   removeExceptionLabel,
   roleControlsLabel,
@@ -48,19 +45,17 @@ import {
   screenMayEdit,
   screenPropose,
   screenReadStarted,
+  screenRetryRead,
   screenReread,
-  screenSaveFinished,
-  screenSaveStarted,
+  runSave,
   screenRepairCleared,
   screenSaving,
   initialScreen,
   isBlankText,
   screenBusy,
-  unreachableNotice,
   type ExceptionDraft,
   type PolicyChange,
   type PolicyExceptionView,
-  type PolicyNotice,
   type PolicyPair,
   type PolicyScreenState,
 } from "../policy-state.ts";
@@ -105,6 +100,7 @@ export interface PolicyScreenHandlers {
   exceptionDraft: (draft: ExceptionDraft | null) => void;
   removeException: (id: string) => void;
   save: () => void;
+  retry: () => void;
   reread: () => void;
 }
 
@@ -125,6 +121,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
   const preview = state.reading && state.change ? previewChange(state.reading, state.change) : null;
   const roles = view ? view.roles.filter((role) => role.editable).map((role) => role.name) : [];
   const draftIsNew = screenDraftIsNew(state);
+  const pendingModel = state.reading ? pendingAllowedModel(state, state.reading) : null;
 
   /** pairsFor is the pair list a role's controls show: the pending change first, then the reading. */
   function pairsFor(name: string, saved: PolicyPair[]): PolicyPair[] {
@@ -149,7 +146,9 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
         {state.error ? (
           <div role="alert">
             <p>{state.error}</p>
-            <button className="btn" onClick={handlers.reread}>Retry</button>
+            {/* Retry re-reads the policy the same way the automatic conflict re-read does, so it keeps
+                the operator's inputs rather than dropping them. */}
+            <button className="btn" onClick={handlers.retry}>Retry</button>
           </div>
         ) : null}
         {!state.reading && !state.error ? <Loading label="Loading the execution policy..." /> : null}
@@ -286,6 +285,28 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   ) : null}
                 </section>
               ))}
+              {/* A model the Add control has just proposed is not in the file yet, so it has no row
+                  above. It gets one here, with the same editor, so its effort set can be set before
+                  Save instead of saving an unwanted approval first and editing it after. */}
+              {editable && pendingModel !== null ? (
+                <section className="list-row" aria-label={`allowed ${pendingModel} (pending)`}>
+                  <div className="row-id">
+                    <span className="row-name">{pendingModel}</span>
+                    <span className="row-sub">new - not in the file yet</span>
+                  </div>
+                  <AllowedRow
+                    model={pendingModel}
+                    entries={allowedEntriesOf(state, pendingModel, [])}
+                    newText={allowedNewOf(state, pendingModel)}
+                    onNewText={(text) => handlers.allowedNewText(pendingModel, text)}
+                    onEntryText={(index, text) => handlers.allowedEntryText(pendingModel, [], index, text)}
+                    onEntryAdded={(text) => handlers.allowedEntryAdded(pendingModel, [], text)}
+                    onEntryRemoved={(index) => handlers.allowedEntryRemoved(pendingModel, [], index)}
+                    onRemoveModel={() => handlers.propose(null)}
+                    disabled={busy || !screenMayEdit(state, `allowed:${pendingModel}`)}
+                  />
+                </section>
+              ) : null}
               {editable ? (
                 (() => {
                   const free = models.filter((option) => !view.allowed.some((entry) => entry.model === option.id));
@@ -327,6 +348,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   efforts={efforts}
                   editable={editable}
                   draft={!draftIsNew && state.exceptionDraft?.id === exception.id ? state.exceptionDraft : null}
+                  editDraft={draftForExceptionEdit(state, exception)}
                   disabled={busy || !screenMayEdit(state, `exception:${exception.id}`)}
                   effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
@@ -475,6 +497,7 @@ function ExceptionRow({
   efforts,
   editable,
   draft,
+  editDraft,
   disabled,
   effortRefused,
   onDraft,
@@ -487,6 +510,8 @@ function ExceptionRow({
   efforts: string[];
   editable: boolean;
   draft: ExceptionDraft | null;
+  /** The draft Edit opens: the pending change for this exception when there is one, else the file. */
+  editDraft: ExceptionDraft;
   disabled: boolean;
   effortRefused: (model: string, effort: string) => boolean;
   onDraft: (draft: ExceptionDraft | null) => void;
@@ -511,7 +536,7 @@ function ExceptionRow({
           <span className="row-sub">{exception.role || "no role - covers requests that cite no role"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
         </div>
         <div className="row-actions">
-          <button className="btn" disabled={disabled} aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft(draftForException(exception))}>Edit</button>
+          <button className="btn" disabled={disabled} aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft(editDraft)}>Edit</button>
           <button className="btn danger" disabled={disabled} aria-label={removeExceptionLabel(exception.id)} onClick={onRemove}>Remove</button>
         </div>
       </section>
@@ -765,46 +790,19 @@ export function PolicyPage() {
   }
 
   async function save() {
-    const change = state.change;
-    const reading = state.reading;
-    if (!change || !reading || screenSaving(state)) return;
-    apply(screenSaveStarted);
-    // Check first: the server judges the change with the bridge's own parser, so a refusal here is a
-    // refusal the write would meet. Sending only a change the check accepted keeps the two answers
-    // from disagreeing, and a refusal is shown without touching the file.
-    let checked;
-    try {
-      checked = decodeCheck((await checkPolicy({ expectedDigest: reading.digest ?? "", change })).body);
-    } catch {
-      apply((previous) => screenSaveFinished(previous, change, unreachableNotice()));
-      return;
-    }
-    if (!checked.valid || checked.stale) {
-      const refused = checkNotice(checked);
-      apply((previous) => screenSaveFinished(previous, change, refused));
-      if (refused.reread) readAgain(true);
-      return;
-    }
-    let notice: PolicyNotice;
-    try {
-      const answer = await writePolicy({ expectedDigest: reading.digest ?? "", change });
-      notice = noticeForWrite(answer.status, answer.body);
-    } catch {
-      // A lost response is not a lost write: the server finishes registration after it has replaced
-      // the file, so the screen re-reads rather than claiming nothing changed.
-      notice = lostWriteNotice();
-    }
-    apply((previous) => screenSaveFinished(previous, change, notice));
-    if (notice.tone === "ok") {
-      // The file moved, so the reading is stale by definition. Re-read before showing the new state.
-      toast("Execution policy saved", "ok");
-      // The re-read always starts from the file. The drafts the write spent were already dropped by
-      // screenSaveFinished; anything the operator starts after this answer arrives is their next
-      // change and must survive the read, so the read keeps whatever is pending when it resolves.
-      readAgain(true);
-      return;
-    }
-    if (notice.reread) readAgain(true);
+    // The whole check-then-write sequence lives in runSave (policy-state.ts), outside React, so the
+    // shipped flow is the one the tests drive with a fake transport rather than a parallel copy.
+    const outcome = await runSave(stateRef.current, {
+      check: (payload) => checkPolicy(payload),
+      write: (payload) => writePolicy(payload),
+    });
+    // The outcome carries the save's own fields; the reading and the catalog are merged from whatever
+    // the screen holds now, so a catalog that arrived while the write was in flight is not dropped.
+    apply((previous) => ({ ...outcome.state, reading: previous.reading, catalog: previous.catalog, error: previous.error }));
+    if (outcome.saved) toast("Execution policy saved", "ok");
+    // The re-read always starts from the file; a conflict or a lost response keeps the operator's
+    // inputs across it, which is why the outcome carries that flag rather than the caller guessing.
+    if (outcome.reread) readAgain(outcome.rereadKeepsInputs);
   }
 
   return (
@@ -820,6 +818,7 @@ export function PolicyPage() {
         exceptionDraft: (draft) => apply((previous) => screenExceptionDraft(previous, draft)),
         removeException: (id) => propose({ kind: "removeException", id }),
         save: () => void save(),
+        retry: () => { apply(screenRetryRead); readAgain(true); },
         // screenReread clears the drafts that exist now; the read keeps whatever the operator starts
         // after this point, which is why it is asked to keep the inputs rather than to drop them.
         reread: () => { apply(screenReread); readAgain(true); },

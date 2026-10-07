@@ -587,11 +587,20 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       const existing = reading.exceptions.find((row) => row.id === change.id);
       const scope = existing && existing.cwd.length > 0 ? existing.cwd.join(", ") : "the exception's scope";
       items.push(...exceptionRows(`exception ${change.id}`, existing ?? null, null));
-      // An exception that omits role applies to every role, so there is no one role whose default it
-      // returns to: each task under that scope falls back to its own role's default.
-      preview.fallback = existing?.role
-        ? `Removing this exception returns ${scope} to the ${existing.role} role default.`
-        : `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then checked against the allowed list, and a request still citing this exception is refused as unknown.`;
+      // What the removal actually does depends on whether the exception's role has a default to fall
+      // back to. A role with no pair in this file has none: the bridge refuses a request whose role it
+      // does not know (internal/bridge/execution/execution.go role lookup), so removing the only
+      // authorization for that scope leaves it refused rather than falling back. Promising a default
+      // that does not exist would misstate the impact of the change.
+      const role = existing?.role;
+      const declared = role !== undefined && reading.roles.some((entry) => entry.name === role && entry.pairs.length > 0);
+      if (role === undefined) {
+        preview.fallback = `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then checked against the allowed list, and a request still citing this exception is refused as unknown.`;
+      } else if (declared) {
+        preview.fallback = `Removing this exception returns ${scope} to the ${role} role default.`;
+      } else {
+        preview.fallback = `This file declares no ${role} role pair, so ${scope} has no default to return to: a request under that scope is refused until the role is given a pair.`;
+      }
       break;
     }
     default:
@@ -868,6 +877,72 @@ export function unreachableNotice(): PolicyNotice {
 
 /* ---- the screen's state transitions ---- */
 
+/** One policy call's raw answer, as the client returns it. */
+export interface PolicyRawResponse {
+  status: number;
+  body: unknown;
+}
+
+/**
+ * The two calls one save makes, injected so the sequence can be driven without a DOM or a network.
+ * The screen passes the real API client; a test passes a fake that answers with the status and body
+ * under test.
+ */
+export interface PolicyWriteTransports {
+  check: (payload: { expectedDigest: string; change: PolicyChange }) => Promise<PolicyRawResponse>;
+  write: (payload: { expectedDigest: string; change: PolicyChange }) => Promise<PolicyRawResponse>;
+}
+
+/** What one save did: the next state, and whether the caller must re-read. */
+export interface PolicySaveOutcome {
+  state: PolicyScreenState;
+  /** True when the caller must read the policy again. */
+  reread: boolean;
+  /** True when that read keeps the operator's inputs (the conflict and lost-response paths). */
+  rereadKeepsInputs: boolean;
+  /** True when the write succeeded, which is when the caller raises the success notice. */
+  saved: boolean;
+}
+
+/**
+ * runSave is the whole check-then-write sequence, outside React so a test can drive it with a fake
+ * transport. It returns the next state and what the caller must do next rather than performing the
+ * re-read itself, which keeps the two effects (state and read) separable and the sequence testable.
+ *
+ * The check runs first because the server judges the change with the bridge's own parser: a refusal
+ * there is a refusal the write would meet, and sending only an accepted change keeps the two answers
+ * from disagreeing. A refusal or a conflict never reaches the write, so nothing touches the file.
+ */
+export async function runSave(state: PolicyScreenState, transports: PolicyWriteTransports): Promise<PolicySaveOutcome> {
+  const change = state.change;
+  const reading = state.reading;
+  if (!change || !reading || state.saving !== null) {
+    return { state, reread: false, rereadKeepsInputs: false, saved: false };
+  }
+  const started = screenSaveStarted(state);
+  const payload = { expectedDigest: reading.digest ?? "", change };
+  let checked: PolicyCheckResult;
+  try {
+    checked = decodeCheck((await transports.check(payload)).body);
+  } catch {
+    return { state: screenSaveFinished(started, change, unreachableNotice()), reread: false, rereadKeepsInputs: false, saved: false };
+  }
+  if (!checked.valid || checked.stale) {
+    const refused = checkNotice(checked);
+    return { state: screenSaveFinished(started, change, refused), reread: refused.reread, rereadKeepsInputs: refused.keepInputs, saved: false };
+  }
+  let notice: PolicyNotice;
+  try {
+    const answer = await transports.write(payload);
+    notice = noticeForWrite(answer.status, answer.body);
+  } catch {
+    // A lost response is not a lost write: the server finishes registration after it has replaced the
+    // file, so the screen re-reads rather than claiming nothing changed.
+    notice = lostWriteNotice();
+  }
+  return { state: screenSaveFinished(started, change, notice), reread: notice.tone === "ok" || notice.reread, rereadKeepsInputs: notice.tone === "ok" || notice.keepInputs, saved: notice.tone === "ok" };
+}
+
 /** initialScreen is the state before anything has been read. */
 export function initialScreen(): PolicyScreenState {
   return { reading: null, catalog: null, error: null, change: null, allowedDraft: new Map(), allowedNew: new Map(), allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, busy: false, notice: null, repair: null };
@@ -947,13 +1022,21 @@ function changeOwner(change: PolicyChange): string {
   }
 }
 
-/** allowedEntriesOf is the efforts an allowlist row is being edited as: the draft, then the file. */
+/**
+ * allowedEntriesOf is the efforts an allowlist row is being edited as: the draft, then a pending
+ * setAllowed for the same model, then the file. The pending change is consulted because a model the
+ * Add control just proposed has no file row yet, and its row must show (and be able to edit) the
+ * entries the pending change carries rather than an empty list.
+ */
 export function allowedEntriesOf(state: PolicyScreenState, model: string, saved: readonly string[]): string[] {
   // A Map lookup by the exact identifier: a model may legitimately be named "__proto__" or
   // "constructor" (the Go parser accepts any nonempty identifier), and as an ordinary object's key
   // that would read an inherited property rather than the draft.
   const draft = state.allowedDraft.get(model);
-  return draft === undefined ? [...saved] : [...draft];
+  if (draft !== undefined) return [...draft];
+  const change = state.change;
+  if (change?.kind === "setAllowed" && change.model === model) return [...change.efforts];
+  return [...saved];
 }
 
 /** allowedNewOf is the text of a row's "add an effort" field. */
@@ -1073,6 +1156,35 @@ export function draftForException(exception: PolicyExceptionView): ExceptionDraf
   return { id: exception.id, isNew: false, role: exception.role ?? "", model: exception.model, effort: exception.reasoningEffort, cwd: [...exception.cwd], cwdNew: "" };
 }
 
+/**
+ * draftForExceptionEdit opens the editor on an existing exception from the state the screen is
+ * actually showing, not from the file alone. A change already proposed for this id is the operator's
+ * latest intent, so reopening the editor must start from it: rebuilding from the file would show the
+ * values they replaced and the next Apply would silently undo the pending change. When the pending
+ * change is a removal there is nothing to reopen, so the file's values are used.
+ */
+export function draftForExceptionEdit(state: PolicyScreenState, exception: PolicyExceptionView): ExceptionDraft {
+  const change = state.change;
+  if (change?.kind === "setException" && change.id === exception.id) {
+    // The change omits the role when it is unchanged (the server keeps the stored one), so the draft
+    // falls back to the exception's own role exactly as the write would.
+    return { id: change.id, isNew: false, role: change.role ?? exception.role ?? "", model: change.model, effort: change.effort, cwd: [...change.cwd], cwdNew: "" };
+  }
+  return draftForException(exception);
+}
+
+/**
+ * pendingAllowedModel is the model a pending setAllowed is adding that the file does not list yet,
+ * or null. Such a row needs its own editor: the Add control can only propose a first effort from the
+ * union across the policy and the catalog, and without an editor the operator would have to save an
+ * unwanted approval before they could correct it.
+ */
+export function pendingAllowedModel(state: PolicyScreenState, reading: PolicyReading): string | null {
+  const change = state.change;
+  if (change?.kind !== "setAllowed") return null;
+  return reading.allowed.some((entry) => entry.model === change.model) ? null : change.model;
+}
+
 /** draftForNewException opens the editor on a new exception, on a real role and a real model. */
 export function draftForNewException(role: string, model: string, effort: string): ExceptionDraft {
   return { id: "", isNew: true, role, model, effort, cwd: [], cwdNew: "" };
@@ -1147,6 +1259,16 @@ export function screenReread(state: PolicyScreenState): PolicyScreenState {
   // The notice goes, but the repair sentence does not: it is the server's own instruction for the
   // repair, and the block it explains is still in force. screenRepairCleared lifts both together.
   return { ...state, change: null, allowedDraft: new Map<string, string[]>(), allowedNew: new Map<string, string>(), allowedAddModel: "", exceptionDraft: null, notice: null };
+}
+
+/**
+ * screenRetryRead is the retry a failed read offers. It keeps the operator's inputs: the read that
+ * failed was the automatic re-read a conflict or a lost response started, and the promise of that
+ * path is that the inputs survive it. Clearing them here - as the explicit re-read does - would break
+ * that promise at exactly the moment the operator is trying to recover.
+ */
+export function screenRetryRead(state: PolicyScreenState): PolicyScreenState {
+  return { ...state, error: null };
 }
 
 /**

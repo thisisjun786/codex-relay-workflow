@@ -381,3 +381,21 @@ test("an undeclared role row is not editable for the supervisor but is for the p
   assert.equal(byLabel(elements, "supervisor pair controls"), undefined);
   assert.ok(byLabel(elements, "parent pair controls"));
 });
+
+test("a model the Add control proposed gets a row the operator can edit before saving", async () => {
+  const pure = await import("../src/policy-state.ts");
+  // The file lists only A; the catalog adds B. After Add, B is pending and must have its own editor
+  // so its effort set can be chosen before Save rather than after an unwanted approval is stored.
+  const state = loadedState(pure, readingBody({ allowed: [{ model: "anthropic/opus", efforts: ["max"] }] }), catalogBody([{ id: "anthropic/opus", label: "Opus" }, { id: "gpt-6.1-sol", label: "Sol" }]));
+  const first = await mount(state);
+  const add = first.elements.find((el) => el.props["aria-label"] === "Add allowed model");
+  assert.ok(add, "the add control is rendered");
+  fire(add, "onClick");
+  const proposed = first.applied.find((call) => call.name === "propose");
+  assert.ok(proposed, "Add proposes a change");
+  const pending = pure.screenPropose(state as never, proposed?.args[0] as never) as unknown as Record<string, unknown>;
+  const second = await mount(pending);
+  const row = second.elements.find((el) => el.props["aria-label"] === "allowed gpt-6.1-sol (pending)");
+  assert.ok(row, "the pending model gets its own row");
+  assert.ok(byLabel(second.elements, "gpt-6.1-sol allowed effort 1"), "and an editor for its effort");
+});
