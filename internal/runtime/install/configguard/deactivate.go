@@ -201,11 +201,12 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	// The spellings differ. On a case-insensitive filesystem they can still name one directory
 	// entry, and filepath.EvalSymlinks follows links without canonicalising the case of ordinary
 	// components. That is the same target — a rename over it replaces the entry both spellings
-	// name — but a hard link is a DIFFERENT entry a rename would not reach, so it stays refused.
-	// The two are told apart with the identities captured at pin time: the candidate must be the
-	// pinned file, in the pinned directory, and that file must have exactly one directory entry.
-	// The pin itself is proven live by configLockPathsPinHolds above, so the captured directory is
-	// the one the pinned path still names.
+	// name — but a second entry whose name differs only by case (a case-sensitive sibling, or a
+	// hard link) is a DIFFERENT entry a rename would not reach, so it stays refused. The two are
+	// told apart with the identities captured at pin time: the candidate must be the pinned file,
+	// in the pinned directory, and that directory must hold exactly one entry under the folded
+	// name. The pin itself is proven live by configLockPathsPinHolds above, so the captured
+	// directory is the one the pinned path still names.
 	if !strings.EqualFold(filepath.Base(real), filepath.Base(pinned.path)) {
 		return false
 	}
@@ -217,17 +218,41 @@ func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool
 	if err != nil || !os.SameFile(realDir, pinned.dir) {
 		return false
 	}
-	return configLockPathsOneEntry(realFile)
+	return configLockPathsOneFoldedEntry(pinned)
 }
 
-// configLockPathsOneEntry reports whether the file has exactly one directory entry, which is what
-// separates a case-insensitive spelling — one entry the kernel reaches under two spellings — from a
-// hard link or a case-sensitive sibling, two entries a rename over the locked path would not reach.
-// The count comes from the file's own inode, not from reading the directory: a parent directory
-// without read permission still allows the stat, open and rename the restore needs, so enumerating
-// it would refuse a restore the kernel would have allowed (CRW-899's seventh evaluation). A count
-// that cannot be read is not known to be one, so it answers false.
-func configLockPathsOneEntry(info os.FileInfo) bool {
+// configLockPathsOneFoldedEntry reports whether the pinned directory holds exactly one entry whose
+// name folds to the pinned file's name: the entry a case-insensitive spelling reaches. Two entries
+// under that folded name — a case-sensitive sibling or a hard link — are what a rename over the
+// locked path would not reach, so the comparison refuses them. The count is per name, not the
+// inode's link count: a separate hard link under another name leaves the entry the manifest names
+// exactly one, and refusing that alias would fail a restore the kernel would have allowed (CRW-899's
+// eighth evaluation).
+//
+// A directory without read permission cannot be enumerated, yet it still allows the stat, open,
+// create and rename the restore needs, so refusing outright would fail a valid alias (CRW-899's
+// seventh evaluation). The link count is the fallback there: one link means the inode has no other
+// name anywhere, so the spelling names the one entry and the alias is accepted; two or more means a
+// second entry exists that a rename over the locked path would not reach, and the comparison refuses
+// rather than restore under a name the lock does not guard.
+func configLockPathsOneFoldedEntry(pinned *configLockPathsPin) bool {
+	entries, err := os.ReadDir(filepath.Dir(pinned.path))
+	if err != nil {
+		return configLockPathsOneLink(pinned.file)
+	}
+	matches := 0
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), filepath.Base(pinned.path)) {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+// configLockPathsOneLink reports whether the inode has exactly one directory entry. It is the
+// unreadable-directory fallback of configLockPathsOneFoldedEntry; a count that cannot be read is not
+// known to be one, so it answers false.
+func configLockPathsOneLink(info os.FileInfo) bool {
 	if info == nil {
 		return false
 	}

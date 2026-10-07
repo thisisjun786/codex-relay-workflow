@@ -397,11 +397,11 @@ func TestConfigLockPathsRefusesACaseVariantHardLink(t *testing.T) {
 	}
 }
 
-// The entry count that separates a case-insensitive spelling from a hard link comes from the file's
-// own inode, not from reading the directory: a parent without read permission still allows the stat,
-// open and rename the restore needs, so enumerating it would refuse a restore the kernel would have
-// allowed (CRW-899's seventh evaluation, a mode-0300 parent on a case-insensitive filesystem).
-func TestConfigLockPathsOneEntryNeedsNoDirectoryReadPermission(t *testing.T) {
+// The fallback that keeps a case-insensitive alias acceptable when the parent cannot be enumerated:
+// a parent without read permission still allows the stat, open and rename the restore needs, so the
+// comparison must not refuse outright (CRW-899's seventh evaluation, a mode-0300 parent). The link
+// count answers there, and it is per inode, so this test pins only that the fallback reads it.
+func TestConfigLockPathsOneFoldedEntryFallsBackWithoutDirectoryRead(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-0300 directory")
 	}
@@ -415,7 +415,6 @@ func TestConfigLockPathsOneEntryNeedsNoDirectoryReadPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
-	// The directory cannot be enumerated now, but the file's own identity still answers.
 	if _, err := os.ReadDir(dir); err == nil {
 		t.Fatal("the directory was still readable; the test would not prove anything")
 	}
@@ -423,53 +422,57 @@ func TestConfigLockPathsOneEntryNeedsNoDirectoryReadPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !configLockPathsOneEntry(info) {
-		t.Fatal("a file with one directory entry was not recognised without a directory read")
+	if !configLockPathsOneLink(info) {
+		t.Fatal("a file with one link was not recognised without a directory read")
 	}
 }
 
-// The same discriminator on a readable directory: one entry is one entry, and a second name for the
-// same inode is two, so the hard link stays refused where the comparison reaches this check.
-func TestConfigLockPathsOneEntryCountsEveryNameOfTheInode(t *testing.T) {
+// The name-folded count on a readable directory: a separate hard link under ANOTHER name leaves the
+// entry the manifest names exactly one, so the alias stays acceptable; a second entry whose name
+// folds to the same name is what a rename over the locked path would not reach, so it is refused.
+// Counting the inode's links instead would refuse the first case (CRW-899's eighth evaluation).
+func TestConfigLockPathsOneFoldedEntryCountsOnlyTheFoldedName(t *testing.T) {
 	home := configLockActivationHome(t)
 	cfg := filepath.Join(home, "config.toml")
 	activationWrite(t, cfg, deactivationConfig)
-	info, err := os.Stat(cfg)
-	if err != nil {
-		t.Fatal(err)
+	pin := configLockPathsTestPin(t, cfg)
+	if !configLockPathsOneFoldedEntry(pin) {
+		t.Fatal("a file whose name has one entry was reported as having more than one")
 	}
-	if !configLockPathsOneEntry(info) {
-		t.Fatal("a file with one directory entry was reported as having more than one")
-	}
-	if err := os.Link(cfg, filepath.Join(home, "linked.toml")); err != nil {
+	if err := os.Link(cfg, filepath.Join(home, "backup.toml")); err != nil {
 		t.Skipf("this filesystem does not support hard links: %v", err)
 	}
-	info, err = os.Stat(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if configLockPathsOneEntry(info) {
-		t.Fatal("a file with two directory entries was reported as having one")
+	// The extra name does not fold to the pinned name, so the entry the manifest names is still one.
+	if !configLockPathsOneFoldedEntry(pin) {
+		t.Fatal("a hard link under another name made the folded-name count refuse the entry")
 	}
 }
 
-// configLockPathsCaseInsensitiveDir answers a directory whose filesystem folds case: the caller's
-// CRW_899_CASE_INSENSITIVE_DIR when it is set (an ext4 casefold or vfat mount a runner provides),
-// else the test's temporary directory. It skips when the filesystem distinguishes the two
-// spellings, because the acceptance cannot be exercised there.
+// configLockPathsCaseInsensitiveDir answers a directory whose filesystem folds case: a directory
+// this test owns inside the caller's CRW_899_CASE_INSENSITIVE_DIR when it is set (an ext4 casefold
+// or vfat mount a runner provides), else a fresh temporary directory. The probe is created under a
+// name this test makes with os.MkdirTemp, so nothing the caller already keeps in that mount is
+// touched. It skips when the filesystem distinguishes the two spellings, because the acceptance
+// cannot be exercised there.
 func configLockPathsCaseInsensitiveDir(t *testing.T) string {
 	t.Helper()
 	root := os.Getenv("CRW_899_CASE_INSENSITIVE_DIR")
 	if root == "" {
 		root = t.TempDir()
 	}
-	if err := os.WriteFile(filepath.Join(root, "CaseProbe.toml"), nil, 0600); err != nil {
+	dir, err := os.MkdirTemp(root, "caseprobe-")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "caseprobe.toml")); err != nil {
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	probe := filepath.Join(dir, "CaseProbe.toml")
+	if err := os.WriteFile(probe, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "caseprobe.toml")); err != nil {
 		t.Skip("this filesystem distinguishes the two spellings")
 	}
-	return root
+	return dir
 }
 
 // The seventh-generation d1 case, through the public entry point: the manifest names the same config
@@ -515,6 +518,50 @@ func TestConfigLockPathsDeactivateAcceptsACaseVariantUnderAnUnreadableParent(t *
 	r, err := Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
 	if err != nil {
 		t.Fatalf("the deactivation refused a case variant under an unreadable parent: %v", err)
+	}
+	if r == nil || r.NoManifest || len(r.RestoredKeys) != 1 || r.RestoredKeys[0] != "memories.dedicated_tools" {
+		t.Fatalf("the deactivation did not restore the owned key: %+v", r)
+	}
+	if got := activationRead(t, path); strings.Contains(got, "dedicated_tools") {
+		t.Fatalf("the managed key was left behind: %q", got)
+	}
+}
+
+// The eighth-generation d2 case, through the public entry point: the config has a hard-link backup
+// under ANOTHER name, and the manifest names the same entry through a differently cased spelling on
+// a case-insensitive filesystem. A count of the inode's links would see two and refuse a spelling
+// that names the locked entry, leaving the owned key behind; the count must be per folded name, so
+// the separate name does not matter. Skips where the filesystem cannot fold case or hard links.
+func TestConfigLockPathsDeactivateAcceptsACaseVariantWithAHardLinkBackup(t *testing.T) {
+	root := configLockPathsCaseInsensitiveDir(t)
+	home := configLockActivationHome(t)
+	dir, err := os.MkdirTemp(root, "locked-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "config.toml")
+	activationWrite(t, path, deactivationConfig)
+	// A backup under another name: same inode, a name that does not fold to the pinned one.
+	if err := os.Link(path, filepath.Join(dir, "backup.toml")); err != nil {
+		t.Skipf("this filesystem does not support hard links: %v", err)
+	}
+	hash, err := hashOrNull(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: path, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+	fresh := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: filepath.Join(root, strings.ToUpper(filepath.Base(dir)), "CONFIG.TOML"), PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, path)
+	configLockActivationHandover(t, home, stale, func() error {
+		return os.WriteFile(manifestPath(home), fresh, 0o644)
+	}, held.Release)
+
+	r, err := Deactivate(deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} }))
+	if err != nil {
+		t.Fatalf("the deactivation refused a case variant with a hard-link backup: %v", err)
 	}
 	if r == nil || r.NoManifest || len(r.RestoredKeys) != 1 || r.RestoredKeys[0] != "memories.dedicated_tools" {
 		t.Fatalf("the deactivation did not restore the owned key: %+v", r)
