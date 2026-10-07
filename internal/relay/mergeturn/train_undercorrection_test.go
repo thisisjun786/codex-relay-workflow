@@ -645,3 +645,23 @@ func (w *fx) ucCount(query string, args ...any) int64 {
 	}
 	return n
 }
+
+// CRW-906 final round, GLM P1: a head is one commit however it is spelled. merge-turn-request stores the
+// caller's head verbatim, so a head-only turn holding the accepted head in upper case must still resolve
+// to the relationship whose correction is open; comparing raw text would let it pass the lane gate.
+func TestTheLaneGateMatchesAHeadRegardlessOfItsSpelling(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	turn := store.MergeTurnsRow{TurnID: "mtn-spelled", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "  HEAD-A ", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a head-only turn holding the accepted head in another spelling was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "rel-lane") {
+		t.Fatalf("the refusal does not name the relationship: %s", refusal.Detail)
+	}
+}

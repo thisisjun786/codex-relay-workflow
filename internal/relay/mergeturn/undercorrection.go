@@ -95,15 +95,15 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 				identity = "lower(COALESCE((SELECT g.forge_repository FROM dag_acceptance_forge g WHERE g.acceptance_id = a.acceptance_id), a.repository))"
 			}
 			query := "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND a.head_sha = ?"
+				" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
 			args := []any{r.Repository, r.CandidateHead}
 			if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 				return nil, err
 			} else if refreshed {
 				query = "SELECT DISTINCT a.relationship_id FROM dag_acceptances a" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND a.head_sha = ?" +
+					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
 					" UNION ALL SELECT a.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND f.head_sha = ?"
+					" WHERE a.state = 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
 				args = []any{r.Repository, r.CandidateHead, r.Repository, r.CandidateHead}
 			}
 			queries = append(queries, struct {
@@ -202,15 +202,15 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 	// rows outlive the acceptance they were recorded for, and a turn held for a refreshed head would
 	// otherwise resolve to nothing once dag-accept --supersedes replaced the acceptance.
 	query := "SELECT a.relationship_id FROM dag_acceptances a" +
-		" WHERE " + identity + " = lower(?) AND a.head_sha = ?"
+		" WHERE " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))"
 	args := []any{repository, head}
 	if refreshed, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
 		return "", err
 	} else if refreshed {
 		query = "SELECT a.relationship_id FROM dag_acceptances a" +
-			" WHERE " + identity + " = lower(?) AND a.head_sha = ?" +
+			" WHERE " + identity + " = lower(?) AND lower(trim(a.head_sha)) = lower(trim(?))" +
 			" UNION ALL SELECT f.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
-			" WHERE " + identity + " = lower(?) AND f.head_sha = ?"
+			" WHERE " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
 		args = []any{repository, head, repository, head}
 	}
 	query = "SELECT relationship_id FROM (" + query + ") ORDER BY relationship_id LIMIT 1"
