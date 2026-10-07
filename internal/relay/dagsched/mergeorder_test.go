@@ -74,6 +74,7 @@ func (w *sweepWorld) running(nodes ...string) {
 // An optimistic release of an overlap, a measured conflict, and the next pass: the later node is ordered after the earlier one, with the observation it rests on, in the reading and in the recorded pass; the
 // children are not stopped and the node's own state, disposition, reason and detail do not change.
 func TestObservedConflictOnAnOptimisticOverlapBecomesAMergeOrderConstraint(t *testing.T) {
+	t.Parallel()
 	w := orderWorld(t)
 	k := w.k
 	// before the release: E is a candidate released as local-optimistic against D
@@ -183,6 +184,7 @@ func TestObservedConflictOnAnOptimisticOverlapBecomesAMergeOrderConstraint(t *te
 
 // No constraint where nothing asks for one: a clean latest measurement, a conflict every covering pair of regions settles by a rule, no measurement at all. One that a local pair of regions leaves open is kept.
 func TestMergeOrderNeedsAConflictNoRuleSettles(t *testing.T) {
+	t.Parallel()
 	union := func(path string) Region {
 		return Region{Repository: "owner/repo", Path: path, Kind: "file", Change: "edit", Grade: "mechanical", Rule: "union"}
 	}

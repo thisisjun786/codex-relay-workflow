@@ -10,6 +10,7 @@ import (
 // row of the resulting store checked against the golden, which began as the Python run of the same
 // fixture.
 func TestQA_emit_deliver_claim_ack_round_trip_rows_equal_python(t *testing.T) {
+	t.Parallel()
 	tree := parityTree(t)
 	expected := expectScenario(t, tree, "qa")
 	f := newFixture(t, tree)

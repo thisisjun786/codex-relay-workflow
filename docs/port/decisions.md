@@ -5663,3 +5663,1556 @@ Only `docs/port/decisions.md` changes: one section at its end. No product code, 
 workflow, contract file, golden, skill document or `plugin.json` changes, and no ruleset,
 repository setting or branch is touched. The implementation, the merge-lane scripts, the CI
 workflow, the rulesets, `POLICY.md` and the test leg rebalance ship as the follow-ups above.
+
+### Correction: the bundle lands as one merge commit and one CI run (CRW-768, Jun 10-06 18:1x·18:2x, management 18:5x)
+
+The strict conclusion above stands, but the shape of the landing changed after this section was
+written, and the two passages of section 81 it named as the reason to keep a small cap are
+superseded. A train is no longer a chain of per-member prefix trees that each earn their own
+`dev-gate`: the lane now builds **one bundle pull request** over the verified members, runs **one**
+full CI on its single tree, and lands it as **one merge commit**. The bundle's size is uncapped — k
+members cost one run, not k, so the runner limit that capped a train at 3 or 4 no longer applies.
+
+What that replaces, in the two passages:
+
+- Section 81's "keep k = 2" is replaced by **no count cap and one bundle merge commit** (one CI run).
+  The cap existed to bound the number of prefix trees that each needed a green `dev-gate`; one
+  bundle tree needs one, whatever the size.
+- Section 81's "do not take option 1" is replaced by **the light mode with the crw-lane full run**
+  (the temporary CI light mode, CRW-790): a pull request the merge lane has not labeled `crw-lane`
+  skips the go-product test legs' work while the job still concludes success, and the label — and
+  every later push while it stays — runs them in full. The bundle pull request carries `crw-lane`,
+  so its one run is a full one.
+
+The commands (CRW-768, `internal/relay/mergeturn/train.go`) are `merge-train-open`,
+`merge-train-verify`, `merge-train-land`, `merge-train-close` and `merge-train-show`. The relay
+reads the pull request, the run, the jobs, the commits and the ancestry from the forge itself, and
+the chain from the given checkout; the caller's values are compared and never trusted (the
+second-generation correction condition). The member conditions are: the leader is the holding turn
+and its pull request is the first member; every other member has a waiting turn on the same target
+of any parent; members are given in the order the plan's edges require, with no count cap; a
+duplicate, an order against a plan edge, a member head that is not the accepted head, and a base
+other than the forge's dev tip are `disposition_conflict` with no event. `merge-train-verify`
+reads the open `crw-lane` bundle pull request on dev and this repository's `ci.yml` run for its
+head, requires every expected job (one named list, pinned to `ci.yml`) to be a success on the newest
+attempt, requires every go-product `test-*` leg's `Test and replay the contract corpus` step to have
+concluded success (a skipped or absent test step is `disposition_conflict`), and proves in the
+checkout that the head's first-parent chain down to the base is one two-parent merge per member in
+order whose second parent is that member's accepted head and whose tree is what `git merge-tree
+--write-tree` merges from its parents (the tree-identity rule of `crw skill base-refresh check`).
+`merge-train-land` requires the forge's dev tip to be the merge commit M whose parents are the base
+D and the verified head H and every member's accepted head an ancestor of M, then records every
+member turn landed with M. The per-member mapping (the relationship, the ruled event, the head fixed
+at the ruling, the accepted head, the member head in the train, the order, the base, the combined
+head, the final tree and M) is recorded in the verify and land event details in the common format
+the delivery-record work also reads.
+
+The failure handling: a member touching a failed job's packages is removed and the rest re-bundled;
+when no member can be named the bundle is halved with a predecessor and its successors kept on the
+same side; a set that failed twice goes one by one; a removed member rides alone; a train whose base
+moved outside the lane is abandoned and reopened.
+
+**Section 79 (a)'s tree-keyed reuse is cancelled in this design** (CRW-766, Canceled): a bundle pull
+request runs the full CI on its final tree once and lands as one merge commit, so no per-member
+prefix reuse path remains. The existing full merge CI and the body-edit mirror (CRW-779, CRW-821)
+stay as they are.
+
+One appended zone statement carries decision 9: a `merge_trains_train_id_not_null` `BEFORE INSERT`
+trigger after the CRW-767 merge-train triggers, so a NULL `train_id` is refused at the door. No
+shipped statement is edited and an existing NULL row is never deleted or rewritten; no train command
+reads it, because every reader addresses a train by a non-empty id.
+
+## 80. CRW-185's completion criteria and its 2026-10-01 research rows, judged against the built DAG scheduler (CRW-762)
+
+Decision (design only, 2026-10-06): the DAG plan store and the DAG scheduler satisfy CRW-185's six
+completion criteria and seven of the eight rows its 2026-10-01 research table added. The eighth row
+is partly met: the cap on repeated retries of one packet exists at the transport and merge-lane
+layers, and the node-level stagnation counter and the local repair ladder it was meant to open are
+not built. The six criteria and the seven met rows are recorded here with the code and the tests
+that carry them; the partly met row becomes one implementation slice. This section judges only
+invariants a record and a test can show — duplicate children 0, wrong releases 0, live children
+recreated 0, merged nodes rerun 0, over-invalidation 0, a missing value never an empty success — and
+it claims no exactly-once for the whole path, as CRW-185's own verification section says. It changes
+no product code, test or contract file.
+
+### How each item was judged
+
+The source is the tree at baseline `50915cfdeb633062704c313e944ccaaad738046a`. Every anchor below is
+a file, a function and a line in that tree, and every test name is a Go test that runs in `make test`
+on the hosted CI of this pull request. The contract is read by section, not by the line numbers it
+cites at `71d1dcf5`: CRW-183 and CRW-184 recorded only offset moves in the sections they consumed,
+the resolutions of CRW-284, CRW-410, CRW-411, CRW-446, CRW-447 and CRW-468 are recorded in
+[the scheduler's D-19 section](../relay/dag-scheduler.md#where-the-code-reads-the-contract-d-19), and
+the `dag` and `dagsched` code is new since the contract was written. Where an item is met, no slice
+is made and only the evidence is written; where part of it is not, what is missing is named and the
+smallest red test that would show it is described.
+
+Most of what CRW-185 asks for was built by the DAG scheduler and by the plan store that precedes it,
+and this section deliberately makes no slice out of the parts that already hold: the plan store
+([decision 74](#74-the-dag-zone-is-created-after-the-frozen-schema-is-validated-crw-183-contract-decision-d-01)),
+the release and ready path, invalidation and the stale routes, the coordinator epoch, withdrawal and
+the forge-target acceptance ([decision 77](#77-implementation-dag-acceptances-use-forge-targets-a-missing-pr-reader-refuses-comparison-crw-603),
+[decision 78](#78-dag-accept-proves-a-parent-made-refresh-of-the-verified-head-before-it-is-accepted-crw-666)).
+
+### The six completion criteria
+
+**C-1. Duplicate, out-of-order and late events, and a lost acknowledgement, are reconciled by event,
+relation, generation and revision; a transport retry keeps the same execution and creates no second
+child or implementation generation — met.**
+
+A release request id is derived from the plan, the node and the manifest digest alone, with no
+attempt counter, so a repeated `dag-release` is the same request (`ReleaseRequestID`,
+`internal/relay/dagsched/digest.go:155`); `dag_releases` is keyed on
+`(plan_id, node_id, manifest_digest)` (`internal/relay/store/dag_zone.go:159-167`), so a duplicate
+wake cannot open a second release; and a replay continues the frozen intent without re-running the
+reading (`Scheduler.replay`, `internal/relay/dagsched/release.go:558`; `Scheduler.startAndBind`,
+`:650`). The relay's own delivery layer already reconciles duplicates, order and a lost
+acknowledgement by event, relation, generation and revision: a generation is unique per
+`(relationship_id, dispatch_request_id)` (`contract/schema/relay-sqlite.sql:34-41`), a superseded
+generation's deliveries are annotated rather than rewritten, and an out-of-order report is refused
+`stale_generation` or `superseded_revision` (`internal/relay/delivery/currency.go`;
+`internal/relay/delivery/ack.go`). This is the part CRW-185 does not rebuild, and the DAG reuses it.
+
+Tests: `TestReleaseDuplicateWake` (`release_test.go:66`), `TestReleaseCreationRace` (`:90`),
+`TestReleaseLostCreationResponse` (`:137`), `TestReleaseBindFailureRecovers` (`:164`),
+`TestReleaseReplayAfterTheSlotWasReturned` (`:254`),
+`TestReleaseReplayOfAReleasedRequestReclaimsNoSlot` (`:314`),
+`TestReleaseAfterCloseCreatesOneChildUnderRace` (`release_recovery_test.go:574`),
+`TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_request`
+(`internal/relay/delivery/delivery_b_test.go:12`),
+`TestSUP07_an_older_generation_is_never_sent` (`internal/relay/delivery/supersession_test.go:248`),
+`TestReceiptIntake_python_duplicates_generations_and_scope`
+(`internal/relay/store/receipt_intake_test.go:196`). Documents: [the scheduler](../relay/dag-scheduler.md)
+"What a replay does not repeat" and "Recovering an abandoned release"; [DAG plans](../relay/dag-plans.md)
+"The log".
+
+**C-2. A stop before or after the intent, before or after the creation response, before or after the
+result is stored and before or after the ruling is reproduced; a live child is adopted and a lease
+that ran out never reassigns it; an unknown external effect is not run again before the receipt has
+been reconciled — met.**
+
+`Scheduler.Restart` (`internal/relay/dagsched/epoch.go:367`) reads the picture from the store and
+names, per node, one of `adopt`, `adopt_needed`, `reconcile`, `needs_operator` or `none`;
+`Scheduler.Adopt` (`:208`) binds the successor to the node as a `parent_handover` execution
+without creating anything; `Scheduler.ClaimEpoch` (`:51`) raises the plan's epoch, and the fence
+(`:27`) refuses a stale session's writes. A creation whose outcome is unknown is `blocked:creation_unknown`
+and is resolved by repeating the same request, never by a new one, and a merge turn whose effect is
+unknown is `blocked:effect_unknown` and is resolved by observation. Time is not an observation.
+
+Tests: `TestRestartOfTheSameTaskAtEveryBoundaryOfARelease` (`epoch_restart_test.go:36`),
+`TestRestartOfTheSameTaskAfterTheResultAndTheRuling` (`:166`), `TestTimeReassignsNothing` (`:259`),
+`TestUnknownEffectsAreNotRerun` (`:297`), `TestAReplacementParentAdoptsTheLiveChild` (`:380`),
+`TestAReplacementParentNamesWhatItCannotRecover` (`:569`),
+`TestRestartReadsTheFrozenRequestOfARecoveredIntent` (`epoch_recovered_test.go:12`),
+`TestReleaseCreationUnknownLegacyProfiles` (`release_creation_unknown_test.go:246`),
+`TestUnknownEffectsAreNotRerun` again for the merge turn. Documents: [the scheduler](../relay/dag-scheduler.md)
+"A creation whose outcome is unknown", "A standby interrupted by a restart", "Restart and adoption".
+
+**C-3. A plan revision marks the affected nodes and their descendants stale; an earlier generation
+that is still running is not used as a later result and passes a safe reconciliation boundary; the
+reason a node is reused is recorded for input, artifact, code, skill and model/policy revision — met.**
+
+The reading derives staleness from the plan, the acceptances and the manifests every time it is
+computed and stores nothing: seeds are found by `seedOf` (`internal/relay/dagsched/invalidation.go:155`)
+and `staleInput` (`:220`), the closure is the seeds and what lies below them (`prepare`, `:256`),
+and a node that already landed is never stale (`landedNode`, `:312`). A descendant is judged by
+value: it is rebuilt as it consumed (`rebuildAsConsumed`, `:374`) and its manifest digest is compared
+with the one its acceptance consumed (`judgeBelow`, `:428`), so a change above it that does not move
+what it consumed does not make it stale. An acceptance is taken only on the head of the relationship's
+current generation (`verifiedHead`, `internal/relay/dagsched/accept.go:103`; `Scheduler.accept`,
+`:204`), so an earlier generation's result is never used as a later one. The reason a result is reused
+is the manifest itself: the slice digest, the criteria digest, the consumed acceptance and head values,
+the base, the volatile snapshots and the rule version (skills digest, model, effort, prompt template,
+relay build) are recorded and compared; the rule version is recorded but, by contract 4.1, is
+deliberately not an invalidation seed unless a plan revision says so.
+
+Tests: `TestSharedRootInvalidationMarksOnlyDescendants` (`invalidation_test.go:133`),
+`TestEdgeChangesSeedTheNodeTheyPointTo` (`:184`), `TestCriteriaChangeIsStaleUntilTheOutputIsReverified`
+(`:232`), `TestSliceAndCriteriaChangedTogetherStillHoldsBackTheNodesBelow` (`:263`),
+`TestStaleSurvivesTheRepairOfItsSeed` (`:287`), `TestStalePredecessorOpensNoEdge` (`:314`),
+`TestIntegratedNodeIsNeverStale` (`:543`), `TestDecisionEdgeBelowASeed` (`:719`),
+`TestAStaleResultIsNotJudgedForMerge` (`invalidation_gates_test.go:35`),
+`TestAConsumerOfAStaleIntegratedResultIsStaleToo` (`:176`). Documents: [the scheduler](../relay/dag-scheduler.md)
+"Invalidation", "Edge satisfaction".
+
+**C-4. When only the criteria changed the same output is re-verified; when the output has to change a
+correction generation is made; an unrelated sibling's valid result and cost records are preserved — met.**
+
+The route is derived from the stale reading and is never stored (`Scheduler.routeStale`,
+`internal/relay/dagsched/revalidation.go:294`; `routeOf`, `:300`; `StaleActions`, `:41`): a
+criteria-only change is `revalidate`, and `dag-accept` records a revalidation of the same acceptance
+in `dag_acceptance_revalidations` with no second acceptance, generation or child; a node whose own
+output must be reworked on an active relationship is `correct`, and `dag-correct` binds the manifest the child was told
+(`CorrectionInstruction`, `internal/relay/dagsched/correction.go:28`; `PrepareCorrection`, `:47`;
+`RecordCorrection`, `:183`) as the next generation of the same relationship. What a node's siblings
+keep is whatever neither route touches: a revalidation writes one revalidation row and a correction one
+execution row, both for the node asked about. The same reading derives two further routes and this
+decision leaves them as they are: `hold` when the node rests on a stale predecessor, an input is not
+there, the node or the plan is paused or a correction of it is already open, and `redefine` when the
+relationship has ended, so there is no child to correct. They change nothing here and no node is
+released by them.
+
+Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidation_test.go:208`),
+`TestRevalidationIsRefusedWhenTheOutputMustBeReworked` (`:261`),
+`TestOutputReworkGoesToTheSameChildAsANewGeneration` (`:339`),
+`TestStaleRouteFollowsTheCause` (`:575`),
+`TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand` (`:774`),
+`TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor` (`:860`),
+`TestCorrectionBindsTheManifestNamedInTheRestorationBlock` (`correction_test.go:55`),
+`TestCorrectionDoesNotBindWhatTheChildWasNotTold` (`:99`). Documents: [the scheduler](../relay/dag-scheduler.md)
+"Handling a stale node", "Three ways to open the generation".
+
+**C-5. Pause, cancel and archive stop new assignment and automatic wake and reconcile the in-flight
+state; a cancel is never shown as a completed rollback — met.** The two holds are separate and each
+stops what it owns: a node's or the plan's hold stops the scheduler's work on the node, and the
+*relationship's* pause is what withholds automatic wake in the delivery layer. A plan-level hold is
+not a delivery fact and withholds no wake; it stops the release, the acceptance, the correction and
+the merge-lane call for every node of the plan.
+
+A node's or the plan's hold is a plan revision and is read by the scheduler before the edges, so a held
+node is never a candidate (`internal/relay/dag/lifecycle.go:41`, `:75`, `:107`;
+`internal/relay/dagsched/lifecycle.go:26`, `:36`, `:106`), and the reasons are the closed
+`defer:plan_paused`, `defer:node_paused`, `skip:node_cancelled` and `skip:node_archived`.
+Cancelled and archived are final states that nothing in the plan moves a node out of, so a cancel is
+never reverted and a landing already observed stays observed. The commands that advance a node are
+refused while the plan holds it, and the refusal is made again inside each command's transaction and
+again just before the managed start (`lifecycleOpen`, `:120`; `releaseGate`, `:209`). Automatic
+wake is the relationship's own fact and is withheld by the delivery layer for a paused relationship
+(`WithheldPreSend` and `RelationshipNotActive`, `internal/relay/delivery/service.go:1149`), which
+the plan change does not touch.
+
+Tests: `TestAPausedNodeOrPlanIsNotOfferedAndResumeOffersItAgain` (`lifecycle_test.go:90`),
+`TestReleaseRefusesAPausedNodeAndAPausedPlan` (`:140`),
+`TestDescendantsOfACancelledOrArchivedNodeAreNeverReleased` (`:172`),
+`TestACancelIsNeverReverted` (`:222`), `TestCancellingALandedNodeDoesNotRevertTheLanding` (`:253`),
+`TestAChildThatReportsAfterAPauseReleasesNoSuccessor` (`:275`),
+`TestAPauseDoesNotInvalidateAnAcceptance` (`:324`), `TestPauseAndCancelKeepTheExecutionSlot` (`:344`),
+`TestAPauseThatLandsBetweenTheReadAndTheTransactionIsCaught` (`:542`),
+`TestTheDescendantsOfAnEndedNodeAreBlockedThroughWhatTheyConsumed` (`:626`),
+`TestAPauseThatLandsBeforeTheManagedStartStopsTheChild` (`:746`),
+`TestANodeThatLeftThePlanIsNotStartedOrCorrected` (`:832`),
+`TestAnAbandonedReleaseOfAHeldNodeIsClosedButNotReleasedAgainUntilResumed` (`lifecycle_recovery_test.go:21`),
+`TestNodeLifecycleTransitions` (`internal/relay/dag/lifecycle_test.go:61`),
+`TestATamperedLifecycleChangeIsTheHostsFailure` (`:250`). Documents: [DAG plans](../relay/dag-plans.md)
+"Pause, resume, cancel and archive"; [the scheduler](../relay/dag-scheduler.md) of the same name.
+
+**C-6. The atomic boundaries of graph state, relation and verdict agree with the replay result, and an
+error is never turned into an automatic success or an empty output — met.**
+
+A revision is one store transaction (`Repo.Put`, `internal/relay/dag/repo.go:230`, `BEGIN IMMEDIATE`),
+so it is visible whole or not at all; the zone's triggers abort an UPDATE or DELETE of a plan, a
+revision, a node or an edge, and `UNIQUE(plan_id, parent_revision_no)` keeps the chain from branching
+(`internal/relay/store/dag_zone.go`). A reader recomputes every slice digest and the state digest from
+the rows it read in one snapshot (`verifiedState`, `repo.go:443`; `verifySlices`, `:466`) and a
+plan that does not agree with itself is the host's failure, never a partial plan; `--verify` replays
+the whole log (`VerifyLog`, `:532`; `Replay`, `internal/relay/dag/fold.go:544`) and requires the
+rows to be what it produces. A writer makes the same checks inside its transaction (`Preflight`,
+`repo.go:620`), and the scheduler's manifest path is explicit that a missing, mismatched or altered
+input is never an empty success ([the scheduler](../relay/dag-scheduler.md) "Input manifest").
+
+Tests: `TestKilledDuringTheFirstRevisionLeavesNoPlan` (`crash_test.go:60`),
+`TestKilledDuringALaterRevisionKeepsTheLastCommittedOne` (`:83`),
+`TestReplayFromEmptyAndFromAnySnapshotReachesTheHead` (`replay_test.go:24`),
+`TestReplayRefusesWhatALogCannotContain` (`:97`),
+`TestReaderRecomputesDigestsAndNeverReturnsAPartialPlan` (`:126`),
+`TestAnAbsentPlanOrRevisionIsRefusedNotEmpty` (`:196`), `TestReadIsOneSnapshot` (`:229`),
+`TestPutRefusesATypedRevisionThatADocumentWouldBeRefusedFor` (`integrity_test.go:19`),
+`TestAWriteNeverTrustsRowsThatDisagreeWithTheLog` (`:76`),
+`TestACommandNeverTrustsRowsThatDisagreeWithTheLog` (`:107`),
+`TestRaceWritersOnOneParent` (`repo_test.go:292`), `TestRaceTheSameRequest` (`:351`),
+`TestForkJoinEndToEnd` (`dagsched/endtoend_test.go:181`). Documents: [DAG plans](../relay/dag-plans.md)
+"The log", "Events, cursors and snapshots".
+
+### The eight rows of the 2026-10-01 research table
+
+**R-1. Invalidation is `descendants(seeds)` only (over-invalidation 0) — met.** `prepare`
+(`invalidation.go:256`) collects the seeds and then walks only downwards from them; a node outside
+that closure is judged as before. `TestSharedRootInvalidationMarksOnlyDescendants`
+(`invalidation_test.go:133`) is the shared-root shape the row names (the Airflow #73710 pattern), and
+it asserts the sibling and the root keep their acceptances. Documents: [the scheduler](../relay/dag-scheduler.md)
+"Invalidation"; [DAG plans](../relay/dag-plans.md) "Digests".
+
+**R-2. Staleness is judged by comparing consumed values only, and a predicate that includes
+`integrated` is invariant under an unrelated move of `dev` (unnecessary reruns 0) — met.**
+`judgeBelow` compares the rebuilt manifest's digest with the consumed one, and
+`rebuildAsConsumed` takes the base, the volatile snapshots, the rule version and the times from the
+consumed manifest, so a `dev` that moved and a clock that advanced never change the digest
+(`invalidation.go:374`, `:428`). Containment is monotone, so an unrelated merge changes no answer;
+the integrated predicate takes the earliest positive observation of the current containment run.
+Tests: `TestUnrelatedDevMoveChangesNothing` (`invalidation_test.go:470`),
+`TestALandedTipOfTheSameRunIsNotAChangedInput` (`:580`),
+`TestALandingOfAnEarlierRunIsAChangedInput` (`:646`), `TestStaleReadingIsDeterministic` (`:337`).
+Documents: [the scheduler](../relay/dag-scheduler.md) "Invalidation" (Judgement by value, Containment
+does not follow dev) and "Edge satisfaction".
+
+**R-3. A red is re-verified against the existing output before a rerun, and a criteria-only change is
+re-verified (the existing criterion) — met.** The `revalidate` route rules the same output again under
+the plan's criteria and records a revalidation instead of a new generation
+(`revalidation.go:294`, `:41`; `dag_acceptance_revalidations`), and the relay's re-review path does
+the same for a criteria change on an accepted head (`internal/relay/delivery/ack.go`, re-review).
+Tests: `TestCriteriaOnlyChangeRevalidatesTheSameOutputWithoutARerun` (`revalidation_test.go:208`),
+`TestCriteriaRolledBackAfterAReverificationIsStillStale` (`invalidation_gates_test.go:131`),
+`TestAMergedNodeIsRevalidatedNotRerunAfterACriteriaChange` (`revalidation_test.go:677`).
+Documents: [the scheduler](../relay/dag-scheduler.md) "Handling a stale node" and "Three ways to open
+the generation". The row's indicator (the share of reds resolved by re-verification) is not printed by
+`dag-measurements`: it is a record-only input of the comparison issue and is listed under "What this
+section does not claim" below.
+
+**R-4. A running child is pinned to the dispatch manifest, the manifest is compared when the report
+arrives, and a correction goes to the same child (live children recreated 0) — met.** A release freezes
+its exact request bytes and its manifest (`Scheduler.assemble`, `release.go:480`; the frozen copy under
+the child's artifact root), the acceptance is judged against the manifest the node consumed, and a
+correction binds the manifest the child was told as the next generation of the same relationship
+(`correction.go:28`, `:47`). Tests:
+`TestCorrectionBindsTheManifestNamedInTheRestorationBlock` (`correction_test.go:55`),
+`TestCorrectionDoesNotBindWhatTheChildWasNotTold` (`:99`),
+`TestOutputReworkGoesToTheSameChildAsANewGeneration` (`revalidation_test.go:339`),
+`TestCorrectionReachesTheChildThroughTheRealVerdictWriter` (`audit_wp5_test.go:239`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Releasing a node" and "Input manifest";
+[DAG plans](../relay/dag-plans.md) "The revision document".
+
+**R-5. A merged node is not rerun; a successor node in a new revision carries the change (merged nodes
+rerun 0) — met.** `landedNode` (`invalidation.go:312`) makes a node that landed in every target never
+stale (contract E-20), `dag-release` of it replays or is refused, and `dag-correct` refuses it in both
+steps whatever kind a later revision gives it. Tests: `TestIntegratedNodeIsNeverStale`
+(`invalidation_test.go:543`), `TestMergedNodeIsNeverRerunWhenItsUpstreamChanges`
+(`revalidation_test.go:485`), `TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes` (`:711`),
+`TestStaleResultNeverOpensAnIntegratedEdge` (`stale_test.go:69`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Invalidation" (a node that landed is never
+stale) and "Handling a stale node".
+
+**R-6. A restart reconstructs from the store, adopts a live child, never reassigns on a lease that ran
+out, and raises the epoch (adopt against recreate) — met.** `Scheduler.Restart` (`epoch.go:367`) is a
+function of the store alone and reads no clock; `Scheduler.Adopt` (`:208`) binds the successor
+without creating anything; `Scheduler.ClaimEpoch` (`:51`) raises the epoch and the fence (`:27`)
+refuses the replaced session's writes. Tests:
+`TestRestartOfTheSameTaskAtEveryBoundaryOfARelease` (`epoch_restart_test.go:36`),
+`TestTimeReassignsNothing` (`:259`), `TestAReplacementParentAdoptsTheLiveChild` (`:380`),
+`TestAdoptRefusals` (`:519`), `TestAForeignSlotIsNotReturnedAsItsHolder` (`:468`).
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Restart and adoption" and "The coordinator
+epoch".
+
+**R-7. A verifier flake is separated (reassignments caused by a flake 0) — met.** A required check that
+failed once on the exact head is retried on the same SHA (`retry_same_sha`), and a second, different
+failure evicts the head for good; no generation and no reassignment is made either way
+(`internal/relay/dagsched/mergejudge.go:71`, the rule list; `internal/relay/dagsched/mergechecks.go:250`,
+`:306`). The judgement history in `dag_merge_checks` is the flake ledger the row asks for: each
+judgement keeps the round, the sequence and the failed required checks, and an eviction survives a
+fresh acceptance of the same head. Tests:
+`TestMergeEligibilityRetryOnceThenEvict` (`mergejudge_test.go:79`),
+`TestEvictionSurvivesAFreshAcceptanceOfTheSameHead` (`:387`),
+`TestEvictionIsOfTheCommitNotOfTheSpellingOrThePullRequest` (`:478`),
+`TestAReadingInFlightWhileAnotherJudgementLandsIsDiscarded` (`:708`). Document:
+[the scheduler](../relay/dag-scheduler.md) "Merge eligibility".
+
+**R-8. A stagnation counter opens a local repair ladder (a cap on repeated retries of the same
+packet) — partly met.** The cap half holds: a delivery's attempts are bounded
+(`RetryPolicy.MaxAttempts` 6, `BusyMaxAttempts` 40, `MaxSendsPerRelationshipPerHour` 12;
+`internal/relay/delivery/policy.go:47`), the hold reasons are the closed `attempt_cap`, `busy_cap`
+and `hourly_cap` (`policy.go:7`, `:16`; `TestDEL13_flood_bounds_cap_attempts_and_pace_sends`,
+`internal/relay/delivery/delivery_b_test.go:74`), and the merge lane spends exactly one retry before
+it evicts (R-7 above). The ladder half does not: nothing counts a node's repeated findings, repeated
+CI failure signatures or a progress window that has gone quiet, and no reading names a rung. The
+coordinator's procedure says so deliberately for review rounds
+(`plugins/crw/skills/crw-run/references/reevaluation.md:78`, "There is no review-round escalation
+value, and that is deliberate"). The CXC loop port has a per-phase stagnation cap
+(`port/cxc/skills/crw-loop/references/runtime-lifecycle.md:83`) but it is a different, not yet
+activated surface and covers no DAG node.
+
+Documents: [the scheduler](../relay/dag-scheduler.md) "Merge eligibility" (the one retry before an
+eviction) and the coordinator's reevaluation page,
+`plugins/crw/skills/crw-run/references/reevaluation.md:78`, which records the deliberate absence of
+a review-round escalation value.
+
+### What remains: one slice
+
+Only R-8 leaves work. The slice below is written the way the follow-ups of
+[decision 79](#79-a-merge-train-reuses-a-proven-tree-it-never-weakens-the-strict-gate-crw-725) are: it
+names the functions and signatures, the appended zone statement, the reasons it reuses, the red test
+it writes first and its region, and it is not implemented here.
+
+**S-1. A node's stagnation counter and the closed repair ladder (one region,
+`internal/relay/dagsched`, about 150-260 product lines plus about 200-320 test lines).**
+
+*Signatures.*
+`func (s *Scheduler) Stagnation(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stagnation, error)`,
+with `type Stagnation struct { NodeID string; Count int; Cause string; Rung string; Next string; FindingDigest string; LastEventID string }`
+and a closed `Cause` set `repeated_finding | repeated_check_failure` and a closed `Rung` set
+`retry_same_packet | edit_packet | split_node | neighbour_repair | full_replan`, mirroring the ladder
+the research report names. The counter is read from rows the store already keeps and adds no writer
+for them: a node's correction generations (`dag_node_executions`, kind `correction`) with the finding
+each ruling carried, its merge-check history (`dag_merge_checks`, `round` and the failed required
+check names) and its revalidations (`dag_acceptance_revalidations`). The reading carries an optional
+`stagnation` object beside `release` and `merge_order` on a node whose count has reached the
+threshold, and `pass.stagnation` counts the nodes at each rung. The threshold is 2: one correction
+is not repetition, and the object appears once the same finding has been carried by two consecutive
+corrections of the node, so it is absent from a reading of a plan nobody has corrected twice, exactly
+as `lifecycle` and `plan_state` are absent when they do not apply.
+
+*Where the finding identity comes from.* A correction generation's finding is the ruling that opened
+it: `RecordCorrection` reads `verdict_context.findings` of the `needs_changes` verdict whose
+`next_generation` is this generation (`internal/relay/dagsched/correction.go:264-275`), the same join
+`restorationDigest` parses (`:381`). The slice digests the finding entries that are not the
+restoration block — the entries carry an `id` and a `note` — with the relay's canonical-JSON sha256,
+and takes that as the generation's finding identity, so two corrections of one node share an identity
+exactly when the ruling carried the same findings. The restoration entry is excluded because its note
+carries this generation's manifest digest, which differs every round; that is why the identity is
+taken over the remaining entries rather than over the whole text. A generation the coordinator opened
+by hand has no ruling and no findings at all (`recordHandOpened`,
+`internal/relay/dagsched/revalidation.go:103`; [the scheduler](../relay/dag-scheduler.md) "Three ways
+to open the generation"), so it raises no `repeated_finding` count and is counted only as a correction
+generation; a correction whose ruling carried no findings reads the same way.
+
+*Zone.* No statement is appended: the counter is a reading of rows the zone already holds
+(`dag_node_executions`, `dag_merge_checks`, `dag_acceptance_revalidations`, `verdict_context`), so it
+is derived like every other node state and clears by itself when the cause is repaired, exactly as
+invalidation does. If a later issue needs a rung to survive the rows it was read from, its table would
+be appended as a new `CREATE ... IF NOT EXISTS` and would reach the swap gate as `EXTENDS_ZONE` with
+`--backup-state-to`, like the region grades and the other side tables
+([decision 74](#74-the-dag-zone-is-created-after-the-frozen-schema-is-validated-crw-183-contract-decision-d-01));
+no shipped statement is edited either way.
+
+*No clock.* The reading reads no clock — it is a function of the store, and `Ready`'s own comment says
+so (`internal/relay/dagsched/ready.go:42-43`) — so a cause that needs an elapsed-time boundary is not
+in this slice. `dag-ready` and `dag-release` read the host once per command for the memory bound and
+record that they did; a quiet-window cause would need the same explicit measured instant rather than a
+clock inside the reading. The two causes above are derived from stored rows alone.
+
+*Reasons.* No new refusal or reading reason, and no writer. The ladder's rungs are actions the parent
+already has — `dag-correct` for `edit_packet`, a plan revision with `replace_node` for `split_node`
+and `neighbour_repair`, and a plan revision for `full_replan` — so the reading names a rung and stops
+naming one past `full_replan`; nothing is refused and nothing is written, because a reading that
+mutated the ladder would make two `dag-ready` calls differ, and the object is advisory like the
+merge-order constraint. If a later issue needs a rung to be refused rather than merely named, that
+refusal would reuse the existing `disposition_conflict` with the rung and the count in the detail, as
+the stale routes and the merge lane already refuse.
+
+*Red first.* `TestARepeatedFindingRaisesTheStagnationCountAndOpensTheNextRung` in a new
+`internal/relay/dagsched/stagnation_test.go`: correct one node twice for the same finding digest and
+assert the reading raises `count` to 2 and names `edit_packet`, then a third time and assert it names
+`split_node`; green controls where the second correction carries a different finding and the count
+resets, where a generation the coordinator opened by hand raises no repeated-finding count, where a
+node that landed reads no stagnation object, and where a fourth correction past `full_replan` leaves
+the rung at `full_replan` and writes nothing. A second red test covers the cap:
+`TestTheStagnationLadderStopsAtFullReplan`, which asserts the same: the rung stops at the last one
+and the reading stays a function of the store. Neither test asserts a refusal, because this reading
+refuses nothing; a later issue that wants the last rung to be refused would add it where the
+triggering command runs, with the existing `disposition_conflict`.
+
+*Not in this slice.* The transport caps of R-8 (`internal/relay/delivery/policy.go`) are unchanged,
+the progress view that CRW-186 owns is not extended here (the scheduler's own reading carries the
+object; projecting it into `dag-progress` is the progress issue's call), and the CXC loop's phase cap
+is a different surface.
+
+### What this section does not claim
+
+No exactly-once for the whole path: the invariants above are the ones records and tests can show, and
+CRW-185's own verification section says the same. Not claimed as met, and not sliced here:
+
+* R-3's indicator, the share of reds resolved by re-verification, is not among the measures
+  `dag-measurements` prints (`internal/relay/dagsched/measure.go`). The behaviour it measures is met;
+  the number is a record-only input of the comparison issue, and adding it is that issue's call rather
+  than a change to the scheduler.
+* A skill or model change is recorded in the manifest's rule version and is deliberately not an
+  invalidation seed (contract 4.1). A policy that made it one would be a plan revision, not a scheduler
+  change.
+* A plan-level pause stops new releases and new acceptances, not the parent's wake: the wake is the
+  delivery layer's and is withheld for a paused relationship (C-5). The contract's plan-pause row asks
+  for exactly this.
+* Nothing here verifies installation, service activation or live relay behaviour. The installed runtime
+  is older than this tree, and M4 owns that acceptance.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test, workflow,
+contract file, golden, skill document or `plugin.json` changes, and no refusal reason, zone statement,
+CLI option or output field is added. The slice above ships as its own implementation issue with its own
+red test and its own PR.
+
+## 81. The lane gets runners first by needing fewer of them; GitHub sells no priority (CRW-780)
+
+Decision (design only, 2026-10-06): a workflow run cannot be given priority over another on
+standard GitHub-hosted runners — the documentation offers no such control — so the lane cannot be
+moved ahead of the children. What the lane can have is a smaller field to compete in, and the
+measurement below says the field is mostly runs that did not need to exist. The recommendation is
+ordered by measured effect against risk: first the run-count rules the packet adopted on
+2026-10-06 made permanent, together with the edited-run reuse and the leg rebalance the sibling CI
+nodes already own; then the dev push run, which re-verifies a tree the lane already proved; then the
+lane's own capacity, where the plan ceiling is the only documented lever that needs no new trust
+path. The plan upgrade, the dev push rule and a self-hosted runner are Jun's decisions and are
+collected at the end. The batch size `k` stays 2. This section changes no running behavior.
+
+### The measurement
+
+Read with `gh api GET` on 2026-10-06 over the window 08:00–15:00 KST
+(`2026-10-05T23:00:00Z..2026-10-06T06:00:00Z`):
+
+```sh
+gh api --paginate "repos/thisisjun786/codex-relay-workflow/actions/runs?created=2026-10-05T23:00:00Z..2026-10-06T06:00:00Z&per_page=100" \
+  --jq '.workflow_runs[] | [.id,.event,.status,(.conclusion//"null"),.head_sha,.run_attempt,.created_at,.run_started_at,.updated_at] | @tsv'
+gh api "repos/thisisjun786/codex-relay-workflow/actions/runs/<run id>/jobs?per_page=100" \
+  --jq '.jobs[] | [.name,.started_at,.completed_at,.conclusion] | @tsv'
+git log --first-parent origin/dev --since=2026-10-05T23:00:00Z --until=2026-10-06T06:00:00Z --oneline | wc -l
+```
+
+| What | Measured | Source |
+| --- | --- | --- |
+| Runs | 350, run ids 37386271268 to 37421344052 | the runs list above |
+| Runs by event | `pull_request` 264, `push` 45, `workflow_dispatch` 41 | the runs list above |
+| Runs by conclusion | success 310, cancelled 31, failure 8, one still running | the runs list above |
+| Cancelled by event | `pull_request` 27, `workflow_dispatch` 3, `push` 1 | the runs list above |
+| Merges | 45 | `git log --first-parent` above; the 45 `push` runs to `dev` agree |
+| Runs per merge | 7.8 (the issue's expectation is about 2.5 to 3) | 350 / 45 |
+| Job slots | one run is ten jobs, so up to 3,500 in seven hours, about 8.3 a minute sustained (a cancelled run starts fewer) | `.github/workflows/ci.yml:19-149`; the jobs list above |
+| Repeated runs on one head | 250 distinct head SHAs, 91 ran more than once, 100 runs beyond the first of their head, and 95 of those extra runs are `pull_request` runs on a head that already had one (79 heads ran twice, 8 three times). These are repeated runs on one head, not necessarily runs of one tree: a `pull_request` run reports the pull request head as `head_sha` while it tests `refs/pull/<number>/merge` (§79), so a base advance between two of them changes the tree without changing the head | the runs list above |
+| Run wall time, `run_started_at` to `updated_at` | `pull_request` median 281 s, p90 730 s, max 1252 s; `push` median 275 s; `workflow_dispatch` median 276 s | the runs list above |
+| Job duration | `test-1` 260 s, `test-2` 259 s, `test-rest` 246 s, `test-3` 197 s, `lint` 148 s, `dist` 144 s, `test-4` 128 s, `validate` 35 s, `secrets` 9 s, `dev-gate` 3 s (medians) | the jobs list above, 26 `pull_request` runs sampled across the window, 260 jobs |
+| Runner wait, job `started_at` minus run `created_at` | the 182 matrix jobs: median 4 s, p90 270 s, max 456 s; 23 of 182 (12.6%) waited 155 s or more and 19 (10.4%) waited 270 s or more; the worst wait in a run has median 6 s and p90 417 s | the jobs list above |
+| Cost of cancellation | 25 of the 27 cancelled `pull_request` runs had jobs that had already started; those jobs ran 26,328 s of job execution time between them, median 1,134 s and max 1,875 s per run, summed per run from each job's `completed_at` minus its `started_at` | the jobs of those runs, read with the jobs endpoint above |
+| Lane CI | §79's measurement of the same day stands: turn median 5.4 min, of which base refresh to CI end 5.2 min. The issue records the lane growing from 4.5 to 11 minutes; the `pull_request` p90 of 730 s, about 12 minutes, is that tail | the issue body for the lane figure; the runs list above for the tail |
+
+Percentiles here are nearest-rank: the p-th percentile is the value at rank `ceil(p*n)` of the sorted
+sample, and a median of an even-sized sample is the lower of the two middle values. Recomputing with
+a different convention moves the p90 values by one rank.
+
+The measurement's window is fixed by `created`; the jobs are read per run from the jobs endpoint, and
+the two derived figures are computed as follows: the run wall time is `updated_at` minus
+`run_started_at` (the queue wait before the run started is deliberately outside it, and the runner
+wait is measured separately as a job's `started_at` minus its run's `created_at`); the cancellation
+cost is the sum over a cancelled run's jobs of `completed_at` minus `started_at`, counting only the
+jobs whose `started_at` is set, which is why 25 of the 27 cancelled pull request runs carry it.
+
+The management session's own observation the same afternoon — 30 jobs running and 14 runs waiting
+(12 `pull_request`, 1 `push`) — is the same picture from the other side and is recorded in the issue
+body, not re-measured here.
+
+### What the measurement says the bottleneck is
+
+One pull request run asks for nine jobs at once: `validate`, `secrets` and the seven-part
+`go-product` matrix. Three concurrent pull request runs therefore claim 27 of the account's 40
+concurrent jobs, and four claim 36. The lane's own run is one more of the same shape, so the lane
+does not merely wait behind the children — it waits behind a queue it is itself shaped like.
+
+The work is not the problem; the demand is. The slowest leg is 260 s and the median run is 281 s,
+but the p90 run is 730 s and the worst matrix job waited 456 s for a runner. The extra minutes are
+queueing, and they land on whichever run is unlucky rather than on the lane.
+
+Most of the runs are avoidable. All 41 `workflow_dispatch` runs report a `codex/` branch as their
+`head_branch`, so they are pull request branches rather than `dev`; they are 11.7% of every run in
+the window, and the packet stopped that practice on 2026-10-06. Another 95 runs re-ran a head that
+already had a pull request run. Cancellation does not recover what was already
+spent: 31 runs were cancelled, and the jobs that had already started in the 27 cancelled pull
+request runs had run 26,328 s of job execution time between them. Cancelling does release the
+runners it stops, but only from the moment of the cancellation, so the queue time those runs had
+already cost is not given back.
+
+The pattern repeats outside the window, in this pull request itself: a `pull_request` event by the
+review bot started a second run of all ten jobs on the same head four seconds after the first,
+because the edited-run reuse of option 7 has not landed yet. Both runs report the same `head_sha`,
+`8e053f26cf`, which is the pull request head rather than what either run tested; on a base that
+did not move between them the two runs cover one tree.
+
+### The current concurrency settings, checked against the documentation
+
+`.github/workflows/ci.yml:13-17` groups on
+`workflow-skills-ci-${{ github.event.pull_request.number || github.ref }}`, plus `-edit` when the
+event action is `edited` and the base did not change, with `cancel-in-progress: true`.
+
+The documentation confirms the comment's reading:
+
+- "You can use `jobs.<job_id>.concurrency` to ensure that only a single job or workflow using the
+  same concurrency group will run at a time", and with `cancel-in-progress: true` GitHub "will
+  cancel any workflow runs or jobs that are already in progress in the same concurrency group"
+  ("Control workflow concurrency"). The group name is case-insensitive.
+- A push to a pull request branch starts no run of its own, because the `push` trigger names only
+  `dev` (`.github/workflows/ci.yml:3-5`). What cancels that pull request's in-progress run is the
+  new `pull_request` (synchronize) run, which shares the pull request number's group — measured, 27
+  cancelled `pull_request` runs. An edited-body run is in its own group and neither cancels nor is
+  cancelled by the synchronize run. A `workflow_dispatch` run on a pull request branch is grouped
+  by `github.ref`, that is `refs/heads/<branch>`, and likewise stands apart from the pull request
+  run.
+- Consecutive merges put their `dev` push runs in one group (`refs/heads/dev`), so the later merge
+  cancels the earlier one — measured, 1 cancelled `push` run. That sits against `POLICY.md`, whose
+  release reads the latest dev push CI for the released SHA: a merge whose dev push run the next
+  merge cancelled has no dev push run of its own, and a later push does not cover it, because
+  `release.yml` reads the run by `head_sha=$RELEASE_SHA` in both `release-source`
+  (`.github/workflows/release.yml:114-126`) and `release-publish` (`:211-223`) and requires the
+  returned run's `head_sha` to be that exact commit. The cancelled run has to be rerun, or the
+  release gate changed, before that SHA can be released. This section records the tension and
+  changes nothing; the rule is part of option 6 below.
+
+Source: "Control workflow concurrency"
+(<https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency>),
+read 2026-10-06.
+
+### Whether a run can be given runner priority
+
+No. The pages read on 2026-10-06 — "Limits", "GitHub-hosted runners", "Larger runners", "Control
+workflow concurrency", "Self-hosted runners" and "Secure use" — document no control that orders one
+workflow run ahead of another on standard GitHub-hosted runners. A run waits for the account's
+concurrent-job capacity, and the only bound the documentation states is a discard: a run "has been successfully
+queued, but has not been processed by a GitHub-hosted runner within 45 minutes, then the queued
+workflow run is discarded".
+
+The documented levers are therefore only the plan's concurrent-job ceiling, larger runners, and
+self-hosted runners or runner groups. All three change the account's capacity; none reorders runs.
+That is why this section answers the question with "fewer runs and less demand per run" rather than
+with a priority mechanism.
+
+Sources, read 2026-10-06: "Limits"
+(<https://docs.github.com/en/actions/reference/limits>), "GitHub-hosted runners"
+(<https://docs.github.com/en/actions/concepts/runners/github-hosted-runners>), "Larger runners"
+(<https://docs.github.com/en/actions/concepts/runners/larger-runners>), "Self-hosted runners"
+(<https://docs.github.com/en/actions/concepts/runners/self-hosted-runners>), "Secure use"
+(<https://docs.github.com/en/actions/reference/security/secure-use>, the page option 3's quotation
+comes from), and "Control workflow concurrency" above.
+
+### The plan limits and cost
+
+From "Limits", for standard GitHub-hosted runners the total concurrent jobs are Free 20, Pro 40,
+Team 60 and Enterprise 500 (and for larger runners, Team 1000 and Enterprise 1000). This account is
+on Pro (Jun, 2026-10-06) and the repository's owner is a user account
+(`repos/thisisjun786/codex-relay-workflow` reports `owner.type: "User"`), so the ceiling today is 40.
+
+From the billing page: "GitHub Actions usage is free for self-hosted runners and for public
+repositories that use standard GitHub-hosted runners", and "Public repositories: Minutes remain
+free". For this repository the runner minutes therefore cost nothing at any ceiling, and the plan's
+incremental value here is the ceiling and the plan's other features, not minutes.
+
+The monthly plan prices could not be read from the documentation: the documentation pages carry
+feature lists rather than prices, and <https://github.com/pricing> puts the plan figures in a
+template that the browser fills in (`data-plan="business"` and `data-plan="business_plus"` render
+4 and 21 USD per user a month, and no value is bound for the account's own plan), so this section
+does not state a price. Two facts that bear on the comparison are readable: GitHub Team is
+described as an organization plan ("In addition to
+the features available with GitHub Free for organizations, GitHub Team includes:") and "GitHub bills
+for GitHub Team on a per-user basis". This repository is owned by a user account, so Pro to Team
+means creating an organization and transferring the repository — the transfer cost §79 already
+records for its organization-transfer option (the Go module path, the `release.yml` owner check, and
+Devin and Linear reconnection). The prices themselves are left to Jun.
+
+Sources, read 2026-10-06: "Limits" above, "Billing for GitHub Actions"
+(<https://docs.github.com/en/billing/concepts/product-billing/github-actions>), and "GitHub's plans"
+(<https://docs.github.com/en/get-started/learning-about-github/githubs-plans>).
+
+### The options, on the body's criteria
+
+| Option | Same-tree all-job success and the strict gate | Required check and job names; §79 (a) | Effect per merge | Cost | Risk, and the slice it needs | Public-repository security | Jun |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1. Intermediate runs test only changed packages; the lane runs the full suite on the refreshed head and `dev-gate` reads it | Weakened unless the tree is proved identical. The check on the pull request head would rest on a run of another ref, and the next push to that head starts over | Names unchanged. A `workflow_dispatch` run is an admitted source under §79 (a) | The lane's run is the full one and the lane is the bottleneck, so the lane's wait does not fall; total job slots stay near 3,500 | A lane step plus a conditional pull request workflow | The pull request's `dev-gate` stops meaning "every job succeeded on this head", and the tree proof belongs to the tree-keyed reuse node; one region in the workflow | No new trust path | Yes |
+| 2. Run only the legs a changed path or package needs | Weakened: a leg that does not run is not a success | Names unchanged; §79 (a) unaffected | Large for a documentation-only pull request, near zero for a Go change, because almost every leg is reachable | A selection rule in the workflow | Also contradicts `POLICY.md:71`, "Nothing is selected by changed paths". One region | No new trust path | Yes |
+| 3. A lane-dedicated self-hosted runner | Unchanged | Names unchanged; §79 (a) unaffected | The only option that answers "runners first" directly: the lane's run stops competing | Not one machine: `ci.yml` makes nine prerequisite jobs eligible at once, so the lane keeps today's latency only with capacity for at least nine runners per simultaneous run (18 at `k = 2`) or an autoscaling pool, plus maintenance and a new trust path | A new trust path in a public repository; one region, plus a runner pool and its upkeep | Refused as stated: "self-hosted runners should almost never be used for public repositories on GitHub, because any user can open pull requests against the repository and compromise the environment". A pool that serves only the lane's own `workflow_dispatch` runs, which a fork cannot start, narrows the exposure but does not remove it, because a pull request can still edit any workflow the runner serves | Yes |
+| 4. Pro to Team, 60 concurrent jobs | Unchanged | Names unchanged; §79 (a) unaffected | The ceiling rises 40 to 60, so the lane's nine-job run and the children's runs queue less. It does not reduce the 350 runs or the 3,500 job slots that cause the queue | An organization and a repository transfer; monthly prices unread | The transfer cost §79 lists; no code slice, only settings, a ruleset and an organization | No new trust path | Yes |
+| 5. Lighter intermediate pushes, or a draft until handoff | Unchanged | Names unchanged; §79 (a) unaffected | A draft adds a run rather than saving one: `ci.yml:8` lists `opened` and `ready_for_review`, so opening the draft starts the same run a ready pull request would and marking it ready starts another on the same head | None | None; no slice, and it costs one extra run. Its only saving is fewer pushes, which option 7 covers | No new trust path | No |
+| 6. Reuse or omit the dev push run | Unchanged: with the strict gate and a merge commit the dev push tree is the tree the lane verified, which is §79's premise | Names unchanged. A `push` run to `dev` is an admitted source, so reusing it is consistent with §79 (a) | Minus 45 runs per seven hours, 12.9% of all runs, and minus 450 job slots; also removes the dev push cancel race | `POLICY.md`'s release-evidence paragraph, `docs/releases.md`, the `release.yml` check and its contract tests | The release loses a run of its own and a reused result must be labelled as reused; one region | No new trust path | Yes |
+| 7. (added) Make the packet's run-count rules permanent | Unchanged: nothing is weakened | Names unchanged; §79 (a) unaffected | Minus the 41 dispatch runs (11.7%), minus the edited share of the 95 extra pull request runs (the runs API reports `pull_request` for `opened` and `edited` alike, so that share cannot be read here; the edited-run reuse node owns it), plus a shorter longest leg from the leg-rebalance node | Skill text only | Low; one region of skill text | No new trust path | No |
+
+Option 5 is answered as the issue frames it. Both one-shot reviews run once per pull request, when
+it is opened or when it becomes ready (the issue's wording), so a draft moves each of them to the
+ready transition rather than removing it, and the receipt waits for whichever has started. The
+draft buys no CI either way. The packet's own rules — no `workflow_dispatch` on a pull request
+branch, the complete body written before the pull request is created, and at most one failed-job
+rerun per head — are what actually removes runs, and they are option 7.
+
+### The recommendation, in order
+
+1. **Take option 7 first.** It is the only lever with no decision, no weakening and a measured
+   effect: 41 dispatch runs gone, the edited-run share of 95 extra runs, and a shorter longest leg.
+   The sibling nodes for the edited-run reuse and the leg rebalance are already running; the packet
+   rules need only to become the written procedure.
+2. **Then decide option 6.** The dev push run is the second-largest single block (45 runs, 12.9%)
+   and its risk is confined to the release-evidence rule, which is one paragraph of `POLICY.md` and
+   one check in `release.yml`. It also removes the dev push cancel race recorded above.
+3. **Then decide option 4.** If the lane is to have capacity of its own, the plan ceiling is the
+   only documented lever that needs no new trust path. It is worth taking as the same decision as
+   §79's organization-transfer option rather than as a separate one, because a Team plan needs an
+   organization and this repository belongs to a user account.
+4. **Option 3 only if option 4 is refused, and only for the lane's own runs.** The security
+   criterion is not satisfied by a self-hosted runner in a public repository; it can be narrowed to
+   the lane's `workflow_dispatch` runs, which a fork cannot start, but the runner remains reachable
+   by any workflow in the repository. This is Jun's decision and this section does not recommend it.
+5. **Do not take option 1 or option 2.** Both weaken the first criterion — the same-tree all-job
+   success — and option 2 also contradicts `POLICY.md`. If the intermediate-run cost is the target,
+   the leg rebalance and the run-count rules get most of it without changing what `dev-gate` means.
+6. **Option 5 needs nothing on its own**; its saving is already inside option 7.
+
+### Whether `k` moves from 2
+
+No; keep `k = 2`. A batch of `k` needs `10k` concurrent jobs, so `k = 2` already claims half of the
+account's 40 while the members' own runs still need room, and the measurement shows the account is
+saturated at that level: 12.6% of sampled matrix jobs waited 155 s or more and the worst waited
+456 s. A larger `k` multiplies both the concurrent demand and the red rate §79 computed for a batch
+of two. Revisit `k` after option 7 has landed and the run count has actually fallen, and after the
+plan question is decided: at a ceiling of 60 with a smaller field, `k = 3` becomes affordable, and
+§79's formula `k = min(2, floor(concurrent_jobs / 10), ready_waiters)` is what would have to change.
+
+### Decisions left to Jun
+
+1. **The dev push run (option 6).** Approve reusing the lane's verified tree as the release
+   evidence, or omitting the dev push run, and the `POLICY.md` and `release.yml` wording that goes
+   with it. This section recommends it second.
+2. **The plan ceiling (option 4).** Decide whether to raise the concurrent-job limit, and whether to
+   take it as part of the organization-transfer decision §79 already holds.
+3. **The self-hosted runner (option 3).** This section does not recommend it for a public
+   repository; if Jun wants it, say which runs it may serve.
+4. **The intermediate-run split and path selection (options 1 and 2).** This section does not
+   recommend them because they weaken the same-tree all-job success; if Jun takes option 2, the
+   `POLICY.md` sentence "Nothing is selected by changed paths" has to change with it.
+5. **`k`.** Confirm `k = 2` for now and the condition above for revisiting it.
+
+### Follow-up interfaces
+
+No signature, reason registry, output field, CLI, SQL or golden changes in this pull request. Each
+slice below is one region of about 600 lines or less, is assignable to IF DeepSeek, is ordered after
+the leg-rebalance, edited-run-reuse and tree-keyed-reuse nodes, and is proved red before it is
+built.
+
+1. **The run-count rules in the child packet and the `crw-run` skill** (`plugins/crw/skills/crw-run`
+   — the packet template and the procedure references; no product code). Contracts to keep: the
+   relay CLI contract unchanged, the required check name `dev-gate` unchanged, the job names
+   unchanged. Red first is a scenario review: a packet that names a `workflow_dispatch` run on the
+   pull request branch is refused; a packet whose pull request is opened before its body is complete
+   is refused; a second failed-job rerun on the same head is refused. End condition: the three rules
+   are named in the packet template, and `crw-dev ci plugin`, `crw-dev ci validate` and the link
+   check pass. About 150 to 250 lines of skill text.
+2. **The dev push run as release evidence** (`.github/workflows/ci.yml` — the `push` trigger at
+   `:3-5`, without which the 45 runs keep starting — `POLICY.md` release paragraph,
+   `docs/releases.md`, both exact-push lookups in `.github/workflows/release.yml`,
+   `release-source` (`:114-126`) and `release-publish` (`:211-223`), `internal/contracttest/release.go`
+   and `internal/contracttest/release_workflow_test.go`, and the CI-control contract tests).
+   Contracts to keep: the release refuses a source it cannot read, as it does today. Red first: a
+   release that the replacement evidence admits succeeds, so the positive case fails against
+   today's exact-push rule; the existing negatives (a missing exact-SHA push run, a
+   `workflow_dispatch` run, a stale or unrelated run) stay, and a reused `dev-gate` is labelled
+   reused and refused as the release's own run. End condition: the rule is written and checked in
+   both copies. Waits on Jun's decision on option 6.
+3. **The lane's capacity** (the workflow and the operator page). Contracts to keep: the required
+   check name and the job names unchanged; no `pull_request_target`. Red first: a `pull_request`
+   run cannot reach a lane runner. End condition: the lane's runs use the new capacity and every
+   other run still uses the standard runners. Waits on Jun's decisions on options 3 and 4.
+
+Option 1, if Jun takes it, consumes the tree-keyed reuse node's tree proof and is not sliced here;
+it is a change to what the pull request's `dev-gate` means and should be planned with that node
+rather than beside it.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test, workflow,
+contract file, golden, skill document or `plugin.json` changes, and no ruleset, repository setting,
+branch or runner is touched. The measurement was taken with read-only `gh api GET` reads of this
+repository's Actions runs and jobs; no run was rerun, cancelled or dispatched, and no repository
+setting was changed. The run-count rules, the dev push rule, the lane capacity, the intermediate-run
+split and the path selection ship as the follow-ups above, each under its own issue.
+
+## 82. A busy backoff holds a parent's whole line; the idle edge, not the timer, should release the head (CRW-781)
+
+Decision (design only, 2026-10-06): the relay already bounds a busy recipient and already keeps
+arrival order, and neither of those is the problem. The problem is *what ends the wait*: today
+only a timer does. Choose **option 1, the idle edge**: while a delivery waits out a busy
+backoff, the relay keeps a subscription on the recipient and treats the App Server's
+`thread/status/changed` to `idle` (or `notLoaded`) as the signal that makes the head
+eligible, with the existing doubling backoff kept as the safety net for a notification the relay
+never saw. The answer carries two preconditions, both stated by the slice below: the subscription
+has to be acquired by a call that subscribes and kept without holding the root's mutation gate,
+and the released head has to stay ahead of younger rows until it is claimed. Option 2 (batch a
+parent's ready backlog into one turn) and option 3 (stop turns opened outside the relay from
+overtaking the backlog) are evaluated below; option 3's relay-owned half changes the supervisor
+channel's ordering rule (I-216) and option 2 changes the delivery unit and the acknowledgement
+shape, so both are named as Jun's decisions and are not chosen here. This section changes no
+running behaviour.
+
+### The hold, from code
+
+Busy is not a guess and not a timeout: it is the host's own answer about the thread, read on
+every attempt.
+
+- `delivery.Observe` (`internal/relay/delivery/lifecycle.go:45`) reads the recipient three ways
+  — `adapter.ReadThread`, `adapter.IsArchived`, `adapter.ReadGoalStatus` — and decides in one
+  switch. `case isText(runtime, "active")` (`lifecycle.go:85`) is the only branch that answers
+  busy: `decide("busy", RecipientBusy)`. `Lifecycle.IsBusy` is exactly `Deliverable == "busy"`
+  (`lifecycle.go:42`). `idle` and `notLoaded` answer `yes` (`lifecycle.go:91`); `systemError`
+  and `canAcceptDirectInput: false` answer `no` and are withheld rather than deferred; anything
+  else with `RequireLifecycleEvidence` is `unknown` and is withheld too.
+- The status is the App Server's: `adapter.ReadThread` (`internal/relay/adapter/adapter.go:175`)
+  calls `thread/read` and takes `thread.status.type` into `RuntimeStatus` and
+  `thread.canAcceptDirectInput` into `CanAcceptInput` (`adapter.go:189-197`). The types the
+  switch names are the host's `active`, `idle`, `notLoaded` and `systemError`.
+- `Service.Attempt` (`internal/relay/delivery/service.go:859`) is the only caller of the busy
+  branch: `observation := Observe(...)`, then `if observation.IsBusy() { return nil,
+  d.deferBusy(ctx, eventID, row, at) }` (`service.go:925-926`). A busy answer never reaches
+  `claim`, so no attempt row is written and the recipient is never asked to interrupt: I-30
+  holds unchanged. The transport carries the same rule as a second guard: a thread that reports
+  `active` immediately before the resume is refused `thread_busy` and nothing is sent
+  (`internal/relay/adapter/transport.go:312`).
+
+The wait is a doubling timer whose ceiling is five minutes.
+
+- `DefaultPolicy` (`internal/relay/delivery/policy.go:47-49`) sets `BusyBase: 15`,
+  `BusyMax: 300`, `BusyMaxAttempts: 40`.
+- `DelayFor(attemptNo, "busy")` (`policy.go:56-62`) is `min(BusyMax, BusyBase * 2^(attemptNo-1))`
+  — 15 s, 30 s, 60 s, 120 s, 240 s, then 300 s for every later answer. `deferBusy` passes
+  `answers`, the count *including* this one.
+- `CapFor("busy")` is `BusyMaxAttempts` (`policy.go:64-69`) and `CapReason("busy")` is
+  `busy_cap` (`policy.go:71-76`).
+- `deferBusy` (`service.go:1101`) counts the answers with `busyAnswers` (`service.go:1089`: the
+  event's `delivery_deferred_busy` journal rows plus its attempts settled `deferred_busy`), sets
+  `hold_reason = busy_cap` once `answers >= BusyMaxAttempts`, writes `next_eligible_at = now +
+  DelayFor(answers, "busy")`, and journals `delivery_deferred_busy` — all inside the guarded
+  `UPDATE`'s transaction (I-221, I-451). Because the count is durable, a restart does not reset
+  it.
+
+The line is held by that timer alone.
+
+- `busyHeadSQL` (`service.go:321`) is a derived table with one row per recipient: the oldest
+  delivery to it in `eligibleOrder` (`service.go:304` — event `first_seen_at`, then the
+  delivery's `created_at`, then the event id) among those with `state = deferred_busy`,
+  `hold_reason IS NULL`, `next_eligible_at > now`, a live relationship and a final event. Only a
+  busy backoff is in it: a hold, a pre-send withhold, a pause, a stale generation and a
+  relationship that has spent its hour are all excluded, so one relationship's trouble cannot
+  keep its siblings waiting (CRW-259).
+- Four places read it, and together they are I-478: `behindBusyHead` (`service.go:339`) asks it
+  of one delivery; `eligibility` (`service.go:357-363`) joins it and requires
+  `bh.event_id IS NULL`, so a younger delivery is not *due*; `Attempt` returns early for a
+  delivery `behind` a head (`service.go:888-896`); and `claim`'s guarded `UPDATE` carries the
+  same `NOT EXISTS` (`service.go:745`), so the order is decided under the write lock and not
+  only in the selection.
+- The scheduler is what turns the timer into attempts: `RelayDaemon.tick` runs
+  `delivery.Scheduler{...}.Deliver(...)` with `MaxSendsTick = Policy.MaxSends` (4)
+  (`internal/relay/daemon/daemon.go:132`, `daemon.go:49`) every `PollInterval` = 20 s
+  (`daemon.go:49`, `internal/relay/service/launch.go:30`), and one parent may use
+  `MaxSendsPerParentPerTick` = 2 attempts
+  (`internal/relay/delivery/policy.go:49`, `internal/relay/delivery/scheduler.go:224`).
+
+So a head that keeps meeting a busy recipient is sampled at 15 s, 30 s, 60 s, 120 s, 240 s and
+then once every 300 s, and every younger delivery to that recipient is not due while it waits.
+That is the mechanism the issue's measurement caught.
+
+### The supervisor channel is the opposite choice (I-216)
+
+The relay already has the other half of this design, one channel over, and it chose the other
+way.
+
+- `SupervisorAheadSQL` (`internal/relay/store/supervisor_sendable.go:106`) is true for a message
+  that is *claimable* (`SupervisorClaimableSQL`, `:87`: unsent, no hold, due) or in flight with a
+  live lease. A message inside its backoff is neither, so it is not "ahead" and a younger message
+  passes it. `SupervisorAheadInClaimSQL` (`:114`) carries the same rule under the claim's write
+  lock.
+- `attemptRun.eligible` (`internal/relay/supervisor/send.go:415`) asks `oldestAhead`
+  (`send.go:187`) and refuses only when an older message *can be sent now*, with the existing
+  reason `not_claimable` (`send.go:425`).
+
+So the supervisor channel is oldest-of-the-claimable — a backed-off older message is bypassed
+deliberately (I-216) — while the delivery path is oldest-including-the-backoff (I-478). The two
+differ on exactly the question this issue asks, and the difference is a decision, not an
+accident: the delivery path exists to hand a child's receipt to its parent in the order the
+receipts arose, and the supervisor channel exists to raise the newest fact to the level above.
+
+### What the relay can already learn about a thread's state
+
+Nothing, today. The bytes arrive and nothing reads them.
+
+- The App Server client's reader forwards *every* notification it receives:
+  `internal/bridge/appserver/receive.go:46-51` pushes `Notification{msg.Method, msg.Params}` onto
+  `c.notifications`, a channel of 64 (`client.go:24`) that drops when full. The one method it acts
+  on is `turn/completed` (`receive.go:43-45`), and only to tell the subscription manager that a
+  watched turn ended.
+- `Client.Notifications()` (`internal/bridge/appserver/records.go:178`) is the only reader of that
+  channel and nothing in the product calls it; the sole caller is
+  `internal/bridge/appserver/client_more_test.go:203`. So `thread/status/changed`, which is what
+  would carry `idle`, is received and discarded.
+- Subscriptions are opened only around the bridge's own outbound work:
+  `Bridge.watchSubscription` (`internal/bridge/subscription.go:15`) is called from
+  `create.go:135` (a thread this bridge created), `mutations.go:162` (a steer or resume),
+  `worktree.go:165` (a worktree creation) and `internal/relay/adapter/transport.go:339` (the
+  relay's own `guardedSend`, immediately before `thread/resume`). Each one is released by
+  `TurnWatch.Finish` (`internal/bridge/appserver/subscription.go:165`) and the manager sends
+  `thread/unsubscribe` (`internal/bridge/appserver/subscription.go:356`). No subscription is
+  held for a recipient between attempts, so the App Server has no reason to report that
+  recipient's status changes to the relay.
+- What subscribes is narrower than what the relay calls. `docs/relay/subscriptions.md:12-13`
+  states the normative rule: "`thread/start` and `thread/resume` subscribe the calling
+  connection. Reads and `turn/start` do not." A watch admits on an already established socket
+  rather than subscribing it (`internal/bridge/appserver/subscription.go:92`), so a delivery
+  cannot subscribe a recipient by reading it, and the busy guard refuses a resume of a thread
+  that reports `active` (`internal/relay/adapter/transport.go:312`) — which is exactly the
+  state a waiting backlog is in.
+- The lifetime a subscription would need already exists in one place. `TurnWatch.Finish` takes
+  a `retain` flag and records the socket as `root.retainedOn` for an untransmitted watch
+  (`internal/bridge/appserver/subscription.go:165-178`), and both `prune` and `ready` treat a
+  retained root as not releasable (`:157-161`, `:284-288`), so a thread can stay subscribed
+  without a live watch. The root's mutation gate is what must not be held across attempts:
+  `watchTurn` takes it at admission (`:114-118`) and `Finish` returns it (`:180`), so a
+  watch left open while a backlog waits would block the delivery's own `WatchTurn`
+  (`internal/relay/adapter/transport.go:339`).
+- The relay daemon does have the socket: its host adapter builds `appserver.New(...)`
+  (`internal/relay/adapter/host.go:39`). So the capability is reachable; the lifetime and the
+  consumer are what is missing.
+
+### The measurement this section uses
+
+The management session's reading of 2026-10-06 15:07 KST: six completion events addressed to one
+project's parent were queued. The head of the queue had been retrying as `deferred_busy` since
+04:47Z, and the oldest queued receipt was 80 minutes old; the other five waited behind it. The
+parent ran turns in that window, so it was not permanently busy — the retries sampled it at the
+wrong instants, and other paths opened new turns in the gaps. Those numbers are that
+observation, not a new measurement; the live relay store and service were not read.
+
+Under `BusyBase`/`BusyMax`/`BusyMaxAttempts` that reading is consistent with the code: the
+backoff reaches its 300 s ceiling on the sixth busy answer and stays there, so 80 minutes is
+roughly twenty attempts, well short of the 40-answer `busy_cap`. The cost is not the attempts;
+it is that each receipt behind the head costs the parent another full turn once it does land.
+
+### Options
+
+The criteria are the issue's: (a) each receipt's claim, ack and verdict proof is unchanged;
+(b) the delivery-order invariants are kept, or the change to them is named for Jun; (c) a busy
+recipient is never interrupted; (d) a contract change is scoped and reuses an existing name
+first; (e) the effect is stated from the measurement above.
+
+| Option | How it ends the wait | (a) proof | (b) invariants | (c) no interrupt | (d) contract | (e) effect |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1. the idle edge releases the head | `thread/status/changed` to `idle` makes the head eligible, so the scheduler attempts it at that parent's next turn | unchanged: the same claim, the same attempt, the same `sha256(eventId\|turn)` | I-478 kept, with its release window closed by the priority marker the answer requires; I-216 untouched | kept: the attempt still reads and withholds before any resume (I-30) | none: no new refusal, field or CLI | the head's next attempt moves from "up to 300 s after the last busy answer" to "the parent's next scheduler turn after the recipient goes idle"; the five behind it then drain in creation order, one attempt each |
+| 2. batch the parent's ready backlog into one turn | the whole backlog lands in one turn, so the head's backoff is paid once | must be preserved per event, which needs a multi-event message and a per-event acknowledgement from one turn | I-478 kept if the batch takes the head first and then the next N-1 in order | kept, same pre-check | large: the message shape, the attempt and receipt intake, and the acknowledgement and verdict per event | the parent pays one turn instead of six; the delay is the head's backoff, unchanged |
+| 3. keep out-of-relay turns from overtaking | the relay's own channels stop spending the recipient's idle gap before the backlog | unchanged | **changes I-216**: a backed-off older delivery would also hold the supervisor and notice channels, which today bypass it | kept | none for the relay-owned half; the management session's own rule is not the relay's to make | the head wins the next idle gap more often; the relay cannot stop the management session, the operator or any other socket client from opening a turn |
+| 1 plus a shorter head-only retry (added) | if the notification cannot be held, retry the head every tick | unchanged | I-478 kept | kept | none | weaker than 1 (it still samples), but strictly better than today and it needs no subscription |
+
+Options 2 and 3 are not rejected on merit. Each is rejected *for this change* on one criterion:
+option 2 fails (a) unless the delivery unit and the acknowledgement shape change, which is a
+contract decision; option 3 fails (b) unless I-216 changes, which the criteria leave to Jun.
+Option 1 meets all five with no contract change and no invariant change, and the added variant is
+its fallback for a notification that cannot be held.
+
+### The answer, with an order
+
+1. **Option 1 first, with its preconditions stated.** While a delivery to a recipient waits out a
+   busy backoff, the relay keeps a subscription on that recipient and consumes
+   `thread/status/changed`. An `idle` or `notLoaded` report makes the busy head *eligible*
+   at once (subject to the min send interval and the relationship's hourly budget, which are
+   unchanged), and the scheduler attempts it when this parent's turn comes. The tick opens at most
+   `MaxSendsTick` parent walks (`internal/relay/delivery/scheduler.go:210-232`), so the
+   notification shortens the wait rather than promising the very next tick. Two preconditions
+   have to hold for the trigger to exist at all, and the slice below states both. First, the
+   subscription must be acquired by a call that actually subscribes — only `thread/start` and
+   `thread/resume` do — and kept through the retention path rather than by an admitted watch,
+   because an admitted watch holds the root's mutation gate until `Finish` and would block the
+   delivery's own send. Second, a recipient this relay has never resumed, whose turns another
+   socket opens, has no subscribing call available while it is active; there the backoff stays the
+   only trigger until the relay's own next delivery to that recipient establishes the
+   subscription. The doubling backoff is not removed either way: it stays the safety net for a
+   notification the relay never saw, a host that reports no status, a recipient with no
+   subscription yet, and a recipient that is busy again before the attempt lands.
+2. **The released head keeps the line until it is claimed.** Making the head eligible is not
+   enough by itself. `busyHeadSQL` (`service.go:321`) lists only deliveries with
+   `next_eligible_at > now`, so a head released to `now` leaves that predicate before it is
+   claimed. Between the release and the claim, a concurrent `deliver --event <younger>` passes
+   both `behindBusyHead` and the claim's `NOT EXISTS` and can open the next turn first, after
+   which the released head finds the recipient busy again. I-478 therefore does not by itself make
+   the head "the only row attempted" once it is released: the slice must keep the released head
+   ahead until it is claimed, by an atomic wake and claim or by a priority marker the younger rows
+   still see. This is the same shape as the overtaking I-478 already names for a row sending under
+   a live lease, and it is a condition of the chosen answer rather than a separate option.
+3. **Option 3 second, and only as far as the relay owns.** The relay owns three ways to open a
+   turn on a recipient: the delivery path (already ordered), the supervisor channel (I-216) and
+   the notice channel (`internal/relay/supervisor/notice.go`, which goes through the same claim
+   and transport). It does not own the management session's direct sends, the operator, or any
+   other client on the App Server socket. Making the relay's own channels yield to a delivery that
+   holds the line is the part that helps option 1; it changes I-216 and is Jun's decision (below).
+   Until he decides it, the relay-side half is not implemented and the ordering stays as it is.
+4. **Option 2 third.** Batching is the only option that reduces the parent's turn count, which is
+   the cost the issue names, but it changes the delivery unit: one message carrying several
+   events, and an acknowledgement and a verdict per event from one turn. That is a contract
+   decision before it is an implementation (below), and it is larger than options 1 and 3
+   together. It is the right successor, not the right first slice.
+
+The order matters because option 1 alone removes the tens-of-minutes hold; option 3 makes option
+1's trigger win the gap more often; option 2 then lowers what the parent pays for each delivery.
+Option 2 before option 1 would batch receipts that are still held by the same backoff.
+
+### Invariant impacts
+
+Rows read in `docs/relay/invariants.md` at this baseline:
+
+| Row | What the answer does to it |
+| --- | --- |
+| I-478 | **Kept, with one addition named.** The idle edge changes when the head becomes eligible, not which row is attempted or in what order: `busyHeadSQL`, `eligibility`, `Attempt` and `claim` keep their meaning, and only `next_eligible_at` moves earlier. The release opens a window the answer has to close, because `busyHeadSQL` requires `next_eligible_at > now`: a head released to `now` is no longer in that predicate until it is claimed, so a concurrent `deliver` could take the turn first. Keeping the released head ahead until it is claimed is a marker beside the existing rule, not a change to what I-478 says. |
+| I-216 | **Untouched by option 1.** Option 3 would change it, so it is named for Jun rather than decided here. |
+| I-30 | **Kept.** Busy is still decided by `Observe` before any transport call; the notification only decides *when to look*. |
+| I-221, I-451 | **Kept.** `deferBusy` still counts its own journal rows and writes inside the guarded `UPDATE`'s transaction. |
+| I-475 | **Kept.** The min send interval and the per-relationship hourly cap still pace the send; an idle notification does not spend a budget the pacing would refuse. |
+| I-61, I-335, I-403 | **Kept.** A busy recipient is still bounded and still waiting rather than failing; the notification adds no failure. |
+| I-479 | **Kept.** The tick's attempt budget and the parent rotation are unchanged; the notification changes a row's due time, not the walk. |
+| I-70, I-36, I-37 | **Kept.** The claim is still one transaction and the turn identity is still checked; nothing about the send changes. |
+
+No invariant has to change for option 1. Option 3 needs I-216 changed, and option 2 needs the
+acknowledgement and receipt rows widened; both are Jun's, below.
+
+### Decisions left to Jun
+
+1. **Option 1's subscription lifetime.** Approve holding a subscription on a recipient while its
+   backlog waits out a busy backoff, and releasing it when the backlog empties or the delivery is
+   delivered. This is a new lifetime for a watch in the subscription manager's terms, and the
+   notification channel is bounded (64) and drops, so the fallback is the existing backoff.
+   Recommendation: yes.
+2. **Option 3's ordering rule.** Decide whether the relay's own supervisor and notice channels
+   should yield to a delivery that holds the line, which changes I-216. Recommendation: make the
+   *notice* channel yield (it carries no receipt whose order has to be protected) and leave the
+   supervisor channel's oldest-of-the-claimable rule alone, because a fault or a decision it
+   carries has its own cost in delay. This is a genuine trade, and the criteria leave it here.
+3. **Option 2's contract shape.** Decide whether one turn may carry several events' deliveries,
+   and if so what the message, the acknowledgement and the verdict look like. Recommendation:
+   defer until option 1 has run for a while, then decide from the measured turn count.
+4. **The retry interval when no notification can be held.** Decide whether the head-only fallback
+   may retry every tick (20 s) instead of on the doubling curve, or whether the current curve
+   stands. Recommendation: keep the curve and let option 1 be the mechanism; a shorter interval
+   buys less than the notification and costs a `thread/read` per tick per waiting head.
+
+### Follow-up interfaces
+
+No signature, reason registry, output field, CLI, SQL or golden changes in this pull request.
+Each slice is one region and about 600 lines or less, and each is proved red before it is built.
+
+1. **The idle edge** (`internal/relay/delivery`, `internal/relay/daemon`,
+   `internal/bridge/appserver`, `internal/relay/adapter`). Red first: a head whose
+   `next_eligible_at` is 300 s away becomes eligible the moment an `idle`
+   `thread/status/changed` arrives for that recipient, and the scheduler attempts it at that
+   parent's next turn; a notification for another thread changes nothing; a notification the
+   relay never saw leaves the head attempted at `next_eligible_at` as today; a recipient with
+   no subscription yet keeps the backoff as its only trigger; a younger delivery to the same
+   recipient is still not attempted while the head waits or is released-but-unclaimed (I-478);
+   and a busy recipient is still never interrupted. The slice also names how the subscription is
+   acquired (the relay's own `thread/resume`) and proves it is kept through the retention path,
+   so a delivery's own `WatchTurn` is never blocked by the root's gate. The trigger reuses the
+   existing words: no new refusal reason and no new output field. End condition: with a scripted
+   App Server, the head's attempt follows the idle edge at the parent's next scheduler turn and is
+   never later than the backoff it replaced, and every existing `TestBusy_*` and
+   `TestScale_a_busy_backlog_drains_in_creation_order` still passes.
+2. **The relay-owned channels' order** (`internal/relay/supervisor/send.go`,
+   `internal/relay/store/supervisor_sendable.go`, `internal/relay/supervisor/notice.go`). Waits
+   on decision 2. Red first, for the recommended path: a *notice* to a recipient whose delivery
+   waits out a busy backoff is refused `not_claimable` while that delivery holds the line (the
+   existing reason, no new one), and is claimable once the head's backoff ends; an ordinary
+   supervisor message is unchanged, because the recommendation leaves I-216's
+   oldest-of-the-claimable rule alone. If Jun takes the broader decision, the same test grows a
+   second branch for the supervisor message and I-216's text changes with it. End condition:
+   I-216's text is updated in the same change if Jun takes it, or the slice is dropped.
+3. **Batching** (`internal/relay/delivery`, `internal/relay/store`,
+   `internal/relay/delivery/ack.go`, `contract/`). Waits on decision 3. Red first: two receipts
+   to one parent are rendered into one message, each keeps its own claim and its own
+   `sha256(eventId|turn)` proof, each is
+   acknowledged separately, and a batch cut off after the first delivery recovers the rest on the
+   next attempt in creation order. End condition: the contract files, the goldens and the zone
+   ledger are updated together, with the change to the frozen acknowledgement shape explained in
+   the pull request.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test, contract
+file, golden, skill document or `plugin.json` changes, and no ruleset, repository setting or
+branch is touched. The implementation, the subscription lifetime, the ordering rule and the
+batching contract ship as the follow-ups above, each as its own issue.
+
+## 83. Store recovery: write-stop on corruption, an official restore that keeps the store's identity, isolated validation, consistent backup, reconciliation, journal loss markers, and replay de-duplication (CRW-847)
+
+Decision (design only, 2026-10-06): the seven gaps the 2026-10-06 relay store corruption
+exposed are decided here, one subsection each, with the options, the criteria the issue
+body fixes, the answer or the owner, and the evidence. This section changes no running
+behaviour: no SQL, refusal name, output field, CLI or golden moves with it. The
+implementation slices that follow are listed at the end with their scope, predecessors,
+edit regions and red-first tests.
+
+Why: on 2026-10-06 the shared relay store became malformed. The recovery was manual -
+offline candidates, primary-key and semantic comparison, an in-place restore that kept the
+file's identity, a journal whose sequence continued after a gap, and a written record of
+the history that was lost. Every step of that was done by hand, and the product has no
+official restore, no isolated validation mode, no write stop after a corrupt or
+short-read answer, and no reconciliation command. The four standing criteria are the
+issue body's: fail-closed is not weakened and the store id, device:inode, path and
+managed fingerprint are preserved; a shipped table's SQL does not change, and a change
+becomes a decision first; a ledger row is never deleted or rewritten; and the recovery a
+person did by hand becomes a product command that can be run again.
+
+The evidence is the incident's preserved record - `RECOVERY-STATUS.json`,
+`RESTORE-RESULT.json`, `RECOVERY-OPERATIONAL-VERIFICATION.json`,
+`restore_same_identity.py`, `sqlite-restore-probe.json`, `index-identity-comparison.json`,
+`candidate-audit.json`, `historical-journal-evidence.json`,
+`candidate-final-pre-reconcile-provenance.json`, `756-offline-request-replay.json` and
+`814-intent-claim-replay.json`, all in the management session's incident directory - and
+P64's recovery record - `recovery-support-answer-p64-20261006.md`,
+`candidate-review-p64-20261006.md` and `db-hardening/design-evidence.md`. The receipt
+names are kept here without their absolute locations, because this repository is public.
+
+### 1. Writes stop when the store reads as corrupt
+
+Context: between 13:44 and 13:52 on 2026-10-06 the daemon's reporting observation failed
+with `SQLITE_IOERR_SHORT_READ (522)` and "malformed", recorded the failure as a notice, and
+kept writing (the incident's `audit-tail-fault_occurrences.json`, summarised in
+`db-hardening/design-evidence.md` section 3). The surviving journal shows the split: seq
+18029 was followed by 18030 with the writes between them gone, and the later writer did not
+see them. The trigger is a result code **class**, not three literals: the primary code 11
+(`SQLITE_CORRUPT`) with every extended result under it, plus `SQLITE_NOTADB` (26) and
+`SQLITE_IOERR_SHORT_READ` (522). The corruption class is why the trigger is written as the
+masked primary code and not as a list of the values seen on 2026-10-06: the runtime already
+classifies a stored SQLite failure that way (`internal/relay/store/pyerr.go:142-150` masks
+`Code() & 0xff` and maps 26 and 11 to Python's `DatabaseError`), and an extended
+corruption such as `SQLITE_CORRUPT_VTAB` (267), `SQLITE_CORRUPT_SEQUENCE` (523) or
+`SQLITE_CORRUPT_INDEX` (779) would otherwise let the daemon go on writing, which is exactly
+the fail-closed gap this item closes. The codes are readable today and only the reaction is
+missing.
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) A marker file in the state directory, checked by every writable open | Detection writes `S/corruption.json` beside `takeover.json` and `write-gate.lock`; every writable open and every daemon pass refuses while it is there; an operator clears it after a verified restore and reconciliation | Fail-closed and it survives a process restart, which is what the 2026-10-06 window needed; it changes no shipped SQL (criterion 2) and writes no ledger row (criterion 3) |
+| (b) Halt the detecting process in memory | The process that saw the failure stops itself | Dies with the process; the next opener writes into the suspect store again, which is the failure the incident already showed |
+| (c) A flag inside the store | A `schema_meta` key, read by every opener | The flag is itself a write into the store whose readability is in question, and it touches the frozen stamp surface that decision 56 fixes (`internal/relay/store/ownership/record.go:36`, `StampFromMeta`) |
+
+Decision: (a). The marker is a file outside the database, in the state directory S, in the
+same durability class as `takeover.json` - published write, fsync, rename, directory fsync
+as `ownership.Publish` does it (`internal/relay/store/ownership/record.go:424`) - and never
+a row inside the store.
+
+The daemon and the CLI behave differently, and the difference is decided here. The daemon,
+on seeing any of the three codes from a write or from its own observation, writes the marker
+and then stops accepting writes: it does not retry the write, does not record a ledger row
+for it, and leaves the deliveries it was carrying where the next daemon can pick them up
+rather than reporting success for work it did not do. That is the 13:44-to-13:52 window
+turned into a stop, and it is the fail-open class the incident's own evidence names. A CLI
+writable command refuses at the open, in the words the preflight already has
+(`internal/relay/store/ownership.go:96-131`), and a read-only command still answers -
+the split decision 76 fixed (`docs/port/decisions.md`, section 76) - because the
+reading is how an operator finds out what happened, and `doctor` is the command that
+proves the store's identity after the restore.
+
+The release procedure is also decided here, in the order the incident's own recovery used:
+restore the store (item 2), then reconcile it (item 5), and only then clear the marker, by an
+explicit operator command that takes the write gate exclusively. The clear refuses while
+either of the first two steps has not left a reading the operator can point at, so the marker
+is never removed on the strength of "it opens now". The set and the clear are both journaled,
+with the marker's own sequence and timestamp.
+
+A refusal reason is required and no existing reason has this meaning: the registered reasons
+were read from `contract/schema/relay-exit-codes.json` (`refusalReasons`, 112 entries), and the only
+one near this surface is `store_owned_by_other` (`:119`), which names a foreign owner and
+would send the operator to the ownership page for a problem that is not about ownership. Per
+D-02 the new reason is registered in `contract/schema/relay-exit-codes.json` and the
+generated code in the slice that introduces it (S1); this section decides that a reason is
+required and why, and leaves the exact name and its registration to that slice, because this
+pull request makes no contract change.
+
+Evidence: `internal/relay/store/pyerr.go:142-150` (the code classification),
+`internal/relay/store/ownership.go:96-131` (`CheckStartLikeFence`, `fenceRefused`, the
+preflight a writable command already runs), `internal/relay/store/ownership/record.go:424`
+(the publication durability the marker follows), `contract/schema/relay-exit-codes.json:119`
+(`store_owned_by_other`), `docs/port/decisions.md` section 76 (the read/write split); the
+incident's `audit-tail-fault_occurrences.json` and `db-hardening/design-evidence.md`
+sections 2 and 3.
+
+### 2. The official restore keeps the store's identity
+
+Context: the 2026-10-06 restore used the SQLite backup API to write a validated candidate
+over the live file, on the same inode, while the write gate was held exclusively. It
+preserved `device 64512`, `inode 40534528`, the store id and `takeover.json`
+(`RESTORE-RESULT.json`; the script is `restore_same_identity.py`). The identity is not
+cosmetic: the managed request fingerprint carries `storeId`, `device`, `inode` and
+`realPath` (`internal/relay/managed/identity.go:52`), and every managed replay compares that
+fingerprint and refuses `relationship_conflict` on a difference
+(`internal/relay/managed/reservation.go:35,77,119,156`). A restore that replaced the file
+would change the inode and make every retained managed request unreplayable.
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) Backup-API restore onto the same inode, under the write gate held exclusively | What the incident did by hand, made a product command | Keeps store id, device:inode, path and every managed fingerprint, so criteria 1 and 4 both hold; the restored bytes are read and verified by SQLite itself |
+| (b) Replace the file, re-record ownership with a higher epoch, and migrate the managed fingerprints | A new inode and a re-stamped store | Breaks criterion 1 unless a fingerprint migration is designed; the fingerprint covers the whole request, so a migration rewrites retained request identity, which the issue body itself flags as the conflict this option creates |
+
+Decision: (a). The restore command is the only official restore form, and (b) is rejected by
+the first criterion rather than left as an alternative. What the command must prove before it
+writes is the incident script's precondition list, which is the de-facto specification: the
+candidate's sha256 matches its provenance record; the candidate passes `integrity_check` and
+`foreign_key_check`; the candidate's `schema_meta` ownership keys equal the live
+`takeover.json` values; the write gate is held exclusively; the pre-restore state is copied
+byte for byte with a manifest; and after the copy the device:inode and the
+`takeover.json` hash are unchanged and the file and its directory are fsynced. The
+exclusive write gate is not on its own enough to establish that nothing else holds the files
+open: a read-only opener takes neither admission nor the write gate
+(`internal/relay/store/hold.go:285-302`, `OpenReadOnlyStore`), so a `doctor` or a
+reconciliation process can open the database after any handle scan and during the copy. The
+command therefore needs a barrier a read-only open also observes; the process-handle scan the
+incident script ran is not that barrier, and saying the write gate gives it would be false.
+That barrier is a requirement of S2.
+
+The post-restore proof is the reading that already exists:
+`doctor --expect-store --expect-inode` (`internal/relay/cli/doctor.go:100-101`,
+`internal/relay/store/compare.go:51-106`). Those two flags alone answer `unproven`, not
+`proven`: `CompareStore` requires a found, attributed nonce and an agreeing log location as
+well (`internal/relay/store/compare.go:51-105`), so the procedure is `doctor` with
+`--expect-store`, `--expect-inode` and `--expect-log`, plus the nonce the restore wrote before
+it stopped the store. The section states the whole proof rather than the two flags, so the
+slice cannot ship a restore whose own acceptance check refuses. The
+issue body and the recovery answer spell the first flag `--expect-store-id`; the real flag is
+`--expect-store` (`internal/relay/argparse/specs.json:528`), and this section uses the real
+name. One sub-question is not answered by the body and is left to management: whether the
+restore command may run only while the item-1 marker is present, or also standalone. My
+recommendation is that restore clears nothing and a separate release step clears the marker
+after reconciliation, so the two commands stay usable on their own.
+
+Evidence: `RESTORE-RESULT.json` (action, device, inode, store_id, `takeover_unchanged`),
+`restore_same_identity.py` (the precondition sequence), `sqlite-restore-probe.json` (the
+same API preserves the inode on an offline copy: 6437852 before and after),
+`internal/relay/managed/identity.go:52`, `internal/relay/managed/reservation.go:35,77,119,156`,
+`internal/relay/cli/doctor.go:100-101`, `internal/relay/argparse/specs.json:528`,
+`internal/relay/store/compare.go:51-106`.
+
+### 3. Isolated validation
+
+Context: replaying a write command against a copy of the store is refused today, by design.
+The copy carries another store's ownership record, so the write gate fence answers
+`store_owned_by_other` (`internal/relay/store/ownership.go:128-131`). The incident met
+exactly that when the offline replay of a merge-turn request was attempted against
+`candidate-validation-state` (`756-offline-request-replay.json`: reason
+`store_owned_by_other`, detail "ownership refused: write gate: no such file or directory"),
+and `RECOVERY-STATUS.json` records that directory as refused. `CODEX_SESSION_RELAY_SCOPE_DIR`
+isolates only the scope registry, not the store's identity, so it does not open this door.
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) A per-copy ownership override, so a copy is treated as this process's | One flag that lets a writer take a copy's gate | Rejected: it removes the fence the incident proved load-bearing, which is the first criterion's own prohibition |
+| (b) Read-only simulation: recompute the deterministic identities and compare them without writing | The replay answers what the write would have produced, without performing it | Safe and reusable; it proves the identity arithmetic and the convergence, not the write path |
+| (c) A clone with a fresh identity, whose copied managed rows carry re-stamped fingerprints | Write replays become possible on the clone | Needs a migration semantics the body does not give: whether a copied row keeps its original fingerprint (and so keeps refusing) or is re-stamped, and what marks the re-stamp |
+
+Decision: the method is (b), read-only simulation. That is stated as the decision rather than
+left to elimination: (a) is refused by the first criterion, and (c) is left open below, so the
+method this issue ships is the read-only one. The first criterion settles the part this
+section can settle - the write gate is not weakened, and (a) is refused on that ground alone -
+and the body's own split ("migration and operating choices are decided by management, then
+Lina, then Jun") reserves the migration question that (c) turns on.
+
+What (b) reads is decided too, because a copy is not the store it came from: the simulation
+recomputes a request's identity against the identity the *copy* records for itself, or
+against the original identity the operator names, and never against the copy's own device and
+inode as though they were the store's. Item 5 says which identity the reconciliation compares
+and why a recomputation against the copy's physical identity would fail on every healthy row.
+That is the same reading rule, applied to the same inputs.
+
+blocked_needs_input: management, Lina and Jun must decide whether an isolated validation copy
+ever carries re-stamped managed fingerprints, and if so what marks them. Until that is
+answered the isolated validation that ships is (b): the reconciliation command of item 5 and
+the identity recomputation of item 7 both run read-only on a copy and need no new ownership.
+
+Evidence: `internal/relay/store/ownership.go:96-131` (the fence),
+`756-offline-request-replay.json` and `RECOVERY-STATUS.json` `candidate_do_not_use`,
+`recovery-support-answer-p64-20261006.md` section (1) (the identity is fixed by the store's
+fingerprint, not by the scope directory), `candidate-review-p64-20261006.md` section 1 (the
+read-only comparison the independent check already ran).
+
+### 4. A consistent backup, and what a sidecar's appearance means
+
+Context: the install route already takes the backup this issue wants, and it does so the way
+CRW-805 decided: the whole state directory is copied byte for byte while the daemon and the
+in-flight cells are stopped, every regular file is hashed as it is read, the source is read
+again and compared, and a manifest is written beside the copy
+(`internal/runtime/install/zone.go:110-115`, `backupState`; the flag is
+`--backup-state-to` at `internal/runtime/install/cli.go:112-114`; the swap gate releases
+the additive zone only on that route, `internal/runtime/swapgate/swapgate.go:55-59`). The
+copy names SQLite's sidecars as SQLite resolves them: when `relay.sqlite3` is a link, the
+real file's `-wal` and `-shm` are copied beside it under the link's name, so a restore
+opens with the commits only the log held (`internal/runtime/install/zone.go:374-375`). The
+2026-10-06 restore consumed exactly such a stopped copy and asserted the database equalled
+the frozen snapshot with an empty log.
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) The stopped byte copy stays the default backup artifact, unchanged | One mechanism, already shipped and already released by an operator acknowledgement | One artifact and one route; it is the artifact the incident's own restore consumed, so the restore path and the backup path already agree |
+| (b) An online `sqlite3_backup` snapshot becomes the default, with the stopped copy as the fallback | Continuous restore points, taken while the daemon runs | The API is the same one the restore and the projection already use (`internal/relay/store/hold.go:307-350`), but it adds always-on machinery and an operating policy the body's criteria do not weigh |
+| (c) The online snapshot, taken only when an operator asks, as an addition | The same artifact with no always-on machinery | Still needs a destination and a retention answer, but it is the safe way to add the online form if one is wanted |
+
+Decision: the mechanism is decided here, and so is the default. A consistent backup is either
+the stopped byte copy CRW-805 and CRW-837 already own, or an online `sqlite3_backup` image,
+and either one must pass `integrity_check` before it may be named as a restore candidate -
+which is what the incident's own restore required of its candidate. The default stays the
+stopped byte copy, option (a): it is the artifact the 2026-10-06 restore consumed, so the
+backup route and the restore route agree by construction, and criterion 4 ("the hand recovery
+becomes a product command that can be run again") is satisfied without new always-on
+machinery.
+
+"Reused unchanged" is narrower than it sounds, and S7 says what it leaves to be added. The
+byte-copy routine itself stays as it is: it copies every regular file while hashing it,
+re-reads the source and refuses every entry that appeared, changed or went between the two
+readings (`internal/runtime/install/zone.go:110-115,473-500`, `listingDiff`), and names the
+sidecars as SQLite resolves them. What is not reusable is its *route*: `backupState` runs only
+inside an install that is introducing the additive zone or an ordinary index
+(`internal/runtime/install/zone.go:71-78`, `swapgate.AdditiveArrivalOnly`), and an install
+that is not gets no backup even when `--backup-state-to` was given. An operator therefore
+cannot take the default artifact on demand today, which is exactly the gap criterion 4 names,
+so S7 adds a standalone route to the same routine. The online form is left to Jun:
+blocked_needs_input: Jun must decide whether an online snapshot runs on a schedule, where it
+is written, and how long it is kept, because the body's criteria do not answer those. The
+clarification the design evidence already makes is carried here: CRW-805's "the last
+connection removed them" reading is right for an install backup, and 2026-10-06 showed a
+sidecar can also vanish while the daemon runs; that second mechanism is the separate cause
+fix, not a defect in the backup decision, and CRW-805 and CRW-837 are otherwise reused
+unchanged.
+
+Evidence: `internal/runtime/install/zone.go:110-115` (`backupState`) and `:374-375` (the
+sidecar naming), `internal/runtime/install/cli.go:112-114` (`--backup-state-to`),
+`internal/runtime/swapgate/swapgate.go:55-59` (`ExtendsZone`/`NarrowsZone`),
+`internal/relay/store/hold.go:307-350` (`Projection`, the runtime's existing backup-API
+wrapper), `restore_same_identity.py` and `sqlite-restore-probe.json`,
+`db-hardening/design-evidence.md` section 4 (the 805/837 reuse rows).
+
+### 5. Row and semantic reconciliation becomes a product command
+
+Context: the 2026-10-06 audit was done by hand and its checks are reproducible. The primary
+key and index-identity comparison is `index-identity-comparison.json`, the cross-table audit
+is `candidate-audit.json`, and the invariant set is P64's: a turn's identity is
+`key(mtn, target, holder, tenure)` with the tenure at `MAX(tenure)+1`
+(`internal/relay/mergeturn/mergeturn.go:72-73,243-248`); every turn id written to the ledger,
+a grant or an event has a `merge_turns` row; a turn's grant sequence is its grant-ledger
+entry count plus one (`internal/relay/mergeturn/mergeturn.go:112-121`); a wake event and its
+delivery are inserted together with `INSERT OR IGNORE`
+(`internal/relay/mergeturn/delivery.go:64-78`) and the event id is derived
+(`internal/relay/mergeturn/delivery.go:107-109`); and a managed request's fingerprint is
+recomputable (`internal/relay/managed/identity.go:52`).
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) A read-only product command that runs the named invariant set and reports | The audit becomes reusable and testable, and a golden can pin each invariant | Read-only, so it writes no row and touches no shipped SQL; the check list is maintained beside the code it mirrors |
+| (b) Keep the management session's audit scripts | No product change | The body's fourth criterion asks for the hand recovery to become a product command, and the incident needed days of expert work |
+
+Decision: (a), read-only. The command reports and never repairs: the incident's repairs were
+human decisions, and the one time a missing journal row was classified as "history only" it
+turned out to be read by the merge-currency check, so the repair went through an official
+command instead (`RECOVERY-STATUS.json`, the `regressions` block). The seed check list is
+I0 the store's identity against `takeover.json`; I1 the turn-id recomputation and the
+ledger-to-turn join; I2 the grant sequence; I3 the ready-waiter promotion order; I4 the
+event/delivery pairing and the staged-event accounting; I5 the managed fingerprint
+recomputation. No refusal reason is added: the command answers a report, and a report that
+finds a broken invariant exits as a reading, not as a refusal.
+
+What the command compares against is decided here, because running it on a copy is the
+normal case and the naive reading is wrong on every healthy copy. A managed request's
+fingerprint is taken over the *selected* store's observed `storeId`, device, inode and real
+path (`internal/relay/managed/identity.go:18-57`, `RequestIdentity`), so copying a store
+changes those inputs and a recomputation against the copy's own identity reports a mismatch
+for every row that is in fact fine. I0 and I5 therefore compare against the identity the
+store records for itself in `takeover.json` and in `schema_meta` - the same values the
+restore's own precondition reads - and separately assert that the copy is deliberately *not*
+the live inode, so a check that silently passed because it was reading the live store cannot
+happen. The live-store case and the copy case differ only in which identity is the expected
+one, and the command says which it used.
+
+Evidence: `index-identity-comparison.json`, `candidate-audit.json`,
+`candidate-review-p64-20261006.md` sections 1-3, `RECOVERY-STATUS.json` (`regressions`,
+`remaining`), `internal/relay/mergeturn/mergeturn.go:72-73,112-121,243-248`,
+`internal/relay/mergeturn/delivery.go:64-78,107-109`,
+`internal/relay/store/mergeturn_capacity.go:61-65` (`ReadyMergeWaiters`, the promotion
+order I3 checks), `internal/relay/managed/identity.go:52`.
+
+### 6. Journal sequence continues, and a loss is marked rather than hidden
+
+Context: the journal's sequence is `INTEGER PRIMARY KEY AUTOINCREMENT`
+(`internal/relay/store/relay-sqlite.sql:477-483`) and no writer passes it
+(`internal/relay/store/registry.go:36-38`), so SQLite never reuses a number. On 2026-10-06
+ten original index entries were missing or conflicting, the surviving sequence jumped from
+18029 to 18030 while the writes between them were lost, and the loss was not merely
+historical: `latestLanding` orders landed turns by the journal's `merge_turn_closed`
+sequence (`internal/relay/mergeturn/refusals.go:149-155`, `ORDER BY COALESCE(j.seq, -1)
+DESC`), so a lost close row makes the ordering read a turn that no longer has a place in it,
+and the lane refused `merge_currency_stale` until the base was restated through the official
+command (`RECOVERY-STATUS.json`, `regressions`). The lost rows themselves are preserved as
+raw evidence in `historical-journal-evidence.json` and were not reinserted.
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) Append a marker row for the known gap and never reinsert an old number | The loss is visible, the sequence keeps moving forward, and the raw evidence stays where it was preserved | Appends only, so no ledger row is deleted or rewritten; AUTOINCREMENT already forbids reuse |
+| (b) Reinsert the recovered rows at their original numbers | A complete-looking history | Reuses numbers the issue body forbids reusing, and writes rows with fabricated old timestamps, which the restore record already declined to do |
+| (c) A separate loss table | A clean separation | A new shipped table changes the frozen SQL, which criterion 2 turns into a decision; a journal row is data and needs no schema change |
+
+Decision: (a). Three rules come with it. First, the restore captures the pre-restore
+high-water mark of the journal sequence and advances the restored store's sequence past it
+before anything is appended. This is the part that makes the no-reuse rule true rather than
+merely intended: the backup API restores the candidate's own `sqlite_sequence` row as well as
+its rows (`internal/relay/store/relay-sqlite.sql:477-483`), so a candidate older than the
+damaged store would otherwise hand back numbers that were already issued and observed - the
+incident itself reserved the observed values exactly this way, by advancing to 18035 before
+appending its preparation record (`candidate-final-pre-reconcile-provenance.json`), and
+occurrence keys such as `refused:<journal seq>` depend on the number meaning one event.
+Second, a marker row kind (a value, not a refusal reason, so it needs no exit-code
+registration) records the known loss span and the path of the evidence that describes it, and
+its own sequence and timestamp are the ones it is written with - never a historical pair.
+Third, a reader that depends on a per-kind sequence maximum must treat a declared loss span
+over that kind as unknown rather than as nothing having happened. That is the lost-close-row
+failure stated as a rule, and the inventory of those readers is part of the slice, not of
+this document. The set this section has confirmed is not complete: `latestLanding`
+(`internal/relay/mergeturn/refusals.go:149-155`) and the fault sweep's sequence paging over
+the journal's refusal rows (`internal/relay/store/relay-sqlite.sql:484-489`) are two, and
+there are at least two more - the reconciliation read that orders `host_lost_turn` records by
+sequence to recover redelivery state (`internal/relay/delivery/reconcile.go:146`) and the
+managed-start read that takes the newest creation answer by sequence
+(`internal/relay/faults/managed_start.go:9`) - so S5 owes a full inventory and a test for each
+reader whose result changes when a row inside the span is absent.
+
+Evidence: `internal/relay/store/relay-sqlite.sql:477-483,484-489`,
+`internal/relay/store/registry.go:36-38`, `internal/relay/mergeturn/refusals.go:149-155`,
+`historical-journal-evidence.json` (the preserved originals),
+`candidate-final-pre-reconcile-provenance.json` (the high-water mark and the truthful
+preparation record), `RECOVERY-STATUS.json` (`regressions`, `remaining`),
+`db-hardening/design-evidence.md` section 3 (the 18029-to-18030 gap).
+
+### 7. A replayed request converges instead of duplicating
+
+Context: replaying a request after a recovery is already deterministic in the ways that
+matter, and this item writes that down as the contract. A merge-turn request derives its turn
+id from `key(mtn, target, holder, tenure)` with the tenure at the holder's `MAX(tenure)+1`
+(`internal/relay/mergeturn/mergeturn.go:72-73,243-248`), so a replay that recomputes the
+same tenure reproduces the original id; a ledger entry under the same idempotency key with
+different content refuses `merge_evidence_required` and rolls the whole thing back
+(`internal/relay/mergeturn/mergeturn.go:98-100`); a promotion's wake is queued once inside
+the grant transaction with a derived event id
+(`internal/relay/mergeturn/delivery.go:64-78,107-109`); a replayed emit finds its event and
+answers duplicate, journaling `event_reobserved` without re-judging
+(`internal/relay/store/receipt_intake.go:237,254-258`); an intent claim is create-once and
+answers `unchanged` to an identical re-claim
+(`internal/relay/delivery/intent_cli.go:513-546`, which the incident observed live:
+`814-intent-claim-replay.json` answers `"outcome": "unchanged"`); and a grant wake is never
+re-sent once `grant_acknowledged` exists
+(`internal/relay/mergeturn/grant.go:95-125`).
+
+| Option | What it means | How it scores against the criteria |
+| --- | --- | --- |
+| (a) Write the existing convergence down as the contract, and pin each rule with a test | No behaviour change; replay safety becomes a tested guarantee | Reuses what the store already guarantees and needs no new row, column or reason |
+| (b) Add new de-duplication machinery, such as a request-id reuse table | A stronger guard for a case that is not yet covered | Redundant where the identity is already derived, and new shipped SQL changes the frozen schema |
+
+Decision: (a), and four rules are stated. First, a merge-turn replay runs only while the
+target is occupied and before the holder re-requests; a replay against a free target takes it
+as `holding` instead of re-entering `waiting`, and a replay after the holder re-requested is
+answered by the holder's live claim rather than by a new turn. Second, before replaying a turn
+request the caller recomputes `key(mtn, target, holder, MAX(tenure)+1)` and compares it with
+the saved response, and does not call when they differ. Third, a replayed emit and a replayed
+intent claim are safe without a precondition, because both answer duplicate or unchanged
+rather than re-judging. Fourth, a replay's timestamps are its own: the request time, the
+ledger's recorded time and the journal row are all the replay's, and a historical time is
+never written, which is the same rule the restore record already states for its lost history.
+The ordering rules are the body's own ("replay only against an occupied target, and before
+the parent re-requests"), and the recovery answer works them out in full.
+
+Evidence: `internal/relay/mergeturn/mergeturn.go:72-73,98-100,112-121,243-248`,
+`internal/relay/mergeturn/delivery.go:64-78,107-109`,
+`internal/relay/mergeturn/grant.go:95-125`,
+`internal/relay/store/receipt_intake.go:237,254-258`,
+`internal/relay/delivery/intent_cli.go:513-546`, `814-intent-claim-replay.json`,
+`recovery-support-answer-p64-20261006.md` sections (2) and (3),
+`RESTORE-RESULT.json` (`historical_gaps`).
+
+### Implementation slices
+
+Each slice is one region and one pull request unless its own issue says otherwise, and each
+is proved red before it is built. S1 is CRW-848, the write-stop issue this section decides;
+the others are the follow-ups this section proposes.
+
+| Slice | Scope | Predecessors | Edit regions | Red-first test |
+| --- | --- | --- | --- | --- |
+| S1 write-stop on corruption (CRW-848) | Detect 11, 26 and 522 on the write paths and the daemon observation, write the marker in S, refuse a writable open and a daemon pass while it is there, and journal the set and the clear | This section | `internal/relay/store/` beside `StartPreflight` and `CheckStartLikeFence`; the daemon observation path; `contract/schema/relay-exit-codes.json` and the generated code for the new reason; `docs/relay/` operator page | A store with the marker present refuses a writable open with the new reason and still answers `doctor`; a synthetic corruption makes the daemon write the marker and stop writing; the clear refuses before a reconciliation reading exists |
+| S2 official restore | The item-2 command: prove the candidate's hash, integrity and ownership keys, hold the gate exclusively, take the read-only-open barrier item 2 requires, preserve the pre-restore state with a manifest, copy through the backup API onto the same inode, advance the journal sequence past the pre-restore high-water mark, prove the result with `doctor` using `--expect-store`, `--expect-inode`, `--expect-log` and the nonce, and journal it | S1 for the marker's release path; not CRW-846 | `internal/relay/store/` (a new restore path; `ownership.CopySnapshot` is not it, its own comment bars that at `internal/relay/store/ownership/record.go:497`), `internal/relay/cli/`, `docs/relay/` | A restore whose candidate fails `integrity_check`, whose ownership keys disagree with `takeover.json`, or that runs while a read-only opener holds the store, refuses and writes nothing; a successful restore leaves device:inode and the `takeover.json` hash unchanged, appends nothing at or below the pre-restore journal high-water mark, and `doctor` with the log expectation and the nonce answers `proven` |
+| S3 isolated validation | The item-3 decision: read-only simulation helpers, and, only if management answers the open question, the clone with re-stamped fingerprints | Item 3's answer | The reconciliation command's read paths; a clone path only if the answer needs one | The simulation recomputes a turn id, a grant id and a wake event id from a copy and reports them; it writes nothing (the doctor-76 rule) |
+| S4 reconciliation command | The item-5 read-only report over I0 to I5 | This section | `internal/relay/store/` (reads), `internal/relay/cli/`, goldens in the command's own test file | A fixture with a planted missing turn row, a grant-count skew and an orphan delivery reports each one by name; a healthy store reports clean; the command writes nothing |
+| S5 journal loss markers | The item-6 marker kind, its writer in the restore flow, the sequence advance past the pre-restore high-water mark, and the rule that a sequence-dependent reader treats a declared span as unknown. The slice owns the full reader inventory: the two this section names (`latestLanding` and the fault sweep's refusal paging) plus at least the `host_lost_turn` reconciliation read and the managed-start creation-answer read | S2 (the restore emits the marker) | `internal/relay/store/registry.go` (the journal path), `internal/relay/mergeturn/refusals.go` (`latestLanding`), `internal/relay/delivery/reconcile.go`, `internal/relay/faults/managed_start.go`, the fault sweep's paging, and the contract page that names the kind | A restored fixture whose candidate is older than the damaged store appends its first row above the pre-restore high-water mark; a declared span makes each inventoried reader report unknown instead of silently selecting an older or no row; the marker row gets a fresh sequence and the replay's own timestamp |
+| S6 replay de-duplication | The four rules of item 7 pinned as tests, with no new machinery, and the same rules written into the normative relay documentation so a future runtime change reads them where the relay's contract lives rather than in this port record | S5 for span visibility | `internal/relay/mergeturn/`, `internal/relay/store/receipt_intake_test.go`, `internal/relay/delivery/`, and the applicable page under `docs/relay/` | A replayed merge-turn request on an occupied target converges to the original turn id and adds no event or delivery; a replayed emit answers duplicate and journals `event_reobserved`; a replayed intent claim answers `unchanged`; a replay whose recomputed id differs is refused before it writes |
+| S7 the backup artifact | The item-4 mechanism half: one definition of a consistent backup, whichever of the two forms it takes, its `integrity_check` gate, and an operator-invokable route to take the default artifact. `backupState` is reachable today only from the install route, and only when the swap actually introduces the additive zone or an ordinary index (`internal/runtime/install/zone.go:71-78`, `swapgate.AdditiveArrivalOnly`), so an operator cannot take the default backup on demand - which is the body's fourth criterion. This slice adds the standalone stopped-backup command (or extends that route) and the policy answer for anything scheduled | Item 4's policy answer for anything scheduled | `internal/runtime/install/zone.go` (`backupState` itself stays as it is), the install CLI, plus a new snapshot path only if Jun approves one | A backup artifact that fails `integrity_check` is refused as a restore candidate; the operator command takes the same byte-copy artifact outside an install; a sidecar that appears or vanishes during a stopped copy is not a failure (the 805 rule, which `listingDiff` already enforces by refusing every newly appearing or changed entry: `internal/runtime/install/zone.go:473-500`), and a sidecar vanishing under a running daemon is the separate cause fix's, not this slice's |
+
+Two cross-cutting requirements the slices carry, because the incident showed they are not
+automatic. A restore or a backup that is interrupted must leave a state a retry can read: the
+marker (S1) is written before the copy starts and cleared only after a verified reading, so a
+cancelled restore leaves the store halted rather than half-restored. And a stop during a
+restore must produce no new row: the write gate is held for the whole copy, so the daemon's
+own writes are already excluded, and each slice's red-first test names the cancellation case
+it covers.
+
+### Decisions left to management, Lina and Jun
+
+1. The isolated-validation fingerprint question (item 3). Does an isolated validation copy
+   ever carry re-stamped managed fingerprints, and what marks a re-stamp? Recommendation:
+   ship the read-only simulation first, and answer this only if a write replay on a clone is
+   actually needed, because the answer is a migration semantics rather than a mechanism.
+2. The online-snapshot policy (item 4). Does an online snapshot run on a schedule, where is
+   it written, and how long is it kept? Recommendation: keep the stopped byte copy as the
+   default until a measured need appears, because a schedule commits ongoing disk and
+   operating work that the body's criteria do not weigh.
+3. The restore/marker coupling (item 2). May the restore run only while the item-1 marker is
+   present, or also standalone? Recommendation: restore clears nothing and a separate release
+   step clears the marker after reconciliation, so each command stays usable alone.
+4. The write-halt refusal reason (item 1). A new reason is required and none existing has the
+   same meaning; the name and its registration in
+   `contract/schema/relay-exit-codes.json` and the generated code belong to S1, and this
+   section decides only that the reason is needed and why.
+
+### What this pull request does not change
+
+Only `docs/port/decisions.md` changes: one section at its end. No product code, test,
+workflow, contract file, golden, skill document or `plugin.json` changes, and no ruleset,
+repository setting or branch is touched. The write stop, the restore command, the isolated
+validation, the reconciliation command, the journal loss markers, the replay tests and the
+backup artifact ship as the slices above.
+
+## 84. The creating open keeps its EX gate and downgrades that description to SH in place (CRW-853)
+
+Decision: a writable open that creates an absent store keeps the write gate's open file
+description it placed `EX` and hands it to the store's shared hold instead of closing it and
+taking `SH` on a second description. `createAbsent` returns the gate it placed, still held `EX`,
+when it created the store, and `nil` when it did not (another opener placed the gate first, or the
+store appeared while it created it); every failure path before the hand-over still closes the
+description it placed. `openFenced` carries the returned gate to the writable open and closes it
+on every failure until the writable open takes ownership. `holdGate`, handed that description,
+takes no lock, binds the socket under it first when the opening binds one (`bindSocket`, unchanged),
+and downgrades that same description to `SH` with `unix.Flock(fd, LOCK_SH|LOCK_NB)` - the
+in-place downgrade the socket-binding branch already did. With no handed gate `holdGate` behaves
+exactly as before.
+
+Why: `flock` belongs to the open file description, not to the process. Closing the creator's
+description and taking `SH` on a fresh one leaves the first description held `EX` for as long as
+any surviving reference to it exists, and a child forked during the creation that has not yet
+`exec`ed holds exactly such a reference. The creator's own writable open then refused the store it
+had just created with reason `store_owned_by_other` and detail `write gate: resource temporarily
+unavailable`. That refusal reached two unrelated CI runs of `internal/relay/routing`
+(`Test23_PRD_22_ProposalRotation` on 2026-10-05, `Test23_PR_9_ProjectMembers` on 2026-10-06) through
+`binary_qa_test.go`, which runs the built relay with `exec.Command` under `t.Parallel()`: the
+fork's `exec` window is the race. The cause is the product, not the tests' isolation, so the lock
+handling is what changes.
+
+Measured: with a `dup` of the creating description alive, a fresh open's `LOCK_SH` answers
+`EWOULDBLOCK` (the observed refusal), `LOCK_SH` on the duplicated description itself succeeds, a
+fresh open's `LOCK_EX` then answers `EWOULDBLOCK`, and after every reference is closed `LOCK_EX`
+succeeds. The probe is recorded with the issue's evidence.
+
+*What does not change.* No refusal reason, output field, exit code, CLI option, contract file or
+golden changes, and no zone statement is appended: this is a change to how an existing lock is
+taken, not to the store's shape. `awaitCreation`'s wait is untouched, the lock file keeps its path,
+mode and inode (`placeGate` and `ownership.Lock` are unchanged; only a close and a second open are
+removed), and no retry, wait or sleep is added to hide a refusal. A creating open now holds `EX`
+from placement through its writable open, so a concurrent opener arriving in that window waits in
+`awaitCreation` bounded by the busy timeout - the same waiting shape the socket-binding window
+already had, and what "never let go between the creation and the store's shared hold" requires.
+
+*Red first.* `Test853CreatingOpenKeepsItsGateAndDowngradesItInPlace` in the new
+`internal/relay/store/creation_gate_test.go` (Linux; other systems skip). It dups the creation
+gate's description at the `createFault("gate-placed")` seam and holds it until `Open` returns:
+before this change `Open` refuses with `store_owned_by_other` and the detail above, after it
+succeeds. While the store is open a fresh exclusive lock of the gate answers `EWOULDBLOCK` and a
+fresh shared one succeeds (the shared probe is the discriminating one: an exclusive probe cannot
+tell `SH` from `EX`); after `Close` and releasing the dup an exclusive lock succeeds. The socket
+case runs the same sequence for a store opened with an App Server socket, which also exercises the
+binding under the handed gate. `Test853CreationRefusalWordsAreUnchanged` pins that a genuine `EX`
+holder still meets the same reason and words.
+
+Evidence: `internal/relay/store/ownership.go` (`createAbsent`, `openFenced`),
+`internal/relay/store/stamp.go` (`verifyWritable`, `holdGate`, `refuseWithHanded`),
+`internal/relay/store/creation_gate_test.go`; the existing
+`Test30ConcurrentFirstOpenersNeverSeeAPartialStore`, `Test30CreateAbsentNeverExposesUnstampedDatabase`
+and `Test30SocketBindingBindsAnUnboundStoreOnce` still hold the creation, crash and binding
+contracts around it.
+
+*Not in this slice.* `awaitCreation` and the socket binding of an already-existing store are
+unchanged, as are the write stop and the store file handles, which neighbouring issues own. No
+live-service, installation or activation behaviour is verified here; the installed runtime is
+older than this tree and M4 owns that acceptance.

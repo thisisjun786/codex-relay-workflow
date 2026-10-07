@@ -53,6 +53,7 @@ func assertSeen(t *testing.T, seen *replaySeen, kinds ...string) {
 // Criterion c1, replaying the events from the beginning: after the initial state and after every step of every fixed record (fork/join, amend, pause, stale, denominators), the events from the empty
 // cursor, read in pages of 1, 2, 3 and all, fold into a snapshot that projects the live document byte for byte with the live digest, and that is the live snapshot part by part.
 func TestProgressReplayFromTheBeginningEqualsLive(t *testing.T) {
+	t.Parallel()
 	seen := newReplaySeen()
 	for _, sc := range replayScenarios {
 		t.Run(sc.name, func(t *testing.T) { runReplayScenario(t, sc, seen, true, false) })
@@ -62,6 +63,7 @@ func TestProgressReplayFromTheBeginningEqualsLive(t *testing.T) {
 
 // Criterion c1, a snapshot plus the events after its cursor: a snapshot taken after every step is brought, by the events after its own cursor, to the live view of every later step.
 func TestProgressSnapshotPlusTailEqualsLive(t *testing.T) {
+	t.Parallel()
 	seen := newReplaySeen()
 	for _, sc := range replayScenarios {
 		t.Run(sc.name, func(t *testing.T) { runReplayScenario(t, sc, seen, false, true) })
@@ -73,6 +75,7 @@ func TestProgressSnapshotPlusTailEqualsLive(t *testing.T) {
 // page); pages of any size are that list cut in order, with no event twice; and from a cursor in the middle of the list, the cursor a page returns, as a value and as text, the pages are the rest
 // of the list: nothing is repeated and nothing is left out.
 func TestProgressDeltaPagesExactlyOnce(t *testing.T) {
+	t.Parallel()
 	for _, sc := range []replayScenario{replayScenarios[0], replayScenarios[1]} {
 		t.Run(sc.name, func(t *testing.T) {
 			f, plan, steps := sc.build(t)
@@ -134,6 +137,7 @@ func TestProgressDeltaPagesExactlyOnce(t *testing.T) {
 // When the store moves between two pages the fold still ends at the live view: the cursor is what the reader holds, so a record that changed after it was read is read again (a new event, not a
 // repeat) and one that did not change is never sent twice. No (event, digest) pair is delivered twice.
 func TestProgressDeltaConvergesWhenTheStoreMoves(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioForkJoin(t)
 	steps[0].run()
 	snap := ProgressSnapshot{}
@@ -194,6 +198,7 @@ func TestProgressDeltaConvergesWhenTheStoreMoves(t *testing.T) {
 // Criterion c3: a query, a snapshot, every page of every size, the fold and the projection write nothing: every row of every table of the store (the journal included) and every object of its
 // schema are the same afterwards, and the same read works, with the same answer, through a store opened read-only.
 func TestProgressReplayWritesNothing(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioForkJoin(t)
 	for _, step := range steps {
 		step.run()
@@ -234,6 +239,7 @@ func TestProgressReplayWritesNothing(t *testing.T) {
 // proof. The case: one revision and one node count, two relationships paused with no revision; a snapshot that took the first page only would pass the checks ProjectProgress has (the revision
 // and the node count) and print a hybrid, so the fold refuses to project until it has caught up.
 func TestProgressSnapshotIsNotProjectedBeforeItHasCaughtUp(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	runningPlan(f, "pq", 3)
 	ctx := context.Background()
@@ -277,6 +283,7 @@ func TestProgressSnapshotIsNotProjectedBeforeItHasCaughtUp(t *testing.T) {
 
 // A reader cut off after the plan header alone must not read the header again for ever: the cursor holds the plan, so the next page goes on to the revisions.
 func TestProgressDeltaHeaderAloneDoesNotRepeat(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	ctx := context.Background()
@@ -303,6 +310,7 @@ func TestProgressDeltaHeaderAloneDoesNotRepeat(t *testing.T) {
 // The plan's limit is 64 nodes. Replacing one keeps 64 live nodes, and a reader that holds 64 records and receives the new one before the old one is gone would hold 65: the removal comes
 // first, so it never holds more than the plan's limit, and it is delivered exactly once whatever the page size; every cursor on the way survives its text and is the folded snapshot's.
 func TestProgressDeltaReplacementAtTheNodeLimit(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	var changes []doc
 	for i := 0; i < 64; i++ {
@@ -360,6 +368,7 @@ func TestProgressDeltaReplacementAtTheNodeLimit(t *testing.T) {
 // A cursor of a reader whose log is not this one is refused: the revision it holds is not in the log (unregistered_scope), or the log has that revision with other content (revision_mismatch,
 // whether the state digest or only the metadata of a revision differs). A cursor of another plan holds nothing of this one.
 func TestProgressDeltaCursorGuards(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioForkJoin(t)
 	for _, step := range steps {
 		step.run()
@@ -422,6 +431,7 @@ func TestProgressDeltaCursorGuards(t *testing.T) {
 // Plans in one store: a snapshot of one plan given the delta of another from the empty cursor (it starts with the plan header) is reset and converges on the other plan; the delta of the other plan
 // read from its own cursor, which has no header, is refused.
 func TestProgressDeltaOfAnotherPlan(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	forkJoinPlan(f, "p1")
 	forkJoinPlan(f, "p2")
@@ -462,6 +472,7 @@ func TestProgressDeltaOfAnotherPlan(t *testing.T) {
 
 // The cursor is text a reader can keep: it parses back to itself, the empty text is the beginning, and everything that is not a cursor is refused as a malformed document.
 func TestProgressCursorText(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioForkJoin(t)
 	steps[0].run()
 	live, _, err := f.sched.ReadProgressSnapshot(context.Background(), plan)
@@ -507,6 +518,7 @@ func TestProgressCursorText(t *testing.T) {
 // What the fold refuses, each with its trigger: an event that does not follow the one before, a revision twice, a record whose digest is not its content, an event of another plan, a delta whose
 // cursor or fingerprint is not what the fold reached; and what it leaves alone: the snapshot it was given, even when it refuses.
 func TestProgressDeltaApplyGuards(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioForkJoin(t)
 	for _, step := range steps {
 		step.run()
@@ -618,6 +630,7 @@ func TestProgressDeltaApplyGuards(t *testing.T) {
 // Dropping the events of any one kind from a read that has them is refused by the fold (its cursor is not the delta's), so a fold that is missing a kind of event cannot report that it caught
 // up. The read is taken from a snapshot after the first step of the amend script, which has all four kinds a snapshot's tail has.
 func TestProgressDeltaWithAMissingKindIsRefused(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioAmend(t)
 	steps[0].run()
 	ctx := context.Background()
@@ -658,6 +671,7 @@ func TestProgressDeltaWithAMissingKindIsRefused(t *testing.T) {
 
 // The plan's own state comes back with the replay: a plan paused and then resumed is an active plan in the rebuilt view (no plan_state), and a plan that is paused is paused in it.
 func TestProgressReplayCarriesThePlanState(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioPause(t)
 	ctx := context.Background()
 	for i, step := range steps {
@@ -682,6 +696,7 @@ func TestProgressReplayCarriesThePlanState(t *testing.T) {
 
 // A record is keyed: a change to one relationship changes the digest of exactly its node's record, and nothing else the cursor holds.
 func TestProgressRecordDigestIsKeyed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	runningPlan(f, "pq", 3)
 	ctx := context.Background()
@@ -712,6 +727,7 @@ func TestProgressRecordDigestIsKeyed(t *testing.T) {
 // change: a link, the slot a node holds, the title. A digest that left one of them out would send no event and the fold would end at a stale view. (The acceptance id is in the digest too, but
 // no case moves it alone: the detail of an accepted node names it, so a new acceptance moves two fields at once.)
 func TestProgressDeltaSeesEveryPrintedFieldOfARecord(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("pf", 0, "pf-r1", addNode("a", dag.NodeNonPR), addNode("b", dag.NodeNonPR), addNode("im", dag.NodeImplementation))
@@ -764,6 +780,7 @@ func TestProgressDeltaSeesEveryPrintedFieldOfARecord(t *testing.T) {
 // read and never deduplicates across reads, and the cursor is what says what a reader holds. The case: a relationship paused and resumed between reads. Node ids are plan-local, so the IDs
 // of two plans with the same node names are different.
 func TestProgressDeltaStateCycleIsDeliveredEveryTime(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	runningPlan(f, "pq", 2)
 	ctx := context.Background()
@@ -812,6 +829,7 @@ func TestProgressDeltaStateCycleIsDeliveredEveryTime(t *testing.T) {
 
 // The readers' entry points join a caller's transaction the way Progress does: inside Compose with the caller's querier, and in a plain transaction ReadProgressDelta is refused as a nested one.
 func TestProgressDeltaInsideCallersTransaction(t *testing.T) {
+	t.Parallel()
 	f, plan, steps := scenarioForkJoin(t)
 	steps[0].run()
 	ctx := context.Background()
@@ -859,6 +877,7 @@ func TestProgressDeltaInsideCallersTransaction(t *testing.T) {
 
 // A guard, not the proof of criterion c3 (that is the behaviour above): the library file imports nothing that reaches outside the process or the command layer.
 func TestProgressReplaySourceImportsGuard(t *testing.T) {
+	t.Parallel()
 	file, err := parser.ParseFile(token.NewFileSet(), "progress_replay.go", nil, parser.ImportsOnly)
 	if err != nil {
 		t.Fatal(err)
@@ -875,6 +894,7 @@ func TestProgressReplaySourceImportsGuard(t *testing.T) {
 
 // The page names every entry point and every kind of event of the rebuild, so it cannot drift from the code.
 func TestProgressReplayPageNamesTheAPI(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../docs/relay/dag-progress.md")
 	if err != nil {
 		t.Fatal(err)

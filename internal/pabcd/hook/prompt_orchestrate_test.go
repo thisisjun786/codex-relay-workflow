@@ -446,22 +446,28 @@ func TestPromptOrchestrateCheckEpochIsMintedKeptAndDropped(t *testing.T) {
 	}
 }
 
-// TestPromptOrchestrateBoundDCloseHandsToTheSeam: a bound D belongs to the successor issue's seam, so
-// this unit answers unhandled, the loose path runs, and nothing is half-closed.
+// TestPromptOrchestrateBoundDCloseHandsToTheSeam: a bound D belongs to the seam prompt_dclose.go
+// fills, so this unit hands it there instead of letting the loose detector run. The case carries no
+// receipt, which is the gate's first refusal, and the seam's own unit owns the rest of its cases
+// (prompt_dclose_test.go). The stub this asserted before CRW-797 is recorded as a pending defect of
+// CRW-385, superseded by that issue's known-defects file.
 func TestPromptOrchestrateBoundDCloseHandsToTheSeam(t *testing.T) {
 	cwd := t.TempDir()
 	promptOrchestrateSeed(t, cwd, "s1", func(s *state.State) {
 		s.Phase, s.OrchestrationActive, s.Slug = state.PhaseC, true, "some-unit"
 	})
 	got := promptOrchestrateAnswer(t, cwd, "s1", "t1", "orchestrate D")
-	if !strings.Contains(got, "[crw: CHECK]") {
-		t.Errorf("the loose path did not run for a bound D: %q", got)
+	if !strings.Contains(got, "C -> D on a goalplan-bound session requires") {
+		t.Errorf("the bound D did not reach the seam's receipt gate: %q", got)
+	}
+	if strings.Contains(got, "[crw: CHECK]") {
+		t.Errorf("a bound D fell through to the loose path: %q", got)
 	}
 	if s := state.ReadState(cwd, "s1"); s.Phase != state.PhaseC || s.Slug != "some-unit" {
-		t.Errorf("a bound D moved the phase: %+v", s)
+		t.Errorf("a refused bound D moved the phase: %+v", s)
 	}
 	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 0 {
-		t.Errorf("a bound D wrote a ledger row: %+v", rows)
+		t.Errorf("a refused bound D wrote a ledger row: %+v", rows)
 	}
 }
 

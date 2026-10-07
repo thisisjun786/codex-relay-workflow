@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -154,10 +155,15 @@ func orchestrateCommitSupersedeStaleRounds(cwd, slug, sessionID, epoch string, p
 	return nil
 }
 
-// orchestrateTransitionDClose is the D close (:725-1064), which CRW-756 and CRW-757 port. This issue refuses
-// the edge rather than half-close a cycle.
-func orchestrateTransitionDClose(cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
-	return CliResult{}, errors.New("orchestrate D close is not ported yet")
+// orchestrateTransitionDClose is the D close (:725-1064), ported in orchestrate_dclose.go. This body stays a
+// one-line call so a sibling issue's rewrite of the ordinary edge of this file merges without touching the D
+// place, and the commit-hook seam lives on the inner function the D close tests call directly.
+func orchestrateTransitionDClose(ctx context.Context, seams *orchestrateCommitSeams, cwd, sessionID, closePhaseID string, cur state.State, att *attest.Attestation, recovering bool) (CliResult, error) {
+	seam := orchestrateDcloseSeam{}
+	if seams != nil {
+		seam.interrupt = seams.interrupt
+	}
+	return orchestrateDcloseContext(ctx, cwd, sessionID, closePhaseID, cur, att, recovering, seam)
 }
 
 // orchestrateTransitionStateWritable is this writer's half of the port's data-loss rule for the session file
@@ -180,6 +186,22 @@ func orchestrateTransitionStateWritable(cwd, sessionID string, kept state.State)
 // orchestrateTransitionUnverifiedRefusalReason is the reason for a rewrite that would cut or retype a stored unverified record.
 const orchestrateTransitionUnverifiedRefusalReason = "session state holds records this rewrite would change; refusing to overwrite it"
 
+// sessionAliasRefusalText is the one answer a mutating entry gives an explicit --session for which
+// state.IsCanonicalSessionID is false (CRW-871). The read side and the library entry share it so the
+// two cannot drift; the state library itself keeps sanitising, as its recorded oracle rows pin.
+const sessionAliasRefusalText = "session id is not canonical"
+
+// sessionAliasRefuse is that answer for one verb, byte for byte the text RunOrchestrateRead returns.
+func sessionAliasRefuse(verb fsm.OrchestrateVerb) CliResult {
+	return CliResult{Code: 1, Output: sessionAliasRefusalOutput(verb)}
+}
+
+// sessionAliasRefusalOutput is the text both entries answer with, so the read side and the library
+// entry cannot drift apart.
+func sessionAliasRefusalOutput(verb fsm.OrchestrateVerb) string {
+	return "orchestrate " + VerbText(verb) + ": " + sessionAliasRefusalText
+}
+
 // orchestrateTransitionStateRefusal is the refusal shared by the three writes this file owns; reason is why the state is not writable.
 func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb, reason string) CliResult {
 	return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + reason + ". Nothing was written."}
@@ -200,6 +222,32 @@ func orchestrateTransitionStateRefusal(verb fsm.OrchestrateVerb, reason string) 
 type orchestrateCommitSeams struct {
 	writeState   func(cwd string, next state.State) error
 	lockGoalplan orchestrateCommitLockFunc
+	// interrupt runs immediately before the pre-write cancellation check of the branch that is about
+	// to write, so a test can cancel the invocation's context exactly between the session lock and the
+	// first durable effect (CRW-871). It is a field, never package state; nil means no hook.
+	interrupt func()
+}
+
+// orchestrateInterruptCheck is the pre-write cancellation check of CRW-871: the invocation's context
+// is read once more after the session lock is held and immediately before the branch's first durable
+// effect, so a first SIGINT that lands in that window leaves nothing written and the caller answers
+// Interrupted (130). The seam runs first, so a test can cancel the context exactly here; the returned
+// error is the context's own.
+func orchestrateInterruptCheck(ctx context.Context, seams *orchestrateCommitSeams) error {
+	var interrupt func()
+	if seams != nil {
+		interrupt = seams.interrupt
+	}
+	return orchestrateInterruptCheckWith(ctx, interrupt)
+}
+
+// orchestrateInterruptCheckWith is orchestrateInterruptCheck for a caller that holds the hook itself
+// (the D close's own seam). The hook runs first, so a test can cancel the invocation exactly here.
+func orchestrateInterruptCheckWith(ctx context.Context, interrupt func()) error {
+	if interrupt != nil {
+		interrupt()
+	}
+	return ctx.Err()
 }
 
 // orchestrateCommitLockFunc is goalplan.WithGoalplanWriteLock at one concrete result type, so a test can
@@ -252,11 +300,18 @@ func orchestrateCommitLock(seams *orchestrateCommitSeams) orchestrateCommitLockF
 // holds, then this goalplan lock; no path in this tree takes them the other way. A busy lock refuses with
 // its reason and publishes nothing; an absent or unreadable goalplan stays fail-open, as the unlocked read
 // did; any other lock failure is a Go error, as it is for the other writers of this package.
-func orchestrateCommitPublish(seams *orchestrateCommitSeams, a OrchestrateCliArgs, cwd, sessionID string, cur, next state.State, to state.Phase, recoveringDclose bool, binding *orchestrateTransitionPlanBinding) orchestrateCommitOutcome {
+func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams, a OrchestrateCliArgs, cwd, sessionID string, cur, next state.State, to state.Phase, recoveringDclose bool, binding *orchestrateTransitionPlanBinding) orchestrateCommitOutcome {
 	if !attest.IsGated(cur.Phase, to) || cur.Slug == "" || recoveringDclose {
 		return orchestrateCommitWrite(seams, cwd, next)
 	}
 	locked, err := orchestrateCommitLock(seams)(cwd, cur.Slug, func(plan *goalplan.Goalplan) (orchestrateCommitOutcome, error) {
+		// CRW-871: this callback runs inside the goalplan write lock, which is not context-aware, so the
+		// invocation's context is read once more immediately before the callback's first durable effect
+		// (the 032 housekeeping's plan write, or the state publication below). Cancelled while the caller
+		// waited for this lock, nothing is written and the caller answers Interrupted (130).
+		if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+			return orchestrateCommitOutcome{}, err
+		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
 			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + bindCheck.Reason}}, nil
 		}
@@ -282,9 +337,17 @@ func orchestrateCommitPublish(seams *orchestrateCommitSeams, a OrchestrateCliArg
 		}
 		return *locked.Value
 	case "locked":
+		// Nothing was published, so a context that ended while the lock was held answers Interrupted
+		// rather than the busy refusal (CRW-871).
+		if err := ctx.Err(); err != nil {
+			return orchestrateCommitOutcome{err: err}
+		}
 		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason}}
 	}
 	// unreadable: fail-open, as the unlocked read did. The publication runs outside the lock.
+	if err := ctx.Err(); err != nil {
+		return orchestrateCommitOutcome{err: err}
+	}
 	return orchestrateCommitWrite(seams, cwd, next)
 }
 
@@ -321,16 +384,36 @@ func orchestrateCommitAnswer(output string, warnings ...string) string {
 // the port fixes that (the data-loss class the parity rule revision of 2026-10-03 fixes during the port). A
 // lock that cannot be taken is an error, never a silent success.
 func RunOrchestrateTransition(a OrchestrateCliArgs, sessionID string) (CliResult, error) {
-	return orchestrateCommitRun(a, sessionID, nil)
+	return RunOrchestrateTransitionContext(context.Background(), a, sessionID)
 }
 
-// orchestrateCommitRun is RunOrchestrateTransition with the commit order's two seams, which only a test
-// supplies; the exported entry point passes nil.
+// RunOrchestrateTransitionContext is RunOrchestrateTransition for a caller that can be interrupted: the
+// orchestrate row of cmd/crw serve passes the invocation context the first SIGINT cancels (CRW-871). A
+// context cancelled before or during the lock wait writes nothing and returns its own error; one cancelled
+// after the lock and before the command's first write writes nothing either. Once the first write has
+// started the command finishes and answers as it always did.
+func RunOrchestrateTransitionContext(ctx context.Context, a OrchestrateCliArgs, sessionID string) (CliResult, error) {
+	return orchestrateCommitRunContext(ctx, a, sessionID, nil)
+}
+
+// orchestrateCommitRun is the context-free form of orchestrateCommitRunContext, which the exported entry
+// point and the commit-order tests call.
 func orchestrateCommitRun(a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
+	return orchestrateCommitRunContext(context.Background(), a, sessionID, seams)
+}
+
+// orchestrateCommitRunContext is RunOrchestrateTransitionContext with the commit order's two seams, which
+// only a test supplies. It makes the canonical-id judgement itself, before it takes the lock, so a direct
+// caller of RunOrchestrateTransition is covered as well as the terminal row: a non-canonical id would
+// otherwise resolve to a DIFFERENT session's file, which this command would then read and rewrite.
+func orchestrateCommitRunContext(ctx context.Context, a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
+	if !state.IsCanonicalSessionID(sessionID) {
+		return sessionAliasRefuse(a.Verb), nil
+	}
 	var out CliResult
-	err := state.WithSessionLock(a.Cwd, sessionID, func() error {
+	err := state.WithSessionLockContext(ctx, a.Cwd, sessionID, func() error {
 		var inner error
-		out, inner = orchestrateTransitionApply(a, sessionID, seams)
+		out, inner = orchestrateTransitionApply(ctx, a, sessionID, seams)
 		return inner
 	})
 	if err != nil {
@@ -340,7 +423,7 @@ func orchestrateCommitRun(a OrchestrateCliArgs, sessionID string, seams *orchest
 }
 
 // orchestrateTransitionApply is the ported body, run while the caller holds the session lock.
-func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
+func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessionID string, seams *orchestrateCommitSeams) (CliResult, error) {
 	cwd, verb := a.Cwd, a.Verb
 	cur := state.ReadState(cwd, sessionID)
 	// 050 wp5 §5: the fixed close target, and whether this D request is finishing a close that already started.
@@ -364,6 +447,11 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 			next := *res.State
 			next.OrchestrationActive, next.LastInjectedPhase = false, nil
 			next.StopBlockPhase, next.StopBlockCount = nil, 0
+			// CRW-871: the pre-write cancellation check. Cancelled here, the reset writes nothing and the
+			// row answers Interrupted (130).
+			if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+				return CliResult{}, err
+			}
 			// Publish the state first, then the row: a failure before the publication writes no row, so no
 			// row describes a reset that did not happen, and a row that cannot be written warns on a success
 			// (CRW-811, the CRW-744/793 rule).
@@ -454,6 +542,10 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 			if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
 				return orchestrateTransitionStateRefusal(verb, reason), nil
 			}
+			// CRW-871: the same pre-write check as the reset branch, before the override's state write.
+			if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+				return CliResult{}, err
+			}
 			// The override publishes first and appends its row second, as the reset above does.
 			published := orchestrateCommitWrite(seams, cwd, next)
 			if !published.published {
@@ -513,7 +605,9 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 		}
 	}
 	if to == state.PhaseD {
-		return orchestrateTransitionDClose(cwd, sessionID, closePhaseID, cur, a.Attest, recoveringDclose)
+		// CRW-871: the D close's first write is its recovery marker or its state publication, both inside
+		// the close. Cancelled before entering it, the close writes nothing and the row answers Interrupted.
+		return orchestrateTransitionDClose(ctx, seams, cwd, sessionID, closePhaseID, cur, a.Attest, recoveringDclose)
 	}
 	// The data-loss refusal, before any of this edge's writes, the goalplan housekeeping included.
 	if reason, ok := orchestrateTransitionStateWritable(cwd, sessionID, cur); !ok {
@@ -558,7 +652,12 @@ func orchestrateTransitionApply(a OrchestrateCliArgs, sessionID string, seams *o
 	// bound session the publication runs inside the goalplan write lock, where the binding is revalidated.
 	// The 032 stale-round housekeeping runs inside this publication's goalplan lock, so a refused edge closes
 	// no round.
-	published := orchestrateCommitPublish(seams, a, cwd, sessionID, cur, next, result.State.Phase, recoveringDclose, binding)
+	// CRW-871: the pre-write cancellation check of the ordinary transition, immediately before its first
+	// durable effect (the state publication, and the goalplan housekeeping that runs inside it).
+	if err := orchestrateInterruptCheck(ctx, seams); err != nil {
+		return CliResult{}, err
+	}
+	published := orchestrateCommitPublish(ctx, seams, a, cwd, sessionID, cur, next, result.State.Phase, recoveringDclose, binding)
 	if published.refusal != nil {
 		return *published.refusal, nil
 	}

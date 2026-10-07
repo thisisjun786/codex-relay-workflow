@@ -88,6 +88,7 @@ type dagReviewSource func(ctx context.Context, in *dagReviewInput) error
 // dagReviewSources is every source a review runs, in order. A source appends to in.review.
 var dagReviewSources = []dagReviewSource{
 	dagReviewStoreSources,
+	dagHostSources,
 }
 
 // dagReviewInput is what a source reads: the open store, the plan facts, the lanes, the clock
@@ -103,8 +104,12 @@ type dagReviewInput struct {
 
 // DagReview is crw manage dag-review: it reads the relay store read-only and reports the DAG
 // anomalies it finds. It is exported because a later issue calls the same review with more
-// sources, and it never writes to the store or to any host state.
+// sources. It never writes to the store; the one host state it writes is the rollout offset file
+// below the configured state directory, and only when the caller did not ask for --no-state.
 func DagReview(ctx context.Context, e *Env, cfg *Config) (Review, error) {
+	// The host-record source reads the App Server and the parents' rollouts, which the source
+	// signature does not carry; the scope travels on the context it runs with.
+	ctx = dagHostBind(ctx, cfg)
 	review := Review{Plans: []DagReviewPlan{}, Anomalies: []DagReviewAnomaly{}, Checks: []Check{}}
 	section := dagReviewSection{}
 	if err := cfg.Section("dag_review", &section); err != nil {
@@ -476,13 +481,13 @@ var dagReviewCommand = Command{Name: "dag-review", Summary: "report DAG anomalie
 func init() { Register(dagReviewCommand) }
 
 // dagReviewUsage is the one line the command prints.
-const dagReviewUsage = "usage: crw manage dag-review [-h] [--anomalies-only] [--text]"
+const dagReviewUsage = "usage: crw manage dag-review [-h] [--anomalies-only] [--text] [--no-state]"
 
 // dagReviewRun is crw manage dag-review. The store is read read-only, so a review is always
 // safe to run beside a live relay. Exit 1 means the review found something, 0 that it did not,
 // 3 that the store could not be read at all.
 func dagReviewRun(ctx context.Context, e *Env, args []string) int {
-	anomaliesOnly, text := false, false
+	anomaliesOnly, text, noState := false, false, false
 	for _, arg := range args {
 		switch arg {
 		case "-h", "--help":
@@ -492,12 +497,17 @@ func dagReviewRun(ctx context.Context, e *Env, args []string) int {
 			anomaliesOnly = true
 		case "--text":
 			text = true
+		case "--no-state":
+			noState = true
 		default:
 			fmt.Fprintln(e.Stderr, dagReviewUsage)
 			fmt.Fprintf(e.Stderr, "crw manage dag-review: error: unexpected argument %q\n", arg)
 			return usageExit
 		}
 	}
+	// --no-state reaches the host-record source on the context, so the review's own call keeps the
+	// signature a later issue calls it through.
+	ctx = dagHostNoState(ctx, noState)
 	review, err := DagReview(ctx, e, coreDefaults(e))
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage dag-review: error: %v\n", err)
