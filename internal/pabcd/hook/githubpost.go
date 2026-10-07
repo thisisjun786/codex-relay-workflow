@@ -599,6 +599,11 @@ func githubPostScriptCommand(tokens []string, cwd string) (githubPostSite, bool)
 		normal[i] = strings.TrimRight(githubPostNormal(token), ")}")
 	}
 	rest := shellVerbSkipWrappers(normal)
+	for len(rest) > 0 && rest[0] == "--" {
+		// A wrapper's own -- separator is an operand boundary the shell drops; the command runs the words
+		// after it (timeout 30 -- bash post.sh runs bash post.sh).
+		rest = rest[1:]
+	}
 	if len(rest) == 0 {
 		return githubPostSite{}, false
 	}

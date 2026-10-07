@@ -385,8 +385,31 @@ func TestGitHubPostGuardReadsAScriptBehindAWrapperOrInAList(t *testing.T) {
 		"bash post.sh 2>/dev/null",
 		"bash post.sh >/dev/null",
 		"bash -n post.sh",
+		"if bash post.sh; then :; fi",
+		"until bash post.sh; do :; done",
+		"bash post.sh || true",
+		"bash post.sh && true",
 	} {
 		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+	// A wrapper's own -- separator is an operand boundary the shell drops, so the command after it runs.
+	for _, command := range []string{
+		"timeout 30 -- bash post.sh",
+		"timeout -- 30 bash post.sh",
+		"sudo -- bash post.sh",
+		"env -- bash post.sh",
+		"nice -- bash post.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+	// The controls for the wrapper separator and the chained lists.
+	for _, command := range []string{
+		"timeout 30 -- bash clean.sh",
+		"sudo -- bash clean.sh",
+		"bash clean.sh || true",
+		"foo=1 timeout 30 bash clean.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
 	}
 	// The controls: a wrapper over a script that names no post, commands that run no script, and a wrapper
 	// whose option makes it run nothing, stay allowed.
