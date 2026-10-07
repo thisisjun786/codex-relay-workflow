@@ -11,3 +11,7 @@ import "golang.org/x/sys/unix"
 func sessionsDirOpenFlags() int {
 	return unix.O_PATH | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 }
+
+// stateDirNeedsPathFallback is false on Linux: O_PATH needs no permission on the directory itself, so
+// the descriptor open never has to fall back to a pathname open.
+func stateDirNeedsPathFallback(error) bool { return false }

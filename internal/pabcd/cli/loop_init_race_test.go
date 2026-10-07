@@ -663,8 +663,12 @@ func TestLoopInitRefusesALinkedStateRootBeforeWriting(t *testing.T) {
 func loopInitFastWaits(t *testing.T) {
 	t.Helper()
 	pause := loopInitPlanWaitPause
+	deadline := loopInitPlanWaitDeadline
 	loopInitPlanWaitPause = func() { time.Sleep(time.Millisecond) }
-	t.Cleanup(func() { loopInitPlanWaitPause = pause })
+	// A case that drives the wait must not spend the production deadline in it; the wait's real bound is
+	// exercised by the fact that it ends at all, and the production value is asserted below.
+	loopInitPlanWaitDeadline = 3 * time.Second
+	t.Cleanup(func() { loopInitPlanWaitPause, loopInitPlanWaitDeadline = pause, deadline })
 }
 
 // loopDeadPID returns the pid of a process that has already exited, so a lock file naming it is an
@@ -797,10 +801,10 @@ func TestLoopInitAnswersTheLockRecoveryWhenALockHasNoReadableOwner(t *testing.T)
 	}
 }
 
-// TestLoopInitWaitsForALiveWinnerWithoutARoundLimit is c1's unconditional answer: a live winner that
+// TestLoopInitWaitsForALiveWinnerWithoutARoundLimit is c1's answer for a slow winner: a live winner that
 // publishes only after many rounds still gets its plan seen by the loser, because the wait follows the
-// holder's lifetime and not a fixed round count (CRW-646 c1, d4). The holder here stays live and
-// publishes well past any small round budget a fixed limit would have set.
+// holder's lifetime rather than a small fixed round count (CRW-646 c1). The holder here stays live and
+// publishes well past any small round budget, and inside the wait's real deadline.
 func TestLoopInitWaitsForALiveWinnerWithoutARoundLimit(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	const slug = "ship-the-export-feature"

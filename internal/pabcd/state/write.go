@@ -251,58 +251,83 @@ func makeSessionsDir(cwd string) error {
 }
 
 // openSessionsDir returns cwd/.crw/sessions as an open descriptor, creating .crw and the sessions
-// directory when they are missing. The state root is opened with O_NOFOLLOW|O_DIRECTORY, so a symbolic
-// link (or a file) in its place is refused as ErrStateRootSymlink instead of followed, and both the
-// sessions directory and the root's .gitignore are created RELATIVE to the held descriptors with
-// Mkdirat/Openat. A caller that writes through the returned descriptor therefore cannot be redirected
-// outside the workspace by a rename of a path component (CRW-646).
+// directory when they are missing. Each of the two components the session state owns is opened with
+// O_NOFOLLOW, so a symbolic link (or a file) in its place is refused as ErrStateRootSymlink instead of
+// followed, and the sessions directory, its .gitignore and the lock file are all created RELATIVE to the
+// held descriptors with Mkdirat/Openat. A caller that writes through the returned descriptor therefore
+// cannot be redirected outside the workspace by a rename of a path component, with no pathname
+// check-then-act window (CRW-646).
 //
-// Only the two components the session state owns are opened this way; cwd and its ancestors keep the
-// ordinary pathname resolution every other caller uses, so a search-only ancestor (mode 0111) is still
-// traversable and no new read permission is required. A .crw this call created publishes its .gitignore;
+// cwd and its ancestors keep the ordinary pathname resolution every other caller uses, so a search-only
+// ancestor (mode 0111) is still traversable. The two state components themselves are opened with the
+// platform's search-only flag (sessionsDirOpenFlags: O_PATH on Linux, which needs no read permission;
+// O_RDONLY on Darwin, which has no O_PATH and therefore requires read access to them, the same
+// documented limitation the goalplan walk carries). A .crw this call created publishes its .gitignore;
 // nothing is ever removed by pathname, so a concurrent writer's replacement is never destroyed.
 func openSessionsDir(cwd string) (*os.File, error) {
 	rootPath := filepath.Join(cwd, crwdir.DirName)
-	root, created, err := openOrCreateRootDir(cwd, rootPath)
-	if err != nil {
+	created := false
+	if err := os.Mkdir(rootPath, 0o777); err == nil {
+		created = true
+	} else if !errors.Is(err, fs.ErrExist) {
 		return nil, err
 	}
+	root, err := openDirNoFollow(nil, rootPath, rootPath)
+	if err != nil {
+		// A platform without O_PATH (Darwin) opens the root with O_RDONLY, which needs read permission
+		// the removed pathname creates did not. When that read is denied but the root is a real
+		// directory, fall back to opening the sessions directory by pathname with an Lstat guard: that
+		// needs only search permission on the root, so a search-only .crw keeps working on that platform.
+		if stateDirNeedsPathFallback(err) {
+			return openSessionsDirByPath(rootPath)
+		}
+		return nil, err
+	}
+	defer root.Close()
 	if created {
 		// A .gitignore that could not be published is not a reason to delete a file: rmdir removes an
 		// EMPTY DIRECTORY only and fails with ENOTDIR for a file or a symbolic link, so a concurrent
 		// writer's replacement is never destroyed (this is exactly crwdir.ensureDir's own cleanup).
 		if err := writeIgnoreAt(root, rootPath); err != nil {
-			_ = root.Close()
 			_ = syscall.Rmdir(rootPath)
 			return nil, err
 		}
 	}
 	sessionsPath := filepath.Join(rootPath, SessionsSubdir)
 	sessions, _, err := ensureDirNoFollow(root, SessionsSubdir, sessionsPath)
-	_ = root.Close()
 	if err != nil {
 		return nil, err
 	}
 	return sessions, nil
 }
 
-// openOrCreateRootDir opens cwd/.crw as a directory, creating it when it is absent. It reports whether
-// this call created it. The create is a pathname Mkdir (which answers EEXIST for a file, a directory or
-// a symbolic link in the way) and the open then refuses a link with O_NOFOLLOW, so a linked root is
-// never followed. Resolving cwd by pathname needs only search permission on its ancestors, so a
-// search-only ancestor keeps working exactly as it did before this change.
-func openOrCreateRootDir(cwd, rootPath string) (*os.File, bool, error) {
-	created := false
-	if err := os.Mkdir(rootPath, 0o777); err == nil {
-		created = true
-	} else if !errors.Is(err, fs.ErrExist) {
-		return nil, false, err
+// openSessionsDirByPath is openSessionsDir's fallback for a state root this platform cannot open by
+// descriptor without read permission. Both components are checked with Lstat, so a symbolic link in
+// either place is refused as ErrStateRootSymlink rather than followed, and the sessions directory is
+// opened with O_NOFOLLOW so the state files and the lock file are still written relative to a descriptor
+// that cannot be swapped for a link.
+func openSessionsDirByPath(rootPath string) (*os.File, error) {
+	for _, path := range []string{rootPath, filepath.Join(rootPath, SessionsSubdir)} {
+		if err := os.Mkdir(path, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%w: %s", ErrStateRootSymlink, path)
+		}
+		if !info.IsDir() {
+			return nil, errors.New("state path is not a directory: " + path)
+		}
 	}
-	dir, err := openDirNoFollow(nil, rootPath, rootPath)
+	sessionsPath := filepath.Join(rootPath, SessionsSubdir)
+	fd, err := unix.Open(sessionsPath, sessionsDirOpenFlags(), 0)
 	if err != nil {
-		return nil, false, err
+		return nil, &os.PathError{Op: "open", Path: sessionsPath, Err: err}
 	}
-	return dir, created, nil
+	return os.NewFile(uintptr(fd), sessionsPath), nil
 }
 
 // ensureDirNoFollow opens name under parent as a directory, creating it with Mkdirat relative to parent
@@ -331,29 +356,9 @@ func ensureDirNoFollow(parent *os.File, name, expected string) (*os.File, bool, 
 	return next, created, nil
 }
 
-// writeIgnoreAt publishes .crw/.gitignore through the descriptor of the .crw this call created, so the
-// write cannot be redirected by a rename of the root path. A .gitignore a concurrent creator wrote first
-// answers EEXIST and is kept.
-func writeIgnoreAt(dir *os.File, dirPath string) error {
-	fd, err := unix.Openat(int(dir.Fd()), ".gitignore", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o666)
-	if errors.Is(err, fs.ErrExist) {
-		return nil
-	}
-	if err != nil {
-		return &os.PathError{Op: "open", Path: filepath.Join(dirPath, ".gitignore"), Err: err}
-	}
-	f := os.NewFile(uintptr(fd), filepath.Join(dirPath, ".gitignore"))
-	_, err = f.WriteString(crwdir.GitignoreText)
-	return errors.Join(err, f.Close())
-}
-
-// ErrStateRootSymlink reports a state root (cwd/.crw) or its sessions directory that is a symbolic
-// link. A caller can tell this refusal apart from an ordinary IO failure and answer it as its own
-// refusal rather than a generic error.
-var ErrStateRootSymlink = errors.New("state path must not be a symlink")
-
-// openDirNoFollow opens name under parent as a directory, refusing a symbolic link at that step. A
-// link is reported as ErrStateRootSymlink so the caller can name the refusal.
+// openDirNoFollow opens name under parent (or the path itself when parent is nil) as a directory,
+// refusing a symbolic link at that step. A link is reported as ErrStateRootSymlink so the caller can name
+// the refusal.
 func openDirNoFollow(parent *os.File, name, expected string) (*os.File, error) {
 	var fd int
 	var err error
@@ -398,6 +403,27 @@ func lstatAt(parent *os.File, name string, st *unix.Stat_t) error {
 	}
 	return unix.Fstatat(int(parent.Fd()), name, st, unix.AT_SYMLINK_NOFOLLOW)
 }
+
+// writeIgnoreAt publishes .crw/.gitignore through the descriptor of the .crw this call created, so the
+// write cannot be redirected by a rename of the root path. A .gitignore a concurrent creator wrote first
+// answers EEXIST and is kept.
+func writeIgnoreAt(dir *os.File, dirPath string) error {
+	fd, err := unix.Openat(int(dir.Fd()), ".gitignore", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o666)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return &os.PathError{Op: "open", Path: filepath.Join(dirPath, ".gitignore"), Err: err}
+	}
+	f := os.NewFile(uintptr(fd), filepath.Join(dirPath, ".gitignore"))
+	_, err = f.WriteString(crwdir.GitignoreText)
+	return errors.Join(err, f.Close())
+}
+
+// ErrStateRootSymlink reports a state root (cwd/.crw) or its sessions directory that is a symbolic
+// link. A caller can tell this refusal apart from an ordinary IO failure and answer it as its own
+// refusal rather than a generic error.
+var ErrStateRootSymlink = errors.New("state path must not be a symlink")
 
 // createExclusive is writeFileSync(path, data, { flag: "wx" }): the file exists before it is written, and a failed write
 // leaves it behind.
