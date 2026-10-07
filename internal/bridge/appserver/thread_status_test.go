@@ -255,6 +255,53 @@ func TestThreadHold_a_refused_resume_holds_nothing(t *testing.T) {
 	}
 }
 
+// CRW-904 (correction, d1): HoldThread pins the root whose gate it holds for the whole hold. Without
+// the pin, an admission cancelled while the resume is outstanding could prune that root (its refs fall
+// to zero and the hold has not set busyHeld yet), a later admission would build a replacement root
+// with its own gate, and that root's release worker could unsubscribe the thread before this hold's
+// successful reply arrived: the hold would be recorded on a socket that receives nothing.
+func TestThreadHold_pins_the_root_it_holds_the_gate_of(t *testing.T) {
+	c, host := holdClient(t)
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	host.Script("thread/resume", fakehost.Reply{Paused: entered, Release: release})
+	returned := make(chan error, 1)
+	go func() { returned <- c.HoldThread(context.Background(), "thread-1") }()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/resume", 1); err != nil {
+		t.Fatalf("the hold's resume never reached the host: %v", err)
+	}
+	// The resume is outstanding. The root the hold took the gate of must still be the one the manager
+	// keeps, so a cancelled admission cannot replace it and a release cannot slip in behind the gate.
+	c.subscriptions.mu.Lock()
+	root := c.subscriptions.roots["thread-1"]
+	pinned := root != nil && root.refs > 0
+	c.subscriptions.mu.Unlock()
+	if !pinned {
+		t.Fatal("the root whose gate the hold holds is not pinned, so a prune can replace it mid-resume")
+	}
+	// An admission that reserves and is then cancelled does not drop the root the hold is using.
+	go func() {
+		watch, err := c.WatchTurn(context.Background(), "thread-1")
+		if err == nil {
+			watch.Finish("", false)
+		}
+	}()
+	c.subscriptions.mu.Lock()
+	same := c.subscriptions.roots["thread-1"] == root
+	c.subscriptions.mu.Unlock()
+	if !same {
+		t.Fatal("the root was replaced while the hold's resume was outstanding")
+	}
+	close(release)
+	if err := <-returned; err != nil {
+		t.Fatal(err)
+	}
+	if !c.ThreadHeld("thread-1") {
+		t.Fatal("the acknowledged hold is not recorded")
+	}
+}
+
 // CRW-904 (correction, d2): a hold whose resume was transmitted but never answered can leave a real
 // subscription behind. The reply is missing, so the caller must not treat the subscription as
 // established - the daemon has to retry, and must not believe it holds a subscription the recipient's

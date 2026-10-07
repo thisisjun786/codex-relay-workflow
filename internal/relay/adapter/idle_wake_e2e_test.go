@@ -81,6 +81,26 @@ func idleE2EHost(t *testing.T) *fakehost.Server {
 }
 
 func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testing.T) {
+	for _, status := range []string{"idle", "notLoaded"} {
+		t.Run("a "+status+" report", func(t *testing.T) {
+			idleE2EWake(t, status, false)
+		})
+	}
+}
+
+// TestIdleWake_end_to_end_at_the_backoff_ceiling: the head the issue is for is 300 s from its
+// deadline, which is what six busy answers leave (BusyBase 15 s doubling to BusyMax 300 s). The
+// scripted transport drives the whole path: the six real busy deferrals, the hold, a real
+// thread/status/changed over the socket, and the woken attempt at the parent's next turn, 300 s
+// before the timer that used to be the only release.
+func TestIdleWake_end_to_end_at_the_backoff_ceiling(t *testing.T) {
+	idleE2EWake(t, "idle", true)
+}
+
+// idleE2EWake drives one scripted-transport run. atCeiling makes the recipient answer six busy
+// attempts first, so the head is exactly BusyMax from its deadline when the report arrives.
+func idleE2EWake(t *testing.T, status string, atCeiling bool) {
+	t.Helper()
 	ctx := context.Background()
 	const now = 1700000000.0
 	host := idleE2EHost(t)
@@ -92,7 +112,8 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	}
 	a := New(Options{RPC: client, Ledger: l, Policy: execution.Policy{}})
 	t.Cleanup(func() { _ = a.Close() })
-	d := daemon.New(s, a, &delivery.FakeClock{T: now}, nil)
+	clock := &delivery.FakeClock{T: now}
+	d := daemon.New(s, a, clock, nil)
 
 	// No subscription exists yet. The first tick attempts the queued delivery, finds the recipient
 	// mid-turn and defers it with the busy backoff, and opens the relay's own hold on that recipient.
@@ -101,6 +122,20 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	}
 	if got := busyAnswers(t, s); got != 1 {
 		t.Fatalf("the first tick left %d busy answers, want the one real busy deferral", got)
+	}
+	wantAnswers := int64(1)
+	if atCeiling {
+		// Six busy answers in all reach BusyMax, the ceiling the issue names.
+		for busyAnswers(t, s) < 6 {
+			clock.T = deadlineOf(t, ctx, s)
+			if _, err := d.Tick(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantAnswers = 6
+		if got := busyAnswers(t, s); got != wantAnswers {
+			t.Fatalf("the ceiling run left %d busy answers, want %d", got, wantAnswers)
+		}
 	}
 	deferred, err := s.One(ctx, "SELECT state, next_eligible_at FROM deliveries WHERE event_id = ?", idleE2EEvent)
 	if err != nil {
@@ -112,6 +147,11 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	deadline := deferred.Get("next_eligible_at").(float64)
 	if deadline <= now {
 		t.Fatalf("the busy deferral left the delivery due at %.0f, want a backoff ahead", deadline)
+	}
+	if atCeiling {
+		if left := deadline - clock.Now(); left != 300 {
+			t.Fatalf("the head waits %.0f s, want the ceiling 300 s from its deadline", left)
+		}
 	}
 	if got := host.Count("thread/resume"); got != 1 {
 		t.Fatalf("%d resumes reached the host, want the relay's own hold on the recipient", got)
@@ -135,7 +175,7 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	// a request the test makes, which is how the scripted host delivers a notification.
 	host.Respond("probe/idle", fakehost.Reply{Before: []fakehost.Notification{{
 		Method: "thread/status/changed",
-		Params: map[string]any{"threadId": idleE2EThread, "status": map[string]any{"type": "idle"}},
+		Params: map[string]any{"threadId": idleE2EThread, "status": map[string]any{"type": status}},
 	}}})
 	if _, err := a.HostCall(ctx, "probe/idle", nil); err != nil {
 		t.Fatal(err)
@@ -145,8 +185,8 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	if _, err := d.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := busyAnswers(t, s); got != 2 {
-		t.Fatalf("the idle report did not release the head: %d busy answers, want the deferral and the woken attempt", got)
+	if got := busyAnswers(t, s); got != wantAnswers+1 {
+		t.Fatalf("the %s report did not release the head: %d busy answers, want the deferrals and the woken attempt", status, got)
 	}
 	row, err := s.One(ctx, "SELECT state, next_eligible_at FROM deliveries WHERE event_id = ?", idleE2EEvent)
 	if err != nil {
@@ -163,6 +203,17 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	if n := countRows(t, s, "SELECT COUNT(*) FROM delivery_wakes"); n != 0 {
 		t.Fatalf("the answered attempt left %d wakes behind", n)
 	}
+}
+
+// deadlineOf is the instant the delivery is next due: the test moves the clock to it so the next
+// tick attempts the head again and the recipient answers busy once more.
+func deadlineOf(t *testing.T, ctx context.Context, s *store.Store) float64 {
+	t.Helper()
+	row, err := s.One(ctx, "SELECT next_eligible_at FROM deliveries WHERE event_id = ?", idleE2EEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row.Get("next_eligible_at").(float64)
 }
 
 // busyAnswers is how many busy answers the delivery has journaled: any answer is the woken attempt's.

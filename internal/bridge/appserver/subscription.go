@@ -145,9 +145,19 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 	// either the worker unsubscribes first and this resume reopens the subscription after it, or this
 	// hold is recorded first and the worker's recheck sees it and leaves the subscription alone. The
 	// resume is one bounded call, so the gate is held no longer than a release holds it.
+	//
+	// The root is pinned for the whole hold, as an admission pins the root it waits on: a reference is
+	// taken before the gate is awaited and dropped when the hold is done. Without it a cancelled
+	// admission could prune this root while the resume was outstanding (refs falls to zero, and the
+	// hold has not set busyHeld yet), a later admission would build a replacement root with its own
+	// gate, and that root's release worker could unsubscribe the thread before this hold's successful
+	// reply arrived. The hold would then be recorded on a socket that receives nothing, and the busy
+	// head would fall back to its timer (CRW-904 correction, d1).
 	m.mu.Lock()
 	r := m.root(thread)
+	r.refs++
 	m.mu.Unlock()
+	defer m.unreserve(thread, r)
 	select {
 	case <-r.gate:
 	case <-ctx.Done():
