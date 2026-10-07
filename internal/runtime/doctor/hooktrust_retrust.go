@@ -282,8 +282,10 @@ func hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next string, runner HookT
 //     config is never visible at the real path and there is no rollback path;
 //   - crwdir.PublishSwap exchanges the temp file with the target atomically and keeps the displaced
 //     file as the backup. A displaced file whose bytes differ from B is a non-cooperative writer
-//     that saved in between: its content stays in the backup, the target holds retrust's content,
-//     nothing is exchanged back, and the conflict is reported with both paths;
+//     that saved in between: its content stays in the backup, nothing is exchanged back, and the
+//     conflict is reported with both paths. What the target holds then is read again before the
+//     answer (CRW-936): retrust's content when nothing saved after the exchange, else the newer save
+//     (Conflict and LateWrite), or nothing is claimed about it when that read fails (RecheckFailed);
 //   - a sync-only failure is a *crwdir.PublishedError: the publication counts as done and the
 //     failure is reported as a warning;
 //   - config.toml is read back, and a value that is not next is reported and left in place.
