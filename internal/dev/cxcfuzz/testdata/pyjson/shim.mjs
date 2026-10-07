@@ -56,7 +56,12 @@ function run(request) {
   }
   if (input.sortKeys === true) argv.push("--sort-keys");
   if (input.ensureAscii === false) argv.push("--no-ensure-ascii");
-  const result = spawnSync("python3", argv, { input: text, encoding: "utf8" });
+  // maxBuffer is raised well past Node's 1 MiB default: the generator draws documents nested near
+  // Python's recursion limit (CRW-708 generation 5, d2), and json.tool's re-dumped value and its
+  // RecursionError traceback both grow with the nesting. With the default the oracle answers an
+  // ENOBUFS error instead of its real answer, which the campaign then records as a difference
+  // between the two sides rather than as the harness's own buffer limit.
+  const result = spawnSync("python3", argv, { input: text, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.error) throw result.error;
   let stdout = result.stdout ?? "";
   if (stdout.endsWith("\n")) stdout = stdout.slice(0, -1);
