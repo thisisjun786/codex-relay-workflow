@@ -1144,6 +1144,176 @@ func TestPumpReview776LegacyPinCarriesNoDigestForAChangedBody(t *testing.T) {
 	}
 }
 
+// A move interrupted between the take-aside and the publish is recovered by the next round: the
+// notice goes back to the queue name it came from, so an interrupted move never hides a notice from
+// the collector.
+func TestPumpReview776InterruptedMoveIsRecovered(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A previous move died after it took the notice aside, so only the aside name is on disk.
+	aside := filepath.Join(dir, ".reclaim-aaaaaaaaaaaaaaaa.txt")
+	if err := os.WriteFile(aside, []byte("a-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	delivered := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			args, _ := call["args"].(map[string]any)
+			if message, _ := args["message"].(string); strings.Contains(message, "a-body") {
+				delivered = true
+			}
+		}
+	}
+	if !delivered {
+		t.Fatalf("the notice an interrupted move set aside was never delivered: %v", deliverSendToolsOf(t, log))
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Errorf("the recovered notice was not completed: %v", err)
+	}
+}
+
+// A move interrupted after the publish is not recovered into the queue: the notice is already under
+// sent/, and putting it back would deliver it twice.
+func TestPumpReview776PublishedMoveIsNotPutBack(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	sent := filepath.Join(dir, pumpSentDir)
+	if err := os.MkdirAll(sent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A previous move published the notice to sent/ and died before it dropped the aside name.
+	aside := filepath.Join(dir, ".reclaim-aaaaaaaaaaaaaaaa.txt")
+	if err := os.WriteFile(aside, []byte("a-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(aside, filepath.Join(sent, "aaaaaaaaaaaaaaaa.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			args, _ := call["args"].(map[string]any)
+			if message, _ := args["message"].(string); strings.Contains(message, "a-body") {
+				t.Errorf("a notice already published to sent/ was delivered again: %v", deliverSendToolsOf(t, log))
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")); !os.IsNotExist(err) {
+		t.Errorf("a published notice was put back into the queue: %v", err)
+	}
+	if _, err := os.Stat(aside); !os.IsNotExist(err) {
+		t.Errorf("the aside name survived the recovery: %v", err)
+	}
+}
+
+// A legacy pin reconciled as accepted settles the ledger, so the next round does not adopt the same
+// record again and the queued notices are delivered under the batch's own id.
+func TestPumpReview776LegacyAcceptedReconciliationSettlesTheLedger(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	// The old attempt is accepted; the notice on disk is a replacement the attempt never carried. The
+	// fake scenario counter restarts with each bridge process, so the first step answers the
+	// reconciliation's get_operation and the queue's active-turn probe, and the second answers the
+	// steer of the follow-on send.
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1",
+			"status": "accepted", "delivery": "accepted_not_applied"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "A2")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("the old body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	record, known, err := deliverLoad(cfg, oldID)
+	if err != nil || !known {
+		t.Fatalf("the old record is gone: known=%v err=%v", known, err)
+	}
+	if record.State != deliverStateAccepted {
+		t.Errorf("the reconciled old record is %q, want accepted so it is not adopted again", record.State)
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Error("the pin survived the accepted reconciliation")
+	}
+	// The notices are delivered under the batch's own id, never completed by the old attempt's name:
+	// the old attempt's text is not recoverable, so no queued notice can be shown to be one it carried.
+	sent := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			if id := deliverSendRequestIDOf(t, call); id == oldID {
+				t.Errorf("the round sent under the old attempt's id %q", oldID)
+			} else {
+				sent = true
+			}
+		}
+	}
+	if !sent {
+		t.Fatalf("the queued notice was not delivered under the batch's own id: %v", deliverSendToolsOf(t, log))
+	}
+}
+
+// The pre-change lookup finds an unsettled record by its target thread, so a notice whose name
+// sorts after the old attempt's names does not hide it.
+func TestPumpReview776LegacyLookupFindsANonPrefixNameSet(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	// The old attempt carried z.txt; a.txt arrived afterwards and sorts before it.
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	pumpQueueTestNotice(t, cfg, "parent-1", "zzzzzzzzzzzzzzzz.txt", "z-body")
+	oldID := pumpBatchIDStrings([]string{"parent-1", "zzzzzzzzzzzzzzzz.txt"})
+	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "zzzzzzzzzzzzzzzz.txt"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("z-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	reconciled := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
+			reconciled = true
+		}
+		if (call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend) && deliverSendRequestIDOf(t, call) == newID {
+			t.Errorf("the round sent under the new id %q instead of reconciling the old attempt", newID)
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the old attempt %q was not reconciled: %v", oldID, deliverSendToolsOf(t, log))
+	}
+}
+
 // A move never deletes a notice the producer wrote after the round read the file: the queue name is
 // taken aside in one atomic rename and only this move's own aside name is ever removed.
 func TestPumpReview776MoveNeverDeletesANewerNotice(t *testing.T) {
