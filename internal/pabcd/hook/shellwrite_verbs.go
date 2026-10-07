@@ -2448,6 +2448,7 @@ type shellWriteUnnamedFrame struct {
 	start     int
 	args      [][2]int
 	recvNamed bool
+	recvPath  bool // the receiver is a Path(...) call, so an open() mode is its first argument, not its second
 }
 
 // shellWriteUnnamedCall is the method call the expression whose bracket just closed names.
@@ -2492,10 +2493,11 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 				importStmt, firstWord = false, true
 			}
 		case c == '(' || c == '[' || c == '{':
-			kind, recvNamed := byte(0), false
+			kind, recvNamed, recvPath := byte(0), false, false
 			switch {
 			case pending.name != "" && pending.at == i:
 				kind, recvNamed, pending = shellWriteUnnamedMethodKind(pending.name), pending.recvNamed, shellWriteUnnamedCall{}
+				recvPath = true // the receiver is the Path(...) call the pending method hangs off
 			case c == '(' && shellWriteUnnamedDefHeader(rs, i):
 				kind = 'd' // a def or async def header binds a name; its parenthesis runs nothing
 			default:
@@ -2521,7 +2523,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 					kind = shellWriteUnnamedMethodAt(rs, i, binds)
 				}
 			}
-			stack = append(stack, shellWriteUnnamedFrame{kind: kind, start: i + 1, recvNamed: recvNamed})
+			stack = append(stack, shellWriteUnnamedFrame{kind: kind, start: i + 1, recvNamed: recvNamed, recvPath: recvPath})
 		case c == ',' && len(stack) > 0:
 			if top := &stack[len(stack)-1]; top.kind != 0 {
 				top.args = append(top.args, [2]int{top.start, i})
@@ -2581,10 +2583,19 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 			w.unnamed = true
 		}
 	case 'q':
-		// A Path or other receiver's open(mode) writes to its receiver, and this reader names no destination for
-		// any open() method at all (only write_text and write_bytes are read, and only from a Path(<literal>)
-		// receiver), so the destination is unnamed; the mode decides whether it writes at all.
-		if shellWriteUnnamedWrites(shellWriteUnnamedArg(rs, spans, 0, "mode")) {
+		// A method named open writes to its receiver, which this reader names for no open() method at all, so the
+		// destination is unnamed; the mode decides whether it writes. Path(...).open(mode) gives the mode as its
+		// first argument, and module.open(path, mode) as its second; mode= names it in either form. A receiver the
+		// reader cannot place (a variable, which may hold a Path or a module) is read either way, so a one-argument
+		// call counts only when that argument is shaped like a mode rather than a path.
+		first := shellWriteUnnamedArg(rs, spans, 0, "mode")
+		if f.recvPath || shellWriteUnnamedModeLike(first) {
+			if shellWriteUnnamedWrites(first) {
+				w.unnamed = true
+			}
+			break
+		}
+		if shellWriteUnnamedWrites(shellWriteUnnamedArg(rs, spans, 1, "mode")) {
 			w.unnamed = true
 		}
 	case 'r':
@@ -3003,6 +3014,22 @@ func shellWriteUnnamedWrites(mode []rune) bool {
 		}
 	}
 	return literals == 0
+}
+
+// shellWriteUnnamedModeLike reports whether an argument is shaped like an open() mode rather than a path: a decoded
+// string literal whose characters are all letters Python accepts in a mode (r, w, a, x, b, t, u) or +. It separates
+// Path(...).open("w") from module.open("memories/a.tar") when the receiver alone does not say which form the call is.
+func shellWriteUnnamedModeLike(arg []rune) bool {
+	value, ok := shellVerbLiteral(arg)
+	if !ok || value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !strings.ContainsRune("rwxabtu+", r|0x20) {
+			return false
+		}
+	}
+	return true
 }
 
 // shellWriteUnnamedFunc reports whether a name is a write function of this reader: open, a Path write method, or a copy,

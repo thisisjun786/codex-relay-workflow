@@ -282,3 +282,36 @@ func TestMemoryGateUnnamedDestinationRenameAndGetattr(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryGateUnnamedDestinationMethodOpenMode pins the mode a method named open is called with: Path(...).open(mode)
+// gives it as the only argument and module.open(path, mode) as the last one, so a read mode is no write and a write mode
+// is. An ordinary module's read-only open must not be refused.
+func TestMemoryGateUnnamedDestinationMethodOpenMode(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"Path literal open write", py("from pathlib import Path; Path('memories/n.md').open('w')")},
+		{"variable receiver open write", py("from pathlib import Path; p = Path('/w'); p.open('w'); print('memories')")},
+		{"module open write", py("import tarfile; tarfile.open('memories/a.tar','w')")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		{"module open read", py("import tarfile; tarfile.open('memories/a.tar','r')")},
+		{"module open read by keyword", py("import tarfile; tarfile.open('memories/a.tar', mode='r')")},
+		{"module open with no mode", py("import tarfile; tarfile.open('memories/a.tar')")},
+		{"Path literal open read", py("from pathlib import Path; Path('memories/n.md').open('r')")},
+		{"Path literal open with no mode", py("from pathlib import Path; Path('memories/n.md').open()")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
