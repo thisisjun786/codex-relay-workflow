@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
@@ -37,6 +39,13 @@ const dagHostReceiptDefaultMinutes = 20
 // the call ids of the refusals already reported for it, so a refusal the review reported once is not
 // reported again.
 const dagHostStateFile = "dag-review-state.json"
+
+// dagHostStateLockFile is the lock beside the offset file. A review holds it across the whole read
+// and the write of the offsets, so two reviews of the same state directory cannot both read the
+// reported list before either writes it, report the same refusal, and each save a list that misses
+// what the other reported. It is a separate file so the offset file's own atomic replacement never
+// swaps the locked inode out from under a holder.
+const dagHostStateLockFile = "dag-review-state.lock"
 
 // dagHostLineLimit bounds one rollout line this review reads; a longer line is a reading it cannot
 // take and is reported as unmeasured rather than skipped silently.
@@ -149,13 +158,25 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 	if scope.noState {
 		refusalsMeasured = true
 	} else if scope.stateDir != "" {
-		state, err := dagHostLoadOffsets(scope.stateDir)
+		// The lock is held from before the offsets are read until after they are written, so a second
+		// review of the same state directory waits here and reads the list the first one saved rather
+		// than the one it read for itself. A lock that cannot be taken is a reading this check could
+		// not take: it reports unmeasured instead of reporting refusals it cannot keep track of.
+		release, err := dagHostStateLock(ctx, scope.stateDir)
 		if err != nil {
 			in.review.Checks = append(in.review.Checks, Check{
 				Name: "dag_review_state", State: dagReviewUnmeasured, Detail: err.Error(),
 			})
 		} else {
-			offsets, offsetsRead, refusalsMeasured = state, true, true
+			defer release()
+			state, err := dagHostLoadOffsets(scope.stateDir)
+			if err != nil {
+				in.review.Checks = append(in.review.Checks, Check{
+					Name: "dag_review_state", State: dagReviewUnmeasured, Detail: err.Error(),
+				})
+			} else {
+				offsets, offsetsRead, refusalsMeasured = state, true, true
+			}
 		}
 	}
 	for _, parent := range dagHostSortedParents(scope.parents) {
@@ -287,7 +308,9 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 // during the scan still is; the call's own position does not matter, so the answer of a call that
 // already existed before the reading is reported when it arrives. A known rollout reports every
 // refusal the reading found that is not in the reported list. The ids the next check re-reads stay
-// in that list, so a refusal is reported once.
+// in that list, so a refusal is reported once. One reading reports a call id once whatever the
+// rollout holds for it: a repeated answer is the duplicate tool outputs reading's finding, and a
+// second refusal anomaly for the same command would be a second report of one refusal.
 func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool, firstSight bool) []dagHostRefusal {
 	out := []dagHostRefusal{}
 	for _, refusal := range reading.refusals {
@@ -297,6 +320,7 @@ func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool,
 		if firstSight && refusal.outputStart < reading.boundary {
 			continue
 		}
+		reported[refusal.callID] = true
 		out = append(out, refusal)
 	}
 	return out
@@ -529,7 +553,14 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 		line, consumed, tooLong, readErr := dagHostReadLine(reader, dagHostLineLimit)
 		if consumed > 0 {
 			offset += consumed
-			resume = lineStart
+			// The resume offset advances past a line only when the line ended with a newline: a
+			// trailing line without one is still being written, so the next check reads it again from
+			// its own start. A reading with nothing left pending resumes at the end of the file.
+			if readErr == nil {
+				resume = offset
+			} else {
+				resume = lineStart
+			}
 			if tooLong {
 				// A line over the limit is a reading this check cannot take. It is not parsed, but the
 				// reading continues after it, so the lines that follow are still read and the offset
@@ -642,6 +673,40 @@ type dagHostOffsets struct {
 	Offsets  map[string]int64
 	Reported map[string][]string
 	raw      map[string]json.RawMessage
+}
+
+// dagHostStateLock takes the state directory's review lock, so one review's read of the offsets, its
+// scan and its write of the offsets are one span no second review can interleave with: without it
+// two reviews could both read a reported list that lacks a refusal, both report it, and each save a
+// list missing what the other reported. A lock already held is a reading this check cannot take, so
+// the caller leaves the refusal reading unmeasured rather than reporting a refusal it cannot track.
+// The kernel releases the lock when the process ends, so a crash cannot leave it held.
+func dagHostStateLock(ctx context.Context, stateDir string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(stateDir, dagHostStateLockFile)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("the review state lock is a symlink; refusing to lock through it")
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = file.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, errors.New("another review holds the review state lock, so the refusal reading was not taken")
+		}
+		return nil, err
+	}
+	return func() {
+		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		_ = file.Close()
+	}, nil
 }
 
 // dagHostLoadOffsets reads the offset file; an absent file is no offsets yet, and an unreadable one

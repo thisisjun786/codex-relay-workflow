@@ -16,7 +16,45 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"golang.org/x/sys/unix"
 )
+
+// dagHostReview775ReadOffsets reads the resume offsets the state file holds.
+func dagHostReview775ReadOffsets(t *testing.T, stateDir string) map[string]int64 {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(stateDir, dagHostStateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Offsets map[string]int64 `json:"offsets"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("the state file is not readable: %v, %s", err, data)
+	}
+	return document.Offsets
+}
+
+// dagHostReview775HoldStateLock takes the review state lock the way another review would, so a test
+// can run a review against a state directory whose lock is already held.
+func dagHostReview775HoldStateLock(t *testing.T, stateDir string) func() {
+	t.Helper()
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(filepath.Join(stateDir, dagHostStateLockFile), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	return func() {
+		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		_ = file.Close()
+	}
+}
 
 // dagHostReview775Refusal is a rollout holding one tool call and the relay's refusal envelope.
 func dagHostReview775Refusal(t *testing.T, callID, arguments string) []string {
@@ -389,5 +427,74 @@ func TestDagHostReview775FirstSightReportsTheAnswerAppendedDuringTheScan(t *test
 				t.Fatalf("the next check reported the same answer again: %+v", second)
 			}
 		})
+	}
+}
+
+// A repeated tool result for one call id is the duplicate-outputs reading's finding; it must not also
+// produce a second refusal anomaly for the same refused command. One reading reports a call id once.
+func TestDagHostReview775RepeatedAnswerReportsOneRefusal(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	answer := dagHostToolOutput(t, "call-1", `{"ok": false, "reason": "stale_coordinator_epoch"}`)
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostToolCall(t, "call-1", "crw relay dag-release --plan p1"), answer, answer)
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	review := dagHostRun(t, context.Background(), f, cfg)
+	found := dagReviewFind(review, dagHostKindParentDagRefusals)
+	if len(found) != 1 {
+		t.Fatalf("one refused call reported %d refusals, want exactly one: %+v", len(found), found)
+	}
+	if duplicates := dagReviewFind(review, dagHostKindDuplicateToolOutputs); len(duplicates) != 1 {
+		t.Fatalf("the repeated answer was not reported as a duplicate tool output: %+v", duplicates)
+	}
+}
+
+// Two reviews of one state directory must not both report the refusal the other already reported. A
+// review that cannot take the state lock leaves the refusal reading unmeasured rather than reporting
+// a refusal whose already-reported list it cannot keep, and it writes no offsets.
+func TestDagHostReview775HeldStateLockLeavesTheReadingUnmeasured(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostReview775Refusal(t, "call-1", "crw relay dag-release --plan p1")...)
+	f.close()
+	dagHostReview775SeedOffsets(t, stateDir, rollout, 0)
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	release := dagHostReview775HoldStateLock(t, stateDir)
+	defer release()
+
+	review := dagHostRun(t, context.Background(), f, cfg)
+	if found := dagReviewFind(review, dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("a review reported a refusal while another review held the state lock: %+v", found)
+	}
+	if !dagHostUnmeasured(review, "parent_refusals:parent-1") {
+		t.Fatalf("a held state lock did not leave the refusal reading unmeasured: %+v", review.Checks)
+	}
+}
+
+// A rollout seen for the first time with no relay call waiting for its answer resumes at the end of
+// the file, not at the start of its last line, so the completed history is not read again on every
+// later check.
+func TestDagHostReview775FirstSightWithNothingPendingResumesAtTheEnd(t *testing.T) {
+	f := dagReviewNewFixture(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl",
+		dagHostResponseItem(t, map[string]any{"type": "message", "role": "user"}))
+	f.close()
+	info, err := os.Stat(rollout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+	if found := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals); len(found) != 0 {
+		t.Fatalf("a first-seen rollout with nothing pending raised an anomaly: %+v", found)
+	}
+	offsets := dagHostReview775ReadOffsets(t, stateDir)
+	if got := offsets[rollout]; got != info.Size() {
+		t.Fatalf("the first-sight resume offset is %d, want the end of the file %d", got, info.Size())
 	}
 }
