@@ -233,6 +233,43 @@ func shellWriteHeredocInterpreterName(word string) bool {
 	return shellVerbVersioned(name)
 }
 
+// shellWriteHeredocVerbExpanded reports whether the verb of the command a here-document is attached to still holds a
+// shell expansion once its quotes and backslashes are removed (CRW-765 correction 5, rule R0). A verb the reader cannot
+// spell out may run any program, an interpreter among them, so the here-document is denied. The scan stops at the first
+// command word: a redirection, a here-document operator and its delimiter word are skipped, so `2>&1 python3 -` and
+// `<<'PY' python3` both read `python3`.
+func shellWriteHeredocVerbExpanded(line []uint16) bool {
+	for i := 0; i < len(line); {
+		if shellSpace(line[i]) {
+			i++
+			continue
+		}
+		kind, next := shellWriteHeredocOperator(line, i)
+		if kind == shellWriteHeredocOpInvalid {
+			return false // an operator shape the reader does not model is decided by the header proof instead
+		}
+		if kind != shellWriteHeredocOpNone {
+			i = next
+			continue
+		}
+		_, _, literal := shellWriteHeredocLiteralWord(line, i)
+		return !literal
+	}
+	return false
+}
+
+// shellWriteHeredocNeverReadsStdin is the reader's data list (CRW-765 correction 5, rule R1): the programs whose
+// standard input is never executed, so a here-document they are attached to is data and its body is not read. The verb
+// is compared by its last path element and case-insensitively, which shellVerbName has already applied. Every other
+// verb is off the list, so rule R2 decides the here-document from the command text instead.
+func shellWriteHeredocNeverReadsStdin(verb string) bool {
+	switch verb {
+	case "cat", "tee", "head", "tail", "wc", "grep", "egrep", "fgrep", "sort", "uniq", "cut", "tr", "jq", "base64", "read":
+		return true
+	}
+	return false
+}
+
 // shellWriteHeredocHeaderProven reports whether a here-document's header is proven to be exactly one simple command the way the shell reads it (CRW-765 correction 4, rule G1). The proof is narrow on purpose: the header's physical line must hold no backslash at all (an escape or a line continuation would change what the shell executes), the physical line before it must not end with a backslash (the shell joins the two lines first), and outside quotes the line must hold no ;, &, |, && or || (so exactly one command stands on it). A header that defines a function in any form is not proven either (rule G3). Only a proven header is decided as data or program; anything else is an unprovable header and the here-document fails closed when the command text names an interpreter.
 func shellWriteHeredocHeaderProven(h shellWriteHeredoc) bool {
 	if h.joined {
