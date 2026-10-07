@@ -255,6 +255,13 @@ var (
 	// working-directory or a cd as well as in the command.
 	skillStep = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(?:` + alternation(skillAssetRoots) + `)/[^/\s]`)
 	// skillRootValue matches an assignment whose value is exactly a skills root, quoted or not:
+	// nodeTest matches a Node test run: the node word followed by --test as its own argument. It is the
+	// subject the one admitted job exists for, and the run needs no skill path spelled out -- a bare
+	// `node --test` discovers the test files under its working directory -- so a detector that only
+	// looks for a skills root or a path below one lets another job run the staged tests with no
+	// finding (CRW-939, the fifth generation-2 evaluation's d1). `npm test` is not this pattern: it
+	// runs the gui job's own suite, not the staged skills'.
+	nodeTest = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])node[ \t]+--test(?:$|[^A-Za-z0-9_-])`)
 	// the root followed by the end of the line, a quote, or a blank. The roots alone are no skill
 	// path (a listing names them), but a job that carries one as a value names where the skill
 	// scripts live, so it is the other shape this detector has to see (CRW-353). YAML accepts more
@@ -264,7 +271,7 @@ var (
 	// a single- or double-quoted key, blanks before the colon (`SKILLS_ROOT : port/cxc/skills`), a key
 	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
 	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
-	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:[A-Za-z_][A-Za-z0-9_-]*=)?["']?(?:` + alternation(skillAssetRoots) + `)/?["']?[ \t]*(?:#.*)?$`)
+	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:(?:export|readonly|declare|local)[ \t]+)?(?:[A-Za-z_][A-Za-z0-9_-]*=)?["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[ \t]*(?:#.*)?$|[ \t]+)`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -333,7 +340,7 @@ func pythonInWorkflow(file, text string) []string {
 			}
 		}
 		code := strings.TrimSpace(line)
-		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code)
+		skillPath := skillStep.MatchString(code) || skillRootValue.MatchString(code) || nodeTest.MatchString(code)
 		if !strings.HasPrefix(code, "#") && (pythonStep.MatchString(code) || (skillPath && !inSkillScriptsNode)) {
 			found = append(found, fmt.Sprintf("%d: %s", number+1, code))
 		}
@@ -675,6 +682,13 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"          root=\"port/cxc/skills\"", true},                                           // a quoted shell assignment is the same value
 		{"          root='port/cxc/skills'", true},                                             // in either quote
 		{"          root=\"port/cxc/skillset\"", false},                                        // a longer name is no root in quotes either
+		{"          export root=port/cxc/skills", true},                                        // an export prefix is the same assignment
+		{"          readonly root=\"port/cxc/skills\"", true},                                  // and so is readonly, quoted
+		{"          root=port/cxc/skills node --test \"$root\"/x/tests/a.test.mjs", true},      // and an assignment that shares its line
+		{"      - run: node --test", true},                                                     // a bare node test run is the same subject
+		{"      - run: node --test 2>&1 | tail -5", true},                                      // and so is one with a pipe
+		{"      - run: node --test-x", false},                                                  // a flag that is not --test
+		{"      - run: npm test", false},                                                       // npm is not node
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
@@ -685,6 +699,13 @@ func TestWorkflow_python_detector(t *testing.T) {
 	// Inside ci.yml's own skill-scripts-node job the same value is the job's own root.
 	if got := pythonInWorkflow("ci.yml", "jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills\n"); len(got) != 0 {
 		t.Errorf("ci.yml's skill-scripts-node root is refused: %q", got)
+	}
+	// The one admitted job may run the staged tests however it spells the command, including a bare
+	// `node --test` that discovers the files itself.
+	for _, line := range []string{"      - run: node --test", "      - run: node --test port/cxc/skills/x/tests/a.test.mjs"} {
+		if got := pythonInWorkflow("ci.yml", "jobs:\n  skill-scripts-node:\n    steps:\n"+line+"\n"); len(got) != 0 {
+			t.Errorf("ci.yml's skill-scripts-node job is refused for %q: %q", strings.TrimSpace(line), got)
+		}
 	}
 	expectEqual(t, "line number", pythonInWorkflow("ci.yml", "jobs:\n  a:\n    steps:\n      - run: |\n          make test\n          python3 x.py\n"),
 		[]string{"6: python3 x.py"})

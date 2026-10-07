@@ -190,6 +190,11 @@ function deferredImport(code, i, parseAt) {
     if (narrower >= indent) continue;
     const text = code[j].trim();
     if (/^(?:async[ \t]+def|def)[ \t]/.test(text)) return functionHoldsTheParse(code, j, parseAt);
+    // A `finally` body, and a bare `except`, run while the parse unwinds: argparse answers --help
+    // by raising SystemExit, and both of these still execute before that reaches the caller, so an
+    // import under one is not deferred (CRW-939, the fifth generation-2 evaluation of d2). A typed
+    // handler cannot catch SystemExit, so the real file's `except ImportError` still defers.
+    if (/^(?:finally|except)[ \t]*:/.test(text)) return false;
     if (/^(?:class|if|elif|else|try|except|finally|with|for|while|match|case)\b/.test(text) && /:[ \t]*$/.test(text)) {
       indent = narrower;
       continue;
@@ -384,6 +389,21 @@ test("the parser-import check reads module-level imports placed after the parse"
   // may be called at module level before main() runs, so a parser import in that helper executes
   // before --help answers (CRW-939, the fourth generation-2 evaluation's d2).
   const helperShape = "def main():\n    args = parser.parse_args()\n\ndef helper():\n    from repomap_class import RepoMap\n\nhelper()\n";
+  // A `finally` body runs while the parse unwinds: argparse answers --help by raising SystemExit,
+  // and the finally block still executes before that reaches the caller, so an optional import
+  // there is not deferred (CRW-939, the fifth generation-2 evaluation of d2). The same holds for a
+  // handler that would catch SystemExit.
+  const finallyShape = "def main():\n    try:\n        args = parser.parse_args()\n    finally:\n        from repomap_class import RepoMap\n";
+  assert.ok(parserImportsBeforeParsing(finallyShape).offenders.length > 0,
+    "an import in a finally block runs while --help unwinds, so it is not deferred");
+  const bareExcept = "def main():\n    try:\n        args = parser.parse_args()\n    except:\n        from repomap_class import RepoMap\n";
+  assert.ok(parserImportsBeforeParsing(bareExcept).offenders.length > 0,
+    "a bare except catches SystemExit, so its import is not deferred");
+  // The control: the real file's `except ImportError` cannot catch SystemExit, so its import is
+  // deferred and stays clean.
+  const typedExcept = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError:\n        from repomap_class import RepoMap\n";
+  assert.deepEqual(parserImportsBeforeParsing(typedExcept).offenders, [],
+    "an import under except ImportError stays clean");
   assert.ok(parserImportsBeforeParsing(helperShape).offenders.length > 0,
     "an import in a function that does not parse the arguments is not deferred past the parse");
 });
