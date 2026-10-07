@@ -74,12 +74,63 @@ test("tags queries cover the fixture-verified languages", () => {
   }
 });
 
-// The oracle spawned `cxc map --help` and asserted its help text names the real entry point.
-// That spawn needs the crw binary, which this job does not build, so the same claim is pinned
-// where it lives: argparse's prog, which is what the help text prints.
+// The oracle spawned `cxc map --help` and asserted exit 0 with no python deps. That spawn needs the
+// crw binary and an interpreter, and this repository's CI runs no skill script, so the same claim
+// is checked from the source structure instead: the modules that pull the optional parser
+// dependencies in are imported only after `parse_args()` has answered `--help`.
+//
+// `parse_args()` is what prints help and exits; an import above it runs first, so a parser import
+// moved ahead of the parse makes `--help` fail without the deps and this test is what sees it. The
+// list is every optional dependency of the vendored stack plus the two local modules that import
+// them at their own top level (`utils`, `repomap_class`).
+const PARSER_IMPORTS = ["diskcache", "networkx", "grep_ast", "tree_sitter", "tree_sitter_language_pack", "tiktoken", "pygments", "utils", "repomap_class"];
+
+/** Imports of the optional parser stack that appear before the `parse_args()` call. */
+function parserImportsBeforeParsing(source) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const parseAt = lines.findIndex((line) => /^\s*args\s*=\s*parser\.parse_args\(\)\s*$/.test(line));
+  if (parseAt < 0) return { parseAt, offenders: ["(no `args = parser.parse_args()` line found)"] };
+  const offenders = [];
+  for (const [i, line] of lines.entries()) {
+    if (i >= parseAt) break;
+    const m = /^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line);
+    if (m && PARSER_IMPORTS.includes(m[1])) offenders.push(`line ${i + 1}: ${line.trim()}`);
+  }
+  return { parseAt, offenders };
+}
+
 test("the vendored CLI names its real entry point", () => {
   const script = readFileSync(join(scriptsDir, "repomap.py"), "utf8");
   assert.match(script, /prog="crw map"/, "argparse prog must name the real entry point");
+});
+
+test("repomap.py parses its arguments before it imports the optional parser stack", () => {
+  const source = readFileSync(join(scriptsDir, "repomap.py"), "utf8");
+  const { parseAt, offenders } = parserImportsBeforeParsing(source);
+  assert.ok(parseAt >= 0, "repomap.py must call parser.parse_args()");
+  assert.deepEqual(offenders, [], `an optional parser import runs before --help can answer:\n${offenders.join("\n")}`);
+  // The deferred block really is there: the same modules are imported after the parse.
+  const after = source.replace(/\r\n/g, "\n").split("\n").slice(parseAt).join("\n");
+  for (const mod of ["utils", "repomap_class"]) {
+    assert.match(after, new RegExp(`from ${mod} import`), `${mod} must still be imported after the parse`);
+  }
+});
+
+// Red-first control: moving one deferred import above `parse_args()` is exactly the regression the
+// oracle's spawn would have caught, and the structural check has to catch it without a Python run.
+test("the parser-import check sees an import moved above the argument parsing", () => {
+  const source = readFileSync(join(scriptsDir, "repomap.py"), "utf8");
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const deferredAt = lines.findIndex((line) => line.trim() === "from repomap_class import RepoMap");
+  assert.ok(deferredAt > 0, "repomap.py must defer `from repomap_class import RepoMap`");
+  const parseAt = lines.findIndex((line) => /^\s*args\s*=\s*parser\.parse_args\(\)\s*$/.test(line));
+  assert.ok(parseAt > 0 && deferredAt > parseAt, "the import must start out after the parse");
+  const moved = [...lines.slice(0, parseAt), lines[deferredAt], ...lines.slice(parseAt, deferredAt), ...lines.slice(deferredAt + 1)];
+  const { offenders } = parserImportsBeforeParsing(moved.join("\n"));
+  assert.equal(offenders.length, 1, `the moved import must be reported once, got ${JSON.stringify(offenders)}`);
+  assert.match(offenders[0], /from repomap_class import RepoMap$/, "the moved import must be named");
+  // The unmodified source is the control: the same reader reports nothing for it.
+  assert.deepEqual(parserImportsBeforeParsing(source).offenders, [], "the unmodified source must be clean");
 });
 
 test("find_src_files skips compiled-output dirs", () => {

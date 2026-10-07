@@ -26,7 +26,6 @@ func workflowJobs(t *testing.T) (map[string]string, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	header := regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
 	jobs := map[string][]string{}
 	var order []string
 	current, inside := "", false
@@ -38,8 +37,10 @@ func workflowJobs(t *testing.T) (map[string]string, []string) {
 		if !inside {
 			continue
 		}
-		if m := header.FindStringSubmatch(line); m != nil {
-			current = m[1]
+		// workflowJobHeader is the one reader of a job key, so this walk and the Node-run
+		// detector cannot disagree about where a job starts (CRW-939).
+		if name, ok := workflowJobHeader(line); ok {
+			current = name
 			jobs[current] = nil
 			order = append(order, current)
 		} else if current != "" {
@@ -269,8 +270,13 @@ const skillScriptsNodeJob = "skill-scripts-node"
 // inherit the one allow-list's exception and run a skill script outside the subject that admits it.
 const skillScriptsNodeFile = "ci.yml"
 
-// jobHeaderLine is a job header: two spaces, the name, a colon. workflowJobs reads the same shape.
-var jobHeaderLine = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
+// jobKeyLine is a key at a job's own indentation: exactly two spaces, a YAML key, a colon, and then
+// nothing, a blank or a comment. YAML accepts more than a lower-case hyphenated name -- a "_" or a
+// "." in the key, an upper-case letter, and a single- or double-quoted key all open a job -- and
+// every one of them has to reset the one Node-run exception. A header this reader missed would
+// leave the exception switched on, and the job below it could run a skill script under a name that
+// is not skill-scripts-node (CRW-939, the generation-1 pre-merge evaluation).
+var jobKeyLine = regexp.MustCompile(`^  (?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_.-]+)):(?:[ \t].*)?$`)
 
 // alternation is words as a regular expression alternative, each taken literally.
 func alternation(words []string) string {
@@ -289,8 +295,9 @@ func alternation(words []string) string {
 // is admitted only inside that pair: the job names its root once and runs the tests it finds there,
 // so neither the root value nor a path below it is a skill script running anywhere else. file is
 // the workflow's path or base name; the job name alone does not carry the exception (CRW-939). The
-// Python rule is unchanged in every job, that one included. A job header is the shape workflowJobs
-// reads, so a job cannot be added in a form this detector misses.
+// Python rule is unchanged in every job, that one included. Every line YAML reads as a key at a
+// job's own indentation starts a new job and resets the exception, so a job cannot be added in a
+// form this detector misses.
 func pythonInWorkflow(file, text string) []string {
 	var found []string
 	admitted := filepath.Base(file) == skillScriptsNodeFile
@@ -309,13 +316,23 @@ func pythonInWorkflow(file, text string) []string {
 	return found
 }
 
-// workflowJobHeader is a job's name when line is a job header: two spaces, the name, a colon.
+// workflowJobHeader is the key when line opens a job: exactly two spaces, then a YAML key and a
+// colon, then nothing, a blank or a comment. The key is a plain name or the contents of a quoted
+// one; a key the reader cannot name still reports true, because the line starts a new job either
+// way and the exception must reset. workflowJobs reads the same two-space shape, and
+// TestWorkflow_the_job_key_reader_matches_workflowJobs holds the two readers to each other on the
+// real ci.yml.
 func workflowJobHeader(line string) (string, bool) {
-	m := jobHeaderLine.FindStringSubmatch(line)
+	m := jobKeyLine.FindStringSubmatch(line)
 	if m == nil {
 		return "", false
 	}
-	return m[1], true
+	for _, key := range m[1:] {
+		if key != "" {
+			return key, true
+		}
+	}
+	return "", true
 }
 
 // workflowPythonFindings reads every workflow file under dir and reports what pythonInWorkflow
@@ -382,6 +399,87 @@ func TestWorkflow_the_skill_scripts_exception_is_one_file_and_one_job(t *testing
 	other := "name: ci\n\njobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills\n"
 	if got := pythonInWorkflow("ci.yml", other); len(got) == 0 {
 		t.Error("ci.yml admits a skills-root value outside the skill-scripts-node job")
+	}
+}
+
+// Every line YAML reads as a key at a job's own indentation starts a new job, so the one Node-run
+// exception cannot survive into the job below it. YAML accepts more job keys than the lower-case
+// hyphenated shape the first reader knew: a key with a "_" or a ".", an upper-case key, a single-
+// or double-quoted key, and a trailing comment after the colon are all one key. A header the
+// detector does not read would leave the exception switched on, and the next job of ci.yml could
+// then run a skill script under a name that is not skill-scripts-node (CRW-939, the generation-1
+// pre-merge evaluation).
+func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testing.T) {
+	const head = "name: ci\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	const run = "      - run: node --test port/cxc/skills/crw-qa/tests/b.test.mjs\n"
+	// The real job stays clean: the exception is the point of the control.
+	if got := pythonInWorkflow("ci.yml", head); len(got) != 0 {
+		t.Fatalf("the real skill-scripts-node job is refused: %q", got)
+	}
+	for _, header := range []string{
+		"  extra_job:\n",                      // a '_' in the key
+		"  extra.job:\n",                      // a '.' in the key
+		"  'quoted-job':\n",                   // a single-quoted key
+		"  \"quoted-job\":\n",                 // a double-quoted key
+		"  extra-job: # a trailing comment\n", // a comment after the colon
+		"  extra-job:  # two spaces\n",
+		"  ExtraJob:\n",     // an upper-case key
+		"  extra-job:\r\n",  // a CRLF line ending
+		"  extra-job: \n",   // a trailing blank
+		"  'quoted job':\n", // a quoted key with a space
+	} {
+		body := head + header + "    runs-on: ubuntu-24.04\n    steps:\n" + run
+		if got := pythonInWorkflow("ci.yml", body); len(got) == 0 {
+			t.Errorf("a job opened by %q inherits the Node-run exception: the run is not refused", strings.TrimSpace(header))
+		}
+	}
+	// A key nested below a job, and a step's own key, are not job keys: the detector must not reset
+	// the exception on every two-space line, or the job it admits would refuse its own root and its
+	// own test run.
+	for _, line := range []string{
+		"    runs-on: ubuntu-24.04\n",
+		"      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n",
+		"        working-directory: port/cxc/skills/crw-qa\n",
+	} {
+		body := "name: ci\n\njobs:\n  skill-scripts-node:\n" + line
+		if got := pythonInWorkflow("ci.yml", body); len(got) != 0 {
+			t.Errorf("%q is not a job key but reset the exception: %q", strings.TrimSpace(line), got)
+		}
+	}
+}
+
+// The detector's job-key reader is the shape YAML uses at a job's indentation, and it agrees with
+// workflowJobs on every header the real ci.yml holds, so the two readers cannot drift apart.
+func TestWorkflow_the_job_key_reader_matches_workflowJobs(t *testing.T) {
+	jobs, order := workflowJobs(t)
+	data, err := os.ReadFile(filepath.Join(repoRoot(), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	inside := false
+	for _, line := range lines(string(data)) {
+		if line != "" && !strings.HasPrefix(line, " ") {
+			inside = strings.HasPrefix(line, "jobs:")
+			continue
+		}
+		if !inside {
+			continue
+		}
+		if name, ok := workflowJobHeader(line); ok {
+			seen = append(seen, name)
+		}
+	}
+	if len(seen) != len(order) {
+		t.Fatalf("the job-key reader found %d headers %v, workflowJobs found %d %v", len(seen), seen, len(order), order)
+	}
+	for i := range seen {
+		if seen[i] != order[i] {
+			t.Fatalf("header %d is %q, workflowJobs says %q", i, seen[i], order[i])
+		}
+		if _, ok := jobs[seen[i]]; !ok {
+			t.Fatalf("header %q names no job body", seen[i])
+		}
 	}
 }
 
