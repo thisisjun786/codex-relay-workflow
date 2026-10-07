@@ -271,11 +271,36 @@ track of which packet each belongs to. The plan is the registry: the packet rule
   allows a single `reserved` or `create_armed` managed start per issue key, so a second packet's reservation is refused while another start
   of the same issue is pending — with the existing `duplicate_assignment` shape, not the index's constraint error — and `dag-ready` keeps
   deferring the packet node (`skip:already_owned`) until that start has attached. The admission beside an *active* relationship stays: it is
-  the attached case, and there the two packets do run side by side.
+  the attached case, and where the issue scope can hold more than one packet the two do run side by side once both have attached (see the
+  project-scope limitation below).
+* A project-scoped plan cannot attach the second packet yet, and this is a v1 limitation rather than a packet rule. Project linkage binds the
+  live child of a scope keyed by the issue, and the v1 unique index `scope_bindings_one_live_owner` (`contract/schema/relay-sqlite.sql`)
+  allows one live child binding per `(scope_kind, scope_key, role)`; the execution link is keyed by the issue too
+  (`registry/linkage.go`). A second packet of an issue whose plan carries a project key is therefore refused `duplicate_scope_owner` at
+  `Register`, before the packet-aware guard below is reached. Turning the issue scope packet-aware is a v1 change, so multi-packet delivery
+  waits for the activation step the issue names; the guard and the reservation rules below are what the relay does where a plan has no project
+  key, and what it will do for every plan once the scope identity can hold several packets.
+* Two packets of one issue must declare edit regions that do not overlap without a declared owner: the owner is the packet that declares the
+  shared place exclusive. A plain overlap between two packets of one issue is refused `disposition_conflict` at `dag-region-declare`, and so
+  are two exclusive claims on one shared place. A node without a `packet_id` is never judged against a sibling, and a packet whose sibling has
+  not declared its regions yet is judged when that sibling declares.
 * `dag-feature-coverage --plan --issue` is the reading: the packets, each packet's acceptance and integration (the merge train's member
   mapping, or a landing the relay observed), and the packet owning each criterion. A feature is complete only when every required
-  criterion is covered by an integrated packet. An issue whose plan declares no criteria is read from the criteria registered for its
-  node's relationship, which is how a plan without packets has always been judged.
+  criterion is covered by an integrated packet.
+* Integration here is the scheduler's own predicate, not a weaker one: the accepted head must carry the parent's merged mark on the
+  acceptance's current stand head, every target the node has to land in must satisfy `integratedAt`, and a merge turn that carried the
+  observation must have landed the same head. A single positive ancestry observation is not integration. The landing commit reported is the
+  commit the record names — the bundle's landed commit when a train carried the member, read from the LANDED event's own members mapping so a
+  member the bundle excluded is not credited, else the stand head a direct observation proved contained in every target.
+* A packet whose relationship was archived after its merge keeps its acceptance and integration: `relationship-close-merged` archives only a
+  settled merged relationship, so ordinary cleanup does not turn a complete feature incomplete. A superseded or abandoned execution still
+  counts for nothing.
+* A criterion counts as covered only when the packet that landed it registered it required with the same id — a packet that covers a
+  feature-required criterion must register it required at release (`criteria_set_changed` otherwise) — so a criterion downgraded to optional
+  in the packet's own criteria set is never read as covered by its landing.
+* Plan validation refuses a multi-packet issue that declares no `feature_criteria`, and a packet node that declares no `covers`, so a
+  required criterion assigned to no packet cannot disappear from the completion test. The legacy reading — the criteria registered for the
+  node's own relationship — is the meaning of an issue with one node and no `packet_id`, and of nothing else.
 
 Old rows are never migrated: a node with no `packet_id` keeps the single-packet meaning it had, and an upgraded store keeps every row and
 every active relationship it held.
