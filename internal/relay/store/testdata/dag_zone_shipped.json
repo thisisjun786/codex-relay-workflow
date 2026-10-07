@@ -80,6 +80,7 @@
     "trigger merge_train_members_no_delete": "CREATE TRIGGER merge_train_members_no_delete BEFORE DELETE ON merge_train_members BEGIN SELECT RAISE(ABORT,'merge_train_members rows are append-only: never deleted'); END",
     "trigger merge_train_members_no_update": "CREATE TRIGGER merge_train_members_no_update BEFORE UPDATE ON merge_train_members BEGIN SELECT RAISE(ABORT,'merge_train_members rows are append-only: never updated'); END",
     "trigger merge_trains_no_delete": "CREATE TRIGGER merge_trains_no_delete BEFORE DELETE ON merge_trains BEGIN SELECT RAISE(ABORT,'merge_trains rows are append-only: never deleted'); END",
-    "trigger merge_trains_no_update": "CREATE TRIGGER merge_trains_no_update BEFORE UPDATE ON merge_trains BEGIN SELECT RAISE(ABORT,'merge_trains rows are append-only: never updated'); END"
+    "trigger merge_trains_no_update": "CREATE TRIGGER merge_trains_no_update BEFORE UPDATE ON merge_trains BEGIN SELECT RAISE(ABORT,'merge_trains rows are append-only: never updated'); END",
+    "trigger merge_trains_train_id_not_null": "CREATE TRIGGER merge_trains_train_id_not_null BEFORE INSERT ON merge_trains WHEN NEW.train_id IS NULL BEGIN SELECT RAISE(ABORT,'merge_trains.train_id is NULL: a train is addressed by a non-empty id'); END"
   }
 }

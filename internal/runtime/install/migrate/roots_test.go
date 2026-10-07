@@ -221,17 +221,17 @@ func TestEnsureDest(t *testing.T) {
 	if _, err := os.Lstat(o.ToHome); err == nil || r.User.Source != nil || r.User.Dest != nil {
 		t.Fatal("Open pinned or created an absent root")
 	}
-	d, err := r.User.EnsureDest(0o700)
+	d, _, err := r.User.EnsureDest(0o700)
 	must(t, err)
 	if fi, err := os.Stat(o.ToHome); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("destination = %v, %v; want a 0700 directory", fi, err)
 	}
-	if again, _ := r.User.EnsureDest(0o700); again != d {
+	if again, _, _ := r.User.EnsureDest(0o700); again != d {
 		t.Error("EnsureDest pinned a second handle")
 	}
 	// A root that Open found already pinned still has its parent synced; a closed parent makes that visible.
 	must(t, r.User.parent.Close())
-	if _, err := r.User.EnsureDest(0o700); !errors.Is(err, os.ErrClosed) {
+	if _, _, err := r.User.EnsureDest(0o700); !errors.Is(err, os.ErrClosed) {
 		t.Errorf("EnsureDest on a pinned root did not sync its parent: %v", err)
 	}
 }
@@ -247,7 +247,7 @@ func TestDirOpensOneComponentAtATime(t *testing.T) {
 		if _, err := d.Child(name); err == nil {
 			t.Errorf("Child(%q) succeeded", name)
 		}
-		if _, err := d.EnsureChild(name, 0o755); err == nil {
+		if _, _, err := d.EnsureChild(name, 0o755); err == nil {
 			t.Errorf("EnsureChild(%q) succeeded", name)
 		}
 		if f, _, err := d.OpenRegular(name); err == nil {
