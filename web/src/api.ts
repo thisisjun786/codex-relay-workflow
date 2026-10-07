@@ -486,3 +486,37 @@ export function writePolicy(payload: PolicyWritePayload): Promise<PolicyResponse
 export function checkPolicy(payload: PolicyWritePayload): Promise<PolicyResponse> {
   return postPolicy("/api/policy/check", payload);
 }
+
+/**
+ * The store-accepted names a model's advertised ladder permits, in the store's own order.
+ *
+ * `supported` is the same three-state value the effort control uses: an array is the model's
+ * advertised ladder, `undefined` means no model is selected, and `null` means the catalog did not
+ * advertise a ladder. Only an array is evidence that the model refuses a name, so a non-array keeps
+ * every store-accepted name selectable.
+ */
+export function selectableEfforts(supported: readonly string[] | null | undefined): string[] {
+  if (!Array.isArray(supported)) return [...EFFORTS];
+  return EFFORTS.filter((name) => supported.includes(name));
+}
+
+/**
+ * Whether the model advertises a ladder that holds none of the names the helper-role store accepts.
+ * When this is true no option is selectable and the role can only use the session effort, so the
+ * screen owes the user a reason (see `effortFallbackNotice`).
+ */
+export function effortLadderUnsupported(supported: readonly string[] | null | undefined): boolean {
+  return Array.isArray(supported) && selectableEfforts(supported).length === 0;
+}
+
+/**
+ * The one-line reason no store-accepted effort is selectable, or null when some is. The sentence
+ * states what the role then uses: the session effort when nothing is saved, and the saved value when
+ * one is, because the screen never silently changes a stored value.
+ */
+export function effortFallbackNotice(supported: readonly string[] | null | undefined, savedEffort: string | null): string | null {
+  if (!effortLadderUnsupported(supported)) return null;
+  return savedEffort === null
+    ? "This model advertises no effort the helper-role store accepts; the role uses the session effort."
+    : `This model advertises no effort the helper-role store accepts; the saved effort ${savedEffort} is kept.`;
+}
