@@ -14,6 +14,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -39,7 +40,7 @@ const (
 	// AppliedActionReregister is the repair when the file bytes no longer match the digest the
 	// wiring record names: the bridge launcher refuses those bytes, so the record must be brought up
 	// to date before a new bridge can start under them.
-	AppliedActionReregister = "re-register the execution policy with crw install register-mcp --owner plugin --execution-policy <file>"
+	AppliedActionReregister = "re-register the execution policy with crw install register-mcp --re-register-policy --execution-policy <file>"
 )
 
 // LookupEnv is os.LookupEnv: a test supplies a map through it.
@@ -58,7 +59,14 @@ type Located struct {
 // strings: an effort name belongs to the model beside it, so max and xhigh are never substituted
 // for one another. On the wire the effort is spelled reasoningEffort, as the policy document
 // spells it, and effort is accepted as an alias.
-type Pair struct{ Model, Effort string }
+type Pair struct {
+	Model, Effort string
+	// conflict is why the two spellings of the effort could not be reconciled, or "" when they
+	// could. It is unexported because it is not part of the pair: it is how a mismatch reaches the
+	// check as a refused change rather than as a decode failure the API would answer as a bad
+	// request.
+	conflict string
+}
 
 // pairWire is a pair as JSON carries it.
 type pairWire struct {
@@ -69,17 +77,30 @@ type pairWire struct {
 
 // UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
 // with an empty effort, which the parser then refuses, rather than silently matching another pair.
+// A pair that names both with different values records the disagreement instead of silently
+// keeping one of them.
 func (p *Pair) UnmarshalJSON(raw []byte) error {
 	var wire pairWire
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
 	}
 	p.Model = wire.Model
-	p.Effort = wire.ReasoningEffort
-	if p.Effort == "" {
-		p.Effort = wire.Effort
-	}
+	p.Effort, p.conflict = effortAlias(wire.ReasoningEffort, wire.Effort)
 	return nil
+}
+
+// effortAlias resolves the two spellings an effort may be given in: the policy document's
+// reasoningEffort and the shorter effort the check contract uses. It is the one place the alias is
+// resolved, so Pair and Change cannot disagree about it. A request that names both with different
+// values is ambiguous, and the returned reason says so rather than silently picking one.
+func effortAlias(reasoningEffort, effort string) (string, string) {
+	if reasoningEffort != "" && effort != "" && reasoningEffort != effort {
+		return "", "reasoningEffort " + strconv.Quote(reasoningEffort) + " and effort " + strconv.Quote(effort) + " disagree; name one"
+	}
+	if reasoningEffort != "" {
+		return reasoningEffort, ""
+	}
+	return effort, ""
 }
 
 // MarshalJSON writes a pair as the policy document spells it.
