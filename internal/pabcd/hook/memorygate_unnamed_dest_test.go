@@ -315,3 +315,74 @@ func TestMemoryGateUnnamedDestinationMethodOpenMode(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryGateUnnamedDestinationPremergeFixes pins the shapes the pre-merge evaluation found: a variable receiver's
+// open() whose mode is computed (the reader cannot read the mode, so the call fails closed), a write method taken off
+// its receiver as a value, an interpreter option that takes its value as a separate word before a here-document, and a
+// here-document inside a nested shell program. The controls pin the two read-only programs the same reading must leave
+// allowed: a string's own replace on a call or parenthesized receiver, and an unquoted here-document that expands a
+// variable but writes nothing.
+func TestMemoryGateUnnamedDestinationPremergeFixes(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	m := root + "/n.md"
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		// A variable receiver may hold a Path or a module, so the reader reads the mode from both positions; a mode
+		// that is no literal is one it cannot name.
+		{"variable receiver with a computed mode", py("from pathlib import Path; p = Path(\"" + m + "\"); mode = \"w\"; p.open(mode).write(\"x\")")},
+		{"variable receiver with a computed keyword mode", py("from pathlib import Path; p = Path(\"" + m + "\"); p.open(mode=open(\"/w/mode\").read())")},
+		// A write method taken off its receiver as a value writes through whatever name it is bound to.
+		{"write method as a value", py("from pathlib import Path; p = Path(\"" + m + "\"); f = p.write_text; f(\"x\")")},
+		{"write method of a literal receiver as a value", py("from pathlib import Path; f = Path(\"" + m + "\").write_bytes; f(b\"x\")")},
+		{"rename method as a value", py("from pathlib import Path; p = Path(\"/w/a\"); f = p.rename; f(\"" + m + "\")")},
+		// An interpreter option whose value is a separate word does not make the interpreter a script runner.
+		{"interpreter option before a here-document", "python3 -W ignore <<'PY'\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\")\nPY"},
+		{"interpreter -X option before a here-document", "python3 -X utf8 <<'PY'\nimport os\nopen(os.path.join(\"" + root + "\", \"n.md\"), \"w\")\nPY"},
+		// A here-document inside a nested shell program is read too.
+		{"here-document inside a shell -c", "bash -c " + shellWriteUnnamedQuote("python3 <<'PY'\nimport os\nopen(os.path.join('"+root+"', 'n.md'), 'w')\nPY")},
+		{"unquoted here-document inside a shell -c", "bash -c " + shellWriteUnnamedQuote("python3 <<PY\nimport os\nopen(os.path.join('"+root+"', 'n.md'), 'w')\nPY")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env)
+			if got.Surface != "shell" || got.Target != unnamedDestWant {
+				t.Errorf("%q: %+v, want the shell surface and %s", c.command, got, unnamedDestWant)
+			}
+		})
+	}
+	for _, c := range []struct{ name, command string }{
+		// A string's own replace takes two arguments and writes no file, whatever the receiver is.
+		{"string replace on a call receiver", py("print(str('memories').replace('m', 'M'))")},
+		{"string replace on a parenthesized receiver", py("print(('memories').replace('m', 'M'))")},
+		{"string replace on a variable receiver", py("s = 'memories'; print(s.replace('m', 'M'))")},
+		// An unquoted here-document that expands a variable but writes nothing is read as the program it is.
+		{"expanded here-document with no write", "python3 <<PY\nprint(\"$USER\")\nPY"},
+		{"expanded here-document that only reads", "python3 <<PY\nopen(\"$HOME/notes.md\").read()\nPY"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
+// TestMemoryGateUnnamedDestinationControlShapes is the matching /w control set the pre-merge evaluation asked for: the
+// computed shapes of the issue body that write under /w with no protected-area literal must stay allowed, so the
+// protected-area condition alone decides.
+func TestMemoryGateUnnamedDestinationControlShapes(t *testing.T) {
+	cwd, _, env := gateScene(t)
+	py := func(program string) string { return "python3 -c " + shellWriteUnnamedQuote(program) }
+	for _, c := range []struct{ name, command string }{
+		{"chained Path under /w", py("from pathlib import Path; (Path('/w') / 'n.md').write_text('x')")},
+		{"Path rename with a Path argument under /w", py("from pathlib import Path; Path('/w/a').rename(Path('/w/n.md'))")},
+		{"copy to a computed destination under /w", py("import shutil, os; shutil.copy('/w/a', os.path.join('/w', 'n.md'))")},
+		{"variable receiver with a computed mode under /w", py("from pathlib import Path; p = Path('/w/n.md'); mode = 'w'; p.open(mode)")},
+		{"write method as a value under /w", py("from pathlib import Path; p = Path('/w/n.md'); f = p.write_text; f('x')")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}

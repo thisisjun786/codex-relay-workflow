@@ -2238,7 +2238,7 @@ const shellWriteUnnamedWhat = "a write whose destination it cannot name"
 // root. The programs read are the -c and --command programs of a python command, including the ones a nested shell -c
 // or eval runs and the shell-unescaped reading of each, and the body of a here-document the interpreter reads.
 func shellWriteUnnamedCommand(command string, points func(string) bool) (string, bool) {
-	for _, program := range shellWriteUnnamedPrograms(command) {
+	for _, program := range shellWriteUnnamedPrograms(command, points) {
 		if program.unreadable || shellWriteUnnamedProgram(program.text, points) {
 			return shellWriteUnnamedWhat, true
 		}
@@ -2256,19 +2256,36 @@ type shellWriteUnnamedSource struct {
 
 // shellWriteUnnamedPrograms is every Python program text a command holds that the reader reads, in the order the command
 // names them.
-func shellWriteUnnamedPrograms(command string) []shellWriteUnnamedSource {
-	budget := 32*len(command) + 65536
+func shellWriteUnnamedPrograms(command string, points func(string) bool) []shellWriteUnnamedSource {
+	budget := &shellWriteUnnamedBudget{bytes: 32*len(command) + 65536}
 	out := []shellWriteUnnamedSource{}
 	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
-		out = shellWriteUnnamedSegment(shellString(segment), &budget, out)
+		out = shellWriteUnnamedSegment(shellString(segment), budget, points, out)
 	}
-	return shellWriteUnnamedHerePrograms(command, out)
+	return shellWriteUnnamedHerePrograms(command, budget, points, out)
+}
+
+// shellWriteUnnamedBudget bounds the work this check does on one command: the bytes of the nested programs it reads and
+// how deep a nested shell program or here-document may stand, so a hostile command cannot make the reader recurse
+// without end. bytes is spent as nested text is read; depth counts the nesting the reader is inside.
+type shellWriteUnnamedBudget struct {
+	bytes int
+	depth int
+}
+
+// shellWriteUnnamedMaxDepth is the deepest nesting of nested shell programs and here-documents this check reads.
+const shellWriteUnnamedMaxDepth = 16
+
+// take spends n bytes of the budget and reports what is left; a negative result means the budget is spent.
+func (b *shellWriteUnnamedBudget) take(n int) int {
+	b.bytes -= n
+	return b.bytes
 }
 
 // shellWriteUnnamedSegment collects the programs of one shell segment's commands: the -c or --command program of a
 // python command, over both the token as it stands and its shell-unescaped reading as shellVerbPythonNode reads them,
-// and the commands a nested shell -c or eval runs.
-func shellWriteUnnamedSegment(segment string, budget *int, out []shellWriteUnnamedSource) []shellWriteUnnamedSource {
+// and the commands a nested shell -c or eval runs, including the here-documents that nested program reads.
+func shellWriteUnnamedSegment(segment string, budget *shellWriteUnnamedBudget, points func(string) bool, out []shellWriteUnnamedSource) []shellWriteUnnamedSource {
 	for _, command := range shellVerbSubsegments(segment) {
 		tokens := shellVerbSkipWrappers(shellTokenize(command))
 		if script, ok := shellWriteFStringPythonScript(tokens); ok {
@@ -2282,11 +2299,22 @@ func shellWriteUnnamedSegment(segment string, budget *int, out []shellWriteUnnam
 		if !ok {
 			continue
 		}
-		if *budget -= len(nested); *budget < 0 {
-			continue
-		}
-		out = shellWriteUnnamedSegment(nested, budget, out)
+		out = shellWriteUnnamedNested(nested, budget, points, out)
 	}
+	return out
+}
+
+// shellWriteUnnamedNested reads one nested shell program: its own commands (a python -c it runs, a shell -c or eval
+// inside it) and the here-documents it reads. The budget bounds the nesting and the bytes read, so a command that nests
+// shell programs without end cannot make the reader recurse without end.
+func shellWriteUnnamedNested(program string, budget *shellWriteUnnamedBudget, points func(string) bool, out []shellWriteUnnamedSource) []shellWriteUnnamedSource {
+	if budget.depth >= shellWriteUnnamedMaxDepth || budget.take(len(program)) < 0 {
+		return out
+	}
+	budget.depth++
+	out = shellWriteUnnamedSegment(program, budget, points, out)
+	out = shellWriteUnnamedHerePrograms(program, budget, points, out)
+	budget.depth--
 	return out
 }
 
@@ -2294,11 +2322,11 @@ func shellWriteUnnamedSegment(segment string, budget *int, out []shellWriteUnnam
 // here-document whose command is a Python interpreter reading its program from standard input runs its body as the
 // program, and one whose command is a shell runs its body as a command, so a python -c inside it is read too. A body
 // whose closing delimiter line is missing never ends, and the unreadable-program check already refuses it (CRW-726). An
-// unquoted delimiter lets the outer shell rewrite the body before the interpreter reads it, and the text the reader
-// holds is then not the program the interpreter runs: the check fails closed on it, because a rewritten body can hide
-// the destination (a $VAR that expands to a protected path) and the reader cannot tell.
-func shellWriteUnnamedHerePrograms(command string, out []shellWriteUnnamedSource) []shellWriteUnnamedSource {
-	budget := 32*len(command) + 65536
+// unquoted delimiter lets the outer shell rewrite the body before the interpreter reads it, so a destination the body
+// spells as a literal is not the text the interpreter runs (a $VAR may expand into a protected path): when such a body
+// holds a write, the check fails closed on it. A body with an expansion and no write at all is read as the program it
+// is, so a read-only program is not refused for naming an unrelated variable.
+func shellWriteUnnamedHerePrograms(command string, budget *shellWriteUnnamedBudget, points func(string) bool, out []shellWriteUnnamedSource) []shellWriteUnnamedSource {
 	for i := 0; i < len(command); {
 		line, after := worktreeDelUnreadableLine(command, i)
 		ops := worktreeDelUnreadableHereOperators(line)
@@ -2314,12 +2342,21 @@ func shellWriteUnnamedHerePrograms(command string, out []shellWriteUnnamedSource
 			switch shellWriteUnnamedHereOwner(line, body.op.at) {
 			case "python":
 				if !body.op.literal && worktreeDelUnreadableHereExpansion(body.body) {
-					out = append(out, shellWriteUnnamedSource{unreadable: true})
-					continue
+					// The outer shell rewrites this body before the interpreter reads it, so a destination the
+					// reader reads here is not the one the interpreter uses. The reader still asks the check's
+					// two questions of the body: a write whose destination it cannot name while the body can
+					// point at the protected area, or any write at all while the body can point at it (a literal
+					// the shell rewrites is no trustworthy destination). A body that writes nothing, or cannot
+					// point at the protected area, is read as the program it is.
+					_, wrote, pointed := shellWriteUnnamedRead(body.body, points)
+					if pointed && wrote {
+						out = append(out, shellWriteUnnamedSource{unreadable: true})
+						continue
+					}
 				}
 				out = append(out, shellWriteUnnamedSource{text: body.body})
 			case "shell":
-				out = shellWriteUnnamedSegment(body.body, &budget, out)
+				out = shellWriteUnnamedNested(body.body, budget, points, out)
 			}
 		}
 		i = next
@@ -2378,7 +2415,8 @@ func shellWriteUnnamedCommandWords(tokens []string) []string {
 
 // shellWriteUnnamedPythonStdin reports whether a Python interpreter with these arguments reads its program from its
 // standard input: no script operand and no -m module (-c is read by shellWriteFStringPythonScript). A lone - operand is
-// the standard input itself.
+// the standard input itself. An option that takes its value as a separate word (-W, -X) is skipped with it, so the
+// value is not mistaken for a script operand.
 func shellWriteUnnamedPythonStdin(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -2387,6 +2425,8 @@ func shellWriteUnnamedPythonStdin(args []string) bool {
 			return i+1 >= len(args) || args[i+1] == "-"
 		case a == "-m" || a == "--module" || strings.HasPrefix(a, "-m") && len(a) > 2:
 			return false
+		case a == "-W" || a == "-X" || a == "--check-hash-based-pycs":
+			i++ // the option's own value is not a script operand
 		case a == "-":
 			return true
 		case a != "" && a[0] == '-':
@@ -2415,21 +2455,27 @@ func shellWriteUnnamedPython(verb string) bool {
 // replacement fields of an f-string are read by this same walk, because they run as program text in the scope that holds
 // them, and each nested program's own imports are read beside the enclosing program's.
 func shellWriteUnnamedProgram(program string, points func(string) bool) bool {
+	unnamed, _, pointed := shellWriteUnnamedRead(program, points)
+	return unnamed && pointed
+}
+
+// shellWriteUnnamedRead reads one Python program for this check and answers its three questions: whether it holds a
+// write whose destination the reader cannot name (unnamed), whether it holds a write of any kind (wrote, which the
+// unquoted here-document rule needs because the outer shell may rewrite a literal destination), and whether it can
+// point at the protected area (pointed, from a decoded literal or the name CODEX_HOME).
+func shellWriteUnnamedRead(program string, points func(string) bool) (unnamed, wrote, pointed bool) {
 	rs := shellVerbWithoutComments(program, true)
 	w := &shellWriteUnnamedWalk{}
 	w.read(rs, 0, shellWriteCopyImports{})
-	if !w.unnamed {
-		return false
-	}
 	if w.codexHome {
-		return true
+		return w.unnamed, w.wrote, true
 	}
 	for _, literal := range w.literals {
 		if literal == "CODEX_HOME" || points != nil && points(literal) {
-			return true
+			return w.unnamed, w.wrote, true
 		}
 	}
-	return false
+	return w.unnamed, w.wrote, false
 }
 
 // shellWriteUnnamedWalk walks one Python program for this check. unnamed is true once it finds a write whose destination
@@ -2437,6 +2483,7 @@ func shellWriteUnnamedProgram(program string, points func(string) bool) bool {
 // the string literals it holds, in the order they stand.
 type shellWriteUnnamedWalk struct {
 	unnamed   bool
+	wrote     bool // the walk saw a write at all, named or not, which the here-document rule needs
 	codexHome bool
 	literals  []string
 }
@@ -2445,6 +2492,7 @@ type shellWriteUnnamedWalk struct {
 // whether the receiver the call hangs off named a destination of its own, which only a Path(<literal>) call does.
 type shellWriteUnnamedFrame struct {
 	kind      byte
+	name      string // the method name the pending call gave, for the methods whose argument count decides the reading
 	start     int
 	args      [][2]int
 	recvNamed bool
@@ -2493,10 +2541,11 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 				importStmt, firstWord = false, true
 			}
 		case c == '(' || c == '[' || c == '{':
-			kind, recvNamed, recvPath := byte(0), false, false
+			kind, recvNamed, recvPath, name := byte(0), false, false, ""
 			switch {
 			case pending.name != "" && pending.at == i:
-				kind, recvNamed, pending = shellWriteUnnamedMethodKind(pending.name), pending.recvNamed, shellWriteUnnamedCall{}
+				kind, recvNamed, name = shellWriteUnnamedMethodKind(pending.name), pending.recvNamed, pending.name
+				pending = shellWriteUnnamedCall{}
 				recvPath = true // the receiver is the Path(...) call the pending method hangs off
 			case c == '(' && shellWriteUnnamedDefHeader(rs, i):
 				kind = 'd' // a def or async def header binds a name; its parenthesis runs nothing
@@ -2523,7 +2572,7 @@ func (w *shellWriteUnnamedWalk) read(rs []rune, depth int, outer shellWriteCopyI
 					kind = shellWriteUnnamedMethodAt(rs, i, binds)
 				}
 			}
-			stack = append(stack, shellWriteUnnamedFrame{kind: kind, start: i + 1, recvNamed: recvNamed, recvPath: recvPath})
+			stack = append(stack, shellWriteUnnamedFrame{kind: kind, name: name, start: i + 1, recvNamed: recvNamed, recvPath: recvPath})
 		case c == ',' && len(stack) > 0:
 			if top := &stack[len(stack)-1]; top.kind != 0 {
 				top.args = append(top.args, [2]int{top.start, i})
@@ -2560,14 +2609,19 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 	case 'o':
 		if shellWriteUnnamedUnpacked(rs, spans) {
 			// A * or ** argument may supply the mode or the path, so neither is a value this reader can read.
+			w.wrote = true
 			w.unnamed = true
 			return
 		}
 		_, mode := shellVerbOpenArgs(rs, spans)
-		if shellWriteUnnamedWrites(mode) && len(shellVerbOpenCall(rs, spans)) == 0 {
-			w.unnamed = true
+		if shellWriteUnnamedWrites(mode) {
+			w.wrote = true
+			if len(shellVerbOpenCall(rs, spans)) == 0 {
+				w.unnamed = true
+			}
 		}
 	case 'c', 'n':
+		w.wrote = true
 		key := "dst"
 		if f.kind == 'n' {
 			key = "new"
@@ -2579,30 +2633,47 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		// write_text and write_bytes write to their receiver, which this reader names only for a Path(<literal>)
 		// call. touch and mkdir write to theirs too, and the reader names no destination for those two at all, so
 		// they are a write whose destination it cannot name whatever the receiver is.
+		w.wrote = true
 		if f.kind == 't' || !f.recvNamed {
 			w.unnamed = true
 		}
 	case 'q':
 		// A method named open writes to its receiver, which this reader names for no open() method at all, so the
 		// destination is unnamed; the mode decides whether it writes. Path(...).open(mode) gives the mode as its
-		// first argument, and module.open(path, mode) as its second; mode= names it in either form. A receiver the
-		// reader cannot place (a variable, which may hold a Path or a module) is read either way, so a one-argument
-		// call counts only when that argument is shaped like a mode rather than a path.
-		first := shellWriteUnnamedArg(rs, spans, 0, "mode")
-		if f.recvPath || shellWriteUnnamedModeLike(first) {
-			if shellWriteUnnamedWrites(first) {
-				w.unnamed = true
-			}
+		// only argument, and module.open(path, mode) as its second; mode= names it in either form. A variable
+		// receiver may hold either, so a lone argument is read as a mode only when it is shaped like one: anything
+		// else there is the module's path, which reads. A mode the reader cannot read as a literal fails closed.
+		if shellWriteUnnamedUnpacked(rs, spans) {
+			w.wrote = true
+			w.unnamed = true // a * or ** argument may supply the mode this reader cannot read
 			break
 		}
-		if shellWriteUnnamedWrites(shellWriteUnnamedArg(rs, spans, 1, "mode")) {
+		first, second := shellWriteUnnamedArg(rs, spans, 0, "mode"), shellWriteUnnamedArg(rs, spans, 1, "mode")
+		writes := false
+		switch {
+		case f.recvPath:
+			writes = shellWriteUnnamedWrites(first)
+		case !shellVerbBlank(second):
+			writes = shellWriteUnnamedWrites(second) || !shellWriteUnnamedLiteral(second)
+		case shellWriteUnnamedModeLike(first):
+			writes = shellWriteUnnamedWrites(first)
+		case !shellVerbBlank(first) && !shellWriteUnnamedLiteral(first):
+			writes = true // a mode this reader cannot read
+		}
+		if writes {
+			w.wrote = true
 			w.unnamed = true
 		}
 	case 'r':
+		if f.name == "replace" && shellWriteUnnamedArgCount(rs, spans) != 1 {
+			break // two or more arguments: a string's own replace, which writes no file
+		}
+		w.wrote = true
 		if !f.recvNamed || len(shellWriteCopyDest(rs, spans, 0, "target")) == 0 {
 			w.unnamed = true
 		}
 	case 'l':
+		w.wrote = true
 		if !f.recvNamed {
 			w.unnamed = true
 		}
@@ -2611,10 +2682,12 @@ func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans
 		// read the name, so an argument that is no literal is a write whose destination it cannot name.
 		name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 1, "name"))
 		if !ok || shellWriteUnnamedFunc(name) {
+			w.wrote = true
 			w.unnamed = true
 		}
 	case 'i':
 		if name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 0, "name")); ok && (name == "shutil" || name == "os") {
+			w.wrote = true
 			w.unnamed = true
 		}
 	case 'e':
@@ -2660,8 +2733,11 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 		}
 		if shellWriteCopyKind(mod, word, binds) != 0 && !shellWriteUnnamedCalled(rs, j) {
 			w.unnamed = true
+			return
 		}
-		return
+		if shellWriteUnnamedModuleReceiver(mod, binds) {
+			return // a module this reader reads its own way is left to the readers above
+		}
 	}
 	if word == "import_module" {
 		w.unnamed = true
@@ -2670,13 +2746,30 @@ func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt, inDe
 	if shellWriteUnnamedTarget(rs, j) {
 		return // an assignment or keyword-argument target binds the name; it is no write value
 	}
-	if word != "open" && len(binds.from[word]) == 0 {
-		return
-	}
 	if shellWriteUnnamedCalled(rs, j) {
 		return // a call: its own frame reads it
 	}
+	if shellWriteUnnamedDotted(rs, i) && shellWriteUnnamedValueMethod(word) {
+		// A write method taken off its receiver as a value - f = p.write_text, f = Path(...).write_text - writes to
+		// that receiver through whatever name it is bound to, and this reader names no destination for such a value.
+		w.unnamed = true
+		return
+	}
+	if word != "open" && len(binds.from[word]) == 0 {
+		return
+	}
 	w.unnamed = true
+}
+
+// shellWriteUnnamedValueMethod reports whether a method name is one of the write methods this check reads whose value
+// names no destination: the Path write methods, rename and the two links. replace is left out, because a string's own
+// replace is far more common than a Path's and a value carries no argument count to tell the two apart by.
+func shellWriteUnnamedValueMethod(name string) bool {
+	switch name {
+	case "write_text", "write_bytes", "touch", "mkdir", "open", "rename", "symlink_to", "hardlink_to":
+		return true
+	}
+	return false
 }
 
 // shellWriteUnnamedDefHeader reports whether the name that ends just before the bracket at rs[i] is the name a def or
@@ -2898,6 +2991,18 @@ func shellWriteUnnamedArgs(rs []rune, i int) int {
 	return -1
 }
 
+// shellWriteUnnamedArgCount counts the arguments the walk read for a call whose bracket has closed: the argument spans
+// that hold anything at all.
+func shellWriteUnnamedArgCount(rs []rune, spans [][2]int) int {
+	count := 0
+	for _, span := range spans {
+		if !shellVerbBlank(rs[span[0]:span[1]]) {
+			count++
+		}
+	}
+	return count
+}
+
 // shellWriteUnnamedModuleReceiver reports whether the name a method hangs off is a module this reader reads its own way:
 // shutil, os or importlib, or an alias an import bound to one of them.
 func shellWriteUnnamedModuleReceiver(receiver string, binds shellWriteCopyImports) bool {
@@ -3030,6 +3135,12 @@ func shellWriteUnnamedModeLike(arg []rune) bool {
 		}
 	}
 	return true
+}
+
+// shellWriteUnnamedLiteral reports whether an argument is a string literal this reader can read.
+func shellWriteUnnamedLiteral(arg []rune) bool {
+	_, ok := shellVerbLiteral(arg)
+	return ok
 }
 
 // shellWriteUnnamedFunc reports whether a name is a write function of this reader: open, a Path write method, or a copy,
