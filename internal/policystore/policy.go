@@ -65,6 +65,11 @@ type Located struct {
 // spells it, and effort is accepted as an alias.
 type Pair struct {
 	Model, Effort string
+	// AutoCompactTokenLimit is the pair's optional model_auto_compact_token_limit, zero when the
+	// pair declares none. It is not part of the pair's identity - the pair is its model and effort -
+	// but it does belong to the pair, so a change that rebuilds a role's pairs has to carry it
+	// across for every pair it keeps.
+	AutoCompactTokenLimit int64
 	// conflict is why the two spellings of the effort could not be reconciled, or "" when they
 	// could. It is unexported because it is not part of the pair: it is how a mismatch reaches the
 	// check as a refused change rather than as a decode failure the API would answer as a bad
@@ -77,6 +82,9 @@ type pairWire struct {
 	Model           string `json:"model"`
 	ReasoningEffort string `json:"reasoningEffort"`
 	Effort          string `json:"effort,omitempty"`
+	// AutoCompactTokenLimit is written only when the pair declares one, so a pair without it reads
+	// back the way it was written.
+	AutoCompactTokenLimit int64 `json:"autoCompactTokenLimit,omitempty"`
 }
 
 // pairRequest is a pair as a request carries it. The two effort spellings are raw so the reader can
@@ -86,6 +94,9 @@ type pairRequest struct {
 	Model           string          `json:"model"`
 	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
 	Effort          json.RawMessage `json:"effort"`
+	// AutoCompactTokenLimit is raw so an absent key is distinguishable from a zero one: zero is not
+	// a positive integer, and the parser refuses it rather than reading it as "no limit".
+	AutoCompactTokenLimit json.RawMessage `json:"autoCompactTokenLimit"`
 }
 
 // UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
@@ -107,6 +118,13 @@ func (p *Pair) UnmarshalJSON(raw []byte) error {
 	}
 	p.Model = wire.Model
 	p.Effort, p.conflict = effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
+	if len(wire.AutoCompactTokenLimit) > 0 {
+		var limit int64
+		if err := json.Unmarshal(wire.AutoCompactTokenLimit, &limit); err != nil {
+			return err
+		}
+		p.AutoCompactTokenLimit = limit
+	}
 	return nil
 }
 
@@ -141,7 +159,7 @@ func effortAlias(reasoningEffort string, reasoningPresent bool, effort string, e
 
 // MarshalJSON writes a pair as the policy document spells it.
 func (p Pair) MarshalJSON() ([]byte, error) {
-	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort})
+	return json.Marshal(pairWire{Model: p.Model, ReasoningEffort: p.Effort, AutoCompactTokenLimit: p.AutoCompactTokenLimit})
 }
 
 // RoleView is one declared role: its pairs, or the record expectation of a supervisor. The JSON
@@ -290,7 +308,11 @@ func projectRoles(policy execution.Policy) []RoleView {
 		}
 		view := RoleView{Name: name, Expectation: role.Expectation}
 		for _, pair := range role.Pairs {
-			view.Pairs = append(view.Pairs, Pair{Model: pair.Model, Effort: pair.Effort})
+			limit := int64(0)
+			if pair.AutoCompactTokenLimit != nil {
+				limit = *pair.AutoCompactTokenLimit
+			}
+			view.Pairs = append(view.Pairs, Pair{Model: pair.Model, Effort: pair.Effort, AutoCompactTokenLimit: limit})
 		}
 		roles = append(roles, view)
 	}
