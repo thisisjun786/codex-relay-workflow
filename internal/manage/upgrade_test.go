@@ -61,7 +61,7 @@ type upgradeEnv struct {
 	// started marks that a service start succeeded, so a status read reports a service that is
 	// really up rather than one the script was merely asked about.
 	started     string
-	pointerLink   string
+	pointerLink string
 
 	// previous is the runtime directory the owned pointer names before the run, and installed the
 	// runtime directory the fake update reports it produced.
