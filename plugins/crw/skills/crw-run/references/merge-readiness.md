@@ -18,7 +18,7 @@ Where the delivery is a pull request, record `isDraft` with the base and head. A
 entered review, which is not the same as being ready to merge: the gates below decide
 that. A draft candidate is not merge-ready, and the fix is to publish it for review as
 [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable)
-describes, not to merge around the gap. Findings or pending CI on an open pull request
+describes, not to merge around the gap. Findings or pending CI on an in-flight pull request
 never send it back to draft.
 
 ## Reviewer policy
@@ -304,13 +304,12 @@ The handoff and the merge record give each reviewer's reading as one of: finishe
 finding inside this issue's scope and of every P0 and security finding, with its commit or its evidence, and
 they name the three gates. A skipped, missing or unrecognised status is never recorded as a pass.
 
-A packet criterion or gate line that reads "Devin has no red or security finding" is read as: if a Devin
-review exists, its red and security findings are resolved; no new Devin review is awaited. The merge does not
+A packet gate line about Devin is read as: if a Devin review exists, every finding in it is judged by this issue's scope and the rules below, and no new Devin review is awaited. The merge does not
 wait for Devin, and the child's wait for the one run is the step above.
 
 ### Late review threads
 
-This rule covers a late finding on any delivered head. The forge reading that finds one (`merge-evidence --restate`) applies to in-flight pull requests only ([In-flight pull requests (transition)](#in-flight-pull-requests-transition)); for internal work the coordinator grades a late finding by the rule below.
+This rule covers a late finding on any delivered head, whichever reviewer wrote it. A late finding is judged by the scope rule of [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt): one inside this issue's promise is fixed in this same issue, a P0 or security finding is fixed before the merge whatever its scope, a separable finding outside the promise is a follow-up with its own context, impact and outcome, and a P3 is recorded. The forge reading that finds one (`merge-evidence --restate`) applies to in-flight pull requests only ([In-flight pull requests (transition)](#in-flight-pull-requests-transition)); for internal work the coordinator grades a late finding by the rule below.
 
 A review thread is late when it is on the candidate's head and is not in the record's `threadsSeen`: the
 reviewer's one run ended after the child's receipt, or a reviewer that showed no signal for 30 minutes posted
@@ -367,23 +366,7 @@ the node, as the first way of opening a generation in
   head and each thread, and asks the child to fix the finding or answer it with code evidence, so a thread that
   needs only a rebuttal takes this route too. The child pushes and reruns checks only if it changed something,
   and emits again. The candidate does not merge meanwhile.
-- A minor thread where the installed relay cannot record the disposition: the temporary procedure.
-  1. Read the late threads to the end (`merge-evidence` on the head lists them) and grade each by impact. A
-     thread that needs a change and not an answer is an ordinary correction naming the change.
-  2. Reply on each thread with the judgment and its evidence, then resolve it. `merge-evidence` refuses a
-     record with a thread unresolved, so a thread listed for the backlog is replied to and resolved as well, the
-     reply naming the follow-up owner and the trigger that reopens it.
-  3. Send the child the minimal correction: the needs-changes ruling with one finding that carries the restoration
-     block. The finding names the head (it has not moved), lists each late thread by URL with the coordinator's
-     disposition and the reply that holds it, and asks only that the child read the review threads on that head
-     again to the end, rebuild the handoff for the same head with those threads in `threadsSeen` and each
-     disposition as the coordinator recorded it (an accepted one carries `addressedBy` naming the reply, with the
-     `followUpOwner` and `reopenTrigger` it states), and emit it again as the first receipt of the new generation.
-     It asks for no code change, no push and no review, and the child reuses what still applies to the same head.
-  4. Read the new record with `merge-evidence --restate` like any record. That checks coverage only: every
-     thread is in `threadsSeen` and none is unresolved. The dispositions the child lists for the late threads are
-     the coordinator's, so the coordinator itself compares each one with its own reply, as it does for any
-     acceptance ([the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs)).
+- A minor thread where the installed relay cannot record the disposition: the temporary procedure in [Late threads on an in-flight pull request](#late-threads-on-an-in-flight-pull-request-temporary-procedure), which applies only to an in-flight pull request.
 
 **After the acceptance of a current result.** A DAG node that reads `done:accepted` and is not stale takes no
 second ruling, and `dag-correct` records a correction only for a stale result (step 6 of
@@ -414,8 +397,7 @@ thread in `threadsSeen` stays the child's. In the temporary procedure the coordi
 itself: the record returns to the child and is rebuilt by it. A recorded disposition is the one other case
 OPS-9.3 and OPS-9.4 name. The coordinator never edits the child's handoff, never lists a late thread in a record as
 if the child had seen it, and never reads its own triage as a verdict or a merge. The verdict, the acceptance and
-the merge turn still run on a record that has seen the thread or a disposition for it, and nothing merges outside
-the lane.
+the merge turn still run on a record that has seen the thread or a disposition for it, and nothing lands on the integration branch without it.
 
 ## The independent review is a reference opinion
 
@@ -913,7 +895,7 @@ to hold again on the new head.
 
 **Only the candidate about to merge.** Refresh the candidate that is about to merge, when its turn
 comes: the one that holds the merge turn or is next in line for it (first in, first out until
-measured, D-16). A landing leaves every other open pull request behind, and that is no reason to
+measured, D-16). A landing leaves every other in-flight pull request behind, and that is no reason to
 touch them: a refresh restarts every required job, and a head refreshed early is behind again after
 the next landing. One merge never starts a refresh of the remaining pull requests, and a parent does
 not refresh a queue ahead of its turn to save time later. A candidate that is not next waits, with
@@ -1230,6 +1212,26 @@ The rules for that transition:
 - The one run each external reviewer makes on a pull request that is still open follows [The one run of each reviewer](#the-one-run-of-each-reviewer-awaited-before-the-receipt).
 
 The subsections below are the lane's mechanics (bundles, the merge lane and its base conflicts) and apply only while such a pull request exists.
+
+### Late threads on an in-flight pull request (temporary procedure)
+
+The temporary procedure for a minor thread, when the installed relay cannot record the disposition:
+  1. Read the late threads to the end (`merge-evidence` on the head lists them) and grade each by impact. A
+     thread that needs a change and not an answer is an ordinary correction naming the change.
+  2. Reply on each thread with the judgment and its evidence, then resolve it. `merge-evidence` refuses a
+     record with a thread unresolved, so a thread listed for the backlog is replied to and resolved as well, the
+     reply naming the follow-up owner and the trigger that reopens it.
+  3. Send the child the minimal correction: the needs-changes ruling with one finding that carries the restoration
+     block. The finding names the head (it has not moved), lists each late thread by URL with the coordinator's
+     disposition and the reply that holds it, and asks only that the child read the review threads on that head
+     again to the end, rebuild the handoff for the same head with those threads in `threadsSeen` and each
+     disposition as the coordinator recorded it (an accepted one carries `addressedBy` naming the reply, with the
+     `followUpOwner` and `reopenTrigger` it states), and emit it again as the first receipt of the new generation.
+     It asks for no code change, no push and no review, and the child reuses what still applies to the same head.
+  4. Read the new record with `merge-evidence --restate` like any record. That checks coverage only: every
+     thread is in `threadsSeen` and none is unresolved. The dispositions the child lists for the late threads are
+     the coordinator's, so the coordinator itself compares each one with its own reply, as it does for any
+     acceptance ([the parent's acceptance](#conditional-acceptance-and-what-recording-one-costs)).
 
 ### Merge a bundle
 

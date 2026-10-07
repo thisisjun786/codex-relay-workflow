@@ -79,7 +79,7 @@ The queue is first in, first out until it is measured, and a measured conflict i
 candidate must read first goes ahead of it (a shared interface, a command, a field), and of two candidates that overlap the one with fewer overlapping hunks goes first, since the other
 one's refresh is then the smaller. Read the `release` rule of each. A grade is a declaration and not a forecast: a `mechanical` pair can still conflict as text and a `local` pair can merge cleanly. What the grade says
 is who settles a conflict and how, a rule for a mechanical overlap and the child of the later pull request for a local one.
-A landing leaves every other open pull request behind; only the candidate about to merge is refreshed ([Refresh the base yourself when only the base
+A landing leaves every other in-flight pull request behind; only the candidate about to merge is refreshed ([Refresh the base yourself when only the base
 moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)).
 
 ### Measure at every landing and every receipt

@@ -287,7 +287,7 @@ Execution:
   decides what you build next: end the turn `blocked_needs_input` with a blocked receipt that carries no file (the request is in the blocked file and your final message). An
   internal finding has no review thread, so a rejection the handoff does not show is one
   nobody can find.
-- Your delivery is commits on the task branch, with the handoff and the local verification record; internal work opens no pull request and waits for no hosted review. The pull request lane applies only to in-flight relay pull requests, under [In-flight pull requests (transition)](merge-readiness.md#in-flight-pull-requests-transition). A review thread that reaches the head after your receipt is not yours to chase: [Late review threads](merge-readiness.md#late-review-threads) says who handles it, and an in-scope one reopens your issue.
+- Your delivery is commits on the task branch, with the handoff and the local verification record; internal work opens no pull request and waits for no hosted review. The pull request lane applies only to in-flight relay pull requests, under [In-flight pull requests (transition)](merge-readiness.md#in-flight-pull-requests-transition). A review thread that reaches the head after your receipt is handled as [Late review threads](merge-readiness.md#late-review-threads) says.
 - Where the assignment names the independent code review, run it once per head: `crw review --base <the base commit> --head <the head you hand off> --issue <this issue> --out <a directory of the task's evidence>`; when the head is a pull request and its summary belongs on it, add `--post-summary --pr <number>`,
   after the local full verification passes on that head and before you emit. The command keeps the run rules itself: the same
   patch-id is never reviewed again (a repeat answers `already_reviewed` and calls no model), one review runs at a time on the host
@@ -1381,8 +1381,7 @@ not checked.
   disposition: `applied` with the commit that applied it, `rebutted` with the evidence that it is
   not a defect, or `out_of_scope` with the boundary that excludes it and where it goes instead. A
   review that ran and raised no such finding says so, and a task that ran none says `ran: false`.
-  The internal independent review ends on a head and the hosted
-  review follows on the open pull request, so `commitsAfter` lists what the review did not see: the
+  The internal independent review ends on a head, so `commitsAfter` lists what the review did not see: the
   commits after `reviewedHead` on the branch's first-parent line that are not merges of the base,
   each with its cause, such as a hosted-review fix or a digest re-record. Where `reviewedHead` is
   omitted, `commitsAfter` still lists any merge that is not a merge of the base. Whether and how
