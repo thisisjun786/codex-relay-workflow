@@ -209,7 +209,7 @@ type createRootRecord struct {
 	info     os.FileInfo
 }
 
-// componentLocation answers the location to read a component at and to reach it by later. It is
+// componentLocation answers the location a component's directory is read at and reached by. It is
 // read before the component's mkdir, while the spelling is known to reach the parent: the parent as
 // the caller spelled it, resolved by the kernel, with the component's own name appended. The mkdir
 // is about to prove the parent exists, so this form is available exactly when it is needed, and it
@@ -218,18 +218,17 @@ type createRootRecord struct {
 // resolved on its own is the next form, and the spelling itself is the last: the removal is then
 // left to the identity check, and a directory the location cannot name is left alone rather than
 // removed on a guess.
-func componentLocation(component string) (read, resolved string) {
+func componentLocation(component string) string {
 	trimmed := strings.TrimRight(component, string(os.PathSeparator))
 	if cut := strings.LastIndex(trimmed, string(os.PathSeparator)); cut >= 0 {
 		if parent, err := filepath.EvalSymlinks(trimmed[:cut]); err == nil {
-			location := crwconfig.JoinRoot(parent, filepath.Base(trimmed))
-			return location, location
+			return crwconfig.JoinRoot(parent, filepath.Base(trimmed))
 		}
 	}
 	if location, err := filepath.EvalSymlinks(component); err == nil {
-		return location, location
+		return location
 	}
-	return component, component
+	return component
 }
 
 // createRoot makes dir and every missing ancestor of it, recording only the components this call
@@ -278,7 +277,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 			if createRootBeforeMkdir != nil {
 				createRootBeforeMkdir(component)
 			}
-			read, resolved := componentLocation(component)
+			location := componentLocation(component)
 			err := os.Mkdir(component, 0o755)
 			switch {
 			case err == nil:
@@ -286,12 +285,12 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// is read now and recorded with it. An identity that cannot be read is a component
 				// that vanished under this call, which the recompute below handles rather than a
 				// record that would let removeCreated remove whatever is there next.
-				info, statErr := os.Lstat(read)
+				info, statErr := os.Lstat(location)
 				if statErr != nil {
 					absent = statErr
 					break
 				}
-				created = recordCreated(created, component, resolved, info)
+				created = recordCreated(created, component, location, info)
 			case errors.Is(err, fs.ErrExist):
 				// The path is there but the scan found it missing. When the identity is the one
 				// this call recorded for that path, the directory is still the one this call made:
@@ -299,11 +298,11 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// as missing and this call made it again below the re-made ancestor. Otherwise
 				// another install removed this call's directory and made its own, which is not
 				// this call's to remove.
-				info, statErr := os.Lstat(read)
+				info, statErr := os.Lstat(location)
 				if statErr == nil && sameRecordedDirectory(created, component, info) {
 					// The directory is still the one this call made, and the walk resolved it
 					// again, so the location it resolves to now is the better one to keep.
-					created = recordCreated(created, component, resolved, info)
+					created = recordCreated(created, component, location, info)
 				} else {
 					created = dropCreated(created, component)
 				}
