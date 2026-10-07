@@ -75,6 +75,15 @@ func TestRelayReadReview766StateSpellingThroughALink(t *testing.T) {
 	if got, want := relayReadStorePath(spelling), spelling+"/"+relayReadStoreFile; got != want {
 		t.Errorf("relayReadStorePath(%q) = %q, want %q", spelling, got, want)
 	}
+	// Both stores are real and populated, so a read of the wrong one is a wrong-store read
+	// rather than a missing store: the cleaned spelling is exactly what names the decoy.
+	decoyProjection, err := RelayReadState(context.Background(), filepath.Join(root, "state"), RelayReadOptions{})
+	if err != nil {
+		t.Fatalf("RelayReadState(cleaned spelling): %v", err)
+	}
+	if len(decoyProjection.Relationships) != 1 || relayReadRelationshipByID(t, decoyProjection, "rel-CRW-CLEAN").IssueKey != "CRW-CLEAN" {
+		t.Fatalf("the decoy store is not the store the cleaned spelling names: %+v", decoyProjection.Relationships)
+	}
 
 	projection, err := RelayReadState(context.Background(), spelling, RelayReadOptions{})
 	if err != nil {
