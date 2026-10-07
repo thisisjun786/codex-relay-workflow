@@ -838,12 +838,13 @@ func shellWriteFStringOpenWritesRunes(rs []rune, python bool) []string {
 // whose first argument is no string literal, or one nested deeper than shellWriteExecMaxDepth
 // (shellWriteExecUnreadableWhat). The walk keeps going after recording what, so a destination it did read is still named.
 // Every other literal keeps the one-region rule of shellWriteTripleScanRegion.
-func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what string) {
+func shellWriteExecScan(rs []rune, python bool, depth int) ([]string, string) {
 	return shellWriteExecScanIn(rs, python, depth, shellWriteCopyImports{})
 }
 
-// shellWriteExecScanIn is shellWriteExecScan with the bindings the enclosing program made, which a program read
-// recursively (an f-string replacement field, a literal passed to exec) inherits (CRW-900 review).
+// shellWriteExecScanIn is shellWriteExecScan with the bindings the enclosing program made: the program text of an exec,
+// eval or compile call and an f-string replacement field are read by this same walk and run in the scope that holds
+// them, so a copy, rename or link call inside one resolves the enclosing program's imports too (CRW-900 review).
 func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCopyImports) (dests []string, what string) {
 	if depth > shellWriteExecMaxDepth {
 		return []string{}, shellWriteExecUnreadableWhat
@@ -865,7 +866,7 @@ func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCop
 	var pending pendingCall
 	var binds shellWriteCopyImports
 	if python {
-		binds = shellWriteCopyImportsIn(rs, outer)
+		binds = shellWriteCopyImportsOf(rs, outer)
 	}
 	dests = []string{}
 	for i := 0; i < len(rs); i++ {
@@ -1283,20 +1284,15 @@ func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCo
 	return out
 }
 
-// shellWriteCopyImportsOf reads the import statements of a program. A string literal is no import text, so a name inside one
-// binds nothing, and a comment was already cut from the program the walk reads. A statement ends at a newline or a semicolon
-// outside every bracket; a newline inside one is an implicit line join and a backslash-newline an explicit one, so an import
-// whose names are parenthesised over several lines binds them all (CRW-900 review: dropping it would leave the destination of
-// the call it binds unnamed, which is the fail-open direction).
-func shellWriteCopyImportsOf(rs []rune) shellWriteCopyImports {
-	binds := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}}
-	return shellWriteCopyImportsIn(rs, binds)
-}
-
-// shellWriteCopyImportsIn is shellWriteCopyImportsOf with the bindings an enclosing program already made: the program
-// read recursively (an f-string replacement field, a literal passed to exec) runs in the scope that holds it, so those
-// names are bound there too (CRW-900 review).
-func shellWriteCopyImportsIn(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
+// shellWriteCopyImportsOf reads the import statements of a program, starting from the bindings an enclosing program
+// already made (empty at the top level): the program read recursively - an f-string replacement field, the text of a
+// literal passed to exec, eval or compile - runs in the scope that holds it, so those names are in scope there too
+// (CRW-900 review). A string literal is no import text, so a name inside one binds nothing, and a comment was already cut
+// from the program the walk reads. A statement ends at a newline or a semicolon outside every bracket; a newline inside
+// one is an implicit line join and a backslash-newline an explicit one, so an import whose names are parenthesised over
+// several lines binds them all (CRW-900 review: dropping it would leave the destination of the call it binds unnamed,
+// which is the fail-open direction).
+func shellWriteCopyImportsOf(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
 	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}})
 	words := []string{}
 	flush := func() {
