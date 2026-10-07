@@ -165,24 +165,44 @@ func trainStripComment(line string) string {
 	return line
 }
 
-// trainWorkflowMatrixParts reads the go-product job's strategy.matrix.part list as text. The list is
-// looked for inside that job's own block, so a workflow that declares no job after it still reads. A
-// matrix that also carries an include or exclude key is refused: those keys add or remove legs whose
-// names this text scan cannot compute, and reading only the part list would report an unchanged job
-// set for a head that added a leg — the fail-open this reader exists to close (CRW-897, answer 2).
+// trainWorkflowMatrixParts reads the go-product job's strategy.matrix.part list. The keys are found
+// by walking the job's own block at the indentation its mapping uses — the job header sits at two
+// spaces, so its direct children sit at four, the strategy's at six and the matrix's keys at eight —
+// rather than by searching the job text for a key name. A name inside a scalar (a run script or an
+// env value) is therefore never taken for a mapping key, and a part: elsewhere in the job is never
+// read as the matrix's list (CRW-897, answer 2; pre-merge evaluation d1, d2).
 func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 	body, found := trainJobBody(workflow, trainProductJob)
 	if !found {
 		return nil, errors.New("the workflow holds no " + trainProductJob + " job")
 	}
-	if trainMatrixHasUnreadableKey(body) {
-		return nil, errors.New("the workflow's " + trainProductJob + " matrix carries an include or exclude list, whose legs this reader cannot read key by key")
-	}
-	_, matrix, found := strings.Cut(body, "\n        part: [")
+	matrix, found := trainMatrixBlock(body)
 	if !found {
+		return nil, errors.New("the workflow's " + trainProductJob + " job has no strategy.matrix block")
+	}
+	var part string
+	for _, line := range matrix {
+		bare := trainStripComment(line)
+		if strings.TrimSpace(bare) == "" {
+			continue
+		}
+		key, ok := trainJobKey(strings.TrimSpace(bare))
+		if !ok {
+			return nil, errors.New("the workflow's matrix holds a line whose key this reader cannot read")
+		}
+		if key != "part" {
+			return nil, errors.New("the workflow's " + trainProductJob + " matrix carries the key " + pyvalue.StrRepr(key) + ", and this reader can compute leg names only from a part list")
+		}
+		part = strings.TrimSpace(bare)
+	}
+	if part == "" {
 		return nil, errors.New("the workflow's " + trainProductJob + " job has no matrix part list")
 	}
-	list, _, found := strings.Cut(matrix, "]")
+	_, list, found := strings.Cut(part, "part: [")
+	if !found {
+		return nil, errors.New("the workflow's matrix part list is not an inline list")
+	}
+	list, _, found = strings.Cut(list, "]")
 	if !found {
 		return nil, errors.New("the workflow's matrix part list is unterminated")
 	}
@@ -193,18 +213,21 @@ func trainWorkflowMatrixParts(workflow string) ([]string, error) {
 	return parts, nil
 }
 
-// trainMatrixHasUnreadableKey reports whether the go-product job's strategy.matrix carries a key this
-// reader cannot compute legs from. The leg names a run reports come from the matrix, and this text
-// scan reads them only from the part list: an include or exclude list, or any other axis, recombines
-// or adds legs, so it is refused rather than read as the part list alone — the fail-open this reader
-// exists to close (CRW-897, answer 2). Only the matrix block's own keys are judged, so an "include:"
-// in a step input or an env entry elsewhere in the job is not a matrix key.
-func trainMatrixHasUnreadableKey(body string) bool {
+// trainMatrixBlock answers the go-product job body's strategy.matrix lines: the keys at the matrix's
+// own indentation, stopping at the first line at or above the matrix key's indent. The job's children
+// are at four spaces (the header is at two), so strategy must be there and matrix at six; a
+// strategy: or matrix: inside a scalar is at another indent and is not read. A matrix key whose value
+// sits on the matrix: line itself ("matrix: &anchor" or "matrix: {part: [...]}") carries no readable
+// key block, so the block is reported as absent and the caller refuses it.
+func trainMatrixBlock(body string) ([]string, bool) {
 	lines := strings.Split(body, "\n")
-	strategyIndent, matrixIndent := -1, -1
+	// the job header sits at two spaces, so its own keys (strategy among them) sit at four and the
+	// matrix at six. Requiring those exact indents is what keeps a key name inside a scalar — a run
+	// script or an env value — from being read as the job's strategy or matrix.
+	strategyAt, matrixAt := -1, -1
 	for i, line := range lines {
 		bare := trainStripComment(line)
-		if bare == "" || !strings.HasPrefix(bare, " ") {
+		if strings.TrimSpace(bare) == "" {
 			continue
 		}
 		indent := len(bare) - len(strings.TrimLeft(bare, " "))
@@ -212,41 +235,41 @@ func trainMatrixHasUnreadableKey(body string) bool {
 		if !ok {
 			continue
 		}
-		if key == "strategy" {
-			strategyIndent = indent
+		if strategyAt < 0 {
+			if key == "strategy" && indent == 4 {
+				strategyAt = i
+			}
 			continue
 		}
-		// matrix is the strategy's own key: a matrix: at any other depth is not the job's matrix
-		if key != "matrix" || strategyIndent < 0 || indent <= strategyIndent {
-			continue
+		if indent <= 4 {
+			// the strategy block ended without a matrix key
+			break
 		}
-		// a matrix key whose value sits on its own line ("matrix: # legs") is a mapping; one that
-		// carries a value ("matrix: &anchor" or "matrix: {part: [lint]}") is not a shape this reader
-		// can take keys from, so it is refused rather than skipped.
-		if value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(bare), "matrix:")); value != "" {
-			return true
+		if key == "matrix" && indent == 6 {
+			// a matrix key whose value sits on the matrix: line itself ("matrix: &anchor" or
+			// "matrix: {part: [...]}") carries no readable key block
+			if value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(bare), "matrix:")); value != "" {
+				return nil, false
+			}
+			matrixAt = i
+			break
 		}
-		matrixIndent = indent
-		lines = lines[i+1:]
-		break
 	}
-	if matrixIndent < 0 {
-		return false
+	if matrixAt < 0 {
+		return nil, false
 	}
-	for _, line := range lines {
+	var block []string
+	for _, line := range lines[matrixAt+1:] {
 		bare := trainStripComment(line)
-		if bare == "" {
+		if strings.TrimSpace(bare) == "" {
 			continue
 		}
-		if len(bare)-len(strings.TrimLeft(bare, " ")) <= matrixIndent {
-			// the matrix block ends at the first line at or above its own key indent
-			return false
+		if len(bare)-len(strings.TrimLeft(bare, " ")) <= 6 {
+			break
 		}
-		if key, ok := trainJobKey(strings.TrimSpace(bare)); ok && key != "part" {
-			return true
-		}
+		block = append(block, line)
 	}
-	return false
+	return block, true
 }
 
 // trainJobBody is the text of one job's block: from its header line to the next job's header, or to
