@@ -744,8 +744,27 @@ func TestWorktreeDelPipeResidualC10d(t *testing.T) {
 	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 /dev/fd/3 3<&0 0</dev/null")
 	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 /dev/stdin </dev/null")
 	worktreeDelPipeInterpreterDenied(t, r, "printf x | php -f /dev/fd/3 3<&0 </dev/null")
+	// (d2 continued) a zsh precommand modifier and a wrapper's end-of-options marker name the command behind
+	// them: noglob and nocorrect hand their command the shell's standard input, and env -- bash runs bash
+	// (CRW-894, the independent review's fourth round).
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | noglob bash",
+		"printf 'rm -rf ../repo' | nocorrect bash",
+		"printf 'rm -rf ../repo' | env -- bash",
+		"printf 'rm -rf ../repo' | nice -- bash",
+		"printf 'rm -rf ../repo' | env --ignore-environment bash",
+		"printf 'rm -rf ../repo' | sudo -- bash",
+		"printf 'rm -rf ../repo' | timeout -- 5 bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | noglob python3")
 	// The controls keep their answers.
 	r.allowed(t,
+		"printf x | noglob cat",
+		"printf x | env -- cat",
+		"printf x | env -u FOO cat",
+		"printf x | sudo -u root cat",
 		"printf x | python3 -- script.py",
 		"printf x | python3 -- /dev/null",
 		"printf x | python3 script.py",

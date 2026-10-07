@@ -204,6 +204,19 @@ func worktreeDelUnreadableSkipRedirections(words []string, i int) int {
 	return i
 }
 
+// worktreeDelWrapperLongArgs are the wrapper long options that take the next word as their own argument, read from
+// each wrapper's own --help on this host (CRW-894, the independent review's fourth round): an option outside this
+// list takes none, so the word after it is still the command (env --ignore-environment bash runs bash, which the
+// earlier blanket "every long option takes the next word" reading missed). --opt=value carries its own argument and
+// is handled before this table is consulted.
+const worktreeDelWrapperLongArgs = " env:--chdir env:--file env:--unset env:--argv0 env:--split-string" +
+	" sudo:--chdir sudo:--group sudo:--prompt sudo:--user sudo:--other-user sudo:--preserve-env" +
+	" timeout:--kill-after timeout:--signal" +
+	" nice:--adjustment" +
+	" ionice:--class ionice:--classdata ionice:--pid ionice:--pgid ionice:--uid" +
+	" stdbuf:--input stdbuf:--output stdbuf:--error" +
+	" xargs:--arg-file xargs:--delimiter xargs:--max-lines xargs:--max-args xargs:--max-procs xargs:--max-chars xargs:--process-slot-var "
+
 // worktreeDelWrapperOptionArg says whether an option word of the command named name takes the next word as its own
 // argument, so that `sudo -u root bash`, `timeout -s TERM 5 bash`, `nice -n 5 rm` and `xargs -n 1 rm` name their
 // command after the argument. An option that carries its argument attached (`stdbuf -o0 rm`, `ionice -c3 rm`, an
@@ -220,15 +233,16 @@ func worktreeDelWrapperOptionArg(name, option string) bool {
 	if len(option) < 2 || option[0] != '-' {
 		return false
 	}
+	if option == "--" {
+		// The end-of-options marker ends the wrapper's option parse: the word after it is the command, not an
+		// argument of the marker (env -- bash runs bash; CRW-894, the independent review's fourth round).
+		return false
+	}
 	if strings.Contains(option, "=") { // --opt=value carries its own argument
 		return false
 	}
-	if strings.HasPrefix(option, "--") { // a long option takes the next word only for the wrappers below
-		switch name {
-		case "sudo", "env", "timeout", "nice", "ionice", "stdbuf", "xargs":
-			return true
-		}
-		return false
+	if strings.HasPrefix(option, "--") { // a long option takes the next word only when the wrapper's table says so
+		return strings.Contains(worktreeDelWrapperLongArgs, " "+name+":"+option+" ")
 	}
 	if len(option) != 2 { // a bare single-letter option: -o0 and -c3 carry their argument attached
 		return worktreeDelWrapperClusterArg(name, option)
@@ -840,8 +854,11 @@ func worktreeDelReadings(command string) []string {
 // The shell names, and the words that may stand before one without making it text (worktreeDelQuoteProgram). busybox is
 // a wrapper whose first operand names the applet, so busybox sh is a shell and busybox rm a removal (CRW-894, c4).
 const (
-	worktreeDelQuoteShells   = " sh bash dash zsh ksh mksh ash csh tcsh fish su "
-	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice busybox "
+	worktreeDelQuoteShells = " sh bash dash zsh ksh mksh ash csh tcsh fish su "
+	// noglob and nocorrect are zsh precommand modifiers: they stand before a command word exactly as a wrapper does
+	// and hand it the shell's standard input, so a shell behind one is the shell the pipe feeds (CRW-894, the
+	// independent review's fourth round).
+	worktreeDelQuoteWrappers = " sudo env nohup xargs command builtin exec time timeout nice setsid stdbuf ionice busybox noglob nocorrect "
 )
 
 // worktreeDelUnreadableCompoundKeywords are the shell keywords that open a compound whose body continues past a
