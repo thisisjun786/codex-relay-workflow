@@ -61,7 +61,6 @@ type improveProposeCandidate struct {
 	// exists adds only the sightings this run newly recorded to that project's count. It does not
 	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
-
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
