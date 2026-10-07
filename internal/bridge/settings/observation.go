@@ -107,3 +107,21 @@ func (c Contract) Receipt(response map[string]any, at string) map[string]any {
 	sort.Strings(unobservable)
 	return map[string]any{"requested": asked, "actual": Observed(response), "verified": verified, "unobservable": unobservable, "findings": findings, "verification": verification, "observationLimits": observationLimits}
 }
+
+// AutoCompactReceipt is the settings observation a resume that carried the pair's limit records.
+// The host has no field that reports the value back, so the limit is written in the same notation
+// Contract.Receipt uses for any setting the host cannot confirm: the value that went out under
+// requested, the field under unobservable, and nothing under verified. The relay's resume path
+// resumes from a record rather than a Contract, so it builds this observation itself; a resume that
+// carried no limit records none, and a caller must not write one on its behalf.
+func AutoCompactReceipt(limit int64, response map[string]any) map[string]any {
+	return map[string]any{
+		"requested":         map[string]any{AutoCompactTokenLimitKey: limit},
+		"actual":            Observed(response),
+		"verified":          []string{},
+		"unobservable":      []string{AutoCompactTokenLimitKey},
+		"findings":          []any{},
+		"verification":      "not_requested",
+		"observationLimits": observationLimits,
+	}
+}

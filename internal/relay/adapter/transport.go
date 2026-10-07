@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	bridgesettings "github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -339,7 +340,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		// record would drop it and the thread would return to the host's own window. It is resolved
 		// from the policy by the pair the record states, on both routes: a settings-free resume sends
 		// no pair, but it may still send the limit of the pair the record says the thread is on.
-		a.withAutoCompactLimit(send, params)
+		limit := a.withAutoCompactLimit(send, params)
 		if client, ok := a.rpc.(*appserver.Client); ok {
 			watch, err = client.WatchTurn(ctx, thread)
 			if err = awaited(err); err != nil {
@@ -352,6 +353,13 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			return err
 		}
 		receipt["resumed"] = resumed
+		// The host never reports this value back, so the receipt is the only place the send can say
+		// what it carried: recorded as requested and unobservable, never as verified, in the same
+		// notation the bridge uses. A resume that carried no limit records no settings observation.
+		if limit != nil {
+			observed, _ := plain(resumed).(map[string]any)
+			receipt["settings"] = bridgesettings.AutoCompactReceipt(*limit, observed)
+		}
 		if settings.SettingsFreeResume {
 			receipt["settingsFreeResume"] = true
 		}

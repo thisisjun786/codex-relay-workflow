@@ -45,13 +45,16 @@ func (a *Adapter) autoCompactLimit(record *delivery.TaskSettings) *int64 {
 	return nil
 }
 
-// withAutoCompactLimit adds the record's pair limit to a resume's parameters. It is additive: the
-// config object a resume already carries keeps every key it had, and a record whose pair declares no
-// limit adds nothing.
-func (a *Adapter) withAutoCompactLimit(record *delivery.TaskSettings, params map[string]any) {
+// withAutoCompactLimit adds the record's pair limit to a resume's parameters and reports the value it
+// put there, nil when the record's pair declares none. It is additive: the config object a resume
+// already carries keeps every key it had, and a record whose pair declares no limit adds nothing.
+//
+// The caller keeps the returned value: the host has no field that reports it back, so the receipt of
+// this resume has to record what went out rather than read it from the answer.
+func (a *Adapter) withAutoCompactLimit(record *delivery.TaskSettings, params map[string]any) *int64 {
 	limit := a.autoCompactLimit(record)
 	if limit == nil {
-		return
+		return nil
 	}
 	config, _ := params["config"].(map[string]any)
 	if config == nil {
@@ -59,5 +62,6 @@ func (a *Adapter) withAutoCompactLimit(record *delivery.TaskSettings, params map
 	}
 	config[bridgesettings.AutoCompactTokenLimitKey] = *limit
 	params["config"] = config
-	record.AutoCompactLimitTransmitted = true
+	record.AutoCompactTokenLimit = limit
+	return limit
 }

@@ -15,10 +15,11 @@ import (
 type TaskSettings struct {
 	Data               Obj
 	SettingsFreeResume bool
-	// AutoCompactLimitTransmitted is whether this send put the pair's auto-compaction limit in the
-	// resume config. The limit is not in the record (the host never reports it back), so a refusal
-	// that describes what a settings-free resume sent has to be told about it rather than infer it.
-	AutoCompactLimitTransmitted bool
+	// AutoCompactTokenLimit is the pair's auto-compaction limit this send put in the resume config,
+	// nil when it sent none. The limit is not in the record (the host never reports it back), so both
+	// a refusal that describes what a settings-free resume sent and the receipt that has to record
+	// the value as unobservable are told about it rather than infer it from the record.
+	AutoCompactTokenLimit *int64
 }
 
 // ResumeParams is the registry's resume_params over this record: only fields ThreadResumeParams

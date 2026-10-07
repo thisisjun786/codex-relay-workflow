@@ -31,11 +31,11 @@ func verifyResume(settings delivery.TaskSettings, response any, status any) (con
 			sent := "nothing was transmitted"
 			_, overrides := settings.Data.Lookup("mcpServers")
 			switch {
-			case overrides && settings.AutoCompactLimitTransmitted:
+			case overrides && settings.AutoCompactTokenLimit != nil:
 				sent = "only the MCP profile's overrides and the pair's auto-compaction limit were transmitted"
 			case overrides:
 				sent = "only the MCP profile's overrides were transmitted"
-			case settings.AutoCompactLimitTransmitted:
+			case settings.AutoCompactTokenLimit != nil:
 				sent = "only the pair's auto-compaction limit was transmitted"
 			}
 			message = code + ": " + pyjson.Text(first.Get("field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(first.Get("expected")) + " in the record; " + sent + " and no turn was started"

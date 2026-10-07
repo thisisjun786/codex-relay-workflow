@@ -231,3 +231,128 @@ func TestASettingsFreeRefusalNamesTheLimitItSent(t *testing.T) {
 		})
 	}
 }
+
+// autoCompactSettings is the receipt's settings observation of a resume, or nil when it carries
+// none. It is the same notation the bridge uses for a setting the host cannot confirm: the value
+// that went out under requested, and the field under unobservable, never under verified.
+func autoCompactSettings(t *testing.T, receipt map[string]any) map[string]any {
+	t.Helper()
+	observed, _ := receipt["settings"].(map[string]any)
+	return observed
+}
+
+// autoCompactSentValue reads the value the receipt recorded as sent, whatever JSON shape it took.
+func autoCompactSentValue(t *testing.T, receipt map[string]any) (int64, bool) {
+	t.Helper()
+	observed := autoCompactSettings(t, receipt)
+	if observed == nil {
+		return 0, false
+	}
+	requested, _ := observed["requested"].(map[string]any)
+	value, present := requested[settings.AutoCompactTokenLimitKey]
+	return autoCompactInt(value), present
+}
+
+// autoCompactInt reads a number the way the ledger round-trips it: the in-process receipt holds an
+// int64, and the stored one holds whatever the decoder made of the same JSON.
+func autoCompactInt(value any) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	}
+	return -1
+}
+
+// autoCompactMarkedUnobservable reports whether the receipt marks the limit as one the host does
+// not report back, so a reader never takes its silence for confirmation.
+func autoCompactMarkedUnobservable(t *testing.T, receipt map[string]any) bool {
+	t.Helper()
+	observed := autoCompactSettings(t, receipt)
+	if observed == nil {
+		return false
+	}
+	for _, field := range autoCompactStrings(observed["unobservable"]) {
+		if field == settings.AutoCompactTokenLimitKey {
+			return true
+		}
+	}
+	return false
+}
+
+// autoCompactStrings reads a list of names from either shape the receipt takes.
+func autoCompactStrings(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			text, _ := item.(string)
+			out = append(out, text)
+		}
+		return out
+	}
+	return nil
+}
+
+// The host never reports the limit back, so a resume that sends it has to say so itself: the value
+// that went out is recorded as requested and marked unobservable, exactly as the bridge records a
+// setting the host cannot confirm. The record has to survive the ledger, because a later reader sees
+// the stored or replayed receipt, not this call's.
+func TestARelayResumeReceiptRecordsTheLimitItSentAsUnobservable(t *testing.T) {
+	for _, free := range []bool{false, true} {
+		t.Run(map[bool]string{false: "with-pair", true: "settings-free"}[free], func(t *testing.T) {
+			record := childRecord(free, "")
+			rpc := &mcpRPC{}
+			a := mcpAdapter(t, rpc, autoCompactChildPolicy(t, record))
+			requestID := "send-limit-receipt"
+			receipt := sendRecord(t, a, requestID, record)
+			if receipt["status"] != "accepted" {
+				t.Fatalf("receipt=%v", receipt)
+			}
+			value, present := autoCompactSentValue(t, receipt)
+			if !present || value != 550000 || !autoCompactMarkedUnobservable(t, receipt) {
+				t.Fatalf("the receipt does not record the limit it sent as unobservable: %v", receipt)
+			}
+			if verified := autoCompactStrings(autoCompactSettings(t, receipt)["verified"]); len(verified) != 0 {
+				t.Fatalf("the limit was recorded as verified: %v", verified)
+			}
+			stored, err := a.GetOperation(context.Background(), requestID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, present = autoCompactSentValue(t, plain(stored).(map[string]any))
+			if !present || value != 550000 || !autoCompactMarkedUnobservable(t, plain(stored).(map[string]any)) {
+				t.Fatalf("the stored receipt lost the limit: %v", stored)
+			}
+			replayed := sendRecord(t, a, requestID, record)
+			if replayed["replayed"] != true {
+				t.Fatalf("the send was not replayed: %v", replayed)
+			}
+			value, present = autoCompactSentValue(t, replayed)
+			if !present || value != 550000 || !autoCompactMarkedUnobservable(t, replayed) {
+				t.Fatalf("the replayed receipt lost the limit: %v", replayed)
+			}
+		})
+	}
+}
+
+// A send whose pair declares no limit records nothing new: a reader of that receipt must not see a
+// settings observation it never made.
+func TestARelayResumeWithoutALimitRecordsNoSettingsObservation(t *testing.T) {
+	record := childRecord(false, "")
+	rpc := &mcpRPC{}
+	a := mcpAdapter(t, rpc, relayPolicy(t))
+	receipt := sendRecord(t, a, "send-no-limit-receipt", record)
+	if receipt["status"] != "accepted" {
+		t.Fatalf("receipt=%v", receipt)
+	}
+	if observed := autoCompactSettings(t, receipt); observed != nil {
+		t.Fatalf("a send without a limit recorded a settings observation: %v", observed)
+	}
+}

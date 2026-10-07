@@ -178,7 +178,10 @@ resume is not withheld, and its receipt does not fail, because the host said not
 receipt records it the way it records any setting the host cannot confirm: under `requested`, with
 the value that was sent, and under `unobservable`; `verified` never lists it. `verification` stays
 `observed_at_creation` or `observed_at_resume` for the settings that were actually compared, and
-`not_requested` when the limit was the only thing asked for.
+`not_requested` when the limit was the only thing asked for. A relay resume records it the same way
+on the receipt it keeps for its own send: the limit resolved from the record's pair is written under
+`requested` and `unobservable`, with `not_requested`, so a later reader of that stored receipt
+still sees what the send carried.
 
 **The recommended value is 550000**, about 110,000 below the highest input observed to pass
 (664,238 tokens, 2026-10-06) and about 114,000 below the first observed failure. The margin is there
