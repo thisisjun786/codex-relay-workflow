@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
@@ -228,15 +229,26 @@ func TestReview818TheOptionReplyIsStoredAndReadBack(t *testing.T) {
 		t.Fatalf("the stored option replies are %v", replies)
 	}
 	// A reply that names no option of the raise is refused.
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
-		"--context", "Hold the other merge?", "--option", "hold=hold it", "--option", "merge=merge now",
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the other merge?", "--option", "hold=hold it:the merge waits", "--option", "merge=merge now:the merge runs",
 		"--option-reply", "nosuch=stop", "--blocking", "relationship=rel-903", "--origin-project", "PRJ-A",
-		"--source", "receipt=ev-blocked", "--authority", "user"), "bad_invocation")
+		"--source", "receipt=ev-blocked", "--authority", "user"), "bad_invocation", "names no option of this raise")
 	// A raise with no reply at all on a relationship-blocking decision is refused.
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
-		"--context", "Hold the third merge?", "--option", "hold=hold it", "--option", "merge=merge now",
+	review818RefusedFor(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the third merge?", "--option", "hold=hold it:the merge waits", "--option", "merge=merge now:the merge runs",
 		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A",
-		"--source", "receipt=ev-blocked", "--authority", "user"), "bad_invocation")
+		"--source", "receipt=ev-blocked", "--authority", "user"), "bad_invocation", "every option of a relationship-blocking decision names its reply")
+}
+
+// review818RefusedFor requires the refusal envelope to carry the reason and a detail naming the
+// check that refused it: two refusals that share a reason are told apart by what they say, so a
+// test cannot pass because an earlier parser rejected the line.
+func review818RefusedFor(t *testing.T, got crw737Answer, reason, detail string) {
+	t.Helper()
+	value := crw737Refused(t, got, reason)
+	if text, _ := value["detail"].(string); !strings.Contains(text, detail) {
+		t.Fatalf("refusal detail %q does not name %q", text, detail)
+	}
 }
 
 // A user-grade answer names its class and comes from the store-scope supervisor seat; with no
@@ -374,6 +386,69 @@ func review818StripOptionReplies(t *testing.T, state, decisionID string) {
 	t.Helper()
 	review818Exec(t, state, "UPDATE dag_user_decisions SET options_json = ? WHERE decision_id = ?",
 		`[{"id":"hold","label":"hold","effect":"hold the merge"},{"id":"merge","label":"merge","effect":"merge now"}]`, decisionID)
+}
+
+// review818SetOptionJSON rewrites a stored record's options wholesale, so a case can seed the exact
+// set a row holds.
+func review818SetOptionJSON(t *testing.T, state, decisionID, options string) {
+	t.Helper()
+	review818Exec(t, state, "UPDATE dag_user_decisions SET options_json = ? WHERE decision_id = ?", options, decisionID)
+}
+
+// A question's identity is its fingerprint, which normalizes an option id (ASCII-lowercased, its
+// whitespace runs collapsed). Two raises that share a fingerprint are one question whatever an id's
+// case or spacing, so the fold matches option ids the same way the fingerprint does: a stored id
+// written as HOLD is the option the incoming hold names. Matching on the raw text would skip the
+// fill silently, and a stored reply would never be compared against the incoming one.
+func TestReview818TheFoldMatchesOptionIDsAsTheFingerprintDoes(t *testing.T) {
+	state := crw737Store(t)
+	review818SeedSupervisor(t, state, "task-sup")
+	event := review818SeedReply(t, state, "rel-903", "ev-blocked", "stop", 1)
+	decision := review818RaiseBlocker(t, state)
+	// A row an older build wrote: its option ids differ in case and carry no reply.
+	review818SetOptionJSON(t, state, decision,
+		`[{"id":"HOLD","label":"hold","effect":"hold the merge"},{"id":"MERGE","label":"merge","effect":"merge now"}]`)
+	merged := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge until the retention decision?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=stop", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "event=ev-blocked",
+		"--authority", "user"))
+	if merged["merged"] != true || merged["decisionId"] != decision {
+		t.Fatalf("the re-raise answered %v, want the stored record %s merged", merged, decision)
+	}
+	record := crw737List(t, state)[0].(map[string]any)
+	if replies := review818OptionReplies(t, record); replies["HOLD"] != "stop" || replies["MERGE"] != "answer" {
+		t.Fatalf("the re-raise left the replies %v, want the named ones filled in", replies)
+	}
+	// The filled reply is the one the apply matches, so the record can be applied.
+	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "HOLD",
+		"--by", "task-sup", "--via", "dots", "--authority", "user"); got.code != 0 {
+		t.Fatalf("decision-answer: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if got := crw737Run(t, "--state", state, "decision-apply", "--decision", decision, "--event", event); got.code != 0 {
+		t.Fatalf("decision-apply: exit %d %s %s", got.code, got.stdout, got.stderr)
+	}
+	if record := crw737List(t, state)[0].(map[string]any); record["state"] != "applied" {
+		t.Fatalf("the applied record is %v", record)
+	}
+}
+
+// The same identity rule is what makes a conflict visible: a stored HOLD=stop and an incoming
+// hold=answer are one option, so the fold refuses rather than dropping the second raise's reply.
+func TestReview818TheFoldRefusesAConflictAcrossAnIDSpelling(t *testing.T) {
+	state := crw737Store(t)
+	decision := review818RaiseBlocker(t, state)
+	review818SetOptionJSON(t, state, decision,
+		`[{"id":"HOLD","label":"hold","effect":"hold the merge","reply":"stop"},{"id":"MERGE","label":"merge","effect":"merge now","reply":"answer"}]`)
+	crw737Refused(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "merge_approval",
+		"--context", "Hold the merge until the retention decision?", "--option", "hold=hold:hold the merge",
+		"--option", "merge=merge:merge now", "--option-reply", "hold=answer", "--option-reply", "merge=answer",
+		"--blocking", "relationship=rel-903", "--origin-project", "PRJ-A", "--source", "event=ev-blocked",
+		"--authority", "user"), "disposition_conflict")
+	record := crw737List(t, state)[0].(map[string]any)
+	if replies := review818OptionReplies(t, record); replies["HOLD"] != "stop" {
+		t.Fatalf("the refused re-raise rewrote the stored replies: %v", replies)
+	}
 }
 
 // A second raise that names another reply for an option the stored record already answers with one

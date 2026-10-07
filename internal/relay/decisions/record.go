@@ -588,22 +588,31 @@ func Merge(first, second Record) (Record, error) {
 	return merged, nil
 }
 
-// mergeOptionReplies folds the incoming raise's option replies into the stored set. The two sets name
-// the same option ids (they share the fingerprint), so the fold walks the stored set and takes the
-// incoming reply for each id. A stored reply and an incoming reply that are both named and differ is
-// ErrMergeConflict: the stored mapping is the one an answer is applied against, and the fingerprint
-// cannot separate the two raises, so the second raise is refused rather than silently dropped. A
-// stored reply that is empty — a record written before the reply field existed — takes the incoming
-// one, and an incoming reply that is empty keeps the stored one. A reply is never written where the
-// option it belongs to is not in the stored set, because an option set is the stored one.
+// mergeOptionReplies folds the incoming raise's option replies into the stored set. The two raises
+// are one question because their fingerprints match, and the fingerprint identifies an option by its
+// normalized id (Normalize: ASCII-lowercased, whitespace runs collapsed), so the fold matches ids the
+// same way: an option stored as HOLD is the option an incoming hold names. Matching on the raw text
+// would skip the fold for a spelling the fingerprint calls the same question, silently leaving a
+// reply unfilled and a conflict unseen. A stored reply and an incoming reply that are both named and
+// differ is ErrMergeConflict: the stored mapping is the one an answer is applied against, and the
+// fingerprint cannot separate the two raises, so the second raise is refused rather than silently
+// dropped. A stored reply that is empty — a record written before the reply field existed — takes the
+// incoming one, and an incoming reply that is empty keeps the stored one. A stored option set that
+// two of whose ids normalize alike cannot say which option an incoming reply belongs to, so it is
+// refused as the ambiguity it is rather than guessed. A reply is never written where the option it
+// belongs to is not in the stored set, because the stored option set is the one the record keeps.
 func mergeOptionReplies(stored, incoming []Option) ([]Option, error) {
 	merged := append([]Option{}, stored...)
 	at := make(map[string]int, len(merged))
 	for i, option := range merged {
-		at[strings.TrimSpace(option.ID)] = i
+		key := Normalize(option.ID)
+		if _, seen := at[key]; seen {
+			return nil, fmt.Errorf("%w: the stored options %q and %q are one id to the fingerprint", ErrMergeConflict, merged[at[key]].ID, option.ID)
+		}
+		at[key] = i
 	}
 	for _, option := range incoming {
-		index, ok := at[strings.TrimSpace(option.ID)]
+		index, ok := at[Normalize(option.ID)]
 		if !ok {
 			continue
 		}
