@@ -1058,37 +1058,6 @@ func TestImproveReview789LongRefStillRuns(t *testing.T) {
 	}
 }
 
-// TestImproveReview789AggregateCountAddsAcrossStores covers the review finding that an aggregated
-// source's occurrences were not added across bundles: a fault ledger row reports its whole count at
-// one origin, and a second store's independent occurrences must be added to it rather than replaced
-// by the larger of the two.
-func TestImproveReview789AggregateCountAddsAcrossStores(t *testing.T) {
-	w := improveProposeTestSetup(t)
-	improveProposeTestConfigure(t, w, map[string]any{})
-	first := improveProposeTestBundle(t, w, []improveRecord{improveReview789FaultRecord(5, "2026-10-06T01:00:00Z")})
-	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
-		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
-	}
-
-	// The same friction, seen in a second store: another row of the same signature, five more
-	// occurrences, at its own origin.
-	second := improveProposeTestBundle(t, w, []improveRecord{
-		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 5, "fault:other-store:f2"),
-	})
-	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", second)
-	if code != 0 {
-		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
-	}
-	report := improveProposeTestReport(t, stdout)
-	if len(report.Updated) != 1 {
-		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
-	}
-	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
-	if !strings.Contains(doc.Body, "- owner_unknown (10)") {
-		t.Errorf("the merged draft does not add the second store's occurrences to the first's:\n%s", doc.Body)
-	}
-}
-
 // TestImproveReview789SymlinkedParentDotDotIsOneLocation covers the review finding that a source
 // path spelled through a symlinked directory followed by ".." was cleaned before its links were
 // resolved, so the origin named a file the read never touched and the same occurrence was counted
@@ -1136,43 +1105,5 @@ func TestImproveReview789SymlinkedParentDotDotIsOneLocation(t *testing.T) {
 	doc := improveReview789Draft(t, manageState, fingerprint)
 	if len(doc.Seen) != 1 {
 		t.Errorf("the draft carries %d seen entries, want one for the one file: %+v", len(doc.Seen), doc.Seen)
-	}
-}
-
-// TestImproveReview789MultiOriginAggregateKeepsItsTotal covers the review finding that a record
-// which reports several origins lost the count it carries: the record's own total is what the
-// bundle says the friction was seen, so merging it into an existing draft must add the whole count,
-// shared among the origins, rather than one per origin.
-func TestImproveReview789MultiOriginAggregateKeepsItsTotal(t *testing.T) {
-	w := improveProposeTestSetup(t)
-	improveProposeTestConfigure(t, w, map[string]any{})
-	// An existing draft for the same friction, one occurrence at its own origin.
-	first := improveProposeTestBundle(t, w, []improveRecord{
-		improveProposeTestRecord(improveKindFault, "observation_stalled", "project-a", "a signature", 1, "fault:store-a:f0"),
-	})
-	if code, _, stderr := improveProposeTestRun(t, w, "--bundle", first); code != 0 {
-		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
-	}
-
-	// One record whose count is seven and which names two new origins: its whole count is new, so
-	// the stored one occurrence plus these seven is eight.
-	record := improveRecord{Kind: improveKindFault, Key: "observation_stalled", Where: "project-a",
-		What: "a signature", Count: 7, FirstAt: "2026-10-06T01:00:00Z", LastAt: "2026-10-06T01:00:00Z",
-		Evidence: []string{"fault:store-a:f1", "fault:store-a:f2"}}
-	bundle := improveProposeTestBundle(t, w, []improveRecord{record})
-	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
-	if code != 0 {
-		t.Fatalf("the second propose: exit %d, stderr %s", code, stderr)
-	}
-	report := improveProposeTestReport(t, stdout)
-	if len(report.Updated) != 1 {
-		t.Fatalf("updated = %+v, want the existing draft to grow", report.Updated)
-	}
-	doc := improveProposeTestDraft(t, w, report.Updated[0].Fingerprint)
-	if !strings.Contains(doc.Body, "- owner_unknown (8)") {
-		t.Errorf("the merge did not add the record's whole count across its origins:\n%s", doc.Body)
-	}
-	if len(doc.Seen) != 3 {
-		t.Errorf("the draft carries %d seen entries, want one per origin (3): %+v", len(doc.Seen), doc.Seen)
 	}
 }

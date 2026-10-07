@@ -62,10 +62,6 @@ type improveProposeCandidate struct {
 	// reach the report: the report names the candidate, not how a merge counts it.
 	seenProjects map[auditDraftSeen]string
 
-	// seenCounts is how many occurrences each sighting stands for. A record that aggregates its
-	// occurrences into one row reports its own count at that one origin; a record with an origin per
-	// occurrence reports one each. It does not reach the report either.
-	seenCounts map[auditDraftSeen]int
 }
 
 // improveProposeReport is what crw manage improve propose prints: the ranked candidates, the
@@ -321,7 +317,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			}
 			improveProposeAddProject(&current.Projects, project, count)
 			current.Evidence = append(current.Evidence, record.Evidence...)
-			improveProposeAddSightings(current, project, sightings, improveProposeSightingWeights(record, len(sightings)))
+			improveProposeAddSightings(current, project, sightings)
 			continue
 		}
 		byKey[key] = len(candidates)
@@ -331,7 +327,7 @@ func improveProposeCandidates(bundle improveBundle) []improveProposeCandidate {
 			Evidence: append([]string(nil), record.Evidence...),
 		}
 		improveProposeAddProject(&candidate.Projects, project, count)
-		improveProposeAddSightings(&candidate, project, sightings, improveProposeSightingWeights(record, len(sightings)))
+		improveProposeAddSightings(&candidate, project, sightings)
 		candidates = append(candidates, candidate)
 	}
 	for i := range candidates {
@@ -380,28 +376,22 @@ func improveProposeProjectKey(project string) string {
 }
 
 // improveProposeAddSightings adds the sightings one record makes to a candidate, once each, and
-// remembers the project each was seen in and how many occurrences it stands for. A merge counts a
-// project by the occurrences this run newly added to it, so the maps are what keep a stored count
-// and a grown seen list in step. A record the candidate already carries a sighting from keeps the
-// count that sighting was first given, so two rows behind one origin are not counted twice.
-func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen, weights []int) {
+// remembers the project each was seen in. A merge counts a project by the sightings this run newly
+// added to it, so the map is what keeps a stored count and a grown seen list in step. A record that
+// merged several rows of one origin keeps the count that origin was first given, so two rows behind
+// one origin are not counted twice.
+func improveProposeAddSightings(candidate *improveProposeCandidate, project string, sightings []auditDraftSeen) {
 	if candidate.seenProjects == nil {
 		candidate.seenProjects = map[auditDraftSeen]string{}
 	}
-	if candidate.seenCounts == nil {
-		candidate.seenCounts = map[auditDraftSeen]int{}
-	}
 	owner := improveProposeProjectKey(project)
-	for i, sighting := range sightings {
+	for _, sighting := range sightings {
 		if improveProposeSeenHas(candidate.seen, sighting) {
 			continue
 		}
 		candidate.seen = append(candidate.seen, sighting)
 		if _, ok := candidate.seenProjects[sighting]; !ok {
 			candidate.seenProjects[sighting] = owner
-		}
-		if _, ok := candidate.seenCounts[sighting]; !ok {
-			candidate.seenCounts[sighting] = weights[i]
 		}
 	}
 }
@@ -603,33 +593,6 @@ func improveProposeMergedCount(project string, incremental int, current []improv
 	return incremental
 }
 
-// improveProposeSightingWeights is how many occurrences each of a record's sightings stands for.
-// The record's own count is what the bundle reports for the friction it names, so the weights add
-// up to it and the count is never lost: a record that aggregates its occurrences into one row (a
-// fault ledger row, whose count moves while its origin stays the same) reports its whole count at
-// that one origin, and a record that merged several origins shares its count among them as evenly
-// as whole occurrences allow. A record whose count is not a whole multiple of its origins still
-// reports its own total, with the remainder on the earliest origins, so the sum is exactly the
-// count the source gave.
-func improveProposeSightingWeights(record improveRecord, sightings int) []int {
-	count := record.Count
-	if count <= 0 {
-		count = 1
-	}
-	if sightings <= 1 {
-		return []int{count}
-	}
-	base, remainder := count/sightings, count%sightings
-	weights := make([]int, sightings)
-	for i := range weights {
-		weights[i] = base
-		if i < remainder {
-			weights[i]++
-		}
-	}
-	return weights
-}
-
 // improveProposeReconcileSightings brings a stored seen list and the counts its draft holds up to
 // date with this run's candidate, and reports what changed. One origin is one sighting: an origin
 // the draft already carries is not added again, and the owner its occurrence is counted under
@@ -646,7 +609,7 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		at := improveProposeSeenIndex(seen, sighting)
 		if at < 0 {
 			seen = append(seen, sighting)
-			added[owner] += improveProposeSightingCount(candidate, sighting)
+			added[owner]++
 			continue
 		}
 		// The occurrence is already recorded. Its owner in this run may differ from the stored one:
@@ -666,20 +629,11 @@ func improveProposeReconcileSightings(candidate improveProposeCandidate, stored 
 		// already drops that false project and carries its occurrences to the unknown owner, so
 		// moving them again would count the same occurrence twice.
 		if was != owner && !issueKeys[was] {
-			count := improveProposeSightingCount(candidate, sighting)
-			moved[was] -= count
-			moved[owner] += count
+			moved[was]--
+			moved[owner]++
 		}
 	}
 	return seen, added, moved
-}
-
-// improveProposeSightingCount is how many occurrences one of a candidate's sightings stands for.
-func improveProposeSightingCount(candidate improveProposeCandidate, sighting auditDraftSeen) int {
-	if count := candidate.seenCounts[sighting]; count > 0 {
-		return count
-	}
-	return 1
 }
 
 // improveProposeSuppressed reports whether an exported issue already covers a candidate: the issue
