@@ -1875,26 +1875,53 @@ const (
 	shellWriteHeredocRefused
 )
 
-// shellWriteHeredocClassify classifies one here-document under the reader's closed rule (CRW-765 corrections 3 to 7) and
-// returns the reader to use when it is a program. The header's physical line must first be proven to be exactly one
-// simple command the way the shell reads it (shellWriteHeredocHeaderProven; correction 4, rules G1 and G3), and its verb
-// must be literal (shellWriteHeredocVerbExpanded; correction 5, rule R0), because a verb that still holds an expansion
-// can be any program. The verb then falls into one of three closed sets (correction 7): C1, the data verbs whose standard
-// input is never executed, so the body is data; C2, the modelled interpreters (the python, node and sh families), whose
-// here-document is always read as that interpreter's program whatever its flags and operands (rule H1); and C3, every
-// other verb, which is an interpreter the reader cannot rule out, so the here-document is refused. sed is the one
-// exception: with a -f option its script comes from the here-document, so it is refused, and without one the body is
-// input data. Only an unproven header or a reserved word is still unknown, and the caller decides that from the command
-// text (the name-binding check of rule R2), so proving a command is not an interpreter never opens a here-document a
-// bound name feeds.
+// shellWriteHeredocClassify classifies one here-document under the reader's closed rule (CRW-765 corrections 3 to 8) and
+// returns the reader to use when it is a program. The header line must first be one the reader can take apart
+// (shellWriteHeredocHeaderProven; rules G1, G3 and U1). The command that carries the here-document operator is then read
+// by its own words (rule U1): a while or until loop that takes the here-document is judged by its condition and body
+// (rule U2), and any other command falls into one of three closed sets. C1, the data verbs whose standard input is never
+// executed, makes the body data; C2, the modelled interpreters (the python, node and sh families), makes it that
+// interpreter's program whatever its flags and operands (rule H1); and C3 refuses every other verb, because it may be an
+// interpreter the reader cannot rule out. sed is the one exception: with a -f option its script comes from the
+// here-document, so it is refused, and without one the body is input data (rule S8). Everything the reader cannot take
+// apart is unknown, and unknown always denies (rule U3).
 func shellWriteHeredocClassify(h shellWriteHeredoc) (shellWriteHeredocReading, shellWriteHeredocKind) {
 	if !shellWriteHeredocHeaderProven(h) {
 		return shellWriteHeredocUnknown, 0
 	}
-	if shellWriteHeredocVerbExpanded(h.command) {
+	seg, ok := shellWriteHeredocOwningCommand(h)
+	if !ok {
+		return shellWriteHeredocUnknown, 0 // rule U3: the line cannot be split into commands
+	}
+	if shellWriteHeredocLoopLine(shellString(h.command)) && shellWriteHeredocLoopOwns(seg) {
+		// Rule U2: the here-document is attached to the loop itself, so every command in its condition and body decides.
+		if shellWriteHeredocLoopSafe(h.command) {
+			return shellWriteHeredocData, 0
+		}
+		return shellWriteHeredocUnknown, 0
+	}
+	return shellWriteHeredocClassifyCommand(seg)
+}
+
+// shellWriteHeredocLoopOwns reports whether the here-document is attached to the loop itself rather than to a command
+// inside it: the owning cut holds only the loop's own syntax words and the operator (rule U2).
+func shellWriteHeredocLoopOwns(seg []uint16) bool {
+	words, ok := shellWriteHeredocSegmentWords(seg, false)
+	if !ok {
+		return false
+	}
+	for len(words) > 0 && (shellWriteHeredocLoopWord(words[0]) || shellVerbAssignment(words[0])) {
+		words = words[1:]
+	}
+	return len(words) == 0
+}
+
+// shellWriteHeredocClassifyCommand classifies the one command that carries the here-document operator (rule U1).
+func shellWriteHeredocClassifyCommand(seg []uint16) (shellWriteHeredocReading, shellWriteHeredocKind) {
+	if shellWriteHeredocVerbExpanded(seg) {
 		return shellWriteHeredocRefused, 0 // rule R0: the verb is not literal, so it can run any program
 	}
-	words, ok := shellWriteHeredocSimpleCommand(h.command)
+	words, ok := shellWriteHeredocSimpleCommand(seg)
 	if !ok {
 		return shellWriteHeredocUnknown, 0
 	}
@@ -2209,7 +2236,6 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 	}
 	u := utf16.Encode([]rune(command))
 	named := shellWriteHeredocNamesInterpreter(u)
-	binding := shellWriteHeredocNameBinding(u)
 	for _, h := range shellWriteHeredocs(u) {
 		reading, kind := shellWriteHeredocClassify(h)
 		if reading == shellWriteHeredocRefused {
@@ -2217,12 +2243,8 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 			return shellWriteHeredocUnreadableWhat, true
 		}
 		if reading == shellWriteHeredocUnknown {
-			// Rule R2: the verb is off the reader's data list, so the here-document is data only when the command text
-			// names no interpreter and holds no name-binding construct (CRW-765 correction 5).
-			if named || binding {
-				return shellWriteHeredocUnreadableWhat, true
-			}
-			continue
+			// Rule U3: the reader cannot take the line apart, so it denies whatever the command text says.
+			return shellWriteHeredocUnreadableWhat, true
 		}
 		if reading != shellWriteHeredocProgram {
 			continue // data: the body is not read as a program

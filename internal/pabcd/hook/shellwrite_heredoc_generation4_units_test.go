@@ -5,7 +5,9 @@ import (
 	"unicode/utf16"
 )
 
-// TestShellWriteHeredocGeneration4HeaderProof pins rules G1 and G3 on the header itself.
+// TestShellWriteHeredocGeneration4HeaderProof pins rules G1 and G3 on the header itself. Correction 8's rule U1 splits
+// the line at the control operators, so the two rows that carry a pipe or a second command are no longer unproven: the
+// command that owns the here-document is read instead. Those two rows are listed in the pull request body.
 func TestShellWriteHeredocGeneration4HeaderProof(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -18,8 +20,8 @@ func TestShellWriteHeredocGeneration4HeaderProof(t *testing.T) {
 		{"a backslash in the command word", "bas\\h <<'EOF'\nx\nEOF", true},
 		{"a line continuation inside the word", "bas\\\nh <<'EOF'\nx\nEOF", true},
 		{"a continuation after the header", "bash <<'EOF' \\\n2>/dev/null\nx\nEOF", true},
-		{"a pipe after the operator", "bash <<'EOF' | cat\nx\nEOF", true},
-		{"a second command on the line", "cat <<'A'; python3 <<'B'\nx\nA\ny\nB", true},
+		{"a pipe after the operator", "bash <<'EOF' | cat\nx\nEOF", false},
+		{"a second command on the line", "cat <<'A'; python3 <<'B'\nx\nA\ny\nB", false},
 		{"a function defined with the keyword", "function f { bash; }; f <<'EOF'\nx\nEOF", true},
 		{"a name() function definition", "f() { bash; } <<'EOF'\nx\nEOF", true},
 		{"a subshell-body function definition", "f() ( bash ) <<'EOF'\nx\nEOF", true},

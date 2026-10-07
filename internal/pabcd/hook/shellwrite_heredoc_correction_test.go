@@ -29,9 +29,9 @@ func shellWriteHeredocCorrectionHeaderRows(mem string) []struct{ name, command s
 }
 
 // shellWriteHeredocCorrectionFailClosedRows are the generation-2 rows whose header line carries a pipe. Correction 4's
-// rule G1 proves a header only when its physical line holds no ;, &, |, && or ||, so these rows are now denied as
-// unreadable instead of being read: the reader cannot tell which command the shell attaches the here-document to. They
-// are the rows whose expectation this correction changes, and the pull request body lists them.
+// rule G1 denied them as unreadable; correction 8's rule U1 splits the line at the control operators instead, so the
+// command that carries the here-document is read and these rows now name the protected path. They are the rows whose
+// expectation this correction changes, and the pull request body lists them.
 func shellWriteHeredocCorrectionFailClosedRows(mem string) []struct{ name, command string } {
 	return []struct{ name, command string }{
 		{"a pipe after the operator", "bash <<'EOF' | cat\necho x > " + mem + "/a\nEOF"},
@@ -63,9 +63,9 @@ func TestShellWriteHeredocCorrectionGate(t *testing.T) {
 			}
 		})
 	}
-	// Correction 4 (rule G1): a header line holding a pipe is unproven, so these rows are denied as unreadable rather
-	// than read.
-	wantUnproven := "(a program the gate cannot read: " + shellWriteHeredocWhatWant + ")"
+	// Correction 8 (rule U1): the line is split at the pipe, so the command that carries the here-document is read and
+	// these rows name the protected path.
+	wantUnproven := root + "/a"
 	for _, row := range shellWriteHeredocCorrectionFailClosedRows(root) {
 		t.Run(row.name+" (fail closed)", func(t *testing.T) {
 			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)

@@ -40,6 +40,7 @@ type shellWriteHeredocDecl struct {
 	delim  []uint16
 	quoted bool
 	tabs   bool
+	at     int // the offset of the << operator in the header line
 }
 
 // shellWriteHeredoc is one here-document of a command: the whole header line that declared it (so the interpreter
@@ -53,6 +54,7 @@ type shellWriteHeredoc struct {
 	quoted  bool
 	tabs    bool
 	joined  bool // the previous physical line ends with a backslash, so this header is a line continuation
+	at      int  // the offset of the << operator in the header line (rule U1)
 }
 
 // shellWriteHeredocs enumerates the here-documents of a command without changing the oracle's own stripHeredocBodies:
@@ -91,7 +93,7 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 					continue // no delimiter word at all (the oracle's absent-delimiter case)
 				}
 				body, next := shellWriteHeredocBody(command, j, d)
-				out = append(out, shellWriteHeredoc{command: header, delim: d.delim, body: body, quoted: d.quoted, tabs: d.tabs, joined: joined})
+				out = append(out, shellWriteHeredoc{command: header, delim: d.delim, body: body, quoted: d.quoted, tabs: d.tabs, joined: joined, at: d.at})
 				j = next
 			}
 			i = j
@@ -126,7 +128,7 @@ func shellWriteHeredocDecls(header []uint16) []shellWriteHeredocDecl {
 		}
 		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) != '<' {
 			delim, quoted := shellWriteHeredocDelimiter(header, i)
-			out = append(out, shellWriteHeredocDecl{delim: delim, quoted: quoted, tabs: shellAt(header, i+2) == '-'})
+			out = append(out, shellWriteHeredocDecl{delim: delim, quoted: quoted, tabs: shellAt(header, i+2) == '-', at: i})
 			i = skipHeredoc(header, i)
 			continue
 		}
@@ -295,18 +297,41 @@ func shellWriteHeredocGitCommitStdin(args []string) bool {
 	return false
 }
 
-// shellWriteHeredocSedReadsScript reports whether a sed command reads its script from a file (CRW-765 correction 7, the
-// sed exception): its options are read letter by letter through every bundle, so -nf, -Ef and an attached -f- are all
-// seen, and --file or --file= is seen too. With one of those the script is the here-document body, which the reader
-// cannot read, so the gate refuses it; without one the here-document is input data.
+// shellWriteHeredocSedReadsScript reports whether a sed command reads its script from a file (CRW-765 correction 7's sed
+// exception, rewritten by correction 8, rule S8). Every option word is read after the CRW-783 normalisation - its
+// quotes and backslashes removed - so `-\f` and `-n'f'` read as the bundles they are; an expansion left in a word
+// denies, because the shell could build a -f out of it. A short bundle is read letter by letter, so any f denies; a long
+// option is read the way GNU getopt reads it, by prefix, so a name before = that is a prefix of file (--f, --fi, --fil,
+// --file) denies; nothing after -- is an option. With one of those the script is the here-document body, which the
+// reader cannot read, so the gate refuses it; without one the here-document is input data.
 func shellWriteHeredocSedReadsScript(args []string) bool {
+	afterDoubleDash := false
 	for _, a := range args {
+		if afterDoubleDash {
+			continue // nothing after -- is an option
+		}
+		if a == "--" {
+			afterDoubleDash = true
+			continue
+		}
+		n, expanded := shellWriteHeredocNormalizeWord(a)
+		if !strings.HasPrefix(n, "-") || n == "-" {
+			continue // not an option word: sed's script operand and its input files
+		}
+		if expanded {
+			return true // an expansion the reader cannot read may build a -f
+		}
 		switch {
-		case a == "--file" || strings.HasPrefix(a, "--file="):
-			return true
-		case len(a) > 1 && a[0] == '-' && a[1] != '-':
-			// A short-option bundle. sed's -f takes the script from a file, and - names standard input.
-			if strings.ContainsRune(a[1:], 'f') {
+		case strings.HasPrefix(n, "--"):
+			name := strings.TrimPrefix(n, "--")
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name = name[:eq]
+			}
+			if name != "" && strings.HasPrefix("file", name) {
+				return true
+			}
+		case len(n) > 1 && n[0] == '-':
+			if strings.ContainsRune(n[1:], 'f') {
 				return true
 			}
 		}
@@ -314,7 +339,157 @@ func shellWriteHeredocSedReadsScript(args []string) bool {
 	return false
 }
 
-// shellWriteHeredocHeaderProven reports whether a here-document's header is proven to be exactly one simple command the way the shell reads it (CRW-765 correction 4, rule G1). The proof is narrow on purpose: the header's physical line must hold no backslash at all (an escape or a line continuation would change what the shell executes), the physical line before it must not end with a backslash (the shell joins the two lines first), and outside quotes the line must hold no ;, &, |, && or || (so exactly one command stands on it). A header that defines a function in any form is not proven either (rule G3). Only a proven header is decided as data or program; anything else is an unprovable header and the here-document fails closed when the command text names an interpreter.
+// shellWriteHeredocNormalizeWord applies the CRW-783 normalisation to one word (rule S8): its quote characters and
+// backslashes are removed, as the shell removes them before the program sees the word, so -\f reads as -f and -n'p' as
+// -np. A backslash-newline is a line continuation and both characters go; the character a backslash escapes stays.
+// expanded reports that an expansion (a dollar sign, a backtick, a substitution, a brace or a glob) is left, which the
+// reader cannot resolve.
+func shellWriteHeredocNormalizeWord(word string) (normalized string, expanded bool) {
+	out := make([]byte, 0, len(word))
+	for i := 0; i < len(word); i++ {
+		switch c := word[i]; c {
+		case '\\':
+			if i+1 < len(word) && word[i+1] == '\n' {
+				i++ // a backslash-newline is a line continuation: both characters go
+			}
+		case '\'', '"':
+			// removed: quoting does not hide the option
+		case '$', '`', '(', ')', '{', '}', '*', '?', '[', ']':
+			expanded = true
+			out = append(out, c)
+		default:
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			out = append(out, c)
+		}
+	}
+	return string(out), expanded
+}
+
+// shellWriteHeredocCuts splits one physical line into its commands at ;, &&, ||, & and |, outside quotes (CRW-765
+// correction 8, rule U1). ok is false when the line cannot be split: an unbalanced quote, or a backslash anywhere on
+// the line, which the shell would use to escape or continue before the reader sees the command (rule U3).
+func shellWriteHeredocCuts(line []uint16) (cuts [][2]int, ok bool) {
+	start := 0
+	for i := 0; i < len(line); {
+		c := line[i]
+		if c == '\'' || c == '"' {
+			next := skipQuoted(line, i)
+			if next <= i || next > len(line) || line[next-1] != c {
+				return nil, false // an unbalanced quote: the line cannot be split
+			}
+			i = next
+			continue
+		}
+		if c == '\\' {
+			return nil, false // a backslash escapes or continues: the line is not readable
+		}
+		if shellWriteHeredocSeparator(line, i) {
+			j := i + 1
+			if (c == '&' || c == '|') && shellAt(line, j) == c {
+				j++ // && and || are one operator
+			}
+			cuts = append(cuts, [2]int{start, i})
+			start, i = j, j
+			continue
+		}
+		i++
+	}
+	return append(cuts, [2]int{start, len(line)}), true
+}
+
+// shellWriteHeredocOwningCommand is the command the here-document is attached to: the cut of the header line that holds
+// the << operator (CRW-765 correction 8, rule U1). ok is false when the line cannot be split or holds no such cut, which
+// makes the header undecidable (rule U3).
+func shellWriteHeredocOwningCommand(h shellWriteHeredoc) ([]uint16, bool) {
+	cuts, ok := shellWriteHeredocCuts(h.command)
+	if !ok {
+		return nil, false
+	}
+	for _, c := range cuts {
+		if c[0] <= h.at && h.at < c[1] {
+			return h.command[c[0]:c[1]], true
+		}
+	}
+	return nil, false
+}
+
+// shellWriteHeredocLoopLine reports whether a header line is a while or until loop, which rule U2 judges by its
+// condition and body rather than by one command.
+func shellWriteHeredocLoopLine(line string) bool {
+	head := strings.TrimLeft(line, " \t")
+	for _, keyword := range []string{"while", "until"} {
+		rest, ok := strings.CutPrefix(head, keyword)
+		if !ok {
+			continue
+		}
+		if rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '\n' || rest[0] == ';' {
+			return true
+		}
+	}
+	return false
+}
+
+// shellWriteHeredocLoopWord reports whether a word is one of the words a while or until loop's own syntax uses, which
+// rule U2 skips before it reads the command the loop runs.
+func shellWriteHeredocLoopWord(word string) bool {
+	switch shellVerbName(word) {
+	case "while", "until", "do", "done", "{", "}", "!", "time":
+		return true
+	}
+	return false
+}
+
+// shellWriteHeredocLoopVerb is rule U2's list: the commands a while or until loop may run while it takes the
+// here-document. It is rule C1's data verbs and read, plus the short list of programs that never read standard input as
+// a program. Anything else makes the loop's here-document a program the reader cannot read.
+func shellWriteHeredocLoopVerb(verb string) bool {
+	switch verb {
+	case "echo", "printf", "true", "false", ":", "test", "[", "break", "continue":
+		return true
+	}
+	return shellWriteHeredocNeverReadsStdin(verb)
+}
+
+// shellWriteHeredocLoopSafe reports whether every command of a while or until loop that takes the here-document is one
+// rule U2 allows, with every word readable (rule U2). The loop's own syntax words are skipped; any other reserved word,
+// an unreadable command, a command substitution that could run a program on the here-document, or a verb off the list
+// denies.
+func shellWriteHeredocLoopSafe(line []uint16) bool {
+	cuts, ok := shellWriteHeredocCuts(line)
+	if !ok {
+		return false
+	}
+	for _, c := range cuts {
+		seg := line[c[0]:c[1]]
+		words, ok := shellWriteHeredocSegmentWords(seg, false)
+		if !ok {
+			return false
+		}
+		for _, w := range words {
+			if strings.ContainsAny(w, "`") || strings.Contains(w, "$(") {
+				return false // a substitution runs a program, whose standard input is the here-document
+			}
+		}
+		rest := words
+		for len(rest) > 0 && (shellWriteHeredocLoopWord(rest[0]) || shellVerbAssignment(rest[0])) {
+			rest = rest[1:]
+		}
+		if len(rest) == 0 {
+			continue // the loop's own syntax alone, such as `while` or `done`
+		}
+		if !shellWriteHeredocLoopVerb(shellVerbName(rest[0])) {
+			return false
+		}
+	}
+	return true
+}
+
+// shellWriteHeredocHeaderProven reports whether a here-document's header is a line the reader can take apart (CRW-765
+// corrections 4 and 8, rules G1, G3 and U1). The line must not be a continuation of the line before it, it must hold no
+// backslash (which the shell would use to escape or continue before the reader sees the command) and it must define no
+// function in any form; the commands on it are separated at the control operators, which rule U1 then judges one by one.
 func shellWriteHeredocHeaderProven(h shellWriteHeredoc) bool {
 	if h.joined {
 		return false
@@ -328,9 +503,6 @@ func shellWriteHeredocHeaderProven(h shellWriteHeredoc) bool {
 		if c == '\'' || c == '"' {
 			i = skipQuoted(line, i)
 			continue
-		}
-		if shellWriteHeredocSeparator(line, i) {
-			return false
 		}
 		i++
 	}
@@ -435,6 +607,14 @@ const (
 // marker or a here-string is not literal, so the command is not proven and its here-document fails closed. words is the
 // literal words in order, the verb first.
 func shellWriteHeredocSimpleCommand(seg []uint16) (words []string, ok bool) {
+	return shellWriteHeredocSegmentWords(seg, true)
+}
+
+// shellWriteHeredocSegmentWords reads one command segment. ok is false when the segment holds a construct the reader
+// cannot follow: an operator shape the closed set does not allow, a redirection target that is not literal, a word it
+// cannot end, or - when requireLiteral is set - a word holding an expansion, a substitution, a brace, a glob or a comment
+// marker. With requireLiteral unset the words are read for their text only, which rule U2's loop check needs.
+func shellWriteHeredocSegmentWords(seg []uint16, requireLiteral bool) (words []string, ok bool) {
 	words = []string{}
 	for i := 0; i < len(seg); {
 		c := seg[i]
@@ -461,7 +641,7 @@ func shellWriteHeredocSimpleCommand(seg []uint16) (words []string, ok bool) {
 			continue
 		}
 		w, n, lit := shellWriteHeredocLiteralWord(seg, i)
-		if !lit || len(w) == 0 {
+		if len(w) == 0 || n <= i || requireLiteral && !lit {
 			return words, false
 		}
 		words = append(words, shellString(w))
