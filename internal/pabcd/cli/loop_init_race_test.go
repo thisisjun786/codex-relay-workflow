@@ -278,7 +278,16 @@ func TestLoopInitNamesThePublishedPlanWhenTheBindingFails(t *testing.T) {
 			const id = "rec-bind"
 			const slug = "bound-objective"
 			loopSession(t, cwd, id)
-			loopInitWriteStateHook = func(string, state.State) error { return tc.err }
+			loopInitWriteStateHook = func(cwd string, next state.State) error {
+				if tc.publish {
+					// The real write lands the binding, then the injected failure stands in for the
+					// directory sync that runs after the rename.
+					if err := state.WriteState(cwd, next); err != nil {
+						return err
+					}
+				}
+				return tc.err
+			}
 			t.Cleanup(func() { loopInitWriteStateHook = nil })
 
 			args, err := ParseLoopCliArgs([]string{"init", "--objective", "Bound objective", "--session", id}, cwd)
@@ -312,7 +321,75 @@ func TestLoopInitNamesThePublishedPlanWhenTheBindingFails(t *testing.T) {
 			if !strings.Contains(result.Output, "session state was published but its directory could not be synced") {
 				t.Fatalf("the answer carries no durability warning: %q", result.Output)
 			}
+			// The write really landed, so the binding and the created row must both be there: a
+			// warning on a success that bound nothing would approve a half-created plan.
+			if bound := state.ReadState(cwd, id).Slug; bound != slug {
+				t.Fatalf("the warned success bound %q, want %q", bound, slug)
+			}
+			if rows := loopCreatedLedgerRows(t, cwd, slug); len(rows) != 1 {
+				t.Fatalf("created ledger rows = %d, want 1: %v", len(rows), rows)
+			}
 		})
+	}
+}
+
+// TestLoopInitRefusesALinkedPlanFile is the c1 companion for a plan path that is a symbolic link: the
+// read path refuses the link (O_NOFOLLOW), so before the fix the absence predicate called the path
+// absent and the publication's rename replaced the link. The link and its target's bytes must both
+// survive.
+func TestLoopInitRefusesALinkedPlanFile(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	const slug = "ship-the-export-feature"
+	dir := filepath.Join(cwd, ".crw", "goalplans", slug)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cwd, "elsewhere.json")
+	stored := "{\"objective\": \"Ship the export feature\", \"slug\": \"" + slug + "\"}"
+	if err := os.WriteFile(target, []byte(stored), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "goalplan.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
+	if result.Code != 1 || !strings.Contains(result.Output, "refusing to overwrite it") {
+		t.Fatalf("got %d %q, want the refusal that keeps the link", result.Code, result.Output)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the plan link was replaced: %v %v", info, err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != stored {
+		t.Fatalf("the link target was rewritten: %q %v", got, err)
+	}
+}
+
+// TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut is the other half of c1: when the plan appears
+// after init's outer absence check and another holder's goalplan lock directory is still there after
+// the wait budget, the loser must answer the criterion's "already exists" refusal, not the lock's own
+// busy message. The seam plants both inside that window, so the outer check cannot mask the case.
+func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	const slug = "ship-the-export-feature"
+	dir := filepath.Join(cwd, ".crw", "goalplans", slug)
+	loopInitAfterAbsenceCheck = func() {
+		// The other init published its plan and still holds the slug's lock directory.
+		plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, ".goalplan.lock"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
+
+	result := loopRun(t, cwd, "init", "--objective", "Ship the export feature")
+	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+	if result.Code != 1 || result.Output != want {
+		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
 	}
 }
 

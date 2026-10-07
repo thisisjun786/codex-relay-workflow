@@ -286,6 +286,13 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		return LoopCliResult{}, err
 	}
 	if locked.Kind == "locked" {
+		// The lock's wait budget ran out with another holder's directory still there. That holder may
+		// have finished inside the window, so re-check the plan before answering busy: the loser of a
+		// concurrent creation owes the criterion's "already exists" refusal, not the lock's own
+		// message (CRW-646 c1).
+		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+			return result, nil
+		}
 		return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
 	}
 	if refusal != nil {
@@ -294,16 +301,19 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
 }
 
-// loopPlanFileExists reports whether slug's plan file is there as a regular file. A path the slug resolver
-// refuses - a linked state root, say - is not an existing plan file: the write path reports that refusal
-// itself, exactly as the oracle's writeGoalplan does.
+// loopPlanFileExists reports whether anything occupies slug's plan path. A regular file is the plan; a
+// symbolic link or another non-directory entry is something a replacing rename would destroy, so it
+// counts as present too (the read path refuses a link through O_NOFOLLOW, so without this the predicate
+// would read "absent" and the publication would replace the link). A path the slug resolver refuses - a
+// linked state root, say - is not an existing plan file: the write path reports that refusal itself,
+// exactly as the oracle's writeGoalplan does.
 func loopPlanFileExists(cwd, slug string) bool {
 	dir, err := goalplan.GoalplanDir(cwd, slug)
 	if err != nil {
 		return false
 	}
 	info, err := os.Lstat(filepath.Join(dir, goalplan.GoalplanFile))
-	return err == nil && info.Mode().IsRegular()
+	return err == nil && !info.IsDir()
 }
 
 // loopReadyPhaseRow, loopReadyTaskRow, loopReadyOpenDecisionRow and loopReadyAwaitingRow are runReady's JSON
