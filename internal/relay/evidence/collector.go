@@ -443,7 +443,57 @@ func provider(n map[string]any) any {
 	}
 	return pyvalue.Str(id)
 }
-func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, connections *[]any) ([]any, []any, []any) {
+
+// requiredProvidersPinned reports whether the branch rule pins an integration for any check: only then
+// is a job's provider read from every check run of the head.
+func requiredProvidersPinned(gates map[string]any) bool {
+	providers, isObject := gates["requiredProviders"].(contract.OrderedObject)
+	return isObject && len(providers) > 0
+}
+
+// lightLegRecorded reports whether any check entry carries a testSkipped or testUnreadable mark: only then
+// can a substitute run answer a light leg, so only then is the provider of an older run's gate needed.
+func lightLegRecorded(checks []any) bool {
+	for _, raw := range checks {
+		if entry, isEntry := raw.(map[string]any); isEntry && (entry["testSkipped"] != nil || entry["testUnreadable"] != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+// completeJobProviders fills the provider of each job entry that the latest check-run listing could not
+// give one. The listing is filtered to the latest run, so the gate of an older run of the head -- a light
+// run a body-only edit mirrored from, say -- is no longer the latest check run of its name and carries no
+// provider. Under a pinned integration that gate cannot answer the integration, and the documented repair
+// is refused (CRW-946). The check runs of every run on the head supply the providers. The listing is read
+// only when the branch rule pins an integration, so the transcript of every other collection is unchanged;
+// its entries stay the same and only the providers of the job entries are filled.
+func completeJobProviders(f *Forge, owner, name, head string, checks []any, jobChecks map[string]string, problems *[]Problem) {
+	if len(jobChecks) == 0 {
+		return
+	}
+	every, e := f.enumerateREST("check runs of every run", "repos/"+owner+"/"+name+"/commits/"+head+"/check-runs", "check_runs", map[string]string{"filter": "all"}, idOf)
+	every = readEnumeration(every, e, problems)
+	providers := map[string]any{}
+	for _, raw := range every.Items {
+		n := mapOf(raw)
+		providers[HashKey(n["id"])] = provider(n)
+	}
+	for _, raw := range checks {
+		entry, isEntry := raw.(map[string]any)
+		if !isEntry {
+			continue
+		}
+		job, bound := jobChecks[strOf(entry["runId"])]
+		if !bound || entry["provider"] != nil {
+			continue
+		}
+		entry["provider"] = providers[job]
+	}
+}
+
+func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, connections *[]any) ([]any, []any, []any, map[string]string) {
 	root := "repos/" + owner + "/" + name
 	runs, err := f.enumerateREST("workflow runs", root+"/actions/runs", "workflow_runs", map[string]string{"head_sha": head}, idOf)
 	runs = readEnumeration(runs, err, problems)
@@ -557,8 +607,10 @@ func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, conn
 		n := mapOf(raw)
 		providers[HashKey(n["id"])] = provider(n)
 	}
+	jobChecks := map[string]string{}
 	for _, b := range bindings {
 		b.entry["provider"] = providers[b.id]
+		jobChecks[strOf(b.entry["runId"])] = b.id
 	}
 	for _, raw := range published.Items {
 		n := mapOf(raw)
@@ -580,7 +632,7 @@ func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, conn
 		entries = append(entries, map[string]any{"runId": "status:" + context, "name": context, "headSha": head, "conclusion": defaultString(n["state"], "unknown"), "attempt": 1, "provider": nil})
 		detail = append(detail, map[string]any{"source": "commit-status", "runId": "status:" + context, "name": context, "superseded": false, "status": n["state"], "conclusion": n["state"], "attempt": 1, "url": n["target_url"], "updatedAt": n["updated_at"]})
 	}
-	return entries, detail, superseded
+	return entries, detail, superseded, jobChecks
 }
 
 func collectGates(f *Forge, owner, name string, base any, problems *[]Problem, connections *[]any) map[string]any {
@@ -767,8 +819,11 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 	coverage, findings := collectReview(f, owner, name, number, &problems, &connections)
 	discussion, reviews := collectDiscussion(f, owner, name, number, &problems, &connections)
 	findings = append(findings, discussion...)
-	checks, detail, superseded := collectChecks(f, owner, name, head, &problems, &connections)
+	checks, detail, superseded, jobChecks := collectChecks(f, owner, name, head, &problems, &connections)
 	gates := collectGates(f, owner, name, pinned["baseRef"], &problems, &connections)
+	if requiredProvidersPinned(gates) && lightLegRecorded(checks) {
+		completeJobProviders(f, owner, name, head, checks, jobChecks, &problems)
+	}
 	after, e := candidate(f, owner, name, number)
 	var reread map[string]any
 	graded := pinned

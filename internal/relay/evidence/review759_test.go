@@ -17,6 +17,7 @@ package evidence
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // Two complementary light runs must not excuse each other. Each holds a leg the other skipped, so
@@ -188,15 +189,22 @@ func TestEvidenceReview759MirrorStepIsNotEvidence(t *testing.T) {
 		return map[string]any{"id": id, "name": "dev-gate", "run_attempt": 1, "status": "completed",
 			"conclusion": "success", "started_at": "2026-10-07T06:00:00Z"}
 	}
-	collect := func(runs []any, jobs map[int][]any) map[string]any {
+	// A dev-gate job's check-run on the head carries the app that ran it, as GitHub lists it: the
+	// provider the collector reads for the job's gate. The exempting run is judged with its substitute
+	// through that provider, so the fake lists both.
+	jobCheck := func(id int) map[string]any {
+		return map[string]any{"id": id, "name": "dev-gate", "head_sha": collectorHead, "status": "completed", "conclusion": "success", "app": map[string]any{"id": 42}}
+	}
+	collect := func(runs []any, jobs map[int][]any, checks []any) map[string]any {
 		snapshot, _ := Collect(fixedForge(&collectorScript{
-			threads: 1, unresolved: map[int]bool{}, runs: runs, jobs: jobs,
+			threads: 1, unresolved: map[int]bool{}, runs: runs, jobs: jobs, checks: checks,
 		}), "owner/name", 7)
 		return snapshot
 	}
 	exempted := collect(
 		[]any{run(8, "2026-10-07T06:00:00Z"), run(9, "2026-10-07T07:00:00Z")},
 		map[int][]any{8: {devGate(60), review759RanLeg(61)}, 9: {devGate(62), review759MirroredJob(63, "skipped")}},
+		[]any{jobCheck(60), jobCheck(62)},
 	)
 	if exempted["verdict"] != Ready {
 		t.Fatalf("the earlier run's own test run exempts the mirrored leg, want %s, got %s: %v",
@@ -206,6 +214,7 @@ func TestEvidenceReview759MirrorStepIsNotEvidence(t *testing.T) {
 	alone := collect(
 		[]any{run(9, "2026-10-07T07:00:00Z")},
 		map[int][]any{9: {devGate(62), review759MirroredJob(63, "skipped")}},
+		nil,
 	)
 	if alone["verdict"] != NotReady {
 		t.Fatalf("a mirrored leg with no earlier run that ran its tests must stay not ready, got %s: %v",
@@ -626,5 +635,106 @@ func TestEvidenceReview759ForeignNamesakeDoesNotBlockThePinnedIntegration(t *tes
 	checks[3].(map[string]any)["provider"] = "42"
 	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned); len(problems) != 0 {
 		t.Fatalf("a foreign namesake must not block the pinned integration, want no problem, got %v", problems)
+	}
+}
+
+// A declared requirement pins the integration even when the branch rule names no provider. A
+// substitute whose gate carries no provider is then no evidence that it ran the tests, the same as
+// under a named integration (CRW-946, the pre-merge evaluation's d1).
+func TestEvidenceReview759RequireDeclaredRefusesAnUnknownProvider(t *testing.T) {
+	checks := append(review759LightRun(),
+		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+	)
+	checks[0].(map[string]any)["provider"] = "42"
+	checks[2].(map[string]any)["provider"] = nil
+	problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, nil)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("an unknown provider is no substitute under a declared requirement, want one %s, got %v", ChecksStale, problems)
+	}
+	if !strings.Contains(problems[0].Detail, "crw-lane") {
+		t.Fatalf("the light refusal is the answer, got %q", problems[0].Detail)
+	}
+	// The contrast: the same substitute carrying the judged run's provider is the evidence.
+	checks[2].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, nil); len(problems) != 0 {
+		t.Fatalf("a substitute with a known provider is the evidence, want no problem, got %v", problems)
+	}
+}
+
+// A separate workflow's test leg is no obligation of the pinned integration. The suite of the
+// required check is the legs of the runs that emit that check; a run that emits no such check says
+// nothing about it, so its optional leg must not demand a rerun from the integration's own run
+// (CRW-946, the pre-merge evaluation's d3).
+func TestEvidenceReview759OptionalWorkflowLegIsNoPinnedObligation(t *testing.T) {
+	pinned := map[string][]string{"dev-gate": {"42"}}
+	checks := []any{
+		review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+		review759Entry("workflow-run:602:go-product (test-extra)#0", "go-product (test-extra)", "success", nil),
+	}
+	checks[0].(map[string]any)["provider"] = "42"
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned); len(problems) != 0 {
+		t.Fatalf("an optional workflow's leg must not be an obligation, want no problem, got %v", problems)
+	}
+}
+
+// review759LatestForge answers the check-runs listing filtered to the latest run with the given
+// entries, as GitHub does, and every other request from the full script.
+func review759LatestForge(s *collectorScript, latest []any) *Forge {
+	f := NewForge(func(argv []string, timeout time.Duration) (int, string, string, error) {
+		if last := argv[len(argv)-1]; strings.Contains(last, "/check-runs") && strings.Contains(last, "filter=latest") {
+			view := *s
+			view.checks = latest
+			return view.runner(argv, timeout)
+		}
+		return s.runner(argv, timeout)
+	})
+	f.PageSize = 100
+	f.Now = func() string { return "2026-09-26T00:00:00+00:00" }
+	return f
+}
+
+// A body-only pull request edit under a pinned integration: run 600 ran every leg and its gate is
+// the integration's; run 601 mirrors the leg with its test step skipped. The earlier run's check-run
+// is no longer the latest, so the latest listing does not hold it. Its gate must still carry the
+// integration, or the mirror cannot be answered by it and the documented repair is refused
+// (CRW-946, the pre-merge evaluation's d2).
+func TestEvidenceReview759BodyEditMirrorUnderPinnedIntegration(t *testing.T) {
+	s := &collectorScript{
+		threads: 1, unresolved: map[int]bool{},
+		runs: []any{
+			map[string]any{"id": 8, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request"},
+			map[string]any{"id": 9, "name": "CI", "head_sha": collectorHead, "workflow_id": 100, "event": "pull_request"},
+		},
+		jobs: map[int][]any{
+			8: {
+				map[string]any{"id": 31, "name": "dev-gate", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-07T06:00:00Z"},
+				map[string]any{"id": 32, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-07T06:01:00Z", "steps": []any{
+					map[string]any{"name": "Test and replay the contract corpus (test-1)", "conclusion": "success", "started_at": "2026-10-07T06:01:01Z"},
+				}},
+			},
+			9: {
+				map[string]any{"id": 41, "name": "dev-gate", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-07T07:00:00Z"},
+				map[string]any{"id": 42, "name": "go-product (test-1)", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-07T07:01:00Z", "steps": []any{
+					map[string]any{"name": "Test and replay the contract corpus (test-1)", "conclusion": "skipped", "started_at": nil},
+				}},
+			},
+		},
+		checks: []any{
+			map[string]any{"id": 31, "name": "dev-gate", "head_sha": collectorHead, "status": "completed", "conclusion": "success", "app": map[string]any{"id": 42}},
+			map[string]any{"id": 41, "name": "dev-gate", "head_sha": collectorHead, "status": "completed", "conclusion": "success", "app": map[string]any{"id": 42}},
+		},
+		rules: []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{"strict_required_status_checks_policy": false, "required_status_checks": []any{map[string]any{"context": "dev-gate", "integration_id": 42}}}}},
+	}
+	latest := []any{map[string]any{"id": 41, "name": "dev-gate", "head_sha": collectorHead, "status": "completed", "conclusion": "success", "app": map[string]any{"id": 42}}}
+	snapshot, err := Collect(review759LatestForge(s, latest), "owner/name", 7)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	for _, raw := range listOf(mapOf(snapshot)["problems"]) {
+		if code := strOf(mapOf(raw)["code"]); code == ChecksStale {
+			t.Fatalf("the body-edit mirror must be answered by run 600's integration gate, got %v", mapOf(raw)["detail"])
+		}
 	}
 }

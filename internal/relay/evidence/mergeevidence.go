@@ -488,6 +488,17 @@ func headTestLegNames(checks []any, name string, pinned []string, highest map[st
 		provider := providerField(entry)
 		foreign[run] = len(pinned) > 0 && provider != "" && !slices.Contains(pinned, provider)
 	}
+	// emits marks the runs that emit the required check name: their legs are this check's suite. A run
+	// that emits no such check is another workflow, and its optional legs are no obligation of the
+	// integration (CRW-946).
+	emits := map[string]bool{}
+	for _, entry := range checks {
+		if textField(entry, "name") == name {
+			if run := workflowRun(textField(entry, "runId")); run != "" {
+				emits[run] = true
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, entry := range checks {
 		if !isLightLegName(entry) {
@@ -497,7 +508,7 @@ func headTestLegNames(checks []any, name string, pinned []string, highest map[st
 		if newest, seen := highest[runId]; seen && attempt(entry).Cmp(newest) != 0 {
 			continue
 		}
-		if foreign[workflowRun(runId)] {
+		if foreign[workflowRun(runId)] || !emits[workflowRun(runId)] {
 			continue
 		}
 		seen[textField(entry, "name")] = true
@@ -570,15 +581,16 @@ func runRanTheWholeSuite(checks []any, run, name string, pinned []string, highes
 // refuses that pair, and it can only ever refuse more: a full run holds no skipped leg, so the
 // documented repair is untouched.
 //
-// The provider is read strictly where the branch rule pins the integration that answers the judged
-// check: the substitute run's gate must then carry a known provider inside that pinned set, because
+// The provider is read strictly where the integration that answers the judged check is pinned, by the
+// branch rule or by a declared requirement: the substitute run's gate must then carry a known provider,
+// inside the named set when the rule names one, because
 // a namesake from another integration does not answer this branch's gate and an unknown provider is
-// not evidence that it does (CRW-946). Where nothing is pinned the read stays lenient: the collector
+// not evidence that it does (CRW-946). Where nothing is pinned and nothing is declared the read stays lenient: the collector
 // fills an entry's provider from the check-run listing filtered to the LATEST run, so an older
 // workflow run whose check-run a newer one replaced carries none, and a strict equality would
 // refuse the labeled full run that is the documented repair. Two known, differing providers are a
 // refusal; an unknown one on either side is not evidence of a different integration.
-func testedElsewhere(checks []any, head, name, provider string, pinned, skipped []string, run string, highest map[string]*big.Int) bool {
+func testedElsewhere(checks []any, head, name, provider string, pinned, skipped []string, strict bool, run string, highest map[string]*big.Int) bool {
 	for _, entry := range checks {
 		runId := textField(entry, "runId")
 		candidate := workflowRun(runId)
@@ -593,10 +605,15 @@ func testedElsewhere(checks []any, head, name, provider string, pinned, skipped 
 			continue
 		}
 		candidateProvider := providerField(entry)
-		if len(pinned) > 0 {
-			// The branch rule names the integrations that answer this check, so the substitute run's
-			// gate must be one of them: an unknown provider is not evidence that it is.
-			if candidateProvider == "" || !slices.Contains(pinned, candidateProvider) {
+		if strict {
+			// The integration is pinned, by the branch rule or by a declared requirement. The substitute
+			// run's gate must carry a known provider: an unknown one is not evidence that it is the pinned
+			// integration. Where the rule names integrations it must be one of them; where it names none,
+			// it must match the judged gate's provider when that one is known (CRW-946).
+			if candidateProvider == "" || (len(pinned) > 0 && !slices.Contains(pinned, candidateProvider)) {
+				continue
+			}
+			if len(pinned) == 0 && provider != "" && candidateProvider != provider {
 				continue
 			}
 		} else if provider != "" && candidateProvider != "" && candidateProvider != provider {
@@ -809,7 +826,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 			// tests is the evidence: the lane's repair for a light run is a labeled full run on the
 			// same head. Where the branch rule pins the integrations that answer this check, the
 			// substitute run's gate must carry one of them (CRW-946).
-			if !testedElsewhere(checks, head, name, providerField(entry), providers[name], unconfirmed, workflowRun(run), highest) {
+			if !testedElsewhere(checks, head, name, providerField(entry), providers[name], unconfirmed, requireDeclared || len(providers[name]) > 0, workflowRun(run), highest) {
 				if key := run + "\x00" + name; lightKey == "" || key < lightKey {
 					lightKey, lightRun, lightName = key, run, unconfirmed[0]
 				}
