@@ -2362,11 +2362,8 @@ func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) (worktreeDe
 		// descriptor keeps whatever it held (CRW-894, and the walk leaves it as it was).
 		return worktreeDelUnreadableStdinRedirect{}, false
 	}
-	rest := op[1:]
-	if strings.HasPrefix(rest, ">") { // <> reopens the target read-write
-		rest = rest[1:]
-	}
-	if rest == "" { // the operator is a word of its own: its target is the next word
+	rest := strings.TrimPrefix(op[1:], ">") // <> reopens the target read-write
+	if rest == "" {                         // the operator is a word of its own: its target is the next word
 		if !hasNext {
 			return worktreeDelUnreadableStdinRedirect{}, false
 		}
