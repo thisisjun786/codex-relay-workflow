@@ -168,10 +168,7 @@ func updateRef(ctx context.Context, dir, ref, newCommit, oldCommit string) error
 func lsRemote(ctx context.Context, dir, remote, ref string) (string, bool, error) {
 	code, out, err := gitRun(ctx, dir, nil, "ls-remote", remote, "refs/heads/"+ref)
 	if err != nil {
-		if code < 0 || unreachableError(err.Error()) {
-			return "", true, err
-		}
-		return "", true, err
+		return "", code < 0 || unreachableError(err.Error()), err
 	}
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
@@ -188,7 +185,8 @@ func lsRemote(ctx context.Context, dir, remote, ref string) (string, bool, error
 func unreachableError(message string) bool {
 	lower := strings.ToLower(message)
 	for _, needle := range []string{"could not resolve host", "connection refused", "connection timed out", "network is unreachable",
-		"could not read from remote repository", "no route to host", "operation timed out", "temporary failure in name resolution"} {
+		"could not read from remote repository", "no route to host", "operation timed out", "temporary failure in name resolution",
+		"could not connect to server", "failed to connect to"} {
 		if strings.Contains(lower, needle) {
 			return true
 		}
