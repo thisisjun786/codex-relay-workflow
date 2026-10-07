@@ -7,7 +7,7 @@ reviewer, enable an unfinished app, or change branch protections.
 
 ## Identify the candidate and gates
 
-Pin the repository, PR, destination branch, current base/head SHAs, and dependencies.
+Pin the repository, the pull request where one exists, the destination branch, current base/head SHAs, and dependencies.
 Read applicable repository instructions, effective branch rules/protections, root
 CI workflows, and current review configuration. Separate required gates from
 optional integrations. Use actual configuration and recent execution evidence;
@@ -309,7 +309,7 @@ wait for Devin, and the child's wait for the one run is the step above.
 
 ### Late review threads
 
-This rule covers a late finding on any delivered head, whichever reviewer wrote it. A late finding is judged by the scope rule of [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt): one inside this issue's promise is fixed in this same issue, a P0 or security finding is fixed before the merge whatever its scope, a separable finding outside the promise is a follow-up with its own context, impact and outcome, and a P3 is recorded. The forge reading that finds one (`merge-evidence --restate`) applies to in-flight pull requests only ([In-flight pull requests (transition)](#in-flight-pull-requests-transition)); for internal work the coordinator grades a late finding by the rule below.
+This rule covers a late finding on any delivered head, whichever reviewer wrote it. For a task branch the integrator holds the candidate before the fast-forward and grades the thread by the same scope rule; the acceptance, correction and merge-turn steps that follow are the relay's mechanics for an in-flight pull request. A late finding is judged by the scope rule of [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt): one inside this issue's promise is fixed in this same issue, a P0 or security finding is fixed before the merge whatever its scope, a separable finding outside the promise is a follow-up with its own context, impact and outcome, and a P3 is recorded. The forge reading that finds one (`merge-evidence --restate`) applies to in-flight pull requests only ([In-flight pull requests (transition)](#in-flight-pull-requests-transition)); for internal work the coordinator grades a late finding by the rule below.
 
 A review thread is late when it is on the candidate's head and is not in the record's `threadsSeen`: the
 reviewer's one run ended after the child's receipt, or a reviewer that showed no signal for 30 minutes posted
@@ -881,6 +881,8 @@ planning side of the same failure is the naming rule in
 [issue boundaries](../../crw-plan/references/issue-boundaries.md#decide-the-boundary).
 
 ### Refresh the base yourself when only the base moved
+
+This section is the forge procedure for an in-flight pull request. A task branch has no forge update: the integrator merges dev into its local integration tree and verifies that tree before the fast-forward, and the steps below do not apply to it.
 
 **The installed relay still runs the PR path.** This section and the lane metrics below describe the
 relay's own mechanism on a pull request; the repository's rule is the integrator's verified

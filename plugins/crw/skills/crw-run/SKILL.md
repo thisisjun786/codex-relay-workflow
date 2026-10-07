@@ -915,9 +915,7 @@ Devin and Codex reviews are references there and not gates: the merge waits for 
 waits for the one run of each within its waiting budget before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
 Serialize integrations that share a target, verify the landing, and update the
 coordination record. Work inside a relay merge turn never runs in the background and records
-its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, push, pull request and the
-review handling on it, and reports once the current head is clean; the coordinator
-decides and performs the merge, and the child never merges. Release and deployment
+its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, its push of the task branch, the handoff and the local verification record, and reports once the current head is verified; the integrator fast-forwards the verified tree to dev, and the child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
 write git metadata are in [Operations contract](references/operations.md).
 
