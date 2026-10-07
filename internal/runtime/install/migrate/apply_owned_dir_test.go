@@ -36,16 +36,16 @@ func migrateOwnedDirUserPlan(t *testing.T, entries map[string]string) (string, s
 	return u, v, r, p
 }
 
-// migrateOwnedDirRaw reads a directory's raw mode, the way finishModes reads it, without opening it:
-// a root this run has just made can be private for the moment, and the cases below observe it before
-// its mode is finished.
+// migrateOwnedDirRaw reads a directory's raw mode through the same reader finishModes uses - the pinned
+// handle and applyDirRaw - so a case proves what the rerun's ownership judgement would actually see,
+// not a second reading taken another way.
 func migrateOwnedDirRaw(t *testing.T, path string) uint32 {
 	t.Helper()
-	var st unix.Stat_t
-	if err := unix.Fstatat(unix.AT_FDCWD, path, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		t.Fatalf("lstat %s: %v", path, err)
-	}
-	return uint32(st.Mode) & 0o7777
+	d := openDir(t, path)
+	defer d.Close()
+	raw, err := applyDirRaw(d)
+	must(t, err)
+	return raw
 }
 
 // C1: a .crw another actor makes 0700 after Open and before apply is not this run's directory, so the
