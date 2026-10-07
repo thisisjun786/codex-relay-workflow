@@ -197,14 +197,17 @@ func TestAuditDraftsReview744NonEnglishWhatGetsAnEnglishTitle(t *testing.T) {
 		defects: []AuditDefect{
 			{Severity: "P1", What: korean, Where: "a.go:1"},
 			{Severity: "P1", What: korean, Where: longPath + ":12"},
+			// A where that carries no path at all: the fallback has nothing to name, so the
+			// title stays English with the bare token rather than an empty path.
+			{Severity: "P1", What: korean, Where: ""},
 		},
 	})
 	cfg := auditDraftSectionOfState(t, state, nil, 0)
 	report := auditDraftRunOf(t, cfg, auditDraftScope{})
-	if len(report.Created) != 2 {
-		t.Fatalf("the run created %d drafts, want two: %+v", len(report.Created), report.Created)
+	if len(report.Created) != 3 {
+		t.Fatalf("the run created %d drafts, want three: %+v", len(report.Created), report.Created)
 	}
-	var short, long *auditDraft
+	titles := map[string]bool{}
 	for _, summary := range report.Created {
 		draft := auditDraftLoadAt(t, state, summary.Fingerprint)
 		if !strings.Contains(draft.Body, korean) {
@@ -213,17 +216,21 @@ func TestAuditDraftsReview744NonEnglishWhatGetsAnEnglishTitle(t *testing.T) {
 		if len([]rune(draft.Title)) > auditDraftTitleLimit {
 			t.Errorf("the title is %d characters: %q", len([]rune(draft.Title)), draft.Title)
 		}
-		if draft.Title == "P1: audit defect in a.go" {
-			short = draft
-		} else {
-			long = draft
+		titles[draft.Title] = true
+	}
+	for _, want := range []string{"P1: audit defect in a.go", "P1: audit defect"} {
+		if !titles[want] {
+			t.Errorf("no draft carries the title %q: %v", want, titles)
 		}
 	}
-	if short == nil {
-		t.Errorf("no draft carries the short English fallback title: %+v", report.Created)
+	long := false
+	for title := range titles {
+		if strings.HasPrefix(title, "P1: audit defect in internal/manage/deep/") {
+			long = true
+		}
 	}
-	if long == nil || !strings.HasPrefix(long.Title, "P1: audit defect in internal/manage/deep/") {
-		t.Errorf("the long title is %+v, want the truncated English fallback", long)
+	if !long {
+		t.Errorf("no draft carries the truncated long-path fallback: %v", titles)
 	}
 	for _, mode := range []string{auditModePR, auditModePackage} {
 		prompt := auditPrompt(&auditBundle{Mode: mode})
