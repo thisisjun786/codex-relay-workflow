@@ -56,6 +56,12 @@ func hookTrustRetrustUTF8IsolatedHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CRW_HOME", filepath.Join(home, ".crw"))
+	// The verification resolves codex through CODEX_BIN before PATH
+	// (hookTrustRetrustCodexBinary, codex_bin.go:33-36), so an inherited non-blank
+	// CODEX_BIN would send the probe to an externally configured binary instead of the
+	// fake codex these cases put on PATH. A blank value does not override, which keeps
+	// the cases hermetic wherever they run.
+	t.Setenv("CODEX_BIN", "")
 	before := hookTrustRetrustUTF8HomeListing(home)
 	t.Cleanup(func() {
 		if after := hookTrustRetrustUTF8HomeListing(home); after != before {
