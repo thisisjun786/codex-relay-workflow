@@ -1,11 +1,13 @@
 package install
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -46,6 +48,11 @@ const (
 	RecordChangedUnderneath = "record_changed_underneath"
 	RecordAppliedUnverified = "record_applied_unverified"
 	RecordPolicyChanged     = "record_policy_changed"
+	RecordUpdated           = "record_updated"
+	RecordWouldUpdate       = "record_would_update"
+	RecordUpdateFailed      = "record_update_failed"
+	RecordNotCanonical      = "record_not_canonical"
+	RecordSymlinked         = "record_symlinked"
 	Conflict                = "CONFLICT"
 	Busy                    = "BUSY"
 	PolicyUnreadable        = "execution_policy_unreadable"
@@ -207,7 +214,15 @@ func sameRegistration(found, wanted Object) bool {
 	return true
 }
 
+// policyRepair is the repair the create path's refusals name. It is unchanged: every existing answer
+// of register-mcp keeps its bytes, and the re-registration path this issue adds is documented where
+// the operator reads it (docs/runtime-install.md, "Re-registering a changed execution policy").
 const policyRepair = "move %s aside by hand, then run crw install register-mcp again. Threads started in between find no record and start no bridge; threads already running keep the bridge they spawned"
+
+// policyRestartRequired is what a re-registration answers about the running runtime: the record is
+// read at every start, so a bridge or relay service already running keeps the policy it started
+// under, and this command never touches one.
+const policyRestartRequired = "the record now names the execution policy this run read; a bridge or relay service already running keeps the policy it started under, so restart the relay service (and let Codex start a new bridge) before the new policy takes effect"
 
 // bridgeWrite is bridgerecord.write: decided twice, acted on once, never over a record that
 // says something else, and a record naming a policy is settled only against the policy file as
@@ -621,6 +636,333 @@ func pluginOwnership(codexHome, recordPath, name string, wanted Object) string {
 		return "the Codex configuration already registers " + reading.Show(name) + ", which is the user-owned registration; a plugin declaration beside it would run a second bridge. Remove that entry first"
 	}
 	return ""
+}
+
+// PolicyUpdateOptions are `crw install register-mcp --re-register-policy`'s inputs. The policy file
+// is named by --execution-policy, the flag the create path already spells, so there is one way to
+// name a policy; PolicyGiven is whether it was given at all.
+type PolicyUpdateOptions struct {
+	ExecutionPolicy string
+	PolicyGiven     bool
+	DryRun          bool
+}
+
+// UpdateRegisteredPolicy re-registers the execution policy of the bridge record that is already
+// installed. It reads and writes under the crw-mcp-ownership lock every writer of that record takes,
+// replaces executionPolicy alone - path and digest, with the file judged by the same check the bridge
+// applies at start (executionPolicyReading) - keeps every other field's bytes and order, backs the
+// record up beside itself before the replacement, publishes the new bytes atomically
+// (record.AtomicWrite: temporary file, fsync, rename) and fsyncs the directory, and answers
+// record_updated with the replaced field, the backup path and the restart the new policy needs. An
+// unchanged policy is left as it is. A record that is absent, unreadable or version 1 writes nothing
+// and answers with its own outcome, as does a policy the bridge would refuse. No bridge and no relay
+// service is started, stopped or signalled: a record written now is read by the next bridge start.
+func UpdateRegisteredPolicy(ctx context.Context, o Options, r PolicyUpdateOptions) (Object, int) {
+	recordPath := filepath.Join(o.CodexHome, BridgeRecordName)
+	base := Object{field("command", "register-mcp"), field("reRegisterPolicy", true), field("record", recordPath)}
+	refused := func(answer Object, why string) (Object, int) {
+		return append(answer, field("applied", false), field("wrote", false), field("note", why)), Refused
+	}
+	if !r.PolicyGiven && r.ExecutionPolicy == "" {
+		// The record's other fields are kept, so this path takes no owner and no bridge command: the
+		// only input it needs is the policy file.
+		return append(base, field("outcome", Conflict), field("detail", "the re-registration path names the policy to register with --execution-policy; the record's other fields are kept, so no other option is needed"),
+			field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
+	}
+	reading, why := executionPolicyReading(r.ExecutionPolicy)
+	if reading == nil {
+		return refused(append(base, field("outcome", PolicyUnreadable), field("detail", why)),
+			"nothing was written: a record naming a policy the bridge would refuse is a bridge that never starts")
+	}
+	lock, err := record.Lock(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
+	if err != nil {
+		if ctx.Err() != nil {
+			return refused(append(base, field("outcome", Interrupted), field("detail", interrupted(err))), "nothing was written")
+		}
+		return refused(append(base, field("outcome", Busy), field("detail", err.Error())),
+			"nothing was written: another run holds the ownership lock")
+	}
+	defer lock.Release()
+	if err := ctx.Err(); err != nil {
+		// The lock is the last boundary before the backup and the replacement: a cancelled run writes
+		// neither, so an interrupted command leaves the record as it was.
+		return refused(append(base, field("outcome", Interrupted), field("detail", interrupted(err))), "nothing was written")
+	}
+	// The look is taken before the record is read and compared again under the lock: a record that
+	// changed between the two, or after them, is a document this decision never saw.
+	before := lookAt(recordPath)
+	found, outcome, detail := readBridgeRecord(recordPath)
+	if found == nil {
+		if outcome == RecordAbsent {
+			return refused(append(base, field("outcome", RecordAbsent), field("detail", detail),
+				field("repair", "run crw install register-mcp --owner plugin --execution-policy <file> to write the record first")),
+				"nothing was written: the re-registration path replaces one field of a record that is already installed")
+		}
+		return refused(append(base, field("outcome", outcome), field("detail", detail)),
+			"nothing was written: the record that names the policy could not be read")
+	}
+	if pluginwiring.ReadBridgeRecord(found).Version == BridgeRecordVersion {
+		return refused(append(base, field("outcome", RecordDiffers),
+			field("detail", "the record is version 1 and names no execution policy; replacing one field would give it a policy without the recordVersion that declares one"),
+			field("differingFields", strs([]string{"executionPolicy", "recordVersion"})),
+			field("repair", strings.ReplaceAll(policyRepair, "%s", recordPath))), "nothing was written")
+	}
+	wanted := reRegistered(found, reading)
+	if wrong := append(bridgeComplaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
+		return refused(append(base, field("outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong))),
+			"nothing was written: the record this run would write is not one the launcher reads")
+	}
+	// The look and the read are two syscalls: a record replaced between them is not the document the
+	// look saw, and the answer says so rather than deciding on a record it never read.
+	if again := lookAt(recordPath); !again.same(before) {
+		return refused(append(base, field("outcome", RecordChangedUnderneath),
+			field("detail", "the record at "+recordPath+" changed while it was being read (another file, size, modification time or bytes), so nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
+	}
+	// A record reached through a symbolic link is refused: the read and the backup follow the link,
+	// but the replacement renames a file over the path itself, which would turn the link into a
+	// regular file and leave its target naming the old policy. The create path writes the same way,
+	// so this is reported rather than quietly done.
+	if info, err := os.Lstat(recordPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return refused(append(base, field("outcome", RecordSymlinked),
+			field("detail", "the record at "+recordPath+" is a symbolic link, and replacing it would turn the link into a regular file rather than update the file it names"),
+			field("repair", "replace the link with the record it names, or register the record at that path afresh")), "nothing was written")
+	}
+	// The bytes of the fields this path keeps are the bytes on disk only when the record is written in
+	// the installer's own canonical form. A record in any other spelling - hand-edited, or written by
+	// another tool - is refused rather than rewritten, because publishing it would reserialize the
+	// fields this operation promises to leave alone.
+	if !bytes.Equal(before.raw, record.Encode(found)) {
+		return refused(append(base, field("outcome", RecordNotCanonical),
+			field("detail", "the record at "+recordPath+" is not in the form this installer writes, so replacing one field would rewrite the others; this path keeps every field it does not replace byte for byte"),
+			field("repair", "move "+recordPath+" aside and run crw install register-mcp --owner plugin --execution-policy <file>, then rerun this command for later policy edits")),
+			"nothing was written")
+	}
+	// One owner registers this surface: a Codex configuration that also starts the bridge is the other
+	// registration, and replacing the plugin record beside it would leave two bridges running.
+	if conflict := competingRegistration(o.CodexHome, wanted); conflict != "" {
+		return refused(append(base, field("outcome", Conflict), field("detail", conflict)),
+			"nothing was written. One owner registers this server; the other is reported with its evidence rather than joined.")
+	}
+	if pyjson.Dumps(record.Get(found, "executionPolicy"), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) ==
+		pyjson.Dumps(record.Get(wanted, "executionPolicy"), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+		return append(base, field("outcome", RecordUnchanged), field("detail", "the record already names this execution policy"),
+			field("executionPolicy", reading), field("applied", false), field("wrote", false), field("note", "nothing was written")), OK
+	}
+	if again := lookAt(recordPath); !again.same(before) {
+		return refused(append(base, field("outcome", RecordChangedUnderneath),
+			field("detail", "the record at "+recordPath+" changed after it was read (another file, size, modification time or bytes), so nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands")), "nothing was written")
+	}
+	if stale := policyFileComplaints(policyReference(reading)); len(stale) > 0 {
+		return refused(append(base, field("outcome", RecordPolicyChanged),
+			field("detail", "the execution policy changed after it was read: "+strings.Join(stale, "; ")+", so nothing was written"),
+			field("repair", "run crw install register-mcp --re-register-policy again against the file as it now stands")), "nothing was written")
+	}
+	if r.DryRun {
+		return append(base, field("outcome", RecordWouldUpdate), field("detail", "would replace the record's execution policy; nothing was written"),
+			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("restartRequired", policyRestartRequired),
+			field("applied", false), field("wrote", false), field("note", "nothing was written")), OK
+	}
+	if err := ctx.Err(); err != nil {
+		// The last boundary before the first durable effect.
+		return refused(append(base, field("outcome", Interrupted), field("detail", interrupted(err))), "nothing was written")
+	}
+	// The last moment another writer can still be seen: the seam runs here, between the decision and
+	// the backup, so a test can act as an editor does. What it changes is caught by the checks below -
+	// a record that moved answers record_changed_underneath, one that went away answers
+	// record_update_failed, and a rewritten policy answers record_policy_changed - so no writer that
+	// ignores the ownership lock is silently overwritten.
+	if !r.DryRun {
+		beforeWriteLock(recordPath)
+	}
+	// The backup holds the bytes the decision was made from, not whatever a later look would find, so
+	// it can always restore exactly the record this run replaced.
+	backup, err := backupBridgeRecord(recordPath, o, before.raw)
+	if err != nil {
+		return refused(append(base, field("outcome", RecordUpdateFailed),
+			field("detail", "the record could not be backed up ("+err.Error()+"), so nothing was written"),
+			field("repair", "check that the directory holding the record can be written")), "nothing was written")
+	}
+	// The record is looked at once more, immediately before the replacement, and the backup above still
+	// holds exactly the document this decision was made from.
+	if again := lookAt(recordPath); !again.same(before) {
+		return refused(append(base, field("outcome", RecordChangedUnderneath),
+			field("detail", "the record at "+recordPath+" changed while this run was backing it up (another file, size, modification time or bytes), so it was not replaced"),
+			field("backup", backup), field("repair", "rerun to decide against the file as it now stands")), "the record was not replaced; the backup beside it holds the bytes this run read")
+	}
+	if renamed, err := publishRecord(recordPath, record.Encode(wanted)); err != nil {
+		if !renamed {
+			return refused(append(base, field("outcome", RecordUpdateFailed),
+				field("detail", "the record could not be written: "+err.Error()), field("backup", backup)),
+				"the record was left as it was; the backup beside it holds the bytes it had")
+		}
+		// The rename happened and its durability could not be established: the record at that path is
+		// the new one, so this is not reported as nothing written.
+		return append(base, field("outcome", RecordAppliedUnverified),
+			field("detail", "the record was replaced and the directory could not be fsynced ("+err.Error()+"); a host that loses power now may find the previous record"),
+			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),
+			field("restartRequired", policyRestartRequired), field("applied", true), field("wrote", true),
+			field("note", "the record names the new policy; its durability was not established")), Refused
+	}
+	// Read back: the answer names the record this run wrote, not the one it meant to write.
+	readBack, readOutcome, _ := readBridgeRecord(recordPath)
+	if readOutcome != "" || pyjson.Dumps(readBack, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+		return append(base, field("outcome", RecordAppliedUnverified),
+			field("detail", "the record was replaced and could not be read back as written ("+readOutcome+"); the next bridge start reads whatever is at "+recordPath),
+			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),
+			field("restartRequired", policyRestartRequired), field("applied", true), field("wrote", true),
+			field("note", "the record was written and could not be read back as written; the plugin should not be relied on to start the bridge until it can be")), Refused
+	}
+	// The policy file is checked once more, after publication: an editor that rewrote it while this
+	// run was writing leaves a record whose digest the launcher refuses, and that is reported rather
+	// than hidden. The record is not undone - the launcher already fails closed on a stale digest.
+	if stale := policyFileComplaints(policyReference(reading)); len(stale) > 0 {
+		return append(base, field("outcome", RecordPolicyChanged),
+			field("detail", "the record was replaced with the policy this run read, and the policy has changed since: "+strings.Join(stale, "; ")+". The record was not undone"),
+			field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),
+			field("restartRequired", policyRestartRequired), field("applied", true), field("wrote", true),
+			field("repair", "run crw install register-mcp --re-register-policy again against the file as it now stands")), Refused
+	}
+	return append(base, field("outcome", RecordUpdated), field("detail", "the record's execution policy was replaced; every other field is as it was"),
+		field("replacedField", "executionPolicy"), field("executionPolicy", reading), field("backup", backup),
+		field("restartRequired", policyRestartRequired), field("applied", true), field("wrote", true),
+		field("note", "no bridge and no relay service was touched; a relay service already running needs a restart to read the new policy")), OK
+}
+
+// reRegistered is the record with only its executionPolicy replaced. Every other field keeps its key,
+// its position and its bytes: this path writes one field and never rebuilds the document.
+func reRegistered(found Object, policy Object) Object {
+	out := make(Object, 0, len(found))
+	for _, f := range found {
+		if f.Key == "executionPolicy" {
+			out = append(out, field("executionPolicy", Object{field("digest", record.Get(policy, "digest")), field("path", record.Get(policy, "path"))}))
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// policyReference is the two fields the record carries, taken from the reading the bridge's own check
+// produced: executionPolicyReading answers the mode and the roles too, which the record never holds.
+func policyReference(reading Object) Object {
+	return Object{field("path", record.Get(reading, "path")), field("digest", record.Get(reading, "digest"))}
+}
+
+// competingRegistration is why the record may not be replaced because another owner registers the
+// bridge: a Codex configuration that starts this bridge, under this server's name or any other, is
+// the second owner the create path refuses as well. An unreadable configuration refuses rather than
+// defaulting, because the question is whether a second bridge would run.
+func competingRegistration(codexHome string, wanted Object) string {
+	view, configPath, unread := readServers(codexHome)
+	if unread != "" {
+		return unread + ", so whether the bridge is registered there as well was not established"
+	}
+	executable, _ := record.Get(wanted, "bridgeExecutable").(string)
+	if aliased := bridgeTables(view, "", executable); len(aliased) > 0 {
+		return "the Codex configuration already starts this bridge as " + strings.Join(aliased, ", ") + ", which is a user-owned registration carrying no ownership record; replacing the plugin record beside it would leave two bridges. Remove that entry first"
+	}
+	name, _ := record.Get(wanted, "serverName").(string)
+	if name == "" {
+		name = ServerName
+	}
+	if _, ok := view[name]; ok {
+		return "the Codex configuration already registers " + reading.Show(name) + " in " + configPath + ", which is the user-owned registration; replacing the plugin record beside it would leave two bridges. Remove that entry first"
+	}
+	return ""
+}
+
+// publishRecord replaces the record with the bytes given, durably: a temporary file beside it takes
+// the existing record's mode, its contents are fsynced, the file is closed, renamed over the record,
+// and the directory is fsynced so the rename itself survives a power loss. record.AtomicWrite stops
+// at the rename, which is not enough for an answer that promises the new record is the one on disk.
+// renamed reports whether the record at that path is the new one: a failure after the rename is a
+// record that was replaced whose durability was not established, which a caller must not report as
+// nothing written.
+func publishRecord(recordPath string, data []byte) (renamed bool, err error) {
+	info, err := os.Stat(recordPath)
+	if err != nil {
+		return false, err
+	}
+	dir := filepath.Dir(recordPath)
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return false, err
+	}
+	file, err := os.CreateTemp(dir, ".crw-write-")
+	if err != nil {
+		return false, err
+	}
+	temporary := file.Name()
+	fail := func(err error) (bool, error) {
+		_ = file.Close()
+		_ = os.Remove(temporary)
+		return false, err
+	}
+	if err := os.Chmod(temporary, info.Mode().Perm()); err != nil {
+		return fail(err)
+	}
+	if _, err := file.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := file.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(temporary)
+		return false, err
+	}
+	if err := os.Rename(temporary, recordPath); err != nil {
+		_ = os.Remove(temporary)
+		return false, err
+	}
+	return true, syncDirectory(dir)
+}
+
+// backupBridgeRecord copies the record as it stood when the decision was made to a stamped .bak
+// beside it - the shape the configguard writes for config.toml - and answers that name. The bytes are
+// the ones the decision read, so the backup always restores exactly the record this run replaced; the
+// copy is fsynced before the replacement is published.
+func backupBridgeRecord(recordPath string, o Options, raw []byte) (string, error) {
+	info, err := os.Stat(recordPath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(recordPath), 0o777); err != nil {
+		return "", err
+	}
+	// Two re-registrations inside one stamp's precision each keep their own backup: the name carries
+	// the stamp the configguard writes, and a taken name takes the next number instead of failing or
+	// overwriting a backup that is already there.
+	stamp := strings.NewReplacer(":", "-", ".", "-").Replace(o.stamp())
+	name := ""
+	var out *os.File
+	for attempt := 0; attempt < 1000 && name == ""; attempt++ {
+		candidate := recordPath + ".crw-" + stamp + ".bak"
+		if attempt > 0 {
+			candidate = recordPath + ".crw-" + stamp + "-" + strconv.Itoa(attempt) + ".bak"
+		}
+		out, err = os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		switch {
+		case err == nil:
+			name = candidate
+		case errors.Is(err, os.ErrExist):
+			err = nil
+		default:
+			return "", err
+		}
+	}
+	if name == "" {
+		return "", errors.New("no free backup name beside " + recordPath)
+	}
+	_, writeErr := out.Write(raw)
+	syncErr := out.Sync()
+	closeErr := out.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
 }
 
 // ordered is a decoded Go value with every map turned into an object in sorted key order, so a

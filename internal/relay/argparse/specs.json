@@ -680,6 +680,30 @@
   {"flag":"--repository"},
   {"flag":"--base-ref"},
   {"flag":"--parent-task","help":"every live claim one task holds, across targets. What a parent that just restarted can ask with the only identifier it still has"}]},
+{"name":"merge-train-open","summary":"open a merge train over the verified pull requests the leader's turn carries, one bundle pull request whose single tree gets one CI run","options":[
+  {"flag":"--turn","required":true,"help":"the leader's holding turn; its pull request is the bundle's first member"},
+  {"flag":"--actor","required":true,"help":"the leader, the holder of that turn"},
+  {"flag":"--base-sha","required":true,"help":"the dev tip D the bundle is built on. The relay reads the base branch itself and refuses a different value"},
+  {"flag":"--member","kind":"append","required":true,"help":"a member pull request, in bundle order; repeat once per member. Every member but the leader's own must have a waiting turn on the same target whose head is that pull request's head. One member opens no train and the answer says so"}]},
+{"name":"merge-train-verify","summary":"the leader proves the bundle pull request's run and first-parent chain and appends a verified event","options":[
+  {"flag":"--train","required":true},
+  {"flag":"--actor","required":true,"help":"the train's leader; another task is refused disposition_conflict"},
+  {"flag":"--bundle-pr","required":true,"help":"the open bundle pull request on dev, labelled crw-lane, whose head is H"},
+  {"flag":"--head","required":true,"help":"the bundle head H; the relay reads the pull request's head and the run's head_sha itself and compares"},
+  {"flag":"--run","required":true,"help":"the ci.yml run for H whose newest attempt is completed/success with every expected job a success and every go-product test leg's test step a success"},
+  {"flag":"--repo","required":true,"help":"a checkout holding H's first-parent chain down to D, where the chain proof runs from git objects alone"}]},
+{"name":"merge-train-land","summary":"record that the bundle landed as one merge commit M and close every member turn landed","options":[
+  {"flag":"--train","required":true},
+  {"flag":"--actor","required":true,"help":"the train's leader"},
+  {"flag":"--landed-sha","required":true,"help":"the bundle's merge commit M; the relay reads the dev tip and M's parents from the forge and refuses anything else"},
+  {"flag":"--observed-base-sha","help":"optional cross-check: the dev tip you read after the merge. The relay reads the branch itself and refuses a value that disagrees"}]},
+{"name":"merge-train-close","summary":"close a train done, or abandon it and return its member turns to waiting","options":[
+  {"flag":"--train","required":true},
+  {"flag":"--actor","required":true,"help":"the train's leader"},
+  {"flag":"--state","required":true,"choices":["done","abandoned"],"help":"the event kind this appends; abandoned returns the member turns to waiting"},
+  {"flag":"--reason","required":true}]},
+{"name":"merge-train-show","summary":"read one train: its members in order, its event log and the state its newest event derives","options":[
+  {"flag":"--train","required":true}]},
 {"name":"slot-reserve","options":[
   {"flag":"--kind","required":true},
   {"flag":"--subject","required":true},

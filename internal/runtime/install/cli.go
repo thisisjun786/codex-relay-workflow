@@ -108,7 +108,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	var unitName, unitDir, scopeDir *string
 	var bridgeArgs repeated
 	var policy, backup given
-	var dryRun, removeUnit *bool
+	var dryRun, removeUnit, reRegisterPolicy *bool
 	var guardTimeout, timeout *int64
 	switch command {
 	case "install", "update":
@@ -126,6 +126,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		bridgeCommand = flags.String("bridge-command", "", "the bridge executable (default ~/.local/share/crw-runtime/current/bin/codex-thread-bridge)")
 		flags.Var(&bridgeArgs, "bridge-arg", "an argument the launcher passes the bridge (repeatable)")
 		flags.Var(&policy, "execution-policy", "the host's execution policy file, named by path and digest in the record")
+		reRegisterPolicy = flags.Bool("re-register-policy", false, "replace only the executionPolicy of the record that is already installed, after the same check the bridge makes at start (takes the file from --execution-policy)")
 		dryRun = flags.Bool("dry-run", false, "report what would be written and write nothing")
 	case "hook":
 		owner = flags.String("owner", OwnerPlugin, "who registers the Stop adapter: plugin (the only supported owner)")
@@ -243,7 +244,13 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	case "status":
 		result, code = Status(ctx, o)
 	case "register-mcp":
-		result, code = RegisterMCP(ctx, o, RegisterOptions{Owner: *owner, Name: *name, BridgeCommand: *bridgeCommand, BridgeArgs: bridgeArgs, ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
+		if *reRegisterPolicy {
+			// Dispatched before the create path: this operation keeps every field of the record that
+			// is already installed, so the owner the create path would apply does not govern here.
+			result, code = UpdateRegisteredPolicy(ctx, o, PolicyUpdateOptions{ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
+		} else {
+			result, code = RegisterMCP(ctx, o, RegisterOptions{Owner: *owner, Name: *name, BridgeCommand: *bridgeCommand, BridgeArgs: bridgeArgs, ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
+		}
 	case "hook":
 		result, code = Hook(ctx, o, HookOptions{Owner: *owner, Relay: *relayCommand, MarkerRoot: *markerRoot, Database: *dbPath, Socket: *socket,
 			JournalRoot: *journalRoot, Mode: *mode, Isolation: *isolation, GuardTimeout: *guardTimeout, Timeout: *timeout, DryRun: *dryRun})

@@ -291,8 +291,12 @@ func TestRunHelpGoesToStdout(t *testing.T) {
 // context from the server's base context.
 func TestRequestContextFollowsTheRunContext(t *testing.T) {
 	seen := make(chan error, 1)
+	// entered is closed by the handler once it is running, so the test cancels only after the
+	// handler has entered rather than after a fixed sleep that a slow machine can outrun.
+	entered := make(chan struct{})
 	token := "a-token-for-this-test"
 	routes := []Route{{Method: http.MethodPost, Path: "/api/wait", Handler: func(_ *Env, r *http.Request) (Response, error) {
+		close(entered)
 		<-r.Context().Done()
 		seen <- r.Context().Err()
 		return Response{Status: http.StatusOK, Body: map[string]any{"ok": true}}, nil
@@ -314,7 +318,11 @@ func TestRequestContextFollowsTheRunContext(t *testing.T) {
 		_, _ = (&http.Client{Timeout: 15 * time.Second}).Do(request)
 		close(clientDone)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the handler did not enter before the cancellation")
+	}
 	cancel()
 	select {
 	case err := <-seen:
