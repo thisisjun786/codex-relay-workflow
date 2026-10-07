@@ -127,16 +127,17 @@ func improveNewAccumulator() *improveAccumulator {
 // improveAdd merges one record. A record's what is kept from the first row of its identity,
 // so the value does not depend on which row a later read happened to reach first. The
 // identity is a JSON array rather than joined text, so a key that carries a delimiter
-// cannot make two different identities read as one.
+// cannot make two different identities read as one. The two times are compared as the
+// instants they name, so a fractional second or a different offset cannot reverse them.
 func (a *improveAccumulator) improveAdd(r improveRecord) {
 	identity := improveIdentity(r.Kind, r.Key, r.Where)
 	if at, ok := a.index[identity]; ok {
 		current := &a.records[at]
 		current.Count += r.Count
-		if r.FirstAt != "" && (current.FirstAt == "" || r.FirstAt < current.FirstAt) {
+		if improveParseEarlier(r.FirstAt, current.FirstAt) {
 			current.FirstAt = r.FirstAt
 		}
-		if r.LastAt > current.LastAt {
+		if improveParseLater(r.LastAt, current.LastAt) {
 			current.LastAt = r.LastAt
 		}
 		if current.What == "" || (improveGenericReason(current.What) && !improveGenericReason(r.What)) {
@@ -147,6 +148,67 @@ func (a *improveAccumulator) improveAdd(r improveRecord) {
 	}
 	a.index[identity] = len(a.records)
 	a.records = append(a.records, r)
+}
+
+// improveParseInstant parses a stored time as the instant it names. The second result is false
+// when the text is empty or is not an RFC3339Nano instant this build can read.
+func improveParseInstant(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+// improveParseEarlier reports whether candidate is the earlier of two stored times and should
+// replace current as a record's first_at. An empty candidate never does and an empty current
+// always does. A value that is not an instant goes after one that is, because comparing the text
+// instead reverses "…00:00:00.5Z" and "…00:00:00Z": '.' sorts before 'Z'. Two values that are
+// both unreadable fall back to their text, so the same input still writes the same bytes.
+func improveParseEarlier(candidate, current string) bool {
+	if candidate == "" {
+		return false
+	}
+	if current == "" {
+		return true
+	}
+	parsed, ok := improveParseInstant(candidate)
+	if !ok {
+		if _, currentOK := improveParseInstant(current); currentOK {
+			return false
+		}
+		return candidate < current
+	}
+	if currentParsed, currentOK := improveParseInstant(current); currentOK {
+		return parsed.Before(currentParsed)
+	}
+	return true
+}
+
+// improveParseLater reports whether candidate is the later of two stored times and should replace
+// current as a record's last_at. It is improveParseEarlier's mirror, including where a value that
+// is not an instant sits: after every value that is one.
+func improveParseLater(candidate, current string) bool {
+	if candidate == "" {
+		return false
+	}
+	if current == "" {
+		return true
+	}
+	parsed, ok := improveParseInstant(candidate)
+	if !ok {
+		if _, currentOK := improveParseInstant(current); currentOK {
+			return true
+		}
+		return candidate > current
+	}
+	if currentParsed, currentOK := improveParseInstant(current); currentOK {
+		return parsed.After(currentParsed)
+	}
+	return false
 }
 
 // improveGenericReason reports whether a split record description is only the bare outcome
@@ -725,19 +787,42 @@ func improveReadRelay(ctx context.Context, dbPath string, acc *improveAccumulato
 		if err != nil {
 			return err
 		}
+		// A child's blocked_needs_input receipt carries no reason field: receiptFields in
+		// internal/relay/store/receipt_shape.go allows none, so reading one there found no
+		// reason for any real blockage. The reason is the note of the decision reply that
+		// answered the event, and that receipt names the answered event in its answersEvent, so
+		// one prepass indexes the replies before the blocked rows are read.
+		answered := map[improveParseBlockedKey]string{}
+		for _, row := range splits {
+			if row.Text("outcome") != "decision_reply" {
+				continue
+			}
+			receipt := improveParseJSONObject(row.Text("receipt"))
+			event := improveStringField(receipt, "answersEvent")
+			if event == "" {
+				continue
+			}
+			answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: event}] = improveStringField(receipt, "note")
+		}
 		for _, row := range splits {
 			outcome, receipt := row.Text("outcome"), improveParseJSONObject(row.Text("receipt"))
+			project := row.Text("project_key")
+			issue := row.Text("issue_key")
+			var reason string
 			if outcome == "decision_reply" {
 				decision := improveStringField(receipt, "decision")
 				if decision != "split_approval" && decision != "scope_change" {
 					continue
 				}
-			}
-			project := row.Text("project_key")
-			issue := row.Text("issue_key")
-			reason := improveStringField(receipt, "reason", "detail", "note", "question", "summary")
-			if reason == "" {
-				reason = improveStringField(receipt, "outcome", "decision")
+				reason = improveStringField(receipt, "reason", "detail", "note", "question", "summary")
+				if reason == "" {
+					reason = improveStringField(receipt, "outcome", "decision")
+				}
+			} else {
+				reason = answered[improveParseBlockedKey{relationship: row.Text("relationship_id"), event: row.Text("event_id")}]
+				if reason == "" {
+					reason = string(store.BlockedNeedsInput)
+				}
 			}
 			rows++
 			acc.improveAdd(improveRecord{Kind: improveKindSplit, Key: improveSplitKey(project, issue), Where: row.Text("relationship_id"),
@@ -760,6 +845,14 @@ func improveSplitKey(project, issue string) string {
 		return project
 	}
 	return issue
+}
+
+// improveParseBlockedKey names one blocked event inside one relationship. The two fields are
+// compared as themselves rather than joined, so a value that carries a delimiter cannot make two
+// different events read as one.
+type improveParseBlockedKey struct {
+	relationship string
+	event        string
 }
 
 // improveReadDag reads each plan the source's pattern names out of the store at dbPath and
@@ -879,27 +972,22 @@ func improveReadInterventions(path string, acc *improveAccumulator) (int, error)
 	return len(lines), nil
 }
 
-// improveReadDrafts reads the audit drafts a management session keeps: one JSON file per
-// draft, under a directory or a single file, and normalizes each by the issue it drafts.
+// improveReadDrafts reads the audit drafts a management session keeps: one crw-issue-draft/1
+// document per draft, under a directory or as a single file. A candidate that decodes to an object
+// of another schema — the directory's index.json, or any other document — is skipped and not
+// counted, so the listing is never read as a draft of its own. Each draft becomes one record keyed
+// by its fingerprint, whose first and last sighting are the earliest and latest seen[].at. A
+// document whose schema is right but whose fingerprint is empty is refused, because a record keyed
+// on nothing would merge two different drafts.
+//
+// A candidate that is not a JSON object at all is refused rather than skipped: it is not a
+// document of another schema, so reading it as nothing would report a complete bundle over a file
+// the drafts directory could not be read from. That is the rule improveReadJSONLines already
+// applies to a null line, and it is what this reader did before the schema gate existed.
 func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
-	info, err := os.Stat(path)
+	files, err := improveParseDraftFiles(path)
 	if err != nil {
 		return 0, err
-	}
-	var files []string
-	if info.IsDir() {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return 0, err
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-				files = append(files, filepath.Join(path, entry.Name()))
-			}
-		}
-		sort.Strings(files)
-	} else {
-		files = []string{path}
 	}
 	rows := 0
 	for _, file := range files {
@@ -907,17 +995,75 @@ func improveReadDrafts(path string, acc *improveAccumulator) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		draft := improveParseJSONObject(string(data))
-		if draft == nil {
-			return 0, fmt.Errorf("%s: not a JSON object", file)
+		schema, err := improveParseDraftSchema(file, data)
+		if err != nil {
+			return 0, err
 		}
+		if schema != auditDraftSchema {
+			continue
+		}
+		// auditDraftLoad (CRW-695) is the writer's own reader: it refuses an empty or mismatched
+		// fingerprint and a key this build does not know, so a document that claims to be a draft
+		// but is not one is named rather than read as something else.
+		draft, err := auditDraftLoad(file)
+		if err != nil {
+			return 0, err
+		}
+		first, last := improveParseSeenBounds(draft.Seen)
 		rows++
-		acc.improveAdd(improveRecord{Kind: improveKindDraft, Key: improveStringField(draft, "issue", "identifier"),
-			Where: improveStringField(draft, "project", "project_key"), What: improveStringField(draft, "title", "summary"), Count: 1,
-			FirstAt: improveStringField(draft, "created_at", "recorded_at", "graded_at"), LastAt: improveStringField(draft, "created_at", "recorded_at", "graded_at"),
-			Evidence: []string{file}})
+		acc.improveAdd(improveRecord{Kind: improveKindDraft, Key: draft.Fingerprint, Where: draft.Project, What: draft.Title, Count: 1,
+			FirstAt: first, LastAt: last, Evidence: []string{file}})
 	}
 	return rows, nil
+}
+
+// improveParseDraftFiles is the candidate draft files of a configured path: the .json files
+// directly inside a directory, or the path itself when it is a file.
+func improveParseDraftFiles(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return []string{path}, nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			files = append(files, filepath.Join(path, entry.Name()))
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+// improveParseDraftSchema is the schema a candidate file declares. A file that is not a JSON
+// object carries no schema and is refused, because the drafts directory could not be read as what
+// it holds rather than as a document of another schema.
+func improveParseDraftSchema(path string, data []byte) (string, error) {
+	object := improveParseJSONObject(string(data))
+	if object == nil {
+		return "", fmt.Errorf("%s: not a JSON object", path)
+	}
+	return improveStringField(object, "schema"), nil
+}
+
+// improveParseSeenBounds is the earliest and latest sighting of a draft's seen list, compared as
+// instants so a fractional second or a different offset cannot reverse them.
+func improveParseSeenBounds(seen []auditDraftSeen) (first, last string) {
+	for _, entry := range seen {
+		if improveParseEarlier(entry.At, first) {
+			first = entry.At
+		}
+		if improveParseLater(entry.At, last) {
+			last = entry.At
+		}
+	}
+	return first, last
 }
 
 // improveReadIssues reads the issue list a management session exported: an array of issues,
