@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	// The fixture builds a real store, so this test binary links internal/relay/store and must
 	// also link internal/testsupport: that package refuses a database below a live relay state
@@ -123,29 +124,85 @@ func (f *checkpointFixture) decision(eventID, relationshipID, decision, at strin
 // made about. A landed merge carries the parent's merged mark on the acceptance's event,
 // generation and revision, which the scheduler's integration rule requires beside the
 // observation.
-func (f *checkpointFixture) acceptance(planID, project, acceptanceID, head, at string) {
-	f.exec("INSERT OR IGNORE INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES (?,?,'parent',?)",
-		planID, project, checkpointAt(0))
-	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,'node','manifest',?,1,'event','revision','criteria','verified',?,'verified','turn','{}','parent',0,?,'active')",
-		acceptanceID, planID, "relationship-"+acceptanceID, head, at)
+func (f *checkpointFixture) acceptance(planID, node, relationshipID, acceptanceID, event, head, at string) {
+	f.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state) VALUES (?,?,?,'manifest',?,1,?,?,'criteria','verified',?,'verified','turn','{}','parent',0,?,'active')",
+		acceptanceID, planID, node, relationshipID, event, "revision-"+acceptanceID, head, at)
 }
 
 // mark records the parent's merged mark on an acceptance, which is what makes an observation an
 // integration rather than a mere ancestry reading.
-func (f *checkpointFixture) mark(acceptanceID, at string) {
-	f.exec("INSERT INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?,'merged','event',1,'revision','{}','parent',?)",
-		"relationship-"+acceptanceID, at)
+func (f *checkpointFixture) mark(relationshipID, event, acceptanceID, at string) {
+	f.exec("INSERT INTO assignment_marks (relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at) VALUES (?,'merged',?,1,?,'{}','parent',?)",
+		relationshipID, event, "revision-"+acceptanceID, at)
 }
 
 // observation records one ancestry observation of an acceptance in the target branch. seq orders
 // the observations of one acceptance and target, which is how a later one supersedes an earlier.
-func (f *checkpointFixture) observation(acceptanceID, at string, seq int, isAncestor bool) {
+func (f *checkpointFixture) observation(acceptanceID, head, repository, baseRef, at string, seq int, isAncestor bool) {
 	flag := 0
 	if isAncestor {
 		flag = 1
 	}
-	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES (?,?,'owner/repo','dev','subject','tip',?,'ancestry',?,?)",
-		fmt.Sprintf("observation-%s-%d", acceptanceID, seq), acceptanceID, flag, seq, at)
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES (?,?,?,?,?,'tip',?,'ancestry',?,?)",
+		fmt.Sprintf("observation-%s-%s-%s-%d", acceptanceID, repository, baseRef, seq), acceptanceID, repository, baseRef, head, flag, seq, at)
+}
+
+// checkpointDigest is a stand-in for a digest: 64 lowercase hex characters derived from a name.
+func checkpointDigest(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])
+}
+
+// checkpointNodeDoc is a plan node's document: its id, the issue it carries, its kind and a
+// criteria digest derived from the id.
+func checkpointNodeDoc(id, kind string) map[string]any {
+	return map[string]any{"node_id": id, "issue_key": "CRW-" + id, "kind": kind, "criteria_set_digest": checkpointDigest("criteria " + id)}
+}
+
+// plan registers a real DAG plan revision through dag.Repo.Put, so the reading's call to
+// dagsched.ExecutionIntegrated — which re-derives the plan's slice and state digests — can read
+// it. A store written by hand cannot serve that call: the scheduler verifies the plan's rows
+// against its log.
+//
+// node is an implementation node with one integrated edge per target, so the node's targets are
+// exactly the ones the caller names, which is what makes an acceptance's head required in every
+// one of them.
+func (f *checkpointFixture) plan(planID, project, node string, targets ...[2]string) {
+	f.t.Helper()
+	changes := []any{map[string]any{"op": "add_node", "node": checkpointNodeDoc(node, "implementation")}}
+	for i, target := range targets {
+		successor := fmt.Sprintf("%s-%d", node, i)
+		changes = append(changes,
+			map[string]any{"op": "add_node", "node": checkpointNodeDoc(successor, "non_pr")},
+			map[string]any{"op": "add_edge", "edge": map[string]any{
+				"edge_id": fmt.Sprintf("%s-%d", node, i), "from_node_id": node, "to_node_id": successor,
+				"kind": "integrated", "target_repository": target[0], "target_base_ref": target[1],
+			}})
+	}
+	document := map[string]any{
+		"schema": "dag-plan-revision/1", "plan_id": planID, "project_key": project,
+		"request_id": planID + "-request-1", "expected_parent_revision": 0, "author_task_id": "parent",
+		"changes": changes,
+	}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	revision, err := dag.DecodeRevision(raw)
+	if err != nil {
+		f.t.Fatalf("decode the plan revision: %v", err)
+	}
+	repo := &dag.Repo{Store: f.store, Now: func() string { return checkpointAt(0) }}
+	if _, err := repo.Put(context.Background(), revision); err != nil {
+		f.t.Fatalf("put the plan revision: %v", err)
+	}
+}
+
+// execution records that a relationship executed a plan's node, which is what makes the
+// scheduler's ExecutionIntegrated applicable to it.
+func (f *checkpointFixture) execution(planID, node, relationshipID string) {
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind) VALUES (?,?,?,1,'manifest','initial')",
+		planID, node, relationshipID)
 }
 
 // checkpointManageStateDir is where the manage configuration's state directory falls with
@@ -397,8 +454,8 @@ func TestCheckpointEachSignalIsDueOnItsOwn(t *testing.T) {
 		f.record("project-1", checkpointAt(1), "record")
 		export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
 			"{\"issues\":["+
-				"{\"identifier\":\"CRW-901\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Completed\",\"milestone\":\"M2\",\"completedAt\":\""+checkpointAt(3)+"\"},"+
-				"{\"identifier\":\"CRW-902\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Completed\",\"milestone\":\"M2\",\"completedAt\":\""+checkpointAt(4)+"\"}]}")
+				"{\"identifier\":\"CRW-901\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M2\",\"completedAt\":\""+checkpointAt(3)+"\"},"+
+				"{\"identifier\":\"CRW-902\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M2\",\"completedAt\":\""+checkpointAt(4)+"\"}]}")
 		report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
 		if !report.Due || !checkpointHasReason(report, checkpointSignalMilestone) {
 			t.Fatalf("milestone did not fire: %+v", report)
@@ -588,15 +645,32 @@ func TestCheckpointStoreWithoutTheDAGZoneIsStillRead(t *testing.T) {
 	}
 }
 
+// checkpointIntegrationFixture builds the one-integration world both integration tests share: a
+// real plan whose node has the given targets, a relationship that executed it, one active
+// acceptance of it, and the parent's merged mark on the acceptance's own event and revision. The
+// caller records the observations, which are the only thing that differs between the cases.
+func checkpointIntegrationFixture(t *testing.T, targets ...[2]string) *checkpointFixture {
+	t.Helper()
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.plan("plan-1", "project-1", "node", targets...)
+	f.execution("plan-1", "node", "relationship-1")
+	f.acceptance("plan-1", "node", "relationship-1", "acceptance-1", "event-1", "head-1", checkpointAt(1))
+	f.mark("relationship-1", "event-1", "acceptance-1", checkpointAt(2))
+	return f
+}
+
 // An ancestry observation is not an integration until the parent's merged mark stands on the
 // acceptance's event, generation and revision; one marked acceptance is counted once however many
 // times it was observed in one target.
 func TestCheckpointIntegrationCountRequiresTheMergedMark(t *testing.T) {
 	unmarked := checkpointNewFixture(t)
 	unmarked.scope("relationship-1", "project-1")
-	unmarked.acceptance("plan-1", "project-1", "acceptance-1", "head-1", checkpointAt(1))
-	unmarked.observation("acceptance-1", checkpointAt(2), 1, true)
-	unmarked.observation("acceptance-1", checkpointAt(3), 2, true)
+	unmarked.plan("plan-1", "project-1", "node", [2]string{"owner/repo", "dev"})
+	unmarked.execution("plan-1", "node", "relationship-1")
+	unmarked.acceptance("plan-1", "node", "relationship-1", "acceptance-1", "event-1", "head-1", checkpointAt(1))
+	unmarked.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
+	unmarked.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(4), 2, true)
 	unmarked.close()
 
 	report := checkpointReport(t, checkpointRead(t, unmarked, CheckpointOptions{}, nil), "project-1")
@@ -604,12 +678,9 @@ func TestCheckpointIntegrationCountRequiresTheMergedMark(t *testing.T) {
 		t.Fatalf("an unmarked observation counted as an integration: %+v", report.Counts)
 	}
 
-	marked := checkpointNewFixture(t)
-	marked.scope("relationship-1", "project-1")
-	marked.acceptance("plan-1", "project-1", "acceptance-1", "head-1", checkpointAt(1))
-	marked.mark("acceptance-1", checkpointAt(2))
-	marked.observation("acceptance-1", checkpointAt(3), 1, true)
-	marked.observation("acceptance-1", checkpointAt(4), 2, true)
+	marked := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"})
+	marked.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
+	marked.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(4), 2, true)
 	marked.close()
 
 	report = checkpointReport(t, checkpointRead(t, marked, CheckpointOptions{}, nil), "project-1")
@@ -621,12 +692,9 @@ func TestCheckpointIntegrationCountRequiresTheMergedMark(t *testing.T) {
 // A later observation saying the head is not contained supersedes the earlier positive one, so
 // the acceptance is not integrated.
 func TestCheckpointIntegrationCountIsClearedByALaterNegativeObservation(t *testing.T) {
-	f := checkpointNewFixture(t)
-	f.scope("relationship-1", "project-1")
-	f.acceptance("plan-1", "project-1", "acceptance-1", "head-1", checkpointAt(1))
-	f.mark("acceptance-1", checkpointAt(2))
-	f.observation("acceptance-1", checkpointAt(3), 1, true)
-	f.observation("acceptance-1", checkpointAt(4), 2, false)
+	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"})
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(4), 2, false)
 	f.close()
 
 	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
@@ -635,7 +703,124 @@ func TestCheckpointIntegrationCountIsClearedByALaterNegativeObservation(t *testi
 	}
 }
 
-// An issue created and completed inside the backlog window changes the backlog by nothing, so it
+// C5: the relay scheduler requires every target of a node. An acceptance observed in only one of
+// two targets is not integrated, and one observed in both is counted once. The instant is the
+// latest of the per-target first satisfying observations.
+func TestCheckpointIntegrationNeedsEveryTarget(t *testing.T) {
+	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"}, [2]string{"owner/repo", "main"})
+	// Observed in dev only: the node has not landed everywhere it has to.
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 1, true)
+	f.close()
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 0 {
+		t.Fatalf("an acceptance observed in one of two targets counted as an integration: %+v", report.Counts)
+	}
+
+	// The second target lands later: now every target contains the head, and the acceptance is
+	// counted once.
+	f2 := &checkpointFixture{t: t, dir: f.dir, path: f.path}
+	st, err := store.Open(context.Background(), f2.path, filepath.Join(f.dir, "app-server-control.sock"))
+	if err != nil {
+		t.Fatalf("reopen the fixture store: %v", err)
+	}
+	f2.store = st
+	f2.observation("acceptance-1", "head-1", "owner/repo", "main", checkpointAt(4), 1, true)
+	f2.close()
+
+	report = checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 1 {
+		t.Fatalf("an acceptance integrated in every target was not counted once: %+v", report.Counts)
+	}
+}
+
+// The instant is the latest of the per-target first satisfying observations, and "first" is by
+// observed_seq (the order the relay writes them), not by the recorded time. A target whose first
+// observation carries a LATER timestamp than a subsequent one still contributes its first row, so
+// a query that took the minimum observed_at would pick the wrong instant.
+func TestCheckpointIntegrationInstantIsTheLatestPerTargetFirst(t *testing.T) {
+	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"}, [2]string{"owner/repo", "main"})
+	// dev: the first observation (seq 1) is at t=9; a later positive one at t=3 must not move it.
+	// A minimum-observed_at query would wrongly pick t=3.
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(9), 1, true)
+	f.observation("acceptance-1", "head-1", "owner/repo", "dev", checkpointAt(3), 2, true)
+	// main: the first observation (seq 1) is at t=5, earlier than dev's first, so dev decides.
+	f.observation("acceptance-1", "head-1", "owner/repo", "main", checkpointAt(5), 1, true)
+	f.close()
+
+	// A record at t=7: the integration is counted only if the instant is the latest per-target
+	// first (dev's t=9), not the minimum observed_at anywhere (t=3) nor main's t=5.
+	f.record("project-1", checkpointAt(7), "a checkpoint before the latest per-target first")
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint == nil || *report.Counts.IntegrationsSinceCheckpoint != 1 {
+		t.Fatalf("the instant was not the latest per-target first observation: %+v", report.Counts)
+	}
+}
+
+// An integrated acceptance whose satisfying observation carries an instant this build cannot read
+// leaves only the integration signal unmeasured, with a reason, and the rest of the reading is
+// still computed. It does not fail the whole reading.
+func TestCheckpointUnreadableIntegrationInstantLeavesOnlyItsSignalUnmeasured(t *testing.T) {
+	f := checkpointIntegrationFixture(t, [2]string{"owner/repo", "dev"})
+	f.mergeTurn("turn-1", "project-1", "landed", checkpointAt(2))
+	// A satisfying observation whose instant is in no form this build reads.
+	f.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, observed_at) VALUES ('observation-broken','acceptance-1','owner/repo','dev','head-1','tip',1,'ancestry',1,'not an instant')")
+	f.close()
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint != nil {
+		t.Errorf("an unreadable instant was measured: %+v", report.Counts.IntegrationsSinceCheckpoint)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalIntegrations) || report.UnmeasuredReasons[checkpointSignalIntegrations] == "" {
+		t.Errorf("the integration signal is not unmeasured with a reason: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if report.Counts.MergesSinceCheckpoint != 1 {
+		t.Errorf("the rest of the reading was not computed: %+v", report.Counts)
+	}
+	if _, _, code := checkpointRunCommand(t, f.dir, nil); code == checkpointStoreExit {
+		t.Errorf("an unreadable instant was reported as an unreadable store")
+	}
+}
+
+// A partly installed DAG zone (a store that carries dag_plans but not the observations table) is
+// an unmeasured integration reading, not a measured zero.
+func TestCheckpointPartialDAGZoneIsUnmeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.mergeTurn("turn-1", "project-1", "landed", checkpointAt(2))
+	f.exec("DROP TABLE dag_integration_observations")
+	f.close()
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.IntegrationsSinceCheckpoint != nil {
+		t.Errorf("a partly installed zone read as a measured integration count: %+v", report.Counts)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalIntegrations) {
+		t.Errorf("the integration reading is not unmeasured: %+v", report.Unmeasured)
+	}
+	if report.Counts.MergesSinceCheckpoint != 1 {
+		t.Errorf("the frozen tables were not read: %+v", report.Counts)
+	}
+}
+
+// A pair-eval file that is present but carries no readable finding is an unreadable input, so its
+// reason names the parse failure rather than claiming no evaluation was given.
+func TestCheckpointUnreadablePairEvalNamesItsReason(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	broken := checkpointWriteInput(t, t.TempDir(), "pair-eval.jsonl", "not a finding at all\n")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{PairEval: broken}, nil), "project-1")
+	if !checkpointHasUnmeasured(report, checkpointSignalPairEval) {
+		t.Fatalf("the pair evaluation is not unmeasured: %+v", report.Unmeasured)
+	}
+	if reason := report.UnmeasuredReasons[checkpointSignalPairEval]; !strings.Contains(reason, "could not be read") {
+		t.Errorf("the reason does not name the read failure: %q", reason)
+	}
+}
+
+// An issue created and closed inside the backlog window changes the backlog by nothing, so it
 // neither adds nor subtracts.
 func TestCheckpointBacklogNetCountsCreationAndCompletionOnce(t *testing.T) {
 	f := checkpointNewFixture(t)
@@ -644,7 +829,7 @@ func TestCheckpointBacklogNetCountsCreationAndCompletionOnce(t *testing.T) {
 	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
 		"{\"issues\":["+
 			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Backlog\"},"+
-			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Completed\",\"completedAt\":\""+checkpointAt(22)+"\"}]}")
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Done\",\"completedAt\":\""+checkpointAt(22)+"\"}]}")
 
 	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
 	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 1 {
@@ -652,15 +837,93 @@ func TestCheckpointBacklogNetCountsCreationAndCompletionOnce(t *testing.T) {
 	}
 }
 
-// A completed milestone whose completion instant is unknown cannot be compared with the baseline,
-// so the reading is unmeasured rather than a measured zero.
+// C1: whether an issue left the backlog is its state, matched against the configured closed
+// list. An issue that is closed counts as having left even when the export carries no
+// completedAt: created inside the window it nets to zero, and created outside it leaves the
+// signal unmeasured, because when it left is then unknown.
+func TestCheckpointBacklogClosedByState(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	inside := checkpointWriteInput(t, t.TempDir(), "inside.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Done\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: inside}, nil), "project-1")
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 0 {
+		t.Fatalf("a closed issue created inside the window did not net to zero: %v", report.Counts.BacklogNet4h)
+	}
+	if checkpointHasUnmeasured(report, checkpointSignalBacklog) {
+		t.Errorf("a closed issue created inside the window left the signal unmeasured: %+v", report.Unmeasured)
+	}
+
+	outside := checkpointWriteInput(t, t.TempDir(), "outside.json",
+		"{\"issues\":[{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(1)+"\",\"state\":\"Canceled\"}]}")
+	report = checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: outside}, nil), "project-1")
+	if report.Counts.BacklogNet4h != nil {
+		t.Fatalf("a closed issue with no completion instant created outside the window was measured: %v", report.Counts.BacklogNet4h)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalBacklog) {
+		t.Errorf("the backlog reading is not unmeasured: %+v", report.Unmeasured)
+	}
+	if report.UnmeasuredReasons[checkpointSignalBacklog] == "" {
+		t.Errorf("the unmeasured backlog carries no reason: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C1: an open issue's leftover completion instant is ignored, because the issue is still in the
+// backlog; and a closed state matched case-insensitively is closed, while a custom name merely
+// containing a closed word is not.
+func TestCheckpointBacklogStateRules(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			// Open, but the export still carries a completion instant: it entered and stayed.
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"In Progress\",\"completedAt\":\""+checkpointAt(22)+"\"},"+
+			// Closed, matched case-insensitively.
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"done\",\"completedAt\":\""+checkpointAt(22)+"\"},"+
+			// Closed by the default list through a cancellation word.
+			"{\"identifier\":\"CRW-3\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Duplicate\",\"completedAt\":\""+checkpointAt(22)+"\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	// CRW-1 entered (+1) and its leftover instant is ignored; CRW-2 and CRW-3 each entered and
+	// left inside the window (0 each).
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 1 {
+		t.Fatalf("the backlog net is %v, want 1 (the open issue entered and stayed)", report.Counts.BacklogNet4h)
+	}
+}
+
+// C1: the closed-state list comes from the checkpoint section, so a project that closes issues in
+// its own state name measures the backlog with it.
+func TestCheckpointBacklogClosedStatesComeFromTheSection(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(21)+"\",\"state\":\"Shipped\",\"completedAt\":\""+checkpointAt(22)+"\"}]}")
+
+	// The default list does not know "Shipped", so the issue is still in the backlog.
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 1 {
+		t.Fatalf("a state outside the default list was read as closed: %v", report.Counts.BacklogNet4h)
+	}
+	// The section's list makes it closed, so the issue entered and left inside the window.
+	report = checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, map[string]any{"closed_states": []string{"Shipped"}}), "project-1")
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 0 {
+		t.Fatalf("the configured closed list was not honoured: %v", report.Counts.BacklogNet4h)
+	}
+}
+
+// A milestone whose every closed issue carries no completion instant cannot be compared with the
+// baseline, so the reading is unmeasured rather than a measured zero — and the milestone is named.
 func TestCheckpointMilestoneWithoutCompletionTimeIsUnmeasured(t *testing.T) {
 	f := checkpointNewFixture(t)
 	f.scope("relationship-1", "project-1")
 	f.close()
 	f.record("project-1", checkpointAt(1), "record")
 	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
-		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Completed\",\"milestone\":\"M1\"}]}")
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\"}]}")
 
 	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
 	if report.Counts.MilestoneIntegrated != nil {
@@ -668,6 +931,138 @@ func TestCheckpointMilestoneWithoutCompletionTimeIsUnmeasured(t *testing.T) {
 	}
 	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
 		t.Errorf("the milestone reading is not unmeasured: %+v", report.Unmeasured)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
+		t.Errorf("the skipped milestone is not named in the reasons: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C4: one milestone whose completion instant is unknown no longer hides another milestone's
+// confirmed integration. The confirmed milestone is counted and the unknown one is named.
+func TestCheckpointUnknownMilestoneTimingDoesNotHideAnother(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "record")
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\"},"+
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M2\",\"completedAt\":\""+checkpointAt(3)+"\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.MilestoneIntegrated == nil || *report.Counts.MilestoneIntegrated != 1 {
+		t.Fatalf("the confirmed milestone was not counted: %+v", report.Counts.MilestoneIntegrated)
+	}
+	if checkpointHasUnmeasured(report, checkpointSignalMilestone) {
+		t.Errorf("the signal is unmeasured although a confirmed milestone was counted: %+v", report.Unmeasured)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
+		t.Errorf("the skipped milestone is not named in the reasons: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C4: the signal is unmeasured only when every fully closed milestone has unknown timing. A
+// confirmed milestone whose completion predates the baseline keeps the signal measured at zero,
+// even beside a milestone with unknown timing.
+func TestCheckpointMilestoneWithKnownTimingBeforeTheBaselineStaysMeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(10), "record")
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\"},"+
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M2\",\"completedAt\":\""+checkpointAt(3)+"\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.MilestoneIntegrated == nil || *report.Counts.MilestoneIntegrated != 0 {
+		t.Fatalf("a milestone whose completion predates the baseline was not measured as zero: %+v", report.Counts.MilestoneIntegrated)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
+		t.Errorf("the skipped milestone is not named in the reasons: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C4: a milestone is integrated when every one of its issues is closed, so its instant is the
+// LAST issue's completion. A fully closed milestone where one issue carries no completion instant
+// is therefore unknown and must be skipped, even when another issue's instant is known: counting
+// the known maximum would report a false zero when the untimed issue closed after the baseline.
+func TestCheckpointPartiallyTimedMilestoneIsSkipped(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(10), "a checkpoint")
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":["+
+			// M1: one issue closed before the baseline with an instant, one closed with none.
+			"{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\",\"completedAt\":\""+checkpointAt(3)+"\"},"+
+			"{\"identifier\":\"CRW-2\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\"M1\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.MilestoneIntegrated != nil {
+		t.Fatalf("a partly timed milestone was measured: %+v", report.Counts.MilestoneIntegrated)
+	}
+	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
+		t.Errorf("the milestone reading is not unmeasured: %+v", report.Unmeasured)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey("M1")] == "" {
+		t.Errorf("the skipped milestone is not named: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C4: an export that names no milestone for the project is a missing input, not an unknown
+// completion time, so its reason says so rather than pointing at completion dates.
+func TestCheckpointAbsentMilestonesNameTheMissingInput(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if !checkpointHasUnmeasured(report, checkpointSignalMilestone) {
+		t.Fatalf("a milestone reading without milestones is not unmeasured: %+v", report.Unmeasured)
+	}
+	if reason := report.UnmeasuredReasons[checkpointSignalMilestone]; !strings.Contains(reason, "names no milestone") {
+		t.Errorf("the reason does not name the missing milestone input: %q", reason)
+	}
+}
+
+// A milestone whose name equals a signal identifier cannot overwrite that signal's own reason,
+// because a skipped milestone is namespaced.
+func TestCheckpointMilestoneReasonCannotShadowASignal(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	f.record("project-1", checkpointAt(1), "a checkpoint")
+	// The milestone is named after a signal, and it is fully closed with no completion instant.
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(2)+"\",\"state\":\"Done\",\"milestone\":\""+checkpointSignalBacklog+"\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	// The milestone signal's own reason must survive, and the milestone must appear under its key.
+	if reason := report.UnmeasuredReasons[checkpointSignalMilestone]; !strings.Contains(reason, "unknown completion instant") {
+		t.Errorf("the milestone signal's reason was overwritten: %q", reason)
+	}
+	if report.UnmeasuredReasons[checkpointMilestoneKey(checkpointSignalBacklog)] == "" {
+		t.Errorf("the skipped milestone is not namespaced: %+v", report.UnmeasuredReasons)
+	}
+}
+
+// C3: a baseline that coincides exactly with the window's own edge is still the checkpoint the
+// reading must not re-count, so an event at that instant is excluded.
+func TestCheckpointBaselineCoincidingWithTheWindowEdgeIsExcluded(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	// now is base+24h; a 2h window's edge is base+22h, and the baseline is exactly there.
+	f.verdict("event-at-edge", "relationship-1", "needs_changes", checkpointAt(22))
+	f.verdict("event-after", "relationship-1", "needs_changes", checkpointAt(22.5))
+	f.close()
+	f.record("project-1", checkpointAt(22), "a checkpoint at the window edge")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.NeedsChangesOrSplit2h != 1 {
+		t.Fatalf("needs_changes_or_split_2h = %d, want 1 (the event at the coincident baseline excluded)", report.Counts.NeedsChangesOrSplit2h)
 	}
 }
 
@@ -703,6 +1098,45 @@ func TestCheckpointRecordClearsTheRunningHoursAndWindowSignals(t *testing.T) {
 	}
 	if after.Counts.NeedsChangesOrSplit2h != 0 {
 		t.Errorf("needs_changes_or_split_2h = %d, want 0", after.Counts.NeedsChangesOrSplit2h)
+	}
+}
+
+// C3: when the 2h window starts at the baseline, an event exactly at that instant is not counted,
+// because the checkpoint that wrote the baseline already looked at it; an event a second later is.
+func TestCheckpointWindowStartExcludesTheBaseline(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	// Two verdicts: one exactly at the baseline instant, one half an hour after it and still
+	// before now.
+	f.verdict("event-at", "relationship-1", "needs_changes", checkpointAt(23))
+	f.verdict("event-after", "relationship-1", "needs_changes", checkpointAt(23.5))
+	f.close()
+	// The baseline is an hour before now, so it is later than now-2h and the window starts there.
+	f.record("project-1", checkpointAt(23), "a checkpoint an hour ago")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{}, nil), "project-1")
+	if report.Counts.NeedsChangesOrSplit2h != 1 {
+		t.Fatalf("needs_changes_or_split_2h = %d, want 1 (the event at the baseline excluded, the later one counted)", report.Counts.NeedsChangesOrSplit2h)
+	}
+	if checkpointHasReason(report, checkpointSignalNeedsChanges) {
+		t.Errorf("the window fired with a single event past the baseline: %+v", report.Reasons)
+	}
+}
+
+// C3: the baseline-exclusive start applies to the backlog window too, so an issue created exactly
+// at the baseline instant does not re-enter the net.
+func TestCheckpointBacklogWindowStartExcludesTheBaseline(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	// The baseline is two hours before now, so it is later than now-4h and the window starts there.
+	f.record("project-1", checkpointAt(22), "a checkpoint two hours ago")
+	export := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(22)+"\",\"state\":\"Backlog\"}]}")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: export}, nil), "project-1")
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 0 {
+		t.Fatalf("an issue created exactly at the baseline was counted: %v", report.Counts.BacklogNet4h)
 	}
 }
 
@@ -753,18 +1187,80 @@ func TestCheckpointRecordRefusesASymlinkedRecordFile(t *testing.T) {
 	}
 }
 
-// A broken input file is not unreadable relay state: it exits 2, while a missing store exits 3.
-func TestCheckpointInputErrorExitsTwo(t *testing.T) {
+// C2: an input file the reading cannot use leaves only the signals that depend on it unmeasured.
+// The rest is computed and the command exits 0; the reason is recorded per signal.
+func TestCheckpointUnreadableInputLeavesOnlyItsSignalsUnmeasured(t *testing.T) {
 	f := checkpointNewFixture(t)
 	f.scope("relationship-1", "project-1")
+	f.mergeTurn("turn-1", "project-1", "landed", checkpointAt(2))
 	f.close()
-	missing := filepath.Join(t.TempDir(), "absent.jsonl")
-	stdout, stderr, code := checkpointRunCommand(t, f.dir, []string{"--pair-eval", missing})
-	if code != checkpointInputExit {
-		t.Fatalf("a missing input file exited %d, want %d: %s%s", code, checkpointInputExit, stdout, stderr)
+	missing := filepath.Join(t.TempDir(), "absent.json")
+
+	// A missing linear export leaves the backlog and the milestone unmeasured; the merge count,
+	// which does not depend on it, is still computed.
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: missing}, nil), "project-1")
+	for _, signal := range []string{checkpointSignalBacklog, checkpointSignalMilestone} {
+		if !checkpointHasUnmeasured(report, signal) {
+			t.Errorf("%s is not unmeasured without the export: %+v", signal, report.Unmeasured)
+		}
+		if report.UnmeasuredReasons[signal] == "" {
+			t.Errorf("%s carries no reason: %+v", signal, report.UnmeasuredReasons)
+		}
+	}
+	if report.Counts.BacklogNet4h != nil || report.Counts.MilestoneIntegrated != nil {
+		t.Errorf("an unmeasured signal carries a count: %+v", report.Counts)
+	}
+	if report.Counts.MergesSinceCheckpoint != 1 {
+		t.Errorf("a signal that does not depend on the export was not computed: %+v", report.Counts)
+	}
+	if checkpointHasUnmeasured(report, checkpointSignalMerges) || checkpointHasUnmeasured(report, checkpointSignalIntegrations) {
+		t.Errorf("an independent signal was left unmeasured: %+v", report.Unmeasured)
+	}
+
+	// The command exits 0 (the project is not due), not the old input error exit.
+	stdout, stderr, code := checkpointRunCommand(t, f.dir, []string{"--linear-export", missing})
+	if code != 0 {
+		t.Fatalf("an unreadable export exited %d, want 0: %s%s", code, stdout, stderr)
 	}
 	if code == checkpointStoreExit {
 		t.Error("a broken export was reported as unreadable relay state")
+	}
+
+	// A missing pair evaluation leaves only its own signal unmeasured, while a readable export
+	// beside it keeps the backlog and milestone measured.
+	goodExport := checkpointWriteInput(t, t.TempDir(), "linear-export.json",
+		"{\"issues\":[{\"identifier\":\"CRW-1\",\"project\":\"project-1\",\"createdAt\":\""+checkpointAt(22)+"\",\"state\":\"Done\",\"milestone\":\"M1\",\"completedAt\":\""+checkpointAt(23)+"\"}]}")
+	report = checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: goodExport, PairEval: missing}, nil), "project-1")
+	if !checkpointHasUnmeasured(report, checkpointSignalPairEval) || report.UnmeasuredReasons[checkpointSignalPairEval] == "" {
+		t.Errorf("the pair evaluation is not unmeasured with a reason: %+v %+v", report.Unmeasured, report.UnmeasuredReasons)
+	}
+	if report.Counts.PairEvalP0P1SinceCheckpoint != nil {
+		t.Errorf("an unmeasured signal carries a count: %+v", report.Counts)
+	}
+	if checkpointHasUnmeasured(report, checkpointSignalBacklog) {
+		t.Errorf("a signal that does not depend on the pair evaluation was left unmeasured: %+v", report.Unmeasured)
+	}
+	if report.Counts.BacklogNet4h == nil || *report.Counts.BacklogNet4h != 0 {
+		t.Errorf("the readable export was not computed beside the broken pair evaluation: %+v", report.Counts.BacklogNet4h)
+	}
+}
+
+// C2: a file that is present but is not the document the reading expects is an unreadable input
+// too, so it leaves the same signals unmeasured rather than failing the reading.
+func TestCheckpointUnparseableInputLeavesItsSignalsUnmeasured(t *testing.T) {
+	f := checkpointNewFixture(t)
+	f.scope("relationship-1", "project-1")
+	f.close()
+	broken := checkpointWriteInput(t, t.TempDir(), "linear-export.json", "not json at all")
+
+	report := checkpointReport(t, checkpointRead(t, f, CheckpointOptions{LinearExport: broken}, nil), "project-1")
+	for _, signal := range []string{checkpointSignalBacklog, checkpointSignalMilestone} {
+		if !checkpointHasUnmeasured(report, signal) || report.UnmeasuredReasons[signal] == "" {
+			t.Errorf("%s is not unmeasured with a reason: %+v %+v", signal, report.Unmeasured, report.UnmeasuredReasons)
+		}
+	}
+	if _, _, code := checkpointRunCommand(t, f.dir, []string{"--linear-export", broken}); code != 0 {
+		t.Errorf("an unparseable export exited %d, want 0", code)
 	}
 }
 

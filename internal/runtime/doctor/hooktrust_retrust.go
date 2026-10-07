@@ -53,6 +53,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -449,7 +450,12 @@ func hookTrustRetrustExec(file string, args []string, env []string) HookTrustRet
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
-	run := HookTrustRetrustRun{Stdout: stdout.String(), Stderr: stderr.String()}
+	// The oracle reads this probe's streams through spawnSync with encoding utf8 (hook-trust.ts:398),
+	// so an invalid byte sequence is one U+FFFD per maximal invalid subpart and can never be a lone
+	// surrogate. Decode here, at the seam, so every consumer -- the verify detail chain and the CLI
+	// failure text a person reads -- sees the text the oracle saw (the same place and rule as
+	// harnessRunExec, harness_run.go).
+	run := HookTrustRetrustRun{Stdout: source.DecodeUTF8(stdout.Bytes()), Stderr: source.DecodeUTF8(stderr.Bytes())}
 	switch {
 	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, exec.ErrWaitDelay):
 		run.Status = harnessRunInt(harnessDriftKilled)

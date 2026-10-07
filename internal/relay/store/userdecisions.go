@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
@@ -39,6 +40,9 @@ var (
 // the same record. A record that carries an answer is history, and a later raise of its question is
 // a new record with its own decision_id.
 var raiseStates = []decisions.State{decisions.StateOpen, decisions.StateRaised}
+
+// userDecisionColumnList is userDecisionColumns as the slice the writers walk.
+var userDecisionColumnList = strings.Split(strings.ReplaceAll(userDecisionColumns, " ", ""), ",")
 
 // userDecisionColumns is the row's column list, in the order the INSERT and the SELECT use.
 const userDecisionColumns = "decision_id, fingerprint, kind, context, options_json," +
@@ -98,8 +102,12 @@ func (s *Store) Raise(ctx context.Context, record decisions.Record) (decisions.R
 	return answer, merged, nil
 }
 
-// List reads the records the filter selects, oldest first. The project predicate reads the stored
-// origin object, guarded as the rest of the store guards JSON text.
+// List reads the records the filter selects, oldest first by the real instant of raised_at (and by
+// decision_id when two share one instant). The project predicate selects a record whose origin
+// project is P or one of whose observations names it: a question raised from two projects is one
+// folded record, so the second project must see it too. A store that predates the DAG zone has no
+// dag_user_decisions table and reads as empty, as the other zone reads do (dag.isMissingZone); any
+// other SQL error is returned.
 func (s *Store) List(ctx context.Context, filter UserDecisionFilter) ([]decisions.Record, error) {
 	query := "SELECT " + userDecisionColumns + " FROM dag_user_decisions WHERE 1 = 1"
 	args := []any{}
@@ -108,12 +116,20 @@ func (s *Store) List(ctx context.Context, filter UserDecisionFilter) ([]decision
 		args = append(args, string(filter.State))
 	}
 	if filter.Project != "" {
-		query += " AND (CASE WHEN json_valid(origin_json) THEN json_extract(origin_json, '$.project') END) = ?"
-		args = append(args, filter.Project)
+		// The origin object and the seen array are JSON text, guarded as the rest of the store
+		// guards it: a row written by another writer with text that is not JSON cannot make the
+		// whole read fail. The two alternatives are parenthesised as one predicate, so a state
+		// filter beside them still applies to both.
+		query += " AND ((CASE WHEN json_valid(origin_json) THEN json_extract(origin_json, '$.project') END) = ?" +
+			" OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(seen_json) THEN seen_json ELSE '[]' END) AS entry" +
+			"  WHERE (CASE WHEN json_valid(entry.value) THEN json_extract(entry.value, '$.source') END) = 'project:' || ?))"
+		args = append(args, filter.Project, filter.Project)
 	}
-	query += " ORDER BY raised_at, decision_id"
 	rows, err := s.All(ctx, query, args...)
 	if err != nil {
+		if missingUserDecisionTable(err) {
+			return []decisions.Record{}, nil
+		}
 		return nil, err
 	}
 	out := make([]decisions.Record, 0, len(rows))
@@ -124,7 +140,53 @@ func (s *Store) List(ctx context.Context, filter UserDecisionFilter) ([]decision
 		}
 		out = append(out, record)
 	}
+	// The order is the instant raised_at names, not its spelling: a stored value that is not a
+	// timestamp (a row a hand edit left) sorts after the parseable ones, in text order, and does
+	// not fail the read.
+	slices.SortStableFunc(out, compareUserDecisions)
 	return out, nil
+}
+
+// compareUserDecisions orders two records by the instant of their raised_at, then by decision_id.
+// An unparseable raised_at ranks after every parseable one; two unparseable ones compare by text.
+func compareUserDecisions(first, second decisions.Record) int {
+	firstAt, firstOK := userDecisionInstant(first.RaisedAt)
+	secondAt, secondOK := userDecisionInstant(second.RaisedAt)
+	if firstOK != secondOK {
+		if firstOK {
+			return -1
+		}
+		return 1
+	}
+	if !firstOK {
+		if order := strings.Compare(first.RaisedAt, second.RaisedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(first.DecisionID, second.DecisionID)
+	}
+	if !firstAt.Equal(secondAt) {
+		if firstAt.Before(secondAt) {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(first.DecisionID, second.DecisionID)
+}
+
+// userDecisionInstant is the instant a stored raised_at names, or false for text that is not one.
+func userDecisionInstant(value string) (time.Time, bool) {
+	if value == "" || strings.Contains(value, ",") {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	return parsed, err == nil
+}
+
+// missingUserDecisionTable reports the one read failure that means the store has no user-decision
+// table: the DAG zone never reached it. The judgment is on that table's name alone, as dag's
+// isMissingZone judges the zone's, so another missing table is still an error.
+func missingUserDecisionTable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table: dag_user_decisions")
 }
 
 // userDecisionByFingerprint is the fold candidate: the open or raised record of a fingerprint.
@@ -291,8 +353,111 @@ func decodeUserDecision(row Row) (decisions.Record, error) {
 	if row.Text("recommendation_json") != "" {
 		record.Recommendation = &recommendation
 	}
-	if err := validateUserDecision(record); err != nil {
+	// A stored raised_at the format refuses - a row written before the check existed, or by a
+	// hand edit - must not fail the read: List still orders such a record, after the parseable
+	// ones. Every other check still applies, and the writer path (Raise, Update) refuses one.
+	keptRaisedAt := record.RaisedAt
+	record.RaisedAt = ""
+	err := validateUserDecision(record)
+	record.RaisedAt = keptRaisedAt
+	if err != nil {
 		return decisions.Record{}, err
 	}
 	return record, nil
+}
+
+// ErrUserDecisionAbsent is Get's refusal of a decision_id no row carries.
+var ErrUserDecisionAbsent = errors.New("store: no user decision carries that decision id")
+
+// Get reads one record by its decision_id.
+func (s *Store) Get(ctx context.Context, decisionID string) (decisions.Record, error) {
+	row, err := s.One(ctx, "SELECT "+userDecisionColumns+" FROM dag_user_decisions WHERE decision_id = ?", decisionID)
+	if err != nil {
+		if missingUserDecisionTable(err) {
+			// A store without the table holds no record, so the answer is the same as for an id no
+			// row carries rather than a host failure.
+			return decisions.Record{}, fmt.Errorf("%w: %q", ErrUserDecisionAbsent, decisionID)
+		}
+		return decisions.Record{}, err
+	}
+	if row == nil {
+		return decisions.Record{}, fmt.Errorf("%w: %q", ErrUserDecisionAbsent, decisionID)
+	}
+	return decodeUserDecision(row)
+}
+
+// Update reads the record decisionID names, hands it to mutate, and stores what mutate returns -
+// one transaction, so the read the mutation decided on is the row the write replaces (a second
+// writer between the two would otherwise be overwritten blind). mutate may refuse, in which case
+// nothing is written. The row is written whole: every column is written back from the record the
+// store itself read, so no field the reader holds is dropped by a narrower write.
+//
+// mutate is handed the transaction's context, and every store call it makes must use it: the
+// transaction holds the store's one writable connection, so a read on the pool inside it would
+// wait for the connection the transaction is holding.
+func (s *Store) Update(ctx context.Context, decisionID string, mutate func(context.Context, decisions.Record) (decisions.Record, error)) (decisions.Record, error) {
+	var answer decisions.Record
+	err := s.Transaction(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		stored, err := s.Get(txCtx, decisionID)
+		if err != nil {
+			return err
+		}
+		updated, err := mutate(txCtx, stored)
+		if err != nil {
+			return err
+		}
+		// The stored record is written back with the raised_at it was read with: a value the
+		// format refuses (a row written before the check, or by a hand edit) must not make the
+		// record unanswerable, so the writer validates the record without re-checking the one
+		// field the reader deliberately preserves. Every other field, and any raised_at the
+		// mutation changed, is still checked.
+		// The record keeps the identity Update was asked about: a mutation that returns another
+		// decision_id would otherwise leave the requested row untouched and overwrite another.
+		if updated.DecisionID != stored.DecisionID {
+			return fmt.Errorf("%w: a mutation changed %q to %q", ErrUserDecisionAbsent, stored.DecisionID, updated.DecisionID)
+		}
+		keptRaisedAt := updated.RaisedAt
+		if keptRaisedAt == stored.RaisedAt {
+			updated.RaisedAt = ""
+		}
+		validationErr := validateUserDecision(updated)
+		updated.RaisedAt = keptRaisedAt
+		if validationErr != nil {
+			return validationErr
+		}
+		if err := s.writeUserDecision(txCtx, updated); err != nil {
+			return err
+		}
+		answer = updated
+		return nil
+	})
+	if err != nil {
+		return decisions.Record{}, err
+	}
+	return answer, nil
+}
+
+// writeUserDecision replaces the row decision_id names with the record's every field.
+func (s *Store) writeUserDecision(ctx context.Context, record decisions.Record) error {
+	values, err := encodeUserDecision(record)
+	if err != nil {
+		return err
+	}
+	assignments := make([]string, 0, len(userDecisionColumnList))
+	for _, column := range userDecisionColumnList {
+		if column == "decision_id" {
+			continue
+		}
+		assignments = append(assignments, column+" = ?")
+	}
+	args := make([]any, 0, len(values))
+	for i, column := range userDecisionColumnList {
+		if column == "decision_id" {
+			continue
+		}
+		args = append(args, values[i])
+	}
+	args = append(args, record.DecisionID)
+	_, err = s.exec(ctx, "UPDATE dag_user_decisions SET "+strings.Join(assignments, ", ")+" WHERE decision_id = ?", args...)
+	return err
 }

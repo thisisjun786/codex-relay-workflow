@@ -6,7 +6,9 @@ import (
 )
 
 // improveUsage is what the improve command prints.
-const improveUsage = "usage: crw manage improve collect [--out FILE]"
+const improveUsage = "usage: crw manage improve collect [--out FILE]\n" +
+	"       crw manage improve propose --bundle FILE [--dry-run]\n" +
+	"       crw manage improve run --boundary <milestone|project> --ref KEY"
 
 // improveCommand is crw manage improve: the operating records of a management session,
 // normalized into one improvement evidence bundle. It only proposes; it never releases,
@@ -28,8 +30,12 @@ func improveRun(ctx context.Context, e *Env, args []string) int {
 		return 0
 	case "collect":
 		return improveRunCollect(ctx, e, args[1:])
+	case "propose":
+		return improveRunPropose(ctx, e, args[1:])
+	case "run":
+		return improveRunRoadmap(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, improveUsage)
-	fmt.Fprintf(e.Stderr, "crw manage improve: error: invalid command %q (choose from 'collect')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage improve: error: invalid command %q (choose from 'collect', 'propose', 'run')\n", args[0])
 	return usageExit
 }
