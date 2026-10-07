@@ -923,7 +923,13 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
   // made while an answer is in flight, is refused, so the pending change is never silently replaced
   // by another row's edit. The controls are disabled in the same condition, so this is the state's
   // own guard rather than the only one.
-  if (!screenMayEdit(state, changeOwner(change))) return state;
+  //
+  // The exception editor is the one control whose token moves while it is open: a NEW exception's id
+  // is still being typed, so the open draft - not the id in the change - is what owns the edit. A
+  // setException proposed from that draft is therefore allowed even though the tokens differ. Every
+  // other exception change still has to match the token, so a removal cannot steal the editor's turn.
+  const fromOpenExceptionDraft = change.kind === "setException" && state.exceptionDraft !== null;
+  if (!screenMayEdit(state, changeOwner(change)) && !(fromOpenExceptionDraft && !screenBusy(state))) return state;
   return { ...state, change, notice: null, exceptionDraft: null };
 }
 

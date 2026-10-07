@@ -40,6 +40,7 @@ import {
   screenBusy,
   screenDraftIsNew,
   screenEditable,
+  screenEditOwner,
   screenEffortUnavailable,
   screenExceptionDraft,
   screenLoaded,
@@ -644,6 +645,31 @@ test("one pending change at a time: another row's edit cannot replace the live o
   assert.equal(screenMayEdit(state, "allowed:B"), true);
   state = screenAllowedDraft(state, "B", ["low", "max"]);
   assert.equal((state.change as { model: string }).model, "B");
+});
+
+test("the open exception editor can propose its own change", () => {
+  // A new exception's id is still being typed while the editor is open, so the open draft owns the
+  // edit and its own Apply must go through. An existing exception's editor proposes under the id it
+  // already has, which is the same token.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  const draft = draftForNewException("parent", "m", "high");
+  state = screenExceptionDraft(state, draft);
+  assert.equal(screenEditOwner(state), "exception:new");
+  state = screenExceptionDraft(state, { ...draft, id: "fresh", cwd: ["/srv/a"] });
+  const change = changeFromExceptionDraft(state.exceptionDraft as ExceptionDraft);
+  assert.ok(change);
+  const proposed = screenPropose(state, change);
+  assert.equal(proposed.change?.kind, "setException", "the new exception's own Apply is not refused");
+  assert.equal((proposed.change as { id: string }).id, "fresh");
+  // An existing exception's editor proposes under its own id, and that too goes through.
+  let editing = screenPropose(screenLoaded(initialScreen(), reading()), null);
+  editing = screenExceptionDraft(editing, draftForException({ id: "legacy", role: "parent", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] }));
+  const editChange = changeFromExceptionDraft({ ...(editing.exceptionDraft as ExceptionDraft), effort: "max" });
+  assert.ok(editChange);
+  assert.equal(screenPropose(editing, editChange).change?.kind, "setException");
+  // A removal of a DIFFERENT exception still cannot steal the open editor's turn.
+  assert.equal(screenPropose(editing, { kind: "removeException", id: "other" }), editing);
 });
 
 test("an answer in flight disables every edit, so no draft races the answer", () => {
