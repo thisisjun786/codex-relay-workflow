@@ -1251,8 +1251,13 @@ parent owns the threads on its own pull request:
   is what frees the remaining member turns, and only then return its lane turn
   (`merge-turn-release --disposition returned`). Releasing without abandoning leaves the train live
   and the other members still riding it, so the next leader's open refuses them as already belonging
-  to a train. Once the turn is returned another parent's turn becomes the leader and the bundle is
-  reopened under it. The leader never merges over a blocking finding about its own member.
+  to a train. Who leads next depends on what the survivors are: another parent's **waiting** turn
+  takes the freed target by the ordinary promotion order, and that parent opens the bundle from its
+  own holding turn. A survivor that rides as a **member-only** turn cannot lead - it never takes the
+  solo grant - so the bundle waits until a parent with a waiting turn (or the returned leader, after
+  it fixes the finding) holds the lane again, and the survivors ride that bundle then. Until then they
+  stay waiting, which costs nothing: their heads and acceptances are unchanged, and each still lands
+  on its own turn. The leader never merges over a blocking finding about its own member.
 - A blocking finding that points at **no** member stops the bundle as before: there is no member to
   remove, so the leader abandons it and reports.
 - A non-blocking finding (Devin yellow, Codex P2 or P3) is answered on its thread with the member pull

@@ -2,7 +2,6 @@ package skill
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
@@ -45,9 +44,10 @@ func TestRelayCleanDifferenceUnderADeclaredRegenerateRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the manifest is settled by the declared regenerate rule, or it is a refusal naming the path: either
-	// way the checker read the relay's decision for the path rather than re-deriving it
-	if why != nil && why.Detail != "" && !strings.Contains(why.Detail, "plugin.json") {
-		t.Fatalf("the refusal does not name the manifest: %+v", why)
+	// The command reproduces the manifest, so the declared rule settles it: no refusal, and the
+	// settled rule is the declared one. The checker used the relay's decision for the path rather
+	// than re-deriving it, which is what makes a clean difference provable at all.
+	if why != nil {
+		t.Fatalf("a clean difference under the agreed regenerate rule was not settled: %+v", why)
 	}
 }

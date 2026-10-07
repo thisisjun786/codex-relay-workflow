@@ -135,9 +135,13 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 		for _, r := range st.Resolved {
 			// A conflict needs every contributing node to agree, because two sides edited the place. A
 			// clean difference the head produced by regenerating (CRW-898, item 9) has no such second
-			// edit to attribute: the candidate"s own declaration admits it, and the re-run below
-			// is the proof. Everything else keeps the contributor requirement.
-			admitted := len(sets[r.Path]) > 0 || (!r.Conflicted && declaresRegenerate(regions, r.Path))
+			// edit to attribute, so the agreement the declarations have to reach is the rule itself:
+			// the candidate"s declaration and every identified contributor"s must name the same
+			// regenerate command, which is what MechanicalRuleFor answers over all of them. A
+			// declaration only the candidate makes, or one the contributors disagree with, is not an
+			// agreement and leaves the path refused as before. Everything else keeps the contributor
+			// requirement.
+			admitted := len(sets[r.Path]) > 0 || (!r.Conflicted && agreedRegenerate(append([][]Region{regions}, sets[r.Path]...), r.Path))
 			if rule, ok := MechanicalRuleFor(append([][]Region{regions}, sets[r.Path]...), r.Path); ok && admitted {
 				paths = append(paths, r.Path)
 				descriptions = append(descriptions, fmt.Sprintf("%s (%s)", r.Path, rule))
@@ -621,6 +625,15 @@ func refreshPathsText(paths []string) string {
 // MechanicalRuleFor over every declaration given (CRW-898, item 9).
 func declaresRegenerate(declared []Region, path string) bool {
 	rule, ok := MechanicalRuleFor([][]Region{declared}, path)
+	return ok && strings.HasPrefix(rule, RuleRegeneratePref)
+}
+
+// agreedRegenerate is whether every declaration given settles a path by one agreed mechanical
+// regenerate rule (CRW-898, item 9). It is declaresRegenerate over all the declarations together,
+// so a candidate-only declaration with no identified contributor is an agreement of one, while a
+// declaration a contributor disagrees with is not an agreement at all.
+func agreedRegenerate(sets [][]Region, path string) bool {
+	rule, ok := MechanicalRuleFor(sets, path)
 	return ok && strings.HasPrefix(rule, RuleRegeneratePref)
 }
 

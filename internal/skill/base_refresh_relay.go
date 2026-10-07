@@ -89,6 +89,20 @@ func settleRelayRefresh(ctx context.Context, checkout string, st dagsched.Refres
 			}
 		}
 	}
+	// A clean difference is never a hand resolution: git merged the path without a conflict, so
+	// there is nothing for a parent to have read and named, and a declaration whose command did not
+	// reproduce the file must not become one. The path is refused instead (CRW-898, item 9). A
+	// conflicted path keeps the manual route, which is what a parent's --resolved name is for.
+	for _, p := range paths {
+		// The plugin manifest keeps its CRW-732 route: a declared rule the checker cannot prove leaves
+		// it to the parent's --resolved name, because the manifest is the one path whose updater needs
+		// the existing file and whose built-in rule is tried beside the declaration. Every other clean
+		// difference is refused, since git merged it and no hand resolution can exist there.
+		if _, conflicted := merged.conflicts[p]; conflicted || !manual[p] || p == pluginversion.ManifestRepoPath {
+			continue
+		}
+		return &dagsched.RefreshMechanicalRefusal{Detail: fmt.Sprintf("tree_differs: regenerate:%s did not reproduce %s, and git merged it cleanly, so the head's content there is not a regeneration of the base and no hand resolution can make it one", strings.TrimPrefix(decided[p], dagsched.RuleRegeneratePref), p)}, nil
+	}
 	var eligible, hand []string
 	for _, p := range paths {
 		if manual[p] {

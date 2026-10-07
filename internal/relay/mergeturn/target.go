@@ -59,6 +59,15 @@ func SameCommit(a, b string) bool {
 	return a != "" && a == b
 }
 
+// sameForgeRepository compares two forge repository names as the relay writes them (owner/name),
+// case-insensitively and without surrounding whitespace, so a trailing space or a differently cased
+// owner is the same repository and not a second identity.
+func sameForgeRepository(a, b string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	b = strings.ToLower(strings.TrimSpace(b))
+	return a != "" && a == b
+}
+
 // Reader is mergeturn.py's target_reader: where a target's base branch points now.
 type Reader interface {
 	Tip(ctx context.Context, repository, base string) (Tip, error)

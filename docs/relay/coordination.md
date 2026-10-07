@@ -216,11 +216,18 @@ conversation changes nothing: only a write by the registered project parent does
 
 ## One live turn per parent per target
 
-A parent holds at most one live turn (waiting, holding, merging or of unknown effect) on a target,
-and that turn is bound to the pull request it was claimed for: `merge-turn-request --pr <n>
---relationship <id>` records both. A request for another pull request used to be answered with the
-live turn and nothing said so, and a caller that took it for the turn of the pull request it asked
-about declared that pull request's head on the live one (2026-10-04). It is refused now.
+A parent holds at most one live turn (waiting, holding, merging or of unknown effect) on a target
+that takes the solo grant, and that turn is bound to the pull request it was claimed for:
+`merge-turn-request --pr <n> --relationship <id>` records both. A request for another pull request
+used to be answered with the live turn and nothing said so, and a caller that took it for the turn
+of the pull request it asked about declared that pull request's head on the live one (2026-10-04).
+It is refused now. One exception is the parent's further ready turn of the same target (CRW-898):
+when the request names a pull request and a relationship whose active acceptance is of that pull
+request, on that repository, and stands on the head the request states, the turn it gets is a
+member-only waiting turn (`member_waiting`). That turn rides bundles and never takes the solo grant,
+so the order that decides which parent next holds the target is unchanged; it carries its own
+relationship and accepted head, and its landing is recorded on its own turn. A request no active
+acceptance covers keeps the refusal above.
 
 - A request that states no pull request and no relationship is the replay of the live turn, as
   before (`alreadyClaimed: true`).

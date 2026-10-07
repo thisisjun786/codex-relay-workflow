@@ -202,7 +202,7 @@ type ClaimOptions struct {
 // acceptance stands on the head the request states, so the turn it gets is a member-only waiting
 // turn a bundle may carry (CRW-898). A request no active acceptance covers keeps the CRW-538
 // refusal, because it cannot be confirmed as the parent's own further candidate.
-func (s *Service) memberOnlyRequest(ctx context.Context, asked ClaimOptions, head string, ready bool) (bool, error) {
+func (s *Service) memberOnlyRequest(ctx context.Context, repository string, asked ClaimOptions, head string, ready bool) (bool, error) {
 	if !ready || head == "" || !asked.PR.Valid || asked.PR.Int64 < 1 || !asked.Relationship.Valid || asked.Relationship.String == "" {
 		return false, nil
 	}
@@ -213,14 +213,16 @@ func (s *Service) memberOnlyRequest(ctx context.Context, asked ClaimOptions, hea
 	if !found {
 		return false, nil
 	}
-	// The acceptance must be of the pull request the request names, not merely stand on the same
-	// head: two pull requests can point at one commit, and admitting the second under the first'
-	// acceptance would bundle a pull request no ruling covers (CRW-898).
-	row, err := s.Store.One(ctx, "SELECT pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", active.AcceptanceID)
+	// The acceptance must be of the pull request the request names, on the repository the request
+	// names, and not merely stand on the same head: two pull requests can point at one commit, and
+	// admitting a second under the first's acceptance would bundle a pull request no ruling covers
+	// (CRW-898). The repository is compared too, because the pull request number alone is not an
+	// identity across repositories.
+	row, err := s.Store.One(ctx, "SELECT forge_repository, pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", active.AcceptanceID)
 	if err != nil {
 		return false, trainUnreadable("the forge identity of acceptance %s was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
 	}
-	if row == nil || fmt.Sprint(row.Get("pr_number")) != fmt.Sprint(asked.PR.Int64) {
+	if row == nil || fmt.Sprint(row.Get("pr_number")) != fmt.Sprint(asked.PR.Int64) || !sameForgeRepository(fmt.Sprint(row.Get("forge_repository")), repository) {
 		return false, nil
 	}
 	stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, asked.Relationship.String, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
@@ -285,7 +287,7 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		// repeat of a live turn.
 		memberOnly := false
 		if len(claims) > 0 {
-			if memberOnly, e = s.memberOnlyRequest(tx, asked, head, ready); e != nil {
+			if memberOnly, e = s.memberOnlyRequest(tx, repository, asked, head, ready); e != nil {
 				return e
 			}
 			if !memberOnly {

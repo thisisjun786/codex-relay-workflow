@@ -373,3 +373,64 @@ func TestVerifiedEventRecordsTheVersionLineSteps(t *testing.T) {
 		t.Fatalf("the recorded step = %v, want the commit, path, rule and blob the chain proved", step)
 	}
 }
+
+// TestBundleDropsTheMemberABlockingFindingPointsAt is criterion c1 item 3 end to end on the relay's
+// own train: a three-member bundle is opened and verified, a blocking finding is answered by dropping
+// one member, the bundle is abandoned and reopened without it, and the survivors verify and land
+// once more. The dropped member's turn is left where its own parent put it, and only the survivors'
+// turns record the landing.
+func TestBundleDropsTheMemberABlockingFindingPointsAt(t *testing.T) {
+	w := newTr(t)
+	leader, members := w.threeMembers()
+	first, err := w.open(leader, trLeader, "base-0", members...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	train := first["train"].(map[string]any)["trainId"].(string)
+	w.pr(900, "head-bundle", TrainLaneLabel)
+	w.forge.runs["run-1"] = runFor("head-bundle")
+	if _, err := w.m.Verify(w.ctx, train, trLeader, "900", "head-bundle", "run-1", "/checkout", w.forge, w.proof); err != nil {
+		t.Fatal(err)
+	}
+	// a blocking finding points at the second member: that member is dropped, so its parent returns
+	// its turn, and the bundle is abandoned and reopened without it
+	dropped := w.turnIDOf(102)
+	if _, err := w.m.Release(w.ctx, dropped, "task-m2", "cancelled", "a blocking finding points at this member", "https://example.invalid/thread"); err == nil {
+		// a waiting member is withdrawn, not released; either way it leaves the lane
+		t.Fatalf("a waiting member turn was released, and a waiting turn is withdrawn")
+	}
+	if _, err := w.m.Withdraw(w.ctx, dropped, "task-m2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.m.Close(w.ctx, train, trLeader, "abandoned", "a blocking finding points at one member"); err != nil {
+		t.Fatal(err)
+	}
+	// the leader still holds its turn, so the survivors reopen under it; the dropped member is gone
+	second, err := w.open(leader, trLeader, "base-0", 101, 103)
+	if err != nil {
+		t.Fatalf("reopening the bundle without the dropped member: %v", err)
+	}
+	reopened := second["train"].(map[string]any)["trainId"].(string)
+	if n := w.count("SELECT count(*) FROM merge_train_members WHERE train_id = ?", reopened); n != 2 {
+		t.Fatalf("the reopened bundle carries %d members, want the two survivors", n)
+	}
+	w.pr(900, "head-bundle-2", TrainLaneLabel)
+	w.forge.runs["run-2"] = runFor("head-bundle-2")
+	if _, err := w.m.Verify(w.ctx, reopened, trLeader, "900", "head-bundle-2", "run-2", "/checkout", w.forge, w.proof); err != nil {
+		t.Fatalf("verifying the survivors once more: %v", err)
+	}
+	w.tip.set(trRepo, trBase, "merge-2")
+	w.forge.commits["merge-2"] = TrainCommit{SHA: "merge-2", Parents: []string{"base-0", "head-bundle-2"}, Tree: "tree-bundle"}
+	if _, err := w.m.TrainLand(w.ctx, reopened, trLeader, "merge-2", "merge-2", w.tip, w.forge); err != nil {
+		t.Fatalf("landing the survivors: %v", err)
+	}
+	if state := w.turn(w.turnIDOf(101)).State; state != "landed" {
+		t.Fatalf("the leader's turn is %s, want landed", state)
+	}
+	if state := w.turn(w.turnIDOf(103)).State; state != "landed" {
+		t.Fatalf("the surviving member's turn is %s, want landed", state)
+	}
+	if state := w.turn(dropped).State; state != "withdrawn" {
+		t.Fatalf("the dropped member's turn is %s, want withdrawn and not landed", state)
+	}
+}
