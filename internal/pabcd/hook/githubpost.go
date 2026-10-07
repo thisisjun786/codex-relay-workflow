@@ -140,7 +140,7 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 	if words, simple := githubPostSimple(command); simple {
 		return githubPostJudgeWords(words, cwd)
 	}
-	return githubPostUnread(command, cwd)
+	return githubPostUnread(command, cwd, true)
 }
 
 // githubPostJudgeArgv judges an already-split argv array: it is a simple command when every word is
@@ -148,7 +148,9 @@ func githubPostJudgeText(command, cwd string) (githubPostSite, bool) {
 func githubPostJudgeArgv(words []string, cwd string) (githubPostSite, bool) {
 	for _, w := range words {
 		if !githubPostLiteralWord(w) {
-			return githubPostUnread(strings.Join(words, " "), cwd)
+			// An argv array carries no shell syntax, so a word that only spells a redirection or a
+			// comment is a literal operand the program receives.
+			return githubPostUnread(strings.Join(words, " "), cwd, false)
 		}
 	}
 	// An argv array is already decoded, so the file rule must not remove quotes from its words again.
@@ -158,15 +160,17 @@ func githubPostJudgeArgv(words []string, cwd string) (githubPostSite, bool) {
 // githubPostJudgeWords is the rule for one simple command of literal words: the one allowed post form,
 // the read-and-record exception, a gh command the guard cannot place, or a text that names a post.
 func githubPostJudgeWords(words []string, cwd string) (githubPostSite, bool) {
-	return githubPostJudgeWordsQuoted(words, cwd, true)
+	return githubPostJudgeWordsQuoted(words, cwd, true, true)
 }
 
 // githubPostJudgeArgvWords is githubPostJudgeWords for an argv array, whose words the shell already built.
 func githubPostJudgeArgvWords(words []string, cwd string) (githubPostSite, bool) {
-	return githubPostJudgeWordsQuoted(words, cwd, false)
+	// An argv array carries no shell syntax: a word that spells a redirection is a literal operand the
+	// program receives, so the redirection reader does not apply to it.
+	return githubPostJudgeWordsQuoted(words, cwd, false, false)
 }
 
-func githubPostJudgeWordsQuoted(words []string, cwd string, quoted bool) (githubPostSite, bool) {
+func githubPostJudgeWordsQuoted(words []string, cwd string, quoted, syntax bool) (githubPostSite, bool) {
 	// A command word that is a path names a file the shell runs, even when its last element spells gh, so
 	// the direct-execution read (D2) judges a readable text script before the gh form trusts the name.
 	if site, denied := githubPostPathFileBeforeForm(words, cwd, quoted); denied {
@@ -175,7 +179,7 @@ func githubPostJudgeWordsQuoted(words []string, cwd string, quoted bool) (github
 	if site, denied, handled := githubPostForm(words, cwd, quoted); handled {
 		return site, denied
 	}
-	if site, denied := githubPostScriptCommand(words, githubPostCtx{dir: cwd}, quoted); denied {
+	if site, denied := githubPostScriptCommand(words, githubPostCtx{dir: cwd}, quoted, syntax); denied {
 		return site, true
 	}
 	if githubPostQuiet(words) {
@@ -251,7 +255,7 @@ func githubPostJudgePathScriptDepth(name, cwd string, depth int) (githubPostSite
 // githubPostUnread is the fail-closed judgement for a text that is not one simple command: rule 2's
 // canonical words are the gate, so a text that names a post is refused whatever its quoting depth, its
 // case or its number of commands, and a text that names no post is not a target.
-func githubPostUnread(command, cwd string) (githubPostSite, bool) {
+func githubPostUnread(command, cwd string, syntax bool) (githubPostSite, bool) {
 	// A text that spells an inline body is the inline-body rule, wherever the body sits.
 	if githubPostInlineShape(command) {
 		return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true
@@ -263,7 +267,7 @@ func githubPostUnread(command, cwd string) (githubPostSite, bool) {
 	}
 	// The file rule reads each command of a list through the same decomposition the write reader uses, so a
 	// wrapper prefix or a list separator no longer hides a shell that runs a posting script file.
-	if site, denied := githubPostScriptList(command, cwd); denied {
+	if site, denied := githubPostScriptList(command, cwd, syntax); denied {
 		return site, true
 	}
 	if !githubPostCanonicalNamesPost(githubPostCanonicalWords(command)) {
@@ -729,7 +733,7 @@ type githubPostCtx struct {
 // shell runs directly (D2). A command whose wrapper runs nothing is not a target, and an allowed script
 // leaves the command text to the closed rule, because the shell's own arguments may run a post the script
 // passes on.
-func githubPostScriptCommand(tokens []string, ctx githubPostCtx, quoted bool) (githubPostSite, bool) {
+func githubPostScriptCommand(tokens []string, ctx githubPostCtx, quoted, syntax bool) (githubPostSite, bool) {
 	// The words are read as the shell builds them (quote removal), so a wrapper or a shell in quote pieces
 	// ('timeout' 30 bash post.sh, 'bash' post.sh) is the word the shell runs.
 	normal := githubPostNormalWords(tokens, quoted)
@@ -743,7 +747,7 @@ func githubPostScriptCommand(tokens []string, ctx githubPostCtx, quoted bool) (g
 	}
 	rest, out := githubPostProgramPrefix(normal, ctx)
 	off := len(normal) - len(rest)
-	return githubPostJudgeProgram(rest, raw[off:], out)
+	return githubPostJudgeProgram(rest, raw[off:], out, syntax)
 }
 
 // githubPostJudgeProgram judges the program that remains once the prefix is dropped: a shell that takes
@@ -751,11 +755,11 @@ func githubPostScriptCommand(tokens []string, ctx githubPostCtx, quoted bool) (g
 // they are judged as written and not decoded again. raw is the same words before quote removal, so a word
 // the shell reads as syntax (a redirection) is told apart from one the shell reads as a literal operand (a
 // quoted '>post.sh' names that file).
-func githubPostJudgeProgram(rest, raw []string, ctx githubPostCtx) (githubPostSite, bool) {
+func githubPostJudgeProgram(rest, raw []string, ctx githubPostCtx, syntax bool) (githubPostSite, bool) {
 	if len(rest) == 0 {
 		return githubPostSite{}, false
 	}
-	if site, denied, _ := githubPostShellScript(rest, raw, ctx); denied {
+	if site, denied, _ := githubPostShellScript(rest, raw, ctx, syntax); denied {
 		return site, true
 	}
 	return githubPostDirectScript(rest, ctx.dir)
@@ -943,7 +947,7 @@ func githubPostSegments(command string) []githubPostSegment {
 // a pipeline or a background job runs in a subshell of its own, so neither moves the directory a later
 // relative operand is read in. A subshell group ( ) is restored when it closes; a brace group { } runs in
 // the current shell, so its cd persists.
-func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
+func githubPostScriptList(command, cwd string, syntax bool) (githubPostSite, bool) {
 	ctx := githubPostCtx{dir: cwd}
 	var saved []githubPostCtx
 	prevSep := ""
@@ -990,7 +994,7 @@ func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
 			if own {
 				ctx.dir = githubPostJoinDir(ctx.dir, name)
 			}
-		} else if site, denied := githubPostJudgeProgram(rest, program, out); denied {
+		} else if site, denied := githubPostJudgeProgram(rest, program, out, syntax); denied {
 			return site, true
 		}
 		for i := 0; i < closes; i++ {
@@ -1059,8 +1063,8 @@ func githubPostDirectScript(words []string, cwd string) (githubPostSite, bool) {
 // handled is true only for a refusal. A script the guard allows is not a verdict on the command: the
 // command text still carries the shell's own arguments, which the script may run ("$@"), so the caller
 // keeps judging it.
-func githubPostShellScript(words, raw []string, ctx githubPostCtx) (githubPostSite, bool, bool) {
-	name, program, ok := githubPostShellProgramFile(words, raw)
+func githubPostShellScript(words, raw []string, ctx githubPostCtx, syntax bool) (githubPostSite, bool, bool) {
+	name, program, ok := githubPostShellProgramFile(words, raw, syntax)
 	if !ok {
 		return githubPostSite{}, false, false
 	}
@@ -1090,7 +1094,7 @@ func githubPostShellScript(words, raw []string, ctx githubPostCtx) (githubPostSi
 // -O, +O, --rcfile, --init-file) also consumes the word after it, so an option's value is never read as
 // the program file. The shell word is the first word after the wrappers, so a source or dot command is
 // recognised even when it is spelled as a path.
-func githubPostShellProgramFile(words, raw []string) (name, program string, ok bool) {
+func githubPostShellProgramFile(words, raw []string, syntax bool) (name, program string, ok bool) {
 	if len(words) < 2 {
 		return "", "", false
 	}
@@ -1106,7 +1110,10 @@ func githubPostShellProgramFile(words, raw []string) (name, program string, ok b
 		if githubPostShellProgramWord(w) {
 			return "", program, false
 		}
-		if operator, consumesNext := githubPostRedirection(w); operator && githubPostRawWord(raw, i) == w {
+		// An argv array carries no shell syntax, so a word that spells a redirection is a literal operand
+		// the program receives (bash '>post.sh' from an argv array names that file), while a shell text
+		// keeps the operator distinction.
+		if operator, consumesNext := githubPostRedirection(w); syntax && operator && githubPostRawWord(raw, i) == w {
 			// A redirection is not the program operand. A bare operator takes the word after it (the
 			// redirection target, or the here-string), so both are skipped: "bash < post.sh" reads its
 			// program from standard input, which is not a file the guard can read.
