@@ -968,6 +968,64 @@ reopens. A delivery refused by the hourly cap, before or inside its claim, is tr
 window's end or within a minute, whichever is sooner, so a cap raised or lifted mid-window takes
 effect within that minute; one refused by the minimum gap keeps the gap from now.
 
+## When the store is damaged: the write halt
+
+The relay stops writing to a store it has seen damaged, and says so durably. On 2026-10-06 the
+daemon's reporting observation saw `store_unreadable` (disk I/O error 522, database disk image is
+malformed 11) between 13:44 and 13:52 and recorded it only as an unmeasured notice, while the daemon
+and the CLI kept writing into the damaged store. The halt is what makes that stop.
+
+**What is detected.** A SQLite failure whose primary result code is `SQLITE_CORRUPT` (11, every
+extended code of it) or `SQLITE_NOTADB` (26), or whose code is `SQLITE_IOERR_SHORT_READ` (522), read
+off the result code rather than a list of three literals. Nothing else halts a store: a busy
+database, a constraint violation and the other I/O errors are answered as they always were.
+
+**Where it is seen.** The daemon's own pass: a statement it issues to write, and its own read of the
+store (the observation pass's census, and the omission observer's reporting reading). A writable
+command that meets the marker refuses at the open.
+
+**The marker.** `corruption.json` in the state directory, beside `takeover.json` and
+`write-gate.lock`, published the way the ownership mirror is (temporary file, fsync, rename,
+directory fsync), so a reader sees the whole previous record or the whole new one and never a
+partial file. It holds the detection time, the process (pid and the command line), the result code
+and message, the site (`write` or `observation`) and the marker's own sequence. **Nothing is
+written into the store when it is set**, and the store is never repaired by the halt: the marker is
+a stop, not a recovery.
+
+Two processes that detect the damage at once both publish, and the last rename is the one that
+stands; what survives is always one whole, decodable record. The sequence counts the detections one
+publisher saw, not how many happened.
+
+**What the daemon does.** A pass that meets the class publishes the marker and ends without an
+error, so the run keeps ticking; every later pass reads the marker first and does nothing at all -
+no host read, no settlement, no delivery, no journal row. The deliveries it was carrying are left
+where they are, for the next daemon and for the operator's restore. Nothing is retried and no ledger
+row is written for the failed write.
+
+**What the CLI does.** A writable command is refused at the open with the reason
+`store_write_halted` (exit 2), whose detail names the marker file and the detection it records.
+Read-only commands still answer: they read the store through the read-only opener, which runs no DDL,
+installs no index and takes no write lock. `doctor` answers and reports the marker as a trailing
+`corruption` key (`present`, `path`, and the detection when the marker decodes; an unreadable
+marker reports `present: true` with the failure in `detail`, because a marker nobody can read is
+not evidence that the store is healthy).
+
+**Clearing it by hand, until the command exists.** The operator command that clears the marker
+ships separately (the follow-up issue for `store-halt-clear`). Until then:
+
+1. Stop the relay service. Nothing must be writing while the store is being restored.
+2. Keep a copy of `corruption.json` as evidence: it records the code, the message, the site and the
+   process, and it is the only record of what the store looked like when it broke.
+3. Restore the store from a backup and check the readings agree - the restore slice's own reading and
+   the reconcile reading - before any write is admitted again. The halt does not do this for you and
+   does not lift itself.
+4. Only then remove `corruption.json` from the state directory, and start the service.
+
+Removing the marker without a verified restore re-admits writes to a store that is still damaged.
+`doctor` reports the marker and the halt is visible in the daemon's notes, so a store that is
+halted cannot be mistaken for a quiet one.
+
+
 ## What one tick guarantees
 
 The loop is bounded, so the interesting question is not what it does but what it cannot
