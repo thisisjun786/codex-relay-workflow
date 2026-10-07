@@ -15,6 +15,11 @@ import (
 // oracle's answer comes first and unchanged; a write it cannot see (a wrapper option, a bundled flag, a command after a
 // newline, a shell started with -c) is appended after it as a recorded intentionally changed case. Nothing is initialized at
 // package level: lookups are functions and regexps compile where they are used.
+//
+// CRW-900 adds one more write the oracle cannot see: the destination of a Python copy, rename or link call (shutil.copy and
+// its siblings, os.rename and its siblings, and the Path methods whose destination is their argument or their receiver).
+// It lives in the hardened program walk and is appended after the oracle's answer like every other addition, so the oracle's
+// own reading (scriptWriteDestinations) is unchanged.
 
 // shellVerbDestinations is the verb step of ShellWriteDestinations: the oracle's destinations, then the others. The command
 // strings a shell -c or eval runs are read again within a budget of 32 times the segment plus 64 KiB, so the work stays linear.
@@ -838,11 +843,24 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 		return []string{}, shellWriteExecUnreadableWhat
 	}
 	type frame struct {
-		kind  byte // 'o' for open(, 'p' for Path(, 'e' for exec/eval/compile(, else 0
+		kind  byte // 'o' for open(, 'p' for Path(, 'e' for exec/eval/compile(, 'c', 'r' or 'l' for a copy, rename or link call, else 0
 		start int
 		args  [][2]int
+		recv  [][2]int // the receiver arguments of Path(b).symlink_to(a) or .hardlink_to(a), whose destination is b
+	}
+	// pending is the method call a Path(...) receiver just named: the bracket of Path(a).rename(b) and its siblings, read
+	// when the walk reaches it, with the receiver's own arguments kept for the two methods whose destination is the receiver.
+	type pendingCall struct {
+		at   int
+		kind byte
+		recv [][2]int
 	}
 	var stack []frame
+	var pending pendingCall
+	var binds shellWriteCopyImports
+	if python {
+		binds = shellWriteCopyImportsOf(rs)
+	}
 	dests = []string{}
 	for i := 0; i < len(rs); i++ {
 		switch c := rs[i]; {
@@ -866,11 +884,20 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 			}
 			i = shellWriteTripleScanRegion(rs, i, python) - 1
 		case c == '(' || c == '[' || c == '{':
-			kind := shellVerbCallKind(rs, i, c)
-			if kind == 0 && python && shellWriteExecCallee(rs, i, c) {
-				kind = 'e'
+			kind, recv := byte(0), [][2]int(nil)
+			switch {
+			case pending.kind != 0 && pending.at == i:
+				kind, recv, pending = pending.kind, pending.recv, pendingCall{}
+			default:
+				kind = shellVerbCallKind(rs, i, c)
+				if kind == 0 && python && shellWriteExecCallee(rs, i, c) {
+					kind = 'e'
+				}
+				if kind == 0 && python && c == '(' {
+					kind = shellWriteCopyModuleKind(rs, i, binds)
+				}
 			}
-			stack = append(stack, frame{kind: kind, start: i + 1})
+			stack = append(stack, frame{kind: kind, start: i + 1, recv: recv})
 		case c == ',' && len(stack) > 0:
 			if top := &stack[len(stack)-1]; top.kind != 0 {
 				top.args = append(top.args, [2]int{top.start, i})
@@ -879,11 +906,23 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 		case (c == ')' || c == ']' || c == '}') && len(stack) > 0:
 			top := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			if spans := append(top.args, [2]int{top.start, i}); top.kind == 'o' && c == ')' {
+			spans := append(top.args, [2]int{top.start, i})
+			switch {
+			case top.kind == 'o' && c == ')':
 				dests = append(dests, shellVerbOpenCall(rs, spans)...)
-			} else if top.kind == 'p' && c == ')' && shellVerbWriteMethod(rs, i+1) {
-				dests = append(dests, shellWriteEscapePath(rs, spans)...)
-			} else if top.kind == 'e' && c == ')' {
+			case top.kind == 'p' && c == ')':
+				if shellVerbWriteMethod(rs, i+1) {
+					dests = append(dests, shellWriteEscapePath(rs, spans)...)
+				} else if at, kind, ok := shellWritePathMethodCall(rs, i+1); ok {
+					pending = pendingCall{at: at, kind: kind, recv: spans}
+				}
+			case top.kind == 'c' && c == ')':
+				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "dst")...)
+			case top.kind == 'r' && c == ')':
+				dests = append(dests, shellWriteCopyDest(rs, spans, 0, "target")...)
+			case top.kind == 'l' && c == ')':
+				dests = append(dests, shellWriteEscapePath(rs, top.recv)...)
+			case top.kind == 'e' && c == ')':
 				more, inner := shellWriteExecProgram(rs, spans, depth)
 				dests = append(dests, more...)
 				if inner != "" && what == "" {
@@ -1026,6 +1065,255 @@ func shellVerbWriteMethod(rs []rune, j int) bool {
 		}
 	}
 	return false
+}
+
+// shellWritePathMethodCall reads the method call that follows a Path(...) receiver at j (CRW-900): its bracket index and the
+// frame kind this reader gives it - 'r' for .rename( and .replace(, whose destination is their own argument, and 'l' for
+// .symlink_to( and .hardlink_to(, whose destination is the receiver. Blanks are allowed around the dot and before the
+// bracket. Every other method, and the end of the program, is no such call.
+func shellWritePathMethodCall(rs []rune, j int) (int, byte, bool) {
+	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
+		j++
+	}
+	if j >= len(rs) || rs[j] != '.' {
+		return 0, 0, false
+	}
+	for j++; j < len(rs) && shellVerbSpaceRune(rs[j]); {
+		j++
+	}
+	start := j
+	for j < len(rs) && shellWriteCopyIdentRune(rs[j]) {
+		j++
+	}
+	var kind byte
+	switch string(rs[start:j]) {
+	case "rename", "replace":
+		kind = 'r'
+	case "symlink_to", "hardlink_to":
+		kind = 'l'
+	default:
+		return 0, 0, false
+	}
+	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
+		j++
+	}
+	if j >= len(rs) || rs[j] != '(' {
+		return 0, 0, false
+	}
+	return j, kind, true
+}
+
+// shellWriteCopyDest is the destination argument of a copy, rename or link call: the positional argument at pos, or the
+// keyword named key, whichever the call gives. A call that gives neither names nothing, and a destination that is no string
+// literal names nothing either, exactly as the non-literal argument of open() names nothing (CRW-900, criterion c1).
+func shellWriteCopyDest(rs []rune, spans [][2]int, pos int, key string) []string {
+	positional, arg := 0, []rune(nil)
+	for _, span := range spans {
+		value := rs[span[0]:span[1]]
+		if shellVerbBlank(value) {
+			continue // the empty argument after a trailing comma
+		}
+		if name, keyword, ok := shellVerbKeywordArg(value); ok {
+			if name == key {
+				arg = keyword
+			}
+			continue
+		}
+		if positional == pos {
+			arg = value
+		}
+		positional++
+	}
+	return shellWriteCopyLiteral(arg)
+}
+
+// shellWriteCopyLiteral is the destination a string literal names, in both readings this port keeps for a path: the earlier
+// one, which drops a backslash only before the literal's own quote or another backslash, and the decoded one
+// (shellWriteEscapeLiteral). A value that is no literal names nothing.
+func shellWriteCopyLiteral(arg []rune) []string {
+	if len(arg) == 0 {
+		return nil
+	}
+	names := []string{}
+	for _, earlier := range []bool{true, false} {
+		if file, ok := shellWriteEscapeLiteral(arg, earlier); ok && file != "" && !slices.Contains(names, file) {
+			names = append(names, file)
+		}
+	}
+	return names
+}
+
+// shellWriteCopyModuleKind reads the callee of the call whose bracket is at i when it names a copy, rename or link function
+// this reader knows ('c'): a name after the shutil. or os. prefix, a bare name a from-import bound (from shutil import copy),
+// or an alias an import bound (import shutil as s). Every other callee is no copy call.
+func shellWriteCopyModuleKind(rs []rune, i int, binds shellWriteCopyImports) byte {
+	j := i - 1
+	for j >= 0 && shellVerbSpaceRune(rs[j]) {
+		j--
+	}
+	end := j
+	for j >= 0 && shellWriteCopyIdentRune(rs[j]) {
+		j--
+	}
+	if end < j+1 {
+		return 0
+	}
+	name := string(rs[j+1 : end+1])
+	for before := j; before >= 0; before-- {
+		if shellVerbSpaceRune(rs[before]) {
+			continue
+		}
+		if rs[before] != '.' {
+			break
+		}
+		before--
+		for before >= 0 && shellVerbSpaceRune(rs[before]) {
+			before--
+		}
+		rend := before
+		for before >= 0 && shellWriteCopyIdentRune(rs[before]) {
+			before--
+		}
+		if rend < before+1 {
+			return 0
+		}
+		if before >= 0 && rs[before] == '.' {
+			return 0 // an attribute chain (a.shutil.copy) is not the module itself
+		}
+		module := string(rs[before+1 : rend+1])
+		if module != "shutil" && module != "os" {
+			module = binds.alias[module]
+		}
+		if shellWriteCopyFunc(module, name) {
+			return 'c'
+		}
+		return 0
+	}
+	if binds.from[name] && !shellWriteExecDefHeader(rs, j) {
+		return 'c'
+	}
+	return 0
+}
+
+// shellWriteCopyFuncs is the functions of a module whose destination this reader names: every one of them writes to its
+// second argument, or to the Path receiver or argument the call names (CRW-900).
+func shellWriteCopyFuncs(module string) []string {
+	switch module {
+	case "shutil":
+		return []string{"copy", "copy2", "copyfile", "copytree", "move"}
+	case "os":
+		return []string{"rename", "replace", "renames", "link", "symlink"}
+	}
+	return nil
+}
+
+// shellWriteCopyFunc reports whether a module names such a function.
+func shellWriteCopyFunc(module, name string) bool {
+	return slices.Contains(shellWriteCopyFuncs(module), name)
+}
+
+// shellWriteCopyImports is what a Python program's import statements bind for the copy, rename and link calls this reader
+// names: the module each alias stands for (import shutil as s) and the function each bare name stands for
+// (from shutil import copy). Nothing else is bound, so an unimported bare name names nothing.
+type shellWriteCopyImports struct {
+	alias map[string]string
+	from  map[string]bool
+}
+
+// shellWriteCopyImportsOf reads the import statements of a program. A string literal is no import text, so a name inside one
+// binds nothing, and a comment was already cut from the program the walk reads.
+func shellWriteCopyImportsOf(rs []rune) shellWriteCopyImports {
+	binds := shellWriteCopyImports{alias: map[string]string{}, from: map[string]bool{}}
+	words := []string{}
+	flush := func() {
+		if len(words) > 0 {
+			shellWriteCopyImportStatement(words, &binds)
+			words = words[:0]
+		}
+	}
+	for i := 0; i < len(rs); {
+		switch c := rs[i]; {
+		case c == '\'' || c == '"':
+			i = shellWriteTripleScanRegion(rs, i, true)
+		case c == '#':
+			for i < len(rs) && rs[i] != '\n' && rs[i] != '\r' {
+				i++
+			}
+		case c == '\n' || c == '\r' || c == ';':
+			flush()
+			i++
+		case shellWriteCopyIdentRune(c):
+			j := i
+			for j < len(rs) && shellWriteCopyIdentRune(rs[j]) {
+				j++
+			}
+			words = append(words, string(rs[i:j]))
+			i = j
+		case c == '*':
+			words = append(words, "*")
+			i++
+		default:
+			i++
+		}
+	}
+	flush()
+	return binds
+}
+
+// shellWriteCopyImportStatement reads one statement's words: import a [as b], import a, b, from m import x [as y], and the
+// star form from m import *, which binds every function of m this reader knows.
+func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports) {
+	switch {
+	case len(words) >= 2 && words[0] == "import":
+		for _, item := range shellWriteCopyImportItems(words[1:]) {
+			name := item[0]
+			if item[1] != "" {
+				name = item[1]
+			}
+			if name != "" && name != "*" {
+				binds.alias[name] = item[0]
+			}
+		}
+	case len(words) >= 3 && words[0] == "from" && words[2] == "import":
+		module := words[1]
+		for _, item := range shellWriteCopyImportItems(words[3:]) {
+			if item[0] == "*" {
+				for _, known := range shellWriteCopyFuncs(module) {
+					binds.from[known] = true
+				}
+				continue
+			}
+			name := item[0]
+			if item[1] != "" {
+				name = item[1]
+			}
+			if name != "" && shellWriteCopyFunc(module, item[0]) {
+				binds.from[name] = true
+			}
+		}
+	}
+}
+
+// shellWriteCopyImportItems splits the name list of an import clause: each item is a name and, after "as", the name it is
+// bound to. A star is the name "*".
+func shellWriteCopyImportItems(words []string) [][2]string {
+	out := [][2]string{}
+	for i := 0; i < len(words); {
+		item := [2]string{words[i], ""}
+		i++
+		if i+1 < len(words) && words[i] == "as" {
+			item[1] = words[i+1]
+			i += 2
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// shellWriteCopyIdentRune is what a Python identifier holds, in the ASCII this reader reads: a letter, a digit or an
+// underscore, and any rune outside ASCII, as the identifier tests beside this one read it.
+func shellWriteCopyIdentRune(r rune) bool {
+	return r >= 128 || r == '_' || shellVerbLetter(byte(r), true)
 }
 
 func shellVerbBlank(arg []rune) bool {
