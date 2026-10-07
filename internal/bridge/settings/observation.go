@@ -84,14 +84,25 @@ func (c Contract) Receipt(response map[string]any, at string) map[string]any {
 	} else if len(asked) > 0 {
 		verification = "observed_at_" + at
 		for k := range asked {
+			// Asking the host for this one is not observing it: the protocol has no field for it, so
+			// a receipt that listed it as verified would claim a confirmation nothing can give.
+			if k == AutoCompactTokenLimitKey {
+				continue
+			}
 			verified = append(verified, k)
 		}
 		sort.Strings(verified)
+		if len(verified) == 0 {
+			verification = "not_requested"
+		}
 	}
 	for _, f := range findings {
 		if f.Code == Unobservable {
 			unobservable = append(unobservable, f.Field)
 		}
+	}
+	if c.AutoCompactTokenLimit != nil {
+		unobservable = append(unobservable, AutoCompactTokenLimitKey)
 	}
 	sort.Strings(unobservable)
 	return map[string]any{"requested": asked, "actual": Observed(response), "verified": verified, "unobservable": unobservable, "findings": findings, "verification": verification, "observationLimits": observationLimits}

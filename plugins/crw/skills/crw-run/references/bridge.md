@@ -230,6 +230,14 @@ Compare actual cwd, workspace roots, model, reasoningEffort, approvalPolicy, and
 the full sandbox/permission response. Do not infer OCX routing from a model ID
 or the generic modelProvider label. Missing served-provider proof stays unknown.
 
+A pair may also carry `autoCompactTokenLimit`. The bridge sends it as
+`config.model_auto_compact_token_limit` on `thread/start` and `thread/resume`, which is how a
+thread is made to compact below a host window larger than what the provider behind the model
+accepts. It is not a pair half and not something a caller states: the operator writes it on the
+role's pair in the execution policy, and a file without it is unchanged. The host does not report
+the value back, so the resume observation never compares it, its silence withholds nothing, and the
+receipt lists it under `requested` and `unobservable` rather than `verified`.
+
 The receipt also reports the runtime status the host gave before the resume. Where that status
 is `notLoaded`, it carries `echoIndependence: "not_established"`: the host may apply the
 settings it was sent while materializing the task, so an agreeing answer cannot be told apart

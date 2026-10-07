@@ -136,6 +136,50 @@ role that lists more than one pair is described differently:
   withheld from a thread the host has not loaded, as `unverified_pair_for_unloaded_thread`, exactly as a
   supervisor's or an exception's pair is.
 
+## A pair may cap auto-compaction
+
+A host can report a context window far larger than what the provider behind a model actually
+accepts. `inferhub/deepseek-v4.1-flash` is the measured case: the host reports 950,000 tokens, and
+the provider cuts every request above roughly 664,000 with `Provider stream error: upstream error`,
+so the child stops without a receipt before Codex compacts on its own. A pair may therefore carry
+`autoCompactTokenLimit`, a positive integer the bridge sends as `model_auto_compact_token_limit` in
+the `thread/start` and `thread/resume` `config`, which makes the host compact below its own window:
+
+    "child": {"model": "inferhub/deepseek-v4.1-flash", "reasoningEffort": "none", "autoCompactTokenLimit": 550000}
+
+    "child": {"pairs": [
+      {"model": "inferhub/deepseek-v4.1-flash", "reasoningEffort": "none", "autoCompactTokenLimit": 550000}
+    ]}
+
+The field is optional and belongs to the pair, so it goes on whichever spelling declares that pair:
+the single `model`/`reasoningEffort` form, or one entry of `pairs`. A file that declares none
+behaves exactly as before — no key is sent and the host's own threshold stands. A supervisor and an
+exception name no pair, so neither can carry one: a `supervisor` entry that declares the field does
+not load, and so does an entry that puts it beside `pairs` instead of inside one.
+
+A value that is not a positive integer is refused when the file is read, through the same
+`execution_policy_unreadable` path as every other unusable policy value: a string, a boolean, a
+fraction or an exponent, zero and a negative number all fail there. The limit is not part of what a
+request is judged against, so it changes neither which pairs a role allows nor the description
+`get_capabilities` reports — that description is the authorization surface, as it is for MCP
+profiles.
+
+The host has no field that reports this value back, so the bridge never compares it. A creation or a
+resume is not withheld, and its receipt does not fail, because the host said nothing about it. The
+receipt records it the way it records any setting the host cannot confirm: under `requested`, with
+the value that was sent, and under `unobservable`; `verified` never lists it. `verification` stays
+`observed_at_creation` or `observed_at_resume` for the settings that were actually compared, and
+`not_requested` when the limit was the only thing asked for.
+
+**The recommended value is 550000**, about 110,000 below the highest input observed to pass
+(664,238 tokens, 2026-10-06) and about 114,000 below the first observed failure. The margin is there
+because compaction is decided between samples, and one tool result can add a lot between two of
+them. The evidence is the parent's probe of 2026-10-06: two ephemeral threads under an isolated
+`codex app-server`, both reporting a 950,000 window, given the same ~15,000-token input over three
+turns. The thread given `config.model_auto_compact_token_limit=4000` compacted twice, its context
+falling from 30,696 to 15,478; the control thread never compacted and grew 30,756 → 40,588 →
+40,593. Writing the value into a host's policy file is an operator step, like the rest of that file.
+
 ## A role may carry MCP profiles
 
 A thread starts every MCP server config.toml defines and every installed plugin provides, whether or
