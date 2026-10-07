@@ -239,4 +239,3 @@ Follow [CI activation](docs/CI.md#activation),
 and read back repository settings before claiming protection is active. Refresh invalidated
 evidence after target changes. During iteration, use the affected tests. Do not repeat passing
 checks for unchanged bytes, criteria and environments merely for extra confidence.
-
