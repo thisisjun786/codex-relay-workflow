@@ -247,7 +247,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	}
 	defer cleanup()
 	if out, err := runGit(opts.Root, "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
-		return verificationRecord{}, false, fmt.Errorf("creating the clean worktree: %w%s", err, localTail(string(out)))
+		return verificationRecord{}, false, fmt.Errorf("creating the clean worktree: %w%s", err, localReason(string(out)))
 	}
 	opts.output = filepath.Join(temp, "runner", "output")
 	env, err := localStepEnv(home, temp, opts)
@@ -373,7 +373,11 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	if err := shell.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return localFailed, fmt.Sprintf("exit status %d%s", exit.ExitCode(), localTail(output.String()))
+			reason := fmt.Sprintf("exit status %d%s", exit.ExitCode(), localReason(output.String()))
+			if strings.Contains(output.String(), localTimeoutMark) {
+				reason = "timeout: " + reason
+			}
+			return localFailed, reason
 		}
 		return localFailed, err.Error()
 	}
@@ -557,19 +561,33 @@ func localStepLabel(step localStep) string {
 	return command
 }
 
-// localTail is the last non-empty line of a command's output, for a failure's reason.
-func localTail(output string) string {
-	last := ""
-	for _, line := range lines(output) {
-		if strings.TrimSpace(line) != "" {
-			last = strings.TrimSpace(line)
-		}
-	}
-	if last == "" {
+// localTimeoutMark is the line a Go test binary prints when a test run outlives its -timeout.
+const localTimeoutMark = "panic: test timed out"
+
+// localReason is the end of a command's output for a failure's reason: the last localReasonLines
+// lines, cut to localReasonBytes, so a failing test's line reaches the record and the record stays
+// bounded.
+func localReason(output string) string {
+	text := strings.TrimRight(output, "\n")
+	if text == "" {
 		return ""
 	}
-	return ": " + last
+	all := strings.Split(text, "\n")
+	if len(all) > localReasonLines {
+		all = all[len(all)-localReasonLines:]
+	}
+	tail := strings.Join(all, "\n")
+	if len(tail) > localReasonBytes {
+		tail = strings.ToValidUTF8(tail[len(tail)-localReasonBytes:], "")
+	}
+	return ": " + tail
 }
+
+// The bounds of a failure's reason: the last lines of the output, and at most this many bytes.
+const (
+	localReasonLines = 40
+	localReasonBytes = 4096
+)
 
 // shortHash is a commit hash's first twelve characters.
 func shortHash(commit string) string {
