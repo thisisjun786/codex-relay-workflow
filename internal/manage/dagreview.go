@@ -90,16 +90,10 @@ type dagReviewSection struct {
 	StallMinutes int      `json:"stall_minutes"`
 }
 
-// dagReviewSource reads one group of anomalies from the store. This issue registers the store
-// source; a later issue adds the host-record source to the same list, so the review is called
-// through one place rather than through a growing switch.
+// dagReviewSource reads one group of anomalies from one place. A source appends to in.review. The
+// two sources a review runs are called from the two places their reads belong: the store source
+// inside the store's snapshot, and the host-record source outside it.
 type dagReviewSource func(ctx context.Context, in *dagReviewInput) error
-
-// dagReviewSources is every source a review runs, in order. A source appends to in.review.
-var dagReviewSources = []dagReviewSource{
-	dagReviewStoreSources,
-	dagHostSources,
-}
 
 // dagReviewInput is what a source reads: the open store, the plan facts, the lanes, the clock
 // and the review being built.
@@ -165,13 +159,13 @@ func DagReview(ctx context.Context, e *Env, cfg *Config) (Review, error) {
 		if in.lanes, err = handle.dagReviewReadLanes(ctx, section.Plans); err != nil {
 			return fmt.Errorf("read the merge lanes: %w", err)
 		}
-		for _, source := range dagReviewSources {
-			if err := source(ctx, in); err != nil {
-				return err
-			}
-		}
-		return nil
+		// The store readings run inside the snapshot; the host readings do not, because they
+		// touch no SQLite state and a network call should not hold the read snapshot open.
+		return dagReviewStoreSources(ctx, in)
 	}); err != nil {
+		return review, err
+	}
+	if err := dagHostSources(ctx, in); err != nil {
 		return review, err
 	}
 	sort.SliceStable(review.Anomalies, func(i, j int) bool {
@@ -227,7 +221,7 @@ func dagReviewPlanShape(in *dagReviewInput, facts dagReviewFacts) {
 	progress := facts.progress
 	released := 0
 	for _, node := range progress.Nodes {
-		if dagReviewNodeReleased(node.Stage) {
+		if dagReviewNodeReleased(node) {
 			released++
 		}
 	}
@@ -238,15 +232,27 @@ func dagReviewPlanShape(in *dagReviewInput, facts dagReviewFacts) {
 	})
 }
 
-// dagReviewNodeReleased is whether the plan has released the node. Progress places a node nobody
-// owns yet in one of four stages, and a node reaches any other stage only after a release, so the
-// released count is the nodes outside those four.
-func dagReviewNodeReleased(stage string) bool {
-	switch stage {
+// dagReviewNodeReleased is whether the plan has released the node. Two of Progress's stages are
+// reached only by a node with a release or an execution behind it; the rest are the plan's
+// lifecycle overlays, which a node the plan holds before any release carries too, so those are
+// released only when the reading shows a release: a relationship, an execution, the managed start
+// of a release whose child is not bound yet, or a held slot.
+func dagReviewNodeReleased(node dagsched.NodeProgress) bool {
+	switch node.Stage {
 	case dagsched.StageWaitingPredecessor, dagsched.StageWaitingDecision, dagsched.StageWaitingResource, dagsched.StageReady:
 		return false
+	case dagsched.StageCancelled, dagsched.StageArchived, dagsched.StagePaused:
+		return dagReviewNodeOwned(node)
 	}
 	return true
+}
+
+// dagReviewNodeOwned is whether the plan's own reading shows the node was ever released. A node
+// the plan holds (paused, cancelled or archived by a revision) before any release has none of
+// these links, and its stage alone cannot tell it from one whose relationship was paused after a
+// release, so the release evidence is what decides.
+func dagReviewNodeOwned(node dagsched.NodeProgress) bool {
+	return len(node.Links.Executions) > 0 || node.Links.Relationship != nil || node.Links.Managed != nil || node.HoldsSlot
 }
 
 // dagReviewIssueByNode maps every live node id of the plan to its issue, as the scheduler's own
@@ -320,7 +326,7 @@ func dagReviewExclusiveOverlapRunning(in *dagReviewInput, facts dagReviewFacts) 
 			})
 			continue
 		}
-		if dagReviewNodeInFlight(node.Stage) {
+		if dagReviewNodeInFlight(node) {
 			inflight = append(inflight, node.NodeID)
 		}
 	}
@@ -341,13 +347,17 @@ func dagReviewExclusiveOverlapRunning(in *dagReviewInput, facts dagReviewFacts) 
 	}
 }
 
-// dagReviewNodeInFlight is whether a Progress stage means the node holds its edit regions now: the
-// plan has released it and its accepted head has not landed.
-func dagReviewNodeInFlight(stage string) bool {
-	switch stage {
+// dagReviewNodeInFlight is whether the node holds its edit regions now: the plan released it and
+// its accepted head has not landed. The stage decides for a node with an execution behind it; the
+// paused stage is shared with a node the plan holds before any release, so there the node's own
+// release evidence decides, and a node nobody released holds nothing.
+func dagReviewNodeInFlight(node dagsched.NodeProgress) bool {
+	switch node.Stage {
 	case dagsched.StageReleasing, dagsched.StageCreationUnknown, dagsched.StageRunning, dagsched.StageReported,
-		dagsched.StageVerifying, dagsched.StageCorrecting, dagsched.StageAccepted, dagsched.StageStale, dagsched.StagePaused:
+		dagsched.StageVerifying, dagsched.StageCorrecting, dagsched.StageAccepted, dagsched.StageStale:
 		return true
+	case dagsched.StagePaused:
+		return dagReviewNodeOwned(node)
 	}
 	return false
 }

@@ -175,6 +175,14 @@ func (f *dagReviewFixture) retire(planID, nodeID string, rev int) {
 	p.revisions[rev-1].changes = append(p.revisions[rev-1].changes, dag.Change{Op: dag.OpRetireNode, NodeID: nodeID})
 }
 
+// pauseNode adds the change that pauses one node at the named revision. A node the plan paused
+// before it was ever released has no release and no execution, so the reading gives it the paused
+// stage while it owns nothing.
+func (f *dagReviewFixture) pauseNode(planID, nodeID string, rev int) {
+	p := f.planFixture(planID)
+	p.revisions[rev-1].changes = append(p.revisions[rev-1].changes, dag.Change{Op: dag.OpPauseNode, NodeID: nodeID})
+}
+
 func (f *dagReviewFixture) edge(planID, edgeID, from, to, kind string, introducedRev int) {
 	f.addEdge(planID, edgeID, from, to, kind, introducedRev, "", "")
 }
