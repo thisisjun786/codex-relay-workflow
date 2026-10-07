@@ -409,7 +409,7 @@ func TestEvidenceReview759UnreadableRunIsNoEvidenceOnItsOwn(t *testing.T) {
 	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
 		t.Fatalf("a run that confirmed its tests is evidence, want no problem, got %v", problems)
 	}
-	// And an unreadable leg beside a substitute that ran that leg is answered by the substitute.
+// And an unreadable leg beside a substitute that ran that leg is answered by the substitute.
 	checks[1] = review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testUnreadable": true})
 	checks = append(checks,
 		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
@@ -417,6 +417,68 @@ func TestEvidenceReview759UnreadableRunIsNoEvidenceOnItsOwn(t *testing.T) {
 	)
 	if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
 		t.Fatalf("a run that ran the unconfirmed leg is the evidence, want no problem, got %v", problems)
+	}
+}
+
+// A workflow run that holds no test leg at all never showed that it ran the tests, so its gate
+// cannot be the success of an integration. The shape a dev-gate-only workflow has answers the
+// required name without testing anything, and reading it as an integration success lets it fill a
+// pinned integration the light run was exempted from (CRW-946, the evaluation's d1).
+func TestEvidenceReview759GateOnlyRunIsNoIntegrationSuccess(t *testing.T) {
+	pinned := map[string][]string{"dev-gate": {"42", "99"}}
+	// run 600 (integration 42) is light, run 601 (integration 99) ran the tests and exempts it,
+	// and run 602 (integration 42) holds only the gate.
+	checks := []any{
+		review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", map[string]bool{"testSkipped": true}),
+		review759Entry("workflow-run:601:dev-gate#0", "dev-gate", "success", nil),
+		review759Entry("workflow-run:601:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+		review759Entry("workflow-run:602:dev-gate#0", "dev-gate", "success", nil),
+	}
+	for i, provider := range []string{"42", "42", "99", "99", "42"} {
+		checks[i].(map[string]any)["provider"] = provider
+	}
+	problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, checks, true, pinned)
+	if len(problems) != 1 || problems[0].Code != ChecksStale {
+		t.Fatalf("a gate-only run must not answer the integration, want one %s, got %v", ChecksStale, problems)
+	}
+	// The contrast: run 602 also ran the tests, so its gate answers integration 42.
+	ran := review759Entry("workflow-run:602:go-product (test-1)#0", "go-product (test-1)", "success", nil)
+	ran["provider"] = "42"
+	if problems := ChecksProblemsWith(crw824Head, []string{"dev-gate"}, append(checks, ran), true, pinned); len(problems) != 0 {
+		t.Fatalf("a run that ran the tests answers its integration, want no problem, got %v", problems)
+	}
+}
+
+// A restated row that states testUnreadable as anything but a boolean cannot be read, and a mark
+// the reader cannot read is not evidence that the leg ran its tests. The reading merge-turn-check
+// uses receives only the rows and runs no shape check of its own, so the predicate itself must fail
+// closed on the value (CRW-946, the evaluation's d2).
+func TestEvidenceReview759MalformedUnreadableMarkFailsClosed(t *testing.T) {
+	for _, value := range []any{"true", 1, []any{}, map[string]any{}} {
+		checks := []any{
+			review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+			review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+		}
+		checks[1].(map[string]any)["testUnreadable"] = value
+		problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks)
+		if len(problems) != 1 || problems[0].Code != ChecksStale {
+			t.Fatalf("testUnreadable %#v must fail closed, want one %s, got %v", value, ChecksStale, problems)
+		}
+	}
+	// An explicit false is the collector's "this leg's tests were confirmed", and an absent field
+	// is a leg the collector never marked: both stay evidence.
+	for _, value := range []any{false, nil} {
+		checks := []any{
+			review759Entry("workflow-run:600:dev-gate#0", "dev-gate", "success", nil),
+			review759Entry("workflow-run:600:go-product (test-1)#0", "go-product (test-1)", "success", nil),
+		}
+		if value != nil {
+			checks[1].(map[string]any)["testUnreadable"] = value
+		}
+		if problems := ChecksProblems(crw824Head, []string{"dev-gate"}, checks); len(problems) != 0 {
+			t.Fatalf("testUnreadable %#v is a confirmed leg, want no problem, got %v", value, problems)
+		}
 	}
 }
 
