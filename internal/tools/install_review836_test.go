@@ -547,12 +547,12 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 	}
 }
 
-// C1, the EEXIST read-failure side through the real walk: a component this call recorded is reached
-// again with the parent location naming a different object than the spelling, so the identity read
-// fails. That failure proves nothing about ownership, so the record this call holds is kept -- it
-// still carries the identity and location taken when the directory was made, and removeCreated
-// verifies both before removing. Dropping it would abandon a directory this call made.
-func TestToolsReview836KeepsItsRecordWhenTheEexistIdentityReadFails(t *testing.T) {
+// C2 through the real walk: a parent repointed while the walk is running must not make the cleanup
+// disturb a directory that was already there. The link is repointed before the root's mkdir, so the
+// walk finishes under a different parent than it started, and neither pre-existing directory may be
+// removed. The EEXIST identity-read-failure keep is a separate branch; this test covers the walk's
+// behaviour around a moving parent, not that branch.
+func TestToolsReview836RepointedParentLeavesPreExistingDirectoriesAlone(t *testing.T) {
 	base := t.TempDir()
 	first := filepath.Join(base, "first")
 	second := filepath.Join(base, "second")
