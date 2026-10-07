@@ -474,6 +474,46 @@ test("the recovery block survives a re-read until the host is actually repaired"
   assert.equal(screenEditable(state), true, "a repaired host is editable again");
 });
 
+test("a change kept across a conflict cannot be saved once the host stops being editable", async () => {
+  // The conflict path keeps the operator's change and clears the busy flag. If the re-read then
+  // answers that the host has no registered policy (or cannot be read), the screen says editing is
+  // blocked, so a save would ask the server to judge a change against a file this screen cannot
+  // read. The state refuses it: no check request leaves, the inputs stay, and the notice names why.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max", "high"]);
+  // The conflict re-read keeps the inputs, but the host now answers unreadable.
+  state = screenLoaded(state, reading({ state: "unreadable", reason: "the file could not be read", digest: "" }), true);
+  assert.ok(state.change, "the inputs are kept, as the conflict path promises");
+  assert.equal(screenEditable(state), false, "and the screen says editing is blocked");
+  assert.equal(screenMayEdit(state, "allowed:anthropic/opus"), false, "no edit is live while editing is blocked");
+  let checked = 0;
+  const outcome = await runSave(state, {
+    check: async () => { checked += 1; return { status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }; },
+    write: async () => { throw new Error("the write must not run while the host cannot be edited"); },
+  });
+  assert.equal(checked, 0, "no check request is sent while editing is blocked");
+  assert.equal(outcome.saved, false);
+  assert.equal(outcome.state.saving, null, "the refused save leaves no in-flight state");
+  assert.ok(outcome.state.change, "the change is still there for a later readable state");
+  assert.ok(outcome.state.notice?.text.includes("nothing was sent"), "the notice says nothing was sent");
+  assert.equal(outcome.state.notice?.keepInputs, true, "and that the inputs are kept");
+});
+
+test("a save with no registered policy is refused without sending a check", async () => {
+  // The other non-editable reading: the host has no registered policy at all.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ state: "not_registered", reason: "no record" }), false);
+  assert.equal(screenEditable(state), false);
+  let checked = 0;
+  const outcome = await runSave(state, {
+    check: async () => { checked += 1; return { status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }; },
+    write: async () => { throw new Error("the write must not run"); },
+  });
+  assert.equal(checked, 0, "nothing is sent when there is no registered policy");
+  assert.equal(outcome.saved, false);
+});
+
 test("a successful save leaves the file's values behind it and no draft of its own", () => {
   // The success path drops the draft the write spent, so a later read shows the file rather than a
   // value no pending change carries. An edit cannot be started during the save (answer 4), so there
@@ -1155,7 +1195,8 @@ test("an edit started after an explicit re-read survives the read", () => {
 test("a model named __proto__ or constructor is read as a file value, not a draft", () => {
   // d2: the draft dictionaries were ordinary objects, so an inherited property was read as a stored
   // draft and the row crashed. The Go parser accepts any nonempty identifier.
-  const state = initialScreen();
+  // A loaded reading, because an edit is only accepted while the screen can edit.
+  const state = screenLoaded(initialScreen(), reading());
   for (const model of ["__proto__", "constructor", "toString"]) {
     assert.deepEqual(allowedEntriesOf(state, model, ["high"]), ["high"], `${model} reads the file's efforts`);
     assert.equal(allowedNewOf(state, model), "");

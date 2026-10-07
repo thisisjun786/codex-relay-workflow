@@ -432,7 +432,9 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                 <p className="sub" role="status">{POLICY_BLAST_RADIUS}</p>
                 <div className="modal-foot">
                   <button className="btn" disabled={busy} onClick={() => handlers.propose(null)}>Cancel</button>
-                  <button className="btn primary" disabled={busy} onClick={handlers.save}>
+                  {/* A change kept across a conflict is only saveable while the host can still be
+                      edited: the screen says editing is blocked, so Save must not be offered. */}
+                  <button className="btn primary" disabled={busy || !editable} onClick={handlers.save}>
                     {saving ? "Saving..." : "Save"}
                   </button>
                 </div>

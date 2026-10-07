@@ -911,6 +911,25 @@ export function checkRefusedNotice(status: number, body: unknown): PolicyNotice 
   return notice;
 }
 
+/**
+ * blockedWriteNotice is the sentence a save attempt becomes while the screen cannot edit. The reading
+ * kept the operator's change across a conflict or a lost response, but the host now answers
+ * not_registered or unreadable (or a repair is outstanding): sending a check would ask the server to
+ * judge a change against a file this screen cannot read, so nothing is sent and the state and its
+ * reason are named. The inputs stay, because a later readable state can still save them.
+ */
+export function blockedWriteNotice(state: PolicyScreenState): PolicyNotice {
+  const reading = state.reading;
+  const why = reading === null
+    ? "the policy could not be read"
+    : reading.state === "not_registered"
+      ? "this host has no registered execution policy"
+      : `the policy could not be read${reading.reason ? `: ${reading.reason}` : ""}`;
+  const notice = emptyNotice("err", `The policy cannot be edited right now because ${why}, so nothing was sent. Your inputs are kept; save again once the policy can be read.`);
+  notice.keepInputs = true;
+  return notice;
+}
+
 /* ---- the screen's state transitions ---- */
 
 /**
@@ -994,6 +1013,13 @@ export async function runSave(state: PolicyScreenState, transports: PolicyWriteT
   const reading = state.reading;
   if (!change || !reading || state.saving !== null) {
     return { state, reread: false, rereadKeepsInputs: false, saved: false };
+  }
+  // A change the conflict path kept is only saveable while the screen can edit. If the host now
+  // answers not_registered or unreadable (or a repair is outstanding), the screen says editing is
+  // blocked, and sending a check would ask the server to judge a change against a file this screen
+  // cannot read. Nothing is sent; the inputs stay for a later readable state.
+  if (!screenEditable(state)) {
+    return { state: screenSaveFinished(state, change, blockedWriteNotice(state)), reread: false, rereadKeepsInputs: true, saved: false };
   }
   const started = screenSaveStarted(state);
   // The started state is handed to the caller BEFORE the first await, so the screen disables its
@@ -1566,7 +1592,10 @@ export function screenOwns(state: PolicyScreenState, token: string): boolean {
  * condition, so the state refuses an edit the screen already prevents.
  */
 export function screenMayEdit(state: PolicyScreenState, token: string): boolean {
-  return !screenBusy(state) && screenOwns(state, token);
+  // Editing is also impossible while the host cannot be edited at all (no registered policy, or a
+  // repair a person must make first): the controls are disabled in that state, and the state refuses
+  // an edit that reaches it anyway.
+  return screenEditable(state) && !screenBusy(state) && screenOwns(state, token);
 }
 
 /**
