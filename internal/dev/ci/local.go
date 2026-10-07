@@ -388,8 +388,9 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	return localPassed, ""
 }
 
-// localIsolatedGoEnv names the Go environment file a run uses: an empty file in the run's own home.
-const localIsolatedGoEnv = "isolated: an empty GOENV in the run's home"
+// localIsolatedGoEnv is the record's goEnv: GOENV is unset in a step, so Go reads its default file
+// under the run's own XDG_CONFIG_HOME, which is empty.
+const localIsolatedGoEnv = "unset: Go reads its default file under the run's own XDG_CONFIG_HOME"
 
 // localGateArgv is the argv a step runs: bash <script>, with the heavy-check gate's own words
 // prepended for a heavy step. The step's command lives in the script file, so a gate between this
@@ -434,12 +435,9 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	if err := os.WriteFile(opts.output, nil, 0o644); err != nil {
 		return nil, err
 	}
-	// The Go environment file is the run's own and empty: the host's GOENV can change what the Go steps
-	// build, so it is never inherited (the record names the run's file as localIsolatedGoEnv).
-	goenv := filepath.Join(home, "goenv")
-	if err := os.WriteFile(goenv, nil, 0o644); err != nil {
-		return nil, err
-	}
+	// GOENV is never inherited: the host's Go environment file can change what the Go steps build.
+	// With HOME and XDG_CONFIG_HOME in the run's own home, Go reads its default file there, which is
+	// empty (localIsolatedGoEnv).
 	env := []string{
 		"HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
@@ -447,7 +445,6 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"XDG_DATA_HOME=" + filepath.Join(home, "data"),
 		"XDG_STATE_HOME=" + filepath.Join(home, "state"),
 		"TZ=UTC",
-		"GOENV=" + goenv,
 		"RUNNER_TEMP=" + runner,
 		"GITHUB_OUTPUT=" + opts.output,
 		"GITHUB_EVENT_NAME=pull_request",

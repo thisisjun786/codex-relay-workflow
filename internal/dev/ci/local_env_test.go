@@ -58,19 +58,21 @@ func TestLocal_a_step_stops_at_its_first_failed_command(t *testing.T) {
 	}
 }
 
-// A step reads an empty GOENV in its own home, never the caller's, so a Go setting file outside the
-// verified commit cannot change what the step builds.
-func TestLocal_a_step_reads_an_empty_isolated_GOENV(t *testing.T) {
+// A step leaves GOENV unset, as CI does, so Go reads its environment file from the run's own
+// home (XDG_CONFIG_HOME) and never from the caller's GOENV, which a product test in the same run
+// would otherwise see as the caller's setting.
+func TestLocal_a_step_leaves_GOENV_unset_and_reads_its_own_home(t *testing.T) {
 	repo := newLocalFixture(t)
 	record := filepath.Join(t.TempDir(), "record.json")
 	t.Setenv("GOENV", filepath.Join(t.TempDir(), "host-goenv"))
-	opts := localRunOptions(repo, localFixturePlan(`test -f "$GOENV" && test ! -s "$GOENV"`), record)
+	command := `test -z "${GOENV+set}" && case "$(go env GOENV)" in "$HOME"/*) ;; *) exit 1 ;; esac`
+	opts := localRunOptions(repo, localFixturePlan(command), record)
 	made, _, err := localVerify(opts, "", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if step := made.Jobs[0].Steps[1]; step.Result != localPassed {
-		t.Errorf("the step is %q (%s), want an empty GOENV of its own", step.Result, step.Reason)
+		t.Errorf("the step is %q (%s), want GOENV unset and Go's file under the run's home", step.Result, step.Reason)
 	}
 }
 
