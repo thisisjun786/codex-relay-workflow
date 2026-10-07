@@ -159,10 +159,12 @@ not load, and so does an entry that puts it beside `pairs` instead of inside one
 
 The relay reads the same declaration. A task's recorded settings come from the host's creation
 response, which never carries this value, so a relay delivery or correction send resolves the
-recipient's role from its record and the limit from the pair that record states, and adds it to the
-resume's config — including on a settings-free resume, which transmits no pair but may still carry
-the limit of the pair the record says the thread is on. A record on a pair that declares no limit
-sends none rather than inheriting a sibling pair's, and a record citing an exception sends none.
+recipient's role and the limit from the pair that role states, and adds it to the resume's config —
+including on a settings-free resume, which transmits no pair but may still carry the limit of the
+pair the thread is on. The role is the one the relay's own gate confirmed the task is bound to (a
+record need not cite its own role), falling back to the record's own citation when the task is
+bound to none. A pair that declares no limit sends none rather than inheriting a sibling pair's,
+and a record citing an exception sends none.
 
 A value that is not a positive integer is refused when the file is read, through the same
 `execution_policy_unreadable` path as every other unusable policy value: a string, a boolean, a

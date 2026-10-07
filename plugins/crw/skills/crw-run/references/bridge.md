@@ -239,8 +239,9 @@ writes it on the role's pair in the execution policy, and a file without it is u
 does not report the value back, so the resume observation never compares it, its silence withholds
 nothing, and the receipt lists it under `requested` and `unobservable` rather than `verified` --
 on a relay resume too, where the value is resolved from the policy by the pair the task's record
-states and the receipt is the only place the send can say what it carried. A resume that sent no
-limit records no such observation.
+states — the role is the one the relay's gate confirmed the task is bound to, falling back to the
+record's own citation — and the receipt is the only place the send can say what it carried. A
+resume that sent no limit records no such observation.
 
 The value applies where the host takes the configuration: at creation, or when the host loads a
 thread it did not have. A resume to a thread the host already holds answers with that thread's
