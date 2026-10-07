@@ -431,9 +431,10 @@ func (r *upgradeRunState) start() {
 			return
 		}
 		if i+1 == len(candidates) {
-			// Nothing started the service. startFrom names the last runtime tried, so the post-check
-			// reads the status the way this attempt left it.
-			r.startFrom = runtime
+			// Nothing started the service, so startFrom stays empty: it names the runtime the service
+			// came back on, and no runtime did. The post-check reads the status through the pointer and
+			// reports what it finds; the last runtime tried is in the recorded step above.
+			r.note(upgradeStepStart, nil, 1, "", fmt.Errorf("no runtime started the service; the last attempt was %s", runtime))
 		}
 	}
 }
@@ -469,60 +470,21 @@ type upgradePostCheck struct {
 // crw must report the version the archive carried, or - when the update did not put a runtime in
 // service - the pointer must still name the runtime it replaced, which is the rollback. The service
 // must come up running and matching on that runtime within the wait budget, and the configuration
-// file must be unchanged.
+// file must be unchanged. The install target is verified again after the wait: the wait can take a
+// minute, and another process on the host can move the pointer while this run waits.
 func (r *upgradeRunState) postCheck() upgradePostCheck {
 	var post upgradePostCheck
-	pointer, err := upgradePointerTarget(r.e)
-	switch {
-	case err != nil:
-		r.note(upgradeStepPostCheck, nil, 1, "", err)
-		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-		post.mismatch = true
-	case r.promoted && r.installed == "":
-		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update named no runtime it installed, so nothing shows the pointer names what it installed"))
-		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-		post.mismatch = true
-	case r.promoted && !upgradeSameDirectory(pointer, r.installed):
-		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
-		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-		post.mismatch = true
-	case r.promoted && r.serviceUp && !upgradeSameDirectory(r.startFrom, r.installed):
-		// The pointer names the runtime the update installed, but the service did not come back on it:
-		// the restart fell back to the runtime the pointer named before the stop. A pointer that names
-		// one runtime while the service runs another is the disagreement this step exists to catch, so
-		// the recovery is recorded as a mismatch rather than a success.
-		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the service came back on %s, not %s, the runtime the update installed", r.startFrom, r.installed))
-		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-		post.mismatch = true
-	case !r.promoted && r.previous != "" && !upgradeSameDirectory(pointer, r.previous):
-		// The update put no runtime in service, so the pointer has to still name the runtime it
-		// replaced: that is the rollback, and its version is the previous one by design. A pointer
-		// that names anything else was changed by something other than this run's update, and nothing
-		// here can show what is in service, so the run refuses rather than calling it a rollback.
-		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update did not put a runtime in service, and the pointer names %s, not %s, the runtime it replaced", pointer, r.previous))
-		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-		post.mismatch = true
-	default:
-		// The version is compared only against a runtime the update put in service. An update that
-		// did not land leaves the pointer on the runtime it replaced, whose version is the previous
-		// one by design: that is the rollback, not a mismatch.
-		if r.promoted {
-			version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
-			got := strings.TrimSpace(version)
-			if err != nil || code != 0 || got != r.version {
-				r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
-				post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
-				post.mismatch = true
-			}
-		}
-	}
+	r.verifyInstallTarget(&post)
 	runtime := r.startFrom
 	if runtime == "" {
-		runtime = pointer
+		if pointer, err := upgradePointerTarget(r.e); err == nil {
+			runtime = pointer
+		}
 	}
 	if runtime != "" && !r.waitForService(runtime) {
 		post.reasons = append(post.reasons, upgradeReasonPostCheck)
 	}
+	r.verifyInstallTarget(&post)
 	// A configuration file the snapshot read and that is now gone is a change the run can state
 	// exactly. A file that still exists but cannot be read is not a change: the run cannot tell
 	// whether it differs, so that is a post-check finding of its own rather than a claimed change.
@@ -546,6 +508,58 @@ func (r *upgradeRunState) postCheck() upgradePostCheck {
 	post.code = upgradeExitPostCheck
 	post.reason = post.reasons[0]
 	return post
+}
+
+// verifyInstallTarget is what the post-check compares the pointer and the running service with: the
+// runtime the update installed, or - when it installed none - the runtime it replaced. It records
+// every mismatch it finds; a mismatch reason is kept once however many times this runs.
+func (r *upgradeRunState) verifyInstallTarget(post *upgradePostCheck) {
+	pointer, err := upgradePointerTarget(r.e)
+	switch {
+	case err != nil:
+		r.note(upgradeStepPostCheck, nil, 1, "", err)
+		r.mismatch(post)
+	case r.promoted && r.installed == "":
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update named no runtime it installed, so nothing shows the pointer names what it installed"))
+		r.mismatch(post)
+	case r.promoted && !upgradeSameDirectory(pointer, r.installed):
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
+		r.mismatch(post)
+	case r.promoted && r.serviceUp && !upgradeSameDirectory(r.startFrom, r.installed):
+		// The pointer names the runtime the update installed, but the service did not come back on it:
+		// the restart fell back to the runtime the pointer named before the stop. A pointer that names
+		// one runtime while the service runs another is the disagreement this step exists to catch, so
+		// the recovery is recorded as a mismatch rather than a success.
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the service came back on %s, not %s, the runtime the update installed", r.startFrom, r.installed))
+		r.mismatch(post)
+	case !r.promoted && r.previous != "" && !upgradeSameDirectory(pointer, r.previous):
+		// The update put no runtime in service, so the pointer has to still name the runtime it
+		// replaced: that is the rollback, and its version is the previous one by design. A pointer
+		// that names anything else was changed by something other than this run's update, and nothing
+		// here can show what is in service, so the run refuses rather than calling it a rollback.
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update did not put a runtime in service, and the pointer names %s, not %s, the runtime it replaced", pointer, r.previous))
+		r.mismatch(post)
+	default:
+		// The version is compared only against a runtime the update put in service. An update that
+		// did not land leaves the pointer on the runtime it replaced, whose version is the previous
+		// one by design: that is the rollback, not a mismatch.
+		if r.promoted {
+			version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
+			got := strings.TrimSpace(version)
+			if err != nil || code != 0 || got != r.version {
+				r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
+				r.mismatch(post)
+			}
+		}
+	}
+}
+
+// mismatch records a pointer-and-runtime disagreement once, however many times the check runs.
+func (r *upgradeRunState) mismatch(post *upgradePostCheck) {
+	post.mismatch = true
+	if !slices.Contains(post.reasons, upgradeReasonRuntimeMismatch) {
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+	}
 }
 
 // waitForService reads the service status again every upgradeServiceInterval until it reports the

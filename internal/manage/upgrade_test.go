@@ -120,6 +120,9 @@ type upgradeHarnessOptions struct {
 	// breakInstalledStart makes the runtime the update produces fail to start the service, so the
 	// restart has to fall back.
 	breakInstalledStart bool
+	// breakPointerDuringWait removes the owned pointer on the second service status read, as another
+	// process on the host moving the pointer while the run waits for the service would.
+	breakPointerDuringWait bool
 	// installedStartAlreadyRunning makes the runtime the update produces answer its start with the
 	// service already up, as it does when something started that runtime between the stop and the
 	// restart.
@@ -247,6 +250,9 @@ func (h *upgradeEnv) fakeScript(opts upgradeHarnessOptions) string {
 	b.WriteString("*\"service status\"*)\n")
 	b.WriteString("  n=$(cat " + coreShellQuote(h.statusCounter) + " 2>/dev/null || printf '0')\n")
 	b.WriteString("  n=$((n + 1))\n")
+	if opts.breakPointerDuringWait {
+		b.WriteString("  [ \"$n\" = \"2\" ] && rm -f " + coreShellQuote(h.pointerLink) + "\n")
+	}
 	// A status read before anything started the service reports it as down, so a run that never
 	// restarts cannot pass the post-check by reading an answer that was scripted for another case.
 	b.WriteString("  [ -f " + coreShellQuote(h.started) + " ] || { printf '%s\\n' " + coreShellQuote("{\"running\":false,\"launchPolicy\":{\"matchesRunning\":\"different\"}}") + "; exit 0; }\n")

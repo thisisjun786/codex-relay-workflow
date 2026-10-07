@@ -2,6 +2,7 @@ package manage
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -392,5 +393,42 @@ func TestUpgradeReview702PointerMovedToAThirdRuntimeIsAMismatch(t *testing.T) {
 	}
 	if got := h.recordOf(t).Reasons; !slices.Contains(got, upgradeReasonRuntimeMismatch) {
 		t.Errorf("a pointer on a third runtime was accepted as a rollback: %v", got)
+	}
+}
+
+// TestUpgradeReview702PointerBrokenDuringTheWaitIsAMismatch: the install target is verified before
+// the service wait and again after it. The wait can run for a minute, and another process on the
+// host can move or remove the pointer while this run waits; the last status answer alone must not
+// turn that into a success.
+func TestUpgradeReview702PointerBrokenDuringTheWaitIsAMismatch(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		produceRuntime: true, pointAtIt: true, breakPointerDuringWait: true,
+		statusAnswers: []string{upgradeStatusUnknown, upgradeStatusSame}})
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the pointer was removed while the run waited: %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+		t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
+	}
+}
+
+// TestUpgradeReview702ServiceWaitBudgetIsRecorded: a service that never reports itself running and
+// matching is a post-check failure, and the wait records the last answer it read rather than
+// returning quietly. The budget is measured on the wall clock, so the case is driven with a context
+// that has already ended: the wait must stop, record and report failure rather than hang or pass.
+func TestUpgradeReview702ServiceWaitBudgetIsRecorded(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := &upgradeRunState{ctx: ctx, cfg: &Config{}, state: "/state"}
+	r.cfg.Relay.Socket = "/socket"
+	if r.waitForService(t.TempDir()) {
+		t.Fatal("a service that never reported itself running and matching was reported as up")
+	}
+	if len(r.steps) == 0 {
+		t.Fatal("the wait recorded nothing")
+	}
+	last := r.steps[len(r.steps)-1]
+	if last.Step != upgradeStepPostCheck || last.Exit == 0 {
+		t.Errorf("the wait's last step is %+v, want a failed %s", last, upgradeStepPostCheck)
 	}
 }
