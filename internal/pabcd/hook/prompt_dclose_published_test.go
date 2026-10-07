@@ -159,8 +159,14 @@ func TestPromptDcloseUnreadablePabcdLedgerWarnsOnAllDoneClose(t *testing.T) {
 	if !strings.Contains(answer, "[crw: DONE]") {
 		t.Errorf("the all-done close did not answer the success directive: %q", answer)
 	}
-	if !strings.Contains(answer, promptDcloseLedgerWarning("")) {
-		t.Errorf("the all-done close did not carry the ledger warning: %q", answer)
+	// Assert the warning's reason, not just its fixed opening sentence: the reason is what tells the
+	// operator which read failed, and the baseline answers the success directive with no warning at
+	// all. The warning text is promptDcloseLedgerWarning(reason), so pin the reason's own words.
+	if !strings.Contains(answer, promptDcloseLedgerWarning("the PABCD ledger could not be read:")) {
+		t.Errorf("the all-done close did not carry the ledger warning with its reason: %q", answer)
+	}
+	if rows := promptOrchestrateLedger(t, cwd); len(rows) != 1 {
+		t.Errorf("the all-done close appended a second close row: %+v", rows)
 	}
 }
 
