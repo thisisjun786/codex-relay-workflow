@@ -168,10 +168,10 @@ func TestToolsReview836DropsAPathAnotherInstallTookOver(t *testing.T) {
 	}
 }
 
-// The scan answers the error it stopped on together with the components it found missing, because
-// that observation is the evidence createRoot uses to decide that a recorded path is gone. A second
-// read of the path cannot replace it: another install can make the path again in between, and the
-// fresh read would then report the peer's directory as present and leave a stale claim on it.
+// The scan reports the components that are missing, and createRoot decides from a read taken at the
+// moment of the decision rather than from the scan's own list: the list is a moment of its own, and
+// a component above a ".." can come back between that moment and the walk. This test pins the scan's
+// contract (the components it found missing, outermost first, and nothing for a root that exists).
 func TestToolsReview836ScanReportsTheAbsenceItObserved(t *testing.T) {
 	base := t.TempDir()
 	existing := filepath.Join(base, "existing")
@@ -180,17 +180,70 @@ func TestToolsReview836ScanReportsTheAbsenceItObserved(t *testing.T) {
 	}
 	target := filepath.Join(existing, "a", "b")
 
-	missing, err := rootComponents(target)
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("the scan answered %v, want the not-exist error it stopped on", err)
-	}
+	missing := rootComponents(target)
 	want := []string{filepath.Join(existing, "a"), target}
 	if strings.Join(missing, ",") != strings.Join(want, ",") {
 		t.Fatalf("the scan found %v, want %v", missing, want)
 	}
-	// A root that already exists has nothing missing and no absence to report.
-	missing, err = rootComponents(existing)
-	if err != nil || len(missing) != 0 {
-		t.Fatalf("the scan of an existing root answered %v, %v", missing, err)
+	// A root that already exists has nothing missing.
+	if missing := rootComponents(existing); len(missing) != 0 {
+		t.Fatalf("the scan of an existing root answered %v", missing)
+	}
+}
+
+// C1, drop side on a path this call already recorded: after the call recorded a directory, another
+// install takes the path over with a directory of its own. The call's next walk reaches that path
+// again -- the component before the ".." vanished and the path was recomputed as missing -- and its
+// mkdir answers EEXIST with a different identity, so the path must leave the record and the other
+// install's directory must survive the cleanup. The replacement is empty, so what keeps it is the
+// identity comparison and not os.Remove refusing a non-empty directory.
+func TestToolsReview836DropsARecordedPathAnotherInstallTookOver(t *testing.T) {
+	component, root, target := review836RaceHost(t)
+	spelled := component + "/../p"
+	// The other install's directory is made while this call's is still there, so the two identities
+	// are certainly different however the filesystem reuses freed inodes; it is then renamed into
+	// the recorded path, which takes the path over without depending on that reuse.
+	peer := filepath.Join(filepath.Dir(component), "peer")
+	if err := os.Mkdir(peer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	phase := 0
+	review836Seam(t, func(path string) {
+		switch {
+		case path == root && phase == 0:
+			// Round 0: the concurrent install takes the component before the ".." back, so this
+			// call's mkdir of the target answers not-exist and the walk recomputes.
+			phase = 1
+			if err := os.Remove(component); err != nil {
+				t.Errorf("the seam could not remove the ancestor: %v", err)
+			}
+		case path == spelled && phase == 1:
+			// Round 1: the target is recomputed as missing, but the path is one this call already
+			// recorded. The concurrent install replaces it with a directory of its own, so this
+			// call's mkdir answers EEXIST and the identity there is not the recorded one.
+			phase = 2
+			if err := os.Remove(target); err != nil {
+				t.Errorf("the seam could not empty the recorded path: %v", err)
+			}
+			if err := os.Rename(peer, target); err != nil {
+				t.Errorf("the seam could not take the recorded path over: %v", err)
+			}
+		}
+	})
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot with a recorded path taken over: %v", err)
+	}
+	for _, made := range created {
+		if made.path == spelled {
+			t.Fatalf("createRoot kept the path another install took over in the record: %v", created)
+		}
+	}
+	removeCreated(created)
+	info, statErr := os.Stat(target)
+	if statErr != nil || !info.IsDir() {
+		t.Fatalf("this call removed the directory another install made at %s: %v", target, statErr)
 	}
 }
