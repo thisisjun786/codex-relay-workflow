@@ -394,18 +394,20 @@ func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generati
 	if err != nil {
 		return Head{}, err
 	}
-	if len(revisions) == 0 {
-		return Head{Evidence: EvidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
-	}
 	anchors, unreadable, err := RequestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return Head{}, err
 	}
 	if len(unreadable) > 0 {
 		// The store holds an eligible ruling this read cannot identify, so no revision's naming can
-		// be resolved against it: the generation reads unknown_predecessor rather than a confident
-		// single head (CRW-928).
+		// be resolved against it and the generation reads unknown_predecessor rather than a
+		// confident single head (CRW-928). A generation holding no reviewable revision takes the
+		// same answer: no_revision is a confident single-head reading this reader cannot give, and
+		// the competitors are then empty because there is no revision to name.
 		return unreadableAnchorHead(revisions, unreadable), nil
+	}
+	if len(revisions) == 0 {
+		return Head{Evidence: EvidenceNone, Competitors: []string{}, Detail: "no reviewable revision in this generation"}, nil
 	}
 	return JudgeHead(ReadThroughSuppressed(revisions, suppressed, anchors), anchors), nil
 }
