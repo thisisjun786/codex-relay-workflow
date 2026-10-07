@@ -90,9 +90,11 @@ type HookTrustRetrustResult struct {
 	Published  bool
 	Conflict   bool
 	LateWrite  bool
-	// RecheckFailed records that the target could not be read again after the exchange displaced
-	// content that was not what retrust read (another save landed in between). The report then says
-	// the read failed and asserts nothing about what the target holds; RecheckError carries why.
+	// RecheckFailed records that the target could not be read again after the publication, so there is
+	// no evidence of what it holds now. It is set on the conflict path (the exchange displaced content
+	// that was not what retrust read, so another save landed in between) and on the ordinary path (the
+	// post-publication read back failed); in both the report says the read failed and asserts nothing
+	// about what the target holds, and RecheckError carries why.
 	RecheckFailed bool
 	RecheckError  string
 	// Reason is the refusal's message, set by the command line for a refusal that came before the
@@ -288,7 +290,8 @@ func hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next string, runner HookT
 //     (Conflict and LateWrite), or nothing is claimed about it when that read fails (RecheckFailed);
 //   - a sync-only failure is a *crwdir.PublishedError: the publication counts as done and the
 //     failure is reported as a warning;
-//   - config.toml is read back, and a value that is not next is reported and left in place.
+//   - config.toml is read back; a value that is not next is reported and left in place, and a read
+//     that fails is reported with nothing claimed about what the file holds (CRW-936).
 //
 // The refusals, in the oracle's order and words: a missing config.toml; a plugin that declares no
 // synchronous command hooks; a duplicate exact section header; more than one, or no, trusted_hash in
@@ -445,7 +448,12 @@ func hookTrustRetrustWith(codexHome, pluginRoot, pluginKey string, bootstrapOK b
 	}
 	after, err := os.ReadFile(targetPath)
 	if err != nil {
-		return result, nil, err
+		// The same rule as the conflict branch: with the target unreadable there is no evidence of what
+		// it holds, so the report says the read failed and claims nothing about it (CRW-936). The exit
+		// status stays the failure it was.
+		result.RecheckFailed = true
+		result.RecheckError = err.Error()
+		return result, nil, fmt.Errorf("retrust published %s but could not read it again to say what it holds now (%s)", targetPath, err)
 	}
 	if !bytes.Equal(after, []byte(next)) {
 		result.LateWrite = true
@@ -783,6 +791,11 @@ func hookTrustRetrustReport(stdout io.Writer, result HookTrustRetrustResult) {
 		fmt.Fprintf(stdout, "%s holds a newer save, not retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
 	case result.Conflict:
 		fmt.Fprintf(stdout, "%s holds retrust's config; %s holds the content that was saved in between\n", result.ConfigPath, displaced)
+	case result.Published && result.RecheckFailed:
+		// The publication happened and the displaced content was what retrust read, so there is no
+		// conflict to report; but the read back failed, so the report must not claim the target holds the
+		// rewritten config (CRW-936, the same rule as the conflict branch).
+		fmt.Fprintf(stdout, "%s could not be read again to say what it holds now (%s); %s holds the content it displaced\n", result.ConfigPath, result.RecheckError, displaced)
 	case result.Published && result.LateWrite:
 		fmt.Fprintf(stdout, "%s holds the newer save, not retrust's config; %s holds the content retrust displaced\n", result.ConfigPath, displaced)
 	case result.Published:

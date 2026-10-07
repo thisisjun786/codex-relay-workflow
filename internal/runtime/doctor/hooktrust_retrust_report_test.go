@@ -209,3 +209,52 @@ func TestHookTrustRetrustReportsAFailedRecheckWithoutClaimingTheTarget(t *testin
 		}
 	}
 }
+
+// The same rule holds on the ordinary path: when nothing raced the exchange (the displaced content
+// is what retrust read) but the target cannot be read back afterwards, the report must say the read
+// failed and assert nothing about the target. On dev the read error is returned as a plain refusal
+// and the report picks its success wording, telling the operator config.toml holds the rewritten
+// config when it may not exist at all. The exit status stays the failure it already was.
+func TestHookTrustRetrustReportsAFailedReadBackOnTheOrdinaryPath(t *testing.T) {
+	f := newCASFixture(t, "")
+	f.write(f.config(), f.installed())
+	original := f.read(f.config())
+
+	result, _, err := hookTrustRetrustWith(f.home, f.plugin, f.key, true, okRunner, f.env(), f.now(), &hookTrustRetrustSeams{
+		publish: func(target string, expected, next []byte, backupPath string) ([]byte, error) {
+			// A cooperative exchange: the displaced content is what retrust read, so there is no
+			// conflict. The target then stops being a readable file before the read back.
+			if werr := os.WriteFile(backupPath, expected, 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.Remove(target); werr != nil {
+				t.Fatal(werr)
+			}
+			if werr := os.Mkdir(target, 0o755); werr != nil {
+				t.Fatal(werr)
+			}
+			return expected, nil
+		},
+	})
+	if err == nil || !result.Published || !result.RecheckFailed {
+		t.Fatalf("the failed read back was not recorded: result=%+v err=%v", result, err)
+	}
+	if result.Conflict || result.LateWrite {
+		t.Fatalf("nothing raced the exchange, so neither state applies: %+v", result)
+	}
+	if got := f.read(f.backupName()); got != original {
+		t.Fatalf("the displaced path holds %q, want the content retrust displaced", got)
+	}
+
+	var stdout bytes.Buffer
+	hookTrustRetrustReport(&stdout, result)
+	report := stdout.String()
+	if strings.Contains(report, "holds the rewritten config") {
+		t.Fatalf("the report claims config.toml holds the rewritten config after a failed read back:\n%s", report)
+	}
+	for _, want := range []string{f.config(), "could not be read again", f.backupName(), "holds the content it displaced"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("the report does not carry %q:\n%s", want, report)
+		}
+	}
+}

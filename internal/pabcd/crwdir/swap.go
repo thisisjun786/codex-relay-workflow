@@ -55,17 +55,16 @@ func Published(err error) bool {
 type crwdirSwapStep int
 
 const (
-	crwdirSwapStepCreate     crwdirSwapStep = iota // the exclusive create of the temp file
-	crwdirSwapStepMode                             // right after the create, before the temp file takes the target's mode
-	crwdirSwapStepWrite                            // before the data is written
-	crwdirSwapStepSync                             // before the temp file is fsynced
-	crwdirSwapStepReserve                          // before the backup path is reserved
-	crwdirSwapStepReread                           // before the last check, the target read again
-	crwdirSwapStepCompare                          // right after the last check passed, before the exchange
-	crwdirSwapStepExchange                         // before the atomic exchange
-	crwdirSwapStepMove                             // before the displaced file is moved to the backup path
-	crwdirSwapStepReadBackup                       // before the displaced file is read back from the backup path
-	crwdirSwapStepSyncDir                          // before the directory is fsynced
+	crwdirSwapStepCreate   crwdirSwapStep = iota // the exclusive create of the temp file
+	crwdirSwapStepMode                           // right after the create, before the temp file takes the target's mode
+	crwdirSwapStepWrite                          // before the data is written
+	crwdirSwapStepSync                           // before the temp file is fsynced
+	crwdirSwapStepReserve                        // before the backup path is reserved
+	crwdirSwapStepReread                         // before the last check, the target read again
+	crwdirSwapStepCompare                        // right after the last check passed, before the exchange
+	crwdirSwapStepExchange                       // before the atomic exchange
+	crwdirSwapStepMove                           // before the displaced file is moved to the backup path
+	crwdirSwapStepSyncDir                        // before the directory is fsynced
 )
 
 // PublishSwap replaces target with next, keeping what it displaced in backupPath, and answers the
@@ -219,9 +218,7 @@ func crwdirSwapPublish(target string, expected, next []byte, backupPath string, 
 		err = errors.Join(fmt.Errorf("%w (the content the exchange displaced is kept at %s)", err, tmp), syncPublished())
 		return nil, &PublishedError{Err: err, DisplacedAt: tmp}
 	}
-	if err = at(crwdirSwapStepReadBackup); err == nil {
-		displaced, err = os.ReadFile(backupPath)
-	}
+	displaced, err = os.ReadFile(backupPath)
 	if err != nil {
 		err = errors.Join(err, syncPublished())
 		return nil, &PublishedError{Err: err, DisplacedAt: backupPath}

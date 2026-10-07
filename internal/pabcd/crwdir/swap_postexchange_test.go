@@ -114,24 +114,28 @@ func TestCrwdirSwapSyncsTheBackupsDirectoryWhenItDiffers(t *testing.T) {
 // between the successful move and the read, so it needs its own seam; the published rename must
 // still be made durable before the failure is reported.
 func TestCrwdirSwapSyncsTheDirectoryWhenTheBackupReadFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the fault is a permission one, and root reads a write-only file")
+	}
 	dir := t.TempDir()
 	target, backup := filepath.Join(dir, "config.toml"), swapBackup(dir)
 	before := "model = \"a\"\n"
 	writeSwapFile(t, target, before, 0o644)
-	injected := errors.New("injected backup read failure")
 
 	var synced []string
 	displaced, err := crwdirSwapPublish(target, []byte(before), []byte("model = \"b\"\n"), backup, func(at crwdirSwapStep) error {
-		if at == crwdirSwapStepReadBackup {
-			return injected
+		if at != crwdirSwapStepCompare {
+			return nil
 		}
-		return nil
+		// The last check has passed and the exchange has not run yet. Making the target write-only now
+		// leaves the check satisfied while the inode the exchange displaces - the one the no-replace
+		// move puts at the backup path - is unreadable, so the move succeeds and the read-back that
+		// follows it is the step that fails. The fault is a real filesystem one, not a seam: this case
+		// is red on the baseline for the missing sync, not for a missing identifier.
+		return os.Chmod(target, 0o200)
 	}, func(at string) error { synced = append(synced, at); return nil })
 	if !Published(err) {
 		t.Fatalf("a post-exchange backup read failure was not reported as published: %v", err)
-	}
-	if !errors.Is(err, injected) {
-		t.Fatalf("the read failure was not surfaced: %v", err)
 	}
 	if displaced != nil {
 		t.Fatalf("a failed backup read answered displaced content: %q", displaced)
@@ -142,6 +146,9 @@ func TestCrwdirSwapSyncsTheDirectoryWhenTheBackupReadFails(t *testing.T) {
 	var published *PublishedError
 	if !errors.As(err, &published) || published.DisplacedAt != backup {
 		t.Fatalf("the failure does not name where the displaced content is: %v", err)
+	}
+	if chmodErr := os.Chmod(backup, 0o644); chmodErr != nil {
+		t.Fatal(chmodErr)
 	}
 	if got := read(t, backup); got != before {
 		t.Fatalf("the displaced content is not in the backup: %q", got)
