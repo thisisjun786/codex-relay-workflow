@@ -342,7 +342,14 @@ test("a save in flight disables the screen's other edit controls", async () => {
   let state = pure.initialScreen();
   state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
   state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
-  const saving = pure.screenSaveStarted(state);
+  // The started state comes from runSave's own callback, which is exactly what PolicyPage applies, so
+  // this renders the state the page is really in while the check and the write are in flight.
+  let saving: Record<string, unknown> | null = null;
+  const pending = pure.runSave(state as never, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => ({ status: 200, body: { stored: { digest: "b".repeat(64) }, applied: "applied", actions: [] } }),
+  }, (started) => { saving = started as unknown as Record<string, unknown>; });
+  assert.ok(saving, "runSave reports the started state synchronously");
   // While the save is in flight the screen disables every edit control, so no second edit can race
   // the answer (decided answer 4: one pending change at a time).
   const { elements } = await mount(saving as unknown as Record<string, unknown>);
@@ -351,6 +358,10 @@ test("a save in flight disables the screen's other edit controls", async () => {
   assert.equal(allowedControls?.props.disabled, true, "the allowed controls are disabled during a save");
   const parentControls = byLabel(elements, "parent pair controls");
   assert.equal(parentControls?.props.disabled, true, "the role controls are disabled during a save");
+  const saveButton = elements.find((el) => el.type === "button" && textOf(el.props.children) === "Saving...");
+  assert.ok(saveButton, "the save control reads Saving... while the write is in flight");
+  assert.equal(saveButton?.props.disabled, true);
+  await pending;
 });
 
 test("one live edit disables the other rows on the screen", async () => {

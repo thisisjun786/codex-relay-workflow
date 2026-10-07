@@ -69,6 +69,7 @@ import {
   type ModelCatalog,
   type PolicyChange,
   type PolicyReading,
+  type PolicyScreenState,
 } from "../src/policy-state.ts";
 
 /** The reading a host with a registered policy answers, in the Go route's own shape. */
@@ -653,6 +654,46 @@ test("one pending change at a time: another row's edit cannot replace the live o
 });
 
 // The five defects the eighth pre-merge evaluation found.
+
+test("runSave reports the started state before its first await", async () => {
+  // d1: the started state was only ever applied to runSave's own local copy, so the page could not
+  // disable its controls while the check and the write were in flight. runSave hands it to the caller
+  // synchronously, before anything is awaited.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const seen: PolicyScreenState[] = [];
+  const promise = runSave(state, {
+    check: async () => ({ status: 200, body: { valid: true, errors: [], currentDigest: "a".repeat(64), stale: false, diff: [] } }),
+    write: async () => ({ status: 200, body: { stored: { digest: "b".repeat(64) }, applied: "applied", actions: [] } }),
+  }, (started) => seen.push(started));
+  // Synchronously after the call, before the promise settles, the started state is already reported.
+  assert.equal(seen.length, 1, "the started state is reported before any await");
+  assert.equal(screenBusy(seen[0]), true, "and it is busy, so the controls are disabled");
+  assert.equal(screenSaving(seen[0]), true);
+  await promise;
+});
+
+test("a removal spends the removed model's draft so a re-add shows the file again", () => {
+  // d2: removeAllowed left the model's typed entries in the drafts, so re-adding the same model showed
+  // and proposed the old text while the file no longer listed it.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "A", efforts: ["high"] }] }));
+  state = screenAllowedDraft(state, "A", ["high", "max"]);
+  state = screenPropose(state, { kind: "removeAllowed", model: "A" });
+  assert.deepEqual(state.allowedDraft.get("A"), ["high", "max"], "the draft is live while the removal is pending");
+  const done = screenSaveFinished(screenSaveStarted(state), state.change, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
+  assert.equal(done.allowedDraft.get("A"), undefined, "the removal spends the draft");
+  assert.deepEqual(allowedEntriesOf(done, "A", []), [], "a re-add starts from the file, not the old text");
+});
+
+test("a removal preview names the refusal a stale exception id meets", () => {
+  // d3: the declared-role branch said the scope returns to the role default without noting that a
+  // request still citing the removed id is refused first.
+  const preview = previewChange(reading(), { kind: "removeException", id: "legacy" });
+  assert.ok(preview.fallback?.includes("parent role default"));
+  assert.ok(preview.fallback?.includes("refused as unknown"), "the refusal is named too");
+});
 
 test("runSave drives the whole check-then-write round trip", async () => {
   // d5: the asynchronous sequence was only reachable inside the React component. runSave is that

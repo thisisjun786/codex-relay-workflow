@@ -795,7 +795,7 @@ export function PolicyPage() {
     const outcome = await runSave(stateRef.current, {
       check: (payload) => checkPolicy(payload),
       write: (payload) => writePolicy(payload),
-    });
+    }, (started) => apply(() => started));
     // The outcome carries the save's own fields; the reading and the catalog are merged from whatever
     // the screen holds now, so a catalog that arrived while the write was in flight is not dropped.
     apply((previous) => ({ ...outcome.state, reading: previous.reading, catalog: previous.catalog, error: previous.error }));

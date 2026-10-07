@@ -597,7 +597,7 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       if (role === undefined) {
         preview.fallback = `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then checked against the allowed list, and a request still citing this exception is refused as unknown.`;
       } else if (declared) {
-        preview.fallback = `Removing this exception returns ${scope} to the ${role} role default.`;
+        preview.fallback = `Removing this exception returns ${scope} to the ${role} role default. A request that still cites the removed exception id is refused as unknown before that default is reached.`;
       } else {
         preview.fallback = `This file declares no ${role} role pair, so ${scope} has no default to return to: a request under that scope is refused until the role is given a pair.`;
       }
@@ -913,13 +913,16 @@ export interface PolicySaveOutcome {
  * there is a refusal the write would meet, and sending only an accepted change keeps the two answers
  * from disagreeing. A refusal or a conflict never reaches the write, so nothing touches the file.
  */
-export async function runSave(state: PolicyScreenState, transports: PolicyWriteTransports): Promise<PolicySaveOutcome> {
+export async function runSave(state: PolicyScreenState, transports: PolicyWriteTransports, onStart?: (started: PolicyScreenState) => void): Promise<PolicySaveOutcome> {
   const change = state.change;
   const reading = state.reading;
   if (!change || !reading || state.saving !== null) {
     return { state, reread: false, rereadKeepsInputs: false, saved: false };
   }
   const started = screenSaveStarted(state);
+  // The started state is handed to the caller BEFORE the first await, so the screen disables its
+  // controls while the check and the write are in flight rather than only after they have answered.
+  onStart?.(started);
   const payload = { expectedDigest: reading.digest ?? "", change };
   let checked: PolicyCheckResult;
   try {
@@ -1209,6 +1212,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
   const stillPending = saved !== null && state.change === saved;
   let change = state.change;
   let allowedDraft = state.allowedDraft;
+  let allowedNew = state.allowedNew;
   let exceptionDraft = state.exceptionDraft;
   let repair = state.repair;
   if (notice.blockEditing) {
@@ -1226,6 +1230,13 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     if (saved.kind === "setAllowed" && before !== null && sameEntries(allowedDraft.get(saved.model), before.allowedDraft.get(saved.model))) {
       allowedDraft = withoutKey(allowedDraft, saved.model);
     }
+    // A removal spends the draft of the model it removed as well. The removal's own change carries no
+    // draft, so without this the removed model's typed text survives and a later Add for the same
+    // model shows and proposes those old entries while the file no longer lists it.
+    if (saved.kind === "removeAllowed") {
+      allowedDraft = withoutKey(allowedDraft, saved.model);
+      allowedNew = withoutKey(allowedNew, saved.model);
+    }
     if (saved.kind === "setException" && exceptionDraft !== null && before !== null && exceptionDraft === before.exceptionDraft) {
       exceptionDraft = null;
     }
@@ -1233,7 +1244,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // the operator's next change.
     if (stillPending) change = null;
   }
-  return { ...state, saving: null, savingDrafts: null, busy: false, notice, change, allowedDraft, exceptionDraft, repair };
+  return { ...state, saving: null, savingDrafts: null, busy: false, notice, change, allowedDraft, allowedNew, exceptionDraft, repair };
 }
 
 /** sameEntries reports whether two effort lists hold the same entries in the same order. */
