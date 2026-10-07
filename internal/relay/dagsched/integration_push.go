@@ -37,6 +37,10 @@ type PushResult struct {
 // PushIntegration moves a remote branch to a local integration branch's commit by a fast-forward only.
 func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrationRef string) (PushResult, error) {
 	out := PushResult{Remote: remote, RemoteRef: remoteRef}
+	// a name that starts with a dash would be read by git as an option (CRW-965 review): refused before git runs
+	if strings.HasPrefix(remote, "-") || strings.HasPrefix(remoteRef, "-") {
+		return out, refuse(contract.RefusalMergeTargetUnreadable, "the remote %q and the remote ref %q must not start with a dash", remote, remoteRef)
+	}
 	local, found, err := integrationBranchTip(ctx, checkout, integrationRef)
 	if err != nil {
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not read %s in %s: %v", integrationRef, checkout, err)

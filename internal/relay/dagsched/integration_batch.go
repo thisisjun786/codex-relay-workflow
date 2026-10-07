@@ -225,6 +225,19 @@ func (s *Scheduler) readyIntegrationCandidates(ctx context.Context, in Integrati
 		}
 	}
 	sort.Slice(pick, func(i, j int) bool { return pick[i].NodeID < pick[j].NodeID })
+	// a candidate whose head the integration branch already contains was merged by an earlier run (before its containment
+	// observation); it is not merged or verified again, and its mark completes from the batch that recorded it
+	var fresh []Candidate
+	for _, c := range pick {
+		contained, err := isAncestorOf(ctx, in.Checkout, c.HeadSHA, in.IntegrationRef)
+		if err != nil {
+			return nil, err
+		}
+		if !contained {
+			fresh = append(fresh, c)
+		}
+	}
+	pick = fresh
 	return pick, nil
 }
 
@@ -426,6 +439,10 @@ func (w *integrationWorktree) merge(ctx context.Context, c Candidate) (bool, str
 		return false, "", fmt.Errorf("git merge of %s: %v", c.HeadSHA, err)
 	}
 	if code != 0 {
+		if code != 1 {
+			// git answers 1 for a conflict; anything else (for example 128, a head this checkout does not hold) is a host failure, not a conflict
+			return false, "", fmt.Errorf("git merge of %s exited %d: it is not mergeable in this checkout", c.HeadSHA, code)
+		}
 		_, _, _ = runGitExit(ctx, w.dir, integrationIdentity, "merge", "--abort")
 		return false, "", nil
 	}
