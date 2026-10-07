@@ -257,6 +257,15 @@ func ExecComplaints(document contract.OrderedObject) []string {
 	return nil
 }
 
+// ArgumentsStartTheLauncher is whether an argument list handed to the bridge's exec begins with
+// Flag: the exec below would read that as another plugin launch and start this launcher again
+// rather than the bridge. Bridge refuses such a list, and the installer's re-registration asks this
+// same question of the record it reads and the record it would write, so a record the launcher
+// refuses is refused there too rather than by a second copy of the check.
+func ArgumentsStartTheLauncher(arguments []string) bool {
+	return len(arguments) > 0 && arguments[0] == Flag
+}
+
 // Prepare is the launcher up to its exec: the record read and judged, then the bridge arguments
 // (the record's, as bytes, then the launcher's own) and the environment it starts under.
 // bridgeExecutable is checked as an exec would take it, and not executed: the Go runtime behind
@@ -323,7 +332,7 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 // in a map handed to the server.
 func Bridge(program string, args []string) int {
 	arguments, environment, err := Prepare(mcp.Environ(os.Environ()), args)
-	if err == nil && len(arguments) > 0 && arguments[0] == Flag {
+	if err == nil && ArgumentsStartTheLauncher(arguments) {
 		// The exec below would read this as another plugin launch and start this launcher again.
 		err = fail("the bridge's arguments begin with " + Flag + ", which would start this launcher" +
 			" again instead of the bridge")

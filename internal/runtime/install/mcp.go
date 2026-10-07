@@ -201,7 +201,18 @@ func bridgeComplaints(found any) []string {
 // launcher's answer is what keeps a record the launcher will not start out of the record file.
 // Each answer is worded to follow "the record at <path> ".
 func launcherComplaints(found Object) []string {
-	return append(pluginwiring.RecordComplaints(found), pluginwiring.ExecComplaints(found)...)
+	wrong := append(pluginwiring.RecordComplaints(found), pluginwiring.ExecComplaints(found)...)
+	// The launcher's last record-dependent refusal is the one Bridge makes on the argument list it
+	// would exec: a list beginning with the plugin-launch flag would start this launcher again
+	// instead of the bridge. The installer asks the launcher's own predicate
+	// (pluginwiring.ArgumentsStartTheLauncher) about the record's arguments, so a record the
+	// launcher refuses is refused here too, and Prepare's own answer for the launcher is unchanged.
+	if pluginwiring.ArgumentsStartTheLauncher(pluginwiring.ReadBridgeRecord(found).Args) {
+		wrong = append(wrong, "lists "+strconv.Quote(pluginwiring.Flag)+
+			" as the first argument the bridge would be started with, which would start this launcher"+
+			" again instead of the bridge")
+	}
+	return wrong
 }
 
 // readBridgeRecord is bridgerecord.read: absent, unreadable and unusable stay three answers.

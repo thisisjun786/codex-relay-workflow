@@ -222,8 +222,11 @@ func TestReRegisterPolicyStillRefusesARecordTheLauncherRefuses(t *testing.T) {
 // shape, args types and the policy reference, but not the serverName the package declares nor whether
 // an exec can take the executable and the arguments, so a hand-edited record naming another server, or
 // one holding a value no exec could be given, was answered record_updated although the launcher refuses
-// it. The checks are the launcher's own (pluginwiring.RecordComplaints, ExecComplaints), asked rather
-// than copied.
+// it. The launcher's last record-dependent refusal is the one Bridge makes on the argument list it
+// would exec - a list beginning with --plugin-launch would start this launcher again instead of the
+// bridge - so a record carrying that list was answered record_updated too. The checks are the
+// launcher's own (pluginwiring.RecordComplaints, ExecComplaints, ArgumentsStartTheLauncher), asked
+// rather than copied.
 func TestReRegisterPolicyRefusesARecordTheLauncherRefuses(t *testing.T) {
 	realHome := realHomeListings(t)
 	defer reportRealHomeDifference(t, realHome)
@@ -246,6 +249,8 @@ func TestReRegisterPolicyRefusesARecordTheLauncherRefuses(t *testing.T) {
 			launcherRecord(jsonText(t, executable+"\x00"), jsonText(t, install.ServerName), "[]", value)},
 		{"an argument holding a lone surrogate outside U+DC80..U+DCFF",
 			launcherRecord(jsonText(t, executable), jsonText(t, install.ServerName), `["\ud800"]`, value)},
+		{"args beginning with the flag that would start the launcher again",
+			launcherRecord(jsonText(t, executable), jsonText(t, install.ServerName), `["--plugin-launch"]`, value)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			write(t, recordPath, c.document)
