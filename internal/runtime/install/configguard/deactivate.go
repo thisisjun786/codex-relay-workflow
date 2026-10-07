@@ -1,7 +1,9 @@
 package configguard
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,12 +50,39 @@ type DeactivateResult struct {
 // closed). The Go-side operations — the drift hash, the read and the restore — work on the pinned
 // path, never on a spelling re-resolved after the wait. The injected CLI calls take only feature
 // names and read CODEX_HOME from the environment, so they are not pinned by this path.
-func configLockPathsPinned(lock *crwdir.ConfigLock) (string, error) {
+func configLockPathsPinned(lock *crwdir.ConfigLock) (*configLockPathsPin, error) {
 	pinned, ok := configLockPathsRealPath(lock.Target)
 	if !ok || !lock.HoldsSidecar(pinned) {
-		return "", fmt.Errorf("the config file's directory changed while the lock was being taken (%s); run the deactivation again", lock.Target)
+		return nil, fmt.Errorf("the config file's directory changed while the lock was being taken (%s); run the deactivation again", lock.Target)
 	}
-	return pinned, nil
+	// The identities are captured HERE, once, while the sidecar proof above holds. Every later
+	// comparison is judged against these captured values, never against the pinned path read from
+	// the filesystem again: re-reading it would follow a directory replaced after this point and
+	// accept the replacement as the locked file (CRW-899's fifth-generation evaluation).
+	// A config file that is already gone is not an error — an uninstall whose config.toml was
+	// removed still disables flags — so a missing file leaves the file identity nil and the
+	// comparison falls back to comparing resolved paths.
+	dirPath := filepath.Dir(pinned)
+	dir, err := os.Stat(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("the config file's directory could not be inspected (%s); run the deactivation again", dirPath)
+	}
+	file, err := os.Stat(pinned)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("the config file could not be inspected (%s); run the deactivation again", pinned)
+	}
+	return &configLockPathsPin{path: pinned, file: file, dir: dir, dirPath: dirPath}, nil
+}
+
+// configLockPathsPin is the locked config file as it was when the lock was proven: its resolved path
+// and the identities of the file and of its parent directory at that moment. A comparison against a
+// later manifest is judged against these captured values, so a path replaced after the pin cannot be
+// accepted as the locked file.
+type configLockPathsPin struct {
+	path    string
+	file    os.FileInfo
+	dir     os.FileInfo
+	dirPath string
 }
 
 func readTextOrNull(path string) (*string, error) {
@@ -124,76 +153,58 @@ func configLockPathsAbsolute(resolved string) (string, bool) {
 	return filepath.Join(realCwd, resolved), true
 }
 
-// configLockPathsSameTarget reports whether a spelling names the file the pinned path names.
-// Only the spelling is resolved; the pinned path is already kernel-resolved and is compared as it
-// is. Re-resolving the pinned path would follow a link that appeared after it was pinned, which is
-// exactly how a path that now names another file would be accepted as the locked one, so the pin is
-// never re-interpreted (CRW-899 E1). The manifest is allowed to name the config file through a
-// different spelling — CODEX_HOME behind a directory symlink, for example, which crwdir's lock
-// resolution leaves spelled through the alias because it follows only a symlink in the final
-// component — and a deactivation that treated that as a different file would refuse to restore an
-// install it owns. The comparison is deliberately directory-entry identity, not inode identity: the
-// restore publishes through the pinned path with an atomic rename, which replaces that one pathname,
-// so a hard link to the same inode under another name would keep the managed key while this command
-// reported it restored (fail open). A hard link therefore stays refused, and a spelling that cannot
-// be resolved is not the same target, so the comparison never accepts what it could not prove.
-func configLockPathsSameTarget(spelling, pinned string) bool {
+// configLockPathsSameTarget reports whether a manifest's spelling names the locked file. Only the
+// SPELLING is read from the filesystem; the locked side is the pin captured when the lock was
+// proven, and the pinned path is never resolved or stat'ed again, because doing so would follow a
+// directory replaced after the pin and accept the replacement as the locked file (CRW-899 E1, and
+// the fifth-generation evaluation that found exactly that). The manifest is allowed to name the
+// config file through a different spelling — CODEX_HOME behind a directory symlink, for example,
+// which crwdir's lock resolution leaves spelled through the alias because it follows only a symlink
+// in the final component — and a deactivation that treated that as a different file would refuse to
+// restore an install it owns. The comparison is deliberately directory-entry identity, not inode
+// identity: the restore publishes through the pinned path with an atomic rename, which replaces that
+// one pathname, so a hard link to the same inode under another name would keep the managed key while
+// this command reported it restored (fail open). A hard link therefore stays refused, and a spelling
+// that cannot be resolved is not the same target, so the comparison never accepts what it could not
+// prove.
+func configLockPathsSameTarget(spelling string, pinned *configLockPathsPin) bool {
 	real, ok := configLockPathsRealPath(spelling)
 	if !ok {
 		return false
 	}
-	return configLockPathsSameEntry(real, pinned)
-}
-
-// configLockPathsSameEntry reports whether two resolved paths name one directory entry. Equal strings
-// are the plain case. Beyond that, a case-insensitive filesystem names one entry with two spellings
-// and filepath.EvalSymlinks follows links without canonicalising the case of ordinary components, so
-// the strings differ while the entry is the same one — still the same target, because a rename over
-// it replaces the entry both spellings name. A hard link is a different entry that a rename would not
-// follow, so it stays refused. The two are told apart by asking the directory itself: the paths must
-// be one file and one parent directory, the names must match without case, and the spelling must not
-// be present as its own entry (which is what a hard link, or a case-sensitive sibling, would be).
-func configLockPathsSameEntry(real, pinned string) bool {
-	if real == pinned {
+	if real == pinned.path {
 		return true
 	}
-	base, pinnedBase := filepath.Base(real), filepath.Base(pinned)
-	if !strings.EqualFold(base, pinnedBase) {
+	if pinned.file == nil {
+		// The config file was already gone at pin time: there is nothing to compare it with, and
+		// the absent-config path restores nothing.
 		return false
 	}
-	realInfo, err := os.Stat(real)
-	if err != nil {
+	// The spellings differ. On a case-insensitive filesystem they can still name one directory
+	// entry, and filepath.EvalSymlinks follows links without canonicalising the case of ordinary
+	// components. That is the same target — a rename over it replaces the entry both spellings
+	// name — but a hard link is a DIFFERENT entry a rename would not reach, so it stays refused.
+	// The two are told apart with the identities captured at pin time, never by reading the pinned
+	// path again: the candidate must be the pinned file, in the pinned directory, and that
+	// directory must hold one entry for the name.
+	if !strings.EqualFold(filepath.Base(real), filepath.Base(pinned.path)) {
 		return false
 	}
-	pinnedInfo, err := os.Stat(pinned)
-	if err != nil {
-		return false
-	}
-	if !os.SameFile(realInfo, pinnedInfo) {
+	realFile, err := os.Stat(real)
+	if err != nil || !os.SameFile(realFile, pinned.file) {
 		return false
 	}
 	realDir, err := os.Stat(filepath.Dir(real))
-	if err != nil {
+	if err != nil || !os.SameFile(realDir, pinned.dir) {
 		return false
 	}
-	pinnedDir, err := os.Stat(filepath.Dir(pinned))
-	if err != nil {
-		return false
-	}
-	if !os.SameFile(realDir, pinnedDir) {
-		return false
-	}
-	// Same inode, same parent directory. Whether this is one entry or two depends on the
-	// filesystem: a case-insensitive directory lists the name once, so both spellings are one
-	// entry; a case-sensitive one that holds both spellings lists them separately, and they are
-	// two entries (a hard link) that a rename over one would not reach.
-	entries, err := os.ReadDir(filepath.Dir(pinned))
+	entries, err := os.ReadDir(pinned.dirPath)
 	if err != nil {
 		return false
 	}
 	matches := 0
 	for _, entry := range entries {
-		if strings.EqualFold(entry.Name(), base) {
+		if strings.EqualFold(entry.Name(), filepath.Base(pinned.path)) {
 			matches++
 		}
 	}
@@ -281,11 +292,11 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 			return nil, err
 		}
 		defer lock.Release()
-		pinned, pinErr := configLockPathsPinned(lock)
+		pin, pinErr := configLockPathsPinned(lock)
 		if pinErr != nil {
 			return nil, pinErr
 		}
-		path = pinned
+		path = pin.path
 		// The manifest read before the lock answered only whether and where to lock. An activation
 		// that published while this command waited would otherwise be ignored, and the restore would
 		// be computed from a manifest that no longer describes the install: the drift hash, the table
@@ -302,7 +313,7 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		// config file would have this deactivation apply one file's ownership records to another, so
 		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
 		// overrides the manifest in both readings, so only the derived path can disagree.
-		if deps.ConfigPath == "" && !configLockPathsSameTarget(m.ConfigPath, path) {
+		if deps.ConfigPath == "" && !configLockPathsSameTarget(m.ConfigPath, pin) {
 			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
 		}
 	}

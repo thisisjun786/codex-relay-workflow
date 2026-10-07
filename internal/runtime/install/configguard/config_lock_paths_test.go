@@ -210,16 +210,47 @@ func TestConfigLockPathsPinnedRefusesARetargetedDirectoryAlias(t *testing.T) {
 	if err := os.Symlink("realA", alias); err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := configLockPathsPinned(lock)
+	pin, err := configLockPathsPinned(lock)
 	if err != nil {
 		t.Fatalf("the guard refused a stable alias: %v", err)
 	}
-	if want, err := filepath.EvalSymlinks(filepath.Join(realA, "config.toml")); err != nil || pinned != want {
-		t.Fatalf("the guard pinned %q, want %q (%v)", pinned, want, err)
+	if want, err := filepath.EvalSymlinks(filepath.Join(realA, "config.toml")); err != nil || pin.path != want {
+		t.Fatalf("the guard pinned %q, want %q (%v)", pin.path, want, err)
 	}
 }
 
 // configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
+
+// The fifth-generation d1 case, pinned through the public entry point: the pinned file's DIRECTORY is
+// replaced after the pin, and the manifest then names the file the replacement points at. The
+// comparison must refuse — the pin's identities are the ones captured at lock time, so a directory
+// read again would have accepted the replacement and restored under the wrong lock.
+func TestConfigLockPathsRefusesAPinnedDirectoryReplacedAfterThePin(t *testing.T) {
+	home := configLockActivationHome(t)
+	dirA := filepath.Join(home, "A")
+	dirB := filepath.Join(home, "B")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgA := filepath.Join(dirA, "config.toml")
+	cfgB := filepath.Join(dirB, "config.toml")
+	activationWrite(t, cfgA, deactivationConfig)
+	activationWrite(t, cfgB, deactivationConfig)
+
+	pin := configLockPathsTestPin(t, cfgA)
+	// Replace the pinned directory with a link to the other one; the manifest now names B.
+	if err := os.Rename(dirA, dirA+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dirB, dirA); err != nil {
+		t.Fatal(err)
+	}
+	if configLockPathsSameTarget(cfgB, pin) {
+		t.Fatal("a directory replaced after the pin was accepted as the locked file")
+	}
+}
 
 // A case-insensitive spelling of the locked entry is the same target and is accepted. The test needs
 // a filesystem that folds case; where the filesystem distinguishes the two spellings it skips, and
@@ -232,10 +263,6 @@ func TestConfigLockPathsAcceptsACaseVariantSpelling(t *testing.T) {
 	}
 	cfg := filepath.Join(real, "config.toml")
 	activationWrite(t, cfg, deactivationConfig)
-	pinned, ok := configLockPathsRealPath(cfg)
-	if !ok {
-		t.Fatal("the pinned path did not resolve")
-	}
 	// The same directory and the same file through a differently cased spelling.
 	upperDir := filepath.Join(home, "REAL")
 	dirInfo, err := os.Stat(upperDir)
@@ -250,7 +277,7 @@ func TestConfigLockPathsAcceptsACaseVariantSpelling(t *testing.T) {
 	if _, err := os.Stat(upperCfg); err != nil {
 		t.Skipf("this filesystem does not fold file case: %v", err)
 	}
-	if !configLockPathsSameTarget(upperCfg, pinned) {
+	if !configLockPathsSameTarget(upperCfg, configLockPathsTestPin(t, cfg)) {
 		t.Fatal("a case-insensitive spelling of the locked entry was refused")
 	}
 }
@@ -266,7 +293,7 @@ func TestConfigLockPathsRefusesACaseVariantHardLink(t *testing.T) {
 	if err := os.Link(lower, upper); err != nil {
 		t.Skipf("this filesystem does not support hard links: %v", err)
 	}
-	if configLockPathsSameTarget(upper, lower) {
+	if configLockPathsSameTarget(upper, configLockPathsTestPin(t, lower)) {
 		t.Fatal("a case-variant hard link was accepted as the locked directory entry")
 	}
 }
@@ -302,15 +329,11 @@ func TestConfigLockPathsMissingIntermediateDirectoryIsNotSynthesised(t *testing.
 	}
 	cfg := filepath.Join(real, "config.toml")
 	activationWrite(t, cfg, deactivationConfig)
-	pinned, ok := configLockPathsRealPath(cfg)
-	if !ok {
-		t.Fatal("the pinned path did not resolve")
-	}
 	spelling := real + string(filepath.Separator) + "missing" + string(filepath.Separator) + ".." + string(filepath.Separator) + "config.toml"
 	if _, ok := configLockPathsRealPath(spelling); ok {
 		t.Fatalf("a missing intermediate directory was synthesised: %q", spelling)
 	}
-	if configLockPathsSameTarget(spelling, pinned) {
+	if configLockPathsSameTarget(spelling, configLockPathsTestPin(t, cfg)) {
 		t.Fatalf("the unresolvable spelling was accepted as the locked file: %q", spelling)
 	}
 }
@@ -326,12 +349,12 @@ func TestConfigLockPathsBareRelativeAbsentConfigResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.Release()
-	pinned, err := configLockPathsPinned(lock)
+	pin, err := configLockPathsPinned(lock)
 	if err != nil {
 		t.Fatalf("the pin refused a bare relative absent config: %v", err)
 	}
-	if want := filepath.Join(home, "config.toml"); pinned != want {
-		t.Fatalf("the pin answered %q, want %q", pinned, want)
+	if want := filepath.Join(home, "config.toml"); pin.path != want {
+		t.Fatalf("the pin answered %q, want %q", pin.path, want)
 	}
 }
 
@@ -352,14 +375,10 @@ func TestConfigLockPathsSpellingWithDotDotResolvesThroughTheKernel(t *testing.T)
 	if err := os.Symlink(sub, filepath.Join(x, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	pinned, ok := configLockPathsRealPath(cfg)
-	if !ok {
-		t.Fatal("the pinned path did not resolve")
-	}
 	// alias -> /y/sub, so /x/alias/../config.toml is /y/config.toml, which does not exist. A
 	// lexical clean would answer /x/config.toml, the pinned file, and accept the manifest.
 	spelling := x + string(filepath.Separator) + "alias" + string(filepath.Separator) + ".." + string(filepath.Separator) + "config.toml"
-	if configLockPathsSameTarget(spelling, pinned) {
+	if configLockPathsSameTarget(spelling, configLockPathsTestPin(t, cfg)) {
 		t.Fatalf("the comparison cleaned the spelling before resolving it: %q", spelling)
 	}
 }
@@ -382,13 +401,10 @@ func TestConfigLockPathsComparisonDoesNotResolveThePinAgain(t *testing.T) {
 	activationWrite(t, pathA, deactivationConfig)
 	activationWrite(t, pathB, deactivationConfig)
 
-	// The pinned path is the kernel-resolved spelling of the locked file.
-	pinned, ok := configLockPathsRealPath(pathA)
-	if !ok {
-		t.Fatal("the pinned path did not resolve")
-	}
-	// Control: while the file is where it was, a spelling of it matches the pin.
-	if !configLockPathsSameTarget(pathA, pinned) {
+	// The pin is captured once, while the locked file is where it was.
+	pin := configLockPathsTestPin(t, pathA)
+	// Control: a spelling of the locked file matches the pin.
+	if !configLockPathsSameTarget(pathA, pin) {
 		t.Fatal("the comparison rejected the locked file before it changed")
 	}
 	// A link now stands where the pinned file was, naming the other file.
@@ -399,11 +415,12 @@ func TestConfigLockPathsComparisonDoesNotResolveThePinAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The other file must not be accepted as the locked one: the pin is not re-interpreted.
-	if configLockPathsSameTarget(pathB, pinned) {
+	if configLockPathsSameTarget(pathB, pin) {
 		t.Fatal("the comparison re-resolved the pin and accepted another file as the locked one")
 	}
 }
 
+// configLockPathsRenameRunner is the issue's reproduction: the injected CLI writes the new settings
 // to a temporary file and renames it over the caller's path, so a symlink there is replaced by a
 // regular file and the old target keeps its bytes.
 func configLockPathsRenameRunner(t *testing.T, path string, calls *[][]string) CodexRunner {
@@ -728,4 +745,20 @@ func TestConfigLockPathsDeactivateRefusesAHardLinkedConfigFile(t *testing.T) {
 	if got := activationRead(t, linked); got != deactivationConfig {
 		t.Fatalf("the refused deactivation wrote through the hard link: %q", got)
 	}
+}
+
+// configLockPathsTestPin captures the pin for a path the way Deactivate does, so a test can compare a
+// spelling against it.
+func configLockPathsTestPin(t *testing.T, path string) *configLockPathsPin {
+	t.Helper()
+	lock, err := crwdir.LockConfig(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lock.Release)
+	pin, err := configLockPathsPinned(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pin
 }
