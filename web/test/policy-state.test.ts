@@ -225,14 +225,16 @@ test("setting an exception that is not declared previews it as new", () => {
   assert.equal(item?.after, "parent gpt-6.1-sol xhigh (no cwd scope)");
 });
 
-test("removing an exception with no role previews each task's own role default", () => {
-  // An exception that omits role applies to every role, so there is no single role whose default it
-  // returns to; the earlier wording invented one ("the cited role") and produced a nonsense sentence.
+test("removing an exception with no role says what that removal actually does", () => {
+  // A role-less exception is not inert: the bridge matches an exception's role against the request's
+  // role exactly, so it covers the requests that cite no role. The removal sentence must describe
+  // that, and must not invent a role or claim a fallback to a role default.
   const unscoped = reading({ exceptions: [{ id: "any", model: "m", reasoningEffort: "max", cwd: ["/srv/all"] }] });
   const preview = previewChange(unscoped, { kind: "removeException", id: "any" });
   const item = preview.items.find((entry) => entry.label.includes("any"));
-  assert.equal(item?.after, "each task's own role default");
-  assert.ok(preview.fallback?.includes("each task's own role default"));
+  assert.equal(item?.after, "no role");
+  assert.ok(preview.fallback?.includes("cite no role"));
+  assert.ok(!preview.fallback?.includes("role default"));
   assert.ok(!preview.fallback?.includes("the cited role"));
 });
 
@@ -414,13 +416,50 @@ test("a successful save keeps an edit the operator started while it was in fligh
   const saving = screenSaveStarted(state);
   const second = screenAllowedText(saving, "gpt-6.1-sol", "high");
   const finished = screenSaveFinished(second, first, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
-  // The screen re-reads with keepInputs because something is still pending.
-  const afterSave = screenLoaded(finished, reading({ digest: "b".repeat(64) }), finished.change !== null);
+  // The saved model's spent draft is gone, and the later edit is still pending.
+  assert.equal(allowedTextOf(finished, "anthropic/opus", ["max", "xhigh"]), "max, xhigh", "the spent draft is dropped");
+  assert.equal(finished.change?.kind, "setAllowed");
+  assert.equal((finished.change as { model: string }).model, "gpt-6.1-sol");
+  // The screen re-reads with keepInputs, so the later edit survives the read.
+  const afterSave = screenLoaded(finished, reading({ digest: "b".repeat(64) }), true);
   assert.equal((afterSave.change as { model: string })?.model, "gpt-6.1-sol", "the later edit survives the re-read");
   assert.equal(afterSave.allowedText["gpt-6.1-sol"], "high");
-  // And a save with nothing pending starts clean.
-  const clean = screenLoaded(finished, reading({ digest: "b".repeat(64) }), false);
+});
+
+test("a successful save with nothing pending leaves no drafts behind", () => {
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedText(state, "anthropic/opus", "max");
+  const saved = state.change;
+  state = screenSaveFinished(screenSaveStarted(state), saved, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
+  assert.equal(state.change, null);
+  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "max, xhigh", "the input shows the file again");
+  const clean = screenLoaded(state, reading({ digest: "b".repeat(64) }), true);
   assert.equal(clean.change, null);
+  assert.equal(allowedTextOf(clean, "anthropic/opus", ["max", "xhigh"]), "max, xhigh");
+});
+
+test("editing an existing exception keeps its identifier byte for byte", () => {
+  // d2: trimming a stored id sent setException for a different id and created a new exception.
+  const exception = { id: " legacy ", role: "parent", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] };
+  const draft = draftForException(exception);
+  const change = changeFromExceptionDraft({ ...draft, effort: "max" });
+  assert.equal((change as { id: string }).id, " legacy ", "the stored id is not trimmed");
+  // A new id the operator invents is trimmed.
+  const fresh = changeFromExceptionDraft({ ...draftForNewException("parent", "m", "high"), id: " fresh ", cwd: ["/srv/a"] });
+  assert.equal((fresh as { id: string }).id, "fresh");
+});
+
+test("a role-less exception is described as covering the requests that cite no role", () => {
+  // d3: the bridge matches roles by exact equality, so a role-less exception covers the role-less
+  // requests the schema allows; calling it inert understated a live authorization.
+  const exception = { id: "legacy", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] };
+  const preview = previewChange(reading({ exceptions: [exception] }), { kind: "removeException", id: "legacy" });
+  const item = preview.items.find((entry) => entry.label.includes("legacy"));
+  assert.ok(item?.before.includes("cite no role"), "the row says which requests it covers");
+  assert.ok(!item?.before.includes("covers no request"));
+  assert.ok(preview.fallback?.includes("cite no role"));
+  assert.ok(!preview.fallback?.includes("role default"));
 });
 
 // The four defects the third pre-merge evaluation found.

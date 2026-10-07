@@ -709,12 +709,11 @@ export function PolicyPage() {
     apply((previous) => screenSaveFinished(previous, change, notice));
     if (notice.tone === "ok") {
       // The file moved, so the reading is stale by definition. Re-read before showing the new state.
-      // The operator may have started the next edit while this save was in flight; that edit is not
-      // this save's to discard, so the re-read keeps whatever is still pending.
       toast("Execution policy saved", "ok");
-      // Nothing is pending any more (Cancel clears it, and so does the reducer when the saved change
-      // is still the pending one), so the re-read starts clean; a still-pending edit is kept.
-      readAgain(stateRef.current.change !== null);
+      // The re-read always starts from the file. The drafts the write spent were already dropped by
+      // screenSaveFinished; anything the operator starts after this answer arrives is their next
+      // change and must survive the read, so the read keeps whatever is pending when it resolves.
+      readAgain(true);
       return;
     }
     if (notice.reread) readAgain(true);

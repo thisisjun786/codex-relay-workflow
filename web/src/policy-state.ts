@@ -438,7 +438,12 @@ function exceptionText(exception: { role?: string; model: string; reasoningEffor
   // Each root is quoted, so a path that itself contains a comma still reads as one path and the
   // before/after rows cannot show two different scopes as the same text.
   const scope = exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.map((root) => JSON.stringify(root)).join(", ");
-  return `${exception.role || "no role (covers no request)"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
+  // An exception with no role is not inert: the bridge matches an exception's role against the
+  // request's role with exact equality (internal/bridge/execution/execution.go exceptionCovers), so a
+  // role-less exception covers exactly the requests that cite no role - which the schema allows and
+  // authorize_test.go pins ("an exception written before roles existed still works for a caller that
+  // names none"). Describing it as covering nothing would understate a live authorization.
+  return `${exception.role || "covers requests that cite no role"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
 }
 
 /**
@@ -489,13 +494,13 @@ export function previewChange(reading: PolicyReading, change: PolicyChange): Pol
       items.push({
         label: `exception ${change.id}`,
         before: existing ? exceptionText(existing) : "not declared",
-        after: existing?.role ? `${existing.role} default` : "each task's own role default",
+        after: existing?.role ? `${existing.role} default` : "no role",
       });
       // An exception that omits role applies to every role, so there is no one role whose default it
       // returns to: each task under that scope falls back to its own role's default.
       preview.fallback = existing?.role
         ? `Removing this exception returns ${scope} to the ${existing.role} role default.`
-        : `Removing this exception returns ${scope} to each task's own role default.`;
+        : `Removing this exception removes the scope ${scope} for requests that cite no role; such a request is then checked against the allowed list, and a request still citing this exception is refused as unknown.`;
       break;
     }
     default:
@@ -867,7 +872,11 @@ export function screenExceptionDraft(state: PolicyScreenState, draft: ExceptionD
  * complete. An empty id or model would be refused by the check, so it is not proposed at all.
  */
 export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | null {
-  const id = draft.id.trim();
+  // An existing exception's id is carried through byte for byte: the policy file is the authority on
+  // its identifiers and the store finds the entry by exact match, so trimming a stored " legacy "
+  // would create a different exception and leave the original untouched. Only a NEW id, which the
+  // operator is inventing, is trimmed.
+  const id = draft.isNew ? draft.id.trim() : draft.id;
   const model = draft.model.trim();
   if (id === "" || model === "") return null;
   // An exception with no cwd covers no request: the bridge requires a request to state a cwd the
@@ -911,6 +920,8 @@ export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
 export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange | null, notice: PolicyNotice): PolicyScreenState {
   const stillPending = saved !== null && state.change === saved;
   let change = state.change;
+  let allowedText = state.allowedText;
+  let exceptionDraft = state.exceptionDraft;
   let repair = state.repair;
   if (notice.blockEditing) {
     change = null;
@@ -918,8 +929,19 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // silently lift the block: the server keeps refusing every write until it is done.
     repair = notice.text;
   }
-  else if (notice.tone === "ok" && stillPending) change = null;
-  return { ...state, saving: null, notice, change, repair };
+  else if (notice.tone === "ok" && saved !== null) {
+    // The write landed, so the drafts that produced it are spent. Only THOSE drafts are dropped: an
+    // edit the operator started while the save was in flight is their next change and stays.
+    if (saved.kind === "setAllowed") {
+      const { [saved.model]: _spent, ...rest } = allowedText;
+      allowedText = rest;
+    }
+    if (saved.kind === "setException" && exceptionDraft?.id === saved.id) exceptionDraft = null;
+    // The pending change is cleared only when it is still the one that was saved; a later edit is
+    // the operator's next change.
+    if (stillPending) change = null;
+  }
+  return { ...state, saving: null, notice, change, allowedText, exceptionDraft, repair };
 }
 
 /**
