@@ -303,14 +303,16 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 }
 
 // dagHostNewRefusals is the refusals of one reading this check has not reported yet. A rollout seen
-// for the first time reports only the refusals whose OUTPUT was written after the reading began
-// (the file size at that moment), so its history is not replayed while a refusal the parent appended
-// during the scan still is; the call's own position does not matter, so the answer of a call that
-// already existed before the reading is reported when it arrives. A known rollout reports every
-// refusal the reading found that is not in the reported list. The ids the next check re-reads stay
-// in that list, so a refusal is reported once. One reading reports a call id once whatever the
-// rollout holds for it: a repeated answer is the duplicate tool outputs reading's finding, and a
-// second refusal anomaly for the same command would be a second report of one refusal.
+// for the first time reports only the refusals whose OUTPUT line was complete before the reading
+// began (the file size at that moment), so its history is not replayed while a refusal the parent
+// appended during the scan still is. An output line that was still being written when the reading
+// began is not history: it is reported, because the refusal it carries arrived with this reading.
+// The call's own position does not matter, so the answer of a call that already existed before the
+// reading is reported when it arrives. A known rollout reports every refusal the reading found that
+// is not in the reported list. The ids the next check re-reads stay in that list, so a refusal is
+// reported once. One reading reports a call id once whatever the rollout holds for it: a repeated
+// answer is the duplicate tool outputs reading's finding, and a second refusal anomaly for the same
+// command would be a second report of one refusal.
 func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool, firstSight bool) []dagHostRefusal {
 	out := []dagHostRefusal{}
 	for _, refusal := range reading.refusals {
@@ -321,7 +323,7 @@ func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool,
 		// is one this reading has seen, so a duplicate of its answer appended during the same scan is
 		// not a new refusal. The duplicate-outputs reading is the one that reports a repeated answer.
 		reported[refusal.callID] = true
-		if firstSight && refusal.outputStart < reading.boundary {
+		if firstSight && refusal.outputEnd <= reading.boundary {
 			continue
 		}
 		out = append(out, refusal)
@@ -414,6 +416,7 @@ type dagHostRefusal struct {
 	reason      string
 	callStart   int64
 	outputStart int64
+	outputEnd   int64
 }
 
 // dagHostRolloutReading is one reading of a rollout: the refusals it shows, the offset the next
@@ -712,11 +715,13 @@ func dagHostHeredocOpeners(line string, quoteIn byte) ([]dagHostHeredoc, byte) {
 			}
 		case c == '<' && i+1 < len(line) && line[i+1] == '<':
 			heredoc, ok, next := dagHostHeredocAt(line, i)
+			// The scan continues after whatever the reader consumed, so a rejected opener (a
+			// here-string, an unnamed <<) is not read again from its second <.
+			i = next - 1
 			if !ok {
 				continue
 			}
 			openers = append(openers, heredoc)
-			i = next - 1
 		}
 	}
 	return openers, quote
@@ -747,7 +752,7 @@ func dagHostHeredocAt(line string, i int) (dagHostHeredoc, bool, int) {
 		return dagHostHeredoc{}, false, i + 2
 	}
 	end := j
-	for end < len(line) && line[end] != ' ' && line[end] != '\t' {
+	for end < len(line) && !dagHostWordBreak(line[end]) {
 		end++
 	}
 	word := line[j:end]
@@ -756,6 +761,17 @@ func dagHostHeredocAt(line string, i int) (dagHostHeredoc, bool, int) {
 		return dagHostHeredoc{}, false, i + 2
 	}
 	return dagHostHeredoc{delimiter: word, stripTabs: strip, expanded: true}, true, end
+}
+
+// dagHostWordBreak reports whether c ends a shell word: whitespace, or a metacharacter that starts
+// another token (; & | < > ( )). So the delimiter of "<<EOF;" is EOF, not "EOF;", exactly as the
+// shell reads it.
+func dagHostWordBreak(c byte) bool {
+	switch c {
+	case ' ', '\t', '\r', '\n', ';', '&', '|', '<', '>', '(', ')':
+		return true
+	}
+	return false
 }
 
 // dagHostSubstitutionText is the command substitutions an unquoted here-document body runs: the
@@ -793,6 +809,10 @@ func dagHostParenEnd(s string, open int) int {
 	depth := 0
 	for i := open; i < len(s); i++ {
 		switch s[i] {
+		case '\\':
+			// A backslash quotes the character after it, so an escaped ( or ) is not a nesting
+			// parenthesis and does not close the substitution.
+			i++
 		case '\'', '"':
 			i = dagHostQuotedEnd(s, i, s[i]) - 1
 		case '(':
@@ -960,7 +980,7 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 					if found := dagHostRefusedReason.FindStringSubmatch(output); found != nil {
 						reason = found[1]
 					}
-					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason, callStart: call.callStart, outputStart: lineStart})
+					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason, callStart: call.callStart, outputStart: lineStart, outputEnd: offset})
 				}
 			}
 		}

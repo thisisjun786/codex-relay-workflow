@@ -233,6 +233,12 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		// A here-document opener inside a quoted argument that spans lines starts no document, so
 		// the real relay command after the quoted argument is still read.
 		{"a here-document opener inside a multiline quoted argument", "printf '%s\\n' 'example:\ncat <<EOF\nbody'\ncrw relay dag-ready --plan p1", true},
+		// A backslash inside a substitution quotes the character after it, so an escaped paren does
+		// not close the substitution and the commands after it are not quoted data; a here-string
+		// (<<<) opens no document; and a delimiter word ends at a metacharacter, so <<EOF; names EOF.
+		{"an escaped paren inside a quoted substitution", `echo "$(true \) ; crw relay dag-ready --plan p1)"`, true},
+		{"a relay command after a here-string", "cat <<< text\ncrw relay dag-ready --plan p1", true},
+		{"a semicolon after the here-document delimiter", "cat <<EOF;\ncrw relay dag-ready --plan p1\nEOF", false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -405,21 +411,24 @@ func TestDagHostReview775FirstSightReportsOnlyRefusalsWrittenAfterTheReading(t *
 		boundary: 100,
 		resume:   250,
 		refusals: []dagHostRefusal{
-			{callID: "history", callStart: 10, outputStart: 20, commands: []string{"dag-release"}, reason: "old"},
-			{callID: "appended", callStart: 10, outputStart: 120, commands: []string{"dag-ready"}, reason: "new"},
+			{callID: "history", callStart: 10, outputStart: 20, outputEnd: 40, commands: []string{"dag-release"}, reason: "old"},
+			{callID: "appended", callStart: 10, outputStart: 120, outputEnd: 160, commands: []string{"dag-ready"}, reason: "new"},
+			// The answer line started before the reading began but was still being written then: it
+			// is not history, so the refusal it carries is reported.
+			{callID: "incomplete", callStart: 10, outputStart: 80, outputEnd: 150, commands: []string{"dag-ready"}, reason: "mid"},
 		},
 	}
 
 	first := dagHostNewRefusals(reading, map[string]bool{}, true)
-	if len(first) != 1 || first[0].callID != "appended" {
-		t.Fatalf("a first-sight reading reported %+v, want only the refusal answered after it began", first)
+	if len(first) != 2 || first[0].callID != "appended" || first[1].callID != "incomplete" {
+		t.Fatalf("a first-sight reading reported %+v, want the refusals not complete before it began", first)
 	}
 	known := dagHostNewRefusals(reading, map[string]bool{}, false)
-	if len(known) != 2 {
-		t.Fatalf("a known rollout reported %+v, want both refusals", known)
+	if len(known) != 3 {
+		t.Fatalf("a known rollout reported %+v, want all three refusals", known)
 	}
 	suppressed := dagHostNewRefusals(reading, map[string]bool{"appended": true}, false)
-	if len(suppressed) != 1 || suppressed[0].callID != "history" {
+	if len(suppressed) != 2 {
 		t.Fatalf("an already reported refusal was reported again: %+v", suppressed)
 	}
 }
