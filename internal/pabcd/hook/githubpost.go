@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 )
@@ -41,6 +42,11 @@ const (
 	githubPostRuleUnread = "unreadable-github-post"
 
 	githubPostMaxFileBytes = 1 << 20 // the most the guard reads of a body file (1 MiB)
+	// githubPostScriptMaxDepth bounds the script-in-script walk: a script whose line runs a path that is
+	// another script is read again, so a self-referential pair (./gh running ./gh) would recurse without a
+	// bound. The limit is small because a real chain is short, and reaching it refuses the command rather
+	// than passing a file the guard stopped reading (fail closed).
+	githubPostScriptMaxDepth = 8
 	// GitHubPostMaxStdinBytes is this row's own stdin bound (1 MiB): over it the guard refuses rather
 	// than passing an input it could not judge.
 	GitHubPostMaxStdinBytes = 1 << 20
@@ -169,7 +175,7 @@ func githubPostJudgeWordsQuoted(words []string, cwd string, quoted bool) (github
 	if site, denied, handled := githubPostForm(words, cwd, quoted); handled {
 		return site, denied
 	}
-	if site, denied := githubPostScriptCommand(words, cwd, quoted); denied {
+	if site, denied := githubPostScriptCommand(words, githubPostCtx{dir: cwd}, quoted); denied {
 		return site, true
 	}
 	if githubPostQuiet(words) {
@@ -188,11 +194,17 @@ func githubPostJudgeWordsQuoted(words []string, cwd string, quoted bool) (github
 }
 
 // githubPostPathFileBeforeForm is D2 on the gh form's own door: a command word that is a path (./gh,
-// scripts/gh) names a file the shell runs, so when that file is a readable text script the guard reads
-// it rather than letting the gh form trust the name. A path that is absent or a binary is not a text
-// script, so the form judges the command as it did before, and the direct-execution path still refuses
-// the absent one.
+// scripts/gh) names a file the shell runs, so when that file is a regular text file the guard reads it
+// rather than letting the gh form trust the name. A name that is not a regular file at all (absent, a
+// directory, a FIFO) is not a script the shell could run, so the form judges the command as it did before;
+// a binary is not a target either; a regular text file the guard cannot read (over the bound, a read error)
+// is refused here, because letting the form trust the name would pass a script its first bytes hid.
 func githubPostPathFileBeforeForm(words []string, cwd string, quoted bool) (githubPostSite, bool) {
+	return githubPostPathFileBeforeFormDepth(words, cwd, quoted, 0)
+}
+
+// githubPostPathFileBeforeFormDepth is githubPostPathFileBeforeForm with the script-in-script walk bounded.
+func githubPostPathFileBeforeFormDepth(words []string, cwd string, quoted bool, depth int) (githubPostSite, bool) {
 	if len(words) == 0 {
 		return githubPostSite{}, false
 	}
@@ -200,10 +212,40 @@ func githubPostPathFileBeforeForm(words []string, cwd string, quoted bool) (gith
 	if !strings.ContainsRune(name, '/') || githubPostProgram(name) != "gh" {
 		return githubPostSite{}, false
 	}
-	if _, binary, unreadable := githubPostReadScriptFile(name, cwd); binary || unreadable {
+	return githubPostJudgePathScriptDepth(name, cwd, depth)
+}
+
+// githubPostJudgePathScript is D2 for a command word that is a path: the file is read and judged by the
+// generation-1 line rule. A name that is not a regular file is not a script the shell runs (the caller
+// leaves the judgement to the form), a binary is not a target, and a regular text file the guard cannot
+// read is refused at the name.
+func githubPostJudgePathScript(name, cwd string) (githubPostSite, bool) {
+	return githubPostJudgePathScriptDepth(name, cwd, 0)
+}
+
+// githubPostJudgePathScriptDepth is githubPostJudgePathScript with the script-in-script walk bounded: a
+// chain deeper than githubPostScriptMaxDepth is refused rather than followed (fail closed).
+func githubPostJudgePathScriptDepth(name, cwd string, depth int) (githubPostSite, bool) {
+	if depth >= githubPostScriptMaxDepth {
+		return githubPostSite{githubPostRuleUnread, name}, true
+	}
+	if st, err := os.Stat(githubPostAbsPath(name, cwd)); err != nil || !st.Mode().IsRegular() {
 		return githubPostSite{}, false
 	}
-	return githubPostDirectScript([]string{name}, cwd)
+	content, binary, unreadable := githubPostReadScriptFile(name, cwd)
+	if binary {
+		return githubPostSite{}, false
+	}
+	if unreadable {
+		return githubPostSite{githubPostRuleUnread, name}, true
+	}
+	if !githubPostScriptNamesPost(content) {
+		return githubPostSite{}, false
+	}
+	if line, found := githubPostScriptBadLineDepth(content, cwd, depth+1); found {
+		return githubPostSite{githubPostRuleUnread, name + ":" + strconv.Itoa(line)}, true
+	}
+	return githubPostSite{}, false
 }
 
 // githubPostUnread is the fail-closed judgement for a text that is not one simple command: rule 2's
@@ -561,12 +603,15 @@ func githubPostPost(args []string, cwd string, quoted bool) (githubPostSite, boo
 	file, fileSet, titles := "", false, []string{}
 	for i := 0; i < len(args); i++ {
 		w := args[i]
+		// The option name is the word the shell builds: a quoted '--body-file' is the same option to the
+		// shell as an unquoted one, so the name is decoded once before it is classified.
+		name := githubPostValueWord(w, quoted)
 		switch {
-		case !strings.HasPrefix(w, "-"):
+		case !strings.HasPrefix(name, "-"):
 			// a positional target: a number, a URL or a branch
-		case w == "--body" || w == "-b" || strings.HasPrefix(w, "--body="):
+		case name == "--body" || name == "-b" || strings.HasPrefix(name, "--body="):
 			return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
-		case w == "--body-file" || w == "-F":
+		case name == "--body-file" || name == "-F":
 			v, ok := githubPostNext(args, &i)
 			if !ok {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
@@ -579,8 +624,9 @@ func githubPostPost(args []string, cwd string, quoted bool) (githubPostSite, boo
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
 			file, fileSet = v, true
-		case strings.HasPrefix(w, "--body-file="):
-			v := githubPostValueWord(strings.TrimPrefix(w, "--body-file="), quoted)
+		case strings.HasPrefix(name, "--body-file="):
+			// name is already the decoded word, so its attached value is decoded once and only once.
+			v := strings.TrimPrefix(name, "--body-file=")
 			if v == "-" {
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
 			}
@@ -588,15 +634,15 @@ func githubPostPost(args []string, cwd string, quoted bool) (githubPostSite, boo
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
 			file, fileSet = v, true
-		case githubPostValueName(w) != "":
-			name, value, attached := githubPostOptionValue(args, &i, w)
+		case githubPostValueName(name) != "":
+			option, value, attached := githubPostOptionValue(args, &i, name)
 			if !attached {
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
-			if name == "--title" || name == "-t" {
+			if option == "--title" || option == "-t" {
 				titles = append(titles, value)
 			}
-		case githubPostSwitch(w):
+		case githubPostSwitch(name):
 		default:
 			// Not the allowed form: the caller judges the command's own text.
 			return githubPostSite{}, false, false
@@ -668,30 +714,51 @@ func githubPostJoinDir(cwd, dir string) string {
 	return cwd + string(filepath.Separator) + dir
 }
 
+// githubPostCtx is the shell state the file rule carries from one command of a list to the next: the
+// directory the shell is in and the PATH it has. Both decide which file a program-file operand or a sourced
+// name resolves to, so neither is assumed: the directory moves with a cd that certainly ran, and the PATH
+// moves with a PATH= word the command itself sets.
+type githubPostCtx struct {
+	dir  string
+	path string
+}
+
 // githubPostScriptCommand is CRW-875's file rule for one command's tokens: the leading assignments and the
 // wrapper commands with their options are dropped with the same reader the gh-post decomposition uses, and
 // the program that remains is judged as a shell that takes its program from a file (D1) or as a path the
 // shell runs directly (D2). A command whose wrapper runs nothing is not a target, and an allowed script
 // leaves the command text to the closed rule, because the shell's own arguments may run a post the script
 // passes on.
-func githubPostScriptCommand(tokens []string, cwd string, quoted bool) (githubPostSite, bool) {
+func githubPostScriptCommand(tokens []string, ctx githubPostCtx, quoted bool) (githubPostSite, bool) {
 	// The words are read as the shell builds them (quote removal), so a wrapper or a shell in quote pieces
 	// ('timeout' 30 bash post.sh, 'bash' post.sh) is the word the shell runs.
-	rest, dir, path := githubPostProgramPrefix(githubPostNormalWords(tokens, quoted), cwd)
-	return githubPostJudgeProgram(rest, dir, path)
+	normal := githubPostNormalWords(tokens, quoted)
+	// The words as written, when the caller kept the quoting: a word the shell reads as syntax (a
+	// redirection) is told apart from one the shell reads as a literal operand (a quoted '>post.sh' names
+	// that file). A tokenizer that already decoded the words leaves no such distinction, so they are the
+	// same slice.
+	raw := normal
+	if quoted {
+		raw = tokens
+	}
+	rest, out := githubPostProgramPrefix(normal, ctx)
+	off := len(normal) - len(rest)
+	return githubPostJudgeProgram(rest, raw[off:], out)
 }
 
 // githubPostJudgeProgram judges the program that remains once the prefix is dropped: a shell that takes
 // its program from a file (D1), or a path the shell runs directly (D2). The words are the shell's own, so
-// they are judged as written and not decoded again.
-func githubPostJudgeProgram(rest []string, dir, path string) (githubPostSite, bool) {
+// they are judged as written and not decoded again. raw is the same words before quote removal, so a word
+// the shell reads as syntax (a redirection) is told apart from one the shell reads as a literal operand (a
+// quoted '>post.sh' names that file).
+func githubPostJudgeProgram(rest, raw []string, ctx githubPostCtx) (githubPostSite, bool) {
 	if len(rest) == 0 {
 		return githubPostSite{}, false
 	}
-	if site, denied, _ := githubPostShellScript(rest, dir, path); denied {
+	if site, denied, _ := githubPostShellScript(rest, raw, ctx); denied {
 		return site, true
 	}
-	return githubPostDirectScript(rest, dir)
+	return githubPostDirectScript(rest, ctx.dir)
 }
 
 // githubPostProgramPrefix drops what stands in front of the program the shell runs and reports the words
@@ -703,8 +770,8 @@ func githubPostJudgeProgram(rest []string, dir, path string) (githubPostSite, bo
 // env --chdir=dir) moves the directory the program file is read in, and a leading PATH= word moves where a
 // sourced name or a bare program is searched, so neither the guard's own environment nor the payload's
 // directory is assumed where the command says otherwise.
-func githubPostProgramPrefix(words []string, cwd string) (rest []string, dir, path string) {
-	dir = cwd
+func githubPostProgramPrefix(words []string, ctx githubPostCtx) (rest []string, out githubPostCtx) {
+	out = ctx
 	for i := 0; i < len(words); i++ {
 		w := words[i]
 		if w == "--" || w == "!" || w == "(" || w == "{" {
@@ -714,37 +781,62 @@ func githubPostProgramPrefix(words []string, cwd string) (rest []string, dir, pa
 			// A NAME=value word before the program is the shell's own assignment, not a command; a PATH
 			// assignment decides where a sourced name or a bare program is read.
 			if name, value, _ := strings.Cut(w, "="); name == "PATH" {
-				path = value
+				out.path = value
 			}
 			continue
 		}
 		if strings.ContainsRune(w, '/') {
 			// A path in command position is the program file, whatever its last element is called.
-			return words[i:], dir, path
+			return words[i:], out
 		}
 		head := githubPostProgram(w)
 		opts, wrapper := shellVerbWrapper(head)
 		if !wrapper {
+			// An assignment builtin (export, declare, typeset, readonly, local) sets the NAME=value words
+			// that follow it, so its PATH operand moves the search exactly as a bare PATH= word does.
+			if githubPostAssignmentBuiltin(head) {
+				for _, a := range words[i+1:] {
+					if !shellVerbAssignment(a) {
+						break
+					}
+					if name, value, _ := strings.Cut(a, "="); name == "PATH" {
+						out.path = value
+					}
+				}
+				continue
+			}
 			if shellVerbKeyword(head) {
 				continue
 			}
-			return words[i:], dir, path
+			return words[i:], out
 		}
 		remain, runs, moved := githubPostWrapperOptions(head, opts, words[i+1:])
 		if !runs {
-			return nil, dir, path
+			return nil, out
 		}
 		if moved != "" {
-			dir = githubPostJoinDir(dir, moved)
+			out.dir = githubPostJoinDir(out.dir, moved)
 		}
 		i = len(words) - len(remain) - 1
 	}
-	return nil, dir, path
+	return nil, out
 }
 
 // githubPostWrapperOptions consumes a wrapper command's options and reports the words that remain, whether
 // the wrapper runs a command at all (command -v runs none), and the directory its own option moved to
 // (env -C dir, env --chdir=dir).
+// githubPostAssignmentBuiltin is a shell builtin whose operands are the NAME=value words it sets: export
+// PATH=dir and declare -x PATH=dir put the command's PATH in force for the commands after them, so the
+// sourced-path search must read that value rather than the guard's own environment.
+func githubPostAssignmentBuiltin(head string) bool {
+	for _, name := range [...]string{"export", "declare", "typeset", "readonly", "local"} {
+		if head == name {
+			return true
+		}
+	}
+	return false
+}
+
 func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool, string) {
 	dir := ""
 	for len(rest) > 0 {
@@ -801,23 +893,73 @@ func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool,
 	return rest, true, dir
 }
 
+// githubPostSegment is one command of a list with the operator that ends it.
+type githubPostSegment struct{ text, sep string }
+
+// githubPostSegments cuts a text at an unquoted ;, &&, ||, &, | or newline, keeping the operator that ended
+// each command. It is the same cutter the write reader uses (a backslash keeps the character after it, and a
+// quoted ; or & is text), with the operator reported so the file rule can tell which command certainly ran
+// and which ran in a subshell of its own.
+func githubPostSegments(command string) []githubPostSegment {
+	s := utf16.Encode([]rune(command))
+	out, start := []githubPostSegment{}, 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\'' || c == '"' {
+			i = skipQuoted(s, i) - 1
+			continue
+		}
+		if c == '\\' {
+			i++
+			continue
+		}
+		if c != ';' && c != '|' && c != '&' && c != '\n' {
+			continue
+		}
+		if c == '|' && shellAt(s, i-1) == '>' || c == '&' && (shellAt(s, i-1) == '>' || shellAt(s, i-1) == '<' || shellAt(s, i+1) == '>') {
+			// >|, >&, <& and &> are redirection operators, not list separators.
+			continue
+		}
+		sep := shellString(s[i : i+1])
+		if (c == '&' || c == '|') && shellAt(s, i+1) == c {
+			// && and || are one operator.
+			sep = shellString([]uint16{c, c})
+			i++
+		}
+		out = append(out, githubPostSegment{text: shellString(s[start : i+1-len([]rune(sep))]), sep: sep})
+		start = i + 1
+	}
+	return append(out, githubPostSegment{text: shellString(s[start:])})
+}
+
 // githubPostScriptList applies the file rule to each command of a text that is not one simple command: the
 // text is cut at a list separator, the leading assignments and the wrapper commands with their options are
 // dropped, and the program that remains is judged. That is the same decomposition the write reader uses, so
 // a wrapper prefix (timeout, sudo, env, nohup, nice, time, command, exec, a NAME=value word) or a list
 // (cd . && bash post.sh, true; bash post.sh, bash post.sh &) no longer hides a posting script file.
+//
+// The directory and the PATH the shell has are carried from one command to the next, but only when the
+// command certainly ran in the current shell: a command after && or || may not run at all, and a command in
+// a pipeline or a background job runs in a subshell of its own, so neither moves the directory a later
+// relative operand is read in. A subshell group ( ) is restored when it closes; a brace group { } runs in
+// the current shell, so its cd persists.
 func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
-	// A subshell ( ) runs its own copy of the shell, so a cd inside it ends with the group; a brace group
-	// { } runs in the current shell, so its cd persists. The stack holds the directory each open subshell
-	// must restore, so a later relative operand is read where the shell would read it in either case.
-	var saved []string
-	for _, part := range shellVerbSubsegments(command) {
+	ctx := githubPostCtx{dir: cwd}
+	var saved []githubPostCtx
+	prevSep := ""
+	for _, seg := range githubPostSegments(command) {
+		part, sep := seg.text, seg.sep
+		// The command certainly runs in the current shell when the previous command certainly completed
+		// (a ; or newline separator, or the start of the text) and this command is not the left or right
+		// side of a pipeline or a background job.
+		certain := prevSep == "" || prevSep == ";" || prevSep == "\n"
+		own := certain && sep != "|" && sep != "&"
 		// A subshell or brace group opens and closes with an unquoted ( or { and ) or } glued to the words;
 		// both are dropped from the raw text, so a quoted operand keeps a literal close ('evil.sh)' names
 		// evil.sh), not evil.sh).
 		opens, closes := githubPostGroupDelta(part)
 		for i := 0; i < opens; i++ {
-			saved = append(saved, cwd)
+			saved = append(saved, ctx)
 		}
 		part = strings.TrimLeft(strings.TrimRight(part, ")}"), "({")
 		// The words are read as written (the strict reader keeps the quote characters), so a name is decoded
@@ -829,20 +971,35 @@ func githubPostScriptList(command, cwd string) (githubPostSite, bool) {
 		if !ok {
 			words, quoted = shellTokenize(part), false
 		}
-		rest, dir, path := githubPostProgramPrefix(githubPostNormalWords(words, quoted), cwd)
+		normal := githubPostNormalWords(words, quoted)
+		rest, out := githubPostProgramPrefix(normal, ctx)
+		raw := normal
+		if quoted {
+			raw = words
+		}
+		program := raw[len(normal)-len(rest):]
+		// The command's own state (a PATH= assignment, a wrapper's env -C directory) carries to the
+		// commands after it in the same shell; a subshell group restores what it saved when it closes.
+		if own {
+			ctx = out
+		}
 		// A cd moves the working directory for the commands after it, so a later relative operand is read
-		// where the shell would read it.
+		// where the shell would read it. It applies inside the group it sits in, and persists past the
+		// segment only when the command certainly ran in the current shell.
 		if name, moved := githubPostChdir(rest); moved {
-			cwd = githubPostJoinDir(cwd, name)
-		} else if site, denied := githubPostJudgeProgram(rest, dir, path); denied {
+			if own {
+				ctx.dir = githubPostJoinDir(ctx.dir, name)
+			}
+		} else if site, denied := githubPostJudgeProgram(rest, program, out); denied {
 			return site, true
 		}
 		for i := 0; i < closes; i++ {
 			if len(saved) > 0 {
-				cwd = saved[len(saved)-1]
+				ctx = saved[len(saved)-1]
 				saved = saved[:len(saved)-1]
 			}
 		}
+		prevSep = sep
 	}
 	return githubPostSite{}, false
 }
@@ -902,8 +1059,8 @@ func githubPostDirectScript(words []string, cwd string) (githubPostSite, bool) {
 // handled is true only for a refusal. A script the guard allows is not a verdict on the command: the
 // command text still carries the shell's own arguments, which the script may run ("$@"), so the caller
 // keeps judging it.
-func githubPostShellScript(words []string, cwd string, path string) (githubPostSite, bool, bool) {
-	name, program, ok := githubPostShellProgramFile(words)
+func githubPostShellScript(words, raw []string, ctx githubPostCtx) (githubPostSite, bool, bool) {
+	name, program, ok := githubPostShellProgramFile(words, raw)
 	if !ok {
 		return githubPostSite{}, false, false
 	}
@@ -912,14 +1069,14 @@ func githubPostShellScript(words []string, cwd string, path string) (githubPostS
 	default:
 		return githubPostSite{}, false, false
 	}
-	if site, denied := githubPostJudgeScript(name, cwd); denied {
+	if site, denied := githubPostJudgeScript(name, ctx.dir); denied {
 		return site, true, true
 	}
 	// source and the dot builtin search PATH for a name with no slash before the working directory, so a
 	// file the working directory names may not be the one that runs. That file is judged too, and either
 	// one failing refuses the command.
-	if found, ok := githubPostSourcedPath(program, name, cwd, path); ok {
-		if site, denied := githubPostJudgeScript(found, cwd); denied {
+	if found, ok := githubPostSourcedPath(program, name, ctx); ok {
+		if site, denied := githubPostJudgeScript(found, ctx.dir); denied {
 			return site, true, true
 		}
 	}
@@ -933,7 +1090,7 @@ func githubPostShellScript(words []string, cwd string, path string) (githubPostS
 // -O, +O, --rcfile, --init-file) also consumes the word after it, so an option's value is never read as
 // the program file. The shell word is the first word after the wrappers, so a source or dot command is
 // recognised even when it is spelled as a path.
-func githubPostShellProgramFile(words []string) (name, program string, ok bool) {
+func githubPostShellProgramFile(words, raw []string) (name, program string, ok bool) {
 	if len(words) < 2 {
 		return "", "", false
 	}
@@ -949,7 +1106,7 @@ func githubPostShellProgramFile(words []string) (name, program string, ok bool) 
 		if githubPostShellProgramWord(w) {
 			return "", program, false
 		}
-		if operator, consumesNext := githubPostRedirection(w); operator {
+		if operator, consumesNext := githubPostRedirection(w); operator && githubPostRawWord(raw, i) == w {
 			// A redirection is not the program operand. A bare operator takes the word after it (the
 			// redirection target, or the here-string), so both are skipped: "bash < post.sh" reads its
 			// program from standard input, which is not a file the guard can read.
@@ -967,6 +1124,15 @@ func githubPostShellProgramFile(words []string) (name, program string, ok bool) 
 		return w, program, true
 	}
 	return "", program, false
+}
+
+// githubPostRawWord is the word at i as it was written, when the caller kept the quoting, so a redirection
+// operator is told apart from a quoted word that only spells one (bash '>post.sh' names that file).
+func githubPostRawWord(raw []string, i int) string {
+	if i < len(raw) {
+		return raw[i]
+	}
+	return ""
 }
 
 // githubPostRedirection is whether a word is a shell redirection operator, and whether it takes the word
@@ -990,15 +1156,18 @@ func githubPostRedirection(w string) (operator, consumesNext bool) {
 
 // githubPostSourcedPath is the file a shell's source or dot builtin would read for a name with no slash: it
 // searches PATH first and falls back to the name in the working directory. The guard reads this file as
-// well as the working-directory one, so neither can hide a posting script from the other. PATH is the
-// guard's own environment, because the payload carries none, so this is a superset of what the shell runs.
-func githubPostSourcedPath(program, name, cwd, path string) (string, bool) {
+// well as the working-directory one, so neither can hide a posting script from the other. The PATH is the
+// one the command itself sets when it sets one, and the guard's own environment otherwise, because the
+// payload carries none; the directory the shell is in comes from the list walk, so a cd or an assignment in
+// an earlier command is honoured.
+func githubPostSourcedPath(program, name string, ctx githubPostCtx) (string, bool) {
 	if program != "source" && program != "." {
 		return "", false
 	}
 	if strings.ContainsRune(name, '/') {
 		return "", false
 	}
+	path := ctx.path
 	if path == "" {
 		path = os.Getenv("PATH")
 	}
@@ -1008,11 +1177,13 @@ func githubPostSourcedPath(program, name, cwd, path string) (string, bool) {
 		}
 		if !filepath.IsAbs(dir) {
 			// A relative PATH entry is relative to the payload's working directory, where the shell runs.
-			dir = githubPostAbsPath(dir, cwd)
+			dir = githubPostAbsPath(dir, ctx.dir)
 		}
 		// The first regular file of that name is the one a shell reads; it need not be executable, as a
-		// sourced file is read rather than run.
-		candidate := filepath.Join(dir, name)
+		// sourced file is read rather than run. The entry is joined without cleaning, so a .. in it is
+		// resolved by the kernel against the real directory tree rather than collapsed here: a link in the
+		// middle of the entry is followed before the .. applies, exactly as the shell would.
+		candidate := githubPostAbsPath(name, dir)
 		if candidate == name {
 			continue
 		}
@@ -1097,6 +1268,12 @@ func githubPostScriptNamesPost(content string) bool {
 // allowed post form nor the read-and-record exception, and whether one does. A blank line and a comment
 // line are skipped.
 func githubPostScriptBadLine(content, cwd string) (int, bool) {
+	return githubPostScriptBadLineDepth(content, cwd, 0)
+}
+
+// githubPostScriptBadLineDepth is githubPostScriptBadLine with the script-in-script walk bounded, so a
+// script whose line runs another path script is judged that many levels deep and then refused.
+func githubPostScriptBadLineDepth(content, cwd string, depth int) (int, bool) {
 	for i, line := range strings.Split(content, "\n") {
 		s := text.Trim(line)
 		if s == "" || strings.HasPrefix(s, "#") {
@@ -1105,6 +1282,13 @@ func githubPostScriptBadLine(content, cwd string) (int, bool) {
 		words, ok := githubPostSimple(s)
 		if !ok {
 			return i + 1, true
+		}
+		// A command word that is a path names a file the shell runs, even when its last element spells gh,
+		// so the line is judged by the direct-execution read (D2) before the form trusts the name.
+		if name := githubPostValueWord(words[0], true); strings.ContainsRune(name, '/') {
+			if _, denied := githubPostJudgePathScriptDepth(name, cwd, depth); denied {
+				return i + 1, true
+			}
 		}
 		if _, denied, handled := githubPostForm(words, cwd, true); handled {
 			if denied {
@@ -1225,36 +1409,41 @@ func githubPostAPI(args []string, cwd string, quoted bool) (githubPostSite, bool
 	file, fileSet, endpoint := "", false, false
 	for i := 0; i < len(args); i++ {
 		w := args[i]
+		// The option name is the word the shell builds: a quoted '--input' is the same option to the
+		// shell as an unquoted one, so the name is decoded once before it is classified.
+		name := githubPostValueWord(w, quoted)
 		switch {
-		case w == "-X" || w == "--method":
+		case name == "-X" || name == "--method":
 			v, ok := githubPostNext(args, &i)
 			if !ok || !githubPostMethod(v) {
 				return githubPostSite{}, false, false
 			}
-		case strings.HasPrefix(w, "--method="):
-			if !githubPostMethod(strings.TrimPrefix(w, "--method=")) {
+		case strings.HasPrefix(name, "--method="):
+			if !githubPostMethod(strings.TrimPrefix(name, "--method=")) {
 				return githubPostSite{}, false, false
 			}
-		case w == "-H" || w == "--header":
+		case name == "-H" || name == "--header":
 			if _, ok := githubPostNext(args, &i); !ok {
 				return githubPostSite{}, false, false
 			}
-		case strings.HasPrefix(w, "--header="):
-		case w == "--paginate" || w == "--silent" || w == "-i" || w == "--include":
-		case w == "--jq" || w == "-q":
+		case strings.HasPrefix(name, "--header="):
+		case name == "--paginate" || name == "--silent" || name == "-i" || name == "--include":
+		case name == "--jq" || name == "-q":
 			if _, ok := githubPostNext(args, &i); !ok {
 				return githubPostSite{}, false, false
 			}
-		case w == "--input" || strings.HasPrefix(w, "--input="):
-			v := strings.TrimPrefix(w, "--input=")
-			if w == "--input" {
+		case name == "--input" || strings.HasPrefix(name, "--input="):
+			v := strings.TrimPrefix(name, "--input=")
+			if name == "--input" {
 				next, ok := githubPostNext(args, &i)
 				if !ok {
 					return githubPostSite{}, false, false
 				}
 				v = next
 			}
-			v = githubPostValueWord(v, quoted)
+			if name == "--input" {
+				v = githubPostValueWord(v, quoted)
+			}
 			if v == "-" {
 				// A standard-input body is refused explicitly, as --body-file - already was.
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
@@ -1263,14 +1452,14 @@ func githubPostAPI(args []string, cwd string, quoted bool) (githubPostSite, bool
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
 			file, fileSet = v, true
-		case w == "-F" || w == "--field":
+		case name == "-F" || name == "--field":
 			v, ok := githubPostNext(args, &i)
 			if !ok {
 				return githubPostSite{}, false, false
 			}
 			v = githubPostValueWord(v, quoted)
-			name, value, found := strings.Cut(v, "=")
-			if !found || name != "body" {
+			field, value, found := strings.Cut(v, "=")
+			if !found || field != "body" {
 				return githubPostSite{}, false, false
 			}
 			if !strings.HasPrefix(value, "@") {
@@ -1284,17 +1473,17 @@ func githubPostAPI(args []string, cwd string, quoted bool) (githubPostSite, bool
 				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true, true
 			}
 			file, fileSet = strings.TrimPrefix(value, "@"), true
-		case w == "-f" || w == "--raw-field":
+		case name == "-f" || name == "--raw-field":
 			v, ok := githubPostNext(args, &i)
 			if !ok {
 				return githubPostSite{}, false, false
 			}
 			v = githubPostValueWord(v, quoted)
-			if name, _, found := strings.Cut(v, "="); found && name == "body" {
+			if field, _, found := strings.Cut(v, "="); found && field == "body" {
 				return githubPostSite{githubPostRuleInline, githubPostWhereCommand}, true, true
 			}
 			return githubPostSite{}, false, false
-		case !strings.HasPrefix(w, "-"):
+		case !strings.HasPrefix(name, "-"):
 			if endpoint {
 				return githubPostSite{}, false, false
 			}
