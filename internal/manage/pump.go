@@ -474,6 +474,10 @@ func pumpCollect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pump
 // state.
 func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry bool) (int, error) {
 	now := e.Now()
+	if err := ctx.Err(); err != nil {
+		// A cancelled round makes no durable change: nothing is collected, saved or delivered.
+		return 1, err
+	}
 	st, err := pumpLoadState(cfg)
 	if err != nil {
 		return 1, err

@@ -326,8 +326,12 @@ func TestPumpReview776QueueSplitsBySize(t *testing.T) {
 	if err := pumpQueueFlush(context.Background(), e2, cfg2, pumpTestReadStatePtr(t, cfg2), pumpSettingsFrom(cfg2), false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(cfg2.StateDir, pumpQueueDir, "parent-1", pumpReview776OversizeDir, "aaaaaaaaaaaaaaaa.txt")); err != nil {
-		t.Errorf("the oversize notice was not moved aside: %v", err)
+	oversizeEntries, err := os.ReadDir(filepath.Join(cfg2.StateDir, pumpQueueDir, "parent-1", pumpReview776OversizeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oversizeEntries) != 1 || !strings.HasPrefix(oversizeEntries[0].Name(), "aaaaaaaaaaaaaaaa.") {
+		t.Errorf("the oversize notice was not moved aside under a stamped name: %v", oversizeEntries)
 	}
 	if _, err := os.Stat(filepath.Join(cfg2.StateDir, pumpQueueDir, "parent-1", pumpSentDir, "cccccccccccccccc.txt")); err != nil {
 		t.Errorf("the fitting notice was not delivered: %v", err)
@@ -762,46 +766,50 @@ func TestPumpReview776OversizeMoveKeepsAReplacement(t *testing.T) {
 	}
 }
 
-// The source is removed only while it still names the linked inode, so a notice the producer
-// replaced after the link stays queued instead of being deleted undelivered.
-func TestPumpReview776OversizeRemoveKeepsAReplacedSource(t *testing.T) {
+// The move is a single rename, so it never unlinks a notice the producer wrote: whatever file the
+// kernel resolves at the source path is quarantined, including a replacement written after the
+// notice was read. Nothing is deleted, and the earlier quarantined notice survives.
+func TestPumpReview776OversizeMoveQuarantinesTheCurrentFile(t *testing.T) {
 	dir := t.TempDir()
+	oversizeDir := filepath.Join(dir, pumpReview776OversizeDir)
+	if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// An earlier quarantine already holds a name; the move must not disturb it.
+	if err := os.WriteFile(filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt"), []byte("already there"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The producer writes a replacement under the source name while the pump is moving.
 	source := filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt")
-	destination := filepath.Join(dir, "quarantined.txt")
-	if err := os.WriteFile(source, []byte("original"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Link(source, destination); err != nil {
-		t.Fatal(err)
+	moved, destination, err := pumpReview776QueueMoveOversize(oversizeDir, dir, "aaaaaaaaaaaaaaaa.txt")
+	if err != nil || !moved {
+		t.Fatalf("move: moved=%v err=%v", moved, err)
 	}
-	// The producer atomically replaces the notice after the link: a new inode now sits at source.
-	replacement := filepath.Join(dir, "replacement.tmp")
-	if err := os.WriteFile(replacement, []byte("replacement"), 0o600); err != nil {
-		t.Fatal(err)
+	if raw, err := os.ReadFile(destination); err != nil || string(raw) != "replacement" {
+		t.Errorf("the quarantined notice is wrong: %q %v", raw, err)
 	}
-	if err := os.Rename(replacement, source); err != nil {
-		t.Fatal(err)
+	if raw, err := os.ReadFile(filepath.Join(oversizeDir, "aaaaaaaaaaaaaaaa.txt")); err != nil || string(raw) != "already there" {
+		t.Errorf("the earlier quarantined notice was disturbed: %q %v", raw, err)
 	}
-	pumpReview776QueueRemoveLinked(source, destination)
-	if raw, err := os.ReadFile(source); err != nil || string(raw) != "replacement" {
-		t.Fatalf("the replacement was deleted: %q %v", raw, err)
-	}
-	// With the same inode at both paths the source is removed, which is the move completing.
-	if err := os.Remove(source); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(source, []byte("same"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(destination); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(source, destination); err != nil {
-		t.Fatal(err)
-	}
-	pumpReview776QueueRemoveLinked(source, destination)
 	if _, err := os.Stat(source); !os.IsNotExist(err) {
-		t.Errorf("the linked source was not removed: %v", err)
+		t.Errorf("the source was not moved: %v", err)
+	}
+	// A second same-named notice gets its own destination, so neither is lost.
+	if err := os.WriteFile(source, []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved, second, err := pumpReview776QueueMoveOversize(oversizeDir, dir, "aaaaaaaaaaaaaaaa.txt")
+	if err != nil || !moved {
+		t.Fatalf("second move: moved=%v err=%v", moved, err)
+	}
+	if second == destination {
+		t.Fatalf("the second move reused the destination %q", second)
+	}
+	if raw, err := os.ReadFile(second); err != nil || string(raw) != "second" {
+		t.Errorf("the second quarantined notice is wrong: %q %v", raw, err)
 	}
 }
 
@@ -901,5 +909,71 @@ func TestPumpReview776DryRunAcceptedPinPrintsOnlyTheLine(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Errorf("the dry run rewrote the state")
+	}
+}
+
+// An empty notice does not stall the queue: it is quarantined like an oversize one, so the
+// notices behind it still go.
+func TestPumpReview776EmptyNoticeDoesNotStallTheQueue(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "   ")
+	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "the real notice")
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpSentDir, "bbbbbbbbbbbbbbbb.txt")); err != nil {
+		t.Errorf("the notice behind the empty one did not go: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", pumpReview776OversizeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("the empty notice was not quarantined: %v", entries)
+	}
+}
+
+// A legacy record for the whole queued set is found even when the size split would deliver only
+// the first notice, so the split does not hide an unsettled attempt.
+func TestPumpReview776LegacyLookupUsesTheWholeSetBeforeSplitting(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	big := strings.Repeat("x", 46000)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", big)
+	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", big)
+	// The pre-change id hashes the whole queued set, not the split prefix.
+	wholeBody := pumpReview776QueueBody([]string{big, big})
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "bbbbbbbbbbbbbbbb.txt"})
+	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", big})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256(wholeBody), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	calls := deliverSendCallsOf(t, log)
+	reconciled := false
+	for _, call := range calls {
+		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
+			reconciled = true
+		}
+		if (call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend) && deliverSendRequestIDOf(t, call) == newID {
+			t.Errorf("the split sent the first notice under the new id instead of reconciling the whole set")
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the whole-set legacy record was not reconciled: %v", deliverSendToolsOf(t, log))
 	}
 }

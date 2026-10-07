@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -100,24 +101,30 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	if err != nil {
 		return err
 	}
-	// A notice that alone exceeds the batch limit is moved aside first, so the longest fitting
-	// prefix always has something to carry and one oversized notice cannot hold the queue.
-	names, texts, err = pumpReview776QueueOversize(ctx, e, cfg, dir, thread, names, texts, dry)
+	// A notice that alone exceeds the batch limit, or one that carries nothing once trimmed, is
+	// moved aside first, so the longest fitting prefix always has something to carry and one such
+	// notice cannot hold the queue.
+	names, texts, err = pumpReview776QueueQuarantine(ctx, e, cfg, dir, thread, names, texts, dry)
 	if err != nil {
 		return err
 	}
 	if len(names) == 0 {
 		return nil
 	}
-	batch := pumpReview776QueueFit(names, texts)
+	// An upgraded state has no pin, but the ledger may still hold a record under the pre-change
+	// logical id of the whole queued set. That lookup runs on the full set, before the size split,
+	// because the pre-change id hashed every queued name: looking it up on the split prefix alone
+	// would miss an old record and re-send an attempt that may already have gone.
+	whole := pumpReview776QueueBatch{names: names, texts: texts, body: pumpReview776QueueBody(texts)}
 	if dry {
-		fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(batch.names), batch.body)
+		// A dry run makes no durable change, so it does not adopt a legacy record or save state.
+		preview := pumpReview776QueueFit(names, texts)
+		if len(preview.names) > 0 {
+			fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(preview.names), preview.body)
+		}
 		return nil
 	}
-	// An upgraded state has no pin, but the ledger may still hold an unsettled record under the
-	// pre-change logical id of exactly these names. Reconciling it first keeps a delivery that may
-	// already have gone from being sent again under the new id.
-	action, err := pumpReview776QueueAdoptLegacy(cfg, st, thread, batch)
+	action, err := pumpReview776QueueAdoptLegacy(cfg, st, thread, whole)
 	if err != nil {
 		return err
 	}
@@ -136,9 +143,14 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 		// The pre-change ledger already accepted this batch, so its notices are moved to sent/ instead
 		// of being delivered a second time.
 		pin := pumpReview776QueuePin{
-			LogicalID: pumpQueueLegacyBatchID(thread, batch.names), Names: append([]string(nil), batch.names...),
-			Body: batch.body, SHA256: pumpReview776QueueDigests(batch.names, batch.texts), Accepted: true}
+			LogicalID: pumpQueueLegacyBatchID(thread, whole.names), Names: append([]string(nil), whole.names...),
+			Body: whole.body, SHA256: pumpReview776QueueDigests(whole.names, whole.texts), Accepted: true}
 		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, dry)
+	}
+	batch := pumpReview776QueueFit(names, texts)
+	if len(batch.names) == 0 {
+		// Every queued notice carries an empty body, so there is nothing to deliver this round.
+		return nil
 	}
 	// The idle-parent timeout is measured on the notices the batch actually carries, so a notice
 	// moved aside as oversize or left for the next round cannot age it.
@@ -286,21 +298,22 @@ func pumpReview776QueueOldest(dir string, names []string) (time.Time, error) {
 	return oldest, nil
 }
 
-// pumpReview776QueueOversize moves a notice whose body alone exceeds the batch limit out of the
-// queue into the thread's oversize/ directory, logging its name and size. A single notice that can
-// never fit is never sent: a batch the delivery core would refuse every round would hold that
-// thread's queue forever. A dry run reports the move instead of making it.
-func pumpReview776QueueOversize(ctx context.Context, e *Env, cfg *Config, dir, thread string, names, texts []string, dry bool) ([]string, []string, error) {
+// pumpReview776QueueQuarantine moves aside a notice that can never form a deliverable batch: one
+// whose body alone exceeds the batch limit, and one that carries nothing once trimmed. Both would
+// otherwise be picked as a singleton every round and refused, holding the thread's queue forever.
+// The notice goes to the thread's oversize/ directory with a log line naming it, its size and why.
+// A dry run reports the move instead of making it.
+func pumpReview776QueueQuarantine(ctx context.Context, e *Env, cfg *Config, dir, thread string, names, texts []string, dry bool) ([]string, []string, error) {
 	keptNames := make([]string, 0, len(names))
 	keptTexts := make([]string, 0, len(texts))
 	for i, name := range names {
-		if len(texts[i]) <= pumpBatchLimit {
+		if len(texts[i]) <= pumpBatchLimit && texts[i] != "" {
 			keptNames = append(keptNames, name)
 			keptTexts = append(keptTexts, texts[i])
 			continue
 		}
 		if dry {
-			fmt.Fprintf(e.Stdout, "queue %s: would move oversize notice %s (%d bytes) to oversize/\n", thread, name, len(texts[i]))
+			fmt.Fprintf(e.Stdout, "queue %s: would move notice %s (%d bytes) to oversize/\n", thread, name, len(texts[i]))
 			continue
 		}
 		// The move is durable, so a cancelled round does not make it.
@@ -316,10 +329,8 @@ func pumpReview776QueueOversize(ctx context.Context, e *Env, cfg *Config, dir, t
 		if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
 			return keptNames, keptTexts, err
 		}
-		// The move never replaces a notice already quarantined under the same name, and it never
-		// removes a notice the producer replaced in the meantime: the source is renamed onto the
-		// destination atomically and without replacing it, so the bytes that move are the bytes the
-		// kernel resolves at the moment of the rename. A name that is taken gets a fresh one.
+		// The move never replaces a notice already quarantined and never unlinks a notice the
+		// producer wrote: see pumpReview776QueueMoveOversize.
 		moved, destination, err := pumpReview776QueueMoveOversize(oversizeDir, dir, name)
 		if err != nil {
 			return keptNames, keptTexts, err
@@ -327,67 +338,53 @@ func pumpReview776QueueOversize(ctx context.Context, e *Env, cfg *Config, dir, t
 		if !moved {
 			// The move is retried next round; the notice is left out of this round's batch so one
 			// immovable file cannot hold the thread's other notices.
-			pumpLog(cfg, fmt.Sprintf("queue %s: oversize notice %s could not be moved", thread, name))
+			pumpLog(cfg, fmt.Sprintf("queue %s: notice %s could not be moved aside", thread, name))
 			continue
 		}
-		pumpLog(cfg, fmt.Sprintf("queue %s: oversize notice %s %d bytes moved to oversize/%s", thread, name, len(texts[i]), filepath.Base(destination)))
+		reason := "oversize"
+		if texts[i] == "" {
+			reason = "empty"
+		}
+		pumpLog(cfg, fmt.Sprintf("queue %s: %s notice %s %d bytes moved to oversize/%s", thread, reason, name, len(texts[i]), filepath.Base(destination)))
 	}
 	return keptNames, keptTexts, nil
 }
 
-// pumpReview776QueueMoveOversize moves one notice out of the queue into oversize/ without ever
-// replacing a file. The notice's own name is tried first; a taken name gets the same stem with a
-// UTC stamp and, if that is taken too, a further suffix.
+// pumpReview776QueueMoveOversize moves one notice out of the queue into oversize/ with a single
+// rename to a name that cannot already exist, so it never replaces a notice quarantined earlier and
+// it never deletes a notice the producer wrote.
 //
-// The link never replaces an existing destination, so an earlier quarantined notice survives. The
-// source is removed only while it still names the inode that was just linked: a producer that
-// atomically replaced the notice after the link left a different file at that path, and deleting it
-// would drop a notice nobody has delivered. The replaced notice simply stays queued for the next
-// round, and the bytes that were linked are already safe in oversize/.
+// A link followed by a remove would not be safe here: the remove resolves the source path again, so
+// a producer that atomically replaced the notice in between would lose its new notice. One rename
+// moves whichever file the kernel resolves at the source path, and the destination carries the
+// source's inode and a nanosecond stamp, so two notices can never choose the same name.
 func pumpReview776QueueMoveOversize(oversizeDir, dir, name string) (bool, string, error) {
 	source := filepath.Join(dir, name)
-	stamp := time.Now().UTC().Format("20060102T150405")
+	info, err := os.Lstat(source)
+	if err != nil {
+		// The notice is gone, so there is nothing to move.
+		return false, "", nil
+	}
 	base := name
 	if ext := filepath.Ext(name); ext != "" {
 		base = strings.TrimSuffix(name, ext)
 	}
-	for n := 0; n < 1000; n++ {
-		taken := name
-		if n > 0 {
-			suffix := ""
-			if n > 1 {
-				suffix = fmt.Sprintf("-%d", n-1)
-			}
-			taken = fmt.Sprintf("%s.%s%s%s", base, stamp, suffix, filepath.Ext(name))
-		}
-		destination := filepath.Join(oversizeDir, taken)
-		if err := os.Link(source, destination); err != nil {
-			if errors.Is(err, os.ErrExist) {
-				// The destination name is taken, so the next candidate is tried.
-				continue
-			}
-			return false, "", nil
-		}
-		pumpReview776QueueRemoveLinked(source, destination)
-		return true, destination, nil
+	stamp := time.Now().UTC().Format("20060102T150405")
+	destination := filepath.Join(oversizeDir, fmt.Sprintf("%s.%s.%d.%d%s",
+		base, stamp, pumpReview776QueueInode(info), time.Now().UnixNano(), filepath.Ext(name)))
+	if err := os.Rename(source, destination); err != nil {
+		return false, "", nil
 	}
-	return false, "", nil
+	return true, destination, nil
 }
 
-// pumpReview776QueueRemoveLinked removes the queue source only while it still names the inode that
-// was linked into oversize/. A producer that atomically replaced the notice after the link left a
-// different file at that path, so the replacement stays queued for the next round rather than being
-// deleted undelivered. The linked bytes are already safe in oversize/ either way.
-func pumpReview776QueueRemoveLinked(source, destination string) {
-	linked, err := os.Stat(destination)
-	if err != nil {
-		return
+// pumpReview776QueueInode is a file's inode number, part of a quarantine name so two notices can
+// never choose the same destination.
+func pumpReview776QueueInode(info os.FileInfo) uint64 {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return stat.Ino
 	}
-	current, err := os.Stat(source)
-	if err != nil || !os.SameFile(linked, current) {
-		return
-	}
-	_ = os.Remove(source)
+	return 0
 }
 
 // pumpReview776QueueFit is the longest name-ordered prefix of a thread's notices whose body stays
@@ -412,9 +409,15 @@ func pumpReview776QueueFit(names, texts []string) pumpReview776QueueBatch {
 		fit = i + 1
 	}
 	if fit == 0 {
-		// An oversize singleton was moved aside already, so this is only a guard against a batch the
-		// delivery core could never accept.
-		return pumpReview776QueueBatch{names: names[:1], texts: texts[:1], body: pumpReview776QueueBody(texts[:1])}
+		// A notice that alone exceeds the limit, and one with an empty body, were moved aside already.
+		// This is only a guard against a batch the delivery core could never accept, so it carries the
+		// longest prefix whose body is non-empty.
+		for i, text := range texts {
+			if text != "" {
+				return pumpReview776QueueBatch{names: names[:i+1], texts: texts[:i+1], body: pumpReview776QueueBody(texts[:i+1])}
+			}
+		}
+		return pumpReview776QueueBatch{}
 	}
 	return pumpReview776QueueBatch{names: names[:fit], texts: texts[:fit], body: pumpReview776QueueBody(texts[:fit])}
 }
