@@ -687,6 +687,10 @@ func promptDcloseGoalplanPublishedWarning(err error) string {
 // commit the operator has to know about, and an artifact that published cleanly carries no warning
 // to recover it from (CRW-930, c6; the mixed-failure path was CRW-869). With nothing published and
 // no warning the refusal is returned exactly as it was.
+//
+// Only the claim this close owns is rewritten: a refusal that embeds a writer's own error text may
+// contain that phrase earlier in the sentence, so the last occurrence - the trailing claim - is the
+// one replaced, never the first (CRW-930, d1).
 func promptDclosePartialRefusal(refusal string, published promptDclosePublishedArtifacts, warnings []string) string {
 	named := published.sentences()
 	for _, warning := range warnings {
@@ -700,7 +704,14 @@ func promptDclosePartialRefusal(refusal string, published promptDclosePublishedA
 	if len(named) == 0 {
 		return refusal
 	}
-	return strings.Replace(refusal, "Nothing was written.", strings.Join(named, " ")+" Nothing else was written.", 1)
+	const claim = "Nothing was written."
+	at := strings.LastIndex(refusal, claim)
+	if at < 0 {
+		// The refusal carries no claim to correct; returning it unchanged is what the first-match form
+		// did too, and every call site's own text ends with the claim.
+		return refusal
+	}
+	return refusal[:at] + strings.Join(named, " ") + " Nothing else was written." + refusal[at+len(claim):]
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any

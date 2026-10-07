@@ -149,6 +149,35 @@ func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
 	}
 }
 
+// TestPromptDclosePlanFailureWhoseReasonHoldsTheDenialKeepsTheTrailingClaim is the d1 case: a plan
+// write error whose own text contains "Nothing was written." must not make the partial refusal edit
+// that inner phrase and leave the false trailing claim behind. The trailing claim is the one the
+// close owns, so the answer must end with the publication list and still name the marker.
+func TestPromptDclosePlanFailureWhoseReasonHoldsTheDenialKeepsTheTrailingClaim(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-plan-error-holds-denial"
+	promptDcloseTwoPhases(t, cwd, slug)
+	promptDcloseSeedState(t, cwd, "s1", slug, "c-plan-error-holds-denial")
+	receipt := promptDcloseReceipt(t, cwd, "s1", "c-plan-error-holds-denial")
+	seams := &promptDcloseSeams{writePlan: func(string, *goalplan.Goalplan) error {
+		// The writer's own message repeats the denial phrase, which the refusal template also ends with.
+		return errors.New("the goalplan could not be written before the rename. Nothing was written.")
+	}}
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", receipt), seams)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the published marker: %q", answer)
+	}
+	if !strings.HasSuffix(answer, "Nothing else was written.]") {
+		t.Errorf("the refusal kept the false trailing claim instead of the publication list: %q", answer)
+	}
+	if strings.HasSuffix(answer, "Nothing was written.]") {
+		t.Errorf("the refusal ends with the denial the close already disproved: %q", answer)
+	}
+}
+
 // TestPromptDcloseRecoveryPlanFailureNamesTheMarkerAlreadyOnTheSession is the c6 case for a recovery
 // retry: the marker of the first attempt is already on the session, so the retry's plan write failing
 // must name that marker instead of claiming nothing was written. It is the recovering branch of
@@ -226,6 +255,11 @@ func TestPromptDcloseGuardRefusalNamesThePublishedPlan(t *testing.T) {
 	warning := promptDcloseGoalplanPublishedWarning(&state.PublishedError{Err: syscall.EIO})
 	if !strings.Contains(answer, warning) {
 		t.Errorf("the guard refusal did not name the published plan and its warning\n got %q\nwant it to contain %q", answer, warning)
+	}
+	// The marker published cleanly in this case, so it carries no warning and is named by the fixed
+	// sentence: a branch that reported only warned artifacts would drop it (CRW-930, d2).
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the guard refusal did not name the cleanly published marker: %q", answer)
 	}
 	if strings.Contains(answer, "Nothing was written.") {
 		t.Errorf("the guard refusal denied the published plan: %q", answer)
