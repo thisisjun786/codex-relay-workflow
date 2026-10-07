@@ -5,6 +5,7 @@ package cxcfuzz
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -340,48 +341,96 @@ func TestScenariosRemoveTheRootOfARefusedBuildWithASealedDirectory(t *testing.T)
 	}
 }
 
-// c7 d2 (CRW-908 generation 2): the caller-level cleanup and error preservation is exercised, not only
-// the direct Scenarios call. A RemovalError must survive refusedOutcome and joinCleanup and reach the
-// caller as itself, and the shrinker must keep the first one it sees, because the defects this correction
-// addresses were exactly these upper layers swallowing the removal failure.
-func TestRemovalErrorReachesTheCaller(t *testing.T) {
-	root := t.TempDir()
-	base := filepath.Join(t.TempDir(), "base")
-	if err := os.Mkdir(base, 0o755); err != nil {
-		t.Fatal(err)
+// c7 d2 (CRW-908 generation 2): the caller-level error preservation is driven through the real
+// functions. evaluate answers a refused scenario with errRefused - the case the campaign counts as
+// refused - and never reaches the worker pool, so a campaign with no pool exercises the refusal path.
+// A refused build whose root survived is answered as its own RemovalError instead, which is the
+// distinction the caller must see; the helpers the caller folds with (joinCleanup, refusedOutcome) are
+// covered here too.
+func TestEvaluateAnswersARefusedScenarioAsRefused(t *testing.T) {
+	called := false
+	cfg := Config{Target: Target{
+		Name:     "refusal",
+		Generate: func(rng *rand.Rand, size int) any { return nil },
+		Go:       func(input any, env Env) (any, error) { called = true; return nil, nil },
+		Compare:  compareJSON,
+	}}
+	c := &campaign{cfg: cfg}
+	refused := fsInput(
+		fsEntry("a", "symlink", "", ".", 0),
+		fsEntry("b", "symlink", "", "a/../escape", 0),
+	)
+	_, _, _, err := c.evaluate(refused)
+	if !errors.Is(err, errRefused) {
+		t.Fatalf("a refused scenario answered %v, want errRefused", err)
 	}
+	if called {
+		t.Fatal("the target's Go function ran for a refused scenario")
+	}
+}
+
+// c7 d2 (CRW-908 generation 2): CheckCase reports a scenario it refused as a problem, so a caller sees
+// a refused case rather than an empty replay result.
+func TestCheckCaseReportsARefusedScenario(t *testing.T) {
+	target := Target{
+		Name:    "refusal",
+		Go:      func(input any, env Env) (any, error) { return nil, nil },
+		Compare: compareJSON,
+	}
+	refused := fsInput(
+		fsEntry("a", "symlink", "", ".", 0),
+		fsEntry("b", "symlink", "", "a/../escape", 0),
+	)
+	c := Case{Name: "refused", Input: canonical(refused), Tag: TagOpen, Go: "null"}
+	if problem := CheckCase(target, c); !strings.Contains(problem, "the scenario is refused") {
+		t.Fatalf("CheckCase answered %q, want a refused-scenario problem", problem)
+	}
+}
+
+// c7 d2 (CRW-908 generation 2): the helpers the caller folds errors with preserve a removal failure,
+// and a deferred cleanup failure is wrapped as one, so a root that outlived a run is never read as a
+// plain refusal or a transient worker death.
+func TestRemovalFailureSurvivesTheCallerHelpers(t *testing.T) {
+	root := t.TempDir()
 	removal := RemovalError{Root: root, Refused: errors.New("a link left the root"), Err: errors.New("permission denied")}
-	// A refusal that also failed to remove its root is answered as itself, not as a refused case.
 	if got := refusedOutcome(removal); !errors.As(got, new(RemovalError)) {
 		t.Fatalf("refusedOutcome turned a RemovalError into %v", got)
 	}
-	// A cleanup failure folded into a run's error is kept, alone or beside another error.
-	if got := joinCleanup(nil, removal); !errors.As(got, new(RemovalError)) {
-		t.Fatalf("joinCleanup dropped a removal failure: %v", got)
+	for _, c := range []struct {
+		name  string
+		err   error
+		clean error
+	}{
+		{"cleanup alone", nil, removal},
+		{"cleanup beside another error", errors.New("a worker died"), removal},
+		{"cleanup first", removal, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := joinCleanup(c.err, c.clean); !errors.As(got, new(RemovalError)) {
+				t.Fatalf("joinCleanup dropped the removal failure: %v", got)
+			}
+		})
 	}
-	if got := joinCleanup(errors.New("a worker died"), removal); !errors.As(got, new(RemovalError)) {
-		t.Fatalf("joinCleanup dropped a removal failure beside another error: %v", got)
-	}
-	if got := joinCleanup(removal, nil); !errors.As(got, new(RemovalError)) {
-		t.Fatalf("joinCleanup dropped the removal failure it was given first: %v", got)
-	}
-	// A cleanup that succeeds adds nothing.
 	if got := joinCleanup(nil, nil); got != nil {
 		t.Fatalf("joinCleanup invented an error: %v", got)
 	}
 	// A deferred cleanup failure is wrapped as a removal failure, so a caller that preserves removal
-	// failures preserves it too.
+	// failures preserves it. The base denies the write that removing the child needs; a process that may
+	// bypass the mode removes it, which is correct, so the precondition is proved first.
+	base := t.TempDir()
 	sealed := filepath.Join(base, "sealed")
 	if err := os.Mkdir(sealed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(base, "probe")
+	if err := os.Mkdir(probe, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(base, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chmod(base, 0o700) }()
-	probe := filepath.Join(base, "probe")
-	privileged := os.Remove(probe) == nil
-	if !privileged {
+	if os.Remove(probe) != nil {
 		if err := CleanupCaseRoot(sealed); !errors.As(err, new(RemovalError)) {
 			t.Fatalf("a deferred cleanup failure was not a RemovalError: %v", err)
 		}
