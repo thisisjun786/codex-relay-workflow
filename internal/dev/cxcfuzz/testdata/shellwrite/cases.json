@@ -211,8 +211,8 @@
     "name": "crw857-gap-copy-destination-not-named",
     "input": "{\"command\": \"python3 -c 'import shutil; shutil.copy(\\\"/w/old.md\\\", \\\"/m/a\\\")'\"}",
     "oracle": "[]",
-    "go": "[]",
-    "tag": "identical",
-    "record": "known-defects CRW-857 (port: pending, security): the destination of shutil.copy is its second argument and NEITHER reader names it, so a write reached this way is invisible to the memory gate; a follow-up issue owns the reader change in internal/pabcd/hook"
+    "go": "[\"/m/a\"]",
+    "tag": "intentionally-changed",
+    "record": "known-defects CRW-900 (port: fixed, security): the port names the second positional argument of shutil.copy as a write destination, which the oracle scriptWriteDestinations (open() and Path().write_text/bytes only) misses; CRW-857 pinned the gap"
   }
 ]
