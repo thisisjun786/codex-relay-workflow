@@ -197,8 +197,32 @@ func memoryGateClassify(tool string, input any, cwd string, env host.LookupEnv) 
 		if what, ok := worktreeDelUnreadableProgram(command); ok {
 			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
 		}
+		// A Python program that computes its write destination names it nowhere, so it may write into the protected root
+		// without ever naming it: a program that holds a write whose destination the reader cannot name while it can
+		// point at the protected area is a write attempt of its own and the gate fails closed (CRW-951, beside CRW-741's
+		// f-string check and CRW-726's unreadable-program check).
+		if what, ok := shellWriteUnnamedCommand(command, func(literal string) bool {
+			return g.namesProtected(literal, cwd, root)
+		}); ok {
+			return MemoryWriteAttempt{Surface: "shell", Target: "(a program the gate cannot read: " + what + ")"}
+		}
 	}
 	return MemoryWriteAttempt{}
+}
+
+// namesProtected says whether a string literal a Python program holds can point at the protected area: the literal is the
+// memories root or a path under it (hit), or one of its path segments is memories or .codex, the directory the root lives
+// in under any home (CRW-951). The program naming CODEX_HOME counts too, and the reader records that itself.
+func (g memoryGateEnv) namesProtected(literal, cwd, root string) bool {
+	if _, ok := g.hit(literal, cwd, root); ok {
+		return true
+	}
+	for _, segment := range strings.Split(strings.ReplaceAll(literal, "\\", "/"), "/") {
+		if segment == "memories" || segment == ".codex" {
+			return true
+		}
+	}
+	return false
 }
 
 // memoryGateToolName: flat_tool_name joins the namespace and the name with no separator, so the hook sees

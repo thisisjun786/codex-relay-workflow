@@ -1419,7 +1419,14 @@ func shellVerbSpaceRune(r rune) bool {
 // neither replaces the other: each reading names its own path when its own mode writes. A mode written with a \N{name} escape
 // cannot be decoded (it needs the Unicode name table), so it counts as writing for both readings.
 func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
-	var path, mode []rune
+	return shellVerbOpenNames(shellVerbOpenArgs(rs, spans))
+}
+
+// shellVerbOpenArgs splits an open() call's arguments the way Python binds them: the path is the first positional
+// argument or file=, and the mode is the second positional argument or mode=, in either order and with other keywords
+// between. The spans are the argument ranges the walk recorded, so an argument that is no literal stays the text it was
+// written as.
+func shellVerbOpenArgs(rs []rune, spans [][2]int) (path, mode []rune) {
 	positional := 0
 	for _, span := range spans {
 		arg := rs[span[0]:span[1]]
@@ -1443,6 +1450,14 @@ func shellVerbOpenCall(rs []rune, spans [][2]int) []string {
 		}
 		positional++
 	}
+	return path, mode
+}
+
+// shellVerbOpenNames is the destination an open() call names from its already-split arguments: the decoded reading
+// (shellVerbLiteral) is added to the earlier one, which kept escapes other than a backslash and the quote as written, and
+// neither replaces the other: each reading names its own path when its own mode writes. A mode written with a \N{name}
+// escape cannot be decoded (it needs the Unicode name table), so it counts as writing for both readings.
+func shellVerbOpenNames(path, mode []rune) []string {
 	names := []string{}
 	_, decodedOK := shellVerbLiteral(mode)
 	named := !decodedOK && strings.Contains(string(mode), "\\N{")
@@ -2199,4 +2214,554 @@ func shellWriteEscapeJS(body string, template bool) (string, bool) {
 		}
 	}
 	return shellString(units), true
+}
+
+// CRW-951 adds the memory gate's third fail-closed check, beside CRW-741's f-string replacement field and CRW-726's
+// unreadable program: a Python program that holds a write whose destination the reader cannot name, while the program
+// can point at the protected area, is a write attempt of its own. The reader (ShellWriteDestinations and the hardened
+// program walk) names string-literal destinations only, so a program that computes its destination - open(Path(m), "w"),
+// open(os.path.join(root, "n.md"), "w"), Path(root).joinpath("n.md").write_text(...), a chained receiver, a write
+// function used as a value, getattr(..., "copy"), __import__("shutil") or importlib.import_module - writes into the
+// memories root without a grant. The oracle's scriptWriteDestinations names the same literal destinations only, so it
+// allows the same programs: this is a security fix (port: fixed). A program with no such write, and one that cannot
+// point at the protected area, is allowed exactly as before, and a session that holds a grant is allowed as before. The
+// over-blocking this accepts - a program that names the protected area and writes elsewhere through a computed path is
+// refused - is recorded in docs/port-cxc/known-defects/CRW-951.md.
+
+// shellWriteUnnamedWhat is the what this check reports; the deny reason names it as
+// "(a program the gate cannot read: " + what + ")".
+const shellWriteUnnamedWhat = "a write whose destination it cannot name"
+
+// shellWriteUnnamedCommand reports the what of this check for one shell command: the first Python program the command
+// runs that holds a write whose destination the reader cannot name while the program can point at the protected area.
+// points says whether a string literal of a program can point at the protected area; the caller resolves the protected
+// root. The programs read are the -c and --command programs of a python command, including the ones a nested shell -c
+// or eval runs and the shell-unescaped reading of each, and the body of a here-document the reader reads.
+func shellWriteUnnamedCommand(command string, points func(string) bool) (string, bool) {
+	for _, program := range shellWriteUnnamedPrograms(command) {
+		if shellWriteUnnamedProgram(program, points) {
+			return shellWriteUnnamedWhat, true
+		}
+	}
+	return "", false
+}
+
+// shellWriteUnnamedPrograms is every Python program text a command holds that the reader reads, in the order the command
+// names them.
+func shellWriteUnnamedPrograms(command string) []string {
+	budget := 32*len(command) + 65536
+	out := []string{}
+	for _, segment := range splitShellSegments(stripHeredocBodies(utf16.Encode([]rune(command)))) {
+		out = shellWriteUnnamedSegment(shellString(segment), &budget, out)
+	}
+	return shellWriteUnnamedHerePrograms(command, out)
+}
+
+// shellWriteUnnamedSegment collects the programs of one shell segment's commands: the -c or --command program of a
+// python command, over both the token as it stands and its shell-unescaped reading as shellVerbPythonNode reads them,
+// and the commands a nested shell -c or eval runs.
+func shellWriteUnnamedSegment(segment string, budget *int, out []string) []string {
+	for _, command := range shellVerbSubsegments(segment) {
+		tokens := shellVerbSkipWrappers(shellTokenize(command))
+		if script, ok := shellWriteFStringPythonScript(tokens); ok {
+			out = append(out, script)
+			if un := shellVerbUnescape(script); un != script {
+				out = append(out, un)
+			}
+			continue
+		}
+		nested, ok := shellWriteFStringNestedScript(tokens)
+		if !ok {
+			continue
+		}
+		if *budget -= len(nested); *budget < 0 {
+			continue
+		}
+		out = shellWriteUnnamedSegment(nested, budget, out)
+	}
+	return out
+}
+
+// shellWriteUnnamedHerePrograms appends the Python programs the reader reads out of the here-documents of a command: a
+// here-document whose command is a Python interpreter runs its body as the program, and one whose command is a shell
+// runs its body as a command, so a python -c inside it is read too. A body whose closing delimiter line is missing
+// never ends, and the unreadable-program check already refuses it (CRW-726); a body the outer shell expands is not read.
+func shellWriteUnnamedHerePrograms(command string, out []string) []string {
+	budget := 32*len(command) + 65536
+	for i := 0; i < len(command); {
+		line, after := worktreeDelUnreadableLine(command, i)
+		ops := worktreeDelUnreadableHereOperators(line)
+		if len(ops) == 0 {
+			i = after
+			continue
+		}
+		bodies, next := worktreeDelUnreadableHereBodies(command, after, ops)
+		for _, body := range bodies {
+			if !body.closed || !body.op.literal && worktreeDelUnreadableHereExpansion(body.body) {
+				continue
+			}
+			switch shellWriteUnnamedHereOwner(line, body.op.at) {
+			case "python":
+				out = append(out, body.body)
+			case "shell":
+				out = shellWriteUnnamedSegment(body.body, &budget, out)
+			}
+		}
+		i = next
+	}
+	return out
+}
+
+// shellWriteUnnamedHereOwner says what the command that owns the here-document operator at byte at on line runs:
+// "python" when its verb is a Python interpreter with no -c program of its own, so the body is the program, "shell" when
+// it is a shell, and "" for every other command.
+func shellWriteUnnamedHereOwner(line string, at int) string {
+	start, end := 0, len(line)
+	for i := at - 1; i >= 0; i-- {
+		if shellWriteUnnamedSeparator(line[i]) {
+			start = i + 1
+			break
+		}
+	}
+	for i := at; i < len(line); i++ {
+		if shellWriteUnnamedSeparator(line[i]) {
+			end = i
+			break
+		}
+	}
+	tokens := shellVerbSkipWrappers(shellTokenize(line[start:end]))
+	if len(tokens) == 0 {
+		return ""
+	}
+	if _, hasC := shellWriteFStringPythonScript(tokens); hasC {
+		return ""
+	}
+	verb := shellVerbName(tokens[0])
+	if shellWriteUnnamedPython(verb) {
+		return "python"
+	}
+	if shellVerbIsShell(verb) {
+		return "shell"
+	}
+	return ""
+}
+
+// shellWriteUnnamedSeparator reports whether a byte ends the command that holds a here-document operator, as the walk
+// that reads here-documents cuts commands.
+func shellWriteUnnamedSeparator(c byte) bool {
+	return c == ';' || c == '&' || c == '|' || c == '\n'
+}
+
+// shellWriteUnnamedPython reports whether a command name is a Python interpreter, as shellWriteFStringPythonScript reads
+// it.
+func shellWriteUnnamedPython(verb string) bool {
+	return verb == "python" || verb == "python3" || verb == "py" || shellVerbVersioned(verb)
+}
+
+// shellWriteUnnamedProgram reports whether one Python program holds a write whose destination the reader cannot name and
+// can point at the protected area (points). The program text of a string literal passed to exec, eval or compile and the
+// replacement fields of an f-string are read by this same walk, because they run as program text in the scope that holds
+// them.
+func shellWriteUnnamedProgram(program string, points func(string) bool) bool {
+	rs := shellVerbWithoutComments(program, true)
+	w := &shellWriteUnnamedWalk{binds: shellWriteCopyImportsOf(rs, shellWriteCopyImports{})}
+	w.read(rs, 0)
+	if !w.unnamed {
+		return false
+	}
+	if w.codexHome {
+		return true
+	}
+	for _, literal := range w.literals {
+		if literal == "CODEX_HOME" || points != nil && points(literal) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellWriteUnnamedWalk walks one Python program for this check. unnamed is true once it finds a write whose destination
+// the reader names nothing for; codexHome is true once the program names CODEX_HOME; literals are the decoded values of
+// the string literals it holds, in the order they stand.
+type shellWriteUnnamedWalk struct {
+	binds     shellWriteCopyImports
+	unnamed   bool
+	codexHome bool
+	literals  []string
+}
+
+// shellWriteUnnamedFrame is one bracket the walk opened: the call kind it holds, the argument spans read so far, and
+// whether the receiver the call hangs off named a destination of its own, which only a Path(<literal>) call does.
+type shellWriteUnnamedFrame struct {
+	kind      byte
+	start     int
+	args      [][2]int
+	recvNamed bool
+}
+
+// shellWriteUnnamedCall is the method call the expression whose bracket just closed names.
+type shellWriteUnnamedCall struct {
+	at        int
+	name      string
+	recvNamed bool
+}
+
+// read walks one program text. A frame is one bracket; the kinds are 'o' open(, 'p' Path(, 'e' exec/eval/compile(,
+// 'g' getattr(, 'i' __import__(, 'c' and 'n' a copy or rename call of shutil or os, and the Path methods a closing
+// receiver names - 'w' write_text/write_bytes, 't' touch/mkdir, 'q' open(, 'r' rename/replace and 'l' the links.
+// pending is the method call the expression whose bracket just closed names.
+func (w *shellWriteUnnamedWalk) read(rs []rune, depth int) {
+	if depth > shellWriteExecMaxDepth {
+		return
+	}
+	var stack []shellWriteUnnamedFrame
+	var pending shellWriteUnnamedCall
+	importStmt, firstWord := false, true
+	for i := 0; i < len(rs); i++ {
+		switch c := rs[i]; {
+		case c == '\'' || c == '"':
+			if shellWriteFStringPrefix(rs, i) {
+				end, fields, _ := shellWriteFStringRegion(rs, i, 0)
+				w.literal(rs[i:end])
+				for _, f := range fields {
+					w.read(shellVerbWithoutComments(string(rs[f[0]:f[1]]), true), depth+1)
+				}
+				i = end - 1
+				continue
+			}
+			end := shellWriteTripleScanRegion(rs, i, true)
+			w.literal(rs[i:end])
+			i = end - 1
+		case c == '\n' || c == ';':
+			if len(stack) == 0 {
+				importStmt, firstWord = false, true
+			}
+		case c == '(' || c == '[' || c == '{':
+			kind, recvNamed := byte(0), false
+			switch {
+			case pending.name != "" && pending.at == i:
+				kind, recvNamed, pending = shellWriteUnnamedMethodKind(pending.name), pending.recvNamed, shellWriteUnnamedCall{}
+			default:
+				kind = shellVerbCallKind(rs, i, c)
+				if kind == 0 && c == '(' && shellWriteExecCallee(rs, i, c) {
+					kind = 'e'
+				}
+				if kind == 0 && c == '(' {
+					kind = shellWriteCopyModuleKind(rs, i, w.binds)
+				}
+				if kind == 0 && c == '(' {
+					kind = shellWriteUnnamedSpecial(rs, i)
+				}
+			}
+			stack = append(stack, shellWriteUnnamedFrame{kind: kind, start: i + 1, recvNamed: recvNamed})
+		case c == ',' && len(stack) > 0:
+			if top := &stack[len(stack)-1]; top.kind != 0 {
+				top.args = append(top.args, [2]int{top.start, i})
+				top.start = i + 1
+			}
+		case (c == ')' || c == ']' || c == '}') && len(stack) > 0:
+			top := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			spans := append(top.args, [2]int{top.start, i})
+			w.close(rs, top, spans, depth)
+			if c == ')' {
+				pending = shellWriteUnnamedReceiver(rs, i, top, spans)
+			}
+		case shellWriteCopyIdentRune(c):
+			j := i
+			for j < len(rs) && shellWriteCopyIdentRune(rs[j]) {
+				j++
+			}
+			w.identifier(rs, i, j, importStmt)
+			if firstWord {
+				firstWord = false
+				word := string(rs[i:j])
+				importStmt = word == "import" || word == "from"
+			}
+			i = j - 1
+		}
+	}
+}
+
+// close decides one call from its argument spans and the bracket that closed it.
+func (w *shellWriteUnnamedWalk) close(rs []rune, f shellWriteUnnamedFrame, spans [][2]int, depth int) {
+	switch f.kind {
+	case 'o':
+		_, mode := shellVerbOpenArgs(rs, spans)
+		if shellWriteUnnamedWrites(mode) && len(shellVerbOpenCall(rs, spans)) == 0 {
+			w.unnamed = true
+		}
+	case 'c', 'n':
+		key := "dst"
+		if f.kind == 'n' {
+			key = "new"
+		}
+		if len(shellWriteCopyDest(rs, spans, 1, key)) == 0 {
+			w.unnamed = true
+		}
+	case 'w', 't':
+		// write_text and write_bytes write to their receiver, which this reader names only for a Path(<literal>)
+		// call. touch and mkdir write to theirs too, and the reader names no destination for those two at all, so
+		// they are a write whose destination it cannot name whatever the receiver is.
+		if f.kind == 't' || !f.recvNamed {
+			w.unnamed = true
+		}
+	case 'q':
+		// Path(...).open(mode) writes to its receiver, which the reader names for no Path method at all, so it is a
+		// write whose destination the reader cannot name whatever the receiver is; the mode decides whether it
+		// writes.
+		if shellWriteUnnamedWrites(shellWriteUnnamedArg(rs, spans, 0, "mode")) {
+			w.unnamed = true
+		}
+	case 'r':
+		if !f.recvNamed || len(shellWriteCopyDest(rs, spans, 0, "target")) == 0 {
+			w.unnamed = true
+		}
+	case 'l':
+		if !f.recvNamed {
+			w.unnamed = true
+		}
+	case 'g':
+		if name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 1, "name")); ok && shellWriteUnnamedFunc(name) {
+			w.unnamed = true
+		}
+	case 'i':
+		if name, ok := shellVerbLiteral(shellWriteUnnamedArg(rs, spans, 0, "name")); ok && (name == "shutil" || name == "os") {
+			w.unnamed = true
+		}
+	case 'e':
+		for _, span := range spans {
+			arg := rs[span[0]:span[1]]
+			if shellVerbBlank(arg) {
+				continue
+			}
+			program, ok := shellVerbLiteral(arg)
+			if !ok {
+				break // a program the reader cannot read is CRW-754's case, not this one
+			}
+			w.read(shellVerbWithoutComments(program, true), depth+1)
+			break
+		}
+	}
+}
+
+// literal records the decoded value of one string literal the program holds.
+func (w *shellWriteUnnamedWalk) literal(arg []rune) {
+	if value, ok := shellVerbLiteral(arg); ok {
+		w.literals = append(w.literals, value)
+	}
+}
+
+// identifier reads one identifier: the program naming CODEX_HOME can point at the protected area, and a write function
+// the program does not call - the open builtin, a copy, rename or link function of shutil or os, a from-imported bare
+// name - is a write whose destination the reader cannot name. A name inside an import statement binds a name and calls
+// nothing.
+func (w *shellWriteUnnamedWalk) identifier(rs []rune, i, j int, importStmt bool) {
+	word := string(rs[i:j])
+	if word == "CODEX_HOME" {
+		w.codexHome = true
+	}
+	if importStmt {
+		return
+	}
+	if mod, ok := shellWriteUnnamedAttribute(rs, i); ok {
+		if word == "import_module" && (mod == "importlib" || slices.Contains(w.binds.alias[mod], "importlib")) {
+			w.unnamed = true
+			return
+		}
+		if shellWriteCopyKind(mod, word, w.binds) != 0 && !shellWriteUnnamedCalled(rs, j) {
+			w.unnamed = true
+		}
+		return
+	}
+	if word == "import_module" {
+		w.unnamed = true
+		return
+	}
+	if word != "open" && len(w.binds.from[word]) == 0 {
+		return
+	}
+	if shellWriteUnnamedCalled(rs, j) {
+		return // a call: its own frame reads it
+	}
+	w.unnamed = true
+}
+
+// shellWriteUnnamedAttribute is the name the attribute whose identifier starts at rs[i] hangs off, and whether the text
+// before the dot is a bare name at all (a.shutil.copy is an attribute chain, not the module).
+func shellWriteUnnamedAttribute(rs []rune, i int) (string, bool) {
+	j := i - 1
+	for j >= 0 && shellVerbSpaceRune(rs[j]) {
+		j--
+	}
+	if j < 0 || rs[j] != '.' {
+		return "", false
+	}
+	j--
+	for j >= 0 && shellVerbSpaceRune(rs[j]) {
+		j--
+	}
+	end := j + 1
+	for j >= 0 && shellWriteCopyIdentRune(rs[j]) {
+		j--
+	}
+	if end == j+1 || j >= 0 && rs[j] == '.' {
+		return "", false
+	}
+	return string(rs[j+1 : end]), true
+}
+
+// shellWriteUnnamedCalled reports whether a call follows the name that ends at j: the next rune that is not a blank is an
+// opening bracket.
+func shellWriteUnnamedCalled(rs []rune, j int) bool {
+	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
+		j++
+	}
+	return j < len(rs) && rs[j] == '('
+}
+
+// shellWriteUnnamedReceiver is the method call the expression whose bracket closes at close names, when the method is one
+// of the Path methods this check reads. recvNamed says whether the reader names the receiver itself, which it does only
+// for a Path(...) call whose arguments the reader reads as a path.
+func shellWriteUnnamedReceiver(rs []rune, close int, recv shellWriteUnnamedFrame, spans [][2]int) shellWriteUnnamedCall {
+	j := close + 1
+	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
+		j++
+	}
+	if j >= len(rs) || rs[j] != '.' {
+		return shellWriteUnnamedCall{}
+	}
+	for j++; j < len(rs) && shellVerbSpaceRune(rs[j]); {
+		j++
+	}
+	start := j
+	for j < len(rs) && shellWriteCopyIdentRune(rs[j]) {
+		j++
+	}
+	if j == start {
+		return shellWriteUnnamedCall{}
+	}
+	name := string(rs[start:j])
+	if !shellWriteUnnamedMethod(name) {
+		return shellWriteUnnamedCall{}
+	}
+	for j < len(rs) && shellVerbSpaceRune(rs[j]) {
+		j++
+	}
+	if j >= len(rs) || rs[j] != '(' {
+		return shellWriteUnnamedCall{}
+	}
+	return shellWriteUnnamedCall{at: j, name: name, recvNamed: recv.kind == 'p' && len(shellWriteEscapePath(rs, spans)) > 0}
+}
+
+// shellWriteUnnamedMethod reports whether a method name is one of the Path methods this check reads: the write methods
+// whose destination is the receiver, and rename, replace and the two links, whose destination is their argument or the
+// receiver (CRW-900).
+func shellWriteUnnamedMethod(name string) bool {
+	switch name {
+	case "write_text", "write_bytes", "touch", "mkdir", "open", "rename", "replace", "symlink_to", "hardlink_to":
+		return true
+	}
+	return false
+}
+
+// shellWriteUnnamedMethodKind is the frame kind of such a method.
+func shellWriteUnnamedMethodKind(name string) byte {
+	switch name {
+	case "write_text", "write_bytes":
+		return 'w'
+	case "touch", "mkdir":
+		return 't'
+	case "open":
+		return 'q'
+	case "rename", "replace":
+		return 'r'
+	}
+	return 'l'
+}
+
+// shellWriteUnnamedSpecial reads the callee of the call whose bracket is at i when it is one of the dynamic routes this
+// check names: getattr ('g') and __import__ ('i'). Any other callee is no such call.
+func shellWriteUnnamedSpecial(rs []rune, i int) byte {
+	word, ok := shellWriteUnnamedCallee(rs, i)
+	if !ok {
+		return 0
+	}
+	switch word {
+	case "getattr":
+		return 'g'
+	case "__import__":
+		return 'i'
+	}
+	return 0
+}
+
+// shellWriteUnnamedCallee is the bare identifier that stands just before the bracket at i: an attribute chain (a.getattr)
+// is not the builtin.
+func shellWriteUnnamedCallee(rs []rune, i int) (string, bool) {
+	j := i - 1
+	for j >= 0 && shellVerbSpaceRune(rs[j]) {
+		j--
+	}
+	end := j + 1
+	for j >= 0 && shellWriteCopyIdentRune(rs[j]) {
+		j--
+	}
+	if end == j+1 || j >= 0 && rs[j] == '.' {
+		return "", false
+	}
+	return string(rs[j+1 : end]), true
+}
+
+// shellWriteUnnamedArg is the argument a call gives for key, or its pos-th positional argument.
+func shellWriteUnnamedArg(rs []rune, spans [][2]int, pos int, key string) []rune {
+	positional, arg := 0, []rune(nil)
+	for _, span := range spans {
+		value := rs[span[0]:span[1]]
+		if shellVerbBlank(value) {
+			continue
+		}
+		if name, keyword, ok := shellVerbKeywordArg(value); ok {
+			if name == key {
+				arg = keyword
+			}
+			continue
+		}
+		if positional == pos {
+			arg = value
+		}
+		positional++
+	}
+	return arg
+}
+
+// shellWriteUnnamedWrites reports whether an open() call's mode opens for writing: a literal mode holding w, a, x or +,
+// or a mode the reader cannot read as a literal (a name, a \N{...} escape). An absent mode reads, which is what Python's
+// default mode does.
+func shellWriteUnnamedWrites(mode []rune) bool {
+	if shellVerbBlank(mode) {
+		return false
+	}
+	literals := 0
+	for _, earlier := range []bool{true, false} {
+		kind, ok := shellWriteEscapeLiteral(mode, earlier)
+		if !ok {
+			continue
+		}
+		literals++
+		if strings.ContainsAny(kind, "wax+") {
+			return true
+		}
+	}
+	return literals == 0
+}
+
+// shellWriteUnnamedFunc reports whether a name is a write function of this reader: open, a Path write method, or a copy,
+// rename or link function of shutil or os.
+func shellWriteUnnamedFunc(name string) bool {
+	switch name {
+	case "open", "write_text", "write_bytes", "touch", "mkdir", "rename", "replace", "symlink_to", "hardlink_to":
+		return true
+	}
+	return shellWriteCopyFunc("shutil", name) || shellWriteCopyFunc("os", name)
 }
