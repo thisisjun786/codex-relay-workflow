@@ -45,7 +45,7 @@ func legacyHeadRevisionFrom(ctx context.Context, q store.Querier, rid string, ge
 	if len(rows) == 0 {
 		return Obj{{Key: "eventId", Value: nil}, {Key: "revisionHash", Value: nil}, {Key: "evidence", Value: NoRevision}, {Key: "competitors", Value: []any{}}, {Key: "detail", Value: "no reviewable revision in this generation"}}, nil
 	}
-	anchors, err := registry.RequestedPredecessors(ctx, q, rid, generation)
+	anchors, _, err := registry.RequestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return nil, err
 	}
