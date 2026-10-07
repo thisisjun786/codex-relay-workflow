@@ -266,6 +266,15 @@ function parserImportsBeforeParsing(source) {
   if (parseAt < 0) return { parseAt, offenders: ["(no `args = parser.parse_args()` line found)"] };
   const offenders = [];
   for (const [i, line] of code.entries()) {
+    // A dependency can also be pulled in by a call the reader cannot resolve:
+    // `importlib.import_module("networkx")` or `__import__("networkx")`. The reader cannot see what
+    // such a call names, so one where an import would run before --help is refused rather than
+    // passed (CRW-939, the tenth generation-2 evaluation of d2).
+    const dynamic = /(?:^|[^A-Za-z0-9_.])(?:importlib[ \t]*\.[ \t]*import_module|__import__)[ \t]*\(/.test(line);
+    if (dynamic && !(i >= parseAt && deferredImport(code, i, parseAt))) {
+      offenders.push(`line ${i + 1}: ${line.trim()} (a dynamic import this check cannot resolve)`);
+      continue;
+    }
     for (const text of importStatements(line)) {
       // The header a statement shares its line with governs it: an inline `finally: import x` or
       // `except SystemExit: import x` runs while --help unwinds, so the reader must not walk past it
@@ -454,6 +463,17 @@ test("the parser-import check reads module-level imports placed after the parse"
   }
   // The control: an inline import in a body that cannot catch SystemExit still defers.
   const inlineImportError = "def main():\n    try:\n        args = parser.parse_args()\n    except ImportError: from repomap_class import RepoMap\n";
+  // An import can also be made by a call the reader cannot resolve: `importlib.import_module("networkx")`
+  // or `__import__("networkx")` loads the same dependency with no import statement. The reader cannot
+  // see what such a call names, so it fails closed on one where an import would run before --help
+  // (CRW-939, the tenth generation-2 evaluation of d2).
+  for (const line of ['importlib.import_module("networkx")\n', '__import__("networkx")\n', 'importlib.import_module("repomap_class")\n']) {
+    const { offenders } = parserImportsBeforeParsing(line + parse);
+    assert.ok(offenders.length > 0, `${JSON.stringify(line)}: a dynamic import before the parse must be refused`);
+  }
+  // The control: the same call inside the function after the parse is deferred like an import.
+  const dynamicInFunction = 'def main():\n    args = parser.parse_args()\n    importlib.import_module("networkx")\n';
+  assert.deepEqual(parserImportsBeforeParsing(dynamicInFunction).offenders, [], "a deferred dynamic import stays clean");
   // Every statement after a handler header on the same line is in that handler body, not only the
   // first: in `finally: import os; import networkx` both run while --help unwinds (CRW-939, the
   // ninth generation-2 evaluation of d2).

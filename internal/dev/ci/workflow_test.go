@@ -325,6 +325,12 @@ func commandWindow(physical []string, i int) string {
 			if indentOf(body) <= key {
 				break
 			}
+			// A body line starting with '#' is a shell comment, not a command: joining it would
+			// report a workflow that only mentions the run in a note (CRW-939, the tenth
+			// generation-2 evaluation of d3).
+			if strings.HasPrefix(strings.TrimSpace(body), "#") {
+				continue
+			}
 			joined += " " + strings.TrimSpace(body)
 		}
 		return joined
@@ -348,7 +354,9 @@ func blockScalarKey(line string) (int, bool) {
 	// A comment after the marker is part of the header, and it may itself hold a colon, so the
 	// marker is read from the first colon that is followed by one -- not from the last colon in the
 	// line, which would land inside the comment (CRW-939, the ninth generation-2 evaluation of d1).
-	marker := regexp.MustCompile(`:[ \t]*([|>][-+]?[ \t]*(?:#.*)?)$`)
+	// A YAML indentation indicator is allowed too, in either order (`>2-`, `|2`, `>-2`); missing it
+	// would leave the body unjoined and a split command unread (the tenth evaluation's d1).
+	marker := regexp.MustCompile(`:[ \t]*([|>](?:[0-9][-+]?|[-+][0-9]?)?[ \t]*(?:#.*)?)$`)
 	if !marker.MatchString(trimmed) {
 		return 0, false
 	}
@@ -742,6 +750,42 @@ func TestWorkflow_a_block_scalar_whose_comment_has_a_colon_is_still_a_finding(t 
 	}
 	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
 		t.Error("extra.yml splits a node --test run under a block scalar whose comment holds a colon and is not refused")
+	}
+}
+
+// A block scalar may carry a YAML indentation indicator (`>2-`, `|2`), which orders the indicator and
+// the chomping sign either way. A reader that accepts only the bare sign does not join the body, so
+// a `node` / `--test` split across its lines escapes the boundary (CRW-939, the tenth generation-2
+// evaluation of d1).
+func TestWorkflow_a_block_scalar_with_an_indent_indicator_is_still_a_finding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, marker := range map[string]string{"folded": ">2-", "literal": "|2-", "reversed": ">-2"} {
+		body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: " + marker + "\n          node\n          --test\n"
+		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
+			t.Errorf("%s: extra.yml splits a node --test run under %q and is not refused", name, marker)
+		}
+	}
+}
+
+// A comment inside a block scalar body is not a command: joining it into the window would report a
+// workflow that only mentions the run in a note (CRW-939, the tenth generation-2 evaluation of d3).
+func TestWorkflow_a_comment_inside_a_block_scalar_is_not_a_command(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          # node --test is not run here\n          make test\n"
+	if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) != 0 {
+		t.Errorf("a comment naming the run was read as a command: %v", findings)
 	}
 }
 
