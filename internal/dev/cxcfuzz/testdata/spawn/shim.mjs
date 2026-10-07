@@ -151,8 +151,9 @@ function answer(table, input) {
 // echo, memorygate and doctor shims each put those five under request.root per request; this does
 // the same. An input that is not an object is answered with the refusal first and touches nothing
 // else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe that
-// must never read or write a home. The isolation runs before the oracle is imported, so the
-// oracle's own module initialization sees the case's homes rather than the caller's.
+// must never read or write a home. The oracle is already loaded by the time a case arrives (see the
+// module-scope load above), so the isolation this puts in place is what every case's own work runs
+// under; the load itself does no home I/O.
 async function run(request) {
   const input = request.input;
   if (input === null || typeof input !== "object" || Array.isArray(input)) {

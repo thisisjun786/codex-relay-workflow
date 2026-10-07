@@ -208,11 +208,12 @@ func TestSpawnShimAnswersTheHandshakeInertly(t *testing.T) {
 	}
 }
 
-// c1 (CRW-938): the worker survives a handshake it cannot consult the oracle for. The shim's oracle
-// import runs per request, after the case is isolated, so a missing or hidden oracle tree answers an
-// error reply instead of ending the process before its stdin listener exists. Red before the fix: the
-// import was at module load, so the worker died and the pool reported a dead worker rather than an
-// answer, and a present tree would have run its module initialization under the caller's homes.
+// c1 (CRW-938): the worker survives a handshake it cannot consult the oracle for. The shim loads the
+// oracle once at module scope and remembers a load that failed, so a missing or hidden oracle tree
+// answers an error reply instead of ending the process before its stdin listener exists. Red against
+// the shim that let the load throw: the worker died and the pool reported a dead worker rather than an
+// answer. Loading at module scope keeps the cost on the worker's start-up budget, which
+// TestSpawnSlowOracleLoadIsChargedToStartup pins.
 func TestSpawnShimAnswersWithoutTheOracleTree(t *testing.T) {
 	requireNode(t)
 	decoy := t.TempDir()
