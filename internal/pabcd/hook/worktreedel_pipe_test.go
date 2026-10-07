@@ -398,3 +398,25 @@ func TestWorktreeDelPipeBraceNestedSubstitution(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeBraceBareOpen pins the bare { inside a ${...} word: bash nests only a ${...}, a $(...) or a backtick
+// pair, so a { that stands in the word opens nothing and the expansion ends at the first }: echo ${q:-a{b}c} prints
+// a{bc} in bash 5.3.9. A reader that counts every { reads past that } and swallows the | and the shell after it.
+func TestWorktreeDelPipeBraceBareOpen(t *testing.T) {
+	r := newDelRig(t)
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' ${q:-a{b} | bash",
+		"printf x | printf 'rm -rf ../repo' ${q:-a{b} | bash",
+		"printf 'rm -rf ../repo' ${q:-a{b} |& bash",
+		"printf 'rm -rf ../repo' ${x:-\\${y:- #\\}} | bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// The expansion ends where bash ends it, so the text after it is read as the shell reads it.
+	r.allowed(t,
+		"echo ${q:-a{b}c}",
+		"printf x ${q:-a{b} | cat",
+		"echo ${x:- #}",
+	)
+	r.intact(t)
+}

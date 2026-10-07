@@ -1186,7 +1186,9 @@ func worktreeDelBraceEnd(rest string) int {
 		if r.state == worktreeDelQuotePlain {
 			switch c {
 			case '{':
-				depth++
+				if r.prev == '$' { // only a ${...} nests: a bare { in the word opens nothing (echo ${q:-a{b}c} is a{bc})
+					depth++
+				}
 			case '}':
 				if depth--; depth == 0 {
 					return i + 1
