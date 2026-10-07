@@ -1445,3 +1445,30 @@ func TestConfigLockPathsCaseFlippedProbeStaysBesideThePinnedPath(t *testing.T) {
 }
 
 // The name-folded count on a readable directory: a separate hard link under ANOTHER name leaves the
+
+// The sixteenth-generation d1 case: a SYMLINK at the case-flipped sidecar name resolves to the real
+// sidecar under os.Stat, so SameFile would be true on a case-SENSITIVE directory too while the
+// target's link count stays one. The probe must read both names with Lstat and refuse a link.
+func TestConfigLockPathsCaseFlippedProbeRefusesASidecarSymlink(t *testing.T) {
+	home := configLockActivationHome(t)
+	dir := filepath.Join(home, "x")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.toml")
+	activationWrite(t, cfg, deactivationConfig)
+	configLockPathsRequiresCaseSensitive(t, dir)
+	pin := configLockPathsTestPin(t, cfg)
+	sidecar := cfg + ".crw-lock"
+	if _, err := os.Stat(sidecar); err != nil {
+		t.Fatalf("the sidecar was not created: %v", err)
+	}
+	if err := os.Symlink(filepath.Base(sidecar), filepath.Join(dir, "CONFIG.TOML.CRW-LOCK")); err != nil {
+		t.Fatal(err)
+	}
+	if configLockPathsCaseFlippedResolvesToThePin(pin) {
+		t.Fatal("a symlink at the flipped sidecar name was reported as case folding")
+	}
+}
+
+// The name-folded count on a readable directory: a separate hard link under ANOTHER name leaves the

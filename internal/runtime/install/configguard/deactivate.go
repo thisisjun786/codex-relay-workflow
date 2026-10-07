@@ -296,19 +296,21 @@ func configLockPathsCaseFlippedResolvesToThePin(pinned *configLockPathsPin) bool
 	if flipped == base {
 		return false
 	}
-	self, err := os.Stat(held)
-	if err != nil {
+	// Both names are read with Lstat and must be the regular sidecar file itself, never a link: a
+	// symlink planted at the flipped name resolves to the real sidecar under os.Stat, which would
+	// make SameFile true on a case-SENSITIVE directory too (CRW-899's sixteenth evaluation).
+	self, err := os.Lstat(held)
+	if err != nil || self.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
-	other, err := os.Stat(filepath.Join(filepath.Dir(held), flipped))
-	if err != nil {
+	other, err := os.Lstat(filepath.Join(filepath.Dir(held), flipped))
+	if err != nil || other.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	// Two names reaching one inode is a case-folding filesystem's single entry ONLY when the inode
-	// has exactly one link. A hard link planted at the flipped name — which is how a case-sensitive
-	// directory could otherwise make this probe report case folding — gives the inode a second
-	// link, so the count separates the two (CRW-899's fifteenth evaluation). A count that cannot be
-	// read is not known to be one, so the comparison refuses.
+	// has exactly one link. A hard link planted at the flipped name gives the inode a second link,
+	// so the count separates that from a folded name (CRW-899's fifteenth evaluation). A count that
+	// cannot be read is not known to be one, so the comparison refuses.
 	return os.SameFile(other, self) && configLockPathsOneLink(self)
 }
 
