@@ -204,8 +204,20 @@ func TestSupervisorReview780HelpPipeEpipeExitsOne(t *testing.T) {
 	}
 }
 
+// supervisorReview780ExpectedUsage is the whole output each help request must write, pinned here as
+// literals rather than taken from the command's own constants: a comparison against the constants
+// would pass even if a line went missing from the writer, which is the regression this test exists
+// to catch.
+var supervisorReview780ExpectedUsage = map[string]string{
+	"supervisor --help": "usage: crw manage supervisor {register,show} ...\n" +
+		"  register\tbind the management thread as the store supervisor and record its pair\n" +
+		"  show\t\tprint the recorded binding and the recorded settings\n",
+	"supervisor register --help": "usage: crw manage supervisor register\n",
+}
+
 // The contrast: with the pipe's read end open the same child writes the whole usage and exits 0.
-// Without it the rule above could be satisfied by failing every help request.
+// Without it the rule above could be satisfied by failing every help request, and the exact-output
+// comparison is what keeps a truncated usage from passing as a successful help request.
 func TestSupervisorReview780HelpPipeOpenPipeStaysZero(t *testing.T) {
 	for _, args := range [][]string{
 		{"supervisor", "--help"},
@@ -219,8 +231,8 @@ func TestSupervisorReview780HelpPipeOpenPipeStaysZero(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("exit %d, want 0 (stderr %q)", code, errOut)
 			}
-			if !strings.Contains(out, "usage: crw manage supervisor") {
-				t.Errorf("stdout %q does not carry the usage", out)
+			if want := supervisorReview780ExpectedUsage[strings.Join(args, " ")]; out != want {
+				t.Errorf("stdout = %q, want the whole usage %q", out, want)
 			}
 		})
 	}
