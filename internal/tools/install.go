@@ -239,22 +239,18 @@ func parentLocation(component string) string {
 }
 
 // componentIdentity reads the identity of the directory the mkdir made at component -- or, on
-// EEXIST, of the directory standing there -- and answers the location that reaches it. parent is
-// the parent location read before the mkdir, and parentInfo is that directory's identity then.
+// EEXIST, of the directory standing there -- and answers the location that reaches it. parent is the
+// parent location read before the mkdir, and it is "" when the parent could not be resolved.
 //
-// The spelled path is what the mkdir acted on, so the identity is read there first and is the answer
-// whenever it can be read. The parent location is the second name, and it is accepted only while the
-// two agree: both name the same object by os.SameFile. When they disagree, a link or a parent
-// changed between the mkdir and this read, so neither name proves which object the mkdir made and
-// nothing is recorded -- a leak rather than removing an object this call never made.
-//
-// When the spelled path cannot be read at all, the parent location stands in, and only while it is
-// proven to be the slot the mkdir filled: the slot was observed empty immediately before the mkdir
-// (childAbsent) and the parent is still the very directory read then (parentInfo). That is the case
-// in which a segment above the parent vanished between the mkdir and this read, so the directory
-// this call made stays recorded and the cleanup can still remove it. Without those observations the
-// parent location might name a slot this call never filled, so nothing is recorded.
-func componentIdentity(component, parent string, parentInfo os.FileInfo, childAbsent bool) (string, os.FileInfo, error) {
+// The spelled path is what the mkdir acted on, so its object is recorded when no parent location was
+// resolved: there is no other name, and that is the case a caller with an absolute root is in. When
+// a parent location was resolved, the two names must agree -- both name the same object by
+// os.SameFile -- before either is recorded, because that is what proves the object standing there is
+// the one the mkdir made rather than a peer's that a link repointed between the read and the mkdir
+// left in that slot. A disagreement, and a spelled path that cannot be read at all, record nothing:
+// the walk recomputes instead, which leaves the directory this call made behind in that narrow
+// interleaving but never removes an object this call did not make.
+func componentIdentity(component, parent string) (string, os.FileInfo, error) {
 	spelled, spelledErr := os.Lstat(component)
 	if parent == "" {
 		if spelledErr != nil {
@@ -264,31 +260,19 @@ func componentIdentity(component, parent string, parentInfo os.FileInfo, childAb
 	}
 	location := childLocation(component, parent)
 	info, err := os.Lstat(location)
-	if err == nil {
-		if spelledErr == nil {
-			if os.SameFile(spelled, info) {
-				return location, info, nil
-			}
-			// The two names disagree, so which object the mkdir made is unknown. Nothing is
-			// recorded.
-			return "", nil, errTwoNamesDisagree
-		}
-		if childAbsent && parentInfo != nil {
-			if now, parentErr := os.Lstat(parent); parentErr == nil && os.SameFile(parentInfo, now) {
-				return location, info, nil
-			}
-		}
+	if err == nil && spelledErr == nil && os.SameFile(spelled, info) {
+		return location, info, nil
 	}
 	if spelledErr != nil {
 		return "", nil, spelledErr
 	}
-	return "", nil, errTwoNamesDisagree
+	return "", nil, errIdentityUnproven
 }
 
-// errTwoNamesDisagree is the refusal componentIdentity answers when the spelled path and the parent
-// location name different objects and nothing proves which one the mkdir made. It is an ordinary
-// error, so the caller recomputes the walk rather than recording a location it cannot stand behind.
-var errTwoNamesDisagree = errors.New("the spelled path and the parent location name different objects")
+// errIdentityUnproven is the refusal componentIdentity answers when the parent location and the
+// spelled path do not agree on which object the mkdir made. It is an ordinary error, so the caller
+// recomputes the walk rather than recording a location it cannot stand behind.
+var errIdentityUnproven = errors.New("the object the mkdir made cannot be established")
 
 // childLocation answers where a component's directory stands under its parent's resolved location.
 func childLocation(component, parent string) string {
@@ -368,14 +352,6 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				createRootBeforeMkdir(component)
 			}
 			parent := parentLocation(component)
-			var parentInfo os.FileInfo
-			childAbsent := false
-			if parent != "" {
-				parentInfo, _ = os.Lstat(parent)
-				if _, err := os.Lstat(childLocation(component, parent)); errors.Is(err, fs.ErrNotExist) {
-					childAbsent = true
-				}
-			}
 			err := os.Mkdir(component, 0o755)
 			if err == nil && createRootAfterMkdir != nil {
 				createRootAfterMkdir(component)
@@ -386,7 +362,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// is read now and recorded with it. An identity that cannot be read is a component
 				// that vanished under this call, which the recompute below handles rather than a
 				// record that would let removeCreated remove whatever is there next.
-				location, info, statErr := componentIdentity(component, parent, parentInfo, childAbsent)
+				location, info, statErr := componentIdentity(component, parent)
 				if statErr != nil {
 					absent = statErr
 					break
@@ -399,7 +375,7 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// as missing and this call made it again below the re-made ancestor. Otherwise
 				// another install removed this call's directory and made its own, which is not
 				// this call's to remove.
-				location, info, statErr := componentIdentity(component, parent, parentInfo, childAbsent)
+				location, info, statErr := componentIdentity(component, parent)
 				switch {
 				case statErr != nil:
 					// The identity could not be read, so nothing here proves the directory changed
