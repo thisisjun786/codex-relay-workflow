@@ -9,6 +9,8 @@
 // the rules of contract/schema/cxc/name-substitution.json the way the corpus recorders and
 // internal/role/spawn/testdata/inline/record.mjs apply them. The answer needs no translation at all.
 import { createInterface } from "node:readline";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // The oracle is loaded once here, before the stdin listener exists, so its module initialization is
@@ -17,32 +19,88 @@ import { join } from "node:path";
 // the per-case one, so a load moved into the first case would be charged to that case and a slow
 // import would time out a worker that answered its handshake.
 //
+// The load must not run under the caller's environment. The pool hands the worker the caller's
+// environment (Campaign passes os.Environ() through NewPool), so the worker first creates a temporary
+// root of its own under the harness TMPDIR and points HOME, CODEX_HOME, CRW_HOME, CODEXCLAW_HOME and
+// TMPDIR at it; only then does it import the oracle. The oracle's module initialization therefore runs
+// under a root this worker owns and removes, and every case's own work still runs after run() has put
+// the five homes under request.root.
+//
 // A load that fails is remembered, not fatal: the worker still starts, still answers the pool's
 // start-up handshake (a null input with an empty root) with the refusal, and answers a later request
 // with an error envelope, so a missing or hidden oracle tree reads as an answer rather than as a dead
 // worker. The retry per request keeps the doctor shim's property that a tree which appears later is
 // picked up.
-//
-// Loading here runs the oracle's module initialization under the caller's environment, which is safe
-// because that initialization does no home I/O: measured against the real v0.2.40 tree it takes ~12 ms,
-// reads no file and mutates no environment variable (its only env read, CXC_SKILLS_DIR, is inside
-// runtimeSkillsDir(), which no top-level statement calls), and leaves ~/.codex unchanged. Every case's
-// own work still runs after run() has put the five homes under request.root.
+const loadHomes = ["home", "codex-home", "crw-home", "codexclaw-home", "tmp"];
+let loadRoot = null;
 let oracleTable = null;
 let oracleLoadError = null;
+
+// ownLoadRoot creates the temporary root the oracle's module initialization runs under, once, and
+// points the five variables at it. releaseLoadRoot removes it again, so the root's lifetime is exactly
+// the import: the worker keeps no tree behind under the harness TMPDIR, and a retry re-creates the same
+// root before its own import rather than inheriting whatever the caller left in the environment.
+function ownLoadRoot() {
+  if (loadRoot === null) {
+    loadRoot = makeLoadRoot();
+  }
+  for (const name of loadHomes) {
+    mkdirSync(join(loadRoot, name), { recursive: true });
+  }
+  process.env.HOME = join(loadRoot, "home");
+  process.env.CODEX_HOME = join(loadRoot, "codex-home");
+  process.env.CRW_HOME = join(loadRoot, "crw-home");
+  process.env.CODEXCLAW_HOME = join(loadRoot, "codexclaw-home");
+  process.env.TMPDIR = join(loadRoot, "tmp");
+  return loadRoot;
+}
+
+function releaseLoadRoot() {
+  if (loadRoot === null) return;
+  try {
+    rmSync(loadRoot, { recursive: true, force: true });
+  } catch {
+    // The root is this worker's own scratch: a failure to remove it must not stop the worker.
+  }
+}
+
+// makeLoadRoot creates the worker's own temporary root, under the harness TMPDIR when that directory
+// exists and under the process's temporary directory otherwise, so a worker still starts when the
+// caller named a TMPDIR that is not there.
+function makeLoadRoot() {
+  const candidates = [process.env.TMPDIR, tmpdir(), "/tmp"].filter((path) => typeof path === "string" && path !== "");
+  let lastError = null;
+  for (const base of candidates) {
+    try {
+      return mkdtempSync(join(base, "crw-spawn-load-"));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error("no temporary directory to create the oracle load root under");
+}
+
+async function loadOracle() {
+  ownLoadRoot();
+  try {
+    const root = process.env.ORACLE_ROOT;
+    if (!root) throw new Error("ORACLE_ROOT is not set");
+    return functions(await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js")));
+  } finally {
+    releaseLoadRoot();
+  }
+}
+
 try {
-  const root = process.env.ORACLE_ROOT;
-  if (!root) throw new Error("ORACLE_ROOT is not set");
-  oracleTable = functions(await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js")));
+  oracleTable = await loadOracle();
 } catch (error) {
   oracleLoadError = error;
 }
 
 async function oracle() {
   if (oracleTable) return oracleTable;
-  const root = process.env.ORACLE_ROOT;
-  if (!root) throw oracleLoadError ?? new Error("ORACLE_ROOT is not set");
-  oracleTable = functions(await import("file://" + join(root, "subagent-config", "dist", "spawn-attach-hook.js")));
+  if (!process.env.ORACLE_ROOT) throw oracleLoadError ?? new Error("ORACLE_ROOT is not set");
+  oracleTable = await loadOracle();
   return oracleTable;
 }
 
@@ -55,24 +113,10 @@ function functions(hook) {
     InferRole: (agentType, message) => hook.inferRole(agentType, typeof message === "string" ? message : ""),
     IsV2SpawnInput: (toolInput) => hook.isV2SpawnInput(asObject(toolInput)),
     IsFullHistoryFork: (toolInput) => hook.isFullHistoryFork(asObject(toolInput)),
-  IsSpawnToolName: (name) => hook.isSpawnToolName(name),
-  IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
-  MentionedFolders: (message) => {
-    const text = unwrapArgument(message);
-    return [...hook.mentionedFolders(typeof text === "string" ? crwToCxc(text) : "")];
-  },
-};
-
-// unwrapArgument follows a chain of one-element arrays down to the value at its end, the way the port's
-// spawnUnwrapArgument does: the generator nests the MentionedFolders argument to the depth a case drew,
-// so the two sides walk the same containers before the classifier sees the message. crwToCxc runs again
-// here because the translation above only reaches a top-level string argument, and it is idempotent.
-function unwrapArgument(value) {
-  while (Array.isArray(value) && value.length === 1) {
-    value = value[0];
-  }
-  return value;
-}
+    IsSpawnToolName: (name) => hook.isSpawnToolName(name),
+    IsCollaborationToolName: (name) => hook.isCollaborationToolName(name),
+    MentionedFolders: (message) => [...hook.mentionedFolders(typeof message === "string" ? crwToCxc(message) : "")],
+  };
 }
 
 function asObject(value) {
@@ -151,9 +195,10 @@ function answer(table, input) {
 // echo, memorygate and doctor shims each put those five under request.root per request; this does
 // the same. An input that is not an object is answered with the refusal first and touches nothing
 // else: the pool's start-up handshake is {"id":N,"input":null,"root":""}, a readiness probe that
-// must never read or write a home. The oracle is already loaded by the time a case arrives (see the
-// module-scope load above), so the isolation this puts in place is what every case's own work runs
-// under; the load itself does no home I/O.
+// must never read or write a home. The isolation below is put in place before the oracle is
+// consulted, so both a case's own work and the oracle's module initialization - which is deferred to
+// the first case that arrives (see oracle()) - run under the case's root rather than the caller's
+// environment.
 async function run(request) {
   const input = request.input;
   if (input === null || typeof input !== "object" || Array.isArray(input)) {

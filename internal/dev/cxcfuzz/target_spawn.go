@@ -70,113 +70,44 @@ const (
 // in which surrogate they hold stay apart.
 var spawnLoneSurrogates = []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80"}
 
-// The nesting a MentionedFolders case builds. The depth is the number the port's JSON-writer bound
-// names (spawnHookRouteMaxDepth, internal/role/spawn/hook_route.go:32), so a case's depth follows the
-// size the campaign passes up to it and reaches the bound from both sides.
+// spawnMentionedFoldersInput is the whole MentionedFolders case, in the grammar the target reads: the
+// drawn message, made as long as the size draws. This target makes no depth claim. MentionedFolders
+// and the other classifiers it compares read strings, and the 4,400-level bound is the writer bound of
+// RunSpawnAttachHook (internal/role/spawn/hook_route.go, spawnHookRouteMaxDepth), which a classifier
+// comparison never reaches. So nothing here nests and no harness strips a container before a classifier
+// receives the input: what the two sides compare is the argument itself. The bound is covered by
+// TestSpawnHookRouteMaximumNesting and internal/role/spawn/testdata/hook/oracle.json, and a hook-route
+// depth target is a separate follow-up.
 //
-// The mention grammar MentionedFolders reads has no nesting of its own: both of its patterns capture a
-// flat run of characters, so a bracket run inside a folder name is ordinary string data to the oracle
-// and to the port alike and exercises no depth. What does nest is the value the classifier is handed,
-// and the nesting is put there - in the argument itself, not beside the call - so both sides walk the
-// drawn number of containers to reach the message before MentionedFolders sees it: the port through
-// pyjson and spawnUnwrapArgument, the shim through JSON.parse and unwrapArgument. The message itself
-// is still drawn by spawnMessage, so the classifier keeps being driven on varied mention text. The
-// pinned deep-nesting case is that argument at the bound.
-//
-// Nothing is put in a second argument: MentionedFolders reads only its first, so a value there would be
-// serialized and parsed by the harness and reach neither side's code.
-const (
-	// spawnNestingBound is the port's JSON-writer depth bound (spawnHookRouteMaxDepth) that the
-	// crw-614 case names, and spawnNestingSpread how far past it a case reaches, so a generated depth
-	// straddles the boundary rather than sitting on one side of it.
-	spawnNestingBound  = 4400
-	spawnNestingSpread = 3
-	// spawnNestingBytesPerLevel is what one nesting level costs in the canonical text: one '[' and one
-	// ']'. The rest of the case is fixed, so a depth's bytes are arithmetic rather than measured.
-	spawnNestingBytesPerLevel = 2
-)
-
-// spawnNestingCase is one case: the MentionedFolders call whose argument is the message nested depth
-// containers deep. depth 0 is the bare message.
-func spawnNestingCase(message string, depth int) pyjson.Object {
-	var argument any = message
-	for i := 0; i < depth; i++ {
-		argument = []any{argument}
-	}
+// The size still shapes the case: it decides how long the message is, with the total bytes computed
+// from the size and capped before the string is built, so a generated case reaches the lengths a
+// mention can have without an unbounded input.
+func spawnMentionedFoldersInput(rng *rand.Rand, size int) pyjson.Object {
+	message := spawnMessage(rng, 1+rng.Intn(8)) + spawnMentionFiller(size)
 	return pyjson.Object{
 		{Key: "fn", Value: spawnFnMentionedFolders},
-		{Key: "args", Value: []any{argument}},
+		{Key: "args", Value: []any{message}},
 	}
 }
 
-// spawnUnwrapArgument follows a chain of one-element arrays down to the value at its end: the generator
-// nests the MentionedFolders argument to the depth a case drew, so the two sides walk the same
-// containers before the classifier sees the message. A value that is not such a chain is itself.
-func spawnUnwrapArgument(value any) any {
-	for {
-		list, ok := value.([]any)
-		if !ok || len(list) != 1 {
-			return value
-		}
-		value = list[0]
-	}
-}
+// spawnMentionFillerCap caps the filler one generated case may build. A case's bytes are decided from
+// the size and clamped to this before the string is built, so no size can make the harness build an
+// unbounded input.
+const spawnMentionFillerCap = 1 << 16
 
-// spawnNestingFixedBytes is the canonical text of a case of this message at depth 0, which is the whole
-// case without the nesting. It is a function rather than a package-level constant because measuring it
-// builds a case, and the runtime criterion forbids work in a package initializer.
-func spawnNestingFixedBytes(message string) int {
-	return len(canonical(spawnNestingCase(message, 0)))
-}
-
-// spawnNestingBytes is what one case of this message at this depth costs, in the canonical text the
-// harness sends. It is arithmetic from the message and the depth, never a measurement of the built
-// case, so a caller decides whether a depth fits before anything of that depth is built.
-func spawnNestingBytes(message string, depth int) int {
-	if depth < 0 {
-		depth = 0
-	}
-	return spawnNestingFixedBytes(message) + spawnNestingBytesPerLevel*depth
-}
-
-// spawnNestingMaxBytes caps what one generated case may build: the byte cost of a case at the bound the
-// crw-614 case names, which is the deepest case this target aims a generator at.
-func spawnNestingMaxBytes(message string) int {
-	return spawnNestingBytes(message, spawnNestingBound+spawnNestingSpread)
-}
-
-// spawnNestingLimit is the deepest depth the cap allows for this message. It is derived from the cap
-// rather than assumed equal to the bound and its spread, so a case's bytes are decided by the cap and
-// the two can never drift into a depth the cap forbids.
-func spawnNestingLimit(message string) int {
-	limit := (spawnNestingMaxBytes(message) - spawnNestingFixedBytes(message)) / spawnNestingBytesPerLevel
-	if limit < 0 {
-		limit = 0
-	}
-	return limit
-}
-
-// spawnNestingDepth is the nesting depth one case builds. The campaign's size is an arbitrary int
-// (rng.Int()), so it is folded into the port's bound and its spread rather than used directly, which
-// puts a case on either side of the 4,400-level bound; the byte cap then clamps it, so a depth the cap
-// forbids is never built.
-func spawnNestingDepth(size int, message string) int {
+// spawnMentionFiller is the run of filler a case's size draws, in bytes. The campaign's size is an
+// arbitrary int (rng.Int()), so it is folded into the cap rather than used directly.
+func spawnMentionFiller(size int) string {
 	if size < 0 {
 		size = -size
 	}
-	depth := size % (spawnNestingBound + spawnNestingSpread + 1)
-	if limit := spawnNestingLimit(message); depth > limit {
-		depth = limit
-	}
-	return depth
+	return strings.Repeat("x", size%spawnMentionFillerCap)
 }
 
-// spawnMentionedFoldersInput is the whole MentionedFolders case, in the grammar the target reads: the
-// drawn message, nested to the depth the size draws. The depth is decided from the message's bytes and
-// the cap before the nesting is built.
-func spawnMentionedFoldersInput(rng *rand.Rand, size int) pyjson.Object {
-	message := spawnMessage(rng, 1+rng.Intn(8))
-	return spawnNestingCase(message, spawnNestingDepth(size, message))
+// spawnMentionBytes is what a case's filler costs, in bytes, decided from the size alone and never by
+// measuring the built string, so a caller can decide whether a size fits before anything is built.
+func spawnMentionBytes(size int) int {
+	return len(spawnMentionFiller(size))
 }
 
 // spawnWords are the message pieces the generator assembles: the role-like spellings, the mention
@@ -337,7 +268,7 @@ func spawnGo(input any, env Env) (any, error) {
 	case spawnFnIsCollaborationTool:
 		return spawn.IsCollaborationToolName(spawnArg(list, 0)), nil
 	case spawnFnMentionedFolders:
-		message, _ := spawnUnwrapArgument(spawnArg(list, 0)).(string)
+		message, _ := spawnArg(list, 0).(string)
 		return spawnSortedFolders(spawn.MentionedFolders(message)), nil
 	default:
 		return spawnRefusal, nil

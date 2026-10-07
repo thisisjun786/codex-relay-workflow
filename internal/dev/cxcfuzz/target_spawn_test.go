@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"encoding/json"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -135,13 +136,9 @@ func TestSpawnGenerateIsDeterministic(t *testing.T) {
 	}
 }
 
-// The two numbers the c3 tests pin: the port's JSON-writer depth bound the crw-614 case names, and the
-// largest input one generated case may build. They are written here rather than read from the target,
-// so the test states what it expects rather than what the code happens to do.
-const (
-	spawnNestingBoundWanted = 4400
-	spawnNestingCapWanted   = 1 << 20
-)
+// The largest filler one generated case may build, written here rather than read from the target, so
+// the test states what it expects rather than what the code happens to do.
+const spawnMentionCapWanted = 1 << 16
 
 // c1 (CRW-938): the shim isolates every case before it consults the oracle, the way the echo,
 // memorygate and doctor shims do: the five variables a case's homes and its temporary directory live
@@ -233,96 +230,49 @@ func TestSpawnShimAnswersWithoutTheOracleTree(t *testing.T) {
 	}
 }
 
-// c3 (CRW-938): the generator builds a really nested MentionedFolders input whose nesting depth follows
-// the size the campaign passes, around the port's 4,400-level bound, and whose bytes are decided before
-// anything is built. Red before the fix: spawnGenerate ignored size, so every generated input nested
-// the same - a flat message and no nested argument. Red again before the correction the pre-merge
-// evaluation of head 59ab846ba called for: the depth was a run of brackets inside one folder string,
-// which both readers take as ordinary text, so the case's containers never nested at all.
-func TestSpawnGenerateNestsBySize(t *testing.T) {
-	// The port's 4,400-level bound plus the spread this target draws past it, plus one: the modulus a
-	// generated depth is taken over.
-	const span = spawnNestingBoundWanted + 3 + 1
+// c3 (corrected, CRW-938): the size still shapes a generated case, as the length of the mention text,
+// and the bytes are decided from the size before anything is built. This target makes no depth claim:
+// MentionedFolders and the other classifiers it compares read strings, and the 4,400-level bound is
+// RunSpawnAttachHook's writer bound (internal/role/spawn/hook_route.go, spawnHookRouteMaxDepth), which
+// a classifier comparison never reaches. Red before the fix: spawnGenerate ignored size, so every
+// generated case carried the same length. Red again before the correction of 2026-10-08: the size was
+// spent on a chain of one-element arrays that both harnesses stripped before the classifier ran, so
+// the case claimed a depth neither side ever exercised.
+func TestSpawnGenerateCarriesTheSizeAsLength(t *testing.T) {
 	seen := map[int]bool{}
-	for size := 0; size < 1024; size++ {
+	for size := 0; size < 512; size++ {
 		document := spawnMentionedDocument(t, size)
-		if got, want := spawnDocumentDepth(t, document), size%span; got != want {
-			t.Fatalf("size %d: the case nests %d deep, want %d", size, got, want)
+		args, _ := document.Lookup("args")
+		list, _ := args.([]any)
+		if len(list) != 1 {
+			t.Fatalf("size %d: the case carries %d arguments, want the message alone", size, len(list))
 		}
-		// The depth is real nesting, not a run of characters inside a string: the canonical text the
-		// harness sends carries one array per level, which is what a JSON reader walks. The deepest
-		// containers are the case object, the args array, and the chain the argument is.
-		if got, want := spawnTextDepth(t, canonical(document)), size%span+2; got != want {
-			t.Fatalf("size %d: the case text nests %d containers deep, want %d", size, got, want)
+		// The argument is the message itself: nothing the harness could strip stands between it and
+		// the classifier, which is what "no depth claim" means here.
+		if _, ok := list[0].(string); !ok {
+			t.Fatalf("size %d: the classifier is handed %T, want the message string", size, list[0])
 		}
-		seen[size%span] = true
+		seen[spawnMentionBytes(size)] = true
 	}
-	if len(seen) < 5 {
-		t.Fatalf("the generated nesting follows size only weakly: %d distinct depths", len(seen))
+	if len(seen) < 64 {
+		t.Fatalf("the generated length follows size only weakly: %d distinct filler sizes", len(seen))
 	}
-	// The bytes are decided before anything is built: a size far past the cap still builds an input
-	// under it, and the case's nesting never passes the bound plus its spread.
+	// The bytes are decided before anything is built: a size far past the cap still builds a case
+	// under it, and no size can make the harness build an unbounded input.
 	for _, size := range []int{1 << 20, 1 << 30, 1 << 62} {
 		text := canonical(spawnMentionedDocument(t, size))
-		if len(text) > spawnNestingCapWanted {
-			t.Errorf("size %d built a %d-byte case, past the %d cap", size, len(text), spawnNestingCapWanted)
-		}
-		if depth := spawnTextDepth(t, text); depth > spawnNestingBoundWanted+4 {
-			t.Errorf("size %d built a case %d containers deep, past the port's bound plus its spread", size, depth)
+		if len(text) > spawnMentionCapWanted+1024 {
+			t.Errorf("size %d built a %d-byte case, past the %d cap", size, len(text), spawnMentionCapWanted)
 		}
 	}
-	// The cap, not the bound, is what forbids a deeper case: a depth past what the cap allows is
-	// clamped rather than built, so no path silently degrades to a flat one.
-	message := "$crw-dev"
-	deepest := spawnNestingLimit(message)
-	if got := spawnNestingBytes(message, deepest); got > spawnNestingMaxBytes(message) {
-		t.Fatalf("the deepest allowed depth costs %d bytes, past the cap %d", got, spawnNestingMaxBytes(message))
-	}
-	// The limit is the deepest the cap allows: one level more would cost more than the cap.
-	if got := spawnNestingBytes(message, deepest+1); got <= spawnNestingMaxBytes(message) {
-		t.Fatalf("a depth one past the limit costs %d bytes, within the cap %d: the limit is too low", got, spawnNestingMaxBytes(message))
-	}
-	if depth := spawnNestingDepth(1<<40, message); depth > deepest {
-		t.Fatalf("a huge size drew depth %d, past what the cap allows %d", depth, deepest)
-	}
-	// No size builds past the cap, and the deepest any size reaches is exactly the limit.
-	reached := 0
-	for size := 0; size < 3*(spawnNestingBoundWanted+spawnNestingSpread+1); size++ {
-		depth := spawnDocumentDepth(t, spawnMentionedFoldersInput(rand.New(rand.NewSource(int64(size))), size))
-		if depth > deepest {
-			t.Fatalf("size %d built %d deep, past what the cap allows %d", size, depth, deepest)
-		}
-		if depth > reached {
-			reached = depth
-		}
-	}
-	if reached != deepest {
-		t.Fatalf("the deepest drawn case is %d, want the cap's limit %d", reached, deepest)
+	if got := spawnMentionBytes(1 << 62); got >= spawnMentionCapWanted {
+		t.Fatalf("a huge size builds %d filler bytes, want under the %d cap", got, spawnMentionCapWanted)
 	}
 }
 
-// c3 (CRW-938): the depths a campaign draws straddle the port's 4,400-level bound, so the boundary is
-// driven from both sides rather than from one.
-func TestSpawnNestingStraddlesTheBound(t *testing.T) {
-	below, above := false, false
-	for size := 0; size <= spawnNestingBoundWanted+16; size++ {
-		switch depth := spawnDocumentDepth(t, spawnMentionedDocument(t, size)); {
-		case depth > spawnNestingBoundWanted:
-			above = true
-		case depth > 0:
-			below = true
-		}
-	}
-	if !below || !above {
-		t.Fatalf("the drawn depths do not straddle the bound (below %v, above %v)", below, above)
-	}
-}
-
-// c3 (CRW-938): the nesting is added to the drawn message rather than replacing it, so the classifier
-// the target exists for keeps being driven on varied text. The pre-merge evaluation of head d33afe26
-// found the opposite - every MentionedFolders case carried one fixed mention - so this pins that the
-// message is still drawn and still reaches MentionedFolders at the bottom of the chain.
-func TestSpawnNestingKeepsTheDrawnMessage(t *testing.T) {
+// c3 (CRW-938): the generator keeps driving MentionedFolders on varied text, so the classifier the
+// target exists for is exercised on more than one mention.
+func TestSpawnMentionedFoldersKeepsTheDrawnMessage(t *testing.T) {
 	messages := map[string]bool{}
 	for seed := int64(0); seed < 256; seed++ {
 		document, ok := spawnMentionedCaseForSeed(t, seed, 5)
@@ -334,65 +284,74 @@ func TestSpawnNestingKeepsTheDrawnMessage(t *testing.T) {
 		if len(list) != 1 {
 			t.Fatalf("seed %d: the case carries %d arguments, want the message alone", seed, len(list))
 		}
-		message, ok := spawnUnwrapArgument(list[0]).(string)
+		message, ok := list[0].(string)
 		if !ok {
-			t.Fatalf("seed %d: the nested argument ends in %T, want the message", seed, spawnUnwrapArgument(list[0]))
+			t.Fatalf("seed %d: the argument is %T, want the message string", seed, list[0])
 		}
 		messages[message] = true
 	}
 	if len(messages) < 16 {
-		t.Fatalf("the generator draws only %d distinct messages, so the nesting replaced the message", len(messages))
+		t.Fatalf("the generator draws only %d distinct messages, so the message is not driven", len(messages))
 	}
-	// The drawn message is what the two sides classify: the Go side reads it through the chain, and the
-	// answer names the folder the message mentions.
+	// The drawn message is what the two sides classify: the answer names the folder the message mentions.
 	for _, message := range spawnWords() {
-		document := spawnNestingCase(message, 3)
+		document := pyjson.Object{
+			{Key: "fn", Value: spawnFnMentionedFolders},
+			{Key: "args", Value: []any{message}},
+		}
 		value, err := spawnGo(document, Env{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		want := spawnSortedFolders(spawn.MentionedFolders(message))
 		if canonical(value) != canonical(want) {
-			t.Fatalf("the nested case answered %s for %q, want %s", canonical(value), message, canonical(want))
+			t.Fatalf("the case answered %s for %q, want %s", canonical(value), message, canonical(want))
 		}
 	}
 }
 
-// c3 (CRW-938): the pinned crw-614-deep-nesting case is a really nested input, not a flat run of one
-// character and not a run of brackets inside a string, and both sides answer it.
-func TestSpawnDeepNestingCaseIsReallyNested(t *testing.T) {
-	target, ok := Lookup("spawn")
-	if !ok {
-		t.Fatalf("spawn is not registered (registered: %v)", Names())
-	}
+// c3 (corrected, CRW-938): no pinned or generated spawn case carries nesting the classifier does not
+// receive. The target compares six classifiers that read strings, so a container between the harness
+// and the classifier is stripped by both sides and can never reach the product code: a case built that
+// way exercises nothing about depth while its name claims a boundary. Red before the correction of
+// 2026-10-08: the pinned case nested 4,400 one-element arrays and every generated MentionedFolders case
+// nested a chain, all of it unwrapped before the classifier ran.
+func TestSpawnCasesCarryNoNestingTheClassifierMisses(t *testing.T) {
+	// Every pinned spawn case hands its classifier a value, not a container: the six classifiers read
+	// strings or objects, and a chain of one-element arrays is neither.
 	cases, err := LoadCases(filepath.Join("testdata", "spawn"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(cases) == 0 {
+		t.Fatal("the spawn target has no pinned cases")
+	}
 	for _, c := range cases {
-		if c.Name != "crw-614-deep-nesting" {
-			continue
-		}
 		value, err := decode(c.Input)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", c.Name, err)
 		}
 		object, ok := value.(pyjson.Object)
 		if !ok {
-			t.Fatalf("the pinned case is %T, want the case object", value)
+			t.Fatalf("%s: the case is %T, want the case object", c.Name, value)
 		}
-		if depth := spawnDocumentDepth(t, object); depth < spawnNestingBoundWanted {
-			t.Fatalf("the pinned case nests %d deep, want at least the port's %d-level bound", depth, spawnNestingBoundWanted)
+		if depth := spawnStrippedDepth(t, object); depth != 0 {
+			t.Fatalf("%s: the classifier is handed a chain %d deep, which the harness unwraps before it runs", c.Name, depth)
 		}
-		if depth := spawnTextDepth(t, c.Input); depth <= spawnNestingBoundWanted {
-			t.Fatalf("the pinned case's text nests %d containers deep, want the containers themselves past the %d-level bound", depth, spawnNestingBoundWanted)
-		}
-		if problem := CheckCase(target, c); problem != "" {
-			t.Fatal(problem)
-		}
-		return
 	}
-	t.Fatal("the pinned case crw-614-deep-nesting is missing")
+	// The same holds for every generated case: a size is spent on the mention text, never on
+	// containers that stand between the harness and the classifier.
+	for seed := int64(0); seed < 512; seed++ {
+		for _, size := range []int{0, 1, 4399, 4400, 4401, 1 << 20} {
+			object, ok := spawnGenerate(rand.New(rand.NewSource(seed)), size).(pyjson.Object)
+			if !ok {
+				continue
+			}
+			if depth := spawnStrippedDepth(t, object); depth != 0 {
+				t.Fatalf("seed %d, size %d: the generated case hands the classifier a chain %d deep", seed, size, depth)
+			}
+		}
+	}
 }
 
 // spawnFakePool starts one spawn worker against a fake oracle tree, with the caller's environment.
@@ -479,6 +438,30 @@ func writeFakeSpawnOracle(t *testing.T) string {
 	return root
 }
 
+// writeRecordingSpawnOracle writes a fake oracle tree whose module initialization records the HOME and
+// CODEX_HOME it ran under, so a test can read back which environment the import saw. The record path
+// travels in an environment variable of its own, which the shim does not touch.
+func writeRecordingSpawnOracle(t *testing.T, record string) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "subagent-config", "dist")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "import { writeFileSync } from \"node:fs\";\n" +
+		"writeFileSync(process.env.CXCFUZZ_LOAD_RECORD, JSON.stringify({ home: process.env.HOME, codex_home: process.env.CODEX_HOME }));\n" +
+		"export function mentionedFolders() { return new Set([\"crw-dev\"]); }\n" +
+		"export function inferRole() { return \"\"; }\n" +
+		"export function isV2SpawnInput() { return false; }\n" +
+		"export function isFullHistoryFork() { return false; }\n" +
+		"export function isSpawnToolName() { return false; }\n" +
+		"export function isCollaborationToolName() { return false; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "spawn-attach-hook.js"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 // spawnMentionedDocument is the first MentionedFolders case the generator draws.
 func spawnMentionedDocument(t *testing.T, size int) pyjson.Object {
 	t.Helper()
@@ -510,17 +493,18 @@ func spawnMentionedCaseForSeed(t *testing.T, seed int64, size int) (pyjson.Objec
 	return object, true
 }
 
-// spawnDocumentDepth is how many containers deep the case's argument sits, counted through the decoded
-// document rather than read from a string: args[0], one array per level down to the mention.
-func spawnDocumentDepth(t *testing.T, document pyjson.Object) int {
+// spawnStrippedDepth is how many one-element containers stand between a case's argument and the value
+// the classifier receives: a chain the harness itself would unwrap, so a case that carries one claims a
+// depth neither side exercises. A case that hands the classifier its value directly has depth 0.
+func spawnStrippedDepth(t *testing.T, document pyjson.Object) int {
 	t.Helper()
 	args, found := document.Lookup("args")
 	if !found {
-		t.Fatalf("the case carries no args: %s", canonical(document))
+		return 0
 	}
 	list, ok := args.([]any)
 	if !ok || len(list) != 1 {
-		t.Fatalf("the case carries %s, want the one argument the classifier reads", canonical(document))
+		return 0
 	}
 	value := list[0]
 	depth := 0
@@ -532,42 +516,7 @@ func spawnDocumentDepth(t *testing.T, document pyjson.Object) int {
 		depth++
 		value = chain[0]
 	}
-	if _, ok := value.(string); !ok {
-		t.Fatalf("the nested argument ends in %T, want the mention the classifier reads", value)
-	}
 	return depth
-}
-
-// spawnTextDepth is how many containers deep a case's JSON text nests, counted by walking its bytes:
-// the depth a JSON reader - the shim's JSON.parse and the port's pyjson decoder - walks the document
-// to. A run of brackets inside a string is invisible to this count, which is the difference between a
-// really nested case and one whose "nesting" is only characters in a folder name.
-func spawnTextDepth(t *testing.T, text string) int {
-	t.Helper()
-	deepest, depth, quoted, escaped := 0, 0, false, false
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		switch {
-		case escaped:
-			escaped = false
-		case c == '\\' && quoted:
-			escaped = true
-		case c == '"':
-			quoted = !quoted
-		case quoted:
-		case c == '[' || c == '{':
-			depth++
-			if depth > deepest {
-				deepest = depth
-			}
-		case c == ']' || c == '}':
-			depth--
-		}
-	}
-	if quoted || depth != 0 {
-		t.Fatalf("the text is not balanced JSON: %s", text)
-	}
-	return deepest
 }
 
 // c1 (CRW-938): the oracle's module initialization is charged to the worker's start-up budget, not to a
@@ -598,6 +547,86 @@ func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
 	}
 	if !strings.Contains(reply, filepath.Join(root, "home")) {
 		t.Fatalf("the case answered %s, want the case root's home", reply)
+	}
+}
+
+// c8 (CRW-938, generation 2): the oracle's import-time initialization runs under a root the worker owns,
+// never under the caller's environment. The pool hands the worker the caller's environment, so a
+// module-scope import would run the oracle's initialization with the real HOME, CODEX_HOME, CRW_HOME,
+// CODEXCLAW_HOME and TMPDIR. Red on head 070737c6: the shim imported the oracle at module scope, before
+// any request set the five variables, so the initialization saw the caller's homes. Red again if the
+// load is merely moved to the first case without an owned root: a case root the harness prepared is not
+// the worker's own.
+func TestSpawnOracleLoadRunsUnderAnOwnedRoot(t *testing.T) {
+	requireNode(t)
+	decoy := t.TempDir()
+	// The worker's temporary directory: the load root is created under it, so the test can tell a root
+	// the worker made for itself from the caller's decoy homes.
+	workerTmp := t.TempDir()
+	record := filepath.Join(t.TempDir(), "load-env.json")
+	pool := spawnFakePool(t, writeRecordingSpawnOracle(t, record),
+		append(append(os.Environ(), spawnDecoyEnv(decoy)...), "TMPDIR="+workerTmp, "CXCFUZZ_LOAD_RECORD="+record))
+	defer func() { _ = pool.Close() }()
+
+	got, err := pool.Call("null", "")
+	if err != nil {
+		t.Fatalf("the handshake answered no reply: %v", err)
+	}
+	if strings.TrimSpace(got) != canonical(spawnRefusal) {
+		t.Fatalf("the handshake answered %s, want the refusal %s", got, canonical(spawnRefusal))
+	}
+
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the oracle's initialization recorded nothing: %v", err)
+	}
+	var seen struct {
+		Home      string `json:"home"`
+		CodexHome string `json:"codex_home"`
+	}
+	if err := json.Unmarshal(raw, &seen); err != nil {
+		t.Fatalf("the oracle's initialization recorded %s: %v", raw, err)
+	}
+	caller := spawnDecoyEnv(decoy)
+	wantHome := strings.TrimPrefix(caller[0], "HOME=")
+	wantCodex := strings.TrimPrefix(caller[1], "CODEX_HOME=")
+	if seen.Home == wantHome {
+		t.Fatalf("the oracle's initialization ran under the caller's HOME %s", seen.Home)
+	}
+	if seen.CodexHome == wantCodex {
+		t.Fatalf("the oracle's initialization ran under the caller's CODEX_HOME %s", seen.CodexHome)
+	}
+	// Both point under one root, and that root is the worker's own: it lives under the harness TMPDIR
+	// rather than beside the caller's homes, and it is not the case root either.
+	if filepath.Dir(seen.Home) != filepath.Dir(seen.CodexHome) {
+		t.Fatalf("the initialization ran under %s and %s, want one root's homes", seen.Home, seen.CodexHome)
+	}
+	root := filepath.Dir(seen.Home)
+	if !strings.HasPrefix(root, workerTmp+string(os.PathSeparator)) {
+		t.Fatalf("the initialization ran under %s, want a root the worker made under %s", root, workerTmp)
+	}
+	if root == decoy {
+		t.Fatalf("the initialization ran under the caller's decoy %s", decoy)
+	}
+}
+
+// c8 (CRW-938): the worker's own load root is removed when the worker stops, so the harness leaves no
+// tree behind under the caller's TMPDIR. The handshake alone is enough to prove the load happened; the
+// listing after Close proves the root is gone.
+func TestSpawnOracleLoadRootIsRemoved(t *testing.T) {
+	requireNode(t)
+	workerTmp := t.TempDir()
+	record := filepath.Join(t.TempDir(), "load-env.json")
+	pool := spawnFakePool(t, writeRecordingSpawnOracle(t, record),
+		append(append(os.Environ(), spawnDecoyEnv(t.TempDir())...), "TMPDIR="+workerTmp, "CXCFUZZ_LOAD_RECORD="+record))
+	if _, err := pool.Call("null", ""); err != nil {
+		t.Fatalf("the handshake answered no reply: %v", err)
+	}
+	if err := pool.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if roots := spawnTree(t, workerTmp); len(roots) != 0 {
+		t.Fatalf("the worker left its load root behind: %v", roots)
 	}
 }
 
