@@ -134,11 +134,15 @@ type pumpState struct {
 
 // pumpReview776QueuePin is one frozen queue batch: the notice names it carried, the body it sent
 // and the logical id it was tried under. The names are what an accepted retry records as the
-// membership, so a notice queued after the pin was taken is not moved to sent/.
+// membership, so a notice queued after the pin was taken is not moved to sent/. SHA256 is each
+// member's delivered body digest, so an accepted batch moves only the members still carrying the
+// text it sent.
 type pumpReview776QueuePin struct {
-	LogicalID string   `json:"logical_id"`
-	Names     []string `json:"names"`
-	Body      string   `json:"body"`
+	LogicalID string            `json:"logical_id"`
+	Names     []string          `json:"names"`
+	Body      string            `json:"body"`
+	SHA256    map[string]string `json:"sha256,omitempty"`
+	Accepted  bool              `json:"accepted,omitempty"`
 }
 
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its

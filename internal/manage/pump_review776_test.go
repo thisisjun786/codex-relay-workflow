@@ -3,6 +3,7 @@ package manage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,13 @@ import (
 	"testing"
 	"time"
 )
+
+// pumpReview776TestDigest is the digest of one notice's trimmed body, the value the pin stores per
+// member. The test computes it itself so the file stays self-contained.
+func pumpReview776TestDigest(text string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(text)))
+	return fmt.Sprintf("%x", sum[:])
+}
 
 // The review-776 tests drive the five P1 defects of the ported event pump through the same fake
 // bridge, injected clock and temporary state directory the pump tests use, so no test reaches a
@@ -157,8 +165,8 @@ func TestPumpReview776RefusedQueueBatchClearsPin(t *testing.T) {
 	}
 }
 
-// A pin whose notices are all gone is dropped, and the thread starts no bridge process for it.
-func TestPumpReview776StaleQueuePinIsDropped(t *testing.T) {
+// A pinned notice that is gone never clears the pin on its own: the attempt may already have gone, so the round still reconciles the pinned id and body.
+func TestPumpReview776GonePinnedNoticeKeepsPin(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
 	bridge, log := deliverFakeBridge(t, []map[string]any{})
@@ -178,11 +186,14 @@ func TestPumpReview776StaleQueuePinIsDropped(t *testing.T) {
 	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
-		t.Errorf("the stale pin survived")
+	// A gone pinned notice never clears the pin on its own: the attempt may already have gone, so the
+	// round still reconciles the pinned id and body, and only the notices that vanished are left out.
+	// The empty scenario answers nothing readable, which leaves the attempt unknown and keeps the pin.
+	if tools := deliverSendToolsOf(t, log); len(tools) == 0 {
+		t.Errorf("a gone pinned notice was not reconciled at all")
 	}
-	if tools := deliverSendToolsOf(t, log); len(tools) != 0 {
-		t.Errorf("the stale pin started a bridge process: %v", tools)
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); !ok {
+		t.Errorf("a gone pinned notice cleared the pin before the reconciliation answered")
 	}
 }
 
@@ -435,34 +446,6 @@ func TestPumpReview776RetryWaitsForIdleTimeout(t *testing.T) {
 	}
 }
 
-// A notice replaced under a pinned name drops the pin, so the new text is not sent as the old one.
-func TestPumpReview776ReplacedPinnedNoticeDropsPin(t *testing.T) {
-	now := pumpTestNow
-	e := pumpTestEnv(t, &now)
-	bridge, log := deliverFakeBridge(t, []map[string]any{
-		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
-		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
-	})
-	cfg := pumpTestConfig(t, bridge)
-	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "new-body")
-	st := pumpTestReadState(t, cfg)
-	st.QueueAttempt["parent-1"] = pumpReview776QueuePin{LogicalID: "pinid", Names: []string{"aaaaaaaaaaaaaaaa.txt"}, Body: "old-body"}
-	if err := st.pumpSave(cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
-		t.Error("the pin survived the replaced notice")
-	}
-	last := deliverSendCallsOf(t, log)
-	args, _ := last[len(last)-1]["args"].(map[string]any)
-	if message, _ := args["message"].(string); !strings.Contains(message, "new-body") {
-		t.Errorf("the batch carried %q, want the replacement body", message)
-	}
-}
-
 // A cancelled round makes no durable change: no pin, no move and no state write.
 func TestPumpReview776CancelledRoundWritesNothing(t *testing.T) {
 	now := pumpTestNow
@@ -562,5 +545,188 @@ func TestPumpReview776InvalidUTF8NoticeIsNotPinned(t *testing.T) {
 		if tool == deliverToolSend || tool == deliverToolSteer {
 			t.Errorf("a notice that is not valid UTF-8 was sent: %v", deliverSendToolsOf(t, log))
 		}
+	}
+}
+
+// A same-named oversize notice that arrives later must not overwrite the one already in
+// oversize/.
+func TestPumpReview776OversizeMoveDoesNotOverwrite(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Repeat("x", 130000)
+	second := strings.Repeat("y", 130001)
+	for i, text := range []string{first, second} {
+		if err := os.WriteFile(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt"), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+			t.Fatalf("round %d: %v", i+1, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, pumpReview776OversizeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("oversize/ holds %d notices, want 2 (a later move overwrote the first)", len(entries))
+	}
+	var all []string
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(dir, pumpReview776OversizeDir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, string(raw))
+	}
+	joined := strings.Join(all, "\n")
+	if !strings.Contains(joined, first) || !strings.Contains(joined, second) {
+		t.Errorf("both quarantined notices were not preserved: %d entries", len(entries))
+	}
+}
+
+// A pinned batch is reconciled under the pin's own logical id and body even after a member is
+// replaced, so an unchanged member is not sent twice.
+func TestPumpReview776PinnedBatchReconcilesWhenAMemberChanges(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "outcome_unknown"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "body-a")
+	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", "body-b")
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	pin, ok := pumpReview776QueueAttempt(t, cfg, "parent-1")
+	if !ok {
+		t.Fatal("the unknown batch was not pinned")
+	}
+	wantID, _ := pin["logical_id"].(string)
+
+	// One member is replaced under the same name before the next round.
+	if err := os.WriteFile(filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1", "aaaaaaaaaaaaaaaa.txt"), []byte("A2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retryBridge, retryLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "not_attempted"}},
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg.Bridge.Binary = retryBridge
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	calls := deliverSendCallsOf(t, retryLog)
+	reconciled, sends := false, 0
+	for _, call := range calls {
+		switch call["tool"] {
+		case deliverToolOperation:
+			if deliverSendRequestIDOf(t, call) == wantID {
+				reconciled = true
+			}
+		case deliverToolSteer, deliverToolSend:
+			sends++
+			args, _ := call["args"].(map[string]any)
+			message, _ := args["message"].(string)
+			if !strings.Contains(message, "body-a") || !strings.Contains(message, "body-b") {
+				t.Errorf("the resend carried %q, want the pinned body", message)
+			}
+			if strings.Contains(message, "A2") {
+				t.Errorf("the resend carried the replacement: %q", message)
+			}
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the retry did not reconcile the pinned id %q: %v", wantID, deliverSendToolsOf(t, retryLog))
+	}
+	if sends > 1 {
+		t.Errorf("the retry sent %d times, want at most one", sends)
+	}
+}
+
+// A notice replaced under a pinned name after the delivery was sent stays queued instead of moving
+// to sent/ undelivered.
+func TestPumpReview776ReplacedNoticeStaysQueuedAfterAccepted(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The pin holds body1 and the file now carries A2, the text nobody delivered.
+	if err := os.WriteFile(filepath.Join(dir, "aaaaaaaaaaaaaaaa.txt"), []byte("A2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{"queue_attempt": map[string]any{"parent-1": map[string]any{
+		"logical_id": "pinid", "names": []string{"aaaaaaaaaaaaaaaa.txt"}, "body": "body1",
+		"sha256": map[string]string{"aaaaaaaaaaaaaaaa.txt": pumpReview776TestDigest("body1")}}}}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.StateDir, pumpStateFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 1 || names[0] != "aaaaaaaaaaaaaaaa.txt" {
+		t.Fatalf("the replacement left the queue: %v", names)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pumpSentDir, "aaaaaaaaaaaaaaaa.txt")); !os.IsNotExist(err) {
+		t.Errorf("the replacement was moved to sent/ undelivered: %v", err)
+	}
+}
+
+// After the logical-id formula changed, a thread with no pin reconciles an unsettled record under
+// the old id instead of sending under a new one.
+func TestPumpReview776UpgradeReconcilesTheOldLogicalID(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	// The pre-change id: the thread and the names, without the body.
+	oldID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt"})
+	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body"})
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("a-body"), CreatedAt: deliverNow(e), State: deliverStatePending}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend {
+			if deliverSendRequestIDOf(t, call) == newID {
+				t.Errorf("the round sent under the new id %q instead of reconciling the old one", newID)
+			}
+		}
+	}
+	reconciled := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
+			reconciled = true
+		}
+	}
+	if !reconciled {
+		t.Fatalf("the round did not reconcile the old id %q: %v", oldID, deliverSendToolsOf(t, log))
 	}
 }

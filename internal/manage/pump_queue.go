@@ -2,6 +2,8 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -61,10 +63,20 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	}
 	// A pinned batch is reconciled first, under its own frozen logical id and body, before any new
 	// batch is formed: a notice that may already have gone is never re-sent under a different id.
-	if _, pinned := st.QueueAttempt[thread]; pinned {
-		settled, err := pumpReview776QueueRetry(ctx, e, cfg, st, s, dir, thread, dry)
-		if settled || err != nil {
-			return err
+	if pin, pinned := st.QueueAttempt[thread]; pinned {
+		if pin.Accepted {
+			// A crash between the accepted mark and the moves is completed here without a resend.
+			if err := pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, dry); err != nil {
+				return err
+			}
+		} else {
+			stop, err := pumpReview776QueueRetry(ctx, e, cfg, st, s, dir, thread, dry)
+			if err != nil {
+				return err
+			}
+			if stop {
+				return nil
+			}
 		}
 	}
 	// An accepted batch whose move did not finish is completed next, so an already accepted notice
@@ -102,6 +114,22 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	if dry {
 		fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(batch.names), batch.body)
 		return nil
+	}
+	// An upgraded state has no pin, but the ledger may still hold an unsettled record under the
+	// pre-change logical id of exactly these names. Reconciling it first keeps a delivery that may
+	// already have gone from being sent again under the new id.
+	if adopted, err := pumpReview776QueueAdoptLegacy(cfg, st, thread, batch); err != nil {
+		return err
+	} else if adopted {
+		// The old id and body are now pinned, so the gated retry reconciles them exactly like any
+		// other pinned attempt, and a settled answer clears the pin.
+		stop, err := pumpReview776QueueRetry(ctx, e, cfg, st, s, dir, thread, dry)
+		if err != nil {
+			return err
+		}
+		if stop {
+			return nil
+		}
 	}
 	// The idle-parent timeout is measured on the notices the batch actually carries, so a notice
 	// moved aside as oversize or left for the next round cannot age it.
@@ -149,7 +177,8 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 	}
 	logicalID := pumpQueueBatchID(thread, batch.names, batch.body)
 	st.QueueAttempt[thread] = pumpReview776QueuePin{
-		LogicalID: logicalID, Names: append([]string(nil), batch.names...), Body: batch.body}
+		LogicalID: logicalID, Names: append([]string(nil), batch.names...), Body: batch.body,
+		SHA256: pumpReview776QueueDigests(batch.names, batch.texts)}
 	if err := st.pumpSave(cfg); err != nil {
 		return err
 	}
@@ -161,18 +190,18 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 		thread, len(batch.names), out.RequestID, out.Class, out.Class == deliverClassAccepted, false))
 	switch out.Class {
 	case deliverClassAccepted:
-		// The membership is durable before any move, so a crash between the moves is recoverable.
-		// A cancelled round records no membership: the pin stays and the next round replays the
-		// accepted receipt from the ledger.
+		// The accepted mark is durable before any move, so a crash between the moves is recoverable:
+		// the next round completes them from the pin without sending again.
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		st.QueueAccepted[thread] = append([]string(nil), batch.names...)
-		delete(st.QueueAttempt, thread)
+		pin := st.QueueAttempt[thread]
+		pin.Accepted = true
+		st.QueueAttempt[thread] = pin
 		if err := st.pumpSave(cfg); err != nil {
 			return err
 		}
-		return pumpQueueCompleteAccepted(cfg, st, dir, thread)
+		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
 	case deliverClassRefused:
 		// A refusal is terminal and nothing was sent, so the pin lifts: the notices stay queued and
 		// a later round forms a new batch under a new id.
@@ -183,37 +212,28 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 	}
 }
 
-// pumpQueueCompleteAccepted moves an accepted batch's notices into sent/. A thread with no
-// recorded membership is done already.
+// pumpQueueCompleteAccepted moves a legacy membership's notices into sent/ by name. A membership
+// written before the pin carried digests names its members only, so it is completed as it was
+// written. A membership the pin wrote is completed by pumpReview776QueueFinishAccepted instead.
 func pumpQueueCompleteAccepted(cfg *Config, st *pumpState, dir, thread string) error {
 	names := st.QueueAccepted[thread]
 	if len(names) == 0 {
 		return nil
 	}
-	sent := filepath.Join(dir, pumpSentDir)
-	if err := os.MkdirAll(sent, 0o700); err != nil {
+	if err := pumpReview776QueueMoveByName(dir, names); err != nil {
 		return err
-	}
-	for _, name := range names {
-		source := filepath.Join(dir, name)
-		if _, err := os.Lstat(source); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return err
-		}
-		if err := os.Rename(source, filepath.Join(sent, name)); err != nil {
-			return err
-		}
 	}
 	delete(st.QueueAccepted, thread)
 	delete(st.QueueAttempt, thread)
 	return st.pumpSave(cfg)
 }
 
-// pumpReview776QueueBatch is one queue batch: the notices it carries and the body it sends.
+// pumpReview776QueueBatch is one queue batch: the notices it carries, their trimmed bodies and the
+// body it sends. The per-notice texts let the pin store each member's digest, so an accepted batch
+// moves only the members still carrying the text it sent.
 type pumpReview776QueueBatch struct {
 	names []string
+	texts []string
 	body  string
 }
 
@@ -287,15 +307,55 @@ func pumpReview776QueueOversize(ctx context.Context, e *Env, cfg *Config, dir, t
 		if err := os.MkdirAll(oversizeDir, 0o700); err != nil {
 			return keptNames, keptTexts, err
 		}
-		if err := os.Rename(filepath.Join(dir, name), filepath.Join(oversizeDir, name)); err != nil {
+		// The move never replaces a notice already quarantined under the same name: a link is created
+		// (which fails when the destination exists) and the source is removed only once it succeeded.
+		// A name that is taken gets a fresh one, so two same-named oversize notices both survive.
+		destination, err := pumpReview776QueueOversizeDestination(oversizeDir, name)
+		if err != nil {
+			return keptNames, keptTexts, err
+		}
+		if err := os.Link(filepath.Join(dir, name), destination); err != nil {
 			// The move is retried next round; the notice is left out of this round's batch so one
 			// immovable file cannot hold the thread's other notices.
 			pumpLog(cfg, fmt.Sprintf("queue %s: oversize notice %s could not be moved: %v", thread, name, err))
 			continue
 		}
-		pumpLog(cfg, fmt.Sprintf("queue %s: oversize notice %s %d bytes moved to oversize/", thread, name, len(texts[i])))
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			// The destination holds the bytes now; the source stays and the next round retries the
+			// removal, which is idempotent because the destination name is then taken.
+			pumpLog(cfg, fmt.Sprintf("queue %s: oversize notice %s linked but not removed: %v", thread, name, err))
+			continue
+		}
+		pumpLog(cfg, fmt.Sprintf("queue %s: oversize notice %s %d bytes moved to oversize/%s", thread, name, len(texts[i]), filepath.Base(destination)))
 	}
 	return keptNames, keptTexts, nil
+}
+
+// pumpReview776QueueOversizeDestination picks a free name under oversize/ for a notice being moved
+// aside. The notice's own name is used while it is free; a taken name gets the same stem with a UTC
+// stamp, and a further suffix until one is free, so an earlier quarantined notice is never replaced.
+func pumpReview776QueueOversizeDestination(oversizeDir, name string) (string, error) {
+	candidate := filepath.Join(oversizeDir, name)
+	if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+		return candidate, nil
+	}
+	stamp := time.Now().UTC().Format("20060102T150405")
+	base := name
+	if ext := filepath.Ext(name); ext != "" {
+		base = strings.TrimSuffix(name, ext)
+	}
+	for n := 0; n < 1000; n++ {
+		suffix := ""
+		if n > 0 {
+			suffix = fmt.Sprintf("-%d", n)
+		}
+		taken := fmt.Sprintf("%s.%s%s%s", base, stamp, suffix, filepath.Ext(name))
+		candidate = filepath.Join(oversizeDir, taken)
+		if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("crw manage pump: no free oversize name for %s in %s", name, oversizeDir)
 }
 
 // pumpReview776QueueFit is the longest name-ordered prefix of a thread's notices whose body stays
@@ -322,9 +382,9 @@ func pumpReview776QueueFit(names, texts []string) pumpReview776QueueBatch {
 	if fit == 0 {
 		// An oversize singleton was moved aside already, so this is only a guard against a batch the
 		// delivery core could never accept.
-		return pumpReview776QueueBatch{names: names[:1], body: pumpReview776QueueBody(texts[:1])}
+		return pumpReview776QueueBatch{names: names[:1], texts: texts[:1], body: pumpReview776QueueBody(texts[:1])}
 	}
-	return pumpReview776QueueBatch{names: names[:fit], body: pumpReview776QueueBody(texts[:fit])}
+	return pumpReview776QueueBatch{names: names[:fit], texts: texts[:fit], body: pumpReview776QueueBody(texts[:fit])}
 }
 
 // pumpReview776QueueHeader is the count line a queue batch carries once it holds more than one
@@ -342,29 +402,24 @@ func pumpReview776QueueBody(texts []string) string {
 	return pumpReview776QueueHeader(len(texts)) + strings.Join(texts, "\n\n")
 }
 
-// pumpReview776QueueRetry reconciles a pinned queue batch. It reports whether it settled the
-// thread for this round, so the caller does not also form a fresh batch in the same round. The
-// retry repeats the queue's own gate: an idle parent is only sent to once the oldest pinned notice
-// has waited max_queue_seconds, so reconciling never opens a parent turn early.
+// pumpReview776QueueRetry reconciles a pinned queue batch. It reports whether the thread is settled
+// for this round, so the caller does not also form a fresh batch in the same round.
+//
+// The reconciliation always uses the pin's own logical id and body, never a body rebuilt from disk:
+// a member the producer replaced says nothing about the attempt that may already have gone, and
+// dropping the pin on that change would let the unchanged members be sent again under a new id.
+// The retry repeats the queue's own gate: an idle parent is only sent to once the oldest pinned
+// notice has waited max_queue_seconds, so reconciling never opens a parent turn early.
 func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, dir, thread string, dry bool) (bool, error) {
 	pin := st.QueueAttempt[thread]
-	texts, err := pumpReview776QueueReadNotices(dir, pin.Names)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return pumpReview776QueuePinDrop(cfg, e, st, thread, dry, "the pinned notices changed")
-		}
-		return true, err
-	}
-	if pumpReview776QueueBody(texts) != pin.Body {
-		// A notice was replaced under the same name, so the frozen batch no longer describes what is
-		// queued: the pin lifts and the current notices form their own batch under their own id.
-		return pumpReview776QueuePinDrop(cfg, e, st, thread, dry, "the pinned notices changed")
-	}
 	if dry {
 		fmt.Fprintf(e.Stdout, "queue %s %d notices\n%s\n", thread, len(pin.Names), pin.Body)
 		return true, nil
 	}
-	oldest, err := pumpReview776QueueOldest(dir, pin.Names)
+	// A pinned name that is gone is left out of the age and the move, but it never cancels the
+	// reconciliation: the answer still decides the pin, and the removed name is handled after it.
+	present := pumpReview776QueuePresent(dir, pin.Names)
+	oldest, err := pumpReview776QueueOldest(dir, present)
 	if err != nil {
 		return true, err
 	}
@@ -381,60 +436,164 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 	if state == pumpQueueIdle && e.Now().Sub(oldest).Seconds() < float64(pumpSettingInt(s.MaxQueueSeconds, pumpDefaultMaxQueueSeconds)) {
 		return true, nil
 	}
+	return true, pumpReview776QueueSettle(ctx, e, cfg, st, dir, thread, pin)
+}
+
+// pumpReview776QueueSettle calls Deliver under the pin's stored logical id and body and handles the
+// answer: accepted marks the pin for the digest-checked move, refused clears the pin, unknown keeps
+// it.
+func pumpReview776QueueSettle(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin) error {
 	out, err := Deliver(ctx, e, cfg, Message{LogicalID: pin.LogicalID, Thread: thread, Text: pin.Body, Role: "parent", Settings: cfg.Settings.Parent})
 	if err != nil && out.Class == "" {
 		// An unclassified local failure reached no bridge and learned nothing about the pinned
 		// attempt, so the pin stays and the next round reconciles it again.
-		return true, err
+		return err
 	}
 	pumpLog(cfg, fmt.Sprintf("queue thread=%s notices=%d request=%s class=%s received=%v applied=%v",
 		thread, len(pin.Names), out.RequestID, out.Class, out.Class == deliverClassAccepted, false))
 	switch out.Class {
 	case deliverClassAccepted:
-		// The membership is the pin's own names, never a fresh read of the directory: a notice queued
-		// after the pin was taken was not in the delivered body and must not move to sent/. A pinned
-		// name the producer replaced while the delivery was in flight is not moved either: the
-		// delivery carried the pinned text, so moving the replacement would drop a notice nobody has
-		// delivered. That notice stays queued and forms its own batch under its own id.
-		current, readErr := pumpReview776QueueReadNotices(dir, pin.Names)
-		unchanged := readErr == nil && pumpReview776QueueBody(current) == pin.Body
-		if !unchanged {
-			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted batch's notices changed; nothing moved to sent/", thread))
-		}
-		// The membership and its save are durable effects, so a cancelled round makes neither; the pin
-		// stays and the next round replays the accepted receipt from the ledger.
+		// The accepted mark is durable before any move, so a crash between the moves is completed by
+		// the next round from the pin without sending again.
 		if err := ctx.Err(); err != nil {
-			return true, err
+			return err
 		}
-		if unchanged {
-			st.QueueAccepted[thread] = append([]string(nil), pin.Names...)
-		}
-		delete(st.QueueAttempt, thread)
+		pin.Accepted = true
+		st.QueueAttempt[thread] = pin
 		if err := st.pumpSave(cfg); err != nil {
-			return true, err
+			return err
 		}
-		return true, pumpQueueCompleteAccepted(cfg, st, dir, thread)
+		return pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
 	case deliverClassRefused:
-		return true, pumpReview776QueuePinLift(cfg, st, thread, err)
+		// A refusal is terminal and nothing was sent, so the pin clears and the notices stay queued.
+		return pumpReview776QueuePinLift(cfg, st, thread, err)
 	default:
-		return true, err
+		// Unknown: the pin stays, so the next round reconciles the same logical id and body.
+		return err
 	}
 }
 
-// pumpReview776QueuePinDrop drops a pin whose frozen batch no longer describes the queue, because
-// the pinned notices changed or are gone. The thread then forms a batch from what is queued, which
-// is why the caller is told the thread was not settled.
-func pumpReview776QueuePinDrop(cfg *Config, e *Env, st *pumpState, thread string, dry bool, reason string) (bool, error) {
-	delete(st.QueueAttempt, thread)
+// pumpReview776QueueFinishAccepted completes an accepted batch: it moves to sent/ only the members
+// whose current file still carries the digest that was sent, leaves a replaced member queued with a
+// log line, and clears the pin. It runs from the accepted send and from a later round that finds an
+// accepted pin.
+func pumpReview776QueueFinishAccepted(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin, dry bool) error {
 	if dry {
-		fmt.Fprintf(e.Stdout, "queue %s: would drop the pin, %s\n", thread, reason)
+		fmt.Fprintf(e.Stdout, "queue %s: would complete %d accepted notices\n", thread, len(pin.Names))
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		// The moves and the pin clear are durable effects: a cancelled round makes neither.
+		return err
+	}
+	sent := filepath.Join(dir, pumpSentDir)
+	created := false
+	for _, name := range pin.Names {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// The name is gone, so there is nothing to move and nothing to keep.
+				continue
+			}
+			return err
+		}
+		if pumpReview776BodyDigest(string(raw)) != pin.SHA256[name] {
+			// The file no longer carries what was sent, so moving it would take a notice to sent/ that
+			// nobody delivered. It stays queued for a later batch.
+			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted notice %s was replaced; left queued", thread, name))
+			continue
+		}
+		if !created {
+			if err := os.MkdirAll(sent, 0o700); err != nil {
+				return err
+			}
+			created = true
+		}
+		if err := os.Rename(filepath.Join(dir, name), filepath.Join(sent, name)); err != nil {
+			return err
+		}
+	}
+	delete(st.QueueAttempt, thread)
+	delete(st.QueueAccepted, thread)
+	return st.pumpSave(cfg)
+}
+
+// pumpReview776QueueDigests is each member's delivered body digest, stored in the pin so an
+// accepted batch moves only the members still carrying the text it sent.
+func pumpReview776QueueDigests(names, texts []string) map[string]string {
+	digests := make(map[string]string, len(names))
+	for i, name := range names {
+		if i < len(texts) {
+			digests[name] = pumpReview776BodyDigest(texts[i])
+		}
+	}
+	return digests
+}
+
+// pumpReview776BodyDigest is one notice body's digest, taken over the same trimmed text the batch
+// carries.
+func pumpReview776BodyDigest(text string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(text)))
+	return hex.EncodeToString(sum[:])
+}
+
+// pumpReview776QueuePresent is the pinned names whose file still exists, in the pin's order.
+func pumpReview776QueuePresent(dir string, names []string) []string {
+	present := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			present = append(present, name)
+		}
+	}
+	return present
+}
+
+// pumpReview776QueueMoveByName moves the named notices into sent/, the completion the pre-pin
+// membership shape uses.
+func pumpReview776QueueMoveByName(dir string, names []string) error {
+	sent := filepath.Join(dir, pumpSentDir)
+	if err := os.MkdirAll(sent, 0o700); err != nil {
+		return err
+	}
+	for _, name := range names {
+		source := filepath.Join(dir, name)
+		if _, err := os.Lstat(source); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		if err := os.Rename(source, filepath.Join(sent, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pumpReview776QueueAdoptLegacy pins the pre-change logical id of a batch that has no pin when the
+// ledger still holds an unsettled record for it, so an upgrade reconciles the old attempt instead of
+// sending under the new id. It reports whether it adopted one. It is reached only when the batch's
+// composed body is still the text that was attempted, which the record's message digest proves; an
+// old attempt whose text changed is left to the new id.
+func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, thread string, batch pumpReview776QueueBatch) (bool, error) {
+	oldID := pumpQueueLegacyBatchID(thread, batch.names)
+	record, known, err := deliverLoad(cfg, oldID)
+	if err != nil {
+		return false, err
+	}
+	if !known || record.State != deliverStatePending || record.MessageSHA256 != deliverMessageSHA256(batch.body) {
 		return false, nil
 	}
-	pumpLog(cfg, fmt.Sprintf("queue %s: pin dropped, %s", thread, reason))
-	if err := st.pumpSave(cfg); err != nil {
-		return true, err
-	}
-	return false, nil
+	st.QueueAttempt[thread] = pumpReview776QueuePin{
+		LogicalID: oldID, Names: append([]string(nil), batch.names...), Body: batch.body,
+		SHA256: pumpReview776QueueDigests(batch.names, batch.texts)}
+	return true, st.pumpSave(cfg)
+}
+
+// pumpQueueLegacyBatchID is the pre-change queue batch id: the thread and the sorted notice names,
+// without the body. It is read only to find an unsettled record an upgrade left behind.
+func pumpQueueLegacyBatchID(thread string, names []string) string {
+	return pumpBatchIDStrings(append([]string{thread}, names...))
 }
 
 // pumpReview776QueuePinLift drops a pin whose delivery settled without an acceptance: a refusal is
