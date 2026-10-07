@@ -657,6 +657,9 @@ func TestAuditDraftsReview744RefusedBatchLeavesNoMarker(t *testing.T) {
 	if err := os.MkdirAll(auditPendingPath(e, cfg, bad), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// Any later grader run writes a clean result, so a bundle that is regraded loses its P1 file
+	// and stops drafting. The count below is therefore the regrade itself, not a coincidence.
+	t.Setenv("AUDIT_JSON", auditJSONClean)
 	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bad}, {Bundle: good}}); err == nil {
 		t.Fatal("a batch whose marker could not be taken was accepted")
 	}
@@ -669,6 +672,9 @@ func TestAuditDraftsReview744RefusedBatchLeavesNoMarker(t *testing.T) {
 	}
 	if len(report.Created) != 1 {
 		t.Fatalf("the recorded grade must still draft: %+v", report)
+	}
+	if report.Created[0].Severity != "P1" {
+		t.Errorf("the surviving draft is %s, want the recorded P1 the refused batch must not regrade", report.Created[0].Severity)
 	}
 }
 

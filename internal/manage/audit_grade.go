@@ -167,7 +167,6 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 	// killed batch leave bundles this run never graded looking unrecorded.
 	marks := make([]*os.File, len(jobs))
 	paths := make([]string, len(jobs))
-	fresh := make([]bool, len(jobs))
 	var markMu sync.Mutex
 	var markErr error
 	results := make([]AuditResult, len(jobs))
@@ -175,21 +174,22 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 	sem := make(chan struct{}, section.Workers)
 	var wg sync.WaitGroup
 	for i := range jobs {
-		// Once a job's marker could not be taken the batch is refused, so no later job is started:
-		// a bundle this run never touched must keep the result it already had.
-		markMu.Lock()
-		stopped := markErr != nil
-		markMu.Unlock()
-		if stopped {
-			break
-		}
 		wg.Add(1)
+		// The worker checks the refusal again after it has a slot and immediately before it grades:
+		// a job that waited for a slot while an earlier marker failed must not start, because a
+		// bundle this run never touched has to keep the result it already had.
 		sem <- struct{}{}
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			markMu.Lock()
+			stopped := markErr != nil
+			markMu.Unlock()
+			if stopped {
+				return
+			}
 			path := auditPendingPath(e, cfg, resolved[i])
-			mark, made, err := auditPendingMark(path)
+			mark, _, err := auditPendingMark(path)
 			if err != nil {
 				// This bundle is not graded at all. Nothing is recorded for it, and the batch is
 				// refused once the workers stop: recording a row for a run that never started would
@@ -201,7 +201,7 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 				markMu.Unlock()
 				return
 			}
-			marks[i], paths[i], fresh[i] = mark, path, made
+			marks[i], paths[i] = mark, path
 			results[i] = auditGradeOne(ctx, e, section, bundles[i], resolved[i], jobs[i], &logs[i])
 		}(i)
 	}
@@ -390,19 +390,6 @@ func auditPendingClear(e *Env, f *os.File, path string) {
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(e.Stderr, "crw manage audit: %s: the in-flight marker could not be cleared: %v\n", path, err)
-	}
-	auditPendingUnlock(f)
-}
-
-// auditPendingDiscard takes back a marker this run created for a bundle it then never graded, so a
-// batch refused before any worker started leaves no bundle looking unrecorded. A marker that was
-// already there is kept: it is the record of an earlier run that could not record its row.
-func auditPendingDiscard(f *os.File, path string, fresh bool) {
-	if f == nil {
-		return
-	}
-	if fresh {
-		_ = os.Remove(path)
 	}
 	auditPendingUnlock(f)
 }
