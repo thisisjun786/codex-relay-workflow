@@ -187,6 +187,15 @@ func trainStripComment(line string) string {
 // env value) is therefore never taken for a mapping key, and a part: elsewhere in the job is never
 // read as the matrix's list (CRW-897, answer 2; pre-merge evaluation d1, d2).
 func trainJobMatrixParts(workflow, job string) ([]string, bool, error) {
+	// a job whose definition sits on its own header line ("  gui: {runs-on: x, strategy: {...}}")
+	// keeps its matrix inside that line, where this text scan cannot read legs from. A plain
+	// flow-mapping job is still counted as a job (answer 2), but one that carries a matrix would be
+	// reported under its bare name while a run reports its legs, so it is merge_target_unreadable
+	// rather than a set comparison that silently passes.
+	if inline, found := trainJobHeaderValue(workflow, job); found && inline != "" &&
+		(strings.Contains(inline, "matrix") || strings.Contains(inline, "strategy")) {
+		return nil, false, errors.New("the workflow's " + job + " job carries its definition on its header line, where its matrix legs cannot be read key by key")
+	}
 	body, found := trainJobBody(workflow, job)
 	if !found {
 		return nil, false, errors.New("the workflow holds no " + job + " job")
@@ -292,6 +301,27 @@ func trainMatrixBlock(body string) ([]string, bool, error) {
 		block = append(block, line)
 	}
 	return block, true, nil
+}
+
+// trainJobHeaderValue answers the value a job's own header line carries after its key: "" for a
+// header whose block follows on the next lines ("  gui:"), and the inline text for a flow-mapping
+// header ("  gui: {runs-on: x}"). The second result is false when no such job key is found.
+func trainJobHeaderValue(workflow, job string) (string, bool) {
+	body, inline, found := trainJobsBlock(workflow)
+	if !found || inline {
+		return "", false
+	}
+	for _, line := range strings.Split(body, "\n") {
+		bare := trainStripComment(line)
+		if !strings.HasPrefix(bare, "  ") || strings.HasPrefix(bare, "   ") {
+			continue
+		}
+		key, value, ok := trainJobKeyValue(strings.TrimPrefix(bare, "  "))
+		if ok && key == job {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // trainJobBody is the text of one job's block: from its header line to the next job's header, or to

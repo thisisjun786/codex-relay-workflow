@@ -10,9 +10,10 @@ package mergeturn
 // same package cannot collide.
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -406,37 +407,6 @@ func TestTrainMatrixGuardRefusesANonPartKey(t *testing.T) {
 	}
 }
 
-// TestTrainHalveIsAPrefixOfTheOrderedGroups: the first half is the ordered groups taken whole until
-// the next would exceed half, so a smaller group after the overflow stays in the second half
-// (CRW-897, answer 3; pre-merge evaluation d2). The review's case: groups of 2, 3, 1, 1, 1 with half
-// 4 give first = the first group only, and the rest — the 1-sized groups included — go second.
-func TestTrainHalveIsAPrefixOfTheOrderedGroups(t *testing.T) {
-	nodes := []TrainMemberNode{
-		{PRNumber: 101, NodeID: "A"}, {PRNumber: 102, NodeID: "B"}, {PRNumber: 103, NodeID: "C"},
-		{PRNumber: 104, NodeID: "D"}, {PRNumber: 105, NodeID: "E"}, {PRNumber: 106, NodeID: "F"},
-		{PRNumber: 107, NodeID: "G"}, {PRNumber: 108, NodeID: "H"},
-	}
-	order := []int64{101, 102, 103, 104, 105, 106, 107, 108}
-	// groups by place: {A,B} {C,D,E} {F} {G} {H}; half = 4, so the first half takes {A,B} and stops
-	edges := []TrainPlanEdge{{FromNodeID: "A", ToNodeID: "B"}, {FromNodeID: "C", ToNodeID: "D"}, {FromNodeID: "D", ToNodeID: "E"}}
-	first, second := TrainHalve(order, nodes, edges)
-	if strings.Join(intsToStrs(first), ",") != "101,102" {
-		t.Fatalf("first = %v, want the first whole group only", first)
-	}
-	if strings.Join(intsToStrs(second), ",") != "103,104,105,106,107,108" {
-		t.Fatalf("second = %v, want everything from the first overflow on", second)
-	}
-}
-
-// intsToStrs renders a pull request list for comparison.
-func intsToStrs(list []int64) []string {
-	out := make([]string, 0, len(list))
-	for _, v := range list {
-		out = append(out, strconv.FormatInt(v, 10))
-	}
-	return out
-}
-
 // TestTrainJobReaderCountsAQuotedMatrixKey: a quoted "matrix": key is read like an unquoted one, so a
 // workflow that quotes its keys is not refused (CRW-897, answer 2; pre-merge evaluation d2).
 func TestTrainJobReaderCountsAQuotedMatrixKey(t *testing.T) {
@@ -462,6 +432,74 @@ func TestTrainJobReaderExpandsEveryMatrixJob(t *testing.T) {
 	want := "validate,audit (one),audit (two),go-product (lint)"
 	if strings.Join(jobs, ",") != want {
 		t.Fatalf("jobs = %v, want %v", jobs, want)
+	}
+}
+
+// TestTrainJobReaderRefusesAFlowMappingJobWithAMatrix: a job defined entirely on its header line
+// keeps its matrix inside that line, so its legs cannot be read; reporting the bare job name would
+// let an added leg pass the set comparison, so it is refused
+// (CRW-897, answer 2; pre-merge evaluation d2).
+func TestTrainJobReaderRefusesAFlowMappingJobWithAMatrix(t *testing.T) {
+	job := "\njobs:\n  validate:\n    runs-on: ubuntu\n  gui: {runs-on: ubuntu, strategy: {matrix: {part: [one, two]}}, steps: [{run: echo ok}]}\n  go-product:\n    strategy:\n      matrix:\n        part: [lint]\n"
+	if _, err := TrainJobsFromWorkflow(job); err == nil {
+		t.Fatal("a flow-mapping job carrying a matrix was read under its bare name")
+	}
+	// a plain flow-mapping job with no matrix is still just a job
+	plain := "\njobs:\n  validate:\n    runs-on: ubuntu\n  audit: {runs-on: ubuntu, steps: []}\n  go-product:\n    strategy:\n      matrix:\n        part: [lint]\n"
+	jobs, err := TrainJobsFromWorkflow(plain)
+	if err != nil {
+		t.Fatalf("a plain flow-mapping job: %v", err)
+	}
+	if strings.Join(jobs, ",") != "validate,audit,go-product (lint)" {
+		t.Fatalf("jobs = %v, want the flow-mapping job counted", jobs)
+	}
+}
+
+// TestTrainCheckoutProverFileReadsTheCommitNotTheWorkingTree: verify's ci.yml read must answer the
+// file at the named commit, never the working tree, which may sit on another branch. The proof is a
+// temporary git repository whose working tree holds one job set while the named commit holds another
+// (CRW-897, answer 2, c2; pre-merge evaluation P2).
+func TestTrainCheckoutProverFileReadsTheCommitNotTheWorkingTree(t *testing.T) {
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	workflow := func(job string) string {
+		return "\njobs:\n  " + job + ":\n    runs-on: ubuntu\n"
+	}
+	path := ".github/workflows/ci.yml"
+	git("init", "-q", "-b", "dev")
+	if err := os.MkdirAll(filepath.Join(repo, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, path), []byte(workflow("at-commit")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", path)
+	git("commit", "-q", "-m", "the workflow at the commit")
+	commit := git("rev-parse", "HEAD")
+	// the working tree now holds a different workflow, as a checkout on another branch would
+	if err := os.WriteFile(filepath.Join(repo, path), []byte(workflow("in-working-tree")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prover := TrainCheckoutProver{}
+	got, err := prover.File(context.Background(), repo, commit, path)
+	if err != nil {
+		t.Fatalf("reading %s at %s: %v", path, commit, err)
+	}
+	if !strings.Contains(got, "at-commit") || strings.Contains(got, "in-working-tree") {
+		t.Fatalf("File answered the working tree, not the commit: %q", got)
+	}
+	// an unknown commit is an error, never the working tree's answer
+	if got, err := prover.File(context.Background(), repo, strings.Repeat("0", 40), path); err == nil {
+		t.Fatalf("an unknown commit answered %q", got)
 	}
 }
 

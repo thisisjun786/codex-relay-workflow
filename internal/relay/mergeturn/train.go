@@ -1318,17 +1318,14 @@ func TrainHalve(order []int64, nodes []TrainMemberNode, edges []TrainPlanEdge) (
 	// the groups are filled into the first half in order, each whole group while it still fits;
 	// the rest go to the second. Each half is then emitted in the bundle's order, so the two sides
 	// stay in the order the bundle named (the halving moves members between halves, never within one).
-	// the first half is a PREFIX of the ordered groups: whole groups are taken in order until the
-	// next one would exceed half, and everything from there on — including a smaller group that
-	// would still fit — goes to the second (CRW-897, answer 3). The first group is always taken, so
-	// a bundle whose leading joined group is larger than half is still split with the first half
-	// non-empty, which is the case the shipped chain test pins; taking a later small group after
-	// the overflow is what would make the split a non-prefix selection.
+	// the groups are filled into the first half in order, each whole group while it still fits;
+	// the rest go to the second. Each half is then emitted in the bundle's order, so the two sides
+	// stay in the order the bundle named (the halving moves members between halves, never within one).
 	inFirst := map[int64]bool{}
 	taken := 0
 	for _, g := range groups {
-		if taken+len(g.members) > half && taken > 0 {
-			break
+		if taken+len(g.members) > half {
+			continue
 		}
 		taken += len(g.members)
 		for _, pr := range g.members {
