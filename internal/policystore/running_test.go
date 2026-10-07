@@ -3,6 +3,8 @@ package policystore
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,5 +94,54 @@ func TestRunningDigestUsesTheConfiguredSocketWhenTheFileNamesOne(t *testing.T) {
 	}
 	if *seen != "/srv/app.sock" {
 		t.Fatalf("socket = %q, want the configured one", *seen)
+	}
+}
+
+// TestRunningDigestRefusesAManageSectionThatIsNotAnObject is C1 for the shape the configuration can
+// take: the file is there, the manage key is there, and it is not an object. The management reader
+// refuses that configuration, so the policy reader must not answer with the default relay's digest
+// as though no configuration had been named.
+func TestRunningDigestRefusesAManageSectionThatIsNotAnObject(t *testing.T) {
+	seen := stubRunningSeams(t, "same-digest")
+	runningSeams.readManage = manageRelaySettings
+	root := t.TempDir()
+	config := filepath.Join(root, "crw-config.json")
+	if err := os.WriteFile(config, []byte("{\"manage\": null}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := envOf(map[string]string{
+		"HOME": root, "CODEX_HOME": filepath.Join(root, ".codex"), "CRW_CONFIG": config,
+	})
+	running := RunningDigest(context.Background(), env)
+	if running.State != RunningUnavailable {
+		t.Fatalf("state = %q, want %q", running.State, RunningUnavailable)
+	}
+	if running.Digest != "" {
+		t.Fatalf("a configuration whose manage section is not an object still answered a digest: %q", running.Digest)
+	}
+	if *seen != "" {
+		t.Fatalf("the default socket %q was used although the manage section could not be read", *seen)
+	}
+}
+
+// TestRunningDigestAcceptsAFileThatNamesNoManageSection is the contrast: a configuration file that
+// simply does not carry the section names nothing, which is the absent case the default covers.
+func TestRunningDigestAcceptsAFileThatNamesNoManageSection(t *testing.T) {
+	seen := stubRunningSeams(t, "d")
+	runningSeams.readManage = manageRelaySettings
+	root := t.TempDir()
+	config := filepath.Join(root, "crw-config.json")
+	if err := os.WriteFile(config, []byte("{\"paths\": {}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := envOf(map[string]string{
+		"HOME": root, "CODEX_HOME": filepath.Join(root, ".codex"), "CRW_CONFIG": config,
+	})
+	running := RunningDigest(context.Background(), env)
+	if running.State != RunningObserved || running.Digest != "d" {
+		t.Fatalf("a configuration naming no manage section was not read as absent: %+v", running)
+	}
+	if want := filepath.Join(root, ".codex", "app-server-control", "app-server-control.sock"); *seen != want {
+		t.Fatalf("socket = %q, want the App Server default %q", *seen, want)
 	}
 }

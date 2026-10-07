@@ -123,27 +123,43 @@ func TestCheckKeepsTheModeWhenAChangeStaysInsideIt(t *testing.T) {
 }
 
 // TestAppliedActionReregisterNamesTheCommandThatWorks is C5: the guidance names the re-registration
-// path, and every flag it names is one install actually declares. A sentence naming a flag install
-// does not know is a repair instruction that fails when an operator follows it.
+// path, every flag it names is one install actually declares, and following the sentence against
+// the state it is meant for really re-registers a changed policy. A sentence naming a flag install
+// does not know, or a command that refuses once a record exists, is a repair instruction that fails
+// when an operator follows it.
 func TestAppliedActionReregisterNamesTheCommandThatWorks(t *testing.T) {
 	if !strings.Contains(AppliedActionReregister, "--re-register-policy") {
 		t.Fatalf("the guidance does not name the re-registration flag: %q", AppliedActionReregister)
 	}
 	args, policy := reregisterArgs(t)
 	env, _ := installHome(t)
-	// The command is run as written against an isolated home with no record: the re-registration
-	// path answers record_absent and refuses. A flag install does not declare is a usage error
-	// instead, which is the difference this test is about.
+	// A record first, naming an older policy, so the sentence is followed against the state it
+	// exists for: an existing registration whose policy file has changed.
+	if err := os.WriteFile(policy, []byte(presenceOnly), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr strings.Builder
-	code := install.Main(context.Background(), args, env, &stdout, &stderr)
-	if code == install.Usage {
-		t.Fatalf("install answered a usage error for the flags the guidance names: %q\n%s%s", AppliedActionReregister, stdout.String(), stderr.String())
+	code := install.Main(context.Background(), []string{"register-mcp", "--owner", "plugin", "--execution-policy", policy}, env, &stdout, &stderr)
+	if code != install.OK || !strings.Contains(stdout.String(), "\"outcome\": \"record_created\"") {
+		t.Fatalf("the record this test needs could not be created: exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
-	if strings.Contains(stderr.String(), "not defined") {
-		t.Fatalf("the guidance names a flag install does not declare: %s", stderr.String())
+	// The policy bytes change, which is the state the repair exists for.
+	if err := os.WriteFile(policy, []byte(oneAllowed), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	// A misspelled flag in the same position is a usage error, so the assertion above is about the
-	// flags rather than about install accepting anything.
+	// The command is run exactly as the guidance spells it, with the placeholder replaced by the
+	// changed file.
+	stdout.Reset()
+	stderr.Reset()
+	code = install.Main(context.Background(), args, env, &stdout, &stderr)
+	if code == install.Usage || strings.Contains(stderr.String(), "not defined") {
+		t.Fatalf("install rejected the flags the guidance names: %q\n%s%s", AppliedActionReregister, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"outcome\": \"record_updated\"") {
+		t.Fatalf("following the guidance did not re-register the policy: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	// A misspelled flag in the same position is a usage error, so the assertions above are about
+	// the flags rather than about install accepting anything.
 	misspelled := []string{"register-mcp", "--re-register-policies", "--execution-policy", policy}
 	stdout.Reset()
 	stderr.Reset()
@@ -153,8 +169,9 @@ func TestAppliedActionReregisterNamesTheCommandThatWorks(t *testing.T) {
 }
 
 // reregisterArgs reads the command line out of the guidance sentence: the tokens from register-mcp
-// on, with the placeholder replaced by a real policy file. The placeholder is written with angle
-// brackets, so it is the one token that is neither a flag nor the subcommand.
+// on, with the placeholder replaced by a real policy file, which the returned path names. The
+// placeholder is written with angle brackets, so it is the one token that is neither a flag nor the
+// subcommand.
 func reregisterArgs(t *testing.T) ([]string, string) {
 	t.Helper()
 	fields := strings.Fields(AppliedActionReregister)
@@ -212,4 +229,56 @@ func installHome(t *testing.T) (scope.Env, string) {
 		"CRW_HOME="+filepath.Join(root, "crw"),
 	)
 	return env, home
+}
+
+// TestCheckRefusesAnAliasThatIsPresentButEmpty is C2's edge: a request that supplies both spellings
+// with one of them empty has still supplied two values, and they differ. Reading the empty one as
+// though the key were absent would accept a request the contract calls ambiguous.
+func TestCheckRefusesAnAliasThatIsPresentButEmpty(t *testing.T) {
+	for _, raw := range []string{
+		"{\"kind\":\"setException\",\"id\":\"legacy\",\"role\":\"child\",\"model\":\"m\",\"reasoningEffort\":\"high\",\"effort\":\"\",\"cwd\":[\"/tmp/project\"]}",
+		"{\"kind\":\"setException\",\"id\":\"legacy\",\"role\":\"child\",\"model\":\"m\",\"reasoningEffort\":\"\",\"effort\":\"high\",\"cwd\":[\"/tmp/project\"]}",
+	} {
+		var change Change
+		if err := json.Unmarshal([]byte(raw), &change); err != nil {
+			t.Fatalf("an empty alias must not fail the decode: %v", err)
+		}
+		result := Check([]byte(presenceOnly), digestOf(presenceOnly), change)
+		if result.Valid {
+			t.Fatalf("a request naming two different efforts, one empty, was accepted: %s -> %+v", raw, result)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatalf("a refused change carries no error: %+v", result)
+		}
+	}
+}
+
+// TestCheckRefusesAPairWhoseAliasesArePresentButEmpty is the same edge through setRolePairs, which
+// resolves its effort with the same function.
+func TestCheckRefusesAPairWhoseAliasesArePresentButEmpty(t *testing.T) {
+	raw := "{\"kind\":\"setRolePairs\",\"role\":\"child\",\"pairs\":[{\"model\":\"m\",\"reasoningEffort\":\"high\",\"effort\":\"\"}]}"
+	var change Change
+	if err := json.Unmarshal([]byte(raw), &change); err != nil {
+		t.Fatal(err)
+	}
+	if result := Check([]byte(presenceOnly), digestOf(presenceOnly), change); result.Valid {
+		t.Fatalf("a pair naming two different efforts, one empty, was accepted: %+v", result)
+	}
+}
+
+// TestCheckAcceptsOneAliasSpellingOnItsOwn is the contrast: naming exactly one spelling is not
+// ambiguous, whether or not the other key is absent.
+func TestCheckAcceptsOneAliasSpellingOnItsOwn(t *testing.T) {
+	for _, raw := range []string{
+		"{\"kind\":\"setException\",\"id\":\"legacy\",\"role\":\"child\",\"model\":\"m\",\"effort\":\"high\",\"cwd\":[\"/tmp/project\"]}",
+		"{\"kind\":\"setException\",\"id\":\"legacy\",\"role\":\"child\",\"model\":\"m\",\"reasoningEffort\":\"high\",\"cwd\":[\"/tmp/project\"]}",
+	} {
+		var change Change
+		if err := json.Unmarshal([]byte(raw), &change); err != nil {
+			t.Fatal(err)
+		}
+		if result := Check([]byte(presenceOnly), digestOf(presenceOnly), change); !result.Valid {
+			t.Fatalf("a single alias spelling was refused: %s -> %+v", raw, result)
+		}
+	}
 }

@@ -68,11 +68,20 @@ type Pair struct {
 	conflict string
 }
 
-// pairWire is a pair as JSON carries it.
+// pairWire is a pair as JSON carries it, for writing.
 type pairWire struct {
 	Model           string `json:"model"`
 	ReasoningEffort string `json:"reasoningEffort"`
 	Effort          string `json:"effort,omitempty"`
+}
+
+// pairRequest is a pair as a request carries it. The two effort spellings are raw so the reader can
+// tell a key that was absent from one supplied empty: the contract refuses two spellings that
+// disagree, and an empty value beside a non-empty one is a disagreement rather than an absence.
+type pairRequest struct {
+	Model           string          `json:"model"`
+	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
+	Effort          json.RawMessage `json:"effort"`
 }
 
 // UnmarshalJSON reads a pair from either spelling of its effort. A pair that names neither is read
@@ -80,24 +89,47 @@ type pairWire struct {
 // A pair that names both with different values records the disagreement instead of silently
 // keeping one of them.
 func (p *Pair) UnmarshalJSON(raw []byte) error {
-	var wire pairWire
+	var wire pairRequest
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
 	}
+	reasoningEffort, reasoningPresent, err := effortField(wire.ReasoningEffort)
+	if err != nil {
+		return err
+	}
+	effort, effortPresent, err := effortField(wire.Effort)
+	if err != nil {
+		return err
+	}
 	p.Model = wire.Model
-	p.Effort, p.conflict = effortAlias(wire.ReasoningEffort, wire.Effort)
+	p.Effort, p.conflict = effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
 	return nil
+}
+
+// effortField is one spelling of an effort as a request carried it: its value when the key was
+// present, whether the key was present at all, and why a value that is not a string could not be
+// read. The presence flag is what separates an absent key from one supplied empty.
+func effortField(raw json.RawMessage) (string, bool, error) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", true, err
+	}
+	return value, true, nil
 }
 
 // effortAlias resolves the two spellings an effort may be given in: the policy document's
 // reasoningEffort and the shorter effort the check contract uses. It is the one place the alias is
-// resolved, so Pair and Change cannot disagree about it. A request that names both with different
-// values is ambiguous, and the returned reason says so rather than silently picking one.
-func effortAlias(reasoningEffort, effort string) (string, string) {
-	if reasoningEffort != "" && effort != "" && reasoningEffort != effort {
+// resolved, so Pair and Change cannot disagree about it. A request that supplies both spellings
+// with different values is ambiguous, and the returned reason says so rather than silently picking
+// one; an explicitly empty value is a supplied value, so it disagrees with a non-empty one.
+func effortAlias(reasoningEffort string, reasoningPresent bool, effort string, effortPresent bool) (string, string) {
+	if reasoningPresent && effortPresent && reasoningEffort != effort {
 		return "", "reasoningEffort " + strconv.Quote(reasoningEffort) + " and effort " + strconv.Quote(effort) + " disagree; name one"
 	}
-	if reasoningEffort != "" {
+	if reasoningPresent && reasoningEffort != "" {
 		return reasoningEffort, ""
 	}
 	return effort, ""

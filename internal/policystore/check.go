@@ -41,17 +41,18 @@ type Change struct {
 }
 
 // changeWire is a change as JSON carries it. It exists so Change can decode the two effort
-// spellings through the same resolver Pair uses without recursing into its own UnmarshalJSON.
+// spellings through the same resolver Pair uses without recursing into its own UnmarshalJSON. The
+// spellings are raw so an absent key is distinguishable from one supplied empty.
 type changeWire struct {
-	Kind            string   `json:"kind"`
-	Role            string   `json:"role,omitempty"`
-	Pairs           []Pair   `json:"pairs,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	Efforts         []string `json:"efforts,omitempty"`
-	ID              string   `json:"id,omitempty"`
-	ReasoningEffort string   `json:"reasoningEffort,omitempty"`
-	Effort          string   `json:"effort,omitempty"`
-	CWD             []string `json:"cwd,omitempty"`
+	Kind            string          `json:"kind"`
+	Role            string          `json:"role,omitempty"`
+	Pairs           []Pair          `json:"pairs,omitempty"`
+	Model           string          `json:"model,omitempty"`
+	Efforts         []string        `json:"efforts,omitempty"`
+	ID              string          `json:"id,omitempty"`
+	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
+	Effort          json.RawMessage `json:"effort"`
+	CWD             []string        `json:"cwd,omitempty"`
 }
 
 // UnmarshalJSON reads a change from the wire, resolving its effort through the same alias resolver
@@ -62,9 +63,17 @@ func (c *Change) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
 	}
-	effort, conflict := effortAlias(wire.ReasoningEffort, wire.Effort)
+	reasoningEffort, reasoningPresent, err := effortField(wire.ReasoningEffort)
+	if err != nil {
+		return err
+	}
+	effort, effortPresent, err := effortField(wire.Effort)
+	if err != nil {
+		return err
+	}
+	resolved, conflict := effortAlias(reasoningEffort, reasoningPresent, effort, effortPresent)
 	*c = Change{Kind: wire.Kind, Role: wire.Role, Pairs: wire.Pairs, Model: wire.Model,
-		Efforts: wire.Efforts, ID: wire.ID, Effort: effort, CWD: wire.CWD, conflict: conflict}
+		Efforts: wire.Efforts, ID: wire.ID, Effort: resolved, CWD: wire.CWD, conflict: conflict}
 	return nil
 }
 

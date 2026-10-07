@@ -1,7 +1,10 @@
 package policystore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,30 +47,48 @@ var runningSeams = struct {
 // manageRelay is the relay block of the management session configuration: the socket and the state
 // directory, either of which may be empty.
 type manageRelay struct {
-	Socket string
-	State  string
+	Socket string `json:"socket"`
+	State  string `json:"state"`
 }
 
 // manageRelaySettings is the relay block the management session configuration names, read through
 // crwconfig the way crw manage reads it. An absent file leaves both empty and the caller falls back
 // to the App Server default socket; a file that is there but cannot be read or is not a JSON object
 // is an error, because which relay to observe could not be established and the default relay is not
-// the answer to that question.
+// the answer to that question. A manage key that is there but is not an object is the same kind of
+// error: the management reader refuses it, so reading it as "names nothing" would answer about the
+// default relay for a host whose intended relay was never established.
 func manageRelaySettings(getenv func(string) string) (manageRelay, error) {
 	file, err := crwconfig.Load(getenv, "")
 	if err != nil {
 		return manageRelay{}, err
 	}
-	var manage struct {
-		Relay struct {
-			Socket string `json:"socket"`
-			State  string `json:"state"`
-		} `json:"relay"`
-	}
-	if err := file.Section("manage", &manage); err != nil {
+	// The section is read raw first, because json.Unmarshal reads a JSON null into a struct without
+	// an error and would leave the zero value indistinguishable from an absent key. The distinction
+	// is the one coreManageSection makes: an absent key names nothing, and anything else that is not
+	// an object is refused.
+	var raw json.RawMessage
+	if err := file.Section("manage", &raw); err != nil {
 		return manageRelay{}, err
 	}
-	return manageRelay{Socket: manage.Relay.Socket, State: manage.Relay.State}, nil
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return manageRelay{}, nil
+	}
+	if trimmed[0] != '{' {
+		return manageRelay{}, errors.New("the manage section is not a JSON object")
+	}
+	manage := map[string]json.RawMessage{}
+	if err := json.Unmarshal(trimmed, &manage); err != nil {
+		return manageRelay{}, fmt.Errorf("the manage section is not a JSON object: %w", err)
+	}
+	relay := manageRelay{}
+	if raw, present := manage["relay"]; present && string(bytes.TrimSpace(raw)) != "null" {
+		if err := json.Unmarshal(raw, &relay); err != nil {
+			return manageRelay{}, fmt.Errorf("manage.relay is not an object: %w", err)
+		}
+	}
+	return relay, nil
 }
 
 // relaySettings is the socket and the configured state directory of the running service.
