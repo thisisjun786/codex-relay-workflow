@@ -969,6 +969,13 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		survivors := make([]store.MergeTrainMemberRow, 0, len(members))
 		turns := make(map[string]store.MergeTurnsRow, len(members))
 		excluded := make([]any, 0, len(members))
+		// CRW-906: the members whose turn left the lane are excluded from the landing, but their code is
+		// still in the merge commit this bundle lands (every member head is checked as an ancestor of it
+		// above), so their correction state is read too. The CRW-897 carve-out keeps holding for what it
+		// is about (a revoked acceptance or a moved head of a member that left does not refuse the rest
+		// of the bundle); this is the separate question of whether the tree being landed still contains a
+		// result the plan is repairing.
+		leftMembers := make([]store.MergeTrainMemberRow, 0, len(members))
 		for _, m := range members {
 			turn, e := s.Store.MergeTurn(tx, m.TurnID)
 			if e != nil {
@@ -976,6 +983,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 			}
 			if turn.State != Holding && turn.State != Waiting {
 				excluded = append(excluded, map[string]any{"seq": m.Seq, "turnId": m.TurnID, "prNumber": m.PRNumber, "relationshipId": m.RelationshipID, "state": turn.State, "closeReason": value(turn.CloseReason)})
+				leftMembers = append(leftMembers, m)
 				continue
 			}
 			if !SameCommit(turn.CandidateHead, m.MemberHead) {
@@ -988,6 +996,11 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		// or moved after open refuses the landing with nothing written (Blocking 1). A member that
 		// left the lane is excluded above and is not re-read, so its parent revoking the acceptance
 		// does not refuse the rest of the bundle.
+		for _, m := range leftMembers {
+			if e := trainMemberCorrectionRefusal(tx, s.Store.Querier(tx), m.PRNumber, m.RelationshipID, m.MemberHead); e != nil {
+				return e
+			}
+		}
 		expectations, e := s.trainExpectations(tx, survivors)
 		if e != nil {
 			return e

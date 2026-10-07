@@ -68,10 +68,23 @@ func underCorrectionRefusal(ctx context.Context, q store.Querier, r store.MergeT
 			}
 		case r.CandidateHead != "":
 			// the turn names neither selector: the head it holds is the only identity left, and the
-			// acceptance that recorded it is what the head belongs to
-			if err := q.QueryRowContext(ctx, "SELECT a.relationship_id FROM dag_acceptances a"+
-				" WHERE a.state = 'active' AND lower(a.repository) = lower(?) AND a.head_sha = ? ORDER BY a.accepted_at DESC, a.acceptance_id DESC LIMIT 1",
-				r.Repository, r.CandidateHead).Scan(&found); err != nil {
+			// acceptance that recorded it is what the head belongs to. A recorded base refresh moves
+			// the head the acceptance stands on without changing the accepted head (dag_base_refreshes
+			// carries the refreshed head), so both are read: the head the turn holds is the accepted
+			// head or the head of a refresh of it, and either belongs to the same acceptance.
+			query := "SELECT a.relationship_id FROM dag_acceptances a" +
+				" WHERE a.state = 'active' AND lower(a.repository) = lower(?) AND a.head_sha = ?"
+			args := []any{r.Repository, r.CandidateHead}
+			if present, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
+				return nil, err
+			} else if present {
+				query = "SELECT a.relationship_id FROM dag_acceptances a" +
+					" WHERE a.state = 'active' AND lower(a.repository) = lower(?) AND a.head_sha = ?" +
+					" UNION ALL SELECT a.relationship_id FROM dag_base_refreshes f JOIN dag_acceptances a ON a.acceptance_id = f.acceptance_id" +
+					" WHERE a.state = 'active' AND lower(a.repository) = lower(?) AND f.head_sha = ?"
+				args = []any{r.Repository, r.CandidateHead, r.Repository, r.CandidateHead}
+			}
+			if err := q.QueryRowContext(ctx, query+" ORDER BY 1 LIMIT 1", args...).Scan(&found); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return nil, nil
 				}

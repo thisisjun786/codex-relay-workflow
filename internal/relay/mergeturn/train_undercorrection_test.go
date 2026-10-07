@@ -264,6 +264,69 @@ func TestTheLaneRefusesATurnWhoseAcceptedResultIsUnderCorrection(t *testing.T) {
 	})
 }
 
+// CRW-906 generation 2: a recorded base refresh moves the head the acceptance stands on without changing
+// the accepted head, so a lane turn that names neither selector and holds the refreshed head must still
+// resolve to the relationship whose correction is open. The head it holds is the accepted head or the head
+// of a refresh of it, and either belongs to the same acceptance.
+func TestTheLaneGateResolvesARefreshedHead(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-lane", 2)
+	// the acceptance stands on head-a; a base refresh moved it to head-refreshed
+	refresh := "dbr-" + strings.Repeat("a", 60)
+	w.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?, ?, 1, ?, 1, 'ev-refresh', 'rev-refresh', 'head-refreshed', ?, ?, 'base-0', '{}', '[]', ?, 0, '2023-11-14T22:13:20.000000+00:00')",
+		refresh, "acc-rel-lane", "rel-lane", fxRepo, fxBase, alpha.TaskID)
+	turn := store.MergeTurnsRow{TurnID: "mtn-refreshed", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-refreshed", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal == nil || refusal.Reason != contract.RefusalDispositionConflict {
+		t.Fatalf("a turn holding the refreshed head of an accepted result under correction was not refused: %+v", refusal)
+	}
+	if !strings.Contains(refusal.Detail, "under correction") || !strings.Contains(refusal.Detail, "rel-lane") {
+		t.Fatalf("the refusal does not name the relationship and the reason: %s", refusal.Detail)
+	}
+}
+
+// CRW-906 generation 2: a member whose turn left the lane is excluded from the landing, but its code is
+// still in the merge commit the bundle lands (every member head is checked as an ancestor of it), so the
+// bundle must not record a landing of a tree that still carries a result the plan is repairing. The
+// CRW-897 carve-out keeps holding for what it is about: a revoked acceptance or a moved head of a member
+// that left does not refuse the rest of the bundle.
+func TestTrainLandRefusesAnExcludedMemberUnderCorrection(t *testing.T) {
+	w := newTr(t)
+	train := w.verifiedTrain()
+	rows, err := w.s.All(w.ctx, "SELECT turn_id FROM merge_train_members WHERE train_id = ? AND seq = 2", train)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("member 2: %v", err)
+	}
+	memberTurn := rows[0].Get("turn_id").(string)
+	// the member's parent withdraws its waiting turn, and the correction over its accepted result opens
+	if _, err := w.m.Withdraw(w.ctx, memberTurn, "task-m2"); err != nil {
+		t.Fatalf("withdrawing the member's turn: %v", err)
+	}
+	w.ucCorrection("rel-task-m2")
+	w.tip.set(trRepo, trBase, "merge-1")
+	w.forge.commits["merge-1"] = TrainCommit{SHA: "merge-1", Parents: []string{"base-0", "head-bundle"}, Tree: "tree-bundle"}
+	_, err = w.m.TrainLand(w.ctx, train, trLeader, "merge-1", "", w.tip, w.forge)
+	if err == nil || trReason(err) != "disposition_conflict" {
+		t.Fatalf("a land of a bundle still carrying an excluded member under correction: %v", err)
+	}
+	for _, want := range []string{"under correction", "generation 2", "generation 1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if n := w.count("SELECT count(*) FROM merge_train_events WHERE kind = 'landed'"); n != 0 {
+		t.Fatalf("a refused land wrote %d landed event(s)", n)
+	}
+	if n := w.count("SELECT count(*) FROM merge_turns WHERE state = 'landed'"); n != 0 {
+		t.Fatalf("a refused land landed %d turn(s)", n)
+	}
+}
+
 // ucCount is the number of rows a query answers, for the writes a refusal must not leave behind.
 func (w *fx) ucCount(query string, args ...any) int64 {
 	w.t.Helper()
