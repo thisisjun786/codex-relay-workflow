@@ -342,6 +342,9 @@ func (a *applyRun) ensureDestDir(scope Scope, rel string) (*Dir, error) {
 	}
 	var made bool
 	if child, made, err = parent.EnsureChild(base, applyTempRaw); err != nil {
+		// The run stops here, so a handle the creation handed back with its error - another actor's
+		// directory when the creation ended in EEXIST, or this run's own when only the final check or
+		// the sync failed - is not kept by anyone else and must not outlive the attempt.
 		if child != nil {
 			_ = child.Close()
 		}

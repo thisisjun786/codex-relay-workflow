@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // migrateOwnedDirIdentitySessionBody is the record the cases copy; it is the JSON object a session file
@@ -734,6 +736,130 @@ func TestMigrateOwnedDirIdentityPinIsHeldAcrossTheReadHandle(t *testing.T) {
 	}
 	if !swapped {
 		t.Fatal("the run never held the pin across the read handle's open")
+	}
+}
+
+// C2(2): the by-name path carries its own verified handle across the rename, the same pin the primary
+// path has: the name is read back, a handle is opened and checked against the identity this run created,
+// and that handle is what the rename and the final check are compared against. This case is a regression
+// guard, not a red-first reproduction: the window it closes needs the kernel to hand the freed inode to a
+// replacement inside two syscalls, which no seam can model without also faking the kernel behaviour the
+// fix relies on (a held descriptor keeps that inode alive). It pins that a replacement put at the
+// temporary on this path is refused and that no temporary is left behind.
+func TestMigrateOwnedDirIdentityByNamePathKeepsItsPin(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	restore := migrateOwnedDirIdentityPin
+	t.Cleanup(func() { migrateOwnedDirIdentityPin = restore })
+	migrateOwnedDirIdentityPin = func(dirfd int, name string) (int, error) {
+		return -1, ownedDirIdentityNoHandleErr{}
+	}
+	swapped := false
+	reused := false
+	migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step != "rename" || swapped {
+			return nil
+		}
+		swapped = true
+		entries, err := os.ReadDir(ws)
+		must(t, err)
+		target := ""
+		for _, e := range entries {
+			if _, ok := tempRun(e.Name()); ok {
+				target = filepath.Join(ws, e.Name())
+			}
+		}
+		if target == "" {
+			t.Fatal("the case found no temporary to swap")
+		}
+		var before unix.Stat_t
+		must(t, unix.Lstat(target, &before))
+		must(t, os.Remove(target))
+		mkdirs(t, target)
+		must(t, os.Chmod(target, 0o755))
+		var after unix.Stat_t
+		must(t, unix.Lstat(target, &after))
+		if (fileID{uint64(after.Dev), uint64(after.Ino)}) == (fileID{uint64(before.Dev), uint64(before.Ino)}) {
+			reused = true
+		}
+		return nil
+	})
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a replacement put at the temporary must stop the run")
+	}
+	if !swapped {
+		t.Fatal("the case never reached the rename step")
+	}
+	if !reused {
+		// The kernel kept the removed directory's inode, so this run's pin (or, without one, the freed
+		// inode) is not observable here; the case still proves the replacement is refused.
+		t.Log("the filesystem did not reuse the inode; the replacement was refused by identity anyway")
+	}
+}
+
+// C2(3): a creation that ends in EEXIST hands back another actor's directory, and a run that then fails at
+// the parent sync must not leak that descriptor. EnsureChild returns the opened child with its error, so
+// the caller that does not keep it has to close it; the head before this cycle dropped it, and repeated
+// same-Pair attempts accumulated one descriptor each. The count is read from /proc, so the case skips
+// where that is unavailable.
+func TestMigrateOwnedDirIdentityEEXISTErrorDoesNotLeakTheDescriptor(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("this platform does not expose /proc/self/fd")
+	}
+	ws, pair := migrateRootPrivateWorkspace(t)
+	mkdirs(t, filepath.Join(ws, crwdir.DirName)) // another actor's root, so the creation ends in EEXIST
+	migrateOwnedDirIdentitySteps(t, func(step string) error {
+		if step == "sync" {
+			return errApplyInterrupted
+		}
+		return nil
+	})
+	count := func() int {
+		t.Helper()
+		entries, err := os.ReadDir("/proc/self/fd")
+		must(t, err)
+		return len(entries)
+	}
+	before := count()
+	for range 20 {
+		if _, _, err := pair.EnsureDest(0o700); !errors.Is(err, errApplyInterrupted) {
+			t.Fatalf("the attempt must fail at the parent sync: %v", err)
+		}
+	}
+	if after := count(); after > before+2 {
+		t.Errorf("repeated failed attempts leaked descriptors: %d open before, %d after", before, after)
+	}
+}
+
+// C2(1): a failure of the final identity read after a successful rename must not forget the creation.
+// The rename already put this run's directory at the name, so the attempt hands the verified handle back
+// with its error and the caller records the identity; a retry then recognises its own root and finishes
+// its mode. The head before this cycle returned no handle, so the retry read its own root as another
+// actor's and left it at the marker mode.
+func TestMigrateOwnedDirIdentityFailedFinalReadKeepsTheCreation(t *testing.T) {
+	ws, r, p := apPlan(t, migrateOwnedDirIdentityEntries(), nil)
+	restore := migrateOwnedDirIdentityLstat
+	t.Cleanup(func() { migrateOwnedDirIdentityLstat = restore })
+	fail := true
+	migrateOwnedDirIdentityLstat = func(dirfd int, name string, st *unix.Stat_t) error {
+		if _, ok := tempRun(name); !ok && fail {
+			fail = false
+			return unix.EIO
+		}
+		return restore(dirfd, name, st)
+	}
+	if _, err := apply(r, p); err == nil {
+		t.Fatal("a failed final identity read must stop the run")
+	}
+	migrateOwnedDirIdentityLstat = restore
+	if r.Project.created == (fileID{}) {
+		t.Fatal("the creation that reached its rename must be recorded as this run's")
+	}
+	res, err := apply(r, p)
+	must(t, err)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, ""), 0o755)
+	migrateOwnedDirIdentityWantRaw(t, apDst(ws, "sessions"), 0o755)
+	if ai := apItem(t, res, "."); strings.Contains(ai.Note, "kept its mode") {
+		t.Errorf("the retry must finish the root this run made, note = %q", ai.Note)
 	}
 }
 
