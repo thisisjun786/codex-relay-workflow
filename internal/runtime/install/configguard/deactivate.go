@@ -88,15 +88,20 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	// marker API itself refuses unreadable records rather than replacing their consent data.
 	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
 	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}}
+	noManifest := func() (*DeactivateResult, error) {
+		markOptedOut()
+		r.NoManifest = true
+		return r, nil
+	}
+	// The first reading decides only whether and where to lock; the reading every decision below uses
+	// is taken after the lock is held (CRW-877).
 	raw, _ := readTextOrNull(manifestPath(deps.CodexHome))
 	if raw == nil {
-		markOptedOut()
-		return r, nil
+		return noManifest()
 	}
 	m := parseInstallManifest(*raw)
 	if m == nil {
-		markOptedOut()
-		return r, nil
+		return noManifest()
 	}
 	r.NoManifest = false
 	path := deps.ConfigPath
@@ -118,6 +123,18 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 		defer lock.Release()
 		path = lock.Target
+		// The manifest read before the lock answered only whether and where to lock. An activation
+		// that published while this command waited would otherwise be ignored, and the restore would
+		// be computed from a manifest that no longer describes the install: the drift hash, the table
+		// keys and the flags below all decide from this second reading. A manifest missing or
+		// unreadable here answers as the no-manifest branch above does.
+		fresh, _ := readTextOrNull(manifestPath(deps.CodexHome))
+		if fresh == nil {
+			return noManifest()
+		}
+		if m = parseInstallManifest(*fresh); m == nil {
+			return noManifest()
+		}
 	}
 	// The opt-out is recorded only once this deactivation is going to do its work: a busy lock
 	// refuses the command before this line, and a refusal must not leave self-healing off for an
