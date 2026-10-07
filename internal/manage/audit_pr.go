@@ -543,6 +543,12 @@ func auditPRNameStatusPaths(out []byte) ([]string, error) {
 		if i >= len(records) {
 			return nil, fmt.Errorf("the git diff-tree record %q names no path", status)
 		}
+		// A deletion contributes no path to the bundle, but its record still has to carry one:
+		// a blank path is the same framing error here as anywhere else, and accepting it would
+		// hide a listing this build cannot read.
+		if records[i] == "" {
+			return nil, fmt.Errorf("the git diff-tree record %q names an empty path", status)
+		}
 		if status[0] != 'D' {
 			if err := add(records[i]); err != nil {
 				return nil, err

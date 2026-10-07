@@ -68,6 +68,7 @@ func TestAuditPRReview752NameStatusPaths(t *testing.T) {
 		"R100\x00\x00old.go\x00new.go\x00", // a rename whose source path is empty
 		"M\x00\x00",                        // a present but empty path
 		"M\x00a.go\x00\x00b.go\x00",        // an empty path between two records
+		"D\x00\x00",                        // a deletion whose path is empty
 	} {
 		if _, err := auditPRNameStatusPaths([]byte(broken)); err == nil {
 			t.Errorf("the listing %q was accepted", broken)
