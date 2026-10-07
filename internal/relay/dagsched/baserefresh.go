@@ -133,9 +133,10 @@ func refusedProof(r *refreshRefusal) error {
 	return refuse(contract.RefusalDispositionConflict, "not a base refresh (%s): %s; the accepted head is not moved, and a later generation whose content is more than merges of the base goes to its child as a correction", r.Code, r.Detail)
 }
 
-// RecordBaseRefresh records that the active acceptance of a node stands on the later generation of its relationship whose head is the accepted head plus merges of the base. The node's result has to be
-// current (a stale one goes through its own route, dag-correct), not landed yet, and the relationship's current generation has to be ruled verified under the plan's criteria exactly as an acceptance
-// requires. The record is an append: the same chain again is a replay, and a pull request that moved on is another record with the next sequence number, proved again from the accepted head.
+// RecordBaseRefresh records that the active acceptance of a node stands on a head that is the accepted head plus merges of the base: the acceptance's own generation, when the parent refreshed the branch
+// inside its merge turn (CRW-916: a bundle leader that fell back to the single lane), or a later generation of the same child that holds nothing else. The node's result has to be current (a stale one goes
+// through its own route, dag-correct), not landed yet, and the generation has to be ruled verified under the plan's criteria exactly as an acceptance requires. The record is an append: the same chain again
+// is a replay, and a pull request that moved on is another record with the next sequence number, proved again from the accepted head.
 func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor string, in RefreshInput) (RefreshResult, error) {
 	out := RefreshResult{PlanID: plan, NodeID: node}
 	q := s.Store.Q(ctx)
@@ -184,11 +185,19 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if !found || rel.Superseded {
 		return out, refuse(contract.RefusalRelationshipNotActive, "the relationship %s of the accepted result is not the one the node stands on any more", acc.RelationshipID)
 	}
-	if rel.Generation <= acc.ExecutionGeneration {
-		return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on: a base refresh is recorded for a later generation of the same child", rel.ID, rel.Generation, node)
+	// A refresh is recorded for the acceptance's own generation - the parent refreshed the branch inside its merge turn, so the relationship never left it - or for a later one of the same child. A
+	// relationship before the generation the acceptance was taken on has nothing to refresh.
+	if rel.Generation < acc.ExecutionGeneration {
+		return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is at generation %d, before the one %s was accepted on (%d): a base refresh is recorded for the acceptance's own generation or a later one of the same child", rel.ID, rel.Generation, node, acc.ExecutionGeneration)
 	}
-	// the later generation has to be one the parent ruled verified under the plan's criteria: the same chain an acceptance applies to a head, asked before any commit is read
-	head, err := s.verifiedHead(ctx, q, rel, "")
+	sameGeneration := rel.Generation == acc.ExecutionGeneration
+	// the generation has to be one the parent ruled verified under the plan's criteria: the same chain an acceptance applies to a head, asked before any commit is read. In the acceptance's own generation
+	// that ruling is the one the acceptance itself rests on, and naming its event is what makes a newer report of the same generation a superseded revision rather than a head to refresh.
+	want := ""
+	if sameGeneration {
+		want = acc.EventID
+	}
+	head, err := s.verifiedHead(ctx, q, rel, want)
 	if err != nil {
 		return out, err
 	}
@@ -246,13 +255,21 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 			return out, refuse(contract.RefusalMergeTargetUnreadable, "%s (%s) is not in %s: fetch it there first (git fetch) and record the refresh again", c.what, c.sha, checkout)
 		}
 	}
-	// the report the parent ruled verified names the head it describes: a head the forge shows now that the report does not name is not what was verified (a report that names none leaves nothing to compare)
-	var reported sql.NullString
-	if _, err := queryOne(ctx, q, "SELECT head_sha FROM work_reports WHERE event_id = ? AND relationship_id = ? ORDER BY submission_no DESC LIMIT 1", []any{head.EventID, rel.ID}, &reported); err != nil {
-		return out, err
-	}
-	if said := strings.ToLower(strings.TrimSpace(reported.String)); said != "" && !(len(said) >= 7 && strings.HasPrefix(pr.HeadSHA, said)) {
-		return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and pull request %s#%d is at %s now: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, forge, number, pr.HeadSHA)
+	if sameGeneration {
+		// In the acceptance's own generation the report of that generation names the accepted head, which the refresh moves past by construction, so the proof from the accepted head stands in for the
+		// report's head. A pull request still at the accepted head has nothing to refresh, and the proof below is what decides the rest.
+		if pr.HeadSHA == acc.HeadSHA {
+			return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on, and pull request %s#%d is still at the accepted head %s: there is nothing to refresh", rel.ID, rel.Generation, node, forge, number, short(acc.HeadSHA))
+		}
+	} else {
+		// the report the parent ruled verified names the head it describes: a head the forge shows now that the report does not name is not what was verified (a report that names none leaves nothing to compare)
+		var reported sql.NullString
+		if _, err := queryOne(ctx, q, "SELECT head_sha FROM work_reports WHERE event_id = ? AND relationship_id = ? ORDER BY submission_no DESC LIMIT 1", []any{head.EventID, rel.ID}, &reported); err != nil {
+			return out, err
+		}
+		if said := strings.ToLower(strings.TrimSpace(reported.String)); said != "" && !(len(said) >= 7 && strings.HasPrefix(pr.HeadSHA, said)) {
+			return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and pull request %s#%d is at %s now: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, forge, number, pr.HeadSHA)
+		}
 	}
 	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA)
 	if err != nil {
