@@ -1987,7 +1987,9 @@ func shellWriteHeredocKindOf(verb string) shellWriteHeredocKind {
 // feed an interpreter.
 func shellWriteHeredocFunctionNames(command []uint16) map[string]bool {
 	out := map[string]bool{}
-	s := stripHeredocBodies(command)
+	// A word-initial # makes the rest of its physical line inert, so a function example written in a comment is no
+	// definition (CRW-765 correction 9, third pass, after the blind pre-merge evaluation of head 05dc1a743).
+	s := shellWriteHeredocBlankComments(stripHeredocBodies(command))
 	for i := 0; i < len(s); i++ {
 		if s[i] != '(' {
 			continue

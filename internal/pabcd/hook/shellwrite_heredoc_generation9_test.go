@@ -300,3 +300,103 @@ func TestShellWriteHeredocGeneration9CommentSyntaxControls(t *testing.T) {
 		})
 	}
 }
+
+// The blind pre-merge evaluation of head 05dc1a743 (score 4) found three more defects inside the same promise, so the
+// same generation closes them: the hidden-operator scan ended at the first comment instead of the end of that line, an
+// ANSI-C quoted delimiter was read with its $ left in place so the document never closed, and the header proof and the
+// function-name scan still read a comment as syntax. The rows below are red on 05dc1a743.
+
+// TestShellWriteHeredocGeneration9CommentLineDenied is the denied case for the scan that ended too early: a comment
+// ends its own physical line only, so a here-document inside a double-quoted command substitution on a later line is
+// still one the collector cannot reach.
+func TestShellWriteHeredocGeneration9CommentLineDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a comment on the line before a hidden here-document", "echo start # harmless comment\nresult=\"$(python3 <<'PY'\nopen('" + mem + "/a','w')\nPY\n)\""},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env)
+			if !shellWriteHeredocGateDenied(got, mem+"/a") {
+				t.Errorf("%q: %+v, want a deny naming the protected path or the fail-closed reason", row.command, got)
+			}
+		})
+	}
+	// A comment swallows the rest of its own line, so a substitution written after it is documentation the shell never
+	// runs: the scan continues on the next line without reading past the newline it stopped at.
+	for _, c := range []struct{ name, command string }{
+		{"a substitution written after a comment", "echo start # note; result=\"$(python3 <<'PY'\nopen('" + mem + "/a','w')\nPY\n)\""},
+		{"a comment on the header line before a data here-document", "echo start # note\ncat <<'EOF'\n" + mem + "\nEOF"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memoryGateClassify("Bash", map[string]any{"command": c.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", c.command, got)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9AnsiCDelimiterDenied is the denied case for an ANSI-C quoted delimiter: the shell
+// reads $'EOF' as the word EOF, so the document closes at the first EOF line and the Python program that follows is its
+// own command.
+func TestShellWriteHeredocGeneration9AnsiCDelimiterDenied(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	command := "cat <<$'EOF'\ntext\nEOF\npython3 <<'PY'\nopen('" + mem + "/a','w')\nPY"
+	hss := shellWriteHeredocs(utf16.Encode([]rune(command)))
+	if len(hss) != 2 {
+		t.Fatalf("collected %d here-documents, want 2: %+v", len(hss), hss)
+	}
+	if got := string(utf16.Decode(hss[0].delim)); got != "EOF" {
+		t.Errorf("delimiter %q, want %q", got, "EOF")
+	}
+	got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
+	if !shellWriteHeredocGateDenied(got, mem+"/a") {
+		t.Errorf("%q: %+v, want a deny naming the protected path", command, got)
+	}
+}
+
+// TestShellWriteHeredocGeneration9AnsiCDelimiterControls pins the ANSI-C escapes the delimiter reader decodes: the
+// shell processes them before the word is used, and an escape it does not decode keeps its backslash.
+func TestShellWriteHeredocGeneration9AnsiCDelimiterControls(t *testing.T) {
+	for _, row := range []struct{ name, header, delim string }{
+		{"a plain ANSI-C word", `cat <<$'EOF'`, "EOF"},
+		{"an ANSI-C tab", `cat <<$'E	F'`, "E\tF"},
+		{"an ANSI-C backslash", `cat <<$'E\\F'`, `E\F`},
+		{"an ANSI-C hex escape", `cat <<$'\x45OF'`, "EOF"},
+		{"a double-quoted word after a dollar", `cat <<$"EOF"`, "EOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			hss := shellWriteHeredocs(utf16.Encode([]rune(row.header + "\nx\n" + row.delim)))
+			if len(hss) != 1 {
+				t.Fatalf("collected %d here-documents, want 1: %+v", len(hss), hss)
+			}
+			if got := string(utf16.Decode(hss[0].delim)); got != row.delim {
+				t.Errorf("delimiter %q, want %q", got, row.delim)
+			}
+		})
+	}
+}
+
+// TestShellWriteHeredocGeneration9HeaderCommentControls is the invariant case for the header proof: a word-initial #
+// makes the rest of the physical line inert, so a backslash or a function example written in a comment is neither a
+// continuation nor a function definition, and an ordinary documentation command stays allowed.
+func TestShellWriteHeredocGeneration9HeaderCommentControls(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	mem := root
+	for _, row := range []struct{ name, command string }{
+		{"a function example in a comment", "cat > note.md <<'EOF' # function example\nhello\nEOF"},
+		{"a name() example in a comment", "cat > note.md <<'EOF' # example() { true; }\nhello\nEOF"},
+		{"a backslash in a comment", "cat > note.md <<'EOF' # a\\b\nhello\nEOF"},
+		{"a memories path in a comment", "cat > note.md <<'EOF' # do not write " + mem + "/a\nhello\nEOF"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got, ok := shellWriteHeredocUnreadable(row.command); ok {
+				t.Errorf("%q reported unreadable %q, want data", row.command, got)
+			}
+			if got := memoryGateClassify("Bash", map[string]any{"command": row.command}, cwd, env); got.Surface != "" {
+				t.Errorf("%q must pass: %+v", row.command, got)
+			}
+		})
+	}
+}

@@ -161,6 +161,39 @@ func shellWriteHeredocEscaped(s []uint16, i int) bool {
 	return n%2 == 1
 }
 
+// shellWriteHeredocBlankComments returns the text with every comment blanked to spaces, its newlines kept, so a check
+// that reads the text as syntax does not read what the shell never parses. A word-initial # ends its physical line and
+// nothing beyond it (CRW-765 correction 9, third pass, after the blind pre-merge evaluation of head 05dc1a743: a
+// function example or a backslash written in a comment made an ordinary documentation command look like a here-document
+// program the reader could not read).
+func shellWriteHeredocBlankComments(s []uint16) []uint16 {
+	out := slices.Clone(s)
+	for i := 0; i < len(out); {
+		c := out[i]
+		if c == '\\' {
+			i += 2 // a backslash escapes the character after it, so an escaped quote opens no quoted span
+			continue
+		}
+		if c == '\'' || c == '"' {
+			i = skipQuoted(out, i)
+			continue
+		}
+		if c == '#' && shellWriteHeredocCommentStart(out, i) {
+			eol := shellNewline(out, i)
+			if eol == -1 {
+				eol = len(out)
+			}
+			for k := i; k < eol; k++ {
+				out[k] = ' '
+			}
+			i = eol
+			continue
+		}
+		i++
+	}
+	return out
+}
+
 // shellWriteHeredocLineStart is the offset of the physical line that holds at: the byte after the last newline before it.
 // The header a here-document is judged by is that physical line, so a backslash, a control operator or a second command
 // beside the operator is seen by the header proof (CRW-765 correction 4, rule G1).
@@ -289,6 +322,39 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 			break
 		}
 		switch c {
+		case '$':
+			// An ANSI-C quoted word ($'...') is the word the shell spells out after it decodes the escapes, and a
+			// locale-translated word ($"...") is the double-quoted word with the dollar removed. Reading the raw text
+			// left the dollar in the delimiter, so the terminator never matched and the document swallowed the
+			// interpreter program that followed it (CRW-765 correction 9, third pass, after the blind pre-merge
+			// evaluation of head 05dc1a743).
+			if shellAt(s, i+1) == '\'' {
+				quoted = true
+				i += 2
+				for i < len(s) && s[i] != '\'' {
+					if s[i] == '\\' {
+						dec, n := shellWriteHeredocAnsiC(s, i)
+						out = append(out, dec...)
+						i = n
+						continue
+					}
+					out = append(out, s[i])
+					i++
+				}
+				if shellAt(s, i) == '\'' {
+					i++
+				}
+				continue
+			}
+			if shellAt(s, i+1) == '"' {
+				quoted = true
+				word, end := shellWriteHeredocDoubleQuotedWord(s, i+2)
+				out = append(out, word...)
+				i = end
+				continue
+			}
+			out = append(out, c)
+			i++
 		case '\'':
 			// A single-quoted span is literal: no escape applies inside it.
 			quoted = true
@@ -305,21 +371,9 @@ func shellWriteHeredocDelimiter(s []uint16, i int) (delim []uint16, quoted bool)
 			// which it removes with the backslash). Any other backslash is a literal character of the word, so the
 			// delimiter is the word the shell spells out, not the raw text (CRW-765 correction 9).
 			quoted = true
-			i++
-			for i < len(s) && s[i] != '"' {
-				if s[i] == '\\' && i+1 < len(s) && shellWriteHeredocDoubleQuoteEscape(s[i+1]) {
-					if s[i+1] != '\n' {
-						out = append(out, s[i+1])
-					}
-					i += 2
-					continue
-				}
-				out = append(out, s[i])
-				i++
-			}
-			if shellAt(s, i) == '"' {
-				i++
-			}
+			word, end := shellWriteHeredocDoubleQuotedWord(s, i+1)
+			out = append(out, word...)
+			i = end
 		case '\\':
 			quoted = true
 			i++
@@ -344,6 +398,93 @@ func shellWriteHeredocDoubleQuoteEscape(c uint16) bool {
 		return true
 	}
 	return false
+}
+
+// shellWriteHeredocDoubleQuotedWord reads the body of a double-quoted word that begins at i (the character after the
+// opening quote) and returns the word the shell spells out together with the offset after the closing quote. The shell
+// removes a backslash only before $, a backtick, " and \ there, and it removes a backslash-newline with both
+// characters; any other backslash is a literal character of the word (CRW-765 correction 9).
+func shellWriteHeredocDoubleQuotedWord(s []uint16, i int) (word []uint16, next int) {
+	word = []uint16{}
+	for i < len(s) && s[i] != '"' {
+		if s[i] == '\\' && i+1 < len(s) && shellWriteHeredocDoubleQuoteEscape(s[i+1]) {
+			if s[i+1] != '\n' {
+				word = append(word, s[i+1])
+			}
+			i += 2
+			continue
+		}
+		word = append(word, s[i])
+		i++
+	}
+	if shellAt(s, i) == '"' {
+		i++
+	}
+	return word, i
+}
+
+// shellWriteHeredocAnsiC reads one backslash escape of an ANSI-C quoted word ($'...') at i, where s[i] is the
+// backslash, and returns the character the shell produces with the offset after the escape. The shell decodes the
+// escapes a C string literal accepts; the common ones a delimiter word may hold are decoded, and an escape this reader
+// does not decode keeps the character after the backslash, as the shell does for an unknown escape.
+func shellWriteHeredocAnsiC(s []uint16, i int) (out []uint16, next int) {
+	if i+1 >= len(s) {
+		return []uint16{'\\'}, i + 1
+	}
+	switch c := s[i+1]; c {
+	case 'a':
+		return []uint16{0x07}, i + 2
+	case 'b':
+		return []uint16{'\b'}, i + 2
+	case 'e', 'E':
+		return []uint16{0x1b}, i + 2
+	case 'f':
+		return []uint16{'\f'}, i + 2
+	case 'n':
+		return []uint16{'\n'}, i + 2
+	case 'r':
+		return []uint16{'\r'}, i + 2
+	case 't':
+		return []uint16{'\t'}, i + 2
+	case 'v':
+		return []uint16{'\v'}, i + 2
+	case '\\', '\'', '"', '?':
+		return []uint16{c}, i + 2
+	case 'x':
+		j, v := i+2, uint16(0)
+		for j < len(s) && shellWriteHeredocHexDigit(s[j]) && j < i+2+2 {
+			v = v*16 + shellWriteHeredocHexValue(s[j])
+			j++
+		}
+		if j == i+2 {
+			return []uint16{'x'}, i + 2 // \x with no digit: the shell keeps the x
+		}
+		return []uint16{v}, j
+	case '0', '1', '2', '3', '4', '5', '6', '7':
+		j, v := i+1, uint16(0)
+		for j < len(s) && s[j] >= '0' && s[j] <= '7' && j < i+1+3 {
+			v = v*8 + (s[j] - '0')
+			j++
+		}
+		return []uint16{v}, j
+	}
+	return []uint16{s[i+1]}, i + 2
+}
+
+// shellWriteHeredocHexDigit reports whether c is a hexadecimal digit.
+func shellWriteHeredocHexDigit(c uint16) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
+// shellWriteHeredocHexValue is the value of a hexadecimal digit c.
+func shellWriteHeredocHexValue(c uint16) uint16 {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	}
+	return c - 'A' + 10
 }
 
 // shellWriteHeredocTrimTabs removes the leading tabs of one here-document body line, as <<- does before the terminator
@@ -633,7 +774,11 @@ func shellWriteHeredocHeaderProven(h shellWriteHeredoc) bool {
 	if h.joined {
 		return false
 	}
-	line := h.command
+	// A word-initial # makes the rest of the physical line inert, so a backslash or a function example written in a
+	// comment is neither a continuation nor a definition. Reading the comment as syntax refused an ordinary
+	// documentation command (CRW-765 correction 9, third pass, after the blind pre-merge evaluation of head
+	// 05dc1a743).
+	line := shellWriteHeredocBlankComments(h.command)
 	for i := 0; i < len(line); {
 		c := line[i]
 		if c == '\\' {
@@ -657,10 +802,17 @@ func shellWriteHeredocDefinesFunction(header []uint16) bool {
 func shellWriteHeredocHiddenOperator(command []uint16) bool {
 	for i := 0; i < len(command); {
 		if command[i] == '#' && shellWriteHeredocCommentStart(command, i) {
-			// A word-initial # begins a comment, so the rest of the physical line is inert: a quoted command
+			// A word-initial # begins a comment, so the rest of its physical line is inert: a quoted command
 			// substitution written inside it is documentation, not a here-document the shell would read (CRW-765
-			// correction 9).
-			break
+			// correction 9). The comment ends at its newline and nothing beyond it, so the scan continues on the next
+			// line; ending the whole search here let a here-document on a later line pass unseen (correction 9, third
+			// pass, after the blind pre-merge evaluation of head 05dc1a743).
+			nl := shellNewline(command, i)
+			if nl == -1 {
+				return false
+			}
+			i = nl + 1
+			continue
 		}
 		if command[i] == '\'' {
 			i = skipQuoted(command, i)
