@@ -107,6 +107,13 @@ func (c *Channel) deferAutoFault(ctx context.Context, id string, now float64, fa
 	if row.HoldReason.Valid || !row.Unsent() {
 		return nil
 	}
+	// A notice that yields its recipient's line to a delivery waiting out a busy backoff is not a
+	// fault to back off from: the refusal says the line is held, and the notice is claimable again
+	// the moment that head is delivered or its backoff ends (I-216's notice part, CRW-943). Its
+	// eligibility is left exactly as it is; every other refusal keeps the backoff below.
+	if isNoticeLineYield(fault) {
+		return nil
+	}
 	at := delivery.ISOOf(now)
 	if c.clockISO != nil {
 		at = c.clockISO()
@@ -337,24 +344,38 @@ func (c *Channel) autoHeads(ctx context.Context, now float64, limit int, afterAt
 	if limit <= 0 {
 		return []store.SupervisorMessagesRow{}, nil
 	}
+	// A notice yielding to a delivery that holds its recipient's line cannot be claimed, so it is
+	// not a head this pass takes up: the pass would only be refused by it, and while it stood as the
+	// head the ordinary message behind it was never read (I-216's notice part, section 82 decision
+	// 2). The held recipients are the delivery path's own reading, so the two channels cannot
+	// disagree about which deliveries hold a line.
+	held, err := c.heldLineRecipients(ctx, now)
+	if err != nil {
+		return nil, err
+	}
 	// Select heads before applying the window: one recipient's backlog must not
 	// consume the page, and an expired sending lease is recovered by Attempt.
-	eligible := store.SupervisorAttemptableSQL
+	eligible := func(alias string) string { return store.SupervisorAttemptableExceptYieldingSQL(alias, held) }
 	heads := "SELECT m.message_id,m.recipient_task_id,m.staged_at FROM supervisor_messages m WHERE " + eligible("m") +
 		" AND NOT EXISTS (SELECT 1 FROM supervisor_messages o WHERE o.recipient_task_id=m.recipient_task_id AND " + eligible("o") +
 		" AND (o.staged_at<m.staged_at OR (o.staged_at=m.staged_at AND o.message_id<m.message_id)))"
 	read := func(predicate string, args ...any) ([]store.Row, error) {
-		return c.Store.All(ctx, heads+predicate+" ORDER BY m.staged_at,m.message_id LIMIT ?", append([]any{now, now, now, now}, args...)...)
+		// The bindings, in the order the statement names them: the head's own condition, the older
+		// row's, the window the caller adds, then the limit.
+		bound := append([]any{}, store.SupervisorHeldNoticeArgs(held, now)...)
+		bound = append(bound, store.SupervisorHeldNoticeArgs(held, now)...)
+		bound = append(bound, args...)
+		return c.Store.All(ctx, heads+predicate+" ORDER BY m.staged_at,m.message_id LIMIT ?", bound...)
 	}
 	var rows []store.Row
-	var err error
+	var readErr error
 	if afterAt == "" {
-		rows, err = read("", limit)
+		rows, readErr = read("", limit)
 	} else {
-		rows, err = read(" AND (m.staged_at>? OR (m.staged_at=? AND m.message_id>?))", afterAt, afterAt, afterID, limit)
-		if err == nil && len(rows) < limit {
+		rows, readErr = read(" AND (m.staged_at>? OR (m.staged_at=? AND m.message_id>?))", afterAt, afterAt, afterID, limit)
+		if readErr == nil && len(rows) < limit {
 			var wrapped []store.Row
-			wrapped, err = read(" AND (m.staged_at<? OR (m.staged_at=? AND m.message_id<=?))", afterAt, afterAt, afterID, limit-len(rows))
+			wrapped, readErr = read(" AND (m.staged_at<? OR (m.staged_at=? AND m.message_id<=?))", afterAt, afterAt, afterID, limit-len(rows))
 			seen := map[string]bool{}
 			for _, row := range rows {
 				seen[row.Get("message_id").(string)] = true
@@ -366,8 +387,8 @@ func (c *Channel) autoHeads(ctx context.Context, now float64, limit int, afterAt
 			}
 		}
 	}
-	if err != nil {
-		return nil, err
+	if readErr != nil {
+		return nil, readErr
 	}
 	out := make([]store.SupervisorMessagesRow, 0, len(rows))
 	for _, row := range rows {

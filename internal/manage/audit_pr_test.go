@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,7 +84,8 @@ func auditPRFakeRelay(t *testing.T, assignments, settings, criteria map[string]s
 }
 
 // auditPRFakeCheckout fakes the git reader the bundle builder uses and the fetch, so a test
-// never runs git or reads a real repository.
+// never runs git or reads a real repository. The changed paths of the merge commit are the
+// files map's keys, answered as the NUL-delimited --name-status output git writes.
 func auditPRFakeCheckout(t *testing.T, merge string, files map[string]string) {
 	t.Helper()
 	previousGit, previousBlob := auditPkgGit, auditPkgBlob
@@ -94,8 +96,22 @@ func auditPRFakeCheckout(t *testing.T, merge string, files map[string]string) {
 		if len(args) == 0 {
 			return nil, errors.New("git called with no arguments")
 		}
-		if args[0] == "fetch" {
+		switch args[0] {
+		case "fetch":
 			return nil, nil
+		case "diff-tree":
+			paths := make([]string, 0, len(files))
+			for path := range files {
+				paths = append(paths, path)
+			}
+			sort.Strings(paths)
+			var out []byte
+			for _, path := range paths {
+				out = append(out, 'M', 0)
+				out = append(out, []byte(path)...)
+				out = append(out, 0)
+			}
+			return out, nil
 		}
 		return nil, errors.New("unexpected git arguments: " + strings.Join(args, " "))
 	}
@@ -490,37 +506,32 @@ func TestAuditPRPairAndPhaseRules(t *testing.T) {
 	}
 }
 
-// The changed-file list is read from the patch's own headers: a modified file, an added
-// file, a renamed file's target and a binary block's path, and never a deletion.
-func TestAuditPRDiffPathsReadsThePatchHeaders(t *testing.T) {
-	patch := "diff --git a/internal/a.go b/internal/a.go\n--- a/internal/a.go\n+++ b/internal/a.go\n@@ -1 +1 @@\n-old\n+new\n" +
-		"diff --git a/docs/gone.md b/docs/gone.md\n--- a/docs/gone.md\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n" +
-		"diff --git a/old.go b/new.go\nsimilarity index 90%\nrename from old.go\nrename to new.go\n" +
-		"diff --git a/img.png b/img.png\nindex 111..222 100644\nBinary files a/img.png and b/img.png differ\n" +
-		"diff --git \"a/with space.txt\" \"b/with space.txt\"\n--- \"a/with space.txt\"\n+++ \"b/with space.txt\"\n@@ -1 +1 @@\n-a\n+b\n"
-	got := auditPRDiffPaths([]byte(patch))
-	want := []string{"internal/a.go", "new.go", "img.png", "with space.txt"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("the paths are %v, want %v", got, want)
+// The changed-file list is read from git rather than from the patch, and it is asked of the
+// merge commit's first parent: a merge is compared with the branch it merged into.
+func TestAuditPRDiffPathsAsksGitForTheMerge(t *testing.T) {
+	var calls [][]string
+	previous := auditPkgGit
+	auditPkgGit = func(_ context.Context, repo string, args ...string) ([]byte, error) {
+		if repo != "/checkout" {
+			t.Errorf("git ran in %q, want the configured checkout", repo)
+		}
+		calls = append(calls, args)
+		return []byte("M\x00internal/a.go\x00"), nil
 	}
-	if paths := auditPRDiffPaths([]byte(auditPRPatch)); strings.Join(paths, ",") != "internal/a.go,docs/b.md" {
-		t.Errorf("the two-file patch gave %v", paths)
+	t.Cleanup(func() { auditPkgGit = previous })
+	paths, err := auditPRDiffPaths(context.Background(), auditPkgCheckout{Repository: "/checkout"}, "m12")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// A hunk's content is data. A patch that adds a line whose own text begins with "++ "
-	// renders it as "+++ ...", and reading that as a path would send the bundle to a file
-	// that does not exist.
-	withHunk := "diff --git a/internal/a.go b/internal/a.go\n--- a/internal/a.go\n+++ b/internal/a.go\n@@ -1,2 +1,3 @@\n context\n+++ this line is content, not a header\n"
-	if paths := auditPRDiffPaths([]byte(withHunk)); strings.Join(paths, ",") != "internal/a.go" {
-		t.Errorf("a hunk whose content starts with pluses gave %v, want the real path only", paths)
+	if strings.Join(paths, ",") != "internal/a.go" {
+		t.Errorf("the paths are %v", paths)
 	}
-	// A deleted binary or empty file has no `+++ /dev/null` line: the extended header is the
-	// only mark. Missing it reads a deleted path at the merge commit, which fails the whole
-	// run on a pull request that can never then be recorded.
-	deletedBinary := "diff --git a/img/logo.png b/img/logo.png\ndeleted file mode 100644\nindex 111..000\nBinary files a/img/logo.png and /dev/null differ\n" +
-		"diff --git a/empty.txt b/empty.txt\ndeleted file mode 100644\nindex 111..000\n" +
-		"diff --git a/internal/a.go b/internal/a.go\n--- a/internal/a.go\n+++ b/internal/a.go\n@@ -1 +1 @@\n-old\n+new\n"
-	if paths := auditPRDiffPaths([]byte(deletedBinary)); strings.Join(paths, ",") != "internal/a.go" {
-		t.Errorf("a deleted binary or empty file gave %v, want the surviving path only", paths)
+	want := "diff-tree -r -z --no-commit-id --name-status -M m12^1 m12"
+	if len(calls) != 1 || strings.Join(calls[0], " ") != want {
+		t.Errorf("the listing was read with %v, want %q", calls, want)
+	}
+	if _, err := auditPRDiffPaths(context.Background(), auditPkgCheckout{}, "m12"); err == nil {
+		t.Error("a checkout with no repository was accepted")
 	}
 }
 
@@ -572,25 +583,25 @@ func TestAuditPRPromptNamesTheBundleItWrites(t *testing.T) {
 }
 
 // A path that would leave the bundle is refused before anything is written, and a file the
-// merge commit does not hold is an error rather than a silently empty bundle file.
+// merge commit does not hold is an error rather than a silently empty bundle file. The
+// directory a failed build made is removed, so nothing half-built is left for a later run.
 func TestAuditPRRefusesAPathOutsideTheBundle(t *testing.T) {
 	state := t.TempDir()
 	cfg := auditPRSectionFixture(t, state, map[string]any{"pr_since": "2026-10-01T00:00:00Z"})
-	patch := "diff --git a/../../escape.go b/../../escape.go\n--- a/../../escape.go\n+++ b/../../escape.go\n@@ -1 +1 @@\n-a\n+b\n"
-	auditPRFakeCheckout(t, "m12", map[string]string{})
+	auditPRFakeCheckout(t, "m12", map[string]string{"../../escape.go": "package escape\n"})
 	e, _, _ := auditTestEnv(t)
 	co, err := auditPkgCheckoutOf(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = auditPRBuild(context.Background(), e, cfg, auditPRSection{}, co, auditPRSource{
-		Target: auditPRTarget{Number: 12, Issue: "CRW-12", Merge: "m12"}, Patch: []byte(patch),
+		Target: auditPRTarget{Number: 12, Issue: "CRW-12", Merge: "m12"}, Patch: []byte(auditPRPatch),
 	})
 	if err == nil {
 		t.Fatal("a path leaving the bundle was accepted")
 	}
-	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", "pr-12", auditBundleFile)); !os.IsNotExist(err) {
-		t.Errorf("a bundle was completed for a refused path: %v", err)
+	if _, err := os.Stat(filepath.Join(state, "audit", "bundles", "pr-12")); !os.IsNotExist(err) {
+		t.Errorf("the failed build left its directory behind: %v", err)
 	}
 }
 
