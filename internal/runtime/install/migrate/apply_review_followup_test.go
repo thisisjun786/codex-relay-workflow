@@ -129,3 +129,68 @@ func TestMigrateApplyReviewFollowupKeepsPlanOrderWithoutAManifest(t *testing.T) 
 		t.Errorf("a record with no manifest array must keep the plan order: %v", got)
 	}
 }
+
+// The two halves of the content judgement are pinned apart, because either one alone puts an artifact before the receipt
+// that names it and would hide the other reverting to the name test.
+
+// R1a, the ordering key half: the receipt itself is demoted to the referrer's place by its content, so a record under
+// another name publishes after an unrelated record of its rank even though plan order puts the receipt first.
+func TestMigrateApplyReviewFollowupDemotesAReceiptUnderAnotherName(t *testing.T) {
+	_, r, p := apPlan(t, map[string]string{
+		"evidence/s/a.json": "{\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}",
+		"evidence/s/b.json": "plain",
+	}, nil)
+	pub, leaves := migrateApplyReviewRenames(t)
+	if _, err := applyWith(r, p, pub); err != nil {
+		t.Fatal(err)
+	}
+	got := leaves()
+	if b, a := slices.Index(got, "b.json"), slices.Index(got, "a.json"); b < 0 || a < 0 || b > a {
+		t.Errorf("the receipt under another name must publish after the record of its rank: %v", got)
+	}
+}
+
+// R1b, the manifest scan half: the artifact a receipt under another name lists is hoisted above a plain record of the same
+// rank, which only the scan reading that receipt's content can do.
+func TestMigrateApplyReviewFollowupHoistsTheArtifactOfAReceiptUnderAnotherName(t *testing.T) {
+	_, r, p := apPlan(t, map[string]string{
+		"evidence/s/a.json":         "{\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}",
+		"evidence/s/b.json":         "plain",
+		"evidence/s/z/verdict.json": "v",
+	}, nil)
+	pub, leaves := migrateApplyReviewRenames(t)
+	if _, err := applyWith(r, p, pub); err != nil {
+		t.Fatal(err)
+	}
+	got := leaves()
+	if v, b := slices.Index(got, "verdict.json"), slices.Index(got, "b.json"); v < 0 || b < 0 || v > b {
+		t.Errorf("the artifact must be hoisted above the plain record: %v", got)
+	}
+}
+
+// R1c: a record the receipt reader could not read is not judged by content, so the plan's own measurement decides it
+// before anything is opened. The plan's size stands in for the file, so the case needs no record of that size.
+func TestMigrateApplyReviewFollowupKeepsTheNameOrderPastTheReceiptReadBound(t *testing.T) {
+	_, r, p := apPlan(t, map[string]string{
+		"evidence/s/qa-receipt.json": "{\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}]}",
+	}, nil)
+	it := apItem(t, &ApplyResult{Items: planItems(p)}, "evidence/s/qa-receipt.json").Item
+	a := &applyRun{roots: r, plan: p, dirs: map[string]*Dir{}, srcs: map[string]*Dir{}, made: map[string]bool{}, result: &ApplyResult{}}
+	defer a.close()
+	if manifest, ok := a.migrateReviewFollowupReceiptManifest(it); !ok || len(manifest) != 1 {
+		t.Fatalf("a record within the bound must be judged by content: %v %v", manifest, ok)
+	}
+	it.Size = migrateReviewFollowupReceiptReadCap + 1
+	if manifest, ok := a.migrateReviewFollowupReceiptManifest(it); ok || manifest != nil {
+		t.Errorf("a record past the receipt reader's bound must not be judged by content: %v %v", manifest, ok)
+	}
+}
+
+// planItems wraps a plan's items as an ApplyResult so apItem can find one by source.
+func planItems(p *Plan) []ApplyItem {
+	items := make([]ApplyItem, len(p.Items))
+	for i, it := range p.Items {
+		items[i].Item = it
+	}
+	return items
+}

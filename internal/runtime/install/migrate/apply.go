@@ -451,18 +451,25 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) (manifest []str
 	if err != nil {
 		return nil, false
 	}
-	data, err := io.ReadAll(io.LimitReader(f, migrateReviewFollowupReceiptReadCap+1))
-	_ = f.Close()
-	if err != nil || len(data) > migrateReviewFollowupReceiptReadCap {
-		return nil, false
-	}
+	defer f.Close()
+	// The object is decoded from the reader rather than buffered whole, so a large evidence record costs no more memory than
+	// the manifest it names. The reader is limited and the value must be the whole record, as the receipt reader requires,
+	// so a record that grew past the bound after the plan measured it, or one with data after the object, is refused and
+	// keeps the order the name judgement gave it.
 	var view struct {
 		ArtifactManifest []struct {
 			Path string `json:"path"`
 			Kind string `json:"kind"`
 		} `json:"artifactManifest"`
 	}
-	if json.Unmarshal(data, &view) != nil || len(view.ArtifactManifest) == 0 {
+	dec := json.NewDecoder(io.LimitReader(f, migrateReviewFollowupReceiptReadCap+1))
+	if dec.Decode(&view) != nil {
+		return nil, false
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	if len(view.ArtifactManifest) == 0 {
 		return nil, false
 	}
 	return view.ArtifactManifest, true
