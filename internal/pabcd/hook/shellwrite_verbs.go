@@ -2173,6 +2173,67 @@ func shellWriteHeredocBodyExpands(body []uint16) bool {
 	return false
 }
 
+// shellWriteHeredocBodyShellText is the text the outer shell hands the program of a here-document whose delimiter is
+// unquoted (CRW-765 correction 9, rule K2). Before the program reads the body the shell processes a backslash that
+// escapes a backslash, a dollar sign, a backtick or a newline, so a body the reader sees as \\x6d is the \x6d the
+// language then decodes, and a backslash-newline is a line continuation that both characters leave. A backslash before
+// any other character stays as the shell leaves it. A quoted delimiter makes the body literal, so this is not applied
+// there. A body that still holds an expansion is refused before this reading, so the unescaped text is a program whose
+// text the reader can evaluate.
+func shellWriteHeredocBodyShellText(body []uint16) []uint16 {
+	out := make([]uint16, 0, len(body))
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c != '\\' || i+1 >= len(body) {
+			out = append(out, c)
+			continue
+		}
+		switch next := body[i+1]; next {
+		case '\\', '$', '\x60':
+			out = append(out, next)
+			i++
+		case '\n':
+			i++ // a backslash-newline is a line continuation: both characters go
+		default:
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// shellWriteHeredocShellBodyUnreadable runs a shell here-document body through the same whole judgement a top-level Bash
+// command gets (CRW-765 correction 9, rule K3): CRW-741's and CRW-754's Python program checks, which reach a python -c
+// program inside the body, and CRW-726's reader, which refuses a program position or a command name the outer shell
+// builds at run time. Either reader's reason denies the body. The reader is the same one the memory gate already runs
+// on the whole command, so a body it can read stays readable.
+func shellWriteHeredocShellBodyUnreadable(body string) (string, bool) {
+	if what, ok := shellWriteFStringUnreadable(body); ok {
+		return what, true
+	}
+	if what, ok := worktreeDelUnreadableProgram(body); ok {
+		return what, true
+	}
+	return "", false
+}
+
+// shellWriteHeredocBlankSpans returns the text with the given spans blanked to spaces, their newlines kept, so the text
+// a check runs on keeps its line structure and offsets while the spans hold nothing (CRW-765 correction 9, rule K5).
+func shellWriteHeredocBlankSpans(s []uint16, spans [][2]int) []uint16 {
+	if len(spans) == 0 {
+		return s
+	}
+	out := slices.Clone(s)
+	for _, span := range spans {
+		from, to := max(span[0], 0), min(span[1], len(out))
+		for i := from; i < to; i++ {
+			if out[i] != '\n' {
+				out[i] = ' '
+			}
+		}
+	}
+	return out
+}
+
 // shellWriteHeredocProgramWrites reads one interpreter here-document as program text and returns the destinations it
 // names plus the what of a program the reader cannot finish. A quoted delimiter makes the body literal; an unquoted one
 // lets the outer shell expand it, so a body holding an expansion is unreadable, and one without is read like the quoted
@@ -2186,7 +2247,7 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 	if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
 		return nil, shellWriteHeredocUnreadableWhat
 	}
-	body := shellString(h.body)
+	body := shellWriteHeredocProgramBody(h)
 	switch kind {
 	case shellWriteHeredocPython:
 		what, _ := shellWriteFStringUnreadableProgram(body)
@@ -2194,9 +2255,25 @@ func shellWriteHeredocProgramWrites(h shellWriteHeredoc, kind shellWriteHeredocK
 	case shellWriteHeredocNode:
 		return shellVerbScriptWritesIn(body, true, false), ""
 	case shellWriteHeredocShell:
+		// Rule K3: a shell body is judged the way a top-level Bash command is, so a program the reader cannot finish
+		// inside it (CRW-741/754) or a program position the outer shell builds at run time (CRW-726) is reported too.
+		if what, bad := shellWriteHeredocShellBodyUnreadable(body); bad {
+			return shellWriteDestinationsIn(body, bodyDepth), what
+		}
 		return shellWriteDestinationsIn(body, bodyDepth), ""
 	}
 	return nil, ""
+}
+
+// shellWriteHeredocProgramBody is the text the interpreter of a here-document reads (CRW-765 correction 9, rule K2). A
+// quoted delimiter makes the body literal, so it is read as it stands; an unquoted delimiter lets the outer shell
+// process the body's escapes first, so \\x6d reaches the language as \x6d and a backslash-newline is a line
+// continuation. The body is known to hold no expansion here, so the processed text is one the reader can evaluate.
+func shellWriteHeredocProgramBody(h shellWriteHeredoc) string {
+	if h.quoted {
+		return shellString(h.body)
+	}
+	return shellString(shellWriteHeredocBodyShellText(h.body))
 }
 
 // shellWriteHeredocDestinations reads every here-document of a command that feeds an interpreter's program and returns
@@ -2235,6 +2312,7 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
 	}
 	u := utf16.Encode([]rune(command))
+	data := [][2]int{} // the bodies this walk judged data, which rule K5 leaves out of the hidden-operator check
 	for _, h := range shellWriteHeredocs(u) {
 		reading, kind := shellWriteHeredocClassify(h)
 		if reading == shellWriteHeredocRefused {
@@ -2246,7 +2324,9 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 			return shellWriteHeredocUnreadableWhat, true
 		}
 		if reading != shellWriteHeredocProgram {
-			continue // data: the body is not read as a program
+			// Data: the body is not read as a program, and its text is not a command either (rule K5).
+			data = append(data, [2]int{h.bodyAt, h.bodyEnd})
+			continue
 		}
 		if !h.quoted && shellWriteHeredocBodyExpands(h.body) {
 			return shellWriteHeredocUnreadableWhat, true
@@ -2255,13 +2335,19 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		if depth+1 > shellWriteHeredocMaxDepth {
 			return shellWriteHeredocUnreadableWhat, true
 		}
+		body := shellWriteHeredocProgramBody(h)
 		switch kind {
 		case shellWriteHeredocPython:
-			if what, bad := shellWriteFStringUnreadableProgram(shellString(h.body)); bad {
+			if what, bad := shellWriteFStringUnreadableProgram(body); bad {
 				return what, true
 			}
 		case shellWriteHeredocShell:
-			if what, bad := shellWriteHeredocUnreadableIn(shellString(h.body), depth+1, budget); bad {
+			if what, bad := shellWriteHeredocUnreadableIn(body, depth+1, budget); bad {
+				return what, true
+			}
+			// Rule K3: the body is a shell program, so the checks the memory gate runs on a top-level command run here
+			// too (CRW-741/754's Python program checks and CRW-726's reader).
+			if what, bad := shellWriteHeredocShellBodyUnreadable(body); bad {
 				return what, true
 			}
 		}
@@ -2269,8 +2355,9 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 	// A here-document operator the collector cannot reach - a << inside a $( ... ) or backtick command substitution a
 	// double-quoted word encloses (correction 4, rule G4) - is read as a here-document by the shell, so a command
 	// holding one is a line the reader cannot take apart and denies (rule U3: an interpreter-name test is no longer an
-	// allow condition).
-	if shellWriteHeredocHiddenOperator(u) {
+	// allow condition). The check reads the text with the bodies already judged data blanked out (correction 9, rule
+	// K5), so a data body that documents a here-document is not mistaken for a command the shell runs.
+	if shellWriteHeredocHiddenOperator(shellWriteHeredocBlankSpans(u, data)) {
 		return shellWriteHeredocUnreadableWhat, true
 	}
 	return shellWriteHeredocUnreadableNested(command, depth, budget)

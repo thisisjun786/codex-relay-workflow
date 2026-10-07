@@ -55,6 +55,8 @@ type shellWriteHeredoc struct {
 	tabs    bool
 	joined  bool // the previous physical line ends with a backslash, so this header is a line continuation
 	at      int  // the offset of the << operator in the header line (rule U1)
+	bodyAt  int  // the offset the body begins at in the walked text (rule K5)
+	bodyEnd int  // the offset after the body's terminator line (rule K5)
 }
 
 // shellWriteHeredocs enumerates the here-documents of a command without changing the oracle's own stripHeredocBodies:
@@ -69,11 +71,28 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 	out := []shellWriteHeredoc{}
 	for i := 0; i < len(command); {
 		ch := command[i]
+		if ch == '#' && shellWriteHeredocCommentStart(command, i) {
+			// Rule K1: a word-initial # begins a comment, so the rest of the physical line holds no operator. The
+			// command reader (shellWriteHeredocSegmentWords) already ends a command at a #; the collector must read
+			// the same text, or a << written inside a comment would claim the next interpreter's body as its own.
+			eol := shellNewline(command, i)
+			if eol == -1 {
+				break
+			}
+			i = eol + 1
+			continue
+		}
 		if ch == '\'' || ch == '"' {
 			i = skipQuoted(command, i)
 			continue
 		}
-		if ch == '<' && shellAt(command, i+1) == '<' && shellAt(command, i+2) != '<' {
+		if ch == '<' && shellAt(command, i+1) == '<' && shellAt(command, i+2) == '<' {
+			// Rule K4: <<< is a here-string, not a here-document. The whole token is consumed, so its second and
+			// third < are never read as a here-document operator (the CRW-726 collector reads it the same way).
+			i += 3
+			continue
+		}
+		if ch == '<' && shellAt(command, i+1) == '<' {
 			eol := shellNewline(command, i)
 			if eol == -1 {
 				eol = len(command)
@@ -93,7 +112,7 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 					continue // no delimiter word at all (the oracle's absent-delimiter case)
 				}
 				body, next := shellWriteHeredocBody(command, j, d)
-				out = append(out, shellWriteHeredoc{command: header, delim: d.delim, body: body, quoted: d.quoted, tabs: d.tabs, joined: joined, at: d.at})
+				out = append(out, shellWriteHeredoc{command: header, delim: d.delim, body: body, quoted: d.quoted, tabs: d.tabs, joined: joined, at: d.at, bodyAt: j, bodyEnd: next})
 				j = next
 			}
 			i = j
@@ -102,6 +121,23 @@ func shellWriteHeredocs(command []uint16) []shellWriteHeredoc {
 		i++
 	}
 	return out
+}
+
+// shellWriteHeredocCommentStart reports whether the # at i begins a shell comment: it stands at the beginning of a word,
+// which is the start of the text, a blank, a newline or a control operator (rule K1). A # inside a word, as in `a#b`, is
+// part of that word and begins nothing.
+func shellWriteHeredocCommentStart(s []uint16, i int) bool {
+	if shellAt(s, i) != '#' {
+		return false
+	}
+	if i == 0 {
+		return true
+	}
+	switch prev := s[i-1]; {
+	case shellSpace(prev), prev == ';', prev == '&', prev == '|', prev == '(', prev == ')':
+		return true
+	}
+	return false
 }
 
 // shellWriteHeredocLineStart is the offset of the physical line that holds at: the byte after the last newline before it.
@@ -122,11 +158,20 @@ func shellWriteHeredocDecls(header []uint16) []shellWriteHeredocDecl {
 	out := []shellWriteHeredocDecl{}
 	for i := 0; i < len(header); {
 		ch := header[i]
+		if ch == '#' && shellWriteHeredocCommentStart(header, i) {
+			// Rule K1: the declaration reader ends the line at a word-initial # exactly as the command reader does, so
+			// a << written inside a comment is no declaration and cannot claim the next interpreter's body.
+			break
+		}
 		if ch == '\'' || ch == '"' {
 			i = skipQuoted(header, i)
 			continue
 		}
-		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) != '<' {
+		if ch == '<' && shellAt(header, i+1) == '<' && shellAt(header, i+2) == '<' {
+			i += 3 // rule K4: <<< is a here-string, and its second and third < open no declaration
+			continue
+		}
+		if ch == '<' && shellAt(header, i+1) == '<' {
 			delim, quoted := shellWriteHeredocDelimiter(header, i)
 			out = append(out, shellWriteHeredocDecl{delim: delim, quoted: quoted, tabs: shellAt(header, i+2) == '-', at: i})
 			i = skipHeredoc(header, i)
