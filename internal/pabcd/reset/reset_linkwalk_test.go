@@ -450,19 +450,35 @@ func TestResetLinkWalkKeepsADotEndingLinkWhenSearchIsDenied(t *testing.T) {
 			if got != wantExists {
 				t.Errorf("exists = %v, but the oracle's stat answers %v", got, oracleErr)
 			}
-			// The removal itself, through the entry point, must follow the same verdict.
+			// The removal itself, through the entry point, must follow the same verdict. The
+			// candidate's target is relative to the sessions directory it sits in, so the same tree is
+			// mirrored there: a target that names "keep" has to name a keep inside .crw/sessions, or
+			// the link would be dangling for every row and no assertion below could fail.
 			crw := filepath.Join(dir, ".crw")
-			if err := os.MkdirAll(filepath.Join(crw, "sessions"), 0o755); err != nil {
+			ws := filepath.Join(crw, "sessions")
+			if err := os.MkdirAll(filepath.Join(ws, "keep", "sub"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(tc.target, filepath.Join(crw, "sessions", "b.json")); err != nil {
+			if err := os.WriteFile(filepath.Join(ws, "keep", "inner.txt"), []byte("keep"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Symlink(tc.target, filepath.Join(ws, "b.json")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(ws, tc.dir), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = os.Chmod(filepath.Join(ws, "keep", "sub"), 0o755)
+				_ = os.Chmod(filepath.Join(ws, "keep"), 0o755)
+			})
 			if _, err := RunReset(dir, State); err != nil {
 				t.Fatalf("RunReset: %v", err)
 			}
-			_, linkErr := os.Lstat(filepath.Join(crw, "sessions", "b.json"))
-			if wantExists && linkErr != nil {
+			// A link whose target exists is removed, so Lstat answers ErrNotExist; one whose target
+			// does not is kept and reset continues.
+			_, linkErr := os.Lstat(filepath.Join(ws, "b.json"))
+			if wantExists && !errors.Is(linkErr, os.ErrNotExist) {
 				t.Errorf("the link must be removed: %v", linkErr)
 			}
 			if !wantExists && linkErr != nil {
