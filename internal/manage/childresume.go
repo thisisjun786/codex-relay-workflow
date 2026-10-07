@@ -52,6 +52,12 @@ type resumeOptions struct {
 	dryRun       bool
 }
 
+// resumeSentTurnStartSeam runs immediately before the turn/start frame is written. It is nil in
+// production: a test installs one to make another call on the same watch context until that call
+// fails, so the connection the watch holds is provably gone and the turn/start that follows is
+// withheld deterministically instead of by timing.
+var resumeSentTurnStartSeam func(ctx context.Context, client *appserver.Client)
+
 // resumeSettings is the authorized record child-resume resumes the child with.
 type resumeSettings struct {
 	Model           string
@@ -395,9 +401,21 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return &resumeFailure{Reason: resumeTurnStartUncertain, Detail: "the turn may or may not have started (" + detail +
 			"); read the thread before sending the message again"}
 	}
+	if resumeSentTurnStartSeam != nil {
+		resumeSentTurnStartSeam(fenced, client)
+	}
 	startedRaw, err := client.Call(fenced, "turn/start", map[string]any{"threadId": child,
 		"input": []map[string]any{{"type": "text", "text": opts.message}}})
 	if err != nil {
+		// Whether the frame reached the host is what separates a lost answer from a request that
+		// never went out, and the watch records exactly that. A withheld turn/start (the connection
+		// already ended, or the watch retired) started no turn, so it is an ordinary host_error; only
+		// a frame that was written and then lost its answer is the uncertain case above. The error
+		// text is never read to decide this.
+		if !watch.Transmitted() {
+			return nil, &resumeFailure{Reason: string(hostReadHostError),
+				Detail: "turn/start was not sent: " + err.Error() + "; no turn was started"}
+		}
 		return nil, uncertain("turn/start: " + err.Error())
 	}
 	var turn struct{ Turn struct{ ID string } }
