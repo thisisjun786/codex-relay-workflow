@@ -516,7 +516,7 @@ type auditBundleID struct {
 func auditBundleIDOf(bundle string) auditBundleID {
 	// The resolved path is the identity, so a row a grade wrote and a row an older run wrote are
 	// compared as the directories they name rather than as the spellings they carry.
-	cleaned := auditBundleResolvedPath(bundle)
+	cleaned := auditBundleIdentity(bundle)
 	info, err := os.Stat(cleaned)
 	if err != nil {
 		info = nil

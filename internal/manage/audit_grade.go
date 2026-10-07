@@ -135,7 +135,14 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 		// this run reads and writes are the ones the caller's path really names. Resolving a
 		// spelling with the kernel (EvalSymlinks) and only then using it is what makes
 		// "link/../B" name the directory the shell would, rather than one a lexical clean picks.
-		path := auditBundleResolvedPath(job.Bundle)
+		// A path the kernel cannot resolve is refused rather than lexically cleaned: cleaning
+		// collapses "link/../B" to "work/B" and would grade a directory the caller's spelling does
+		// not name. A caller that names a bundle through a link that does not exist yet has to
+		// create it first.
+		path, err := auditBundleResolvedPath(job.Bundle)
+		if err != nil {
+			return nil, err
+		}
 		bundle, err := auditReadBundle(path)
 		if err != nil {
 			return nil, err
@@ -196,14 +203,13 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 			fmt.Fprintf(e.Stderr, "crw manage audit: %s: %s: %s\n", results[i].Bundle, results[i].Status, auditFirstLine(logs[i].String()))
 		}
 	}
-	// auditRecord appends one ledger row per result in order, so the rows it managed to append are
-	// a prefix of the results. The marker is removed for exactly that prefix: a row on disk names its
-	// file and its result is complete, while a result whose row is missing keeps its marker and
-	// stays unreadable. A recorded result is never thrown away, so a failure that comes after some
-	// rows (an alert write, for one) costs only the results it actually lost.
-	mark, torn := auditLedgerProgress(e, cfg)
-	if err := auditRecord(e, cfg, results); err != nil {
-		recorded := auditLedgerRowsRecorded(e, cfg, mark, torn)
+	// auditRecord appends one ledger row per result in order and reports how many it appended, so
+	// the rows on disk are a prefix of the results and the count comes from the writer rather than
+	// a re-read that may itself fail. The marker is removed for exactly that prefix: a row on disk
+	// names its file and its result is complete, while a result whose row is missing keeps its
+	// marker and stays unreadable. A recorded result is never thrown away, so a failure that comes
+	// after some rows (an alert write, for one) costs only the results it actually lost.
+	if recorded, err := auditRecord(e, cfg, results); err != nil {
 		for i := range results {
 			if i >= recorded {
 				auditPendingUnlock(marks[i])
@@ -219,55 +225,43 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 	return results, nil
 }
 
-// auditLedgerProgress is where a run's own ledger rows begin: the offset just past the last line
-// feed, and whether a partial row an earlier writer left sits before it. A row exists once its
-// terminating line feed reached the file, so counting line feeds after this mark counts exactly
-// the rows this run appended, even when a write stopped in the middle of one.
-func auditLedgerProgress(e *Env, cfg *Config) (int64, bool) {
-	data, err := os.ReadFile(filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile))
-	if err != nil {
-		return 0, false
-	}
-	mark := int64(bytes.LastIndexByte(data, '\n') + 1)
-	return mark, int64(len(data)) > mark
-}
-
-// auditLedgerRowsRecorded counts the ledger rows a run appended after the mark.
-func auditLedgerRowsRecorded(e *Env, cfg *Config, mark int64, torn bool) int {
-	data, err := os.ReadFile(filepath.Join(auditStateDir(e, cfg), "audit", auditLedgerFile))
-	if err != nil || int64(len(data)) < mark {
-		return 0
-	}
-	rows := bytes.Count(data[mark:], []byte{'\n'})
-	if torn {
-		rows--
-	}
-	if rows < 0 {
-		return 0
-	}
-	return rows
-}
-
 // auditBundleResolvedPath is the directory a bundle really is: the absolute path with every link
 // resolved. The ledger records this rather than the spelling the caller passed, so two grades of
 // one directory are one bundle to a later reader even after a link used for one of them is gone
 // or repointed, and so a reader anywhere names the same directory.
-func auditBundleResolvedPath(bundle string) string {
+func auditBundleResolvedPath(bundle string) (string, error) {
 	// The kernel resolves a path component by component, so a link followed by ".." names the
 	// link target's parent. The whole spelling is asked for first for that reason: cleaning it
 	// would collapse "link/../B" to "work/B" and name a directory the caller's path does not.
 	if resolved, err := filepath.EvalSymlinks(bundle); err == nil {
-		return auditBundleAbs(resolved)
+		return auditBundleAbs(resolved), nil
 	}
 	// The path does not exist yet, so the kernel has nothing to resolve for its leaf. Its parent
 	// is resolved and the leaf rejoined, which answers the same before and after a bundle is
 	// built, so a marker taken for a build and the grade that adopts it name one file.
-	cleaned := filepath.Clean(bundle)
-	parent, err := filepath.EvalSymlinks(filepath.Dir(cleaned))
+	//
+	// The parent is taken from the spelling as written, not from its cleaned form: filepath.Dir
+	// cleans, and cleaning "link/../B" to "work/B" would resolve the wrong directory and could
+	// substitute an unrelated bundle for one whose real target is gone.
+	parent, base := auditBundleSplitParent(bundle)
+	resolved, err := filepath.EvalSymlinks(parent)
 	if err != nil {
-		return auditBundleAbs(bundle)
+		return "", fmt.Errorf("bundle %s: the path cannot be resolved: %w", bundle, err)
 	}
-	return filepath.Join(parent, filepath.Base(cleaned))
+	return filepath.Join(resolved, base), nil
+}
+
+// auditBundleSplitParent splits a path into the part before its last separator and the last
+// element, without cleaning either: filepath.Dir and filepath.Base both clean, and a cleaned
+// parent resolves a link-and-".." spelling to a different directory than the kernel would.
+func auditBundleSplitParent(path string) (string, string) {
+	if i := strings.LastIndexByte(path, filepath.Separator); i >= 0 {
+		if i == 0 {
+			return string(filepath.Separator), path[1:]
+		}
+		return path[:i], path[i+1:]
+	}
+	return ".", path
 }
 
 // auditBundleAbs is a path's absolute form, or its cleaned form when the working directory itself
@@ -288,8 +282,20 @@ const auditPendingDir = "pending"
 // marker is never opened through a path the bundle controls, and a reader that has only the
 // ledger row still finds it.
 func auditPendingPath(e *Env, cfg *Config, bundle string) string {
-	sum := sha256.Sum256([]byte(auditBundleResolvedPath(bundle)))
+	sum := sha256.Sum256([]byte(auditBundleIdentity(bundle)))
 	return filepath.Join(auditStateDir(e, cfg), "audit", auditPendingDir, hex.EncodeToString(sum[:]))
+}
+
+// auditBundleIdentity is the name a marker is keyed by: the directory the kernel resolves the
+// spelling to when it can, and the cleaned absolute spelling when it cannot. A marker is keyed
+// from a ledger row, and a row names a bundle that exists or once did, so the resolved form is
+// what a grade of that row will look for; the fallback keeps a row whose bundle is gone from
+// keying every such row to one name.
+func auditBundleIdentity(bundle string) string {
+	if resolved, err := auditBundleResolvedPath(bundle); err == nil {
+		return resolved
+	}
+	return auditBundleAbs(bundle)
 }
 
 // auditPendingMark creates or opens a bundle's marker and holds an exclusive lock on it for the
@@ -313,6 +319,11 @@ func auditPendingMark(path string) (*os.File, bool, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
+		// The file this call created is taken back: nothing was graded under it, and leaving it
+		// would make a later reader distrust a bundle this run never touched.
+		if made {
+			_ = os.Remove(path)
+		}
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, false, fmt.Errorf("bundle_locked: %s is being graded", path)
 		}

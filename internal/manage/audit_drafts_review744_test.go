@@ -715,9 +715,104 @@ func TestAuditDraftsReview744BundlePathResolvesLikeTheKernel(t *testing.T) {
 	}
 	// The kernel reads "link/../B" as real/B, while a lexical clean would name work/B. The spelling
 	// is joined by hand, because filepath.Join would clean it before the resolver ever saw it.
-	got := auditBundleResolvedPath(work + "/link/../B")
-	want := auditBundleResolvedPath(filepath.Join(real, "B"))
+	got, err := auditBundleResolvedPath(work + "/link/../B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := auditBundleResolvedPath(filepath.Join(real, "B"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != want {
 		t.Errorf("the resolved path is %q, want the directory the kernel names, %q", got, want)
+	}
+}
+
+// C1: a spelling the kernel cannot resolve is refused rather than lexically cleaned, so grading
+// never substitutes a different existing directory for the one the caller named.
+func TestAuditDraftsReview744UnresolvableBundlePathIsRefused(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(base, "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "child"), filepath.Join(work, "link")); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	// /work/B exists and holds a valid bundle, while the path the kernel resolves
+	// (/real/B) does not. Cleaning first would grade /work/B; refusing is the only safe answer.
+	auditDraftsReview744BundleAt(t, filepath.Join(work, "B"))
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: work + "/link/../B"}}); err == nil {
+		t.Fatal("a spelling whose kernel-resolved target does not exist was graded anyway")
+	}
+	if _, err := os.Stat(filepath.Join(work, "B", auditGradeFile)); !os.IsNotExist(err) {
+		t.Errorf("the other directory was graded through the substitution: %v", err)
+	}
+}
+
+// C1: a result whose ledger row was written is not thrown away when the recording call fails
+// later. The writer reports how many rows it appended, so an alert write that fails after a row
+// does not take back that row's marker even when the ledger cannot be read afterwards.
+func TestAuditDraftsReview744RecordedRowSurvivesAnUnreadableLedger(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the file permission this test needs does not stop root")
+	}
+	state := t.TempDir()
+	dir := filepath.Join(state, "audit")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/full", filepath.Join(dir, auditAlertFile)); err != nil {
+		t.Skipf("this host cannot make the failing alert target: %v", err)
+	}
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	auditDraftsReview744BundleAt(t, bundle)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 5})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}}); err == nil {
+		t.Fatal("a grade whose alert could not be written reported success")
+	}
+	// The row is on disk, so the marker must be gone and the result must still draft.
+	if auditPending(e, cfg, bundle) {
+		t.Fatal("the marker of a recorded result was kept")
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 1 {
+		t.Fatalf("the recorded result must still draft: %+v", report)
+	}
+}
+
+// C1: a marker this run created is taken back when it cannot be locked, so a batch that never
+// graded anything leaves no bundle looking unrecorded.
+func TestAuditDraftsReview744UnlockableMarkerIsTakenBack(t *testing.T) {
+	state := t.TempDir()
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	auditDraftsReview744BundleAt(t, bundle)
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	e, _, _ := auditTestEnv(t)
+	// The marker path is already a directory, so the exclusive create fails and no marker file is
+	// made; the check below is that nothing is left that reads as an unrecorded grade.
+	if err := os.MkdirAll(auditPendingPath(e, cfg, bundle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}}); err == nil {
+		t.Fatal("a bundle whose marker could not be taken was graded anyway")
+	}
+	if _, err := os.Stat(filepath.Join(bundle, auditGradeFile)); !os.IsNotExist(err) {
+		t.Errorf("a grader ran for a bundle whose marker was refused: %v", err)
 	}
 }
