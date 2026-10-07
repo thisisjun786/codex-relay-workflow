@@ -67,6 +67,11 @@ var errPolicyMoved = errors.New("the policy file changed since it was read")
 // written; the bytes the exchange displaced are kept at the path the error names.
 var errExchangeHappened = errors.New("the policy file was replaced and what it held could not be read back")
 
+// errUndoSync marks an errPolicyMoved whose undo ran but whose directory entry was not synced: the
+// replacement still did not happen, but a power loss may bring it back, so the refusal carries the
+// warning rather than presenting a confirmed rollback.
+var errUndoSync = errors.New("the undo of this call's exchange could not be synced, so a host that loses power now may find the candidate at the policy path")
+
 // writeDecisionTimeout bounds the post-publication phase: the registration, the (a)/(b)/(c)
 // decision and any restore. It is a var so a test can shorten it. The phase runs on a context
 // detached from the request, because a client that goes away must not be able to leave the policy
@@ -121,6 +126,9 @@ var (
 	// writeExchange is the seam a test replaces to drive the instant between the publication's undo
 	// exchange and its read-back: a writer that saves again in that window must keep its bytes.
 	writeExchange = exchangeFiles
+	// writeSync is the seam a test replaces to drive a directory fsync that fails: the rollback the
+	// refusal reports must then say its durability was not established.
+	writeSync = syncDirectory
 )
 
 // WriteOptions are the seams a write runs with. A nil field takes the production value: the clock,
@@ -139,7 +147,8 @@ type WriteOptions struct {
 // SwapFunc is the shape of the publication step: the file is replaced only while it still holds
 // expected, by an atomic exchange with a temporary file holding next. displaced is what the exchange
 // moved out of the path and is set only when the replacement stands. kept names a file holding bytes
-// this call did not create and therefore never deletes: the caller must report it. err is nil on a
+// this call did not create and therefore never deletes: the caller must report it, and it is non-empty
+// only alongside errPolicyMoved or errExchangeHappened, never with a nil error. err is nil on a
 // standing replacement, errPolicyMoved when the file had already changed (nothing was replaced),
 // errExchangeHappened when the exchange ran and its outcome could not be established, and any other
 // error when nothing was replaced. The context is honoured up to the exchange, which is the durable
@@ -332,12 +341,17 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 		// names those bytes, so the two disagree and the answer says what is on disk.
 		observed, readErr := digestAt(path)
 		detail := "the execution policy changed while this write held its lock, so it was not replaced"
+		if errors.Is(err, errUndoSync) {
+			// The rollback ran but its directory entry was not synced, so the refusal must not present it
+			// as durable: a power loss may bring this call's candidate back at the policy path.
+			detail += "; the undo of this write's exchange could not be synced, so a host that loses power now may find the candidate at the policy path"
+		}
 		if readErr != nil {
 			observed = ""
 			detail += "; the policy file could not be read back: " + readErr.Error()
 		}
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: original, Backup: reported,
-			Recovery: recoveryAdvice(path, reported), Errors: []string{detail}}
+			Kept: pyvalue.FSDecode(kept), Recovery: recoveryAdviceKept(path, reported, pyvalue.FSDecode(kept)), Errors: []string{detail}}
 	case displaced == nil && ctx.Err() != nil:
 		// The publication refused the replacement because the request ended: nothing was replaced.
 		return WriteResult{Kind: WriteCancelled, Step: "publish", Backup: reported, Errors: []string{err.Error()}}
@@ -459,6 +473,14 @@ func storedResult(ctx context.Context, env LookupEnv, running func(context.Conte
 		registered = ""
 		warnings = append(warnings, "the execution policy was written and the wiring record could not be read back afterwards, so the digest it names was not established: "+located.Reason)
 	}
+	if established && registered != stored {
+		// The record was read back and names bytes the file does not hold: the two no longer describe
+		// one document, which is the (c) decision whatever the registration answered. Reporting it as a
+		// success would present a state no bridge can start under as an applied policy.
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: stored, RegisteredDigest: registered, Backup: backup,
+			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Errors: []string{"the registration reported success, but the policy file and the wiring record name different digests: the file holds " + stored + " and the record names " + registered}}
+	}
 	file := Reading{State: Registered, Path: path, Digest: stored, RegisteredDigest: registered}
 	observed := running(ctx, env)
 	applied := Applied(file, observed)
@@ -545,17 +567,14 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 	confirmed, confirmErr := digestAt(path)
 	if confirmErr != nil {
 		return WriteResult{Kind: WriteRecoveryNeeded, RegisteredDigest: original, Backup: backup,
-			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
 			Errors: []string{detail + "; the bytes could not be read back after the restore: " + confirmErr.Error()}}
 	}
 	if confirmed != original {
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: original, Backup: backup,
-			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
 			Errors: []string{detail + "; the bytes read back after the restore are not the ones that were backed up"}}
 	}
-	// The file holds the original bytes again. The record is read once more: a registration that ran
-	// elsewhere while this restore was deciding may now name another digest, and then the two still
-	// disagree even though the file is back.
 	// The file holds the original bytes again, so the record must be read once more and must still
 	// name them: a registration that ran elsewhere while this restore was deciding may name another
 	// digest, and a record that is now absent or unreadable establishes nothing. Either way the two
@@ -564,12 +583,20 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 	switch {
 	case after.State != Registered:
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, Backup: backup,
-			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
 			Errors: []string{detail + "; the wiring record could not be read back after the restore: " + after.Reason}}
 	case after.RegisteredDigest != original:
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: after.RegisteredDigest, Backup: backup,
-			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
 			Errors: []string{detail + "; the wiring record names " + after.RegisteredDigest + ", not the bytes that were put back"}}
+	}
+	if keptPath != "" {
+		// The file and the record agree again, but this run left a document it could not read at a path
+		// of its own. Calling that a confirmed restore would drop the only name of those bytes, so the
+		// answer is the recovery that carries it.
+		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: confirmed, RegisteredDigest: original, Backup: backup,
+			Kept: pyvalue.FSDecode(keptPath), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(keptPath)), Warnings: warnings,
+			Errors: []string{detail + "; the bytes this restore displaced could not be read back and are kept at " + pyvalue.FSDecode(keptPath)}}
 	}
 	if syncErr != nil {
 		return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
@@ -633,9 +660,9 @@ func describeAnswer(answer RegisterAnswer, outcome string, parsed bool) string {
 // recoveryAdvice is what a person does about a policy file and a wiring record that no longer agree.
 // The backup is named only when this run knows one.
 // A path whose bytes are not UTF-8 is spelled by the installer as a surrogate escape; a JSON writer
-// that replaces it with U+FFFD would name a file that does not exist. The advice is therefore built
-// from the path's own bytes (the kernel spelling) so that it survives any writer: the command it
-// names opens the file the record describes.
+// that replaces it with U+FFFD would name a file that does not exist. path is that record spelling,
+// and the response writers (pathText, messageText) keep it as the \udcXX escape rather than letting
+// encoding/json fold it, so the command the advice names opens the file the record describes.
 func recoveryAdvice(path, backup string) string {
 	advice := "the execution policy and the wiring record name different digests, so neither is enforced; re-register the file with crw install register-mcp --re-register-policy --execution-policy " + path
 	if backup != "" {
@@ -804,9 +831,23 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 	}
 	// The undo moved this call's own candidate back to the temporary path unless a writer saved again
 	// in between; that writer's document is kept and named rather than deleted.
+	// The undo is a durable effect of its own: the directory entry it changed must be synced, or a
+	// power loss can leave the candidate at the policy path although this call reports that it
+	// replaced nothing. A sync that fails is carried in the error rather than dropped, so the answer
+	// warns that the rollback may not survive.
 	if back, backErr := readRegularKernel(temporary); backErr == nil && bytes.Equal(back, next) {
 		_ = os.Remove(temporary)
+		// The undo and the removal are durable effects of their own: their directory entries must be
+		// synced, or a power loss can leave the candidate at the policy path although this call reports
+		// that it replaced nothing. A sync that fails is carried in the error rather than dropped, so
+		// the answer warns that the rollback may not survive.
+		if syncErr := writeSync(dir); syncErr != nil {
+			return nil, "", fmt.Errorf("%w: %w: %s", errPolicyMoved, errUndoSync, syncErr.Error())
+		}
 		return nil, "", errPolicyMoved
+	}
+	if syncErr := writeSync(dir); syncErr != nil {
+		return nil, temporary, fmt.Errorf("%w: %w: %s", errPolicyMoved, errUndoSync, syncErr.Error())
 	}
 	return nil, temporary, errPolicyMoved
 }

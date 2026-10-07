@@ -2,6 +2,7 @@ package policystore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -255,5 +256,124 @@ func writeEscapedRecord(t *testing.T, codexHome, escapedPath, digest string) {
 		"}\n"
 	if err := os.WriteFile(filepath.Join(codexHome, "crw-bridge-mcp.json"), []byte(document), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestATrustedRegistrationWhoseRecordDisagreesIsARecovery is the pre-merge evaluation's d3: a
+// registration that answered record_updated is trusted, but the file it read back and the record it
+// read back name different documents. A bridge refuses those bytes, so the answer is the (c)
+// recovery, never a 200 that presents the disagreement as an applied policy.
+func TestATrustedRegistrationWhoseRecordDisagreesIsARecovery(t *testing.T) {
+	env, file := host(t, policyText, true)
+	third := "{\n  \"roles\": {},\n  \"allowed\": [],\n  \"exceptions\": {}\n}\n"
+	opts := WriteOptions{Running: unavailableRunning(), Register: func(_ context.Context, path string) RegisterAnswer {
+		// The installer registers the candidate, and an editor then saves another document at the same
+		// path before the write reads the file back. The record still names the candidate.
+		rewriteRecord(t, env, path, digestOfFile(t, path))
+		if err := os.WriteFile(file, []byte(third), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return answer("record_updated", 0)
+	}}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q: the file and the record name different documents", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.FileDigest != digestOf(third) {
+		t.Fatalf("fileDigest = %q, want the digest the file actually holds", result.FileDigest)
+	}
+	if result.RegisteredDigest == "" || result.RegisteredDigest == result.FileDigest {
+		t.Fatalf("registeredDigest = %q, want the record's own digest, different from the file's", result.RegisteredDigest)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("the recovery does not say what disagreed")
+	}
+}
+
+// TestARestoreThatCouldNotSyncItsUndoWarns is the pre-merge evaluation's d2: the mismatch branch's
+// second exchange (the undo) and the removal of the temporary file are durable effects, but only the
+// matching-byte success branch synced the directory. A refusal whose rollback was not made durable
+// must say so rather than present a confirmed rollback.
+func TestARestoreThatCouldNotSyncItsUndoWarns(t *testing.T) {
+	env, file := host(t, policyText, true)
+	// The editor durably saves its own document between this run's locked read and the publication's
+	// exchange, so the compare-and-swap finds bytes it did not authorize and undoes its exchange. The
+	// undo's directory sync then fails, and the refusal must say the rollback was not made durable.
+	exchange := writeExchange
+	first := true
+	writeExchange = func(a, b string) error {
+		if first {
+			first = false
+			if err := os.WriteFile(b, []byte("a document an editor saved\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return exchange(a, b)
+	}
+	t.Cleanup(func() { writeExchange = exchange })
+	sync := writeSync
+	writeSync = func(string) error { return errors.New("the directory could not be synced") }
+	t.Cleanup(func() { writeSync = sync })
+	result := Write(context.Background(), envOf(env), WriteOptions{Register: neverRegisters(t)},
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	joined := strings.Join(result.Errors, " ")
+	if !strings.Contains(joined, "undo") || !strings.Contains(joined, "power") {
+		t.Fatalf("the refusal does not warn that its rollback was not made durable: %v", result.Errors)
+	}
+	// The editor's document is untouched: the undo ran.
+	after, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != "a document an editor saved\n" {
+		t.Fatalf("the editor's document was not put back: %q", string(after))
+	}
+}
+
+// TestARestoreKeepsTheDisplacedDocumentOnEveryExit is the pre-merge evaluation's d1: once the
+// restore's exchange kept a document it could not read, the later failure exits dropped that path.
+// The path is the only place those bytes exist, so every exit names it.
+func TestARestoreKeepsTheDisplacedDocumentOnEveryExit(t *testing.T) {
+	env, file := host(t, policyText, true)
+	keptPath := filepath.Join(filepath.Dir(file), "kept-displaced.tmp")
+	if err := os.WriteFile(keptPath, []byte("a document the restore displaced\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	opts := WriteOptions{
+		Register: func(_ context.Context, path string) RegisterAnswer {
+			// The registration fails with the record still naming the original, so the (b) restore is
+			// decided.
+			return answer("record_absent", 1)
+		},
+		Swap: func(ctx context.Context, path string, expected, next []byte, mode os.FileMode) ([]byte, string, error) {
+			calls++
+			if calls == 1 {
+				// The publication.
+				return swapPolicy(ctx, path, expected, next, mode)
+			}
+			// The restore's exchange ran and what it displaced could not be read back, so the bytes it
+			// moved out are kept at a path of its own. The record disappears at the same moment, so the
+			// restore cannot be confirmed and the answer must still name those bytes.
+			if err := os.Remove(recordOf(env)); err != nil {
+				t.Fatal(err)
+			}
+			return nil, keptPath, fmt.Errorf("%w: the bytes it displaced could not be read", errExchangeHappened)
+		},
+	}
+	result := Write(context.Background(), envOf(env), opts,
+		WriteRequest{ExpectedDigest: digestOf(policyText), Change: removeLegacy()})
+	if result.Kind != WriteRecoveryNeeded {
+		t.Fatalf("kind = %q (%v), want %q", result.Kind, result.Errors, WriteRecoveryNeeded)
+	}
+	if result.Kept != keptPath {
+		t.Fatalf("kept = %q, want %q: the only copy of those bytes is not named on this exit", result.Kept, keptPath)
+	}
+	if _, err := os.Stat(keptPath); err != nil {
+		t.Fatalf("the kept bytes are gone: %v", err)
 	}
 }
