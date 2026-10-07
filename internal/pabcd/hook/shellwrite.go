@@ -543,7 +543,9 @@ func shellWriteHeredocAnsiC(s []uint16, i int) (out []uint16, next int) {
 			v = v*8 + (s[j] - '0')
 			j++
 		}
-		return []uint16{v}, j
+		// The shell keeps one byte of an octal escape: $'\501' is the byte 0x41, not the code point 0x141 (CRW-765 correction 9,
+		// seventh pass, after the blind pre-merge evaluation of head 24f3a6f1b).
+		return []uint16{v & 0xFF}, j
 	}
 	// An escape the shell does not decode keeps its backslash: the word is the two characters, not the second one.
 	return []uint16{'\\', s[i+1]}, i + 2
@@ -670,8 +672,8 @@ func shellWriteHeredocSedReadsScript(args []string) bool {
 		if !strings.HasPrefix(n, "-") || n == "-" {
 			continue // not an option word: sed's script operand and its input files
 		}
-		if expanded {
-			return true // an expansion the reader cannot read may build a -f
+		if expanded && strings.HasPrefix(n, "--") {
+			return true // an expansion in a long option may build a -f (a short bundle is read below, up to its argument)
 		}
 		switch {
 		case strings.HasPrefix(n, "--"):
@@ -692,6 +694,19 @@ func shellWriteHeredocSedReadsScript(args []string) bool {
 			raw, _ := shellWriteHeredocStripQuotes(a)
 			if len(raw) < 2 || raw[0] != '-' {
 				continue
+			}
+			// The option letters end where the first argument-taking letter does: the rest of the word is that argument, a
+			// script the shell passes on literally, so a bracket or a star in it is no expansion of an option (CRW-765
+			// correction 9, seventh pass, after the blind pre-merge evaluation of head 24f3a6f1b).
+			opt := raw
+			for k := 1; k < len(raw); k++ {
+				if raw[k] == 'e' || raw[k] == 'i' || raw[k] == 'l' {
+					opt = raw[:k+1]
+					break
+				}
+			}
+			if strings.ContainsAny(opt, "$`(){}*?[]") {
+				return true // an expansion in the option letters may build a -f
 			}
 			for _, letter := range raw[1:] {
 				if letter == 'f' {
@@ -940,74 +955,104 @@ func shellWriteHeredocDefinesFunction(header []uint16) bool {
 	return len(shellWriteHeredocFunctionNames(header)) > 0
 }
 
-// shellWriteHeredocHiddenOperator reports whether the command holds a here-document operator the collector cannot reach: a << inside a $( ... ) or backtick command substitution that a double-quoted word encloses (CRW-765 correction 4, rule G4). The shell reads that operator as a here-document, so a command holding one is an unprovable header and fails closed when the command text names an interpreter.
+// shellWriteHeredocHiddenOperator reports whether the command holds a here-document operator the collector cannot reach: a
+// << inside a $( ... ) or backtick command substitution that sits in a double-quoted word (CRW-765 correction 4, rule G4).
+// The shell reads that operator as a here-document, so such a command is an unprovable header. The scan follows the quote
+// state of the whole text, one context at a time: a double quote inside the substitution (`"$(printf '%s' "ok"; ...)"`) is
+// not the end of the outer word, and a span-by-span reader lost the substitution and the program in it (CRW-765 correction
+// 9, seventh pass, after the blind pre-merge evaluation of head 24f3a6f1b).
 func shellWriteHeredocHiddenOperator(command []uint16) bool {
-	for i := 0; i < len(command); {
-		if command[i] == '#' && shellWriteHeredocCommentStart(command, i) {
-			// A word-initial # begins a comment, so the rest of its physical line is inert: a quoted command
-			// substitution written inside it is documentation, not a here-document the shell would read (CRW-765
-			// correction 9). The comment ends at its newline and nothing beyond it, so the scan continues on the next
-			// line; ending the whole search here let a here-document on a later line pass unseen (correction 9, third
-			// pass, after the blind pre-merge evaluation of head 05dc1a743).
-			nl := shellNewline(command, i)
-			if nl == -1 {
-				return false
-			}
-			i = nl + 1
-			continue
-		}
-		if command[i] == '\'' {
-			i = skipQuoted(command, i)
-			continue
-		}
-		if command[i] == '"' {
-			end := skipQuoted(command, i)
-			if shellWriteHeredocSubstitutionOperator(command[i:end]) {
+	type frame struct {
+		sub   bool // a $( ... ) substitution; otherwise a double-quoted word
+		inDQ  bool // a substitution that sits, at any depth, inside a double-quoted word
+		depth int  // the parenthesis depth inside a substitution
+	}
+	var stack []frame
+	underDQ := func() bool {
+		for _, f := range stack {
+			if !f.sub || f.inDQ {
 				return true
 			}
-			i = end
-			continue
 		}
-		i++
+		return false
+	}
+	inDQSub := func() bool {
+		for _, f := range stack {
+			if f.sub && f.inDQ {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(command); {
+		c := command[i]
+		top := len(stack) - 1
+		inDouble := top >= 0 && !stack[top].sub
+		switch {
+		case c == '\\':
+			i += 2
+		case inDouble && c == '"':
+			stack = stack[:top]
+			i++
+		case c == '$' && shellAt(command, i+1) == '(':
+			stack = append(stack, frame{sub: true, inDQ: underDQ(), depth: 1})
+			i += 2
+		case c == '`':
+			end := i + 1
+			for end < len(command) && command[end] != '`' {
+				if command[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			if end > len(command) {
+				end = len(command)
+			}
+			if underDQ() && shellWriteHeredocOperatorIn(command[i:end]) {
+				return true
+			}
+			i = end + 1
+		case inDouble:
+			i++
+		case c == '#' && shellWriteHeredocCommentStart(command, i):
+			// A word-initial # begins a comment to the end of its physical line: a substitution written in it is text the shell
+			// never runs (rule K1, the same boundary the collector reads).
+			eol := shellNewline(command, i)
+			if eol == -1 {
+				return false
+			}
+			i = eol + 1
+		case c == '\'':
+			i = skipQuoted(command, i)
+		case c == '"':
+			stack = append(stack, frame{})
+			i++
+		case c == '(' && top >= 0 && stack[top].sub:
+			stack[top].depth++
+			i++
+		case c == ')' && top >= 0 && stack[top].sub:
+			stack[top].depth--
+			if stack[top].depth == 0 {
+				stack = stack[:top]
+			}
+			i++
+		case c == '<' && shellAt(command, i+1) == '<' && shellAt(command, i+2) != '<':
+			if inDQSub() {
+				return true
+			}
+			i += 2
+		default:
+			i++
+		}
 	}
 	return false
 }
 
-// shellWriteHeredocSubstitutionOperator reports whether a double-quoted span holds a << inside one of its $( ... ) or backtick command substitutions. A backslash escapes the character after it inside double quotes, so an escaped character is not read as part of a substitution.
-func shellWriteHeredocSubstitutionOperator(span []uint16) bool {
-	depth, tick := 0, false
-	for i := 0; i < len(span); i++ {
-		c := span[i]
-		if c == '\\' {
-			i++
-			continue
-		}
-		if c == '$' && shellAt(span, i+1) == '(' {
-			depth++
-			i++
-			continue
-		}
-		if tick {
-			if c == '\x60' {
-				tick = false
-			} else if c == '<' && shellAt(span, i+1) == '<' && shellAt(span, i+2) != '<' {
-				return true
-			}
-			continue
-		}
-		if c == '\x60' {
-			tick = true
-			continue
-		}
-		if depth > 0 {
-			switch {
-			case c == '(':
-				depth++
-			case c == ')':
-				depth--
-			case c == '<' && shellAt(span, i+1) == '<' && shellAt(span, i+2) != '<':
-				return true
-			}
+// shellWriteHeredocOperatorIn reports whether a span holds a here-document operator, a << that is not a here-string.
+func shellWriteHeredocOperatorIn(span []uint16) bool {
+	for i := 0; i+1 < len(span); i++ {
+		if span[i] == '<' && span[i+1] == '<' && shellAt(span, i+2) != '<' {
+			return true
 		}
 	}
 	return false

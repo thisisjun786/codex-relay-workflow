@@ -2116,50 +2116,62 @@ func shellWriteHeredocNamesInterpreter(command []uint16) bool {
 	return check(len(s))
 }
 
-// shellWriteHeredocNameBinding reports whether the command text outside here-document bodies holds a name-binding
-// construct: a verb that binds a name to a program (eval, source, ., alias, hash, ln, exec, enable), a function
-// definition, or an assignment to PATH (CRW-765 correction 5, rule R2). A name bound this way can stand for an
-// interpreter the reader cannot see from the command text alone, so the here-document is denied even when the text
-// names no interpreter. The text is the same canonical text rule R2 reads.
+// shellWriteHeredocNameBinding reports whether the command text outside here-document bodies binds a name to a program: a
+// verb that binds a name (eval, source, ., alias, hash, ln, exec, enable) at a command's verb position, a PATH assignment
+// before a command, or a function definition (CRW-765 correction 5, rule R2). The words are read the way the shell reads
+// them, with their quotes removed, so 'hash' is the verb hash; a quoted operand is one word that binds nothing (CRW-765
+// correction 9, seventh pass, after the blind pre-merge evaluation of head 24f3a6f1b).
 func shellWriteHeredocNameBinding(command []uint16) bool {
-	// The text outside the here-document bodies, read by this issue's own collector and not by the oracle's legacy
-	// stripper: the legacy delimiter reader takes only the first quoted span of `<<'E''OF'`, so its body ends at the
-	// line `E` and the body's own text leaked into this scan as commands (CRW-765 correction 9, fifth pass, after the
-	// blind pre-merge evaluation of head 4c8b1b9ea).
 	stripped := shellWriteHeredocOutsideBodies(command)
 	if len(shellWriteHeredocFunctionNames(stripped)) > 0 {
 		return true
 	}
-	// The words are read with quoted spans blanked: a quoted operand is text the shell passes through, so the PATH=
-	// of `echo 'PATH=x'` is no assignment and the `;` of `echo 'a; eval b'` splits nothing (CRW-765 correction 9,
-	// sixth pass, after the blind pre-merge evaluation of head cf4c472b9).
-	s := shellWriteHeredocCanonicalWords(stripped)
-	for i := 0; i+len("path=") <= len(s); i++ {
-		if s[i:i+len("path=")] != "path=" {
-			continue
-		}
-		// The name must begin a word: `mypath=x` is not an assignment to PATH.
-		if i == 0 || !shellWriteHeredocWordRune(rune(s[i-1])) && s[i-1] != '$' {
-			return true
-		}
-	}
-	// A name-binding verb binds a name only where a command's verb stands, so the check reads each command of the text
-	// and looks at its own verb: `.` in `jq .` is an operand and binds nothing, while `. file`, `eval bash` and
-	// `hash -p /bin/bash b` are bindings (CRW-765 correction 9, after the blind pre-merge evaluation of head
-	// a9ca76947, where scanning every word refused an ordinary `jq . <<'EOF'`).
-	for _, sub := range shellVerbSubsegments(s) {
+	for _, sub := range shellVerbSubsegments(shellString(shellWriteHeredocBlankComments(stripped))) {
 		tokens := shellTokenize(sub)
-		words := shellVerbSkipWrappers(tokens)
-		for len(words) > 0 && shellVerbAssignment(words[0]) {
-			words = words[1:]
+		for _, t := range tokens {
+			if !shellVerbAssignment(t) {
+				break
+			}
+			if strings.HasPrefix(t, "PATH=") {
+				return true
+			}
 		}
-		// The verb of the command as the shell reads it, and the word that stands where a verb would after the wrappers
-		// are stripped (exec and sudo are wrappers, and `exec /tmp/x` binds nothing while `exec` itself is a builtin
-		// that replaces the shell): both are checked, and an operand such as the `.` of `jq .` is neither.
+		words := shellVerbSkipWrappers(tokens)
 		for _, word := range []string{shellWriteHeredocFirstWord(tokens), shellWriteHeredocFirstWord(words)} {
 			switch shellVerbName(word) {
 			case "eval", "source", ".", "alias", "hash", "ln", "exec", "enable":
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// shellWriteSplitStringWrapper reports whether a command runs env with its split-string option, which builds a command line
+// out of its argument: the command the reader would call the verb is not the one env runs, so the program is unreadable.
+// Any unambiguous prefix of the long option names it, and -S names it in a short bundle; the options are read up to the
+// first word that is no option (CRW-765 correction 9, seventh pass).
+func shellWriteSplitStringWrapper(command string) bool {
+	for _, sub := range shellVerbSubsegments(command) {
+		tokens := shellTokenize(sub)
+		for i, t := range tokens {
+			if shellVerbName(t) != "env" {
+				continue
+			}
+			for _, a := range tokens[i+1:] {
+				if a == "--" || len(a) < 2 || a[0] != '-' {
+					break
+				}
+				if a[1] == '-' {
+					name, _, _ := strings.Cut(a[2:], "=")
+					if name != "" && strings.HasPrefix("split-string", name) {
+						return true
+					}
+					continue
+				}
+				if strings.IndexByte(a[1:], 'S') >= 0 {
+					return true
+				}
 			}
 		}
 	}
@@ -2174,15 +2186,6 @@ func shellWriteHeredocOutsideBodies(command []uint16) []uint16 {
 		spans = append(spans, [2]int{h.bodyAt, h.bodyEnd})
 	}
 	return shellWriteHeredocBlankSpans(command, spans)
-}
-
-// shellWriteHeredocCanonicalWords is rule G2's canonical text read the way a word scan needs it: the comments and the
-// quoted spans are blanked first, so a quoted operand stays inert text, and then every quote character and backslash is
-// deleted and the ASCII letters are lowered (CRW-765 correction 9, sixth pass, after the blind pre-merge evaluation of
-// head cf4c472b9: deleting the quotes without blanking their content turned the PATH= of `echo 'PATH=x'` into an
-// assignment and the `;` of `echo 'a; eval b'` into a command separator).
-func shellWriteHeredocCanonicalWords(command []uint16) string {
-	return shellWriteHeredocCanonical(shellString(shellWriteHeredocBlankCommentsAndQuotes(command)))
 }
 
 // shellWriteHeredocFirstWord is the first word of a token list, or the empty string when the list is empty.
@@ -2363,6 +2366,11 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
 	}
 	u := utf16.Encode([]rune(command))
+	// A command that runs env with split-string names no program the reader can read: the command line env builds is not the
+	// one written (CRW-765 correction 9, seventh pass, after the blind pre-merge evaluation of head 24f3a6f1b).
+	if shellWriteSplitStringWrapper(command) {
+		return "a command line env builds from its split-string argument", true
+	}
 	bodies := [][2]int{} // every here-document body, which rule K5 leaves out of the hidden-operator check
 	for _, h := range shellWriteHeredocs(u) {
 		// A body is never outer-shell text: a data body is not read at all, and a program body is read by its own
