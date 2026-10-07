@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -173,9 +173,14 @@ type RelayProjection struct {
 type relayReadRecord interface{ Get(string) any }
 
 // relayReadStorePath is the store this command reads: the named file below the relay state
-// directory, exactly as the relay's own readers spell it.
+// directory, spelled the way the caller spelled the directory. The join is raw text and never
+// cleans the path: filepath.Join would remove a ".." before the symbolic link it follows is
+// resolved, so a state directory that mixes a link and ".." would name a different store than
+// the filesystem means. store.OpenInPlace resolves the path the way SQLite does (crwconfig
+// JoinRoot is the same raw join the configured roots use), and the stat below, the open and the
+// path the assignment view records all come from this one function, so they cannot disagree.
 func relayReadStorePath(stateDir string) string {
-	return filepath.Join(stateDir, relayReadStoreFile)
+	return crwconfig.JoinRoot(stateDir, relayReadStoreFile)
 }
 
 // relayReadOpenStore opens the relay store read-only under the store's own no-sidecar rule, so a
@@ -245,6 +250,18 @@ func RelayReadState(ctx context.Context, stateDir string, opts RelayReadOptions)
 func RelayRead(ctx context.Context, e *Env, cfg *Config, opts RelayReadOptions) (RelayProjection, error) {
 	state, err := e.relayHelperState(ctx, cfg)
 	if err != nil {
+		// A context that ended is that context's error: relayHelperRun reports ctx.Err() and
+		// relayHelperState then wraps it as an unresolved state, so without this check a
+		// cancelled read would be reported as a state directory nobody configured.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return RelayProjection{}, ctxErr
+		}
+		// An unresolved state directory is the caller's own error name, with the reason that
+		// resolved it kept reachable: a caller filters with errors.Is and still reads the
+		// doctor's answer with errors.As or errors.Is.
+		if relayHelperIsUnresolved(err) {
+			return RelayProjection{}, fmt.Errorf("%w: %w", ErrRelayStateUnconfigured, err)
+		}
 		return RelayProjection{}, err
 	}
 	return RelayReadState(ctx, state, opts)
@@ -636,9 +653,10 @@ func relayReadRun(ctx context.Context, e *Env, args []string) int {
 		case arg == "--all":
 			opts.IncludeClosed = true
 		case arg == "--state", arg == "--plan", arg == "--project":
-			// The next token is the value unless it is missing or is itself an option: an option
-			// token here is a missing value, not a value that happens to start with "--".
-			if i+1 >= len(args) || relayReadIsOptionToken(args[i+1]) {
+			// The next token is the value unless it is missing, empty or itself an option: an
+			// option token here is a missing value, not a value that happens to start with
+			// "--", and an empty token is the answer the --name= form already refuses.
+			if i+1 >= len(args) || args[i+1] == "" || relayReadIsOptionToken(args[i+1]) {
 				return relayReadUsageError(e, arg+" needs a value")
 			}
 			i++

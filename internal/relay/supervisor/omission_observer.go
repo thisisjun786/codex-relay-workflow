@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
@@ -37,7 +38,31 @@ func (OmissionObserver) Observe(ctx context.Context, r faults.ManagedReadingRequ
 	}
 	reading := delivery.ObserveOmission(ctx, selection, r.Root, r.Workspace, r.Assignment, r.Session, r.Turn, r.Now, omissionObserverGrace)
 	reading = unclaimedOmission(ctx, selection, r, reading, nil)
+	haltOnUnreadableStore(ctx, selection, reading)
 	return orderedMap(reading), nil
+}
+
+// haltOnUnreadableStore is the daemon's own observation of the store (CRW-848): a reading whose
+// state is unmeasured because the store could not be read carries the failure's text, and a text of
+// the corrupting class writes the halt marker. The reading itself is returned unchanged - the
+// observer's answer shape does not move - and the store is not read a second time: the classification
+// runs on the text the reading already holds, and only the marker (which lives beside the store, not
+// in it) is written. A reading that is not of that shape, and a failure that is not of that class,
+// change nothing.
+func haltOnUnreadableStore(ctx context.Context, selection store.StateSelection, reading delivery.Obj) {
+	if reading.Get("reportingState") != "unmeasured" {
+		return
+	}
+	detail, ok := strings.CutPrefix(fmt.Sprint(reading.Get("reason")), "store_unreadable: ")
+	if !ok {
+		return
+	}
+	cause, ok := store.CorruptingDetail(detail)
+	if !ok {
+		return
+	}
+	cause.Site = store.HaltSiteObservation
+	_ = store.RecordHalt(ctx, selection.DBPath(), cause)
 }
 
 // A claim is the child's declaration, not the relay's admission. For this one missing-claim case,
