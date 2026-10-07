@@ -682,8 +682,12 @@ func TestConfigLockPathsDeactivateAcceptsACaseVariantWithAHardLinkBackup(t *test
 // requiring the whole folded-name count instead refused it. The test re-execs itself inside bwrap;
 // it is skipped where bwrap cannot bind.
 func TestConfigLockPathsDeactivateAcceptsASameBasenameThroughABindMount(t *testing.T) {
-	a, b := os.Getenv("CRW_899_ALIAS_A"), os.Getenv("CRW_899_ALIAS_B")
-	if a == "" {
+	// The alias directories are trusted only when the parent handed over its own token with them:
+	// an inherited CRW_899_ALIAS_A alone would point this test at directories it does not own, and
+	// the fixture writes below truncate whatever config.toml is already there (CRW-899's twelfth
+	// evaluation, a test-only data-loss path).
+	a, b, trusted := os.Getenv("CRW_899_ALIAS_A"), os.Getenv("CRW_899_ALIAS_B"), os.Getenv("CRW_899_ALIAS_OWNED") == "1"
+	if a == "" || !trusted {
 		bwrap, err := exec.LookPath("bwrap")
 		if err != nil {
 			t.Skip("no bwrap to mount one directory twice")
@@ -699,7 +703,7 @@ func TestConfigLockPathsDeactivateAcceptsASameBasenameThroughABindMount(t *testi
 			t.Skipf("bwrap cannot bind here: %v %s", err, out)
 		}
 		cmd := exec.Command(bwrap, "--dev-bind", "/", "/", "--bind", a, b, os.Args[0], "-test.run=^TestConfigLockPathsDeactivateAcceptsASameBasenameThroughABindMount$", "-test.count=1", "-test.v")
-		cmd.Env = append(os.Environ(), "CRW_899_ALIAS_A="+a, "CRW_899_ALIAS_B="+b)
+		cmd.Env = append(os.Environ(), "CRW_899_ALIAS_A="+a, "CRW_899_ALIAS_B="+b, "CRW_899_ALIAS_OWNED=1")
 		out, err := cmd.CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "the bound alias was accepted") {
 			t.Fatalf("inside bwrap: %v\n%s", err, out)
@@ -1249,3 +1253,48 @@ func configLockPathsTestPin(t *testing.T, path string) *configLockPathsPin {
 	}
 	return pin
 }
+
+// The twelfth-generation d2 case, through the public entry point with an explicit ConfigPath: the
+// pinned directory is left alone but the pinned FINAL component is replaced by a symlink to another
+// file. The sidecar beside the pinned path is unchanged, so the sidecar proof alone passes; the
+// comparison against the pinned path itself is what refuses, because the read, restore and hash
+// would otherwise follow the new link to a file whose own lock this command does not hold.
+func TestConfigLockPathsDeactivateRefusesAFinalComponentSwappedForASymlink(t *testing.T) {
+	home := configLockActivationHome(t)
+	dirA := filepath.Join(home, "A")
+	dirB := filepath.Join(home, "B")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgA := filepath.Join(dirA, "config.toml")
+	activationWrite(t, cfgA, deactivationConfig)
+	activationWrite(t, filepath.Join(dirB, "config.toml"), deactivationConfig)
+	hash, err := hashOrNull(cfgA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]TableKeyRecord{"memories.dedicated_tools": deactivationKey(nil)}
+	stale := configLockActivationManifestBytes(t, &InstallManifest{Version: 2, ConfigPath: cfgA, PostActivateHash: hash, Flags: map[string]FlagRecord{}, TableKeys: keys})
+
+	held := configLockWritersHold(t, cfgA)
+	configLockPathsHandoverRetarget(t, home, stale, func() error {
+		if err := os.Remove(cfgA); err != nil {
+			return err
+		}
+		return os.Symlink(filepath.Join(dirB, "config.toml"), cfgA)
+	}, held.Release, stale)
+
+	deps := deactivationDeps(home, func([]string) CodexRunResult { return CodexRunResult{} })
+	deps.ConfigPath = cfgA
+	_, err = Deactivate(deps)
+	if err == nil || !strings.Contains(err.Error(), "directory changed") {
+		t.Fatalf("the explicit ConfigPath followed a swapped final component: %v", err)
+	}
+	if got := activationRead(t, filepath.Join(dirB, "config.toml")); got != deactivationConfig {
+		t.Fatalf("the refused deactivation wrote the linked file: %q", got)
+	}
+}
+
+// The root-parent boundary: a config named directly at the filesystem root must resolve through

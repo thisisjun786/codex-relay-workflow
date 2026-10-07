@@ -384,11 +384,13 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
 		// overrides the manifest in both readings, so only the derived path can disagree.
 		if deps.ConfigPath != "" {
-			// An explicit ConfigPath has no manifest spelling to agree with, but it must still prove
-			// the pin: the override chooses WHICH file this command acts on, and the held sidecar must
-			// still be that file's. Without this the override would skip the proof entirely and act on
-			// a path a directory replacement moved the lock off (CRW-899's eleventh evaluation).
-			if !configLockPathsPinHolds(pin) {
+			// An explicit ConfigPath has no manifest spelling to agree with, but the pinned path must
+			// still name the pinned file: the override chooses WHICH file this command acts on, and a
+			// directory replacement or a final-component symlink swapped in after the pin would send
+			// the read, the restore and the hash to another file without its lock. The same proof the
+			// manifest branch uses runs here, against the pinned path itself (CRW-899's eleventh and
+			// twelfth evaluations).
+			if !configLockPathsSameTarget(pin.path, pin) {
 				return nil, fmt.Errorf("the config file's directory changed while the lock was held (%s); run the deactivation again", lockedPath)
 			}
 		} else if !configLockPathsSameTarget(m.ConfigPath, pin) {
