@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -367,23 +368,29 @@ func TestLoopInitRefusesALinkedPlanFile(t *testing.T) {
 	}
 }
 
-// TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut is the other half of c1: when the plan appears
-// after init's outer absence check and another holder's goalplan lock directory is still there after
-// the wait budget, the loser must answer the criterion's "already exists" refusal, not the lock's own
-// busy message. The seam plants both inside that window, so the outer check cannot mask the case.
+// TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut is the other half of c1: the plan appears only
+// AFTER the creation lock's own wait budget has run out, while the lock directory is still there. The
+// loser must keep waiting for the winner's publication and then answer the criterion's "already
+// exists" refusal, not the lock's busy message. The seam plants the lock and schedules the plan on a
+// timer, so the winner publishes while the loser is in its bounded re-attempts.
 func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	const slug = "ship-the-export-feature"
 	dir := filepath.Join(cwd, ".crw", "goalplans", slug)
+	published := make(chan error, 1)
 	loopInitAfterAbsenceCheck = func() {
-		// The other init published its plan and still holds the slug's lock directory.
-		plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
-		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		// The other init holds the slug's lock directory and has not published yet.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Mkdir(filepath.Join(dir, ".goalplan.lock"), 0o755); err != nil {
 			t.Fatal(err)
 		}
+		go func() {
+			time.Sleep(200 * time.Millisecond) // after the lock's own 75 ms budget
+			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
+			published <- goalplan.WriteGoalplan(cwd, plan)
+		}()
 	}
 	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
 
@@ -391,6 +398,9 @@ func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
 	if result.Code != 1 || result.Output != want {
 		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
+	}
+	if err := <-published; err != nil {
+		t.Fatalf("the competing init could not publish: %v", err)
 	}
 }
 
@@ -473,4 +483,66 @@ func loopTreeSnapshot(t *testing.T, cwd string) string {
 	}
 	slices.Sort(paths)
 	return strings.Join(paths, "\n")
+}
+
+// TestLoopInitCarriesOnWhenThePlanWriteOnlyFailedItsDirectorySync is the commit-order case of d2: the
+// plan write published at the final path and then failed a step after the rename. The plan is
+// visible, so init must still append the created row and write the binding, and carry the durability
+// failure as a warning; aborting would leave a visible plan with no row and no binding, and the retry
+// would be refused with "a plan already exists".
+func TestLoopInitCarriesOnWhenThePlanWriteOnlyFailedItsDirectorySync(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	const id = "rec-sync"
+	const slug = "bound-objective"
+	loopSession(t, cwd, id)
+	loopInitWriteGoalplanHook = func(cwd string, plan *goalplan.Goalplan) error {
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			return err
+		}
+		return &state.PublishedError{Err: errors.New("directory sync failed")}
+	}
+	t.Cleanup(func() { loopInitWriteGoalplanHook = nil })
+
+	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
+	if result.Code != 0 {
+		t.Fatalf("the published plan must not abort init: %d %q", result.Code, result.Output)
+	}
+	if !strings.Contains(result.Output, "was published but its directory could not be synced") {
+		t.Fatalf("the answer carries no goalplan durability warning: %q", result.Output)
+	}
+	if rows := loopCreatedLedgerRows(t, cwd, slug); len(rows) != 1 {
+		t.Fatalf("created ledger rows = %d, want 1: %v", len(rows), rows)
+	}
+	if bound := state.ReadState(cwd, id).Slug; bound != slug {
+		t.Fatalf("the binding was skipped: %q", bound)
+	}
+}
+
+// TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut is d1's session-lock half: when the
+// competing init of the same session published the plan while this init waited for the session lock,
+// the loser owes the criterion's "already exists" refusal rather than the lock file's own error.
+func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
+	cwd := loopReadWorkspace(t)
+	gitInit(t, cwd)
+	const id = "rec-slock"
+	const slug = "bound-objective"
+	loopSession(t, cwd, id)
+	loopInitAfterAbsenceCheck = func() {
+		plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
+		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
+	// Another holder keeps the session lock file, so acquisition runs out its budget.
+	if err := os.WriteFile(state.StatePath(cwd, id)+".lock", []byte("1"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	result := loopRun(t, cwd, "init", "--objective", "Bound objective", "--session", id)
+	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
+	if result.Code != 1 || result.Output != want {
+		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
+	}
 }

@@ -11,7 +11,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +77,33 @@ func loopInitWriteState(cwd string, next state.State) error {
 	return state.WriteState(cwd, next)
 }
 
+// loopInitCreationLockRounds bounds how many extra times init re-attempts the creation lock after the
+// lock's own retry budget (5+10+20+40 ms) runs out, and loopInitCreationLockWait pauses between those
+// rounds. The holder may be another init that publishes just after its budget — its plan write stages
+// a file, fsyncs it and fsyncs the directory after the rename — and the answer the criterion owes that
+// loser is the "a plan already exists at slug ..." refusal, not the lock's busy message (CRW-646 c1).
+// A genuinely stale lock still ends with the busy message once the rounds are spent, which is the
+// recovery the shared lock offers. Wait is a test seam: production sleeps 50 ms, so the bound is
+// about 0.4 s of extra waiting.
+const loopInitCreationLockRounds = 8
+
+var loopInitCreationLockWait = func() { time.Sleep(50 * time.Millisecond) }
+
+// loopInitWriteGoalplanHook, when non-nil, replaces the plan publication of init's creation step so a
+// test can drive the case where the plan is published and a step after its rename fails (CRW-646,
+// failure class 2). It is nil in production (an uninitialized variable, no package-level work at
+// start).
+var loopInitWriteGoalplanHook func(string, *goalplan.Goalplan) error
+
+// loopInitWriteGoalplan is init's plan publication: the hook when a test set one,
+// goalplan.WriteGoalplan otherwise.
+func loopInitWriteGoalplan(cwd string, plan *goalplan.Goalplan) error {
+	if loopInitWriteGoalplanHook != nil {
+		return loopInitWriteGoalplanHook(cwd, plan)
+	}
+	return goalplan.WriteGoalplan(cwd, plan)
+}
+
 // loopInitAppendLedgerHook, when non-nil, replaces the created-row append of init's creation step so a
 // test can drive the case where the plan is published and the row then fails (CRW-646, failure class 2).
 // It is nil in production (an uninitialized variable, no package-level work at start).
@@ -87,6 +116,17 @@ func loopInitAppendLedger(cwd, slug string, entry goalplan.GoalplanLedgerEntry) 
 		return loopInitAppendLedgerHook(cwd, slug, entry)
 	}
 	return goalplan.AppendGoalplanLedger(cwd, slug, entry)
+}
+
+// loopInitAppendWarnings joins a warning line onto init's answer for each durability warning its
+// writes produced, in the order they happened. No warning leaves the answer's bytes untouched.
+func loopInitAppendWarnings(result LoopCliResult, warnings []string) LoopCliResult {
+	for _, warning := range warnings {
+		if warning != "" {
+			result.Output += "\n" + warning
+		}
+	}
+	return result
 }
 
 // RunLoopCli is runGoalplanCli (:751-865) for the verbs this issue owns. A non-nil error is the oracle's
@@ -170,13 +210,17 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if sessionID == "" {
 		return loopInitCreate(args, slug, objective)
 	}
-	// The source-identity gate runs BEFORE the session lock as well, because taking that lock creates
-	// the state directory: a bound cycle this workspace cannot close would otherwise leave a fresh
-	// .crw behind while the command answered "Nothing was written" (the oracle checks before any
-	// write). The check inside the lock below stays authoritative, so a state that changed in between
-	// is still judged there (CRW-646 c2).
-	if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
-		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
+	// Taking the session lock creates the state directory, so when that directory is not there yet the
+	// source-identity gate runs BEFORE the lock: a bound cycle this workspace cannot close would
+	// otherwise leave a fresh .crw behind while the command answered "Nothing was written" (the
+	// oracle checks before any write). When the directory is already there the lock creates nothing,
+	// so the gate inside the lock alone is enough and the oracle's single source capture is kept. The
+	// in-lock check stays authoritative either way, so a state that changed in between is judged
+	// there (CRW-646 c2).
+	if _, err := os.Stat(filepath.Dir(state.StatePath(args.Cwd, sessionID))); errors.Is(err, fs.ErrNotExist) {
+		if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
+			return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
+		}
 	}
 	var answer LoopCliResult
 	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
@@ -185,6 +229,15 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 		return err
 	})
 	if err != nil {
+		// The lock's wait budget ran out (the create's EEXIST is what the lock returns when another
+		// holder keeps its file). The competing init may have published the plan inside that window,
+		// and then the criterion's "already exists" refusal is the answer owed, not the lock file's
+		// own error (CRW-646 c1). An error the callback itself returned is not this case.
+		if errors.Is(err, fs.ErrExist) {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				return result, nil
+			}
+		}
 		return LoopCliResult{}, err
 	}
 	return answer, nil
@@ -246,7 +299,7 @@ func loopInitBound(args LoopCliArgs, slug, objective, sessionID string) (LoopCli
 	// D-close answer theirs (CRW-823/CRW-869); a failure before the rename is an error that names the
 	// plan left behind, because a retry is refused with "a plan already exists" and would otherwise
 	// look like the defect this issue fixes.
-	answer := LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}
+	answer := loopInitAppendWarnings(result, nil)
 	if writeErr != nil {
 		if !state.Published(writeErr) {
 			return LoopCliResult{}, fmt.Errorf(
@@ -270,43 +323,60 @@ func loopInitCreate(args LoopCliArgs, slug, objective string) (LoopCliResult, er
 		criteria = append(criteria, goalplan.NewGoalplanCriterion{Scenario: scenario})
 	}
 	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: objective, Criteria: criteria, SchemaVersion: args.SchemaVersion})
-	var refusal *LoopCliResult
-	locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
-		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
-			refusal = &result
+	// The creation lock's own budget is short (5+10+20+40 ms), and the winner of a concurrent creation
+	// holds it across a staged-file write, its fsync and the directory fsync, so the loser's budget can
+	// run out while the winner is still publishing. The loser then owes the criterion's "already
+	// exists" refusal, not the lock's busy message (CRW-646 c1), so it re-attempts the acquisition a
+	// bounded number of times: each round re-checks the plan, and a round that finally takes the lock
+	// runs the same check-and-publish body. A genuinely stale lock ends with the message the shared
+	// lock builds, which is the recovery path that lock offers.
+	for round := 0; ; round++ {
+		var refusal *LoopCliResult
+		warnings := []string{}
+		locked, err := goalplan.WithGoalplanCreationLock(args.Cwd, slug, func() error {
+			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+				refusal = &result
+				return nil
+			}
+			// A plan write that published at the final path and then failed the directory sync is a
+			// written plan: the bytes and the criteria are there for every reader, so the created row
+			// and the binding still run and the durability failure is carried as a warning, exactly as
+			// steering and review-round open do (CRW-793/CRW-823). A failure before the rename
+			// published nothing and stays an error.
+			if err := loopInitWriteGoalplan(args.Cwd, plan); err != nil {
+				if !state.Published(err) {
+					return err
+				}
+				warnings = append(warnings, cliPublishedGoalplanWarning(slug, err))
+			}
+			if err := loopInitAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
+				Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
+				Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
+			}); err != nil {
+				// The plan is published before this row, so a failure here is not "nothing was
+				// written": the retry answers "a plan already exists", which would otherwise look like
+				// the defect this issue fixes. Name the published plan, as the binding failure does.
+				return fmt.Errorf("loop init: the plan at slug '%s' is published, but its created ledger row could not be appended: %w", slug, err)
+			}
 			return nil
+		}, nil)
+		if err != nil {
+			return LoopCliResult{}, err
 		}
-		if err := goalplan.WriteGoalplan(args.Cwd, plan); err != nil {
-			return err
+		if locked.Kind != "locked" {
+			if refusal != nil {
+				return *refusal, nil
+			}
+			return loopInitAppendWarnings(LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, warnings), nil
 		}
-		if err := loopInitAppendLedger(args.Cwd, slug, goalplan.GoalplanLedgerEntry{
-			Ts: loopNowISO(), Slug: slug, Event: goalplan.EventCreated,
-			Detail: "init objective=\"" + objective + "\" criteria=" + fmt.Sprint(len(args.Criteria)),
-		}); err != nil {
-			// The plan is published before this row, so a failure here is not "nothing was written":
-			// the retry answers "a plan already exists", which would otherwise look like the defect
-			// this issue fixes. Name the published plan, as the binding failure below does.
-			return fmt.Errorf("loop init: the plan at slug '%s' is published, but its created ledger row could not be appended: %w", slug, err)
-		}
-		return nil
-	}, nil)
-	if err != nil {
-		return LoopCliResult{}, err
-	}
-	if locked.Kind == "locked" {
-		// The lock's wait budget ran out with another holder's directory still there. That holder may
-		// have finished inside the window, so re-check the plan before answering busy: the loser of a
-		// concurrent creation owes the criterion's "already exists" refusal, not the lock's own
-		// message (CRW-646 c1).
 		if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
 			return result, nil
 		}
-		return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+		if round >= loopInitCreationLockRounds {
+			return LoopCliResult{Output: "loop init: " + locked.Reason, Code: 1}, nil
+		}
+		loopInitCreationLockWait()
 	}
-	if refusal != nil {
-		return *refusal, nil
-	}
-	return LoopCliResult{Output: RenderLoopPlan(goalplan.ReadGoalplan(args.Cwd, slug), nil), Code: 0}, nil
 }
 
 // loopPlanFileExists reports whether anything occupies slug's plan path. A regular file is the plan; a
