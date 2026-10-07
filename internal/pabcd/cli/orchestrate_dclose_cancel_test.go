@@ -42,8 +42,9 @@ func orchestrateDcloseCancelAllDoneAtC(t *testing.T, cwd, id, slug string) {
 
 // TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing pins the check that guards the IDLE
 // state write when the goalplan lock wrote nothing: the all-done branch whose PABCD row is already
-// recorded. The ledger read still precedes that write, so the cancellation is fired by the same
-// after-read seam the F2 case uses, and a check moved in front of that read cannot see it.
+// recorded. The read that immediately precedes that write is the recovery state read that follows the
+// first lock, so the cancellation is fired from that read's own seam; a check moved in front of it cannot
+// see the cancellation and writes IDLE, which fails here.
 func TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing(t *testing.T) {
 	cwd := orchestrateDcloseTestCwd(t)
 	id, slug := "dclose-cancel-idlewrite", "dclose-cancel-idlewrite-plan"
@@ -57,7 +58,7 @@ func TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reads := 0
-	seam := orchestrateDcloseSeam{afterLedgerRead: func() {
+	seam := orchestrateDcloseSeam{afterRecoveryStateRead: func() {
 		reads++
 		cancel()
 	}}
@@ -68,7 +69,7 @@ func TestOrchestrateDcloseCancelBeforeTheIdleStateWriteWritesNothing(t *testing.
 			got, err, state.ReadState(cwd, id).Phase)
 	}
 	if reads != 1 {
-		t.Fatalf("the close ran the after-read seam %d time(s); want the all-done branch's ledger read once", reads)
+		t.Fatalf("the close ran the recovery-read seam %d time(s); want the read that precedes the IDLE write once", reads)
 	}
 	if s := state.ReadState(cwd, id); s.Phase != state.PhaseC {
 		t.Fatalf("phase = %s; the cancelled close must not have published IDLE", s.Phase)

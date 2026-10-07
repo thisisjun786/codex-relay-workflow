@@ -76,6 +76,11 @@ type orchestrateDcloseSeam struct {
 	// Sleep, which the lock calls only once its wait has begun; zero retry delays keep that wait free
 	// of real sleeps. Nil means the lock's own defaults.
 	goalplanLockSeam func(finalize bool) *goalplan.GoalplanWriteLockOptions
+	// afterRecoveryStateRead runs immediately after the state read that follows the first goalplan lock
+	// (`state.ReadState(cwd, sessionID).DcloseRecovery`), before the pre-write check that guards the IDLE
+	// state write that read precedes. A test cancels the context here to order the cancellation after that
+	// read and before that write, which a check that had run before the read cannot see. Nil means no hook.
+	afterRecoveryStateRead func()
 }
 
 // orchestrateDcloseRunHook runs one hook, or nothing when the test left it nil.
@@ -673,6 +678,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 	allDoneClose = locked.Value.AllDone
 
 	recovery := state.ReadState(cwd, sessionID).DcloseRecovery
+	orchestrateDcloseRunVoid(seam.afterRecoveryStateRead)
 	closeCheckEpoch := cur.CheckEpoch
 	if recovery != nil {
 		epoch := recovery.CheckEpoch
