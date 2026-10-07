@@ -831,3 +831,86 @@ func TestImproveReview789AliasedSourceIsOneLocation(t *testing.T) {
 		t.Errorf("the draft carries %d seen entries, want one for the one file: %+v", len(doc.Seen), doc.Seen)
 	}
 }
+
+// TestImproveReview789MultilineReasonSurvivesARerun covers the review finding that a valid reason
+// holding a blank line and a Markdown heading was shortened in the body on an identical rerun: the
+// rewrite read the rendered body's What section, whose end it could not tell from a heading inside
+// the reason, so the second run saved only the first line while the fingerprint and title still
+// named the whole reason. The rewrite now carries this run's own reason, which is the same text the
+// fingerprint was taken over.
+func TestImproveReview789MultilineReasonSurvivesARerun(t *testing.T) {
+	w := improveProposeTestSetup(t)
+	improveProposeTestConfigure(t, w, map[string]any{})
+	reason := "size overrun\n\n## Details\n\nEstimate ignored generated files"
+	bundle := improveProposeTestBundle(t, w, []improveRecord{
+		improveProposeTestRecord(improveKindSplit, "project-a", "rel-a", reason, 1, "events:rel-a"),
+	})
+	code, stdout, stderr := improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("the first propose: exit %d, stderr %s", code, stderr)
+	}
+	first := improveProposeTestReport(t, stdout)
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	doc := improveProposeTestDraft(t, w, first.Created[0].Fingerprint)
+	if !strings.Contains(doc.Body, reason) {
+		t.Fatalf("the first draft's body does not carry the whole reason:\n%s", doc.Body)
+	}
+
+	// The identical bundle again: no new occurrence, and the whole reason stays in the body.
+	code, _, stderr = improveProposeTestRun(t, w, "--bundle", bundle)
+	if code != 0 {
+		t.Fatalf("the repeated propose: exit %d, stderr %s", code, stderr)
+	}
+	again := improveProposeTestDraft(t, w, first.Created[0].Fingerprint)
+	if !strings.Contains(again.Body, reason) {
+		t.Errorf("the rerun shortened the reason in the body:\n%s", again.Body)
+	}
+}
+
+// TestImproveReview789LearnedProjectIsOneSighting covers the review finding that learning the
+// project of an existing split counted the same occurrence twice: the split's key is its current
+// project and became the sighting's subject, so once the relationship was attached to a project the
+// one event origin was counted again, under the unknown owner and under the project. One origin is
+// one sighting, and the owner it is counted under follows the latest reading.
+func TestImproveReview789LearnedProjectIsOneSighting(t *testing.T) {
+	s := improveTestSetup(t)
+	manageState := filepath.Join(s.root, "manage-state")
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-a','CRW-900','active','parent','host','child','host',1,'[]','[]','2026-10-06T00:00:00Z','2026-10-06T00:00:00Z')")
+		improveTestInsert(t, db, "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at) VALUES ('ev-a','rel-a',1,?,'decision_reply','parent','t','turn-1','completed',?,'final','2026-10-06T01:00:00Z','2026-10-06T01:00:00Z')",
+			strings.Repeat("0", 64), improveReview789SplitReceipt("size overrun"))
+	})
+	improveReview789Configure(t, s, manageState, map[string]any{})
+
+	improveReview789Collect(t, s)
+	first := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(first.Created) != 1 {
+		t.Fatalf("created = %+v, want one draft", first.Created)
+	}
+	fingerprint := first.Created[0].Fingerprint
+	if doc := improveReview789Draft(t, manageState, fingerprint); !strings.Contains(doc.Body, "- owner_unknown (1)") {
+		t.Fatalf("the scopeless draft does not count the one occurrence under the unknown owner:\n%s", doc.Body)
+	}
+
+	// The relationship is attached to a project. No new event: the same origin, seen again.
+	improveTestStore(t, s, func(t *testing.T, db *sql.DB) {
+		improveTestInsert(t, db, "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-a','project-a','2026-10-06T02:00:00Z')")
+	})
+	improveReview789Collect(t, s)
+	second := improveReview789Propose(t, s, improveReview789BundlePath(s))
+	if len(second.Updated) != 1 {
+		t.Fatalf("updated = %+v, want the existing draft to grow once", second.Updated)
+	}
+	doc := improveReview789Draft(t, manageState, fingerprint)
+	if len(doc.Seen) != 1 {
+		t.Errorf("the draft carries %d seen entries, want one: one origin is one sighting: %+v", len(doc.Seen), doc.Seen)
+	}
+	if !strings.Contains(doc.Body, "- project-a (1)") {
+		t.Errorf("the draft does not count the occurrence under the project it learned:\n%s", doc.Body)
+	}
+	if strings.Contains(doc.Body, "- owner_unknown (") {
+		t.Errorf("the draft still counts the occurrence under the unknown owner:\n%s", doc.Body)
+	}
+}
