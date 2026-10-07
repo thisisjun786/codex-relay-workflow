@@ -623,9 +623,9 @@ procedure is in the crw-run skill's
 | Command | Purpose |
 |---|---|
 | `merge-train-open` | the leader's holding turn opens a train over the members in the given order; one member is today's lane and opens no train |
-| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run and the first-parent chain in the given checkout, and appends a verified event |
-| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed |
-| `merge-train-close` | close the train done, or abandon it and return its member turns to waiting |
+| `merge-train-verify` | the leader reads the bundle pull request, this repository's `ci.yml` run, the first-parent chain and the head's own `.github/workflows/ci.yml` job set in the given checkout, and appends a verified event |
+| `merge-train-land` | record that the bundle landed as one merge commit M and close every member turn landed; a member whose turn left the lane after the train opened is named in the landed event instead |
+| `merge-train-close` | close the train done, or abandon it; abandoning moves no member turn (the leader still holds the lane turn, the other members still wait) |
 | `merge-train-show` | the train's members in order, its event log, the state its newest event derives, and a reconcile reading of a lost landing |
 
 The relay reads the pull request, the run, the jobs, the commits and the ancestry from the forge
