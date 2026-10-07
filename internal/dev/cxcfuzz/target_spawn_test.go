@@ -600,3 +600,53 @@ func TestSpawnSlowOracleLoadIsChargedToStartup(t *testing.T) {
 		t.Fatalf("the case answered %s, want the case root's home", reply)
 	}
 }
+// c1 (CRW-938): the oracle is loaded eagerly, under the caller's environment, so that load is safe only while
+// the oracle's module initialization does no home I/O. This measures that against the real oracle tree: the
+// five homes point at a decoy directory, the handshake is answered, and nothing may have appeared under the
+// decoy afterwards. The pre-merge evaluation of head 2410f141 found the earlier isolation test could not show
+// this - it read the environment when an oracle function was called, which a later request's reset hides - so
+// this pins the property the eager load depends on instead of the environment at one moment.
+func TestSpawnOracleLoadDoesNotTouchTheHomes(t *testing.T) {
+	requireNode(t)
+	hook := filepath.Join(DefaultOracleRoot, "subagent-config", "dist", "spawn-attach-hook.js")
+	if _, err := os.Stat(hook); err != nil {
+		t.Skipf("the CXC oracle tree is not extracted here: %v", err)
+	}
+	decoy := t.TempDir()
+	pool := spawnFakePool(t, DefaultOracleRoot, append(os.Environ(), spawnDecoyEnv(decoy)...))
+	defer func() { _ = pool.Close() }()
+	got, err := pool.Call("null", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(got) != canonical(spawnRefusal) {
+		t.Fatalf("the handshake answered %s, want the refusal %s", got, canonical(spawnRefusal))
+	}
+	if files := spawnTree(t, decoy); len(files) != 0 {
+		t.Fatalf("the oracle's initialization wrote under the homes it was handed: %v", files)
+	}
+}
+
+// spawnTree is every path under dir, relative to it, so a test can show that nothing appeared there.
+func spawnTree(t *testing.T, dir string) []string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		found = append(found, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
