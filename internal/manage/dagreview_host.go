@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 // The four host-record anomaly kinds this issue adds to the review.
@@ -280,17 +282,19 @@ func dagHostParentRollout(in *dagReviewInput, parent dagHostParent, path string,
 }
 
 // dagHostNewRefusals is the refusals of one reading this check has not reported yet. A rollout seen
-// for the first time reports only the refusals written after the reading began (the file size at
-// that moment), so its history is not replayed while a refusal the parent appended during the scan
-// still is; a known rollout reports every refusal the reading found that is not in the reported
-// list. The ids the next check re-reads stay in that list, so a refusal is reported once.
+// for the first time reports only the refusals whose OUTPUT was written after the reading began
+// (the file size at that moment), so its history is not replayed while a refusal the parent appended
+// during the scan still is; the call's own position does not matter, so the answer of a call that
+// already existed before the reading is reported when it arrives. A known rollout reports every
+// refusal the reading found that is not in the reported list. The ids the next check re-reads stay
+// in that list, so a refusal is reported once.
 func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool, firstSight bool) []dagHostRefusal {
 	out := []dagHostRefusal{}
 	for _, refusal := range reading.refusals {
 		if reported[refusal.callID] {
 			continue
 		}
-		if firstSight && refusal.lineStart < reading.boundary {
+		if firstSight && refusal.outputStart < reading.boundary {
 			continue
 		}
 		out = append(out, refusal)
@@ -305,7 +309,7 @@ func dagHostNewRefusals(reading dagHostRolloutReading, reported map[string]bool,
 func dagHostResumeRefusalIDs(reading dagHostRolloutReading) []string {
 	ids := []string{}
 	for _, refusal := range reading.refusals {
-		if refusal.lineStart < reading.resume {
+		if refusal.callStart < reading.resume {
 			continue
 		}
 		ids = append(ids, refusal.callID)
@@ -373,13 +377,16 @@ func dagHostDuplicateOutputs(path string) ([]dagHostDuplicate, error) {
 	return duplicates, nil
 }
 
-// dagHostRefusal is one relay dag- command a parent's rollout shows refused, with the line its call
-// started on so a later check can tell whether it will read that call again.
+// dagHostRefusal is one relay dag- command a parent's rollout shows refused. callStart is the line
+// the call started on, which is what decides whether a later check reads that call again;
+// outputStart is the line the refusal's answer started on, which is what decides whether a
+// first-sight reading treats the refusal as history or as one the parent appended during the scan.
 type dagHostRefusal struct {
-	callID    string
-	commands  []string
-	reason    string
-	lineStart int64
+	callID      string
+	commands    []string
+	reason      string
+	callStart   int64
+	outputStart int64
 }
 
 // dagHostRolloutReading is one reading of a rollout: the refusals it shows, the offset the next
@@ -411,9 +418,13 @@ var (
 // dagHostRelaySubcommands reads the dag- subcommands of the relay invocations in a tool call's
 // argument text. The text is split into simple command units (a newline, ;, &&, ||, | or $( starts
 // one) and each into words; leading VAR=value assignments and exec are skipped; the program word
-// must be the relay (codex-session-relay by basename, crw relay, or a variable expansion). Only
-// option words and their values may then pass before a dag- subcommand word, so reading a relay
-// document with cat or searching for a dag- word with rg is not a relay invocation.
+// must be the relay (codex-session-relay by basename, crw relay, or a variable expansion). The
+// words after the program are read with the relay's own root parser, so an option's value is not
+// mistaken for the subcommand: --state, --socket and --kind-module take a value (--flag=value too)
+// and --json takes none. The subcommand is the parser's first remaining word, and the call is a dag
+// call only when the parser read the line and that word matches ^dag-[a-z-]+$; a line the root
+// parser refuses (an unknown option, a missing value) is not a dag call, and reading a relay
+// document with cat or searching for a dag- word with rg is never a relay invocation.
 func dagHostRelaySubcommands(text string) []string {
 	var subcommands []string
 	for _, unit := range dagHostCommandSplitter.Split(text, -1) {
@@ -429,23 +440,16 @@ func dagHostRelaySubcommands(text string) []string {
 		} else {
 			words = words[1:]
 		}
-		for len(words) > 0 {
-			word := words[0]
-			if dagHostDagSubcommand.MatchString(word) {
-				subcommands = append(subcommands, word)
-				break
-			}
-			if !strings.HasPrefix(word, "-") {
-				break
-			}
-			// An option word consumes the next word as its value, unless that word is another option
-			// or the subcommand itself: a value-less flag such as the relay's own --json must not
-			// swallow the subcommand that follows it.
-			if len(words) < 2 || strings.HasPrefix(words[1], "-") || dagHostDagSubcommand.MatchString(words[1]) {
-				words = words[1:]
-				continue
-			}
-			words = words[2:]
+		// The relay's root parser knows which options take a value, so a dag- word given as an
+		// option's value is not read as the subcommand, and a line the parser refuses is not a dag
+		// call. Remaining is what the parser did not consume: for the root, the subcommand and the
+		// words after it.
+		parsed := argparse.Parse("", words)
+		if parsed.Message != "" || len(parsed.Remaining) == 0 {
+			continue
+		}
+		if dagHostDagSubcommand.MatchString(parsed.Remaining[0]) {
+			subcommands = append(subcommands, parsed.Remaining[0])
 		}
 	}
 	return subcommands
@@ -483,6 +487,12 @@ func dagHostCallText(arguments, input string) string {
 	return input
 }
 
+// dagHostAfterBoundary is a test seam: it is called after a reading has taken the rollout's size as
+// its boundary and before it scans, so a test can append the answer of a call that already existed
+// and check the boundary rule against the real reading rather than against a reading built by hand.
+// It is nil outside tests.
+var dagHostAfterBoundary func(path string)
+
 // dagHostRolloutRefusals reads the rollout from start to its end and reports the relay dag-
 // refusals it finds, with the offset the next check resumes from. The resume offset never advances
 // past a relay call whose output has not been seen, so a call and its output split across two checks
@@ -508,6 +518,9 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 	// boundary is the size the rollout had when this reading began. The caller uses it to tell a
 	// first-sight rollout's history from a refusal the parent appended while this reading ran.
 	reading := dagHostRolloutReading{resume: start, boundary: size}
+	if dagHostAfterBoundary != nil {
+		dagHostAfterBoundary(path)
+	}
 	offset, resume := start, start
 	calls := map[string]dagHostCall{}
 	var refusals []dagHostRefusal
@@ -529,7 +542,7 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 				switch entry.Payload.Type {
 				case "function_call", "custom_tool_call":
 					if commands := dagHostRelaySubcommands(dagHostCallText(entry.Payload.Arguments, entry.Payload.Input)); len(commands) > 0 {
-						calls[entry.Payload.CallID] = dagHostCall{commands: commands, lineStart: lineStart}
+						calls[entry.Payload.CallID] = dagHostCall{commands: commands, callStart: lineStart}
 					}
 				case "function_call_output", "custom_tool_call_output":
 					call, ok := calls[entry.Payload.CallID]
@@ -548,7 +561,7 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 					if found := dagHostRefusedReason.FindStringSubmatch(output); found != nil {
 						reason = found[1]
 					}
-					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason, lineStart: call.lineStart})
+					refusals = append(refusals, dagHostRefusal{callID: entry.Payload.CallID, commands: call.commands, reason: reason, callStart: call.callStart, outputStart: lineStart})
 				}
 			}
 		}
@@ -562,8 +575,8 @@ func dagHostRolloutRefusals(path string, start int64) (dagHostRolloutReading, er
 	// A relay call whose output has not arrived stays pending: the next check re-reads it from its
 	// own line, so the call and its output are paired even when they are written in different runs.
 	for _, call := range calls {
-		if !call.seen && call.lineStart < resume {
-			resume = call.lineStart
+		if !call.seen && call.callStart < resume {
+			resume = call.callStart
 		}
 	}
 	reading.refusals = refusals
@@ -604,7 +617,7 @@ func dagHostReadLine(reader *bufio.Reader, limit int) ([]byte, int64, bool, erro
 // whether its output has been seen.
 type dagHostCall struct {
 	commands  []string
-	lineStart int64
+	callStart int64
 	seen      bool
 }
 

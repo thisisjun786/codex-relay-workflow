@@ -127,6 +127,16 @@ func TestDagHostReview775DocsReadIsNotRelayCall(t *testing.T) {
 		{"an option with a separate value", "codex-session-relay --state S dag-ready --plan p1", true},
 		{"a program whose argument holds the words", "rg -n 'relay dag-release' docs", false},
 		{"an unrelated program after exec", "exec cat docs/relay/dag-plan.md", false},
+		// The subcommand position follows the relay's own root parser: a dag- word given as an
+		// option's value is that value, and a word after an unknown or value-less option is not
+		// the subcommand either. A line the parser refuses is not a dag call.
+		{"a dag- word taken as an option value", "codex-session-relay --state dag-release status", false},
+		{"a dag- word after an unknown option", "codex-session-relay --json --relationship dag-release status", false},
+		{"a dag- word after an unknown option, no flag first", "codex-session-relay --nope dag-release --plan p1", false},
+		{"an option missing its value", "codex-session-relay --state", false},
+		{"a variable program with a value-less option", "$RELAY --json dag-ready --plan p", true},
+		{"a variable program with an inline option value", "$RELAY --state=$ST dag-release --plan p1", true},
+		{"the relay program with an inline option value", "codex-session-relay --state=$ST dag-release --plan p1", true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -290,21 +300,23 @@ func TestDagHostReview775OversizeLineDoesNotBlockLaterRefusals(t *testing.T) {
 	}
 }
 
-// On a rollout seen for the first time only the refusals written after the reading began are
-// reported: an older one is history, while one the parent appended during the scan is new.
+// On a rollout seen for the first time only the refusals whose answer was written after the reading
+// began are reported: a refusal already in the file is history even when its call line is inside the
+// reading, and the answer of a call that already existed is new when it arrives during the scan. The
+// call's own position decides nothing here; the resume list still bounds itself by the call line.
 func TestDagHostReview775FirstSightReportsOnlyRefusalsWrittenAfterTheReading(t *testing.T) {
 	reading := dagHostRolloutReading{
 		boundary: 100,
 		resume:   250,
 		refusals: []dagHostRefusal{
-			{callID: "history", lineStart: 10, commands: []string{"dag-release"}, reason: "old"},
-			{callID: "appended", lineStart: 120, commands: []string{"dag-ready"}, reason: "new"},
+			{callID: "history", callStart: 10, outputStart: 20, commands: []string{"dag-release"}, reason: "old"},
+			{callID: "appended", callStart: 10, outputStart: 120, commands: []string{"dag-ready"}, reason: "new"},
 		},
 	}
 
 	first := dagHostNewRefusals(reading, map[string]bool{}, true)
 	if len(first) != 1 || first[0].callID != "appended" {
-		t.Fatalf("a first-sight reading reported %+v, want only the refusal written after it began", first)
+		t.Fatalf("a first-sight reading reported %+v, want only the refusal answered after it began", first)
 	}
 	known := dagHostNewRefusals(reading, map[string]bool{}, false)
 	if len(known) != 2 {
@@ -313,5 +325,69 @@ func TestDagHostReview775FirstSightReportsOnlyRefusalsWrittenAfterTheReading(t *
 	suppressed := dagHostNewRefusals(reading, map[string]bool{"appended": true}, false)
 	if len(suppressed) != 1 || suppressed[0].callID != "history" {
 		t.Fatalf("an already reported refusal was reported again: %+v", suppressed)
+	}
+}
+
+// d1 (C2): a rollout seen for the first time decides history by where a refusal's ANSWER starts, not
+// by where its call starts. The seam appends the answer of a call that already existed after the
+// reading has taken the file's size as its boundary and before it scans, so the real reading is
+// driven: the answer is new and is reported once, and the next check does not report it again. The
+// control's call and answer both precede the reading, so neither is reported.
+func TestDagHostReview775FirstSightReportsTheAnswerAppendedDuringTheScan(t *testing.T) {
+	cases := []struct {
+		name       string
+		lines      []string
+		append     []string
+		wantRaised bool
+	}{
+		{
+			name:       "the answer of a call that already existed arrives during the scan",
+			lines:      []string{dagHostToolCall(t, "call-A", "crw relay dag-release --plan p1")},
+			append:     []string{dagHostToolOutput(t, "call-A", `{"error":"refused","reason":"stale_coordinator_epoch"}`)},
+			wantRaised: true,
+		},
+		{
+			name: "a call and its answer both precede the scan",
+			lines: []string{
+				dagHostToolCall(t, "call-A", "crw relay dag-release --plan p1"),
+				dagHostToolOutput(t, "call-A", `{"error":"refused","reason":"stale_coordinator_epoch"}`),
+			},
+			append:     []string{dagHostResponseItem(t, map[string]any{"type": "message", "role": "user"})},
+			wantRaised: false,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			f := dagReviewNewFixture(t)
+			stateDir := filepath.Join(t.TempDir(), "state")
+			rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", test.lines...)
+			f.close()
+			cfg := dagHostReview775Parent(t, f, rollout, stateDir)
+
+			appended := false
+			dagHostAfterBoundary = func(path string) {
+				if path != rollout || appended {
+					return
+				}
+				appended = true
+				dagHostAppendRollout(t, rollout, test.append...)
+			}
+			t.Cleanup(func() { dagHostAfterBoundary = nil })
+
+			first := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+			if !test.wantRaised {
+				if len(first) != 0 {
+					t.Fatalf("a refusal that preceded the reading was reported: %+v", first)
+				}
+				return
+			}
+			if len(first) != 1 || !strings.Contains(first[0].Detail, "stale_coordinator_epoch") {
+				t.Fatalf("the answer appended during the scan was not reported once: %+v", first)
+			}
+			second := dagReviewFind(dagHostRun(t, context.Background(), f, cfg), dagHostKindParentDagRefusals)
+			if len(second) != 0 {
+				t.Fatalf("the next check reported the same answer again: %+v", second)
+			}
+		})
 	}
 }
