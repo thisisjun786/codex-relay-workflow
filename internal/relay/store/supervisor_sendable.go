@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 )
@@ -58,6 +59,74 @@ func (r SupervisorMessagesRow) ClaimableAt(now float64) bool {
 	return r.Unsent() && !r.HoldReason.Valid && !(r.NextEligibleAt.Valid && r.NextEligibleAt.Float64 > now)
 }
 
+// SupervisorNoticeObligationKind is the obligation_kind a fault notice's message carries. The
+// notice channel is the one relay-owned channel that yields the recipient's line to a delivery
+// waiting out a busy backoff (I-216's notice part, section 82 decision 2); every other message
+// keeps the oldest-of-the-claimable rule the rest of this file writes.
+const SupervisorNoticeObligationKind = "fault_notification"
+
+// YieldsToBusyHead reports whether this message yields the recipient's line to a delivery that
+// waits out a busy backoff at now: only a fault notice does. Whether the line is held at all is the
+// delivery path's own question (delivery.Service.BusyHeadHoldsRecipientLine), so the two channels
+// cannot disagree about which deliveries hold a line.
+func (r SupervisorMessagesRow) YieldsToBusyHead() bool {
+	return r.ObligationKind == SupervisorNoticeObligationKind
+}
+
+// supervisorHeldNoticeExclusion is the exception an order condition carries for the recipients named
+// in held, whose line a delivery holds under a busy backoff at now. The notice channel yields such a
+// recipient's line to that delivery (I-216's notice part, section 82 decision 2), and a notice that
+// yields cannot be claimed where its claim happens. So it is not a claimable row either, and a
+// judgement that counts it as one lets it stand in front of a younger message to that recipient:
+// the whole supervisor channel then yields with it, and an ordinary report waits for a fact that is
+// not going to move.
+//
+// held is the caller's reading of the delivery path's own rule
+// (delivery.Service.BusyHeadHoldsRecipientLine), so the two channels cannot disagree about which
+// deliveries hold a line. It is written as an exception to the CLAIMABLE test alone and never to the
+// in-flight or stranded ones, because that is the whole of what the yield takes away: a notice whose
+// send is already under way goes ahead whatever the line does (I-216's in-flight clause), and one
+// whose lease ran out is still recovered by the attempt that follows.
+//
+// It is a fragment to place after AND, not a condition, and it takes the whole set as ONE binding -
+// a JSON array read with json_each, the form this repository already uses for a set the caller
+// holds. That matters: the set is every recipient a busy-backoff delivery holds, which is bounded by
+// the store and not by the page being read, and the head selection carries this fragment twice. One
+// "?" per recipient would therefore let a large enough store exceed the connection's bind-variable
+// limit and fail the whole pass, including the recipients whose lines are free. With none named the
+// fragment is empty and binds nothing, so a caller that holds no such reading asks exactly what it
+// asked before this exclusion existed.
+func supervisorHeldNoticeExclusion(alias string, held []string) string {
+	if len(held) == 0 {
+		return ""
+	}
+	return " AND NOT (" + supervisorColumn(alias, "obligation_kind") + "='" + SupervisorNoticeObligationKind + "' AND " + supervisorColumn(alias, "recipient_task_id") + " IN (SELECT value FROM json_each(?)))"
+}
+
+// SupervisorHeldNoticeArgs are the values the three order conditions below bind for held, in text
+// order: now once (the claimable test's own due), the held set as one JSON array (the exclusion), then
+// now once (the in-flight or the stranded test). With none named it is now twice and nothing else,
+// which is exactly what those conditions bound before the yield was excepted.
+func SupervisorHeldNoticeArgs(held []string, now float64) []any {
+	args := make([]any, 0, len(held)+2)
+	args = append(args, now)
+	if len(held) > 0 {
+		args = append(args, supervisorHeldNoticeJSON(held))
+	}
+	return append(args, now)
+}
+
+// supervisorHeldNoticeJSON is held as the JSON array json_each reads. The set is identifiers the
+// delivery path named, so encoding it cannot fail for a value it could hold.
+func supervisorHeldNoticeJSON(held []string) string {
+	encoded, err := json.Marshal(held)
+	if err != nil {
+		// Unreachable for []string; the empty array keeps a caller safe rather than binding nothing.
+		return "[]"
+	}
+	return string(encoded)
+}
+
 func supervisorColumn(alias, name string) string {
 	if alias == "" {
 		return name
@@ -103,8 +172,17 @@ func supervisorLeaseExpiredSQL(alias string) string {
 // SupervisorAheadSQL is true for a message that goes ahead of a younger one to the same recipient:
 // claimable, or in flight. A hold keeps a message out of the queue only while it is unsent. It
 // binds now twice.
-func SupervisorAheadSQL(alias string) string {
-	return "(" + SupervisorClaimableSQL(alias) + " OR " + supervisorLeaseLiveSQL(alias) + ")"
+func SupervisorAheadSQL(alias string) string { return SupervisorAheadExceptYieldingSQL(alias, nil) }
+
+// SupervisorAheadExceptYieldingSQL is SupervisorAheadSQL for a recipient whose line a delivery holds
+// under a busy backoff at now: a claimable fault notice to that recipient is left out, because it
+// cannot be claimed and so is not a row that goes ahead of the one behind it (I-216's notice part,
+// CRW-943). held is the caller's reading of the delivery path's own rule
+// (delivery.Service.BusyHeadHoldsRecipientLine), so the two channels cannot disagree about which
+// deliveries hold a line. It binds SupervisorHeldNoticeArgs(held, now); with none named it is
+// byte-for-byte the condition it was before this exclusion existed.
+func SupervisorAheadExceptYieldingSQL(alias string, held []string) string {
+	return "(" + SupervisorClaimableSQL(alias) + supervisorHeldNoticeExclusion(alias, held) + " OR " + supervisorLeaseLiveSQL(alias) + ")"
 }
 
 // SupervisorAheadInClaimSQL is SupervisorAheadSQL as the claim asks it under its write lock, where
@@ -112,13 +190,29 @@ func SupervisorAheadSQL(alias string) string {
 // carries a hold, which a hold landing between an attempt's read and its claim can produce. It
 // binds now twice.
 func SupervisorAheadInClaimSQL(alias string) string {
-	return "(" + supervisorColumn(alias, "hold_reason") + " IS NULL AND ((" + SupervisorUnsentSQL(alias) + " AND " + SupervisorDueSQL(alias) + ") OR " + supervisorLeaseLiveSQL(alias) + "))"
+	return SupervisorAheadInClaimExceptYieldingSQL(alias, nil)
+}
+
+// SupervisorAheadInClaimExceptYieldingSQL is the same exclusion on the claim's own form of the
+// condition, so the selection that led to the claim and the claim itself agree about what goes
+// first. It binds SupervisorHeldNoticeArgs(held, now).
+func SupervisorAheadInClaimExceptYieldingSQL(alias string, held []string) string {
+	return "(" + supervisorColumn(alias, "hold_reason") + " IS NULL AND ((" + SupervisorUnsentSQL(alias) + " AND " + SupervisorDueSQL(alias) + supervisorHeldNoticeExclusion(alias, held) + ") OR " + supervisorLeaseLiveSQL(alias) + "))"
 }
 
 // SupervisorAttemptableSQL is true for a message a daemon pass may attempt: claimable, or stranded
 // (the attempt recovers it first). It binds now twice.
 func SupervisorAttemptableSQL(alias string) string {
-	return "(" + SupervisorClaimableSQL(alias) + " OR " + supervisorLeaseExpiredSQL(alias) + ")"
+	return SupervisorAttemptableExceptYieldingSQL(alias, nil)
+}
+
+// SupervisorAttemptableExceptYieldingSQL is SupervisorAttemptableSQL for a recipient whose line a
+// delivery holds under a busy backoff at now: a claimable fault notice to that recipient is left
+// out, so a daemon pass reads past a row it would only be refused by to the message behind it,
+// instead of spending its turn on a fact that cannot move while the line is held (I-216's notice
+// part, CRW-943). It binds SupervisorHeldNoticeArgs(held, now).
+func SupervisorAttemptableExceptYieldingSQL(alias string, held []string) string {
+	return "(" + SupervisorClaimableSQL(alias) + supervisorHeldNoticeExclusion(alias, held) + " OR " + supervisorLeaseExpiredSQL(alias) + ")"
 }
 
 // SupervisorOlderThanSQL is true for a message staged before the one at (staged_at, message_id):

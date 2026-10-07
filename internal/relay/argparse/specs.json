@@ -726,10 +726,10 @@
   {"flag":"--actor","required":true,"help":"the train's leader"},
   {"flag":"--landed-sha","required":true,"help":"the bundle's merge commit M; the relay reads the dev tip and M's parents from the forge and refuses anything else"},
   {"flag":"--observed-base-sha","help":"optional cross-check: the dev tip you read after the merge. The relay reads the branch itself and refuses a value that disagrees"}]},
-{"name":"merge-train-close","summary":"close a train done, or abandon it and return its member turns to waiting","options":[
+{"name":"merge-train-close","summary":"close a train done, or abandon it; abandoning moves no member turn","options":[
   {"flag":"--train","required":true},
   {"flag":"--actor","required":true,"help":"the train's leader"},
-  {"flag":"--state","required":true,"choices":["done","abandoned"],"help":"the event kind this appends; abandoned returns the member turns to waiting"},
+  {"flag":"--state","required":true,"choices":["done","abandoned"],"help":"the event kind this appends; abandoning moves no member turn"},
   {"flag":"--reason","required":true}]},
 {"name":"merge-train-show","summary":"read one train: its members in order, its event log and the state its newest event derives","options":[
   {"flag":"--train","required":true}]},

@@ -1004,9 +1004,14 @@ jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_s
 `dag-merge-request`, the merge lane, the merge, `assignment-mark merged`,
 `dag-integration-observe`. The judge reads the pull request through the relay's own checkout, so N
 has to be fetched there, or it fails as a host problem and writes nothing. A base that moves after
-the acceptance, for example while N's jobs run or while the candidate waits for its turn, cannot be
-refreshed by the parent at this baseline: the update would move the head off the accepted one, and
-the judge reads `stale_base`. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
+the acceptance, for example while N's jobs run or while the candidate waits for its turn, is the
+parent's to refresh in that same turn: the update moves the head off the accepted one, and
+`dag-base-refresh` records the refreshed head in the acceptance's own generation, so the head moves
+and the generation does not (`docs/relay/dag-scheduler.md`, "A base refresh of an accepted node").
+Without that record the judge reads `stale_head` and `dag-merge-request` refuses
+`merge_candidate_moved`, because the head is no longer the one the acceptance stands on: the head is
+compared before the base is. With it the judge, the merge request, the release freshness check and a
+bundle's stand-head check all read the refreshed head. That candidate does not go back by a second ruling, because the relay takes none on an accepted head; [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) is the other way back, and [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance) says what remains for the ruling that precedes it. The window now includes N's job time, and another project's landing during it
 counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
 scheduler's, which has no re-acceptance of a verified refresh: the refresh is recorded beside the acceptance instead.
 
@@ -1188,31 +1193,54 @@ its correction; the operator page is `docs/relay/README.md`).
    --run <R> --repo <a checkout>`. The relay reads the pull request, the run and the chain itself and
    compares your values; a run that is not this repository's `ci.yml`, a fork run, a job that is not a
    success, a go-product test leg whose test step was skipped, and a hand-resolved merge are each
-   refused with no event.
+   refused with no event. It also reads `.github/workflows/ci.yml` **at H** from the checkout (the git
+   object, never the working tree, which may sit on another branch) and refuses a head whose job set
+   differs from the one this runtime verifies, naming the jobs the head lost and the ones it added; a
+   workflow it cannot read is `merge_target_unreadable`. So a member that changes the workflow's jobs
+   cannot ride a bundle unnoticed.
 5. `gh pr merge <bundle pr> --merge --match-head-commit <H>`.
 6. `merge-train-land --train <id> --actor <leader> --landed-sha <M> --observed-base-sha <M>`. The
    relay reads the dev tip and M's parents from the forge; anything but M with parents (D, H) and every
    member head an ancestor of M is refused and writes nothing. On success every member turn is recorded
-   landed with M.
-7. For each member pull request, check it shows merged; if it does not, comment "landed via bundle
-   <merge sha>" and close it.
+   landed with M, except the members the landed event names in its `excluded` list.
+7. For each member pull request **the landed event did not exclude**, check it shows merged; if it does
+   not, comment "landed via bundle <merge sha>" and close it. An excluded member's pull request is left
+   alone: the bundle carried the head it moved away from, so the pull request still has to land on its
+   own.
 8. `merge-train-close --train <id> --actor <leader> --state done --reason <...>` and delete the
    bundle branch.
 
 **Each member's parent.** Once the landing is recorded, the member's own parent records
-`assignment-mark` (merged) and `dag-integration-observe` on its relationship. The ruling and the
-integration observation stay the parent's work.
+`assignment-mark` (merged) and `dag-integration-observe` on its relationship — except for a member the
+landed event's `excluded` list names, whose work did not land and which therefore gets neither mark.
+The ruling and the integration observation stay the parent's work.
 
 **Failure handling.**
 
 - If the bundle's CI fails, read the failed job's log for the packages it names and remove the members
   that touch those packages, then open a new bundle over the rest (close the old one abandoned and close
-  its pull request).
+  its pull request). Abandoning moves no member turn: opening a bundle never moved them, so after the
+  close the leader still holds the lane turn (which is what reopening needs) and every other member is
+  still waiting (so a replacement bundle may carry it).
 - If no member can be named as the cause, halve the bundle and run again, keeping a predecessor and its
-  successors on the same side.
+  successors on the same side. `merge-train-open` requires the whole bundle to be one holding turn plus
+  waiting members, so a member whose turn is not waiting at open is not carried; and a bundle whose
+  members are joined into one group cannot be halved at all — it is run as it is or taken apart by hand.
 - If only a known flaky test failed, rerun the failed jobs once.
 - A set that failed twice goes one by one through the lane.
 - A removed member rides alone.
+- **A member that moves while the bundle is up.** `merge-train-verify` and `merge-train-land` each
+  reread every member pull request from the forge before writing; a member whose pull request no
+  longer shows the head the bundle carries, or is no longer open on the bundle's base, is refused
+  `disposition_conflict` naming the pull request and what changed, with nothing written. At verify,
+  abandon and reopen without that member. Between verify and land (the window the bundle merge opens)
+  the member's own parent takes its turn out of the lane — `merge-turn-withdraw` for a waiting member,
+  `merge-turn-release --disposition returned` for the leader, which is the turn that holds the lane —
+  and `merge-train-land` then records the rest and names the excluded member in its landed event with
+  the turn state and close reason. A member that moved while its turn is still in the lane is refused,
+  not excluded. The leader's post-land steps must read that `excluded` list: an excluded member's pull
+  request is not merged and is not closed as landed, and its parent records no `assignment-mark` for
+  it, because the bundle carries only the head it moved away from.
 - If a merge outside the lane moves dev, abandon the bundle and open a new one.
 
 **The lane script** changes only after the bundle merge is in the runtime; until then the lane goes one
@@ -1368,6 +1396,8 @@ The verdict `verified` was given, and before `dag-accept` (or, in a project with
 7. **When the child reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The child declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
 
 ### A base refresh the child made after the acceptance
+
+**The parent's own refresh comes first (CRW-916).** When the candidate is the one about to merge, the parent updates the branch inside its own turn ([Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved)) and records it with `dag-base-refresh` in the acceptance's own generation: the head moves and the generation does not, so the node integrates on that generation's own merged mark, and a bundle leader that fell back to the single lane keeps moving. What follows is the case where that is not possible and the work goes back to the same child.
 
 In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling or by `dag-correct`, because its result is current. The way back to the same child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base. The pull request is then judged and merged through the lane at that head, and the node integrates on it. A generation that holds more than that, the child's own work, is a correction, and for a current result this build has no route for it: report it on the coordination record. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
 

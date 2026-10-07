@@ -198,6 +198,13 @@ func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	if err = partialStore(resolved); err != nil {
 		return nil, err
 	}
+	// A store whose writes are halted is read through the read-only opener (CRW-848): a read-only
+	// command still answers, and it opens no writable store at all, so the halt's refusal stays with
+	// the commands that write. The read-only opener runs no DDL, installs no index and takes no write
+	// lock, which is exactly what a halted store may have.
+	if HaltStateAt(resolved).Present {
+		return OpenReadOnlyStore(ctx, path)
+	}
 	// Another runtime's store is read without its write gate (stampInPlace, which never takes a
 	// lock); one this runtime may write is opened as a writer opens it.
 	if meta, fenced, err := stampInPlace(ctx, resolved); err == nil && fenced && stampRefusal(meta) != nil {

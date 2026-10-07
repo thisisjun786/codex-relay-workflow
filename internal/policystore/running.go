@@ -1,11 +1,16 @@
 package policystore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/manage"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -25,7 +30,8 @@ type Running struct {
 }
 
 // runningSeams are the host readers a test replaces. The production values are the exported readers
-// of internal/relay, which are the same ones crw manage and relay doctor use.
+// of internal/relay, which are the same ones crw manage and relay doctor use, and the management
+// command itself, which is the reader crw manage config is.
 var runningSeams = struct {
 	scope      func() (*service.ScopeRegistry, error)
 	observe    func(context.Context, store.StateSelection, string, string, *service.ScopeRegistry) service.Object
@@ -40,37 +46,61 @@ var runningSeams = struct {
 	readManage: manageRelaySettings,
 }
 
-// manageRelay is the relay block of the management session configuration: the socket and the state
-// directory, either of which may be empty.
+// manageRelay is the relay block crw manage config reports: the socket and the state directory,
+// either of which may be empty.
 type manageRelay struct {
-	Socket string
-	State  string
+	Socket string `json:"socket"`
+	State  string `json:"state"`
 }
 
-// manageRelaySettings is the relay block the management session configuration names, read through
-// crwconfig the way crw manage reads it. An absent or unusable file leaves both empty, and the
-// caller falls back to the App Server default socket.
-func manageRelaySettings(getenv func(string) string) (manageRelay, error) {
-	file, err := crwconfig.Load(getenv, "")
-	if err != nil {
-		return manageRelay{}, err
+// manageRelaySettings is the relay block crw manage config reports, read by running that command in
+// this process through the package public entry point. The management command owns every judgement
+// about the configuration file: which fields it must carry, which values it refuses and what the
+// install layout defaults are. So this package reads no part of that file itself, and the relay the
+// policy API observes is exactly the one the management command names.
+//
+// A non-zero exit is the command own refusal and its stderr is the reason, so the caller reports the
+// running digest unavailable with that sentence rather than falling back to a relay the command
+// never named. A report this reader cannot decode is refused for the same reason: fail closed rather
+// than answer a relay this package inferred.
+//
+// The command reads the process environment itself (Run builds its Env with os.Getenv), so the
+// environment this reader is handed is not what it runs with, and the parameter is unused. It stays
+// in the signature because the seam type is shared with the stubs the tests in this package install,
+// and this issue does not change them. config is a local file read with no work a context could
+// cancel, so the call runs on a background context rather than the reading own.
+func manageRelaySettings(_ func(string) string) (manageRelay, error) {
+	var stdout, stderr bytes.Buffer
+	if code := manage.Run(context.Background(), []string{"config"}, nil, &stdout, &stderr); code != 0 {
+		reason := strings.TrimSpace(stderr.String())
+		if reason == "" {
+			reason = fmt.Sprintf("crw manage config exited with status %d", code)
+		}
+		return manageRelay{}, errors.New(reason)
 	}
-	var manage struct {
-		Relay struct {
-			Socket string `json:"socket"`
-			State  string `json:"state"`
-		} `json:"relay"`
+	var report struct {
+		Relay manageRelay `json:"relay"`
 	}
-	if err := file.Section("manage", &manage); err != nil {
-		return manageRelay{}, err
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		return manageRelay{}, fmt.Errorf("crw manage config printed no readable report: %w", err)
 	}
-	return manageRelay{Socket: manage.Relay.Socket, State: manage.Relay.State}, nil
+	return report.Relay, nil
 }
 
-// relaySettings is the socket and the configured state directory of the running service.
+// relaySettings is the socket and the configured state directory of the running service: exactly
+// what crw manage config reports. The command fills the install layout defaults, so an absent file
+// and a file that names no relay answer with the App Server default socket here as well.
+//
+// The guard below covers a report that names no socket at all, which the management command does
+// not produce: it fills the App Server default itself. It is kept so a report that named nothing
+// can never hand an empty socket to the state-directory resolver, and it never overrides a socket
+// the command named.
 func relaySettings(env LookupEnv) (string, string, error) {
 	getenv := func(key string) string { value, _ := env(key); return value }
-	configured, _ := runningSeams.readManage(getenv)
+	configured, err := runningSeams.readManage(getenv)
+	if err != nil {
+		return "", "", fmt.Errorf("the management configuration could not be read: %w", err)
+	}
 	socket := configured.Socket
 	if socket == "" {
 		home, ok := codexHome(env)
@@ -85,6 +115,11 @@ func relaySettings(env LookupEnv) (string, string, error) {
 // RunningDigest reads the digest the running relay service worker published. Every failure is a
 // named state with a reason; it is never reported as the file digest, and never as an empty
 // success.
+//
+// The relay it observes is the one crw manage config names, and that command reads this process own
+// environment, so env does not decide which relay is observed. It stays in the signature because the
+// GUI handler passes the process environment and the exported shape is not this issue to change, and
+// relaySettings still reads it for the guard it describes.
 func RunningDigest(ctx context.Context, env LookupEnv) Running {
 	socket, state, err := relaySettings(env)
 	if err != nil {
