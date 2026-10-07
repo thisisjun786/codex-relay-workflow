@@ -30,6 +30,7 @@ func TestShimsAnswerTheStartupHandshakeInertly(t *testing.T) {
 	}
 	for _, name := range shimTargets() {
 		t.Run(name, func(t *testing.T) {
+			requireOracleModule(t, name)
 			dir := t.TempDir()
 			shim := filepath.Join(root, "internal", "dev", "cxcfuzz", "testdata", name, "shim.mjs")
 			cmd := exec.Command("node", shim)

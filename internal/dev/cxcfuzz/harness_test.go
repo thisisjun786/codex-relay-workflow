@@ -118,6 +118,32 @@ func requireNode(t *testing.T) {
 	}
 }
 
+// requireOracleModule skips a test that starts one of this issue's shims when the oracle module that
+// shim imports at its top level is not present under DefaultOracleRoot. A CI runner has node but no
+// extracted CXC oracle tree, so such a shim exits at its top-level import (ERR_MODULE_NOT_FOUND)
+// before it reads a request, and a test that started it would report a worker that answered nothing
+// rather than the input the host is missing. The state and goalplan shims import the oracle's readers
+// and writers; the pyjson shim imports none (it drives python3's json.tool through the standard
+// library command), so it is never skipped here and keeps running wherever python3 is. The skip
+// message names the module file that was looked for.
+func requireOracleModule(t *testing.T, target string) {
+	t.Helper()
+	module := ""
+	switch target {
+	case "state":
+		module = "pabcd-state/dist/state.js"
+	case "goalplan":
+		module = "pabcd-state/dist/goalplan.js"
+	}
+	if module == "" {
+		return
+	}
+	path := filepath.Join(DefaultOracleRoot, filepath.FromSlash(module))
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("the oracle module %s is not present: %v", path, err)
+	}
+}
+
 // A campaign over the echo target with the committed shim agrees everywhere.
 func TestCampaignEchoAgreesWithTheShim(t *testing.T) {
 	requireNode(t)
