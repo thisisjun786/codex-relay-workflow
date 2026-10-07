@@ -46,6 +46,8 @@ import {
   screenSaveStarted,
   initialScreen,
   allowedAddChoice,
+  allowedTextOf,
+  screenPropose,
   type ExceptionDraft,
   type ModelCatalog,
   type PolicyChange,
@@ -169,7 +171,7 @@ test("removing an exception previews that scope returning to the role default", 
   const preview = previewChange(reading(), { kind: "removeException", id: "legacy" });
   const item = preview.items.find((entry) => entry.label.includes("legacy"));
   assert.ok(item, "the preview names the exception");
-  assert.equal(item?.before, "parent devin/swe-2 max (/srv/project)");
+  assert.equal(item?.before, 'parent devin/swe-2 max ("/srv/project")');
   assert.ok(item?.after.includes("parent"), "the after names the role whose default returns");
   assert.ok(preview.fallback, "the preview carries the fallback sentence");
   assert.ok(preview.fallback?.includes("/srv/project"));
@@ -205,8 +207,8 @@ test("setting an exception previews the exception before and after", () => {
   });
   const item = preview.items.find((entry) => entry.label.includes("legacy"));
   assert.ok(item, "the preview names the exception");
-  assert.equal(item?.before, "parent devin/swe-2 max (/srv/project)");
-  assert.equal(item?.after, "child anthropic/opus max (/srv/other)");
+  assert.equal(item?.before, 'parent devin/swe-2 max ("/srv/project")');
+  assert.equal(item?.after, 'child anthropic/opus max ("/srv/other")');
 });
 
 test("setting an exception that is not declared previews it as new", () => {
@@ -363,7 +365,7 @@ test("a new exception's editor stays open while its id is being typed", () => {
   state = screenExceptionDraft(state, draft);
   assert.equal(screenDraftIsNew(state), true);
   // Typing an id does not close it, and the change becomes proposable.
-  state = screenExceptionDraft(state, { ...draft, id: "fresh" });
+  state = screenExceptionDraft(state, { ...draft, id: "fresh", cwd: ["/srv/a"] });
   assert.equal(screenDraftIsNew(state), true);
   const change = changeFromExceptionDraft(state.exceptionDraft as ExceptionDraft);
   assert.equal(change?.kind, "setException");
@@ -419,6 +421,56 @@ test("a successful save keeps an edit the operator started while it was in fligh
   // And a save with nothing pending starts clean.
   const clean = screenLoaded(finished, reading({ digest: "b".repeat(64) }), false);
   assert.equal(clean.change, null);
+});
+
+// The four defects the third pre-merge evaluation found.
+
+test("an exception's cwd is carried as a list, so a path containing a comma survives an edit", () => {
+  // d1: joining the roots and splitting them again turned one authorized path into two authorized
+  // paths. A cwd is a path, and a path may contain a comma.
+  const commaPath = "/srv/a, /srv/b";
+  const exception = { id: "legacy", role: "parent", model: "m", reasoningEffort: "high", cwd: [commaPath] };
+  const draft = draftForException(exception);
+  assert.deepEqual(draft.cwd, [commaPath], "the single path is kept as one entry");
+  // Editing only the effort keeps the scope byte for byte.
+  const change = changeFromExceptionDraft({ ...draft, effort: "max" });
+  assert.deepEqual((change as { cwd: string[] }).cwd, [commaPath]);
+  // And the preview shows the two different scopes as different text.
+  const readingWith = reading({ exceptions: [exception] });
+  const before = previewChange(readingWith, { kind: "setException", id: "legacy", role: "parent", model: "m", effort: "max", cwd: [commaPath] });
+  const after = previewChange(readingWith, { kind: "setException", id: "legacy", role: "parent", model: "m", effort: "max", cwd: ["/srv/a", "/srv/b"] });
+  assert.notEqual(before.items[0].after, after.items[0].after, "one path and two paths do not read the same");
+});
+
+test("cancelling an allowlist edit clears its draft so a later re-read shows the file's value", () => {
+  // d2: Cancel cleared the change but left the raw text, and the successful-save re-read kept it.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedText(state, "anthropic/opus", "low");
+  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "low");
+  // Cancel clears the pending change AND the draft text.
+  state = screenPropose(state, null);
+  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "max, xhigh");
+  // A later re-read of the file shows the file's value, never the cancelled draft.
+  state = screenAllowedText(state, "anthropic/opus", "low");
+  state = screenPropose(state, null);
+  state = screenLoaded(state, reading(), false);
+  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "max, xhigh");
+});
+
+test("the new-exception draft starts with no cwd and requires at least one root", () => {
+  // d3/d4: the new-exception editor must build the same change shape the other paths do, with the
+  // cwd as a list and the effort judged per model.
+  const draft = draftForNewException("parent", "m", "high");
+  assert.deepEqual(draft.cwd, []);
+  assert.equal(draft.cwdNew, "");
+  // A draft with no root yet does not propose a change.
+  assert.equal(changeFromExceptionDraft({ ...draft, id: "fresh" }), null);
+  // Once a root is added the change carries it, and the id and model are trimmed.
+  const complete = { ...draft, id: " fresh ", cwd: ["/srv/a"] };
+  const change = changeFromExceptionDraft(complete);
+  assert.equal((change as { id: string }).id, "fresh");
+  assert.deepEqual((change as { cwd: string[] }).cwd, ["/srv/a"]);
 });
 
 /* ---- C4/C5: the write answer, and never a success notice on a refusal ---- */

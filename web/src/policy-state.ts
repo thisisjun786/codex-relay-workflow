@@ -221,8 +221,15 @@ export interface ExceptionDraft {
   role: string;
   model: string;
   effort: string;
-  /** The cwd text exactly as typed; it is parsed only when the change is built. */
-  cwdText: string;
+  /**
+   * The cwd roots, one string per entry. It is a LIST rather than one comma-separated field because
+   * a cwd is a path, and a path may itself contain a comma: joining the roots and splitting them
+   * again would turn one authorized path into two different authorized paths, silently widening the
+   * scope of the exception.
+   */
+  cwd: string[];
+  /** The text of the "add a root" input, which is empty until the operator types into it. */
+  cwdNew: string;
 }
 
 /**
@@ -266,6 +273,9 @@ function stringOf(value: unknown): string {
  * trimmed and the empty ones are dropped. It is deliberately NOT applied on every keystroke - the
  * screen keeps the raw text in its state and calls this only to derive the change, so a trailing
  * comma the operator is about to follow with another entry survives on screen.
+ *
+ * It is used for the allowed-efforts list, whose entries are effort NAMES and so cannot contain a
+ * comma. A cwd is a path and uses one input per root instead (ExceptionDraft.cwd).
  */
 export function parseListInput(text: string): string[] {
   return text
@@ -425,7 +435,9 @@ function pairsText(pairs: readonly PolicyPair[]): string {
 
 /** exceptionText is one exception as a row reads it. */
 function exceptionText(exception: { role?: string; model: string; reasoningEffort: string; cwd: string[] }): string {
-  const scope = exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.join(", ");
+  // Each root is quoted, so a path that itself contains a comma still reads as one path and the
+  // before/after rows cannot show two different scopes as the same text.
+  const scope = exception.cwd.length === 0 ? "no cwd scope" : exception.cwd.map((root) => JSON.stringify(root)).join(", ");
   return `${exception.role || "no role (covers no request)"} ${exception.model} ${exception.reasoningEffort} (${scope})`;
 }
 
@@ -796,6 +808,12 @@ export function screenCatalogLoaded(state: PolicyScreenState, catalog: ModelCata
 
 /** screenPropose sets the one pending change and clears the previous attempt's notice. */
 export function screenPropose(state: PolicyScreenState, change: PolicyChange | null): PolicyScreenState {
+  // A cancel (a null change) also drops the drafts that produced the change: leaving the typed text
+  // behind would show a value the operator just abandoned, and would survive the re-read that a
+  // later successful save triggers. A non-null change keeps the drafts so a multi-step edit can go on.
+  if (change === null) {
+    return { ...state, change: null, notice: null, allowedText: {}, exceptionDraft: null };
+  }
   return { ...state, change, notice: null, exceptionDraft: null };
 }
 
@@ -852,7 +870,13 @@ export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | 
   const id = draft.id.trim();
   const model = draft.model.trim();
   if (id === "" || model === "") return null;
-  const change: PolicyChange = { kind: "setException", id, model, effort: draft.effort, cwd: parseListInput(draft.cwdText) };
+  // An exception with no cwd covers no request: the bridge requires a request to state a cwd the
+  // exception lists (internal/bridge/execution/execution.go exceptionCovers), so a root-less
+  // exception would be stored and then never apply. The editor requires at least one root.
+  const cwd = draft.cwd.filter((root) => root !== "");
+  if (cwd.length === 0) return null;
+  // The roots are already a list, so a path containing a comma is carried through unchanged.
+  const change: PolicyChange = { kind: "setException", id, model, effort: draft.effort, cwd };
   // An empty role is left off the request: the server then keeps the role an existing exception
   // records. The screen only produces this for an exception that already has no role.
   if (draft.role !== "") change.role = draft.role;
@@ -861,12 +885,12 @@ export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | 
 
 /** draftForException opens the editor on an existing exception, with its recorded values. */
 export function draftForException(exception: PolicyExceptionView): ExceptionDraft {
-  return { id: exception.id, isNew: false, role: exception.role ?? "", model: exception.model, effort: exception.reasoningEffort, cwdText: exception.cwd.join(", ") };
+  return { id: exception.id, isNew: false, role: exception.role ?? "", model: exception.model, effort: exception.reasoningEffort, cwd: [...exception.cwd], cwdNew: "" };
 }
 
 /** draftForNewException opens the editor on a new exception, on a real role and a real model. */
 export function draftForNewException(role: string, model: string, effort: string): ExceptionDraft {
-  return { id: "", isNew: true, role, model, effort, cwdText: "" };
+  return { id: "", isNew: true, role, model, effort, cwd: [], cwdNew: "" };
 }
 
 /** screenDraftIsNew reports whether the open draft is a new exception rather than an edit. */

@@ -312,6 +312,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   models={models}
                   efforts={efforts}
                   draft={draftIsNew ? state.exceptionDraft : null}
+                  effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
                   onAdd={(draft) => {
                     const change = changeFromExceptionDraft(draft);
@@ -461,7 +462,24 @@ function ExceptionRow({
               );
             })}
           </select>
-          <input className="input" style={{ maxWidth: "220px" }} aria-label={`${exception.id} exception cwd`} value={draft.cwdText} onChange={(e) => onDraft({ ...draft, cwdText: e.target.value })} />
+        </div>
+        {/* One input per root: a cwd is a path, and a path may contain a comma, so joining the roots
+            into one comma-separated field and splitting them again would change the scope. */}
+        {draft.cwd.map((root, index) => (
+          <div className="role-selects" key={index}>
+            <input className="input" style={{ maxWidth: "320px" }} aria-label={`${exception.id} exception cwd ${index + 1}`} value={root} onChange={(e) => onDraft({ ...draft, cwd: draft.cwd.map((current, at) => (at === index ? e.target.value : current)) })} />
+            <button className="btn" aria-label={`Remove ${exception.id} cwd ${index + 1}`} onClick={() => onDraft({ ...draft, cwd: draft.cwd.filter((_, at) => at !== index) })}>Remove root</button>
+          </div>
+        ))}
+        <div className="role-selects">
+          <input className="input" style={{ maxWidth: "320px" }} aria-label={`${exception.id} exception cwd to add`} placeholder="one cwd root" value={draft.cwdNew} onChange={(e) => onDraft({ ...draft, cwdNew: e.target.value })} />
+          <button
+            className="btn"
+            disabled={draft.cwdNew.trim() === ""}
+            onClick={() => onDraft({ ...draft, cwd: [...draft.cwd, draft.cwdNew.trim()], cwdNew: "" })}
+          >
+            Add root
+          </button>
         </div>
         <div className="role-selects">
           <button className="btn primary" disabled={draft.id.trim() === "" || draft.model.trim() === ""} onClick={() => onApply(draft)}>Apply</button>
@@ -478,6 +496,7 @@ function ExceptionAdder({
   models,
   efforts,
   draft,
+  effortRefused,
   onDraft,
   onAdd,
 }: {
@@ -485,6 +504,7 @@ function ExceptionAdder({
   models: Array<{ id: string; label: string; unavailable: boolean }>;
   efforts: string[];
   draft: ExceptionDraft | null;
+  effortRefused: (model: string, effort: string) => boolean;
   onDraft: (draft: ExceptionDraft | null) => void;
   onAdd: (draft: ExceptionDraft) => void;
 }) {
@@ -504,7 +524,6 @@ function ExceptionAdder({
       </div>
     );
   }
-  const parsed = parseListInput(draft.cwdText);
   return (
     <section className="list-row role-row" aria-label="add exception">
       <div className="row-id"><span className="row-name">New exception</span></div>
@@ -517,21 +536,49 @@ function ExceptionAdder({
             ))}
           </select>
           <select className="select" style={{ maxWidth: "220px" }} aria-label="new exception model" value={draft.model} onChange={(e) => onDraft({ ...draft, model: e.target.value })}>
+            {/* A draft value the catalog no longer lists keeps a matching option, so the control can
+                never display a different model than the draft it will submit. */}
+            {models.some((option) => option.id === draft.model) ? null : <option value={draft.model}>{draft.model} (not in the current list)</option>}
             {models.map((option) => (
               <option key={option.id} value={option.id}>{modelOptionLabel(models, option.id)}</option>
             ))}
           </select>
           <select className="select" style={{ maxWidth: "180px" }} aria-label="new exception effort" value={draft.effort} onChange={(e) => onDraft({ ...draft, effort: e.target.value })}>
-            {efforts.map((effort) => (
-              <option key={effort} value={effort}>{effort}</option>
-            ))}
+            {/* The same per-model judgement the role rows and the existing-exception editor make. */}
+            {!efforts.includes(draft.effort) || effortRefused(draft.model, draft.effort) ? (
+              <option value={draft.effort}>{draft.effort} (not advertised by this model)</option>
+            ) : null}
+            {efforts.map((effort) => {
+              const refused = effortRefused(draft.model, effort);
+              return (
+                <option key={effort} value={effort} disabled={refused}>
+                  {refused ? `${effort} (not advertised by this model)` : effort}
+                </option>
+              );
+            })}
           </select>
-          <input className="input" style={{ maxWidth: "220px" }} aria-label="new exception cwd" placeholder="cwd roots, comma separated" value={draft.cwdText} onChange={(e) => onDraft({ ...draft, cwdText: e.target.value })} />
+        </div>
+        {/* One input per root: a cwd is a path, and a path may contain a comma. */}
+        {draft.cwd.map((root, index) => (
+          <div className="role-selects" key={index}>
+            <input className="input" style={{ maxWidth: "320px" }} aria-label={`new exception cwd ${index + 1}`} value={root} onChange={(e) => onDraft({ ...draft, cwd: draft.cwd.map((current, at) => (at === index ? e.target.value : current)) })} />
+            <button className="btn" aria-label={`Remove cwd ${index + 1}`} onClick={() => onDraft({ ...draft, cwd: draft.cwd.filter((_, at) => at !== index) })}>Remove root</button>
+          </div>
+        ))}
+        <div className="role-selects">
+          <input className="input" style={{ maxWidth: "320px" }} aria-label="new exception cwd to add" placeholder="one cwd root" value={draft.cwdNew} onChange={(e) => onDraft({ ...draft, cwdNew: e.target.value })} />
+          <button
+            className="btn"
+            disabled={draft.cwdNew.trim() === ""}
+            onClick={() => onDraft({ ...draft, cwd: [...draft.cwd, draft.cwdNew.trim()], cwdNew: "" })}
+          >
+            Add root
+          </button>
         </div>
         <div className="role-selects">
           <button
             className="btn primary"
-            disabled={draft.id.trim() === "" || draft.model.trim() === "" || parsed.length === 0}
+            disabled={draft.id.trim() === "" || draft.model.trim() === "" || draft.cwd.length === 0}
             onClick={() => onAdd(draft)}
           >
             Add
@@ -548,24 +595,28 @@ export function PolicyPage() {
   const [state, setState] = useState<PolicyScreenState>(initialScreen);
   const [reload, setReload] = useState(0);
   /**
-   * The latest pending change, for the save sequence. A save resolves after several awaits, and the
-   * question it must answer then - did the operator start another edit while this one was in flight?
-   * - is about the state as it is at that moment, not the one the save captured. Every path that sets
-   * the change goes through this ref as well, so it is current without waiting for a render.
+   * The screen state as it is right now. React's functional setState runs its updater during the
+   * render, not at call time, so a ref is what lets one event handler see the state another handler
+   * set in the same tick - and what lets the save sequence ask, after several awaits, whether the
+   * operator started another edit while it was in flight.
    */
-  const changeRef = useRef<PolicyChange | null>(null);
+  const stateRef = useRef<PolicyScreenState>(state);
+  /**
+   * apply is the one place the screen state changes. It derives the next state synchronously from the
+   * ref, stores it back, and renders it, so the ref is never behind what the screen shows.
+   */
+  function apply(update: (previous: PolicyScreenState) => PolicyScreenState) {
+    const next = update(stateRef.current);
+    stateRef.current = next;
+    setState(next);
+  }
   /** propose sets the pending change in both the ref and the state. */
   function propose(change: PolicyChange | null) {
-    changeRef.current = change;
-    setState((previous) => screenPropose(previous, change));
+    apply((previous) => screenPropose(previous, change));
   }
   /** allowedText records the raw text and derives the pending change from it. */
   function allowedText(model: string, text: string) {
-    setState((previous) => {
-      const next = screenAllowedText(previous, model, text);
-      changeRef.current = next.change;
-      return next;
-    });
+    apply((previous) => screenAllowedText(previous, model, text));
   }
   // keepInputs is read when the read resolves, so it is a ref rather than a dependency: it describes
   // the read that is in flight, not a reason to start another one.
@@ -581,7 +632,7 @@ export function PolicyPage() {
     const current = ++catalogGeneration.current;
     const next = await getModelCatalog(force);
     if (current !== catalogGeneration.current) return;
-    setState((previous) => screenCatalogLoaded(previous, next));
+    apply((previous) => screenCatalogLoaded(previous, next));
     catalogLoading.current = false;
   }
 
@@ -607,11 +658,11 @@ export function PolicyPage() {
       .then((body) => {
         if (controller.signal.aborted || current !== generation.current) return;
         // A malformed answer is refused here rather than rendered as a half-populated screen.
-        setState((previous) => screenLoaded(previous, decodePolicy(body), keep));
+        apply((previous) => screenLoaded(previous, decodePolicy(body), keep));
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setState((previous) => screenLoadFailed(previous, err instanceof Error ? err.message : "The execution policy could not be read."));
+        apply((previous) => screenLoadFailed(previous, err instanceof Error ? err.message : "The execution policy could not be read."));
       });
     return () => {
       controller.abort();
@@ -629,7 +680,7 @@ export function PolicyPage() {
     const change = state.change;
     const reading = state.reading;
     if (!change || !reading || screenSaving(state)) return;
-    setState(screenSaveStarted);
+    apply(screenSaveStarted);
     // Check first: the server judges the change with the bridge's own parser, so a refusal here is a
     // refusal the write would meet. Sending only a change the check accepted keeps the two answers
     // from disagreeing, and a refusal is shown without touching the file.
@@ -637,12 +688,12 @@ export function PolicyPage() {
     try {
       checked = decodeCheck((await checkPolicy({ expectedDigest: reading.digest ?? "", change })).body);
     } catch {
-      setState((previous) => screenSaveFinished(previous, change, unreachableNotice()));
+      apply((previous) => screenSaveFinished(previous, change, unreachableNotice()));
       return;
     }
     if (!checked.valid || checked.stale) {
       const refused = checkNotice(checked);
-      setState((previous) => screenSaveFinished(previous, change, refused));
+      apply((previous) => screenSaveFinished(previous, change, refused));
       if (refused.reread) readAgain(true);
       return;
     }
@@ -655,13 +706,15 @@ export function PolicyPage() {
       // the file, so the screen re-reads rather than claiming nothing changed.
       notice = lostWriteNotice();
     }
-    setState((previous) => screenSaveFinished(previous, change, notice));
+    apply((previous) => screenSaveFinished(previous, change, notice));
     if (notice.tone === "ok") {
       // The file moved, so the reading is stale by definition. Re-read before showing the new state.
       // The operator may have started the next edit while this save was in flight; that edit is not
       // this save's to discard, so the re-read keeps whatever is still pending.
       toast("Execution policy saved", "ok");
-      readAgain(changeRef.current !== null);
+      // Nothing is pending any more (Cancel clears it, and so does the reducer when the saved change
+      // is still the pending one), so the re-read starts clean; a still-pending edit is kept.
+      readAgain(stateRef.current.change !== null);
       return;
     }
     if (notice.reread) readAgain(true);
@@ -673,11 +726,11 @@ export function PolicyPage() {
       handlers={{
         propose,
         allowedText,
-        allowedAddModel: (model) => setState((previous) => screenAllowedAddModel(previous, model)),
-        exceptionDraft: (draft) => setState((previous) => screenExceptionDraft(previous, draft)),
+        allowedAddModel: (model) => apply((previous) => screenAllowedAddModel(previous, model)),
+        exceptionDraft: (draft) => apply((previous) => screenExceptionDraft(previous, draft)),
         removeException: (id) => propose({ kind: "removeException", id }),
         save: () => void save(),
-        reread: () => { changeRef.current = null; setState(screenReread); readAgain(false); },
+        reread: () => { apply(screenReread); readAgain(false); },
       }}
       help={{ open: helpOpen, topic: helpTopic, openHelp, closeHelp }}
     />
