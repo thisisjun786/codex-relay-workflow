@@ -353,9 +353,6 @@ func createRoot(dir string) ([]createRootRecord, error) {
 			}
 			parent := parentLocation(component)
 			err := os.Mkdir(component, 0o755)
-			if err == nil && createRootAfterMkdir != nil {
-				createRootAfterMkdir(component)
-			}
 			switch {
 			case err == nil:
 				// The component is this call's, wherever in the walk it was made, so its identity
@@ -461,11 +458,6 @@ func dropCreated(created []createRootRecord, path string) []createRootRecord {
 // so a test can remove an ancestor at exactly the moment a concurrent install would instead of
 // relying on timing. nil is the production value.
 var createRootBeforeMkdir func(path string)
-
-// createRootAfterMkdir is a test seam called immediately after an os.Mkdir that succeeded and
-// before the identity of what it made is read, so a test can make an ancestor vanish in exactly that
-// window instead of relying on timing. nil is the production value.
-var createRootAfterMkdir func(path string)
 
 // rootComponents lists the components of dir that do not exist yet, outermost first, stopping at
 // the first ancestor that does exist. A dangling symbolic link counts as existing, so it is never
