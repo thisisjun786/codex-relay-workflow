@@ -598,3 +598,82 @@ func TestResetLinkPermReadsALongTargetWhole(t *testing.T) {
 		})
 	}
 }
+
+// TestResetLinkPermALongChainOfShortLinksIsStillResolved: the walk resolves a target through one
+// concatenated pathname, and the kernel applies its own limit to a single pathname (ENAMETOOLONG).
+// A chain whose cumulative name crosses that limit is one the walk cannot decide, while the kernel
+// resolves the candidate's short link name component by component and reaches the target, so the
+// walk must hand it back rather than answer absent for it. This is the regression the walk-only
+// return introduced, found in the pre-merge evaluation.
+func TestResetLinkPermALongChainOfShortLinksIsStillResolved(t *testing.T) {
+	root := t.TempDir()
+	sessions := filepath.Join(root, ".crw", "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Nested directories, each name long enough that the cumulative pathname crosses the limit; the
+	// nesting is built with relative steps so no single mkdir crosses it.
+	const depth = 18
+	name := strings.Repeat("d", 240)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(sessions); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+	for i := 0; i < depth; i++ {
+		if err := os.Mkdir(name, 0o755); err != nil {
+			t.Fatalf("mkdir depth %d: %v", i, err)
+		}
+		// next -> <name>/next, so each link target is short and the kernel resolves the chain step by
+		// step.
+		if err := os.Symlink(name+"/next", "next"); err != nil {
+			t.Fatalf("symlink depth %d: %v", i, err)
+		}
+		if err := os.Chdir(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("keep.txt", "next"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("keep.txt", []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("next", "a.json"); err != nil {
+		t.Fatal(err)
+	}
+	// The oracle's answer: a stat of the short link name, which the kernel resolves component by
+	// component.
+	_, oracleErr := os.Stat(filepath.Join(sessions, "a.json"))
+	if oracleErr != nil {
+		t.Fatalf("the control must resolve: %v", oracleErr)
+	}
+	crw := filepath.Join(root, ".crw")
+	parent, err := os.OpenRoot(crw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	observed, err := parent.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := resetPin(parent, "sessions", observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	got, err := resetLinkTargetExists(pinned, "a.json")
+	if err != nil {
+		t.Fatalf("resetLinkTargetExists: %v", err)
+	}
+	if got != (oracleErr == nil) {
+		t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
+	}
+}

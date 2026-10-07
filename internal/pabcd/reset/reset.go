@@ -282,6 +282,9 @@ func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 			// there, so ask the kernel here and answer absent when it cannot search. This is the
 			// question the last dot component has always asked, now asked at every dot component: the
 			// kernel answers EACCES for a directory it cannot search and the link is kept.
+			if resetLinkWalkPathTooLong(resetLinkWalkSearchableName(walked)) {
+				return false, false // the walk cannot ask this through one pathname; let the caller answer
+			}
 			if !resetLinkWalkSearchable(dir, walked) {
 				return false, true
 			}
@@ -294,6 +297,14 @@ func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 			continue
 		}
 		path := resetLinkWalkPath(walked, component)
+		if resetLinkWalkPathTooLong(path) {
+			// The walk resolves the target through one concatenated pathname, and this one has reached
+			// the limit the kernel applies to a single pathname (ENAMETOOLONG). The kernel resolves the
+			// candidate's short link name component by component instead, so it can still reach a
+			// target the walk cannot: the walk must not answer absent here, and hands the target back
+			// for the caller's descriptor stat, which resolves it the way the kernel does.
+			return false, false
+		}
 		st, err := resetLinkWalkLstat(dir, path)
 		if err != nil {
 			return false, true
@@ -359,14 +370,38 @@ func resetLinkWalkReadlink(dir *os.File, path string) (string, error) {
 // directory for reading (CRW-554) and creates nothing. A directory the kernel cannot search, and a
 // question it cannot answer at all, are both reported as not searchable.
 func resetLinkWalkSearchable(dir *os.File, walked []string) bool {
-	name := resetLinkWalkSearchProbe
-	if len(walked) > 0 {
-		name = strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + name
-	}
 	// The name is concatenated by hand, never filepath.Join, which would clean away the "." and
 	// ".." components this judgement exists for.
-	_, err := resetLinkWalkLstat(dir, name)
+	_, err := resetLinkWalkLstat(dir, resetLinkWalkSearchableName(walked))
 	return err == nil || errors.Is(err, unix.ENOENT)
+}
+
+// resetLinkWalkSearchableName is the probe name the search question looks up inside the directory the
+// walked components name. It is concatenated by hand, never filepath.Join, which would clean away the
+// "." and ".." components this judgement exists for.
+func resetLinkWalkSearchableName(walked []string) string {
+	if len(walked) == 0 {
+		return resetLinkWalkSearchProbe
+	}
+	return strings.Join(walked, string(filepath.Separator)) + string(filepath.Separator) + resetLinkWalkSearchProbe
+}
+
+// resetLinkWalkPathTooLong reports whether a pathname the walk would hand to one fstatat has reached
+// the limit the kernel applies to a single pathname, where that call answers ENAMETOOLONG. The walk
+// concatenates the target's components into one pathname, while the kernel resolves the candidate's
+// short link name component by component, so a target past this limit is one the walk cannot decide
+// and must hand back rather than answer absent for.
+func resetLinkWalkPathTooLong(path string) bool {
+	return len(path) >= resetLinkWalkPathMax()
+}
+
+// resetLinkWalkPathMax is the longest pathname one fstatat call may carry: the kernel's own PATH_MAX,
+// which is 4096 on Linux and 1024 on XNU.
+func resetLinkWalkPathMax() int {
+	if runtime.GOOS == "darwin" {
+		return 1024
+	}
+	return 4096
 }
 
 // resetLinkWalkSearchProbe is the name the search probe looks up. It is never created: the point
