@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -774,6 +775,16 @@ func TestAuditDraftsReview744RecordedRowSurvivesAnUnreadableLedger(t *testing.T)
 	if err := os.Symlink("/dev/full", filepath.Join(dir, auditAlertFile)); err != nil {
 		t.Skipf("this host cannot make the failing alert target: %v", err)
 	}
+	// The ledger exists and can be appended to, but cannot be read: a run that re-read it to count
+	// its own rows would fail and answer zero, while the row it already wrote is on disk.
+	ledger := filepath.Join(dir, auditLedgerFile)
+	if err := os.WriteFile(ledger, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ledger, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ledger, 0o600) })
 	bundle := filepath.Join(t.TempDir(), "bundle")
 	auditDraftsReview744BundleAt(t, bundle)
 	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 5})
@@ -782,6 +793,11 @@ func TestAuditDraftsReview744RecordedRowSurvivesAnUnreadableLedger(t *testing.T)
 	t.Setenv("AUDIT_SLOW", "")
 	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle}}); err == nil {
 		t.Fatal("a grade whose alert could not be written reported success")
+	}
+	// The ledger is readable again, as it would be once the operator fixes the mode; the marker
+	// decision above was made while it was not.
+	if err := os.Chmod(ledger, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	// The row is on disk, so the marker must be gone and the result must still draft.
 	if auditPending(e, cfg, bundle) {
@@ -796,16 +812,44 @@ func TestAuditDraftsReview744RecordedRowSurvivesAnUnreadableLedger(t *testing.T)
 	}
 }
 
-// C1: a marker this run created is taken back when it cannot be locked, so a batch that never
-// graded anything leaves no bundle looking unrecorded.
+// C1: a marker this call created is taken back when the lock cannot be taken, so a bundle nothing
+// was graded under is not left looking unrecorded.
 func TestAuditDraftsReview744UnlockableMarkerIsTakenBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marker")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := auditPendingLockFailed(f, path, true, syscall.EWOULDBLOCK); err == nil {
+		t.Fatal("a marker whose lock failed was accepted")
+	} else if !strings.Contains(err.Error(), "bundle_locked") {
+		t.Errorf("the refusal reads %q, want bundle_locked", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the marker this call created was left behind: %v", err)
+	}
+	// A marker another run left is kept: its lock is released, but the file is that run's record.
+	other := filepath.Join(t.TempDir(), "marker-other")
+	g, err := os.OpenFile(other, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := auditPendingLockFailed(g, other, false, syscall.EWOULDBLOCK); err == nil {
+		t.Fatal("a marker whose lock failed was accepted")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("a marker this call did not create was removed: %v", err)
+	}
+}
+
+// C1: a bundle whose marker cannot be taken is not graded, and no grader runs.
+func TestAuditDraftsReview744BundleWhoseMarkerIsRefusedIsNotGraded(t *testing.T) {
 	state := t.TempDir()
 	bundle := filepath.Join(t.TempDir(), "bundle")
 	auditDraftsReview744BundleAt(t, bundle)
 	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
 	e, _, _ := auditTestEnv(t)
-	// The marker path is already a directory, so the exclusive create fails and no marker file is
-	// made; the check below is that nothing is left that reads as an unrecorded grade.
+	// A directory at the marker path makes the exclusive create fail before anything is graded.
 	if err := os.MkdirAll(auditPendingPath(e, cfg, bundle), 0o700); err != nil {
 		t.Fatal(err)
 	}

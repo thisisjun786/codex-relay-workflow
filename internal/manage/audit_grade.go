@@ -230,6 +230,12 @@ func auditGradeLocked(ctx context.Context, e *Env, cfg *Config, jobs []AuditJob)
 // one directory are one bundle to a later reader even after a link used for one of them is gone
 // or repointed, and so a reader anywhere names the same directory.
 func auditBundleResolvedPath(bundle string) (string, error) {
+	// The empty spelling is refused here as the bundle reader refuses it, so resolving a caller's
+	// path can never turn "no bundle named" into a directory (the current one, for instance) that
+	// then gets graded.
+	if bundle == "" {
+		return "", errors.New("the bundle directory is empty")
+	}
 	// The kernel resolves a path component by component, so a link followed by ".." names the
 	// link target's parent. The whole spelling is asked for first for that reason: cleaning it
 	// would collapse "link/../B" to "work/B" and name a directory the caller's path does not.
@@ -318,18 +324,23 @@ func auditPendingMark(path string) (*os.File, bool, error) {
 		return nil, false, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		// The file this call created is taken back: nothing was graded under it, and leaving it
-		// would make a later reader distrust a bundle this run never touched.
-		if made {
-			_ = os.Remove(path)
-		}
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, false, fmt.Errorf("bundle_locked: %s is being graded", path)
-		}
-		return nil, false, err
+		return auditPendingLockFailed(f, path, made, err)
 	}
 	return f, made, nil
+}
+
+// auditPendingLockFailed closes a marker descriptor whose lock could not be taken, and removes the
+// file when this call created it: nothing was graded under a marker this call made, and leaving it
+// would make a later reader distrust a bundle this run never touched.
+func auditPendingLockFailed(f *os.File, path string, made bool, err error) (*os.File, bool, error) {
+	_ = f.Close()
+	if made {
+		_ = os.Remove(path)
+	}
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil, false, fmt.Errorf("bundle_locked: %s is being graded", path)
+	}
+	return nil, false, err
 }
 
 // auditPendingUnlock gives up the marker's lock and keeps the file, so the bundle stays marked as
