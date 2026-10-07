@@ -79,15 +79,26 @@ step, and the runner refuses a ci.yml the table does not cover.
 
 The record is `verification-record/1`: `repository`, `baseCommit`,
 `headCommit`, `treeHash`, `ciDigest` (the sha256 of ci.yml),
-`tools` (Go, Node, gitleaks, staticcheck as observed), `pins` (the versions the tree
+`tools` (Go and Node as observed on the host; gitleaks and staticcheck at the version
+their step runs, which is the pin, because secrets.sh runs its own pinned Gitleaks and the lint
+leg runs the staticcheck the tree requires), `pins` (the versions the tree
 pins: go.mod's toolchain and staticcheck, ci.yml's Node, secrets.sh's Gitleaks),
-`pinMismatch`, `dependencies` (the sha256 of `go.sum` and
-`web/package-lock.json`), `os`, `arch`, `result`, and `jobs`
+`pinMismatch`, `goFlags` (the GOFLAGS the steps inherit), `goEnv` (the Go environment file
+the steps read: an empty file in the run's own home, so the host's GOENV never applies),
+`dependencies` (the sha256 of `go.sum` and
+`web/package-lock.json`), `os`, `arch`, `result`, `runner`, and `jobs`
 — one entry per GitHub check, each with its steps' `command`, `scope`,
 `result`, `seconds` and `reason`. `digest` is the sha256 of the
 canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
 escaping, and the `digest` member removed. A tool whose observed version differs from its
 pin is named in `pinMismatch`, and such a record is never reused.
+
+A step runs under `bash --noprofile --norc -eo pipefail`, as the runner does, so its first
+failed command fails it. A failed step's `reason` gives the exit status, the failing test lines
+of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 40 lines of the
+output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
+so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `TMPDIR`
+and `PATH`, so a test that makes a socket or a temporary file uses the caller's temporary root.
 
 A step's result is `passed`, `failed`, `missing_tool`,
 `skipped` or `not_applicable`. The whole result is `pass` only when no step
@@ -97,10 +108,12 @@ or lacks its tool fails the run, and the record names it with its reason.
 ### Reuse
 
 `--reuse <record>` answers an existing record instead of running only when the **tree**, the
-**ci.yml digest**, the **tool versions**, the **dependency digests** and the **OS and
-architecture** all match, and the record passed with no pin mismatch. The head commit is
-deliberately not a key: a rebase that keeps the tree reuses the record. Changing any one key
-re-runs.
+**ci.yml digest**, the **tool versions**, the **dependency digests**, the **OS and
+architecture** and the **base commit** (the range the blob and secret steps judge) all match,
+and the record passed with no pin mismatch. The head commit is deliberately not a key: a rebase
+that keeps the tree and the base reuses the record. The commits between base and head are not
+compared one by one, so a record reused across a history rewrite that keeps the tree and the
+base judges the same content. Changing any one key re-runs.
 
 ### The heavy-check gate and TMPDIR
 

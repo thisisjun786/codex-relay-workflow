@@ -5,7 +5,6 @@ package ci
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -28,9 +27,9 @@ var (
 
 // localToolPins reads the pinned versions from the verified tree. A pin the tree does not carry
 // is left empty rather than guessed.
-func localToolPins(root string) (map[string]string, error) {
+func localToolPinsFrom(read func(path string) ([]byte, error)) (map[string]string, error) {
 	pins := map[string]string{}
-	if data, err := os.ReadFile(filepath.Join(root, "go.mod")); err == nil {
+	if data, err := read("go.mod"); err == nil {
 		if m := goModToolchain.FindSubmatch(data); m != nil {
 			pins["go"] = string(m[1])
 		}
@@ -38,12 +37,12 @@ func localToolPins(root string) (map[string]string, error) {
 			pins["staticcheck"] = string(m[2])
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml")); err == nil {
+	if data, err := read(".github/workflows/ci.yml"); err == nil {
 		if m := ciNodeVersion.FindSubmatch(data); m != nil {
 			pins["node"] = string(m[1])
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(root, "scripts", "ci", "secrets.sh")); err == nil {
+	if data, err := read("scripts/ci/secrets.sh"); err == nil {
 		if m := secretsVersion.FindSubmatch(data); m != nil {
 			pins["gitleaks"] = string(m[1])
 		}
@@ -63,12 +62,11 @@ func localToolVersions(pathEnv string) map[string]string {
 }
 
 // localObservedVersions is what the steps actually used. Two tools are fetched by the step rather
-// than inherited: secrets.sh downloads the pinned Gitleaks, and the lint leg runs staticcheck
-// through the module the tree requires. When the host has no copy, the record names the pin the
-// step will fetch, so the field says what ran rather than staying empty.
+// than inherited: secrets.sh downloads and runs the pinned Gitleaks, and the lint leg runs the
+// staticcheck the tree requires. So a host copy of either never runs, and the record names the pin.
 func localObservedVersions(versions, pins map[string]string) map[string]string {
 	for _, name := range []string{"gitleaks", "staticcheck"} {
-		if versions[name] == "" && pins[name] != "" {
+		if pins[name] != "" {
 			versions[name] = pins[name]
 		}
 	}

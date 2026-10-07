@@ -399,11 +399,11 @@ func TestLocal_removes_its_clean_worktree(t *testing.T) {
 // script file, so a gate between the run and bash never sees the command's own characters.
 func TestLocal_gate_prefixes_a_heavy_step_as_argv(t *testing.T) {
 	gate := localGateArgv("gate.sh --flag", true, "/tmp/step-001.sh")
-	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "bash", "/tmp/step-001.sh"})
+	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
 	light := localGateArgv("gate.sh", false, "/tmp/step-001.sh")
-	expectEqual(t, "a light step's argv", light, []string{"bash", "/tmp/step-001.sh"})
+	expectEqual(t, "a light step's argv", light, []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
 	none := localGateArgv("", true, "/tmp/step-001.sh")
-	expectEqual(t, "no gate", none, []string{"bash", "/tmp/step-001.sh"})
+	expectEqual(t, "no gate", none, []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", "/tmp/step-001.sh"})
 }
 
 // A step's command reaches bash as a file, so no gate between the run and bash can expand it
@@ -432,8 +432,9 @@ func TestLocal_write_script_keeps_the_command_verbatim(t *testing.T) {
 	}
 }
 
-// The two tools a step fetches rather than inherits are named from the pin when the host has no
-// copy, so the record says what the step used; a host copy is still compared.
+// The two tools a step fetches are named from their pins whatever the host has: secrets.sh runs its
+// own pinned Gitleaks and the lint leg runs the staticcheck the tree requires, so a host copy is
+// never what ran and is not compared.
 func TestLocalTools_a_fetched_tool_is_named_from_its_pin(t *testing.T) {
 	pins := map[string]string{"go": "1.27.1", "gitleaks": "8.30.1", "staticcheck": "0.8.1"}
 	observed := localObservedVersions(map[string]string{"go": "1.27.1", "gitleaks": "", "staticcheck": ""}, pins)
@@ -443,10 +444,13 @@ func TestLocalTools_a_fetched_tool_is_named_from_its_pin(t *testing.T) {
 	if got := localPinMismatch(pins, observed); len(got) != 0 {
 		t.Errorf("a host without the fetched tools reports a mismatch: %v", got)
 	}
-	// A host copy that differs from the pin is still a mismatch.
+	// A host copy that differs from the pin is not what ran, so it is not a mismatch either.
 	host := localObservedVersions(map[string]string{"go": "1.27.1", "gitleaks": "8.18.0"}, pins)
-	if got := localPinMismatch(pins, host); len(got) != 1 || got[0] != "gitleaks" {
-		t.Errorf("a host Gitleaks that differs from the pin is not a mismatch: %v", got)
+	if host["gitleaks"] != "8.30.1" {
+		t.Errorf("a host Gitleaks is named %q, want the pin it ran", host["gitleaks"])
+	}
+	if got := localPinMismatch(pins, host); len(got) != 0 {
+		t.Errorf("a host Gitleaks that differs from the pin is reported as a mismatch: %v", got)
 	}
 }
 

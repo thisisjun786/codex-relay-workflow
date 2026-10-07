@@ -1,3 +1,5 @@
+//go:build dev
+
 package ci
 
 import (
@@ -38,5 +40,57 @@ func TestLocal_a_failed_test_before_a_long_tail_still_reaches_the_reason(t *test
 	}
 	if reason := made.Jobs[0].Steps[1].Reason; !strings.Contains(reason, "--- FAIL: TestEarly") {
 		t.Errorf("the reason %q does not carry the failing test", reason)
+	}
+}
+
+// A step stops at its first failed command, as the runner's bash -eo pipefail does, so a failure
+// in the middle of a multi-command step cannot be hidden by a later command that passes.
+func TestLocal_a_step_stops_at_its_first_failed_command(t *testing.T) {
+	repo := newLocalFixture(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	opts := localRunOptions(repo, localFixturePlan("false\necho after"), record)
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step := made.Jobs[0].Steps[1]; step.Result != localFailed {
+		t.Errorf("the step is %q, want %q: a later command hid the failure", step.Result, localFailed)
+	}
+}
+
+// A step reads an empty GOENV in its own home, never the caller's, so a Go setting file outside the
+// verified commit cannot change what the step builds.
+func TestLocal_a_step_reads_an_empty_isolated_GOENV(t *testing.T) {
+	repo := newLocalFixture(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	t.Setenv("GOENV", filepath.Join(t.TempDir(), "host-goenv"))
+	opts := localRunOptions(repo, localFixturePlan(`test -f "$GOENV" && test ! -s "$GOENV"`), record)
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step := made.Jobs[0].Steps[1]; step.Result != localPassed {
+		t.Errorf("the step is %q (%s), want an empty GOENV of its own", step.Result, step.Reason)
+	}
+}
+
+// The tool versions a run records are the ones the reuse check computes from the same commit, so a
+// record made on this host is never refused for a tool the host lacks (the fetched tools name their pins).
+func TestLocal_the_recorded_tool_versions_match_the_reuse_keys(t *testing.T) {
+	repo := newLocalFixture(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	opts := localRunOptions(repo, localFixturePlan("echo hello"), record)
+	current, err := localCurrentKeys(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gitleaks", "staticcheck"} {
+		if made.Tools[name] != current.Tools[name] {
+			t.Errorf("%s: the record says %q, the reuse key says %q", name, made.Tools[name], current.Tools[name])
+		}
 	}
 }

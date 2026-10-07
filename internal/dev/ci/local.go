@@ -198,6 +198,10 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 			return verificationRecord{}, err
 		}
 	}
+	pins, err := localToolPinsFrom(func(path string) ([]byte, error) { return runGit(opts.Root, "show", head+":"+path) })
+	if err != nil {
+		return verificationRecord{}, err
+	}
 	return verificationRecord{
 		Schema:       recordSchema,
 		Runner:       opts.Runner,
@@ -206,9 +210,9 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		HeadCommit:   head,
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
-		Tools:        localToolVersions(localPathEnv(opts.Env)),
+		Tools:        localObservedVersions(localToolVersions(localPathEnv(opts.Env)), pins),
 		GoFlags:      os.Getenv("GOFLAGS"),
-		GoEnv:        os.Getenv("GOENV"),
+		GoEnv:        localIsolatedGoEnv,
 		Dependencies: dependencies,
 		OS:           localHostOS(),
 		Arch:         localHostArch(),
@@ -254,7 +258,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	if err != nil {
 		return verificationRecord{}, false, err
 	}
-	pins, err := localToolPins(worktree)
+	pins, err := localToolPinsFrom(func(path string) ([]byte, error) { return os.ReadFile(filepath.Join(worktree, path)) })
 	if err != nil {
 		return verificationRecord{}, false, err
 	}
@@ -384,11 +388,14 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	return localPassed, ""
 }
 
+// localIsolatedGoEnv names the Go environment file a run uses: an empty file in the run's own home.
+const localIsolatedGoEnv = "isolated: an empty GOENV in the run's home"
+
 // localGateArgv is the argv a step runs: bash <script>, with the heavy-check gate's own words
 // prepended for a heavy step. The step's command lives in the script file, so a gate between this
 // process and bash never sees the command's own characters.
 func localGateArgv(gate string, heavy bool, script string) []string {
-	argv := []string{"bash", script}
+	argv := []string{"bash", "--noprofile", "--norc", "-eo", "pipefail", script}
 	if heavy {
 		if words := strings.Fields(gate); len(words) > 0 {
 			argv = append(words, argv...)
@@ -427,6 +434,12 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	if err := os.WriteFile(opts.output, nil, 0o644); err != nil {
 		return nil, err
 	}
+	// The Go environment file is the run's own and empty: the host's GOENV can change what the Go steps
+	// build, so it is never inherited (the record names the run's file as localIsolatedGoEnv).
+	goenv := filepath.Join(home, "goenv")
+	if err := os.WriteFile(goenv, nil, 0o644); err != nil {
+		return nil, err
+	}
 	env := []string{
 		"HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
@@ -434,6 +447,7 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"XDG_DATA_HOME=" + filepath.Join(home, "data"),
 		"XDG_STATE_HOME=" + filepath.Join(home, "state"),
 		"TZ=UTC",
+		"GOENV=" + goenv,
 		"RUNNER_TEMP=" + runner,
 		"GITHUB_OUTPUT=" + opts.output,
 		"GITHUB_EVENT_NAME=pull_request",
@@ -441,7 +455,7 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	// The host's caches, PATH and the user runtime directory are inherited: they decide how fast a
 	// step runs and whether the heavy-check gate can reach the user's systemd, not what it
 	// decides. GOFLAGS is left as the host set it, and GOCACHE is never cleared.
-	for _, name := range []string{"PATH", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "GOENV", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+	for _, name := range []string{"PATH", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}
