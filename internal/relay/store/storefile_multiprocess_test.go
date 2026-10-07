@@ -499,6 +499,99 @@ func TestStoreFileLockDiagnosticFromALocklessHolder(t *testing.T) {
 	}
 }
 
+// TestStoreFileLockDiagnosticAfterTheReadPaths pins the failing path end to end at the process
+// boundary: the hook drops the holder's lock during the read paths, so the count the parent reads
+// after them is 0 and the block that accompanies that failure names the inode, the uncounted line,
+// the descriptors and the journal mode. The suite cannot assert another test's failure, so this
+// drives the same holder the parent drives and reads the same answers.
+func TestStoreFileLockDiagnosticAfterTheReadPaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.sqlite3")
+	seed, err := fixtureOpen(context.Background(), path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	holder := exec.Command(os.Args[0], "-test.run=^TestStoreFileHolderProcess$")
+	holder.Env = append(os.Environ(), storeFileHolderEnv+"="+path, storeFileHolderNoLockEnv+"=after")
+	stdin, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := holder.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder.Stderr = os.Stderr
+	if err = holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		if holder.ProcessState == nil {
+			_ = holder.Process.Kill()
+			_ = holder.Wait()
+		}
+	})
+	lines := bufio.NewScanner(stdout)
+	if !lines.Scan() {
+		t.Fatalf("holder did not start: %v", lines.Err())
+	}
+	_, before, ok := storeFileParseReadyLine(lines.Text())
+	if !ok {
+		t.Fatalf("holder did not start: %q (%v)", lines.Text(), lines.Err())
+	}
+	if before < 1 {
+		t.Fatalf("the hook drops the lock during the read paths, so the precondition must hold: ready line %q", lines.Text())
+	}
+	if after := askStoreFileLocks(t, stdin, lines, "paths"); after != 0 {
+		t.Fatalf("the lock the hook drops during the read paths is still counted: %d lock(s) after", after)
+	}
+	message := storeFileDiagnosticMessage(holder.Process.Pid, 0, askStoreFileDiagnostic(t, stdin, lines))
+	for _, want := range []string{"locks=0", "holder-descriptors-on-the-store-files:", "journal-mode=", "diagnostic-end"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the failure message for the lost lock does not name %q:\n%s", want, message)
+		}
+	}
+}
+
+// TestStoreFileReadyLineAndDiagnosticMessage pins the two contracts the parent depends on: the ready
+// line the holder writes and the parent parses, and the failure text the diagnostic is carried in.
+// Both are strings the two processes agree on, so a change to either has to be deliberate.
+func TestStoreFileReadyLineAndDiagnosticMessage(t *testing.T) {
+	cases := []struct {
+		line  string
+		inode uint64
+		locks int
+		ok    bool
+	}{
+		{"ready inode=2505008 locks=1", 2505008, 1, true},
+		{"ready inode=0 locks=0", 0, 0, true},
+		{"ready inode=2505008", 0, 0, false},
+		{"ready locks=1 inode=2505008", 0, 0, false},
+		{"ready inode=abc locks=1", 0, 0, false},
+		{"ready inode=2505008 locks=x", 0, 0, false},
+		{"ready inode=2505008 locks=1 extra", 0, 0, false},
+		{"locks=1", 0, 0, false},
+		{"holder-open: refused", 0, 0, false},
+	}
+	for _, c := range cases {
+		inode, locks, ok := storeFileParseReadyLine(c.line)
+		if ok != c.ok || (ok && (inode != c.inode || locks != c.locks)) {
+			t.Errorf("storeFileParseReadyLine(%q) = (%d, %d, %v), want (%d, %d, %v)", c.line, inode, locks, ok, c.inode, c.locks, c.ok)
+		}
+	}
+	message := storeFileDiagnosticMessage(4242, 0, storeFileDiagnosticBegin+"\njournal-mode=wal\n"+storeFileDiagnosticEnd)
+	for _, want := range []string{"locks=0", "holder pid=4242", storeFileDiagnosticBegin, "journal-mode=wal", storeFileDiagnosticEnd} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the failure text does not carry %q:\n%s", want, message)
+		}
+	}
+}
+
 // TestStoreFileLocksKeepsItsCountingRule pins both halves of the rule against recorded /proc/locks
 // text: the counted shape, and the two shapes the issue names as uncounted.
 func TestStoreFileLocksKeepsItsCountingRule(t *testing.T) {
