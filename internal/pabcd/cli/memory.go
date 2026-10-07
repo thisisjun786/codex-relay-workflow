@@ -89,11 +89,13 @@ func cliPublishedMemoryAllowWrite(a MemoryAllowWriteArgs, writeState func(string
 		if unreadable {
 			return errors.New("session state is unreadable; refusing to overwrite it")
 		}
-		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
-			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
-		}
+		// The interview check runs first: cliVerdictsIntact now covers the tracker too, so a state that
+		// would lose interview records must keep this command's own interview sentence.
 		if !cliInterviewIntact(a.Cwd, a.SessionID) {
 			return errors.New(cliInterviewRefusalReason)
+		}
+		if !cliVerdictsIntact(a.Cwd, a.SessionID, len(s.UnverifiedSubagents)) {
+			return errors.New("session state holds unreadable unverified records; refusing to rewrite it")
 		}
 		s.MemoryWriteGrant = true
 		return writeState(a.Cwd, s)
@@ -120,11 +122,11 @@ func cliPublishedStateWarning(err error) string {
 	return "session state was published but its directory could not be synced: " + cliErrorMessage(err)
 }
 
-// cliVerdictsIntact prevents publishing a reconstructed list that discarded or changed
-// raw records: the list the reader rebuilds from the file must equal what the file
-// stores (state.RewriteKeepsUnverified), and hold the count the caller read. The existing
-// evidence owner's count helper is private; keeping this scoped check here avoids changing
-// that package's public API. Reads occur under WithSessionLock. Absent/null lists are
+// cliVerdictsIntact prevents publishing a state the reader rebuilt that discarded or changed a stored
+// record: the file must keep every record class the shared judgement covers (state.RewriteKeepsStored:
+// the unverified-subagent list and the interview tracker), and the rebuilt list must hold the count the
+// caller read. The existing evidence owner's count helper is private; keeping this scoped check here
+// avoids changing that package's public API. Reads occur under WithSessionLock. Absent/null lists are
 // valid old-schema states; non-arrays are not.
 func cliVerdictsIntact(cwd, sessionID string, count int) bool {
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
@@ -135,7 +137,7 @@ func cliVerdictsIntact(cwd, sessionID string, count int) bool {
 		return false
 	}
 	s, unreadable := state.ReadStateStrict(cwd, sessionID)
-	return !unreadable && len(s.UnverifiedSubagents) == count && state.RewriteKeepsUnverified(raw, s.UnverifiedSubagents)
+	return !unreadable && len(s.UnverifiedSubagents) == count && state.RewriteKeepsStored(raw, s)
 }
 
 // cliInterviewRefusalReason is the reason a cli writer gives when the rewrite would drop stored interview records.
