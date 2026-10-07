@@ -41,16 +41,17 @@ const errUnreadable = sentinel("session state is unreadable; refusing to overwri
 // rewriteGuardLoses is what a tier returns when writing the rebuilt state back would change a record the file stores.
 const rewriteGuardLoses = sentinel("session state holds records a rewrite would change; refusing to overwrite it")
 
-// rewriteGuardKeeps says whether writing kept, the list the strict read rebuilt, over the session file would lose nothing it stores:
-// the reader keeps 64 records, cuts a receipt to 256 units and defaults a field of the wrong type, none of which a count shows
-// (state.RewriteKeepsUnverified). A file that does not exist stores nothing; one that cannot be read now is refused. It is called
-// inside the session lock, after the strict read.
-func rewriteGuardKeeps(cwd, sessionID string, kept []state.UnverifiedSubagent) bool {
+// rewriteGuardKeeps says whether writing s, the state the strict read rebuilt, over the session file would lose nothing it stores:
+// the reader keeps 64 records, cuts a receipt to 256 units, defaults a field of the wrong type and caps the interview tracker arrays
+// at interview.MaxTrackerArray, none of which a count shows (state.RewriteKeepsStored). A file that does not exist stores nothing;
+// one that cannot be read now is refused. It is called inside the session lock, after the strict read. A legacy D-close marker is
+// deliberately not part of it (the CRW-648 allowance: this writer keeps the marker's distinction across the write).
+func rewriteGuardKeeps(cwd, sessionID string, s state.State) bool {
 	raw, err := os.ReadFile(state.StatePath(cwd, sessionID))
 	if errors.Is(err, fs.ErrNotExist) {
-		return len(kept) == 0
+		return len(s.UnverifiedSubagents) == 0
 	}
-	return err == nil && state.RewriteKeepsUnverified(raw, kept)
+	return err == nil && state.RewriteKeepsStored(raw, s)
 }
 
 // tombstoneIdentity is the identity of a tombstone. An empty agent id is not resolvable: such ids collide.
@@ -98,7 +99,7 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		if unreadable {
 			return errUnreadable
 		}
-		if !rewriteGuardKeeps(cwd, sessionID, s.UnverifiedSubagents) {
+		if !rewriteGuardKeeps(cwd, sessionID, s) {
 			return rewriteGuardLoses
 		}
 		s.SessionID = sessionID
@@ -118,7 +119,7 @@ func recordTombstone(cwd, sessionID string, p Payload, attempts int, now time.Ti
 		if unreadable { // changed: the oracle writes the sentinel over the unreadable file
 			return errUnreadable
 		}
-		if !rewriteGuardKeeps(cwd, sessionID, s.UnverifiedSubagents) { // the sentinel write rebuilds the list too
+		if !rewriteGuardKeeps(cwd, sessionID, s) { // the sentinel write rebuilds the list too
 			return rewriteGuardLoses
 		}
 		s.SessionID, s.UnverifiedCorrupt = sessionID, true

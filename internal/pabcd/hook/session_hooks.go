@@ -12,7 +12,6 @@ import (
 	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
@@ -76,7 +75,7 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 			return nil
 		}
 		fresh.LastInjectedPhase = nil
-		if !sessionHookStateRewritable(raw, fresh) {
+		if !state.RewriteKeepsStored(raw, fresh) || state.DcloseRecoveryLegacy(fresh) {
 			return nil
 		}
 		return state.WriteState(p.Cwd, fresh)
@@ -88,32 +87,6 @@ func sessionHookPostCompact(p SessionHookPostCompactPayload, lock func(cwd, sess
 // reinjection cursor still holds a phase, so there is something to reset.
 func sessionHookPostCompactEligible(s state.State) bool {
 	return s.OrchestrationActive && s.Phase != state.PhaseIdle && s.LastInjectedPhase != nil
-}
-
-// sessionHookStateRewritable says whether writing next back over the file's raw bytes would keep every record the file
-// stores. The reader and the writer normalise what they handle, so a write-back that only means to clear the reinjection
-// cursor can still drop or change records: ReconstructUnverified stops at the cap, cuts a long receiptClaimed and replaces a
-// field of the wrong type (state.RewriteKeepsUnverified), ReconstructInterview caps every tracker array at
-// interview.MaxTrackerArray and repairs or drops malformed entries, and a legacy D-close marker loses its distinction. The
-// state is written back only when all three keep what is stored; otherwise the file is left as it was.
-func sessionHookStateRewritable(raw []byte, next state.State) bool {
-	if next.DcloseRecovery != nil && next.DcloseRecovery.Legacy {
-		return false
-	}
-	if !state.RewriteKeepsUnverified(raw, next.UnverifiedSubagents) {
-		return false
-	}
-	return sessionHookInterviewKeepsStored(raw, next.Interview)
-}
-
-// sessionHookInterviewKeepsStored says whether the interview tracker the write would publish still holds every entry the file
-// stores. ReconstructInterview caps contradictions and assumptions at interview.MaxTrackerArray, dropping the oldest, and drops
-// an ontology entity with no name and a relationship with no target, so a stored array longer than the rebuilt one is a record
-// the write-back would lose. The two values cannot be compared instead: the reader's rebuild always normalises a dimension (an
-// absent known/unknown array becomes empty, an unrecognised level becomes low), so a value comparison would refuse every write
-// and silently stop the recovery. A tracker the file does not hold, or holds as null, holds no entry to lose.
-func sessionHookInterviewKeepsStored(raw []byte, kept *interview.Tracker) bool {
-	return state.RewriteKeepsInterview(raw, kept)
 }
 
 // SessionHookPostToolUse is handlePostToolUse (hook.ts:1951-1992): a request_user_input round is

@@ -382,15 +382,17 @@ const auditUsage = "usage: crw manage audit grade --bundle DIR [--pair P] [--pha
 	"       crw manage audit round {start,status} --name R\n" +
 	"       crw manage audit pr [--max N] [--dry-run]\n" +
 	"       crw manage audit report\n" +
-	"       crw manage audit drafts [--round R | --since T] [--severity P1]"
+	"       crw manage audit drafts [--round R | --since T] [--severity P1]\n" +
+	"       crw manage audit list [--round R] [--issue K] [--since T]"
 
 // auditRun is crw manage audit. It dispatches the grade subcommand, which grades one bundle
 // the caller already assembled, the package subcommand, which audits the packages a round
 // still holds pending or failed, the round subcommand, which starts a round and reports its
 // progress, the pr subcommand, which selects, bundles and grades newly merged pull requests,
 // the report subcommand, which rebuilds the report from the ledger, and the drafts
-// subcommand, which turns the recorded defects into follow-up issue drafts. The help flags
-// keep their own path so the usage stays reachable without a subcommand.
+// subcommand, which turns the recorded defects into follow-up issue drafts, and the list
+// subcommand, which reports what the audit has recorded without writing anything. The help
+// flags keep their own path so the usage stays reachable without a subcommand.
 func auditRun(ctx context.Context, e *Env, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(e.Stderr, auditUsage)
@@ -412,9 +414,11 @@ func auditRun(ctx context.Context, e *Env, args []string) int {
 		return auditReportRun(ctx, e, args[1:])
 	case "drafts":
 		return auditRunDrafts(ctx, e, args[1:])
+	case "list":
+		return auditListRun(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, auditUsage)
-	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'pr', 'report', 'round', 'drafts')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage audit: error: invalid command %q (choose from 'grade', 'package', 'pr', 'report', 'round', 'drafts', 'list')\n", args[0])
 	return usageExit
 }
 
