@@ -206,3 +206,30 @@ func TestMigrateRootPrivateExistingRootIsNotClaimedOrRetightened(t *testing.T) {
 		t.Errorf(".gitignore = %q", got)
 	}
 }
+
+// The merged rule where it differs from the derivation this issue's parent used before the merge. The root is absent
+// when the pair is opened, so 'made := pair.Dest == nil' would call the root this call's own and tighten it; a racer
+// creates it in between, and the merged rule takes made from the creation's own result instead, so the racer's root
+// keeps the mode it has. This case is red on the pre-merge derivation, which chmods it to the private marker.
+func TestMigrateRootPrivateRacerRootKeepsItsMode(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	ws, pair := migrateRootPrivateWorkspace(t)
+	if pair.Dest != nil {
+		t.Fatal("this case needs the destination root to be absent when the pair is opened")
+	}
+	// The racer creates the root after Open and before the call, so pair.Dest is still nil when it runs.
+	mkdirs(t, filepath.Join(ws, crwdir.DirName))
+	must(t, os.Chmod(filepath.Join(ws, crwdir.DirName), 0o755))
+	root, made, err := newPub(t).EnsureProjectRoot(pair)
+	must(t, err)
+	if root == nil || made {
+		t.Fatalf("EnsureProjectRoot = %v, %v; want the racer's root and made=false", root, made)
+	}
+	fi, err := os.Stat(filepath.Join(ws, crwdir.DirName))
+	if err != nil || fi.Mode().Perm() != 0o755 || fi.Mode()&fs.ModeSticky != 0 {
+		t.Errorf("a root this call did not create must keep its mode: %v %v", fi, err)
+	}
+	if got := get(t, filepath.Join(ws, crwdir.DirName, ".gitignore")); got != crwdir.GitignoreText {
+		t.Errorf(".gitignore = %q", got)
+	}
+}
