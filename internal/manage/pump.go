@@ -119,8 +119,26 @@ type pumpState struct {
 	// sent/ did not finish. The next round completes the move before anything else, so an
 	// accepted notice is never sent twice.
 	QueueAccepted map[string][]string `json:"queue_accepted"`
+	// PRSeq is the counter a detected PR change is numbered with. The event id carries it, so a
+	// transition that happens twice mints two ids and the second is not dropped as one the sent
+	// set already holds.
+	PRSeq int `json:"pr_seq"`
+	// QueueAttempt is a queue thread's batch whose delivery ended neither accepted nor refused.
+	// While it is set the batch's notice names, body and logical id are frozen, so the next round
+	// reconciles the same request id instead of forming a new batch around a notice that may
+	// already have gone.
+	QueueAttempt map[string]pumpReview776QueuePin `json:"queue_attempt"`
 
 	extra map[string]json.RawMessage
+}
+
+// pumpReview776QueuePin is one frozen queue batch: the notice names it carried, the body it sent
+// and the logical id it was tried under. The names are what an accepted retry records as the
+// membership, so a notice queued after the pin was taken is not moved to sent/.
+type pumpReview776QueuePin struct {
+	LogicalID string   `json:"logical_id"`
+	Names     []string `json:"names"`
+	Body      string   `json:"body"`
 }
 
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its
@@ -136,7 +154,8 @@ func pumpNewState() pumpState {
 	return pumpState{
 		Offsets: map[string]int64{}, PRs: map[string]string{}, Sources: map[string]string{},
 		Cursors: map[string]string{}, Sent: map[string]bool{},
-		QueueAccepted: map[string][]string{}, extra: map[string]json.RawMessage{},
+		QueueAccepted: map[string][]string{}, QueueAttempt: map[string]pumpReview776QueuePin{},
+		extra: map[string]json.RawMessage{},
 	}
 }
 
@@ -178,6 +197,10 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.Attempt)
 		case "queue_accepted":
 			err = json.Unmarshal(value, &st.QueueAccepted)
+		case "pr_seq":
+			err = json.Unmarshal(value, &st.PRSeq)
+		case "queue_attempt":
+			err = json.Unmarshal(value, &st.QueueAttempt)
 		default:
 			// A key this file does not name belongs to a later node; it is preserved on write.
 			st.extra[key] = value
@@ -204,6 +227,9 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 	if st.QueueAccepted == nil {
 		st.QueueAccepted = map[string][]string{}
 	}
+	if st.QueueAttempt == nil {
+		st.QueueAttempt = map[string]pumpReview776QueuePin{}
+	}
 	return st, nil
 }
 
@@ -229,6 +255,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 		{"offsets", st.Offsets}, {"pending", st.Pending}, {"first_at", st.FirstAt},
 		{"prs", st.PRs}, {"sources", st.Sources}, {"cursors", st.Cursors}, {"sent", st.Sent},
 		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
+		{"pr_seq", st.PRSeq}, {"queue_attempt", st.QueueAttempt},
 	} {
 		if err := put(field.key, field.value); err != nil {
 			return err
@@ -354,16 +381,39 @@ func pumpDue(pending []pumpEvent, firstAt *float64, now time.Time, s pumpSetting
 // events is split into stable prefixes rather than forming a batch that can never be accepted.
 const pumpBatchLimit = 90000
 
-// pumpBatchPrefix is the longest prefix of the pending events whose body stays inside the batch
-// limit. The prefix is stable for a given pending set, so the frozen attempt and its logical id
-// are stable across rounds.
+// pumpBatchPrefix is the longest prefix of the delivery order whose body stays inside the batch
+// limit. An urgent round delivers the urgent events (question, dag) first in their collected
+// order, then the rest in their collected order, so an urgent event collected last still lands in
+// the first batch. The order is deterministic for a given pending set, so the frozen attempt and
+// its logical id are stable across rounds.
 func pumpBatchPrefix(events []pumpEvent, now time.Time, urgent bool, footer string) []pumpEvent {
+	if urgent {
+		events = pumpReview776UrgentFirst(events)
+	}
 	for n := len(events); n > 0; n-- {
 		if len(pumpBody(events[:n], now, urgent, footer)) <= pumpBatchLimit {
 			return events[:n]
 		}
 	}
 	return events[:1]
+}
+
+// pumpReview776UrgentFirst is the urgent delivery order: the urgent events in their collected
+// order first, then the rest in their collected order. It is a stable partition, so the same
+// pending set always produces the same order and therefore the same logical id.
+func pumpReview776UrgentFirst(events []pumpEvent) []pumpEvent {
+	ordered := make([]pumpEvent, 0, len(events))
+	for _, ev := range events {
+		if ev.Kind == pumpKindQuestion || ev.Kind == pumpKindDag {
+			ordered = append(ordered, ev)
+		}
+	}
+	for _, ev := range events {
+		if ev.Kind != pumpKindQuestion && ev.Kind != pumpKindDag {
+			ordered = append(ordered, ev)
+		}
+	}
+	return ordered
 }
 
 // pumpBody is the delivered text: the issue's first line, the event bodies, then the configured

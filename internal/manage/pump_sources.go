@@ -300,12 +300,17 @@ func (pumpPRSource) Collect(ctx context.Context, _ *Env, cfg *Config, st *pumpSt
 	}
 	sort.Strings(changed)
 	sort.Strings(ids)
+	// Every detected change takes the next number, so a transition that happens twice mints two
+	// ids and the second is not dropped as one the sent set already holds. Dedup stays the
+	// previous-snapshot comparison above: a round with no change mints nothing and never advances
+	// the counter.
+	st.PRSeq++
 	kind := pumpKindPR
 	if lowOnly {
 		kind = pumpKindLow
 	}
 	return pumpSourceResult{Status: pumpSourceOK, Events: []pumpEvent{{
-		ID: "pr#" + strings.Join(ids, ","), Kind: kind,
+		ID: fmt.Sprintf("pr#%s@%d", strings.Join(ids, ","), st.PRSeq), Kind: kind,
 		Text: "PR changes: " + strings.Join(changed, ", "),
 	}}}
 }
