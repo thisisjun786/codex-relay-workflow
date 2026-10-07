@@ -42,6 +42,17 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf x | node --no-warnings --require fs",
 		"printf x | php -f /dev/stdin",
 		"printf x | python3 -m code",
+		// CRW-894 c10, third round: the forms the gate shares with the worktree guard. (a) an output-style
+		// duplication of the saved pipe back onto descriptor 0, and a read-write reopen of an alias;
+		// (b) a condition argument named then or do is no clause introducer; (d) a here-document whose owner
+		// stands behind a condition prefix; (e) a here-document written on another descriptor and copied back
+		// onto descriptor 0.
+		"printf 'echo x > " + root + "/a' | bash -c 'bash 3<&0 </dev/null 0>&3'",
+		"printf 'echo x > " + root + "/a' | bash -c 'bash <>/dev/stdin'",
+		"printf 'echo x > " + root + "/a' | bash -c 'if bash -s then; then :; fi'",
+		"printf 'echo x > " + root + "/a' | bash -c 'if ! bash -s then; then :; fi'",
+		"if python3 <<'PY'\nopen('" + root + "/a','w')\nPY\nthen :; fi",
+		"python3 3<<'PY' <&3\nopen('" + root + "/a','w')\nPY",
 	} {
 		got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env)
 		if got.Surface != "shell" || !strings.HasPrefix(got.Target, "(a program the gate cannot read: ") {
@@ -62,6 +73,8 @@ func TestMemoryGatePipeResidual(t *testing.T) {
 		"printf x | python3 -c 'print(1)'",
 		"printf x | bash -c 'cat'",
 		"printf x | cat",
+		"printf x | node --no-warnings script.js",
+		"python3 3<<EOF\nignored\nEOF",
 	} {
 		if got := memoryGateClassify("Bash", map[string]any{"command": command}, cwd, env); got.Surface != "" {
 			t.Errorf("%q: %+v, want no write attempt", command, got)

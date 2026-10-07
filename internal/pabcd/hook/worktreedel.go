@@ -1090,6 +1090,12 @@ func worktreeDelSuProgram(operands []string) int {
 // worktreeDelBashLongs are the long options of bash (bash --help): one outside this list is not a certainty.
 const worktreeDelBashLongs = " --debug --debugger --dump-po-strings --dump-strings --help --init-file --login --noediting --noprofile --norc --posix --pretty-print --rcfile --restricted --verbose --version "
 
+// worktreeDelNodeLongBooleans are the long options of node that take no argument (node --help, verified by running
+// node 24 with each option before a script: the option leaves the script operand where it is, so node runs it). An
+// option that takes an argument consumes the word after it instead, and one outside this list is read as taking the
+// next word (the fail-closed reading; CRW-894 c10(f), the pre-merge evaluation's third round).
+const worktreeDelNodeLongBooleans = " --abort-on-uncaught-exception --allow-addons --allow-child-process --allow-inspector --allow-wasi --allow-worker --build-snapshot --cpu-prof --disable-sigusr1 --disallow-code-generation-from-strings --enable-etw-stack-walking --enable-network-family-autoselection --enable-source-maps --entry-url --experimental-addon-modules --experimental-eventsource --experimental-import-meta-resolve --experimental-import-text --experimental-inspector-network-resource --experimental-network-inspection --experimental-print-required-tla --experimental-storage-inspection --experimental-stream-iter --experimental-strip-types --experimental-test-coverage --experimental-test-module-mocks --experimental-transform-types --experimental-vm-modules --experimental-webstorage --experimental-worker-inspection --expose-gc --force-context-aware --force-node-api-uncaught-exceptions-policy --frozen-intrinsics --heap-prof --insecure-http-parser --inspect --interactive --interpreted-frames-native-stack --jitless --no-addons --no-async-context-frame --no-deprecation --no-experimental-detect-module --no-experimental-global-navigator --no-experimental-repl-await --no-experimental-require-module --no-experimental-sqlite --no-extra-info-on-fatal-exception --no-force-async-hooks-checks --no-global-search-paths --no-network-family-autoselection --no-require-module --no-strip-types --no-warnings --node-memory-debug --openssl-legacy-provider --openssl-shared-config --pending-deprecation --permission --permission-audit --preserve-symlinks --preserve-symlinks-main --prof --report-compact --report-exclude-env --report-exclude-network --report-on-fatalerror --report-on-signal --test --test-force-exit --test-only --test-randomize --test-update-snapshots --throw-deprecation --tls-max-v1.2 --tls-max-v1.3 --tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --trace-deprecation --trace-env --trace-env-js-stack --trace-env-native-stack --trace-exit --trace-promises --trace-sigint --trace-sync-io --trace-tls --trace-uncaught --trace-warnings --track-heap-objects --use-bundled-ca --use-env-proxy --use-openssl-ca --use-system-ca --watch --watch-preserve-output --zero-fill-buffers "
+
 // worktreeDelFlagShellProgram is the index of the operand that holds the -c program of sh, bash, dash, ash or zsh, -1 when none is
 // certain. Their options end at the first operand or after --; every letter of a cluster is a flag, an o or O (-o posix,
 // -O nullglob) takes the next word, and so do --rcfile and --init-file. The program is the first operand when -c came before
@@ -1654,6 +1660,15 @@ func worktreeDelUnreadableInterpreterStdin(name string, operands []string) bool 
 	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
 	for i := 0; i < len(args); i++ {
 		word := args[i]
+		if word == "--" {
+			// The end-of-options marker ends the option parse: the word after it is the script operand, whatever it
+			// looks like, so python3 -- /dev/stdin runs the piped program while python3 -- script.py runs the file
+			// (CRW-894 c10, third round). With no word after it the interpreter has no program argument at all.
+			if i+1 >= len(args) {
+				return true
+			}
+			return worktreeDelUnreadableStdinAliasPath(args[i+1])
+		}
 		option := worktreeDelUnreadableInterpreterOption(name, word)
 		value := option.value // the program the option carries, attached or in the next word
 		if value == "" && option.next && i+1 < len(args) {
@@ -1723,13 +1738,19 @@ func worktreeDelUnreadableInterpreterOption(name, option string) worktreeDelUnre
 		if k := strings.IndexByte(option, '='); k >= 0 {
 			value, attached = option[:k], true
 		}
-		switch name {
-		case "node", "nodejs":
+		switch {
+		case name == "node" || name == "nodejs":
 			switch value {
-			case "--eval", "--print":
+			case "--eval", "--print", "--version", "--help":
 				return worktreeDelUnreadableInterpreterOpt{program: true, known: true}
 			}
-		case "php":
+			if strings.Contains(worktreeDelNodeLongBooleans, " "+value+" ") {
+				// The option takes no argument, so the word after it is no argument of it either: it is the script
+				// operand the interpreter reads (node --no-warnings script.js runs script.js; CRW-894 c10(f), the
+				// pre-merge evaluation's third round).
+				return worktreeDelUnreadableInterpreterOpt{known: true}
+			}
+		case name == "php":
 			switch value {
 			case "--run":
 				return worktreeDelUnreadableInterpreterOpt{program: true, known: true}
@@ -1740,6 +1761,18 @@ func worktreeDelUnreadableInterpreterOption(name, option string) worktreeDelUnre
 					carried = option[len("--file="):]
 				}
 				return worktreeDelUnreadableInterpreterOpt{program: true, next: !attached, known: true, file: true, value: carried}
+			}
+		case worktreeDelUnreadablePython(name):
+			switch value {
+			case "--version", "--help", "--help-env", "--help-xoptions", "--help-all":
+				// The option runs a program of the interpreter's own and exits, so the interpreter reads no standard
+				// input and no later word is its script (python3 --version script.py prints the version).
+				return worktreeDelUnreadableInterpreterOpt{program: true, known: true}
+			}
+		case name == "perl":
+			switch value {
+			case "--version", "--help":
+				return worktreeDelUnreadableInterpreterOpt{program: true, known: true}
 			}
 		}
 		// A long option whose arity the guard does not know takes the next word: the fail-closed reading
@@ -2284,7 +2317,16 @@ type worktreeDelUnreadableStdinRedirect struct {
 // follows every descriptor and not only descriptor 0 (CRW-894 c9(a)). A here-document and a here-string feed the
 // descriptor a program of their own and are not the pipe (CRW-726, c15(a)).
 func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) (worktreeDelUnreadableStdinRedirect, bool) {
-	i := strings.IndexByte(word, '<')
+	// The operator is the first < or > of the word. Every redirection form is read, not only the < forms: a
+	// duplication written with > puts descriptor M's content on descriptor N just as one written with < does
+	// (CRW-894 c10, third round: 0>&3 copies the saved pipe back onto descriptor 0 and the shell reads it), and <>
+	// reopens its target read-write. A redirection written with no descriptor names descriptor 0 for < and
+	// descriptor 1 for >, which is where the shell puts it (>&2 redirects standard output, not standard input).
+	// &>f redirects both standard streams and names no descriptor of its own.
+	if strings.HasPrefix(word, "&>") {
+		return worktreeDelUnreadableStdinRedirect{}, false
+	}
+	i := strings.IndexAny(word, "<>")
 	if i < 0 {
 		return worktreeDelUnreadableStdinRedirect{}, false
 	}
@@ -2295,22 +2337,40 @@ func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) (worktreeDe
 			return worktreeDelUnreadableStdinRedirect{}, false
 		}
 		descriptor = n
+	} else if word[i] == '>' {
+		descriptor = 1
 	}
-	if strings.HasPrefix(word[i:], "<<") { // a here-document or a here-string feeds the descriptor a program
+	op := word[i:]
+	if strings.HasPrefix(op, "<<") { // a here-document or a here-string feeds the descriptor a program
 		return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: worktreeDelStdinCopies, content: worktreeDelStdinProgram}, true
 	}
-	rest := word[i+1:]
+	if len(op) > 1 && op[1] == '&' { // N<&M and N>&M duplicate descriptor M, N<&- and N>&- close descriptor N
+		rest := op[2:]
+		if rest == "" { // the operator is a word of its own: its target is the next word
+			if !hasNext {
+				return worktreeDelUnreadableStdinRedirect{}, false
+			}
+			rest = next
+		}
+		if n, ok := worktreeDelUnreadableDescriptor(rest); ok {
+			return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: n}, true
+		}
+		return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: worktreeDelStdinCopies, content: worktreeDelStdinUnknown}, true
+	}
+	if op[0] != '<' {
+		// >, >> and >| open a file for writing on the descriptor they name; they put no pipe or program there, so the
+		// descriptor keeps whatever it held (CRW-894, and the walk leaves it as it was).
+		return worktreeDelUnreadableStdinRedirect{}, false
+	}
+	rest := op[1:]
+	if strings.HasPrefix(rest, ">") { // <> reopens the target read-write
+		rest = rest[1:]
+	}
 	if rest == "" { // the operator is a word of its own: its target is the next word
 		if !hasNext {
 			return worktreeDelUnreadableStdinRedirect{}, false
 		}
 		rest = next
-	}
-	if strings.HasPrefix(rest, "&") { // N<&M duplicates descriptor M, N<&- closes descriptor N
-		if n, ok := worktreeDelUnreadableDescriptor(rest[1:]); ok {
-			return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: n}, true
-		}
-		return worktreeDelUnreadableStdinRedirect{descriptor: descriptor, from: worktreeDelStdinCopies, content: worktreeDelStdinUnknown}, true
 	}
 	if n, pid, ok := worktreeDelUnreadableStdinAlias(rest); ok { // N</dev/fd/M, N</dev/stdin, N</proc/<pid>/fd/M
 		if pid != "" && pid != "self" {
@@ -2404,7 +2464,8 @@ func worktreeDelUnreadableStdinHoldingsFrom(operands []string, multios bool, ini
 	holds := map[int]int{0: initial}
 	for i := 0; i < len(operands); i++ {
 		word := operands[i]
-		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) && strings.HasPrefix(operands[i+1], "<") {
+		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) &&
+			(strings.HasPrefix(operands[i+1], "<") || strings.HasPrefix(operands[i+1], ">")) {
 			word, i = word+operands[i+1], i+1 // a descriptor word before the operator belongs to it
 		}
 		hasNext := i+1 < len(operands)
@@ -3132,17 +3193,14 @@ func worktreeDelUnreadableConditionWords(words []string) []string {
 		if len(words) == 0 {
 			return words
 		}
-		switch basename(words[0]) {
-		case "if", "elif", "while", "until":
-			if !slices.Contains(words, "then") && !slices.Contains(words, "do") {
-				words = words[1:] // the head of the compound: the condition command follows the keyword
-				continue
-			}
+		i, found := worktreeDelUnreadableCompoundKeyword(words)
+		if !found {
+			return words
 		}
-		if i, found := worktreeDelUnreadableCompoundKeyword(words); found {
-			return words[i:]
+		if i >= len(words) {
+			return nil // the compound's header holds no command of its own
 		}
-		return words
+		words = words[i:]
 	}
 }
 
@@ -3209,17 +3267,18 @@ func worktreeDelUnreadableCompoundKeyword(words []string) (int, bool) {
 	switch basename(words[0]) {
 	case "then", "do", "else", "elif":
 		return 1, true // the clause introducer of a compound already opened
-	default:
-		if !strings.Contains(worktreeDelUnreadableCompoundKeywords, " "+basename(words[0])+" ") {
-			return 0, false
-		}
-		for i, word := range words {
-			if word == "then" || word == "do" {
-				return i + 1, true
-			}
-		}
-		return len(words), true
 	}
+	// A piece that opens a compound was already cut at the separator that ends its condition, so the clause
+	// introducer (then, do) can only stand in a later piece. A word that spells then or do inside this piece is an
+	// argument of the condition command, not the introducer: if bash -s then; then :; fi runs bash with then as $1
+	// (CRW-894 c10(c), the pre-merge evaluation's third round).
+	switch basename(words[0]) {
+	case "if", "elif", "while", "until":
+		return 1, true // the head of the compound: the condition command follows the keyword
+	case "for", "case", "select":
+		return len(words), true // the header holds no command of its own: the body follows do or in
+	}
+	return 0, false
 }
 
 // heredocs judges every here-document of a text that a listed shell reads as its program: with a delimiter word that
@@ -3252,17 +3311,37 @@ func (s *worktreeDelUnreadableScan) heredocs(text, cwd string, depth int, named 
 				continue
 			}
 			// An interpreter with no program argument reads a here-document on its standard input as its program (CRW-894,
-			// c5). A descriptor other than 0 feeds another descriptor and is no program: python3 3<<EOF still reads its
-			// standard input, and a pipe there is read by the pipe rule.
-			if body.op.descriptor == "" || body.op.descriptor == "0" {
-				if worktreeDelUnreadableInterpreterStdin(name, operands) {
-					return worktreeDelUnreadableRefusal{what: "an interpreter program read from a here-document"}, true
-				}
+			// c5). A here-document that feeds another descriptor and stays away from standard input is no program:
+			// python3 3<<EOF still reads its standard input, and a pipe there is read by the pipe rule. Whether the body
+			// reaches standard input follows every descriptor, so a later redirection that copies the operator's
+			// descriptor onto descriptor 0 (<&3) brings the body back (CRW-894 c10, third round).
+			if worktreeDelUnreadableInterpreterStdin(name, operands) && worktreeDelUnreadableStdinProgramAt(line, body.op.at) {
+				return worktreeDelUnreadableRefusal{what: "an interpreter program read from a here-document"}, true
 			}
 		}
 		i = next
 	}
 	return worktreeDelUnreadableRefusal{}, false
+}
+
+// worktreeDelUnreadableStdinProgramAt says whether the command that owns the here-document operator at byte at ends up
+// with a program on descriptor 0: the here-document operators of that command feed their descriptor a program of their
+// own, and a later redirection that copies such a descriptor onto descriptor 0 puts that body back on standard input
+// (python3 3<<EOF <&3 runs the here-document). A here-document that feeds another descriptor and stays away from
+// standard input leaves descriptor 0 as it was, so python3 3<<EOF is no program and the pipe rule reads its standard
+// input as before (CRW-894 c10, third round).
+func worktreeDelUnreadableStdinProgramAt(line string, at int) bool {
+	start, end := 0, len(line)
+	for _, i := range worktreeDelUnreadableLineSeparators(line) {
+		if i < at {
+			start = i + 1
+			continue
+		}
+		end = i
+		break
+	}
+	words := worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(line[start:end]))
+	return worktreeDelUnreadableStdinHoldingsFrom(words, false, worktreeDelStdinFile)[0] == worktreeDelStdinProgram
 }
 
 // worktreeDelUnreadableHereDescriptor is the descriptor written before the here-document operator at byte at, or ""
@@ -3329,6 +3408,11 @@ func worktreeDelUnreadableLineCommandAt(line string, at int) (string, []string, 
 		}
 		plain = append(plain, word)
 	}
+	// A here-document's owner is a command, so the shell's condition syntax in front of it is taken off the way the
+	// pipe reading takes it off: the owner of 'if python3 <<EOF' is python3, and of 'if ! python3 <<EOF' it is
+	// python3 too, while a clause introducer that opens the piece ('then python3 <<EOF') is stepped over the same
+	// way (CRW-894 c10, the pre-merge evaluation's third round).
+	plain = worktreeDelUnreadableConditionWords(plain)
 	i := worktreeDelUnreadableCommandWord(plain)
 	if i < 0 {
 		return "", nil, false

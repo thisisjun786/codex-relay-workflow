@@ -634,3 +634,75 @@ func TestWorktreeDelPipeResidualC10b(t *testing.T) {
 	)
 	r.intact(t)
 }
+
+// TestWorktreeDelPipeResidualC10c is the pre-merge evaluation's third round, on head 350f75c1f, red first there. Six
+// forms inside this issue's promise still reached the piped or here program: (d1) the descriptor walk read only a "<",
+// so 0>&3 (an output-style duplication back onto descriptor 0) and <>/dev/stdin (a read-write reopen of the same
+// alias) left the pipe recorded as a file; (d2) a condition argument named then or do was mistaken for the clause
+// introducer, hiding the shell that inherits the pipe; (d3) the end-of-options marker -- was read as an unknown
+// argument-taking long option, so python3 -- /dev/stdin ran the pipe; (d4) a here-document whose owner stands behind a
+// condition prefix (if python3 <<EOF) was not recognized; (d5) a here-document written on descriptor 3 and copied back
+// onto descriptor 0 with <&3 was ignored; (d6) a legitimate file program behind a boolean long option (node
+// --no-warnings script.js) was newly denied. Each form was reproduced with a harmless stand-in for the deletion in the
+// host's zsh; no row runs a deletion, and the guard reads text and runs nothing.
+func TestWorktreeDelPipeResidualC10c(t *testing.T) {
+	r := newDelRig(t)
+	// (d1) an output-style duplication of the saved pipe onto descriptor 0, and a read-write reopen of an alias.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash -c 'bash 3<&0 </dev/null 0>&3'",
+		"printf 'rm -rf ../repo' | bash -c 'bash 3</dev/fd/0 </dev/null 0>&3'",
+		"printf 'rm -rf ../repo' | bash -c 'bash <>/dev/stdin'",
+		"printf 'rm -rf ../repo' | bash -c 'bash 0<>/dev/fd/0'",
+		"printf 'rm -rf ../repo' | bash 3<&0 </dev/null 0>&3",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 3<&0 </dev/null 0>&3")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 <>/dev/stdin")
+	// (d2) a condition argument named then or do is no clause introducer: bash -s reads the piped program with then
+	// as $1. A bare script operand named then (bash then) is a file bash cannot read, not the introducer, so it runs
+	// nothing and stays allowed.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | bash -c 'if bash -s then; then :; fi'",
+		"printf 'rm -rf ../repo' | bash -c 'while bash -s do; do :; done'",
+		"printf 'rm -rf ../repo' | bash -c 'if bash -s do; then :; fi'",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	r.allowed(t,
+		"printf 'rm -rf ../repo' | bash -c 'if bash then; then :; fi'",
+		"printf 'rm -rf ../repo' | bash -c 'if bash do; then :; fi'",
+	)
+	// (d3) the end-of-options marker ends the option parse, so the word after it is the script operand.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -- /dev/stdin ignored.py")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -- /dev/stdin")
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 -O -- /proc/self/fd/0 ignored.py")
+	// (d4) a here-document whose owner stands behind a condition prefix.
+	worktreeDelUnreadableDenied(t, r, "if python3 <<'PY'\nimport os\nPY\nthen :; fi", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "while python3 <<EOF\nimport os\nEOF\ndo :; done", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "if ! python3 <<EOF\nimport os\nEOF\nthen :; fi", "an interpreter program read from a here-document")
+	// (d5) a here-document written on another descriptor and copied back onto descriptor 0.
+	worktreeDelUnreadableDenied(t, r, "python3 3<<'PY' <&3\nimport os\nPY", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "python3 3<<EOF <&3\nimport os\nEOF", "an interpreter program read from a here-document")
+	worktreeDelUnreadableDenied(t, r, "python3 3<<EOF 4<&3 <&4\nimport os\nEOF", "an interpreter program read from a here-document")
+	// (d6) a boolean long option does not swallow the file program behind it.
+	r.allowed(t,
+		"printf x | node --no-warnings script.js",
+		"printf x | node --no-warnings --trace-warnings script.js",
+		"printf x | python3 --version script.py",
+		"printf x | perl --version script.pl",
+	)
+	// The c10(f) deny keeps its answer: a -word is no argument of an unknown-arity option.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | node --no-warnings --require fs")
+	// The controls keep their answers.
+	r.allowed(t,
+		"printf x | python3 -c 'print(1)'",
+		"printf x | node script.js",
+		"printf x | python3 -m json.tool",
+		"cat <>/dev/null <<EOF\nimport os\nEOF",
+		"python3 3<<EOF\nignored\nEOF",
+		"python3 -c 'print(1)' <<EOF\nx\nEOF",
+		"printf x | bash -c 'if true; then :; fi'",
+	)
+	r.intact(t)
+}
