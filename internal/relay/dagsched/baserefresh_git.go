@@ -174,8 +174,14 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 				// identified contributor declares a different rule for the path, no rule is agreed
 				// across the declarations and the built-in rule is handed over instead (CRW-898,
 				// item 6).
-				decided[r.Path] = RefreshDecisionBuiltin
-				decided[r.Path] = manifestRefreshDecision(regions, sets[r.Path])
+				// An unattributed landing on the path is not an agreement either: the contributor
+				// veto deletes the path"s sets, and taking the candidate"s lone declaration for an
+				// agreement would let it block the built-in rule (CRW-898, item 6).
+				// The contributor sets that matter are the declarations themselves, not the landings
+				// the attribution mapped: a contributor whose declaration touches the manifest but
+				// whose landing was vetoed still disagrees, and taking the candidate's lone command
+				// for an agreement would let it block the built-in rule (CRW-898, item 6).
+				decided[r.Path] = manifestRefreshDecision(regions, contributorDeclarations(contributors, r.Path))
 			}
 		}
 		if len(paths) == 0 {
@@ -216,6 +222,9 @@ func (p *refreshProof) applyMechanical(ctx context.Context, g *refreshRepo, chec
 // contributingRegions reads every new first-parent landing, without Git's path
 // history simplification. An unmapped path delta vetoes automatic classification
 // even when other landings for that path map to known nodes.
+// It answers the attributed sets and the set of paths a landing vetoed (an unmapped carrier): a
+// vetoed path is one the declarations did not settle, which is what the manifest's built-in rule is
+// for (CRW-898, item 6).
 func (g *refreshRepo) contributingRegions(ctx context.Context, st RefreshStep, heads map[string][][]Region) (map[string][][]Region, error) {
 	_, line, err := g.run(ctx, nil, "rev-list", "--first-parent", fmt.Sprintf("--max-count=%d", MaxBaseLine+1), st.BaseParent, "^"+st.Previous)
 	if err != nil {
@@ -670,6 +679,52 @@ func manifestRefreshDecision(candidate []Region, contributors [][]Region) string
 		return rule
 	}
 	return RefreshDecisionBuiltin
+}
+
+// contributorDeclarations is the declaration sets of the identified contributors whose regions
+// touch one path, one set per contributor. The manifest's rule has to be agreed across every node
+// that declared it, and a declaration an attribution vetoed is still a declaration (CRW-898, item 6).
+func contributorDeclarations(contributors map[string][][]Region, path string) [][]Region {
+	seen := map[string]bool{}
+	var out [][]Region
+	for _, sets := range contributors {
+		for _, set := range sets {
+			touches := false
+			for _, r := range set {
+				if (r.Kind == "tree" && within(path, r.Path)) || (r.Kind != "tree" && r.Path == path) {
+					touches = true
+					break
+				}
+			}
+			if !touches {
+				continue
+			}
+			key := regionSetKey(set)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, set)
+		}
+	}
+	return out
+}
+
+// regionSetKey identifies one declaration set so the same node's sets are counted once however many
+// heads the map carries them under.
+func regionSetKey(set []Region) string {
+	var b strings.Builder
+	for _, r := range set {
+		b.WriteString(r.Repository)
+		b.WriteByte('\x00')
+		b.WriteString(r.Path)
+		b.WriteByte('\x00')
+		b.WriteString(r.Kind)
+		b.WriteByte('\x00')
+		b.WriteString(r.Rule)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // proveBaseRefresh walks the first parents from head back to accepted. Every commit on the way must be a merge of exactly two parents, the previous commit first and a commit on the first-parent line of baseTip

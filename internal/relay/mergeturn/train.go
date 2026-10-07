@@ -1053,6 +1053,13 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 		// event, so a failure leaves neither the rows nor the event (the relay's one-transaction
 		// rule).
 		for _, m := range survivors {
+			// The member lands at the head its acceptance stands on, which a recorded base refresh
+			// may have moved past the head the turn held when the bundle opened. Restating it here,
+			// in the same transaction as the landing, keeps the readers that look a landing up by
+			// candidate_head able to link this landing to the turn (CRW-898, item 4).
+			if e := s.Store.RestateMergeTurnHead(tx, m.TurnID, m.MemberHead, at); e != nil {
+				return e
+			}
 			if e := s.closeWith(tx, turns[m.TurnID], "landed", reason, actor, at, nullable(landed), nullable(tip.SHA)); e != nil {
 				return e
 			}

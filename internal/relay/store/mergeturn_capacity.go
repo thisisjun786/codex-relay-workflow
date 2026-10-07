@@ -113,6 +113,16 @@ func (s *Store) CloseMergeTurn(ctx context.Context, turnID, state, reason, at st
 	return err
 }
 
+// RestateMergeTurnHead records the head a turn now carries, without touching its state. A bundle
+// lands each member at the head its acceptance stands on, which may be a recorded base-refresh head
+// the turn itself still held the pre-refresh head for (CRW-898, item 4); restating it in the landing
+// transaction is what lets the readers that look a landing up by candidate_head (the reception
+// reading, the integration diagnosis, the unknown-effect reading) link the landing to this turn.
+func (s *Store) RestateMergeTurnHead(ctx context.Context, turnID, head, at string) error {
+	_, err := s.exec(ctx, "UPDATE merge_turns SET candidate_head = ?, updated_at = ? WHERE turn_id = ?", head, at, turnID)
+	return err
+}
+
 // WriteMergeLedger is mergeturn.py:716 _write_ledger: a replayed key is one fact.
 func (s *Store) WriteMergeLedger(ctx context.Context, e MergeTurnLedgerRow) error {
 	_, err := s.exec(ctx, "INSERT INTO merge_turn_ledger (entry_id, turn_id, kind, from_state, to_state,"+

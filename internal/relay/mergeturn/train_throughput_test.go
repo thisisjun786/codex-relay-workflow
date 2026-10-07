@@ -130,6 +130,11 @@ func TestBundleCarriesAMemberRefreshedWithoutRestatingItsTurn(t *testing.T) {
 		if state := w.turn(w.turnIDOf(102)).State; state != "landed" {
 			t.Fatalf("the member turn is %s after the landing, want landed", state)
 		}
+		// the landing restates the turn to the head the acceptance stands on, so the readers that look
+		// a landing up by candidate_head link this one to the turn (CRW-898, item 4)
+		if head := w.turn(w.turnIDOf(102)).CandidateHead; head != "head-m2-refreshed" {
+			t.Fatalf("the landed member turn holds %s, want the stand head the bundle carried", head)
+		}
 	})
 
 	t.Run("a member whose head moved with no record still drops", func(t *testing.T) {
