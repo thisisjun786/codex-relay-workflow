@@ -170,3 +170,53 @@ func TestRootReplacement(t *testing.T) {
 		t.Fatalf("keyed %s", got)
 	}
 }
+
+// c3 (CRW-857): a symlink target that starts with the ROOT placeholder takes the case root, is
+// checked for containment and is created with the substituted absolute target. Red first: the
+// builder refused every absolute target, so no absolute link target could ever be generated.
+func TestScenariosBuildAnAbsoluteRootTarget(t *testing.T) {
+	root := t.TempDir()
+	input := fsInput(
+		fsEntry("codex-home/memories", "dir", "", "", 0o755),
+		fsEntry("work/abs", "symlink", "", rootPlaceholder+"/codex-home/memories", 0),
+	)
+	if n, err := Scenarios(root, input); err != nil || n != 2 {
+		t.Fatalf("%d entries, %v", n, err)
+	}
+	link := filepath.Join(root, "work", "abs")
+	got, err := os.Readlink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "codex-home", "memories"); got != want {
+		t.Fatalf("the link target is %q, want %q", got, want)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "codex-home", "memories"); resolved != want {
+		t.Fatalf("the link resolves to %q, want %q", resolved, want)
+	}
+}
+
+// c3 (CRW-857): the placeholder is no licence to leave the case root. An absolute target outside
+// it, a placeholder target that walks out with .., and a plain relative escape are all still
+// refused, and nothing is materialised.
+func TestScenariosStillRefuseATargetOutsideTheRoot(t *testing.T) {
+	// The link stands at work/abs, so a relative escape has to climb two levels: one "../" from
+	// work/abs still lands inside the case root and is legitimately allowed.
+	for _, target := range []string{"/etc/passwd", rootPlaceholder + "/../outside", rootPlaceholder + "/../escape", "../../outside"} {
+		root := t.TempDir()
+		if _, err := Scenarios(root, fsInput(fsEntry("work/abs", "symlink", "", target, 0))); err == nil {
+			t.Fatalf("the target %q was materialised", target)
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("the target %q left %v", target, entries)
+		}
+	}
+}

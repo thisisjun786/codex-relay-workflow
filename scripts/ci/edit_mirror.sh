@@ -10,6 +10,10 @@
 # is mirrored only when that job's test step concluded success too: CRW-790's light mode lets a leg succeed
 # with its tests skipped, and such a leg must not be carried into a later run.
 #
+# The gui job is mirrored only when its four screen steps concluded success too: gui_paths.sh lets
+# the job end, before Node is installed, with every screen step skipped and the check still reads
+# success, and such a run is not screen evidence a later body-only edit may carry forward.
+#
 # The lookup never fails the job. No candidate, a failure, a cancellation, a skip, a missing
 # job, another head, pull request, workflow or repository, an unreadable API and this run
 # itself all answer mirrored=false, and the job then runs in full as it did before this script
@@ -27,6 +31,15 @@ output=${GITHUB_OUTPUT:-}
 # The ci.yml step a go-product test leg runs, up to the leg's part; internal/dev/ci/light_mode_test.go
 # holds this name and ci.yml's step name to each other, so a rename on either side is a red test.
 test_step_prefix='Test and replay the contract corpus ('
+# The four steps the gui job runs when it verifies the screens, in ci.yml's order, named exactly as
+# ci.yml names them. internal/dev/ci/edit_mirror_test.go holds this list and ci.yml's gui job step
+# names to each other, so a rename on either side is a red test.
+screen_steps=(
+  'Install the screen dependencies from the committed lockfile'
+  'Run the screen tests'
+  'Build the screens into a fresh tree'
+  'Refuse a committed tree that is not a fresh build'
+)
 
 mirrored=false
 mirror_run=
@@ -84,6 +97,29 @@ if [[ -n $job_name && -n $head_sha && -n $pull_number && -n $self_run && -n $rep
         else
           mirrored=false
           reason="run $mirror_run did not conclude $job_name's test step $step_name as success (${step_conclusion:-missing})"
+          mirror_run=
+        fi
+      elif [[ $job_name == gui ]]; then
+        # A gui job concludes success with the screens unverified when gui_paths.sh answered
+        # changed=false: the four screen steps are skipped and the check still reads success. The
+        # job is mirrored only when all four concluded success in the same newest attempt the
+        # conclusion came from, so a skipped, failed or missing step, and an earlier attempt's
+        # green screens, each answer mirrored=false.
+        screen_failed=
+        for screen_step in "${screen_steps[@]}"; do
+          screen_conclusion=$(printf '%s' "$jobs" | jq -s -r --arg name "$job_name" --arg step "$screen_step" '
+            [ .[] | select(.name == $name) ] | sort_by(.attempt) | last | (.steps // [])
+            | map(select(.name == $step)) | last | .conclusion // empty') || screen_conclusion=
+          if [[ $screen_conclusion != success ]]; then
+            screen_failed="$screen_step (${screen_conclusion:-missing})"
+            break
+          fi
+        done
+        if [[ -z $screen_failed ]]; then
+          reason="run $mirror_run concluded success for $job_name and its four screen steps"
+        else
+          mirrored=false
+          reason="run $mirror_run did not conclude $job_name's screen step $screen_failed as success"
           mirror_run=
         fi
       fi

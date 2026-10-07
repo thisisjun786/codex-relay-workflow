@@ -1,6 +1,11 @@
 package configguard
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+)
 
 type DeactivateDeps struct {
 	Run                   CodexRunner
@@ -58,6 +63,21 @@ func DecideKeyRestore(rec TableKeyRecord, live *string, drift, backupKnown bool,
 	}
 }
 
+// configLockWritersDeactivateWrites reports whether this deactivation will write config.toml: it
+// restores owned table keys, or it asks the injected CLI to disable a flag CRW enabled. With
+// neither, uninstall is not gated on the lock, because there is no config.toml write to serialize.
+func configLockWritersDeactivateWrites(m *InstallManifest) bool {
+	if len(m.TableKeys) > 0 {
+		return true
+	}
+	for _, key := range manifestOrder(m.flagOrder, m.Flags) {
+		if f := m.Flags[key]; !f.PriorEnabled && f.EnabledByCodexclaw {
+			return true
+		}
+	}
+	return false
+}
+
 // Deactivate restores owned table keys before asking the injected CLI to disable flags.
 // The manifest/backup remain ownership evidence, never overwritten by deactivation.
 func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
@@ -67,21 +87,70 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	}
 	// Oracle parity: marker failure never gates uninstall, including early exits. The
 	// marker API itself refuses unreadable records rather than replacing their consent data.
-	_ = MarkSelfHealOptedOut(deps.CodexHome, now())
+	markOptedOut := func() { _ = MarkSelfHealOptedOut(deps.CodexHome, now()) }
 	r := &DeactivateResult{Disabled: []string{}, SkippedPreExisting: []string{}, NoManifest: true, RestoredKeys: []string{}, SkippedExternal: []SkippedExternal{}}
+	noManifest := func() (*DeactivateResult, error) {
+		markOptedOut()
+		r.NoManifest = true
+		return r, nil
+	}
+	// The first reading decides only whether and where to lock; the reading every decision below uses
+	// is taken after the lock is held (CRW-877).
 	raw, _ := readTextOrNull(manifestPath(deps.CodexHome))
 	if raw == nil {
-		return r, nil
+		return noManifest()
 	}
 	m := parseInstallManifest(*raw)
 	if m == nil {
-		return r, nil
+		return noManifest()
 	}
 	r.NoManifest = false
 	path := deps.ConfigPath
 	if path == "" {
 		path = m.ConfigPath
 	}
+	// lockedPath is the spelling the first reading chose; the re-read below must still name the same
+	// file for the held lock to be the lock over the manifest's own config file.
+	lockedPath := path
+	// One critical section for the whole command's writes to config.toml under the sidecar lock
+	// every CRW writer of config.toml takes (CRW-866), the shape of activate.go's
+	// activationSetKeyLocked: the drift check, the read, the restore, and the injected CLI calls
+	// that disable flags and rewrite the same file. A CRW writer that published between the read
+	// and the restore, or between the restore and the CLI's own read-modify-write, would otherwise
+	// have its change discarded with neither command reporting it. The lock is taken only when this
+	// deactivation writes config.toml, so an uninstall with nothing to restore and no flag CRW
+	// enabled is never gated on it, and an empty config path names no file to guard.
+	if path != "" && configLockWritersDeactivateWrites(m) {
+		lock, err := crwdir.LockConfig(path, activationLockWait)
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Release()
+		path = lock.Target
+		// The manifest read before the lock answered only whether and where to lock. An activation
+		// that published while this command waited would otherwise be ignored, and the restore would
+		// be computed from a manifest that no longer describes the install: the drift hash, the table
+		// keys and the flags below all decide from this second reading. A manifest missing or
+		// unreadable here answers as the no-manifest branch above does.
+		fresh, _ := readTextOrNull(manifestPath(deps.CodexHome))
+		if fresh == nil {
+			return noManifest()
+		}
+		if m = parseInstallManifest(*fresh); m == nil {
+			return noManifest()
+		}
+		// The lock is held on the file the first reading named. A manifest that now names a different
+		// config file would have this deactivation apply one file's ownership records to another, so
+		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
+		// overrides the manifest in both readings, so only the derived path can disagree.
+		if deps.ConfigPath == "" && m.ConfigPath != lockedPath {
+			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
+		}
+	}
+	// The opt-out is recorded only once this deactivation is going to do its work: a busy lock
+	// refuses the command before this line, and a refusal must not leave self-healing off for an
+	// uninstall that never ran (the commit-order rule: never record an effect that did not happen).
+	markOptedOut()
 	if m.PostActivateHash != nil {
 		hash, err := hashOrNull(path)
 		if err != nil {

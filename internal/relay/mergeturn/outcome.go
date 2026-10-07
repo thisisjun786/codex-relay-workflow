@@ -81,19 +81,28 @@ func (s *Service) Land(ctx context.Context, turn, actor, landed, stated, evidenc
 				return e
 			}
 		}
-		switch {
-		case r.HolderTaskID != actor:
-			refusal = notHolder(r, actor, "record a landing on")
-		case r.State != Merging:
-			refusal = wrongState(r, actor, "recording a landing")
-		case !read:
-			refusal = coordination(r, contract.RefusalMergeEvidenceRequired, "turn "+pyvalue.StrRepr(turn)+" entered merging before the relay read its base, so its checked base "+reprOrNone(r.CheckedBaseSHA)+" was typed rather than read and the branch cannot show whether this merge landed. Report the outcome with merge-turn-unknown and resolve it from the pull request's state with merge-turn-resolve, which reads the branch", r.CheckedBaseSHA.String, actor)
-		case tip.SHA == "":
-			refusal = unreadableTarget(r, actor, why, "the base this landing leaves behind cannot be recorded; the turn stays merging")
-		case r.CheckedBaseSHA.Valid && SameCommit(tip.SHA, r.CheckedBaseSHA.String) && !SameCommit(r.CheckedBaseSHA.String, r.CandidateHead):
-			refusal = coordination(r, contract.RefusalMergeBaseNotAdvanced, "the base branch "+pyvalue.StrRepr(r.BaseRef)+" still reads "+pyvalue.StrRepr(tip.SHA)+", the base the currency check read before merging, so the merge of "+pyvalue.StrRepr(r.CandidateHead)+" is not on it. The turn stays merging: merge and land again, or read again if the forge has not caught up. If the merge changed nothing because the base already contained the candidate, record that with merge-turn-unknown and merge-turn-resolve --pr-state merged", r.CheckedBaseSHA.String, tip.SHA)
-		case stated != "" && !SameCommit(stated, tip.SHA):
-			refusal = mismatch(r, actor, stated, tip, "--observed-base-sha", true)
+		// CRW-768: a member of a live train does not record a landing of its own; the bundle's landing
+		// is recorded with merge-train-land.
+		if guard, e := s.trainMemberRefusal(tx, turn, actor, "record a landing on it"); e != nil {
+			return e
+		} else if guard != nil {
+			refusal = guard
+		}
+		if refusal == nil {
+			switch {
+			case r.HolderTaskID != actor:
+				refusal = notHolder(r, actor, "record a landing on")
+			case r.State != Merging:
+				refusal = wrongState(r, actor, "recording a landing")
+			case !read:
+				refusal = coordination(r, contract.RefusalMergeEvidenceRequired, "turn "+pyvalue.StrRepr(turn)+" entered merging before the relay read its base, so its checked base "+reprOrNone(r.CheckedBaseSHA)+" was typed rather than read and the branch cannot show whether this merge landed. Report the outcome with merge-turn-unknown and resolve it from the pull request's state with merge-turn-resolve, which reads the branch", r.CheckedBaseSHA.String, actor)
+			case tip.SHA == "":
+				refusal = unreadableTarget(r, actor, why, "the base this landing leaves behind cannot be recorded; the turn stays merging")
+			case r.CheckedBaseSHA.Valid && SameCommit(tip.SHA, r.CheckedBaseSHA.String) && !SameCommit(r.CheckedBaseSHA.String, r.CandidateHead):
+				refusal = coordination(r, contract.RefusalMergeBaseNotAdvanced, "the base branch "+pyvalue.StrRepr(r.BaseRef)+" still reads "+pyvalue.StrRepr(tip.SHA)+", the base the currency check read before merging, so the merge of "+pyvalue.StrRepr(r.CandidateHead)+" is not on it. The turn stays merging: merge and land again, or read again if the forge has not caught up. If the merge changed nothing because the base already contained the candidate, record that with merge-turn-unknown and merge-turn-resolve --pr-state merged", r.CheckedBaseSHA.String, tip.SHA)
+			case stated != "" && !SameCommit(stated, tip.SHA):
+				refusal = mismatch(r, actor, stated, tip, "--observed-base-sha", true)
+			}
 		}
 		if refusal != nil {
 			return s.Registry.RecordCoordinationConflict(tx, *refusal, at)

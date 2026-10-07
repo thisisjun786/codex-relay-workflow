@@ -7,7 +7,8 @@ package tools
 
 import (
 	"fmt"
-	"path/filepath"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 )
 
 // ReleaseBase is where a pinned archive is fetched from when no seam overrides it. The archive's
@@ -77,17 +78,27 @@ func (p Pin) Supports(goos, goarch string) bool {
 // DirName is the directory the pin installs into under tools_root.
 func (p Pin) DirName() string { return p.Name + "-" + p.Version }
 
-// InstallDir is where the pin installs under a tools root.
-func (p Pin) InstallDir(toolsRoot string) string { return filepath.Join(toolsRoot, p.DirName()) }
+// InstallDir is where the pin installs under a tools root. The path is joined without cleaning,
+// through crwconfig.JoinRoot, so a tools_root whose spelling mixes a symbolic link and ".." names
+// the directory the filesystem resolves it to rather than the one filepath.Clean would name.
+func (p Pin) InstallDir(toolsRoot string) string { return crwconfig.JoinRoot(toolsRoot, p.DirName()) }
 
 // ExecutablePath is the installed executable's path under a tools root.
 func (p Pin) ExecutablePath(toolsRoot string) string {
-	return filepath.Join(p.InstallDir(toolsRoot), p.Executable)
+	return crwconfig.JoinRoot(p.InstallDir(toolsRoot), p.Executable)
 }
 
 // RecordPath is the installed record's path under a tools root.
 func (p Pin) RecordPath(toolsRoot string) string {
-	return filepath.Join(p.InstallDir(toolsRoot), recordFile)
+	return crwconfig.JoinRoot(p.InstallDir(toolsRoot), recordFile)
+}
+
+// LockPath is the file this pin's installs take an exclusive lock on while they change the install
+// directory. It sits beside the install directory under the tools root, named after the pin, and it
+// is never removed: two callers must lock the same inode, and unlinking it would let a later caller
+// create and lock a different one.
+func (p Pin) LockPath(toolsRoot string) string {
+	return crwconfig.JoinRoot(toolsRoot, "."+p.DirName()+".lock")
 }
 
 // platformName renders a platform pair for a message.
