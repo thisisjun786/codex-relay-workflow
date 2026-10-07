@@ -5,8 +5,8 @@
 // instead of claiming that nothing was written. With no earlier warning the bare refusal is
 // unchanged.
 //
-// Both cases drive the handler through promptSubmitHandleWith with function-argument seams, the way
-// prompt_dclose_published_test.go does, and use only temporary homes.
+// Every case drives the handler through promptSubmitHandleWith with function-argument seams, the way
+// prompt_dclose_published_test.go does, and uses only temporary homes.
 package hook
 
 import (
