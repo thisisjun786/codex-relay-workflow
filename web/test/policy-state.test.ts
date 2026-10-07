@@ -17,8 +17,11 @@ import {
   allowedEffortsLabel,
   catalogNotice,
   checkNotice,
+  changeFromExceptionDraft,
   decodeCheck,
   decodePolicy,
+  draftForException,
+  draftForNewException,
   lostWriteNotice,
   modelOptions,
   modelLadder,
@@ -31,11 +34,19 @@ import {
   removeExceptionLabel,
   roleControlsLabel,
   screenAllowedAddModel,
+  screenAllowedText,
+  screenDraftIsNew,
+  screenEditable,
   screenEffortUnavailable,
+  screenExceptionDraft,
   screenLoaded,
   screenCatalogLoaded,
+  screenReread,
+  screenSaveFinished,
+  screenSaveStarted,
   initialScreen,
   allowedAddChoice,
+  type ExceptionDraft,
   type ModelCatalog,
   type PolicyChange,
   type PolicyReading,
@@ -339,6 +350,75 @@ test("the add-model control follows a catalog that arrives after the policy", ()
   state = screenAllowedAddModel(state, "fresh/model");
   assert.equal(allowedAddChoice(state, free), "fresh/model");
   assert.equal(allowedAddChoice(state, []), "");
+});
+
+// The five defects the second pre-merge evaluation found on the fixed head.
+
+test("a new exception's editor stays open while its id is being typed", () => {
+  // d1: the editor used to be recognised by an empty id, so the first character typed closed it.
+  const draft = draftForNewException("parent", "m", "high");
+  assert.equal(draft.isNew, true);
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenExceptionDraft(state, draft);
+  assert.equal(screenDraftIsNew(state), true);
+  // Typing an id does not close it, and the change becomes proposable.
+  state = screenExceptionDraft(state, { ...draft, id: "fresh" });
+  assert.equal(screenDraftIsNew(state), true);
+  const change = changeFromExceptionDraft(state.exceptionDraft as ExceptionDraft);
+  assert.equal(change?.kind, "setException");
+  assert.equal((change as { id: string }).id, "fresh");
+  // An existing exception's draft is not the new one.
+  const existing = draftForException({ id: "legacy", role: "parent", model: "m", reasoningEffort: "high", cwd: ["/srv/a"] });
+  assert.equal(existing.isNew, false);
+  assert.equal(screenDraftIsNew(screenExceptionDraft(state, existing)), false);
+});
+
+test("the effort names include what the policy's pairs and exceptions declare", () => {
+  // d3: a presence_only policy declares no allowlist, so reading only the allowlist and the catalog
+  // left such a host with no selectable effort and no way to add a pair or an exception.
+  const presenceOnly = reading({ allowed: [], roles: [{ name: "child", expectation: "", pairs: [{ model: "m", reasoningEffort: "none" }] }], exceptions: [{ id: "e", role: "parent", model: "m", reasoningEffort: "max", cwd: ["/srv/a"] }] });
+  const names = policyEfforts(presenceOnly, catalog("unavailable"));
+  assert.deepEqual(names, ["none", "max"]);
+});
+
+test("the recovery block survives a re-read until the host is actually repaired", () => {
+  // d5: the block used to live only in the notice, so an explicit re-read lifted it while the server
+  // was still refusing every write.
+  let state = initialScreen();
+  const broken = reading({ digest: "1".repeat(64), registeredDigest: "2".repeat(64) });
+  state = screenLoaded(state, broken);
+  assert.equal(screenEditable(state), true, "the screen is editable before the failure");
+  const recovery = noticeForWrite(500, { error: "recovery_needed", fileDigest: "1".repeat(64), registeredDigest: "2".repeat(64), recovery: "run the repair" });
+  state = screenSaveFinished(state, null, recovery);
+  assert.equal(screenEditable(state), false, "the block is in force");
+  // An explicit re-read clears the notice but not the block, and a reading that still disagrees does
+  // not lift it either.
+  state = screenReread(state);
+  state = screenLoaded(state, broken);
+  assert.equal(state.notice, null);
+  assert.equal(screenEditable(state), false, "a re-read of the same disagreement keeps the block");
+  // Only a reading whose file digest matches the record lifts it.
+  state = screenLoaded(state, reading({ digest: "3".repeat(64), registeredDigest: "3".repeat(64) }));
+  assert.equal(screenEditable(state), true, "a repaired host is editable again");
+});
+
+test("a successful save keeps an edit the operator started while it was in flight", () => {
+  // d2: the success branch always re-read without keeping the inputs, so the next edit was wiped.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedText(state, "anthropic/opus", "max");
+  const first = state.change;
+  const saving = screenSaveStarted(state);
+  const second = screenAllowedText(saving, "gpt-6.1-sol", "high");
+  const finished = screenSaveFinished(second, first, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
+  // The screen re-reads with keepInputs because something is still pending.
+  const afterSave = screenLoaded(finished, reading({ digest: "b".repeat(64) }), finished.change !== null);
+  assert.equal((afterSave.change as { model: string })?.model, "gpt-6.1-sol", "the later edit survives the re-read");
+  assert.equal(afterSave.allowedText["gpt-6.1-sol"], "high");
+  // And a save with nothing pending starts clean.
+  const clean = screenLoaded(finished, reading({ digest: "b".repeat(64) }), false);
+  assert.equal(clean.change, null);
 });
 
 /* ---- C4/C5: the write answer, and never a success notice on a refusal ---- */

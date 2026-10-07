@@ -212,6 +212,12 @@ export interface PolicyModelOption {
 export interface ExceptionDraft {
   /** The exception being edited, or "" when a new one is being added. */
   id: string;
+  /**
+   * True when this draft is a NEW exception. The editor's open condition is this flag, not the id
+   * being empty: the first character the operator types into the id would otherwise close the editor
+   * and make a new exception impossible to finish.
+   */
+  isNew: boolean;
   role: string;
   model: string;
   effort: string;
@@ -239,6 +245,12 @@ export interface PolicyScreenState {
   /** The change a save in flight is writing, or null when no save is in flight. */
   saving: PolicyChange | null;
   notice: PolicyNotice | null;
+  /**
+   * The repair a person must make before this screen may edit again, or null. It is separate from
+   * the notice so an explicit re-read cannot clear it: the server keeps refusing every write while
+   * the file and the wiring record disagree, so the block must outlive the notice that reported it.
+   */
+  repair: string | null;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -503,7 +515,14 @@ export function policyEfforts(reading: PolicyReading, catalog: ModelCatalog | nu
       names.push(name);
     }
   };
+  // The policy file is the authority, so every effort it declares anywhere is a name this screen
+  // offers: the allowlist, each role's pairs and each exception. A presence_only policy declares no
+  // allowlist at all, and a catalog that could not be read contributes nothing, so reading only the
+  // allowlist and the catalog would leave such a host with no selectable effort and no way to add a
+  // pair or an exception.
   for (const entry of reading.allowed) for (const effort of entry.efforts) add(effort);
+  for (const role of reading.roles) for (const pair of role.pairs) add(pair.reasoningEffort);
+  for (const exception of reading.exceptions) add(exception.reasoningEffort);
   for (const entry of catalog?.entries ?? []) {
     if (Array.isArray(entry.reasoningEfforts)) for (const effort of entry.reasoningEfforts) add(effort);
   }
@@ -743,7 +762,7 @@ export function unreachableNotice(): PolicyNotice {
 
 /** initialScreen is the state before anything has been read. */
 export function initialScreen(): PolicyScreenState {
-  return { reading: null, catalog: null, error: null, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, saving: null, notice: null };
+  return { reading: null, catalog: null, error: null, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, saving: null, notice: null, repair: null };
 }
 
 /**
@@ -753,10 +772,14 @@ export function initialScreen(): PolicyScreenState {
  * successful save) starts from the file.
  */
 export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, keepInputs = false): PolicyScreenState {
+  // A reading that shows the host repaired lifts the block; any other reading leaves it, because the
+  // server still refuses writes while the file and the wiring record disagree.
+  const repair = screenRepairCleared(reading) ? null : state.repair;
   return {
     ...state,
     reading,
     error: null,
+    repair,
     ...(keepInputs ? {} : { change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null }),
   };
 }
@@ -836,6 +859,21 @@ export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | 
   return change;
 }
 
+/** draftForException opens the editor on an existing exception, with its recorded values. */
+export function draftForException(exception: PolicyExceptionView): ExceptionDraft {
+  return { id: exception.id, isNew: false, role: exception.role ?? "", model: exception.model, effort: exception.reasoningEffort, cwdText: exception.cwd.join(", ") };
+}
+
+/** draftForNewException opens the editor on a new exception, on a real role and a real model. */
+export function draftForNewException(role: string, model: string, effort: string): ExceptionDraft {
+  return { id: "", isNew: true, role, model, effort, cwdText: "" };
+}
+
+/** screenDraftIsNew reports whether the open draft is a new exception rather than an edit. */
+export function screenDraftIsNew(state: PolicyScreenState): boolean {
+  return state.exceptionDraft?.isNew === true;
+}
+
 /** screenSaveStarted marks the change a save in flight is writing. */
 export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
   return { ...state, saving: state.change };
@@ -849,14 +887,34 @@ export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
 export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange | null, notice: PolicyNotice): PolicyScreenState {
   const stillPending = saved !== null && state.change === saved;
   let change = state.change;
-  if (notice.blockEditing) change = null;
+  let repair = state.repair;
+  if (notice.blockEditing) {
+    change = null;
+    // The repair a person must make is recorded separately from the notice so a later re-read cannot
+    // silently lift the block: the server keeps refusing every write until it is done.
+    repair = notice.text;
+  }
   else if (notice.tone === "ok" && stillPending) change = null;
-  return { ...state, saving: null, notice, change };
+  return { ...state, saving: null, notice, change, repair };
 }
 
-/** screenReread is the explicit re-read: it drops the pending change and the previous notice. */
+/**
+ * screenReread is the explicit re-read: it drops the pending change and the previous notice. The
+ * repair block is deliberately NOT dropped here - it is cleared only when a fresh read shows a
+ * registered policy whose file digest matches the digest the wiring record names, which is what the
+ * server requires before it will accept a write again.
+ */
 export function screenReread(state: PolicyScreenState): PolicyScreenState {
   return { ...state, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, notice: null };
+}
+
+/**
+ * screenRepairCleared reports whether a fresh reading shows the host repaired: a registered policy
+ * whose file digest is the one the wiring record names. Anything else leaves the block in place.
+ */
+export function screenRepairCleared(reading: PolicyReading): boolean {
+  if (reading.state !== "registered") return false;
+  return reading.digest !== "" && reading.digest === reading.registeredDigest;
 }
 
 /**
@@ -865,7 +923,7 @@ export function screenReread(state: PolicyScreenState): PolicyScreenState {
  */
 export function screenEditable(state: PolicyScreenState): boolean {
   if (state.reading === null || state.reading.state !== "registered") return false;
-  return !(state.notice?.blockEditing ?? false);
+  return state.repair === null;
 }
 
 /** screenSaving is whether a save is in flight; the controls are disabled while it is. */

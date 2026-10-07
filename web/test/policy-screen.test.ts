@@ -288,9 +288,33 @@ test("a new exception can be added, and its role is never silently empty", async
   fire(add, "onClick");
   const call = first.applied.find((c) => c.name === "exceptionDraft");
   assert.ok(call, "adding an exception opens the editor");
-  const draft = call?.args[0] as { role: string };
+  const draft = call?.args[0] as { role: string; isNew: boolean; id: string };
   // The new exception starts on a real role, because an empty one would be covered by no request.
   assert.notEqual(draft.role, "");
+  assert.equal(draft.isNew, true);
+  // Typing an id keeps the editor open: the open condition is the isNew flag, not an empty id.
+  const typing = pure.screenExceptionDraft(state as never, { ...draft, id: "f" } as never) as unknown as Record<string, unknown>;
+  const second = await mount(typing);
+  const idInput = byLabel(second.elements, "new exception id");
+  assert.ok(idInput, "the new-exception editor is still rendered after a character is typed");
+  assert.equal(idInput?.props.value, "f");
+});
+
+test("the exception editor judges an effort against the exception's own model", async () => {
+  const pure = await import("../src/policy-state.ts");
+  // The catalog advertises max for the exception's model and high for another one, so high is not
+  // offered for this model even though the union of every model's efforts contains it.
+  const fresh = catalogBody([{ id: "devin/swe-2", label: "SWE", reasoningEfforts: ["max"] }, { id: "gpt-6.1-sol", label: "Sol", reasoningEfforts: ["high"] }]);
+  const state = loadedState(pure, readingBody(), fresh);
+  const first = await mount(state);
+  fire(byLabel(first.elements, "Edit exception legacy"), "onClick");
+  const call = first.applied.find((c) => c.name === "exceptionDraft");
+  const opened = pure.screenExceptionDraft(state as never, call?.args[0] as never) as unknown as Record<string, unknown>;
+  const second = await mount(opened);
+  const effort = byLabel(second.elements, "legacy exception effort");
+  assert.ok(effort, "the exception's effort select is rendered");
+  // The saved effort is max, which this model does advertise, so it is not marked unavailable.
+  assert.equal(effort?.props.value, "max");
 });
 
 test("a stale check keeps the inputs and asks for a re-read", async () => {

@@ -17,6 +17,8 @@ import {
   decodeCheck,
   decodePolicy,
   editExceptionLabel,
+  draftForException,
+  draftForNewException,
   lostWriteNotice,
   modelOptionLabel,
   modelOptions,
@@ -35,12 +37,14 @@ import {
   screenEditable,
   screenEffortUnavailable,
   screenExceptionDraft,
+  screenDraftIsNew,
   screenLoaded,
   screenLoadFailed,
   screenPropose,
   screenReread,
   screenSaveFinished,
   screenSaveStarted,
+  screenRepairCleared,
   screenSaving,
   initialScreen,
   unreachableNotice,
@@ -95,6 +99,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
   const saving = screenSaving(state);
   const preview = state.reading && state.change ? previewChange(state.reading, state.change) : null;
   const roles = view ? view.roles.filter((role) => role.editable).map((role) => role.name) : [];
+  const draftIsNew = screenDraftIsNew(state);
 
   /** pairsFor is the pair list a role's controls show: the pending change first, then the reading. */
   function pairsFor(name: string, saved: PolicyPair[]): PolicyPair[] {
@@ -291,7 +296,8 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   models={models}
                   efforts={efforts}
                   editable={editable}
-                  draft={state.exceptionDraft?.id === exception.id ? state.exceptionDraft : null}
+                  draft={!draftIsNew && state.exceptionDraft?.id === exception.id ? state.exceptionDraft : null}
+                  effortRefused={(model, effort) => screenEffortUnavailable(state, model, effort)}
                   onDraft={handlers.exceptionDraft}
                   onRemove={() => handlers.removeException(exception.id)}
                   onApply={(draft) => {
@@ -305,7 +311,7 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                   roles={roles}
                   models={models}
                   efforts={efforts}
-                  draft={state.exceptionDraft?.id === "" ? state.exceptionDraft : null}
+                  draft={draftIsNew ? state.exceptionDraft : null}
                   onDraft={handlers.exceptionDraft}
                   onAdd={(draft) => {
                     const change = changeFromExceptionDraft(draft);
@@ -383,6 +389,7 @@ function ExceptionRow({
   efforts,
   editable,
   draft,
+  effortRefused,
   onDraft,
   onRemove,
   onApply,
@@ -393,6 +400,7 @@ function ExceptionRow({
   efforts: string[];
   editable: boolean;
   draft: ExceptionDraft | null;
+  effortRefused: (model: string, effort: string) => boolean;
   onDraft: (draft: ExceptionDraft | null) => void;
   onRemove: () => void;
   onApply: (draft: ExceptionDraft) => void;
@@ -415,7 +423,7 @@ function ExceptionRow({
           <span className="row-sub">{exception.role || "no role (covers no request)"} · {exception.model} · {exception.reasoningEffort} · {exceptionScope(exception)}</span>
         </div>
         <div className="row-actions">
-          <button className="btn" aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft({ id: exception.id, role: exception.role ?? "", model: exception.model, effort: exception.reasoningEffort, cwdText: exception.cwd.join(", ") })}>Edit</button>
+          <button className="btn" aria-label={editExceptionLabel(exception.id)} onClick={() => onDraft(draftForException(exception))}>Edit</button>
           <button className="btn danger" aria-label={removeExceptionLabel(exception.id)} onClick={onRemove}>Remove</button>
         </div>
       </section>
@@ -439,10 +447,19 @@ function ExceptionRow({
             ))}
           </select>
           <select className="select" style={{ maxWidth: "180px" }} aria-label={`${exception.id} exception effort`} value={draft.effort} onChange={(e) => onDraft({ ...draft, effort: e.target.value })}>
-            {efforts.includes(draft.effort) ? null : <option value={draft.effort}>{draft.effort} (saved, unavailable)</option>}
-            {efforts.map((effort) => (
-              <option key={effort} value={effort}>{effort}</option>
-            ))}
+            {!efforts.includes(draft.effort) || effortRefused(draft.model, draft.effort) ? (
+              <option value={draft.effort}>{draft.effort} (saved, unavailable)</option>
+            ) : null}
+            {efforts.map((effort) => {
+              // The same per-model judgement the role pair select makes: an effort only another model
+              // advertises is not offered for this one.
+              const refused = effortRefused(draft.model, effort);
+              return (
+                <option key={effort} value={effort} disabled={refused}>
+                  {refused ? `${effort} (not advertised by this model)` : effort}
+                </option>
+              );
+            })}
           </select>
           <input className="input" style={{ maxWidth: "220px" }} aria-label={`${exception.id} exception cwd`} value={draft.cwdText} onChange={(e) => onDraft({ ...draft, cwdText: e.target.value })} />
         </div>
@@ -479,7 +496,7 @@ function ExceptionAdder({
           <button
             className="btn"
             disabled={models.length === 0 || efforts.length === 0}
-            onClick={() => onDraft({ id: "", role: roles[0] ?? "", model: models[0]?.id ?? "", effort: efforts[0] ?? "", cwdText: "" })}
+            onClick={() => onDraft(draftForNewException(roles[0] ?? "", models[0]?.id ?? "", efforts[0] ?? ""))}
           >
             Add exception
           </button>
@@ -530,6 +547,26 @@ function ExceptionAdder({
 export function PolicyPage() {
   const [state, setState] = useState<PolicyScreenState>(initialScreen);
   const [reload, setReload] = useState(0);
+  /**
+   * The latest pending change, for the save sequence. A save resolves after several awaits, and the
+   * question it must answer then - did the operator start another edit while this one was in flight?
+   * - is about the state as it is at that moment, not the one the save captured. Every path that sets
+   * the change goes through this ref as well, so it is current without waiting for a render.
+   */
+  const changeRef = useRef<PolicyChange | null>(null);
+  /** propose sets the pending change in both the ref and the state. */
+  function propose(change: PolicyChange | null) {
+    changeRef.current = change;
+    setState((previous) => screenPropose(previous, change));
+  }
+  /** allowedText records the raw text and derives the pending change from it. */
+  function allowedText(model: string, text: string) {
+    setState((previous) => {
+      const next = screenAllowedText(previous, model, text);
+      changeRef.current = next.change;
+      return next;
+    });
+  }
   // keepInputs is read when the read resolves, so it is a ref rather than a dependency: it describes
   // the read that is in flight, not a reason to start another one.
   const keepInputs = useRef(false);
@@ -621,8 +658,10 @@ export function PolicyPage() {
     setState((previous) => screenSaveFinished(previous, change, notice));
     if (notice.tone === "ok") {
       // The file moved, so the reading is stale by definition. Re-read before showing the new state.
+      // The operator may have started the next edit while this save was in flight; that edit is not
+      // this save's to discard, so the re-read keeps whatever is still pending.
       toast("Execution policy saved", "ok");
-      readAgain(false);
+      readAgain(changeRef.current !== null);
       return;
     }
     if (notice.reread) readAgain(true);
@@ -632,13 +671,13 @@ export function PolicyPage() {
     <PolicyScreen
       state={state}
       handlers={{
-        propose: (change) => setState((previous) => screenPropose(previous, change)),
-        allowedText: (model, text) => setState((previous) => screenAllowedText(previous, model, text)),
+        propose,
+        allowedText,
         allowedAddModel: (model) => setState((previous) => screenAllowedAddModel(previous, model)),
         exceptionDraft: (draft) => setState((previous) => screenExceptionDraft(previous, draft)),
-        removeException: (id) => setState((previous) => screenPropose(previous, { kind: "removeException", id })),
+        removeException: (id) => propose({ kind: "removeException", id }),
         save: () => void save(),
-        reread: () => { setState(screenReread); readAgain(false); },
+        reread: () => { changeRef.current = null; setState(screenReread); readAgain(false); },
       }}
       help={{ open: helpOpen, topic: helpTopic, openHelp, closeHelp }}
     />
