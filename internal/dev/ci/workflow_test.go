@@ -276,7 +276,12 @@ const skillScriptsNodeFile = "ci.yml"
 // every one of them has to reset the one Node-run exception. A header this reader missed would
 // leave the exception switched on, and the job below it could run a skill script under a name that
 // is not skill-scripts-node (CRW-939, the generation-1 pre-merge evaluation).
-var jobKeyLine = regexp.MustCompile(`^  (?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_.-]+)):(?:[ \t].*)?$`)
+// The tail is deliberately unconstrained: a job key's value is whatever follows the colon, and
+// `key:`, `key: # comment`, `key: value`, `key:#value` and `key :` all open the same job. Two
+// spaces is a job's own indentation, so a step's key (eight) and a job's `runs-on:` (four) are not
+// read as one. Over-resetting is the safe direction here: it can only refuse more, and no line at
+// this indentation occurs inside the admitted job, which its own test holds.
+var jobKeyLine = regexp.MustCompile(`^  (?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_.-]+))[ \t]*:.*$`)
 
 // alternation is words as a regular expression alternative, each taken literally.
 func alternation(words []string) string {
@@ -423,10 +428,20 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 		"  \"quoted-job\":\n",                 // a double-quoted key
 		"  extra-job: # a trailing comment\n", // a comment after the colon
 		"  extra-job:  # two spaces\n",
-		"  ExtraJob:\n",     // an upper-case key
-		"  extra-job:\r\n",  // a CRLF line ending
-		"  extra-job: \n",   // a trailing blank
-		"  'quoted job':\n", // a quoted key with a space
+		"  ExtraJob:\n",                    // an upper-case key
+		"  extra-job:\r\n",                 // a CRLF line ending
+		"  extra-job: \n",                  // a trailing blank
+		"  'quoted job':\n",                // a quoted key with a space
+		"  extra-job :\n",                  // a blank before the colon
+		"  extra-job:#no space after it\n", // no space after the colon
+		"  extra-job: value\n",             // an inline value
+		"  extra-job: {a: 1}\n",            // a flow mapping value
+		"  extra-job: |\n",                 // a block scalar
+		"  extra-job: &anchor\n",           // an anchored value
+		"  \"quo#ted\":\n",                 // a '#' inside a quoted key
+		"  job1:\n",                        // digits only
+		"  JOB-2:\n",                       // upper case with a hyphen
+		"  j.o_b-3:\n",                     // every allowed character at once
 	} {
 		body := head + header + "    runs-on: ubuntu-24.04\n    steps:\n" + run
 		if got := pythonInWorkflow("ci.yml", body); len(got) == 0 {
@@ -448,10 +463,12 @@ func TestWorkflow_every_yaml_job_key_resets_the_skill_scripts_exception(t *testi
 	}
 }
 
-// The detector's job-key reader is the shape YAML uses at a job's indentation, and it agrees with
-// workflowJobs on every header the real ci.yml holds, so the two readers cannot drift apart.
-func TestWorkflow_the_job_key_reader_matches_workflowJobs(t *testing.T) {
-	jobs, order := workflowJobs(t)
+// The job-key reader finds exactly the jobs the real ci.yml declares, in order and nothing else: the
+// whole file, not a fragment, so a shape the reader over- or under-reads shows up as a missing or an
+// extra job. The expected list is written out here, so this is evidence about the reader and not a
+// second reading of the same function.
+func TestWorkflow_the_job_key_reader_finds_exactly_the_real_jobs(t *testing.T) {
+	want := []string{"validate", "secrets", "skill-scripts-node", "gui", "go-product", "dev-gate"}
 	data, err := os.ReadFile(filepath.Join(repoRoot(), ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -470,16 +487,8 @@ func TestWorkflow_the_job_key_reader_matches_workflowJobs(t *testing.T) {
 			seen = append(seen, name)
 		}
 	}
-	if len(seen) != len(order) {
-		t.Fatalf("the job-key reader found %d headers %v, workflowJobs found %d %v", len(seen), seen, len(order), order)
-	}
-	for i := range seen {
-		if seen[i] != order[i] {
-			t.Fatalf("header %d is %q, workflowJobs says %q", i, seen[i], order[i])
-		}
-		if _, ok := jobs[seen[i]]; !ok {
-			t.Fatalf("header %q names no job body", seen[i])
-		}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("the job-key reader found %v, want the real jobs %v", seen, want)
 	}
 }
 
