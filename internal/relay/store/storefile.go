@@ -5,6 +5,8 @@ import (
 	"sync"
 	"syscall"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -133,6 +135,12 @@ func holdStoreFile(path string) (*os.File, error) {
 		// collector's close of it would drop this process's POSIX locks on the file. The
 		// descriptor just opened is kept reachable for the same reason.
 		heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, file)
+		// A handle this path used to answer with is displaced here. It stays reachable through
+		// byKey today (every value byPath holds is one byKey holds), and it is put on the
+		// never-closed list as well so the rule holds even if that ever stops being true.
+		if displaced, ok := heldStoreFiles.byPath[path]; ok && displaced != held {
+			heldStoreFiles.neverClosed = append(heldStoreFiles.neverClosed, displaced)
+		}
 		heldStoreFiles.byPath[path] = held
 		return held, nil
 	}
@@ -157,7 +165,7 @@ func storeFileRefusal(path string, info os.FileInfo) error {
 // the open file description, so a descriptor this process keeps must not leave it set: a read
 // through it, or through any descriptor that shares the description, would see EAGAIN.
 func clearStoreFileNonblock(fd int) {
-	_ = syscall.SetNonblock(fd, false)
+	_ = unix.SetNonblock(fd, false)
 }
 
 // recordStoreFilePath records a resolved database path this process opened through store.open,
@@ -172,7 +180,9 @@ func recordStoreFilePath(resolved string) {
 // holdsStoreFileIdentity reports whether (device, inode) is a store file this process holds or
 // opened: an inode the registry holds, or a recorded database path or one of its sidecars as the
 // kernel resolves it now. It stats and never opens, and it is asked about the identity of an
-// already-open descriptor, so a pathname race cannot move the answer (CRW-880).
+// already-open descriptor, so a pathname race cannot move the answer (CRW-880). The registry
+// mutex is held for the stats and the maps only; the caller hashes outside it, and the two
+// functions never nest, so nothing here waits on a read.
 func holdsStoreFileIdentity(device, inode uint64) bool {
 	heldStoreFiles.Lock()
 	defer heldStoreFiles.Unlock()
