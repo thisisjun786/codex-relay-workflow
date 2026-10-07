@@ -514,7 +514,9 @@ type auditBundleID struct {
 // is left to resolve. The same resolution decides which jobs of one grade may run and which
 // ledger rows are one bundle, so a batch and the drafts surface agree on identity.
 func auditBundleIDOf(bundle string) auditBundleID {
-	cleaned := filepath.Clean(bundle)
+	// The resolved path is the identity, so a row a grade wrote and a row an older run wrote are
+	// compared as the directories they name rather than as the spellings they carry.
+	cleaned := auditBundleResolvedPath(bundle)
 	info, err := os.Stat(cleaned)
 	if err != nil {
 		info = nil
@@ -797,7 +799,7 @@ func auditDraftsRun(e *Env, cfg *Config, scope auditDraftScope) (auditDraftRepor
 		// run nothing names, so no row is drafted from it: the file may belong to a run that
 		// timed out, failed or was killed, and attributing it to this older row would report
 		// defects the row never found.
-		if auditPending(row.Bundle) {
+		if auditPending(e, cfg, row.Bundle) {
 			report.Skipped = append(report.Skipped, auditDraftSkip{Mode: row.Mode, Subject: row.Subject, Head: row.Head,
 				Reason: "the bundle carries an unrecorded grade, so its " + auditGradeFile + " is not this row's"})
 			continue

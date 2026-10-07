@@ -858,15 +858,25 @@ func auditPRRunWith(ctx context.Context, e *Env, cfg *Config, max int, dryRun bo
 				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 				return 1
 			}
+			// The marker is taken before the bundle is emptied and held until the grade records its
+			// row, so this rebuild cannot delete the files of a grade that is running and the grade
+			// cannot be drafted while its row is missing.
+			bundleDir := filepath.Join(auditPRBundleRoot(e, cfg, section), auditPRSubject(target.Number))
+			mark, markPath, made, err := auditPendingHold(e, cfg, bundleDir)
+			if err != nil {
+				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
+				return 1
+			}
 			dir, err := auditPRBuild(ctx, e, cfg, section, co, auditPRSource{
 				Target: target, Patch: patch, Criteria: criteria, CriteriaUnavailable: unavailable,
 				RelationshipUnavailable: target.Child.Relationship == "", Relationship: target.Child.Relationship,
 			})
 			if err != nil {
+				auditPendingDiscard(mark, markPath, made)
 				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 				return 1
 			}
-			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase}})
+			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Pair: target.Pair, Phase: target.Phase, held: mark}})
 			if err != nil {
 				fmt.Fprintf(e.Stderr, "crw manage audit pr: error: %v\n", err)
 				return 1

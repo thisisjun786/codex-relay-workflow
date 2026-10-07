@@ -61,6 +61,11 @@ type AuditJob struct {
 	Pair   string
 	Phase  string
 	Round  string
+
+	// held is the in-flight marker the caller already locked for this bundle, when the caller
+	// built the bundle itself and must keep it from being emptied between the build and the
+	// grade. It is unexported: a caller outside this package never holds one.
+	held *os.File
 }
 
 // AuditCriterion is one acceptance criterion's outcome in a graded result, in the shape

@@ -354,18 +354,6 @@ func auditPkgResetDir(root, dir string) error {
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return fmt.Errorf("bundle %s is outside %s", dir, root)
 	}
-	// A grade holds the bundle's marker for its whole run, and the builder would delete the
-	// grade.json and the inputs that run is working with. The marker is what tells the two
-	// apart, so a bundle whose marker is held is refused here rather than emptied under the
-	// grader. A marker a run left behind after failing to record is not held, so a rebuild
-	// replaces that bundle as usual.
-	held, err := auditPendingHeld(filepath.Join(dir, auditPendingFile))
-	if err != nil {
-		return err
-	}
-	if held {
-		return fmt.Errorf("bundle_locked: %s is being graded", dir)
-	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
@@ -741,12 +729,22 @@ func auditPkgRunOne(ctx context.Context, e *Env, round string, next int, headArg
 			return 1
 		}
 		for _, pkg := range pending {
-			dir, err := auditPkgBuild(ctx, e, cfg, section, co, pkg, head)
+			// The marker is taken before the bundle is emptied and held until the grade records its
+			// row, so this rebuild cannot delete the files of a grade that is running and the grade
+			// cannot be drafted while its row is missing.
+			bundleDir := filepath.Join(auditPkgBundleRoot(e, cfg, section), auditPkgBundleName(pkg, head))
+			mark, markPath, made, err := auditPendingHold(e, cfg, bundleDir)
 			if err != nil {
 				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
 				return 1
 			}
-			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Round: round}})
+			dir, err := auditPkgBuild(ctx, e, cfg, section, co, pkg, head)
+			if err != nil {
+				auditPendingDiscard(mark, markPath, made)
+				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
+				return 1
+			}
+			results, err := AuditGrade(ctx, e, cfg, []AuditJob{{Bundle: dir, Round: round, held: mark}})
 			if err != nil {
 				fmt.Fprintf(e.Stderr, "crw manage audit package: error: %v\n", err)
 				return 1
