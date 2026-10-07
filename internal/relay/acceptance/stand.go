@@ -55,7 +55,11 @@ func tableExists(ctx context.Context, q store.Querier, name string) (bool, error
 }
 
 // Stands are the base refreshes recorded for an acceptance that digest to their ids, newest first. A
-// store that predates the table has none; a row that does not digest to its id is ignored.
+// store that predates the table has none; a row that does not digest to its id is ignored. A row of
+// the acceptance's own generation is the lane refresh (CRW-916): the parent refreshed the branch
+// inside its own merge turn after the acceptance, so the relationship never left the generation the
+// acceptance was recorded on. A store written before that case existed holds no such row, because
+// the writer refused the same generation.
 func Stands(ctx context.Context, q store.Querier, acceptanceID, relationshipID string, generation int64) ([]Stand, error) {
 	present, err := tableExists(ctx, q, "dag_base_refreshes")
 	if err != nil || !present {
@@ -74,7 +78,7 @@ func Stands(ctx context.Context, q store.Querier, acceptanceID, relationshipID s
 		if err := rows.Scan(&id, &rid, &rowGeneration, &event, &revision, &head, &baseRepo, &baseRef, &baseTip, &proof, &resolved); err != nil {
 			return nil, err
 		}
-		if rid == relationshipID && rowGeneration > generation && id == RefreshDigest(acceptanceID, rid, rowGeneration, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved) {
+		if rid == relationshipID && rowGeneration >= generation && id == RefreshDigest(acceptanceID, rid, rowGeneration, event, revision, head, baseRepo, baseRef, baseTip, proof, resolved) {
 			out = append(out, Stand{RelationshipID: rid, Generation: rowGeneration, EventID: event, RevisionHash: revision, Head: head, RefreshID: id})
 		}
 	}
