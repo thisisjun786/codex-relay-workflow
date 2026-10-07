@@ -27,6 +27,11 @@ func auditListReview822State(t *testing.T) string {
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	t.Setenv("CRW_HOME", filepath.Join(home, "crw"))
 	t.Setenv("XDG_STATE_HOME", state)
+	// The configuration path too: a test that drives a real command must not read a
+	// configuration file outside the temporary tree, whose state_dir would then win over
+	// the temporary one and let the command write to the operator's real state.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("CRW_CONFIG", "")
 	return filepath.Join(state, "crw", "manage")
 }
 
@@ -247,6 +252,62 @@ func TestAuditListReview822PackageValueHelpIsNotHelp(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), auditPkgUsage) {
 			t.Errorf("package %q printed %q, want the usage", args, out.String())
+		}
+	}
+}
+
+// C5: a -h a subcommand reads as a value is not a help request anywhere in the audit family,
+// so the configuration refusal applies to every audit subcommand, including the ones that
+// write state. The audit dispatcher reads help by the family's own rule and refuses an
+// unusable file itself, so a token in a value slot no longer lets Run's -h/--help scan skip
+// the refusal.
+func TestAuditListReview822ValueHelpIsRefusedForEveryAuditSubcommand(t *testing.T) {
+	coreTempHome(t)
+	state := auditListReview822State(t)
+	coreConfigAt(t, coreConfigDocument(t, "not an object"))
+
+	_, _, runErr := coreRunManage(t, "audit", "round", "status", "--name", "r1")
+	if !strings.Contains(runErr, "crw manage: error:") {
+		t.Fatalf("Run did not refuse a broken file: %q", runErr)
+	}
+
+	for _, args := range [][]string{
+		{"audit", "round", "start", "--name", "-h", "--package", "internal/manage"},
+		{"audit", "drafts", "--round", "-h"},
+		{"audit", "list", "--round", "-h"},
+		{"audit", "list", "--issue", "-h"},
+		{"audit", "package", "--round", "-h"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != usageExit {
+			t.Errorf("%q: exit %d, want %d: %s", args, code, usageExit, errOut)
+		}
+		if out != "" {
+			t.Errorf("%q: printed %q, want no output", args, out)
+		}
+		if errOut != runErr {
+			t.Errorf("%q: said %q, want Run's message %q", args, errOut, runErr)
+		}
+	}
+
+	// The refusal came before any write: no round file and no lock reached the state tree.
+	if _, err := os.Stat(filepath.Join(state, "audit")); !os.IsNotExist(err) {
+		t.Errorf("the refused commands wrote state: %v", err)
+	}
+
+	// A real help request still works under the same broken file.
+	for _, args := range [][]string{
+		{"audit", "round", "--help"},
+		{"audit", "drafts", "help"},
+		{"audit", "list", "help"},
+		{"audit", "help"},
+	} {
+		code, out, errOut := coreRunManage(t, args...)
+		if code != 0 {
+			t.Errorf("%q: exit %d, want 0: %s", args, code, errOut)
+		}
+		if !strings.Contains(out, "usage:") {
+			t.Errorf("%q: the usage is missing from %q", args, out)
 		}
 	}
 }

@@ -437,6 +437,19 @@ func auditRun(ctx context.Context, e *Env, args []string) int {
 		fmt.Fprintln(e.Stderr, auditUsage)
 		return usageExit
 	}
+	// The audit family reads a help request more widely than the shared entry point does (a
+	// bare "help" as the command's or its subcommand's own first argument), and Run skips its
+	// configuration refusal for any -h or --help it sees, including one an option consumes as
+	// a value. A command line the audit family reads as real work — "audit list --round -h",
+	// where the round is named -h — would otherwise run on the defaults of a file this product
+	// cannot use. The refusal is made here, once for every audit subcommand, in Run's words and
+	// with Run's status, so no audit command silently continues with the defaults.
+	if !auditHelpRequested(args) {
+		if err := coreConfigError(e); err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
+			return usageExit
+		}
+	}
 	switch args[0] {
 	case "-h", "--help", "help":
 		fmt.Fprintln(e.Stdout, auditUsage)

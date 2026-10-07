@@ -339,9 +339,9 @@ func auditListRun(ctx context.Context, e *Env, args []string) int {
 		return 0
 	}
 	// This parse decides for itself which tokens are values, so a -h it consumed as a value
-	// is not a help request even though Run saw one and skipped its own refusal. The
-	// configuration file is refused here, in Run's words and with Run's status, so a file
-	// this product cannot use never lets the listing run on the defaults.
+	// is not a help request even though Run saw one and skipped its own refusal. The audit
+	// dispatcher already refuses an unusable file for the whole family; the reader refuses it
+	// again so a direct caller that never passed through the dispatcher is safe too.
 	if err := coreConfigError(e); err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage: error: %v\n", err)
 		return usageExit
