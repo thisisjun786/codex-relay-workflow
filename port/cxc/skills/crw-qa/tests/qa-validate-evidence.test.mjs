@@ -7,8 +7,13 @@
 // The oracle is CXC v0.2.40 plugins/codexclaw/test/qa-validate-evidence.test.mjs, applied through
 // contract/schema/cxc/name-substitution.json (.codexclaw -> .crw). The oracle's three TypeScript
 // imports (pabcd-state/src/goalplan.ts, source-identity.ts, source-receipt.ts) have no Node
-// counterpart here: those modules became Go, so the tests whose subject is the receipt *parser*
-// or the goalplan live in Go (internal/pabcd/gate/receipt_test.go) and are not duplicated here.
+// counterpart here: those modules became Go. The three cases whose subject is the receipt *parser*
+// or the goalplan binding are therefore not duplicated in JavaScript; the Go side is
+// internal/pabcd/gate/receipt_test.go and internal/pabcd/goalplan/finalgate_test.go. The Go tests
+// build their receipts in Go, so they do not read the bytes this script writes: the one case that
+// needed both sides (the script's own receipt read back through the parser) is kept here in the
+// part a Node test can check -- that the emitted manifest binds the bytes on disk -- and the PR
+// body states the split. Neither side runs the other.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
@@ -159,6 +164,38 @@ test("desktop verdict requires identity and unique criterion IDs", () => {
   verdict.artifactRefs = ["Demo.zip"];
   writeFileSync(join(dir, "verdict.json"), JSON.stringify(verdict));
   assert.match(validateEvidence(qaDir(root)).errors.join(" "), /exactly one artifact-identity/);
+});
+
+// The oracle's "manifest detects changed verdict, identity and receipt-only criterion edits" case read the
+// script's own receipt back through the TypeScript `parseSourceBoundReceipt`. That parser is Go here, and a Go
+// test cannot read Node-written bytes without putting Node on the `make test` path, so the same three failures
+// are checked here against the bytes the script wrote -- what the parser re-checks, read the same way. The Go
+// parser's own tests (internal/pabcd/gate/receipt_test.go) cover its rules over receipts built in Go; neither
+// side runs the other, and the PR body says so.
+test("the emitted receipt binds the bytes on disk, and an edit shows up", () => {
+  const root = workspace();
+  const { dir } = desktopFixture(root);
+  const result = validateEvidence(qaDir(root), { emitReceipt: true });
+  assert.equal(result.ok, true, result.errors.join("; "));
+  const written = receipt(result.receiptPath);
+  const receiptDir = dirname(result.receiptPath);
+  // Every entry names a relative path, a lowercase SHA-256 of the bytes there, and a kind matching the basename.
+  for (const entry of written.artifactManifest) {
+    assert.equal(resolve(receiptDir, entry.path), resolve(receiptDir, entry.path));
+    assert.ok(!entry.path.startsWith("/"), `${entry.path}: a manifest path is relative`);
+    assert.equal(entry.kind, entry.path.replace(/.*\//, "").replace(/\.json$/, ""), `${entry.path}: kind names the basename`);
+    assert.match(entry.sha256, /^[0-9a-f]{64}$/, `${entry.path}: a lowercase SHA-256 digest`);
+    assert.equal(hash(readFileSync(resolve(receiptDir, entry.path))), entry.sha256, `${entry.path}: digest binds the bytes`);
+  }
+  // A byte appended to the verdict leaves the recorded digest stale: this is what the parser refuses on.
+  const verdictEntry = written.artifactManifest.find((entry) => entry.kind === "verdict");
+  const verdictPath = resolve(receiptDir, verdictEntry.path);
+  writeFileSync(verdictPath, readFileSync(verdictPath, "utf8") + " ");
+  assert.notEqual(hash(readFileSync(verdictPath)), verdictEntry.sha256, "an edited verdict no longer matches its digest");
+  // The verdict entry carries the criterion IDs the verdict itself declares, so a receipt-side edit breaks the binding.
+  assert.deepEqual(verdictEntry.criterionIds, JSON.parse(readFileSync(verdictPath, "utf8")).criterionIds);
+  const edited = { ...written, artifactManifest: written.artifactManifest.map((entry) => (entry.kind === "artifact-identity" ? { ...entry, criterionIds: ["c-4"] } : entry)) };
+  assert.notDeepEqual(edited.artifactManifest.find((entry) => entry.kind === "artifact-identity").criterionIds, written.artifactManifest.find((entry) => entry.kind === "artifact-identity").criterionIds);
 });
 
 test("identity schema and component bytes fail before receipt creation", () => {

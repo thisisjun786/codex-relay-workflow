@@ -264,7 +264,7 @@ var (
 	// a single- or double-quoted key, blanks before the colon (`SKILLS_ROOT : port/cxc/skills`), a key
 	// inside a flow mapping (`env: {SKILLS_ROOT: port/cxc/skills}`), and the body line of a block
 	// scalar (`SKILLS_ROOT: |` with the root alone on the next line), which is no assignment at all.
-	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^\s*(?:` + alternation(skillAssetRoots) + `)/?[ \t]*(?:#.*)?$`)
+	skillRootValue = regexp.MustCompile(`(?:^|[{,])\s*(?:[A-Za-z_][A-Za-z0-9_-]*|"[^"]*"|'[^']*')[ \t]*:\s*["']?(?:` + alternation(skillAssetRoots) + `)/?["']?(?:[,\s}]|$)|^[ \t]*(?:[A-Za-z_][A-Za-z0-9_-]*=)?(?:` + alternation(skillAssetRoots) + `)/?[ \t]*(?:#.*)?$`)
 )
 
 // skillScriptsNodeJob is the one job whose subject is the staged skills' Node tests (the
@@ -589,6 +589,35 @@ func TestWorkflow_a_copied_skill_scripts_node_job_in_another_workflow_is_a_findi
 	}
 }
 
+// The same escape in the shape a workflow really writes it: a skills root split from its key by a
+// block scalar, and a root moved into a shell variable. Neither line is an assignment, so the
+// detector has to read the value line itself (CRW-939, the fourth generation-2 evaluation of d1).
+func TestWorkflow_a_skills_root_split_across_lines_is_still_a_finding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"block scalar":   "name: extra\n\njobs:\n  other:\n    env:\n      SKILLS_ROOT: >-\n        port/cxc/skills\n    steps:\n      - run: node --test \"$SKILLS_ROOT\"/crw-qa/tests/a.test.mjs\n",
+		"shell variable": "name: extra\n\njobs:\n  other:\n    steps:\n      - run: |\n          root=port/cxc/skills\n          node --test \"$root\"/crw-qa/tests/a.test.mjs\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
+			t.Errorf("%s: extra.yml names a skills root and runs a staged skill test through it, and is not refused", name)
+		}
+	}
+	// The control: the real ci.yml, where the same value is the one admitted job's own root.
+	data, err := os.ReadFile(filepath.Join(repoRoot(), ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found := pythonInWorkflow("ci.yml", string(data)); len(found) != 0 {
+		t.Errorf("the real ci.yml is refused: %v", found)
+	}
+}
+
 // The detector refuses what installs or runs Python in a workflow, and a step that names a skill
 // asset script, and lets comments, other words that contain pip or python, and ordinary skill
 // paths through.
@@ -638,7 +667,11 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"          port/cxc/skills", true},                                                    // the body line of a YAML block scalar is the same value
 		{"          port/cxc/skills/", true},                                                   // with a trailing slash
 		{"          port/cxc/skills # the staged skills", true},                                // and with a trailing comment
-		{"          port/cxc/skillset", false},                                                 // a longer name is no root
+		{"          port/cxc/skills", true},                                                    // a folded block scalar resolves to the same root
+		{"          root=port/cxc/skills", true},                                               // a shell assignment names the same root
+		{"          root=port/cxc/skills/", true},                                              // with a trailing slash
+		{"          root=port/cxc/skills # the staged skills", true},                           // and with a trailing comment
+		{"          root=port/cxc/skillset", false},                                            // a longer name is no root
 		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {

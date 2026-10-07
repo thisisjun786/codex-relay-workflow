@@ -94,7 +94,7 @@
       "file": "tests/qa-validate-evidence.test.mjs",
       "reason": "CRW-939: port the skill's own Node test from CXC v0.2.40 plugins/codexclaw/test/ into the staged skill's tests/, with the name substitution applied and the paths adapted to the staged skill; the test travels with the script it protects.",
       "add": true,
-      "sha256": "05467e66e377a1f8bc4b6c2d42dd2a095f7160a9c32e746a48eb4740bc958f37"
+      "sha256": "3302c75ce1917207774a4efd9e160cb161a07a42c9488bd926b2cd75ae59cd02"
     }
   ]
 }
