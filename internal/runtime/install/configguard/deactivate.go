@@ -1,6 +1,7 @@
 package configguard
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
@@ -108,6 +109,9 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 	if path == "" {
 		path = m.ConfigPath
 	}
+	// lockedPath is the spelling the first reading chose; the re-read below must still name the same
+	// file for the held lock to be the lock over the manifest's own config file.
+	lockedPath := path
 	// One critical section for the whole command's writes to config.toml under the sidecar lock
 	// every CRW writer of config.toml takes (CRW-866), the shape of activate.go's
 	// activationSetKeyLocked: the drift check, the read, the restore, and the injected CLI calls
@@ -134,6 +138,13 @@ func Deactivate(deps DeactivateDeps) (*DeactivateResult, error) {
 		}
 		if m = parseInstallManifest(*fresh); m == nil {
 			return noManifest()
+		}
+		// The lock is held on the file the first reading named. A manifest that now names a different
+		// config file would have this deactivation apply one file's ownership records to another, so
+		// it refuses rather than acting under the wrong lock (fail closed). An explicit ConfigPath
+		// overrides the manifest in both readings, so only the derived path can disagree.
+		if deps.ConfigPath == "" && m.ConfigPath != lockedPath {
+			return nil, fmt.Errorf("the install manifest now names a different config file (%s, was %s); run the deactivation again", m.ConfigPath, lockedPath)
 		}
 	}
 	// The opt-out is recorded only once this deactivation is going to do its work: a busy lock

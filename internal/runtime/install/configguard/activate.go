@@ -165,10 +165,6 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	if e := os.MkdirAll(deps.CodexHome, 0777); e != nil {
 		return nil, e
 	}
-	state, e := ReadDeclaredState(deps.Run)
-	if e != nil {
-		return nil, e
-	}
 	// One critical section for the whole activation, under the sidecar lock every CRW writer of
 	// config.toml takes (CRW-877): the pre-install read, the backup, the injected "codex features
 	// enable" calls that rewrite config.toml themselves, the managed-key read-modify-writes and the
@@ -188,6 +184,16 @@ func Activate(deps ActivateDeps) (*InstallManifest, error) {
 	}
 	defer lock.Release()
 	target := lock.Target
+	// The declared-state probe reads the same config.toml through the injected CLI, and its answer
+	// decides both which flags are enabled below and every flag's priorEnabled, so it runs inside the
+	// critical section too. A probe taken before the wait would let an activation that holds the lock
+	// enable a flag and publish its manifest, after which this activation would enable the flag again,
+	// record it as previously disabled and claim it as its own, and a later deactivation would turn
+	// off a flag the other activation enabled.
+	state, e := ReadDeclaredState(deps.Run)
+	if e != nil {
+		return nil, e
+	}
 	pre, exists, e := activationReadFile(target)
 	if e != nil {
 		return nil, e
