@@ -25,6 +25,8 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 	stop := make(chan struct{})
 	var forkers sync.WaitGroup
 	var forks int64
+	// writesOpen counts writeFile calls in progress; forksInWrite counts forks that complete while one is.
+	var writesOpen, forksInWrite int64
 	for i := 0; i < 2; i++ {
 		forkers.Add(1)
 		go func() {
@@ -37,6 +39,9 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 				}
 				if exec.Command("true").Run() == nil {
 					atomic.AddInt64(&forks, 1)
+					if atomic.LoadInt64(&writesOpen) > 0 {
+						atomic.AddInt64(&forksInWrite, 1)
+					}
 				}
 			}
 		}()
@@ -51,7 +56,6 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 		forkers.Wait()
 		t.Fatal("no fork started before the writes")
 	}
-	forksBeforeWrites := atomic.LoadInt64(&forks)
 
 	const writers, copies = 4, 40
 	var (
@@ -65,7 +69,10 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 			defer wg.Done()
 			for n := 0; n < copies; n++ {
 				path := filepath.Join(dir, fmt.Sprintf("w%d-%d", w, n))
-				if err := writeFile(path, []byte("#!/bin/sh\nexit 0\n")); err != nil {
+				atomic.AddInt64(&writesOpen, 1)
+				err := writeFile(path, []byte("#!/bin/sh\nexit 0\n"))
+				atomic.AddInt64(&writesOpen, -1)
+				if err != nil {
 					mu.Lock()
 					fail = append(fail, err.Error())
 					mu.Unlock()
@@ -86,7 +93,7 @@ func TestWriteFile_executes_under_concurrent_forks(t *testing.T) {
 		}(w)
 	}
 	wg.Wait()
-	overlap := atomic.LoadInt64(&forks) - forksBeforeWrites
+	overlap := atomic.LoadInt64(&forksInWrite)
 	close(stop)
 	forkers.Wait()
 	if overlap == 0 {
