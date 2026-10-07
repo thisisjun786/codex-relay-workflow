@@ -31,11 +31,23 @@ func (s *Store) MergeTurnsForTarget(ctx context.Context, targetKey string) ([]Me
 		"  ORDER BY requested_at, turn_id", targetKey)
 }
 
-// LiveMergeClaim is mergeturn.py:867: the holder's own live claim on a target (the replay).
+// LiveMergeClaim is mergeturn.py:867: the holder's own live claim on a target (the replay). It reads
+// the lane claim only; MergeLiveClaimsForHolder adds the member-only waiting turns of CRW-898.
 func (s *Store) LiveMergeClaim(ctx context.Context, targetKey, holderTaskID string) (MergeTurnsRow, error) {
 	return queryRow(ctx, s, scanMergeTurns, "SELECT "+mergeTurnsColumns+" FROM merge_turns"+
 		"  WHERE target_key = ? AND holder_task_id = ?"+
 		"    AND state IN ('waiting','holding','merging','unknown')", targetKey, holderTaskID)
+}
+
+// MergeLiveClaimsForHolder is every live turn the holder has on a target, oldest first: the lane
+// claim (waiting, holding, merging or unknown) and the member-only waiting turns a bundle carries
+// (CRW-898, the management decision of 10-07 13:5x). A request that repeats one of them is answered
+// with that turn rather than refused.
+func (s *Store) MergeLiveClaimsForHolder(ctx context.Context, targetKey, holderTaskID string) ([]MergeTurnsRow, error) {
+	return queryRows(ctx, s, scanMergeTurns, "SELECT "+mergeTurnsColumns+" FROM merge_turns"+
+		"  WHERE target_key = ? AND holder_task_id = ?"+
+		"    AND state IN ('member_waiting','waiting','holding','merging','unknown')"+
+		"  ORDER BY requested_at, turn_id", targetKey, holderTaskID)
 }
 
 // MergeTargetOccupant is mergeturn.py:1009: the turn holding a target, if any.
@@ -57,10 +69,13 @@ func (s *Store) HighestMergeTenure(ctx context.Context, targetKey, holderTaskID 
 	return highest.Int64, err
 }
 
-// ReadyMergeWaiters is mergeturn.py:1302 _promote_in: the promotion order.
+// ReadyMergeWaiters is mergeturn.py:1302 _promote_in: the promotion order, widened by CRW-898 to hold
+// the member-only waiting turns too. It lists every ready waiter in request order; the promotion
+// itself takes only each parent's oldest live turn (promote), so a member-only turn rides a bundle
+// while an older turn of the same parent stands on the target.
 func (s *Store) ReadyMergeWaiters(ctx context.Context, targetKey string) ([]MergeTurnsRow, error) {
 	return queryRows(ctx, s, scanMergeTurns, "SELECT "+mergeTurnsColumns+" FROM merge_turns"+
-		"  WHERE target_key = ? AND state = 'waiting' AND declared_ready = 1"+
+		"  WHERE target_key = ? AND state IN ('member_waiting','waiting') AND declared_ready = 1"+
 		"  ORDER BY requested_at, turn_id", targetKey)
 }
 
@@ -72,7 +87,7 @@ func (s *Store) OutstandingMergeClaims(ctx context.Context, holderTaskID string)
 		var o OutstandingMergeClaim
 		return o, row.Scan(&o.TurnID, &o.TargetKey, &o.State)
 	}, "SELECT turn_id, target_key, state FROM merge_turns"+
-		"  WHERE holder_task_id = ? AND state IN ('waiting','holding','merging','unknown')"+
+		"  WHERE holder_task_id = ? AND state IN ('member_waiting','waiting','holding','merging','unknown')"+
 		"  ORDER BY requested_at, turn_id", holderTaskID)
 }
 

@@ -34,6 +34,18 @@ func (s *Service) promote(ctx context.Context, target, at string) (string, error
 		return "", err
 	}
 	for _, candidate := range waiters {
+		// The solo grant order takes each parent's oldest live turn (CRW-898): a member-only waiting
+		// turn takes the lane only once no older live turn of the same holder stands on the target, so
+		// a holder whose own older turn is still waiting, merging or held back by a paused owner does
+		// not take the lane with a later one. Outside this feature a holder has one live turn per
+		// target, so this never skips a candidate it used to promote.
+		oldest, err := s.Store.MergeLiveClaimsForHolder(ctx, target, candidate.HolderTaskID)
+		if err != nil {
+			return "", err
+		}
+		if len(oldest) == 0 || oldest[0].TurnID != candidate.TurnID {
+			continue
+		}
 		owner, refusal, err := s.ownership(ctx, candidate.ProjectKey, target, candidate.HolderTaskID)
 		if err != nil {
 			return "", err
@@ -49,7 +61,7 @@ func (s *Service) promote(ctx context.Context, target, at string) (string, error
 			if err = s.Store.PromoteMergeTurn(ctx, candidate.TurnID, Holding, at); err != nil {
 				return "", err
 			}
-			if err = s.ledger(ctx, candidate.TurnID, "transition", Waiting, Holding, "promoted", candidate.HolderTaskID, "promoted when the target was released", fmt.Sprintf("promote:%d", candidate.Tenure), at); err != nil {
+			if err = s.ledger(ctx, candidate.TurnID, "transition", candidate.State, Holding, "promoted", candidate.HolderTaskID, "promoted when the target was released", fmt.Sprintf("promote:%d", candidate.Tenure), at); err != nil {
 				return "", err
 			}
 			candidate.State = Holding
@@ -93,7 +105,7 @@ func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason,
 		switch {
 		case r.State == Merging || r.State == Unknown:
 			refusal = unresolved(r, actor)
-		case r.State == Waiting:
+		case r.State == Waiting || r.State == MemberWaiting:
 			refusal = wrongState(r, actor, "release; a waiting claim is withdrawn")
 		case r.State != Holding:
 			refusal = wrongState(r, actor, "release")
@@ -163,7 +175,7 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-		if err == nil && headCompareForge(early) && early.HolderTaskID == actor && (early.State == Waiting || early.State == Holding) {
+		if err == nil && headCompareForge(early) && early.HolderTaskID == actor && (early.State == Waiting || early.State == Holding || early.State == MemberWaiting) {
 			// the head the call means: the candidate when it names none. The caller's own head is left as it was, so a candidate that
 			// changes before the transaction is not taken for a head the caller named (the read is for the candidate it saw).
 			meant := head
@@ -189,7 +201,7 @@ func (s *Service) Ready(ctx context.Context, turn, actor string, ready bool, hea
 		}
 		if r.HolderTaskID != actor {
 			refusal = notHolder(r, actor, "declare readiness on")
-		} else if r.State != Waiting && r.State != Holding {
+		} else if r.State != Waiting && r.State != Holding && r.State != MemberWaiting {
 			refusal = wrongState(r, actor, "declare readiness on")
 		}
 		if refusal == nil {
@@ -390,7 +402,7 @@ func (s *Service) Withdraw(ctx context.Context, turn, actor string) (map[string]
 		}
 		if r.HolderTaskID != actor {
 			refusal = notHolder(r, actor, "withdraw")
-		} else if r.State != Waiting {
+		} else if r.State != Waiting && r.State != MemberWaiting {
 			refusal = wrongState(r, actor, "withdraw")
 		}
 		if refusal != nil {

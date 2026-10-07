@@ -63,7 +63,7 @@ func (s *Service) livePlace(ctx context.Context, live store.MergeTurnsRow) (plac
 		switch row.State {
 		case Holding, Merging, Unknown:
 			holding = append(holding, row.TurnID)
-		case Waiting:
+		case Waiting, MemberWaiting:
 			waiting = append(waiting, row.TurnID)
 		}
 	}
@@ -128,7 +128,7 @@ func (s *Service) otherPullRequestRefusal(ctx context.Context, live store.MergeT
 	}
 	next := "return it with merge-turn-release"
 	switch live.State {
-	case Waiting:
+	case Waiting, MemberWaiting:
 		next = "withdraw it with merge-turn-withdraw"
 	case Merging:
 		next = "land it with merge-turn-land"

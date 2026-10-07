@@ -39,7 +39,7 @@ func (s *Service) passRefusal(ctx context.Context, r store.MergeTurnsRow, actor 
 		return nil, err
 	}
 	for _, claim := range claims {
-		if claim.State != Waiting || claim.HolderTaskID != actor {
+		if (claim.State != Waiting && claim.State != MemberWaiting) || claim.HolderTaskID != actor {
 			continue
 		}
 		owner, refusal, err := s.ownership(ctx, claim.ProjectKey, r.TargetKey, actor)

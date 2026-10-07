@@ -21,11 +21,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -148,6 +150,26 @@ type TrainCheckout interface {
 type TrainChain struct {
 	Tree    string
 	Commits []string
+	// Steps is the built-in version-line proof of every merge whose tree git does not write from its
+	// parents by itself (CRW-898): the merge recorded the plugin manifest's version line again, and
+	// the line is the one the merge's own payload derives. A chain with a step git cannot settle this
+	// way is refused instead, so a step here is always a proved one.
+	Steps []TrainChainStep
+}
+
+// TrainVersionLineRule is the built-in rule the bundle chain applies to the plugin manifest's version
+// line (CRW-898): the same rule the single lane's base-refresh proof applies
+// (dagsched.BuiltinPluginVersionRule). The spelling is repeated here because importing
+// internal/relay/dagsched from this package would close an import cycle.
+const TrainVersionLineRule = "regenerate:plugin-version"
+
+// TrainChainStep is one merge of a bundle chain that the built-in version-line rule settled: the
+// merge commit, the path, the rule and the blob the merge holds for it.
+type TrainChainStep struct {
+	Commit string
+	Path   string
+	Rule   string
+	Blob   string
 }
 
 // trainConflict is a bundle that disagrees or is out of order: disposition_conflict, and no event is
@@ -245,20 +267,25 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 			}
 		}
 	}
-	// every member (the leader included) must stand on an active acceptance whose stand head is the
-	// head its pull request shows and its turn holds (Blocking 1): in the single lane that tie is
-	// dag-accept, which the bundle path would otherwise never pass through
-	standFor := func(relationship, memberHead string) (acceptance.Active, string, string, string, error) {
+	// Every member (the leader included) must stand on an active acceptance (Blocking 1): in the
+	// single lane that tie is dag-accept, which the bundle path would otherwise never pass through.
+	// The head the bundle carries is the head the acceptance stands on, so a member whose branch was
+	// base-refreshed and recorded keeps its eligibility through that recorded head (CRW-898, item 4);
+	// a member whose head moved without a record is refused, as before.
+	memberHeadFor := func(pr int64, relationship, memberHead string) (acceptance.Active, string, string, string, error) {
 		active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), relationship)
 		if err != nil {
 			return acceptance.Active{}, "", "", "", trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(relationship), err)
 		}
 		if !found {
-			return acceptance.Active{}, "", "", "", nil
+			return acceptance.Active{}, "", "", "", trainStandRefusal(pr, relationship, memberHead, acceptance.Active{}, "")
 		}
 		stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, relationship, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
 		if err != nil {
 			return acceptance.Active{}, "", "", "", trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
+		}
+		if err := trainStandRefusal(pr, relationship, memberHead, active, stand.Head); err != nil {
+			return acceptance.Active{}, "", "", "", err
 		}
 		rulingHead, rulingSource, err := acceptance.RulingHead(ctx, s.Store.Querier(ctx), active.EventID, active.HeadSHA)
 		if err != nil {
@@ -281,25 +308,16 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 			return nil, trainConflict("member pull request %d targets %s and the bundle's base is %s", pr, pyvalue.StrRepr(pull.BaseRef), pyvalue.StrRepr(early.BaseRef))
 		}
 		if pr == leaderPR {
-			if !SameCommit(pull.HeadSHA, early.CandidateHead) {
-				return nil, trainConflict("the leader's pull request %d reads head %s and its turn holds %s; a member's head is not refreshed by the bundle", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(early.CandidateHead))
-			}
-			active, standHead, rulingHead, rulingSource, err := standFor(early.RelationshipID.String, early.CandidateHead)
+			active, memberHead, rulingHead, rulingSource, err := memberHeadFor(pr, early.RelationshipID.String, early.CandidateHead)
 			if err != nil {
 				return nil, err
 			}
-			if err := trainStandRefusal(pr, early.RelationshipID.String, early.CandidateHead, active, standHead); err != nil {
-				return nil, err
-			}
-			expectations = append(expectations, TrainMemberExpectation{TurnID: turn, PRNumber: pr, RelationshipID: early.RelationshipID.String, AcceptedHead: early.CandidateHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
+			expectations = append(expectations, TrainMemberExpectation{TurnID: turn, PRNumber: pr, RelationshipID: early.RelationshipID.String, AcceptedHead: memberHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
 			continue
 		}
 		member, found := waitingTurnFor(waiting, pr)
 		if !found {
 			return nil, trainConflict("pull request %d has no waiting turn on %s, so it is not a member this bundle may carry", pr, pyvalue.StrRepr(early.TargetKey))
-		}
-		if !SameCommit(pull.HeadSHA, member.CandidateHead) {
-			return nil, trainConflict("pull request %d reads head %s and its waiting turn holds %s; the member's head moved", pr, pyvalue.StrRepr(pull.HeadSHA), pyvalue.StrRepr(member.CandidateHead))
 		}
 		if member.DeclaredReady != 1 {
 			return nil, trainConflict("pull request %d's turn %s has not declared its candidate ready, so it is not a candidate the lane may carry", pr, pyvalue.StrRepr(member.TurnID))
@@ -307,14 +325,11 @@ func (s *Service) Open(ctx context.Context, turn, actor, base string, members []
 		if !member.RelationshipID.Valid || member.RelationshipID.String == "" {
 			return nil, trainConflict("pull request %d's turn %s records no relationship, so its landing cannot be recorded", pr, pyvalue.StrRepr(member.TurnID))
 		}
-		active, standHead, rulingHead, rulingSource, err := standFor(member.RelationshipID.String, member.CandidateHead)
+		active, memberHead, rulingHead, rulingSource, err := memberHeadFor(pr, member.RelationshipID.String, member.CandidateHead)
 		if err != nil {
 			return nil, err
 		}
-		if err := trainStandRefusal(pr, member.RelationshipID.String, member.CandidateHead, active, standHead); err != nil {
-			return nil, err
-		}
-		expectations = append(expectations, TrainMemberExpectation{TurnID: member.TurnID, PRNumber: pr, RelationshipID: member.RelationshipID.String, AcceptedHead: member.CandidateHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
+		expectations = append(expectations, TrainMemberExpectation{TurnID: member.TurnID, PRNumber: pr, RelationshipID: member.RelationshipID.String, AcceptedHead: memberHead, RuledEventID: active.EventID, RulingHead: rulingHead, RulingHeadSource: rulingSource})
 	}
 	if len(members) == 1 {
 		return map[string]any{"train": nil, "lane": "single", "turnId": turn, "pullRequest": leaderPR, "baseSha": tip.SHA}, nil
@@ -385,7 +400,7 @@ func (s *Service) trainMembershipRefusal(ctx context.Context, actor string, memb
 		if err != nil {
 			return err
 		}
-		if turn.State != Holding && turn.State != Waiting {
+		if turn.State != Holding && turn.State != Waiting && turn.State != MemberWaiting {
 			return trainConflict("turn %s of pull request %d is %s, so it left the lane while the bundle was being read; call again", pyvalue.StrRepr(m.TurnID), m.PRNumber, turn.State)
 		}
 		if !SameCommit(turn.CandidateHead, m.AcceptedHead) {
@@ -436,17 +451,19 @@ func (s *Service) membersWhoLeftTheLane(ctx context.Context, members []store.Mer
 		if err != nil {
 			return nil, err
 		}
-		if turn.State != Holding && turn.State != Waiting {
+		if turn.State != Holding && turn.State != Waiting && turn.State != MemberWaiting {
 			out[m.TurnID] = true
 		}
 	}
 	return out, nil
 }
 
-// waitingTurnFor is the waiting turn of one pull request on a target, if any.
+// waitingTurnFor is the waiting turn of one pull request on a target, if any. A member-only waiting
+// turn (CRW-898) is a waiting turn too: it rides bundles and takes no solo grant, so a bundle may
+// carry it.
 func waitingTurnFor(turns []store.MergeTurnsRow, pr int64) (store.MergeTurnsRow, bool) {
 	for _, t := range turns {
-		if t.State == Waiting && t.PRNumber.Valid && t.PRNumber.Int64 == pr {
+		if (t.State == Waiting || t.State == MemberWaiting) && t.PRNumber.Valid && t.PRNumber.Int64 == pr {
 			return t, true
 		}
 	}
@@ -949,7 +966,7 @@ func (s *Service) TrainLand(ctx context.Context, train, actor, landed, observed 
 			if e != nil {
 				return e
 			}
-			if turn.State != Holding && turn.State != Waiting {
+			if turn.State != Holding && turn.State != Waiting && turn.State != MemberWaiting {
 				excluded = append(excluded, map[string]any{"seq": m.Seq, "turnId": m.TurnID, "prNumber": m.PRNumber, "relationshipId": m.RelationshipID, "state": turn.State, "closeReason": value(turn.CloseReason)})
 				continue
 			}
@@ -1783,18 +1800,196 @@ func (g *trainGit) file(ctx context.Context, commit, path string) (string, error
 	return out, nil
 }
 
-// mergeTree merges two commits in memory and returns the resulting tree, or an error when git cannot
-// merge them without a resolution.
-func (g *trainGit) mergeTree(ctx context.Context, first, second string) (string, error) {
+// mergeTree merges two commits in memory: the tree git writes and the sorted names of the paths it
+// could not merge (none for a clean merge). Anything but a clean merge or a conflict is a failure to
+// compute it, never an empty answer.
+func (g *trainGit) mergeTree(ctx context.Context, first, second string) (string, []string, error) {
 	code, out, err := g.iso(ctx, "--attr-source="+first, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", first, second)
-	if code != 0 {
-		return "", fmt.Errorf("git merge-tree could not merge %s and %s without a resolution: %w", first, second, err)
+	if code != 0 && code != 1 {
+		return "", nil, fmt.Errorf("git merge-tree could not merge %s and %s: %w", first, second, err)
 	}
 	records := strings.Split(out, "\x00")
 	if len(records) == 0 || !hexID(records[0]) {
-		return "", fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a tree", trainFirstLine(out), first, second)
+		return "", nil, fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a tree", trainFirstLine(out), first, second)
 	}
-	return strings.TrimSpace(records[0]), nil
+	tree := strings.TrimSpace(records[0])
+	if code == 0 {
+		return tree, nil, nil
+	}
+	var conflicts []string
+	for _, name := range records[1:] {
+		if name == "" {
+			break
+		}
+		conflicts = append(conflicts, name)
+	}
+	if len(conflicts) == 0 {
+		return "", nil, fmt.Errorf("git merge-tree reported a conflict for %s and %s and named no file", first, second)
+	}
+	sort.Strings(conflicts)
+	return tree, conflicts, nil
+}
+
+// versionLineStep proves that a merge commit whose tree git does not write from its parents by itself
+// differs only in the plugin manifest's version line, and that the line is the one the merge's own
+// payload derives (CRW-898, the management decision of 10-07 13:5x). The rule is the one the single
+// lane's base-refresh proof applies to the same file: the manifest equals both parents' apart from the
+// version it records, with the same file mode and the same release, and the version is the derived one.
+// Anything else is a hand resolution, which a bundle does not carry.
+func (g *trainGit) versionLineStep(ctx context.Context, commit, merged, actual string, conflicts []string) (TrainChainStep, error) {
+	names, err := g.differing(ctx, merged, actual)
+	if err != nil {
+		return TrainChainStep{}, trainUnreadable("what the tree of %s differs from git's merge of its parents in was not read: %v", pyvalue.StrRepr(commit), err)
+	}
+	if len(names) != 1 || names[0] != pluginversion.ManifestRepoPath {
+		return TrainChainStep{}, trainConflict("the tree of merge commit %s is %s and git merges %s from its parents, so the merge holds a hand resolution: it differs in %s, and the built-in version-line rule settles only %s", commit, actual, merged, trainPathList(names), pluginversion.ManifestRepoPath)
+	}
+	for _, c := range conflicts {
+		if c != pluginversion.ManifestRepoPath {
+			return TrainChainStep{}, trainConflict("the merge commit %s leaves %s unmerged, and the built-in version-line rule settles only %s", commit, trainPathList(conflicts), pluginversion.ManifestRepoPath)
+		}
+	}
+	parents, err := g.parents(ctx, commit)
+	if err != nil {
+		return TrainChainStep{}, trainUnreadable("the parents of %s were not read: %v", pyvalue.StrRepr(commit), err)
+	}
+	if len(parents) != 2 {
+		return TrainChainStep{}, trainConflict("commit %s has %d parent(s), and a bundle's chain is one two-parent merge per member", commit, len(parents))
+	}
+	modes := [3]string{}
+	elided := [3]string{}
+	versions := [3]string{}
+	for i, c := range []string{parents[0], commit, parents[1]} {
+		mode, content, err := g.manifestAt(ctx, c)
+		if err != nil {
+			return TrainChainStep{}, trainUnreadable("the plugin manifest of %s was not read: %v", pyvalue.StrRepr(c), err)
+		}
+		if mode == "" {
+			return TrainChainStep{}, trainConflict("commit %s holds no regular file at %s, and the built-in rule settles only that file's version line", c, pluginversion.ManifestRepoPath)
+		}
+		elidedBytes, version, err := pluginversion.ManifestVersionElided([]byte(content))
+		if err != nil {
+			return TrainChainStep{}, trainConflict("the plugin manifest of %s cannot be read apart from its version, so the built-in rule settles nothing there: %v", c, err)
+		}
+		modes[i], elided[i], versions[i] = mode, string(elidedBytes), version
+	}
+	if modes[1] != modes[0] || modes[1] != modes[2] {
+		return TrainChainStep{}, trainConflict("the merge commit %s holds %s as mode %s and its parents hold it as %s and %s, and the version-line rule leaves the mode alone", commit, pluginversion.ManifestRepoPath, modes[1], modes[0], modes[2])
+	}
+	if elided[1] != elided[0] || elided[1] != elided[2] {
+		return TrainChainStep{}, trainConflict("the plugin manifest of merge commit %s differs from a parent's outside the version line, and the built-in rule settles only the version line", commit)
+	}
+	release, _ := pluginversion.SplitVersion(versions[1])
+	for _, version := range versions {
+		if r, _ := pluginversion.SplitVersion(version); r != release {
+			return TrainChainStep{}, trainConflict("the plugin manifest of merge commit %s records %s and one of its parents records another release, and the version-line rule keeps the release it finds", commit, versions[1])
+		}
+	}
+	want, reason, err := pluginversion.TreeVersion(ctx, g.runner(), commit)
+	if err != nil {
+		return TrainChainStep{}, trainUnreadable("the plugin payload of %s was not read: %v", pyvalue.StrRepr(commit), err)
+	}
+	if reason != "" {
+		return TrainChainStep{}, trainConflict("the plugin payload of merge commit %s cannot name a version (%s), so the version line it records is not the derived one", commit, reason)
+	}
+	if versions[1] != want {
+		return TrainChainStep{}, trainConflict("the plugin manifest of merge commit %s records %s and the payload of that commit derives %s, so the merge did not re-record the version line", commit, versions[1], want)
+	}
+	blob, err := g.blobAt(ctx, commit, pluginversion.ManifestRepoPath)
+	if err != nil {
+		return TrainChainStep{}, trainUnreadable("the plugin manifest blob of %s was not read: %v", pyvalue.StrRepr(commit), err)
+	}
+	return TrainChainStep{Commit: commit, Path: pluginversion.ManifestRepoPath, Rule: TrainVersionLineRule, Blob: blob}, nil
+}
+
+// differing is the sorted paths in which two trees differ, by content, mode or type.
+func (g *trainGit) differing(ctx context.Context, a, b string) ([]string, error) {
+	code, out, err := g.iso(ctx, "diff-tree", "-r", "-z", "--name-only", "--no-renames", a, b)
+	if code != 0 {
+		return nil, err
+	}
+	var names []string
+	for _, n := range strings.Split(out, "\x00") {
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// manifestAt reads the plugin manifest at one commit: its mode and bytes, empty strings when the
+// commit holds no regular file there.
+func (g *trainGit) manifestAt(ctx context.Context, commit string) (mode, content string, err error) {
+	code, out, err := g.iso(ctx, "ls-tree", "-z", commit, "--", pluginversion.ManifestRepoPath)
+	if code != 0 {
+		return "", "", err
+	}
+	record, _, _ := strings.Cut(out, "\x00")
+	meta, name, ok := strings.Cut(record, "\t")
+	if !ok || name != pluginversion.ManifestRepoPath {
+		return "", "", nil
+	}
+	fields := strings.Fields(meta)
+	if len(fields) != 3 || fields[1] != "blob" {
+		return "", "", nil
+	}
+	if content, err = g.file(ctx, commit, pluginversion.ManifestRepoPath); err != nil {
+		return "", "", err
+	}
+	return fields[0], content, nil
+}
+
+// blobAt is the blob id a commit holds for a path, empty when the commit has no such file.
+func (g *trainGit) blobAt(ctx context.Context, commit, path string) (string, error) {
+	code, out, err := g.iso(ctx, "ls-tree", "-z", commit, "--", path)
+	if code != 0 {
+		return "", err
+	}
+	record, _, _ := strings.Cut(out, "\x00")
+	meta, name, ok := strings.Cut(record, "\t")
+	if !ok || name != path {
+		return "", nil
+	}
+	if fields := strings.Fields(meta); len(fields) == 3 {
+		return fields[2], nil
+	}
+	return "", nil
+}
+
+// runner is the chain proof's own git view as a pluginversion.GitRunner: a version is read through the
+// same isolated repository as the rest of the proof, so a replace ref or an inherited GIT_* variable
+// cannot make a payload a different tree's.
+func (g *trainGit) runner() pluginversion.GitRunner {
+	return func(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, g.gitBin, append([]string{"--git-dir=" + g.gitdir}, args...)...)
+		cmd.Env = g.isoEnv
+		if stdin != nil {
+			cmd.Stdin = bytes.NewReader(stdin)
+		}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				return nil, fmt.Errorf("git %s: exit %d: %s", strings.Join(args, " "), exit.ExitCode(), strings.TrimSpace(stderr.String()))
+			}
+			return nil, err
+		}
+		return stdout.Bytes(), nil
+	}
+}
+
+// trainPathList names paths for a refusal, "none" when there are none.
+func trainPathList(paths []string) string {
+	if len(paths) == 0 {
+		return "none"
+	}
+	quoted := make([]string, 0, len(paths))
+	for _, p := range paths {
+		quoted = append(quoted, pyvalue.StrRepr(p))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // hexID is whether a string is a full SHA-1 or SHA-256 object name.
@@ -1820,6 +2015,7 @@ func (g *trainGit) chain(ctx context.Context, head, base string, want []string) 
 	}
 	current := head
 	commits := make([]string, 0, len(want))
+	var steps []TrainChainStep
 	for i := len(want) - 1; i >= 0; i-- {
 		parents, err := g.parents(ctx, current)
 		if err != nil {
@@ -1832,7 +2028,7 @@ func (g *trainGit) chain(ctx context.Context, head, base string, want []string) 
 		if !SameCommit(second, want[i]) {
 			return TrainChain{}, trainConflict("the merge commit %s has %s as its second parent, and the member at that place is %s; the bundle's order or a member's head changed", current, pyvalue.StrRepr(second), pyvalue.StrRepr(want[i]))
 		}
-		merged, err := g.mergeTree(ctx, first, second)
+		merged, conflicts, err := g.mergeTree(ctx, first, second)
 		if err != nil {
 			return TrainChain{}, trainConflict("the merge commit %s is not what git merges from its parents: %v", current, err)
 		}
@@ -1840,8 +2036,16 @@ func (g *trainGit) chain(ctx context.Context, head, base string, want []string) 
 		if err != nil {
 			return TrainChain{}, trainUnreadable("the tree of %s was not read: %v", pyvalue.StrRepr(current), err)
 		}
-		if actual != merged {
-			return TrainChain{}, trainConflict("the tree of merge commit %s is %s and git merges %s from its parents, so the merge holds a hand resolution", current, actual, merged)
+		if actual != merged || len(conflicts) > 0 {
+			// The plugin manifest's version line is the one difference git's own merge does not write and
+			// the built-in rule proves (CRW-898, the management decision of 10-07 13:5x): the merge
+			// recorded the line again, and the line is the one the merge's own payload derives. Every
+			// other difference, or a conflict elsewhere, is a hand resolution a bundle does not carry.
+			step, err := g.versionLineStep(ctx, current, merged, actual, conflicts)
+			if err != nil {
+				return TrainChain{}, err
+			}
+			steps = append(steps, step)
 		}
 		commits = append(commits, current)
 		current = first
@@ -1849,5 +2053,5 @@ func (g *trainGit) chain(ctx context.Context, head, base string, want []string) 
 	if !SameCommit(current, base) {
 		return TrainChain{}, trainConflict("the chain's oldest merge stands on %s and the bundle's base is %s", pyvalue.StrRepr(current), pyvalue.StrRepr(base))
 	}
-	return TrainChain{Tree: tree, Commits: commits}, nil
+	return TrainChain{Tree: tree, Commits: commits, Steps: steps}, nil
 }

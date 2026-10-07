@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -22,6 +23,12 @@ const (
 	Holding = "holding"
 	Merging = "merging"
 	Unknown = "unknown"
+	// MemberWaiting is a ready turn a parent holds on a target where it already holds one: the solo
+	// grant order takes only each parent's oldest live turn, so this one is kept as a member-only
+	// waiting turn that rides a bundle (CRW-898, the management decision of 10-07 13:5x). It carries
+	// its own relationship and accepted head, its landing is recorded on its own turn, and it takes
+	// the lane itself only once it is the parent's oldest live turn.
+	MemberWaiting = "member_waiting"
 	// Passed closes a holding turn whose holder went silent past the holding limit and was
 	// passed on to the next waiter.
 	Passed = "passed"
@@ -190,6 +197,29 @@ type ClaimOptions struct {
 	Relationship sql.NullString
 }
 
+// memberOnlyRequest is whether a request that is not the repeat of a live turn is the parent's
+// further ready turn on the target: it names a pull request and a relationship whose active
+// acceptance stands on the head the request states, so the turn it gets is a member-only waiting
+// turn a bundle may carry (CRW-898). A request no active acceptance covers keeps the CRW-538
+// refusal, because it cannot be confirmed as the parent's own further candidate.
+func (s *Service) memberOnlyRequest(ctx context.Context, asked ClaimOptions, head string, ready bool) (bool, error) {
+	if !ready || head == "" || !asked.PR.Valid || asked.PR.Int64 < 1 || !asked.Relationship.Valid || asked.Relationship.String == "" {
+		return false, nil
+	}
+	active, found, err := acceptance.ActiveForRelationship(ctx, s.Store.Querier(ctx), asked.Relationship.String)
+	if err != nil {
+		return false, trainUnreadable("the acceptance of relationship %s was not read: %v", pyvalue.StrRepr(asked.Relationship.String), err)
+	}
+	if !found {
+		return false, nil
+	}
+	stand, err := acceptance.StandOf(ctx, s.Store.Querier(ctx), active.AcceptanceID, asked.Relationship.String, active.Generation, active.EventID, active.RevisionHash, active.HeadSHA)
+	if err != nil {
+		return false, trainUnreadable("what acceptance %s stands on was not read: %v", pyvalue.StrRepr(active.AcceptanceID), err)
+	}
+	return SameCommit(stand.Head, head), nil
+}
+
 func (s *Service) Request(ctx context.Context, repository, base, project, holder, host, head string, ready bool, options ...ClaimOptions) (map[string]any, error) {
 	target, err := TargetKey(repository, base)
 	if err != nil {
@@ -216,25 +246,44 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		if refusal != nil {
 			return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
 		}
-		live, e := s.Store.LiveMergeClaim(tx, target, holder)
-		if e == nil {
-			var asked ClaimOptions
-			if len(options) > 0 {
-				asked = options[0]
+		var asked ClaimOptions
+		if len(options) > 0 {
+			asked = options[0]
+		}
+		// The holder's live turns on this target, oldest first: its lane claim and the member-only
+		// waiting turns a bundle carries (CRW-898). A request that repeats one of them is answered with
+		// that turn rather than refused.
+		claims, e := s.Store.MergeLiveClaimsForHolder(tx, target, holder)
+		if e != nil {
+			return e
+		}
+		for _, claim := range claims {
+			if requestIsLiveClaim(claim, asked) {
+				id = claim.TurnID
+				replayed = true
+				return nil
 			}
-			// the holder has one live claim per target: a request for another pull request is refused, not answered with it
-			if !requestIsLiveClaim(live, asked) {
-				if refusal, e = s.otherPullRequestRefusal(tx, live, asked, holder); e != nil {
+		}
+		// A request for another pull request is no longer answered with the turn it did not ask about
+		// (CRW-538's harm): it gets a turn of its own, so a caller can never declare this pull request's
+		// head on a turn bound to another one. When the parent already holds a live turn on this target
+		// and the request names a verified, accepted candidate of the same target, the further ready turn
+		// is kept as a member-only waiting turn that takes no solo grant while an older turn of the same
+		// parent is in the lane (CRW-898, the management decision of 10-07 13:5x). It is still a turn row:
+		// it carries its own relationship and accepted head, and its landing is recorded on its own turn.
+		// A request no active acceptance covers keeps the refusal, because it cannot be confirmed as a
+		// repeat of a live turn.
+		memberOnly := false
+		if len(claims) > 0 {
+			if memberOnly, e = s.memberOnlyRequest(tx, asked, head, ready); e != nil {
+				return e
+			}
+			if !memberOnly {
+				if refusal, e = s.otherPullRequestRefusal(tx, claims[0], asked, holder); e != nil {
 					return e
 				}
 				return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
 			}
-			id = live.TurnID
-			replayed = true
-			return nil
-		}
-		if !errors.Is(e, sql.ErrNoRows) {
-			return e
 		}
 		occupied, e := s.Store.MergeTargetOccupant(tx, target)
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
@@ -248,22 +297,30 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		id = TurnID(target, holder, tenure)
 		state := Holding
 		held := nullable(at)
-		owners, e := s.Registry.Owners(tx, "project", project)
-		if e != nil {
-			return e
-		}
-		for _, o := range owners {
-			for _, f := range o {
-				if f.Key == "status" && f.Value != "active" {
-					state = Waiting
+		if memberOnly {
+			// the parent already holds a live turn on this target, so the solo grant order leaves this
+			// one to the bundles: it is kept as a member-only waiting turn, carries its own relationship
+			// and accepted head, and its landing is recorded on its own turn (CRW-898)
+			state = MemberWaiting
+			held = nullable("")
+		} else {
+			owners, e := s.Registry.Owners(tx, "project", project)
+			if e != nil {
+				return e
+			}
+			for _, o := range owners {
+				for _, f := range o {
+					if f.Key == "status" && f.Value != "active" {
+						state = Waiting
+					}
 				}
 			}
-		}
-		if occupied.TurnID != "" {
-			state = Waiting
-		}
-		if state == Waiting {
-			held = nullable("")
+			if occupied.TurnID != "" {
+				state = Waiting
+			}
+			if state == Waiting {
+				held = nullable("")
+			}
 		}
 		flag := int64(0)
 		if ready {
@@ -448,16 +505,22 @@ func (s *Service) Outstanding(ctx context.Context, task string) ([]map[string]an
 			return nil, err
 		}
 		why := "already " + claim.State
-		if claim.State == Waiting {
+		if claim.State == Waiting || claim.State == MemberWaiting {
 			why = ""
-			occupant, err := s.Store.MergeTargetOccupant(ctx, claim.TargetKey)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-			if occupant.TurnID != "" {
-				why = "target_occupied"
-			} else if why, err = s.withheld(ctx, record["projectKey"].(string), task); err != nil {
-				return nil, err
+			if claim.State == MemberWaiting {
+				// a member-only waiting turn takes no solo grant while an older turn of the same parent
+				// is in the lane: it rides a bundle (CRW-898)
+				why = "member_only_waiting"
+			} else {
+				occupant, err := s.Store.MergeTargetOccupant(ctx, claim.TargetKey)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+				if occupant.TurnID != "" {
+					why = "target_occupied"
+				} else if why, err = s.withheld(ctx, record["projectKey"].(string), task); err != nil {
+					return nil, err
+				}
 			}
 		}
 		record["targetFree"] = why == ""
