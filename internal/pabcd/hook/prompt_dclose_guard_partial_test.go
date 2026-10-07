@@ -149,6 +149,72 @@ func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
 	}
 }
 
+// TestPromptDcloseRecoveryRefusalNamesTheCommittedMarkerAndPlan is the recovery-refusal case: the
+// first attempt of this close wrote the marker and committed the plan (the target is closed on
+// disk), and the operator then left an open task under it, so the retry refuses. The refusal must
+// name the artifacts this close published - the inherited marker and the committed plan - instead of
+// ending in "Nothing was written." (CRW-930, d1).
+func TestPromptDcloseRecoveryRefusalNamesTheCommittedMarkerAndPlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-refusal-names"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	// The first attempt committed the close: the target is done and its successor started. The
+	// operator then hid a pending task under the closed target.
+	promptDcloseRecoveryPlan(t, cwd, slug, []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "first", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{{ID: "t-late", Title: "added late", Status: goalplan.TaskPending}}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}, promptDcloseStr("wp-2"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "gained 1 open task(s) after its marker was written") {
+		t.Fatalf("the recovery did not refuse: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the recovery refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the recovery refusal did not name the committed goalplan: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the recovery refusal denied the artifacts this close published: %q", answer)
+	}
+}
+
+// TestPromptDcloseRecoveryCleanupNamesTheCommittedPlan is the absent-target cleanup case: the target
+// is gone and its recorded successor is already running, so the retry settles the plan with no write
+// of its own - the first attempt had committed it. The resting state write then fails, and that
+// refusal must name the plan this close published as well as the marker (CRW-930, d2).
+func TestPromptDcloseRecoveryCleanupNamesTheCommittedPlan(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-cleanup-names"
+	// The target wp-1 is gone and the recorded successor wp-2 is running on the cursor, which is the
+	// cleanup answer: the first attempt's plan commit is on disk. A stored record whose write-back
+	// would lose it makes the IDLE-write guard refuse the resting state.
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "cleanup " + slug})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-2")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptDcloseWrite(t, cwd, filepath.Join(".crw", "sessions", "s1.json"),
+		promptDcloseCommittedRecoveryState(slug, "c-recovery"))
+	answer := promptDcloseRun(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", ""))
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Fatalf("the retry did not refuse at the IDLE-write guard: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal did not name the committed goalplan: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the refusal denied the artifacts this close published: %q", answer)
+	}
+}
+
 // promptDcloseCommittedRecoveryState is a recoverable session whose plan commit already landed: it
 // carries the D-close marker of wp-1 and a stored unverified-subagent record whose write-back the
 // reader would truncate, so the IDLE-write guard refuses the resting state while the file stays

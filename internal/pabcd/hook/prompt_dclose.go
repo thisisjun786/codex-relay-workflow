@@ -567,15 +567,16 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 
 	if recovering {
 		out, refusal, refused := promptDcloseRecoveryClose(p, held, plan, closePhaseID)
-		if refused {
-			return promptDclosePlanOutcome{output: refusal}, nil
-		}
-		closeResult, writeClosedPlan = out.result, out.writePlan
-		// A retry whose plan commit already landed rewrites nothing but still continues this close, so
-		// the plan counts as published for every refusal below (CRW-930, d1).
+		// A retry continues the close the first attempt started, so the marker it inherits is an
+		// artifact of this close, and so is the goalplan when that attempt's commit is on disk. Both
+		// count as published for every refusal here and below (CRW-930, d1/d2).
 		if out.planCommitted {
 			published.plan = promptDclosePublication{landed: true}
 		}
+		if refused {
+			return promptDclosePlanOutcome{output: promptDclosePartialRefusal(refusal, published, nil)}, nil
+		}
+		closeResult, writeClosedPlan = out.result, out.writePlan
 	} else {
 		// §35-3: a non-empty all-done plan closes only the cycle. It needs no target and writes no
 		// recovery marker or goalplan row. This sits inside the non-recovery branch so a matching
@@ -742,13 +743,34 @@ func promptDcloseOutstandingMarkerRefusal(sessionID, closedWorkPhaseID string) s
 		promptDcloseResetCommand(sessionID) + ". Nothing was written.")
 }
 
+// promptDcloseRecoveryPlanCommitted reports whether the plan on disk already carries the effect of
+// this close's commit, so a recovery refusal must name it as published. The marker is written before
+// the commit, so a matching marker alone proves nothing; the plan's own settled shape does: the fixed
+// target is done and the recorded successor is running on the cursor, which only a completed commit
+// produces (CRW-930, d1/d2). The absent-target cleanup answer carries the same proof and is folded in
+// by the caller.
+func promptDcloseRecoveryPlanCommitted(plan *goalplan.Goalplan, closePhaseID string) bool {
+	target := promptDcloseFindWorkPhase(plan, closePhaseID)
+	if target == nil || target.Status != goalplan.WorkPhaseDone {
+		return false
+	}
+	cursor := plan.ActiveWorkPhaseID
+	if cursor == nil || *cursor == closePhaseID {
+		return false
+	}
+	next := promptDcloseFindWorkPhase(plan, *cursor)
+	return next != nil && next.Status == goalplan.WorkPhaseInProgress
+}
+
 // promptDcloseRecoveryOutcome is what the recovery arm answered when it did not refuse.
 type promptDcloseRecoveryOutcome struct {
 	result    promptDcloseCloseResult
 	writePlan bool
-	// planCommitted is true when the plan's settled shape is already on disk (CloseFixedWorkPhase's
-	// already_done): the first attempt of this same close committed the plan, so a later refusal of
-	// the retry must name it even though this invocation rewrites nothing (CRW-930, d1).
+	// planCommitted is true when the first attempt of this same close already committed the plan, so
+	// a refusal of the retry must name it even though this invocation rewrites nothing: the settled
+	// shape is on disk (CloseFixedWorkPhase's already_done) or the target is closed, which is the
+	// commit's own effect, or the absent-target resume answered cleanup, whose comment records that
+	// the activation happened and only the idempotent rows are owed (CRW-930, d1/d2).
 	planCommitted bool
 }
 
@@ -762,7 +784,7 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	// §50: a pre-§48 marker has no safe reading, so this stops instead of nulling the cursor on a
 	// plan whose commit may have landed.
 	if marker.Legacy {
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("the recovery marker for " + closePhaseID +
+		return promptDcloseRecoveryOutcome{planCommitted: promptDcloseRecoveryPlanCommitted(plan, closePhaseID)}, promptOrchestrateRefusal("the recovery marker for " + closePhaseID +
 			" predates the successor field, so this retry cannot tell whether the plan commit landed. " +
 			"The marker was kept; inspect the goalplan, set the work-phase statuses and " +
 			"activeWorkPhaseId by hand, then run " + promptDcloseResetCommand(p.SessionID) +
@@ -773,13 +795,14 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	// ours to redo; present-but-open is the marker-then-crash case and we close exactly that phase.
 	fixed := promptDcloseFindWorkPhase(plan, closePhaseID)
 	resumedAbsent := (*goalplan.Goalplan)(nil)
+	orphan := goalplan.WorkPhaseResumeAbsentTargetResult{}
 	if fixed == nil {
 		// §53: the absent-target decision is shared with the CLI. Leaving it out here let the same
 		// marker activate a pending successor on one surface and silently log started without a plan
 		// write on the other.
-		orphan := goalplan.ResumeAbsentTarget(plan, promptDcloseString(marker.NextWorkPhaseID))
+		orphan = goalplan.ResumeAbsentTarget(plan, promptDcloseString(marker.NextWorkPhaseID))
 		if orphan.Kind == goalplan.WorkPhaseResumeSuccessorLost {
-			return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is gone from the plan and the successor " +
+			return promptDcloseRecoveryOutcome{planCommitted: promptDcloseRecoveryPlanCommitted(plan, closePhaseID)}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is gone from the plan and the successor " +
 				promptDcloseString(orphan.SuccessorID) + " it recorded " + goalplan.AbsentSuccessorDetail(orphan.Reason) +
 				", so this retry cannot tell what to finish. The marker was kept; inspect the goalplan, " +
 				"set the work-phase statuses and activeWorkPhaseId by hand, then run " + promptDcloseResetCommand(p.SessionID) +
@@ -789,6 +812,9 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 			resumedAbsent = orphan.Plan
 		}
 	}
+	// planCommitted is what every refusal below must report: the first attempt of this close published
+	// the goalplan when the plan on disk already carries the commit's effect (CRW-930, d1/d2).
+	planCommitted := promptDcloseRecoveryPlanCommitted(plan, closePhaseID) || orphan.Kind == goalplan.WorkPhaseResumeCleanup
 	// §40 Z1: both surfaces go through CloseFixedWorkPhase, so the recovered plan matches what a
 	// normal close would have written - cursor moved, successor in_progress, a truthful started row.
 	closed := goalplan.WorkPhaseCloseFixedResult{Kind: goalplan.WorkPhaseCloseFixedAbsent}
@@ -798,19 +824,19 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	switch closed.Kind {
 	case goalplan.WorkPhaseCloseFixedTasksPending:
 		// §41 W1: the marker stays so the operator can repair the plan and finish with the same request.
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " gained " + promptDcloseCount(len(closed.Pending)) +
+		return promptDcloseRecoveryOutcome{planCommitted: planCommitted}, promptOrchestrateRefusal("recovery target " + closePhaseID + " gained " + promptDcloseCount(len(closed.Pending)) +
 			" open task(s) after its marker was written (CYCLE-COMPLETION-01): " + promptDclosePendingText(closed.Pending) +
 			". The recovery marker was kept; close those tasks and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedNotRunnable:
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is now " + string(closed.Status) +
+		return promptDcloseRecoveryOutcome{planCommitted: planCommitted}, promptOrchestrateRefusal("recovery target " + closePhaseID + " is now " + string(closed.Status) +
 			" (CYCLE-COMPLETION-01). The recovery marker was kept; restore that work-phase and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedDependenciesUnmet:
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " now waits for " + strings.Join(closed.Unmet, ", ") +
+		return promptDcloseRecoveryOutcome{planCommitted: planCommitted}, promptOrchestrateRefusal("recovery target " + closePhaseID + " now waits for " + strings.Join(closed.Unmet, ", ") +
 			" (CYCLE-COMPLETION-01). The recovery marker was kept; satisfy those work-phases and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedSuccessorLost:
 		// §51: a corrupt marker points at reset, not at a fix.
 		if closed.Reason == "corrupt" {
-			return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("the recovery marker for " + closePhaseID + " names that same work-phase as its successor, " +
+			return promptDcloseRecoveryOutcome{planCommitted: planCommitted}, promptOrchestrateRefusal("the recovery marker for " + closePhaseID + " names that same work-phase as its successor, " +
 				"which no close can produce, so this retry cannot tell what to finish. The marker was kept; inspect the goalplan, " +
 				"set the work-phase statuses and activeWorkPhaseId by hand, then run " + promptDcloseResetCommand(p.SessionID) +
 				" to clear the marker. Nothing was written."), true
@@ -822,7 +848,7 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 		case "not_runnable":
 			detail = "can no longer be started"
 		}
-		return promptDcloseRecoveryOutcome{}, promptOrchestrateRefusal("recovery target " + closePhaseID + " was closed with successor " +
+		return promptDcloseRecoveryOutcome{planCommitted: planCommitted}, promptOrchestrateRefusal("recovery target " + closePhaseID + " was closed with successor " +
 			promptDcloseString(closed.SuccessorID) + ", which " + detail + " (CYCLE-COMPLETION-01). The recovery marker was kept; " +
 			"restore that work-phase and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedOK:
@@ -838,7 +864,7 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 	if resumedAbsent != nil {
 		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: closePhaseID, plan: resumedAbsent}, writePlan: true}, "", false
 	}
-	return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: closePhaseID, plan: plan}}, "", false
+	return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: closePhaseID, plan: plan}, planCommitted: planCommitted}, "", false
 }
 
 // promptDcloseAllDone is the oracle's plan.workPhases.every((wp) => wp.status === "done").
