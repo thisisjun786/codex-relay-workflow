@@ -2235,7 +2235,6 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 		return shellWriteHeredocUnreadableWhat, true // the budget is spent: the program cannot be read
 	}
 	u := utf16.Encode([]rune(command))
-	named := shellWriteHeredocNamesInterpreter(u)
 	for _, h := range shellWriteHeredocs(u) {
 		reading, kind := shellWriteHeredocClassify(h)
 		if reading == shellWriteHeredocRefused {
@@ -2269,8 +2268,9 @@ func shellWriteHeredocUnreadableIn(command string, depth int, budget *int) (stri
 	}
 	// A here-document operator the collector cannot reach - a << inside a $( ... ) or backtick command substitution a
 	// double-quoted word encloses (correction 4, rule G4) - is read as a here-document by the shell, so a command
-	// holding one fails closed when the command text names an interpreter.
-	if named && shellWriteHeredocHiddenOperator(u) {
+	// holding one is a line the reader cannot take apart and denies (rule U3: an interpreter-name test is no longer an
+	// allow condition).
+	if shellWriteHeredocHiddenOperator(u) {
 		return shellWriteHeredocUnreadableWhat, true
 	}
 	return shellWriteHeredocUnreadableNested(command, depth, budget)
