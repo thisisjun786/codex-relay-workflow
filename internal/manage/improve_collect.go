@@ -542,17 +542,17 @@ func improveWriteFile(plan improveOutputPlan, ids *improveIdentitySet, data []by
 	// whose refusal removes that name through the same descriptor; the sequence runs at most twice.
 	for attempt := 0; ; attempt++ {
 		err := improveWriteTemporary(dirfd, held, plan, ids, data, attempt == 0)
-		if errors.Is(err, improveErrNoUnnamedName) && attempt == 0 {
+		if errors.Is(err, errImproveNoUnnamedName) && attempt == 0 {
 			continue
 		}
 		return err
 	}
 }
 
-// improveErrNoUnnamedName is the internal answer of a kernel or filesystem that will not give an
+// errImproveNoUnnamedName is the internal answer of a kernel or filesystem that will not give an
 // unnamed temporary file its one name. It never reaches the caller: improveWriteFile answers it by
 // writing the bundle again as a named temporary file.
-var improveErrNoUnnamedName = errors.New("the unnamed temporary file could not be given a name")
+var errImproveNoUnnamedName = errors.New("the unnamed temporary file could not be given a name")
 
 // improveWriteTemporary writes the bundle to one temporary file in the directory dirfd names and
 // renames it onto the destination. With unnamed the file is created unnamed and receives its one
@@ -638,7 +638,7 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 			// The file is still unnamed and is released by closing the descriptor. The caller writes
 			// the bundle again as a named temporary file rather than failing the run.
 			_ = file.Close()
-			return improveErrNoUnnamedName
+			return errImproveNoUnnamedName
 		}
 		named = true
 	}
