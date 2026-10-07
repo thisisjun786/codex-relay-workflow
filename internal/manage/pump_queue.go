@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -231,7 +230,7 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 		// being the text on disk; the delivery core refuses such a message anyway.
 		return fmt.Errorf("crw manage pump: the queued notices of %s are not valid UTF-8", thread)
 	}
-	logicalID := pumpQueueBatchID(thread, batch.names, batch.body)
+	logicalID := pumpQueueBatchID(thread, batch.idNames, batch.body)
 	st.QueueAttempt[thread] = pumpReview776QueuePin{
 		LogicalID: logicalID, Names: append([]string(nil), batch.names...), Body: batch.body,
 		SHA256: pumpReview776QueueDigests(batch.names, batch.texts)}
@@ -291,6 +290,10 @@ type pumpReview776QueueBatch struct {
 	names []string
 	texts []string
 	body  string
+	// idNames is the queued name set the logical id is computed over. It is the whole queue the round
+	// read, not the prefix the batch carries, so a notice the producer adds after the prefix still
+	// changes the id and lets a batch the ledger already refused be tried again under a new id.
+	idNames []string
 }
 
 // pumpReview776QueueReadNotices reads one thread's notices in name order. A notice is a regular
@@ -408,6 +411,7 @@ func pumpReview776QueueFit(names, texts []string) pumpReview776QueueBatch {
 	if len(names) == 0 {
 		return pumpReview776QueueBatch{}
 	}
+	idNames := append([]string(nil), names...)
 	total, fit := 0, 0
 	for i, text := range texts {
 		total += len(text)
@@ -427,12 +431,12 @@ func pumpReview776QueueFit(names, texts []string) pumpReview776QueueBatch {
 		// longest prefix whose body is non-empty.
 		for i, text := range texts {
 			if text != "" {
-				return pumpReview776QueueBatch{names: names[:i+1], texts: texts[:i+1], body: pumpReview776QueueBody(texts[:i+1])}
+				return pumpReview776QueueBatch{names: names[:i+1], texts: texts[:i+1], body: pumpReview776QueueBody(texts[:i+1]), idNames: idNames}
 			}
 		}
 		return pumpReview776QueueBatch{}
 	}
-	return pumpReview776QueueBatch{names: names[:fit], texts: texts[:fit], body: pumpReview776QueueBody(texts[:fit])}
+	return pumpReview776QueueBatch{names: names[:fit], texts: texts[:fit], body: pumpReview776QueueBody(texts[:fit]), idNames: idNames}
 }
 
 // pumpReview776QueueHeader is the count line a queue batch carries once it holds more than one
@@ -470,8 +474,24 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		// duplicates nothing; nothing is sent and no bridge process starts.
 		return true, nil
 	}
-	// A pinned name that is gone is left out of the age and the move, but it never cancels the
-	// reconciliation: the answer still decides the pin, and the removed name is handled after it.
+	// The bridge's own receipt is read every round, before any gate: the lookup opens no parent turn,
+	// so an attempt the bridge already settled must not be held back until an idle parent has waited
+	// max_queue_seconds. Only the send that would follow an unsettled receipt is gated.
+	record, known, err := deliverLoad(cfg, pin.LogicalID)
+	if err != nil {
+		return true, err
+	}
+	if known {
+		settled, err := pumpReview776QueueReconcileReceipt(ctx, e, cfg, st, dir, thread, pin, record)
+		if err != nil {
+			return true, err
+		}
+		if settled {
+			return true, nil
+		}
+	}
+	// The receipt is not settled (or there is none): the attempt may still be sent, but only under
+	// the queue's own gate, so an idle parent is not opened early.
 	present := pumpReview776QueuePresent(dir, pin.Names)
 	oldest, err := pumpReview776QueueOldest(dir, present)
 	if err != nil {
@@ -491,6 +511,55 @@ func pumpReview776QueueRetry(ctx context.Context, e *Env, cfg *Config, st *pumpS
 		return true, nil
 	}
 	return pumpReview776QueueSettle(ctx, e, cfg, st, dir, thread, pin)
+}
+
+// pumpReview776QueueReconcileReceipt reads the bridge's own receipt for a pinned attempt and settles
+// what it answers, without ever sending. It reports whether the pin is settled for this round, so the
+// caller neither sends nor forms a new batch. An accepted receipt completes the batch (or holds it
+// when the pin cannot prove which notices the attempt carried); a refused one lifts the pin, because
+// nothing was sent under it; an undetermined one keeps the pin.
+func pumpReview776QueueReconcileReceipt(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, thread string, pin pumpReview776QueuePin, record deliverRecord) (bool, error) {
+	bridge, err := deliverDial(ctx, e, cfg)
+	if err != nil {
+		// A bridge that could not be started says nothing about the attempt, so the pin stays.
+		pumpLog(cfg, "queue "+thread+" "+pumpSourceUnmeasured+": "+err.Error())
+		return true, nil
+	}
+	defer bridge.close()
+	switch deliverReconcile(ctx, bridge, record) {
+	case deliverReconcileAccepted:
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		if pin.Legacy || len(pin.SHA256) == 0 {
+			// The attempt's text is not recoverable, so no queued notice can be shown to be one it
+			// carried: the pin holds the thread rather than archiving an undelivered notice.
+			pin.Held = true
+			st.QueueAttempt[thread] = pin
+			return true, st.pumpSave(cfg)
+		}
+		record.State, record.Received, record.Applied = deliverStateAccepted, true, false
+		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "get_operation: the pinned attempt was dispatched"})
+		if err := deliverSave(cfg, record); err != nil {
+			return true, err
+		}
+		pin.Accepted = true
+		st.QueueAttempt[thread] = pin
+		if err := st.pumpSave(cfg); err != nil {
+			return true, err
+		}
+		return true, pumpReview776QueueFinishAccepted(ctx, e, cfg, st, dir, thread, pin, false)
+	case deliverReconcileRefused:
+		// The bridge settled the attempt as a refusal before any dispatch, so nothing was sent and the
+		// notices may be tried again under the batch's current id.
+		return false, pumpReview776QueuePinLift(cfg, st, thread, nil)
+	case deliverReconcileResendSame, deliverReconcileResendNew:
+		// Nothing was sent under the attempt, so the caller may make it under the queue's gate.
+		return false, nil
+	default:
+		// Undetermined: the pin stays, so the next round reconciles the same logical id and body.
+		return true, nil
+	}
 }
 
 // pumpReview776QueueSettle reconciles a pinned queue batch. It reports whether the thread is settled
@@ -741,6 +810,11 @@ func pumpReview776QueueAsideDir(dir string) string {
 // whole.
 func pumpReview776QueueTakeAside(dir, name string) (string, error) {
 	asideDir := pumpReview776QueueAsideDir(dir)
+	// The aside directory is checked the way the queue root is: a symlink planted in its place would
+	// send the notice, and every later recovery, outside the state directory.
+	if err := pumpQueueSafe(asideDir, "the queue's aside directory"); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(asideDir, 0o700); err != nil {
 		return "", err
 	}
@@ -763,6 +837,11 @@ func pumpReview776QueueTakeAside(dir, name string) (string, error) {
 // reports what it would do instead of moving anything.
 func pumpReview776QueueRecoverAsides(e *Env, dir string, dry bool) error {
 	asideDir := pumpReview776QueueAsideDir(dir)
+	// A symlink in the aside directory's place would make every file of its target look like one of
+	// this move's asides, and the recovery would then unlink files outside the queue.
+	if err := pumpQueueSafe(asideDir, "the queue's aside directory"); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(asideDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1023,64 +1102,12 @@ func pumpReview776QueueAdoptLegacy(cfg *Config, st *pumpState, thread string, ba
 	}
 	// No prefix of today's queue is the pre-change id of an attempt. The pre-change id hashed the
 	// sorted names of the whole queue at the time, and a notice the producer added later carries a
-	// name it chose, so the old set need not be a prefix of today's. The outbox is scanned for an
-	// unsettled attempt on this thread: its own text is not stored, so it is pinned as a legacy
-	// attempt and reconciled through the bridge's receipt, which tells an attempt that went from one
-	// that did not without re-sending anything.
-	record, known, err := pumpReview776QueueThreadAttempt(cfg, thread)
-	if err != nil {
-		return pumpReview776QueueLegacyNone, err
-	}
-	if !known {
-		return pumpReview776QueueLegacyNone, nil
-	}
-	st.QueueAttempt[thread] = pumpReview776QueuePin{
-		LogicalID: record.LogicalID, Names: append([]string(nil), batch.names...), Body: batch.body,
-		Legacy: true}
-	return pumpReview776QueueLegacyReconcile, st.pumpSave(cfg)
-}
-
-// pumpReview776QueueThreadAttempt is the newest outbox record that targets one thread and is still
-// unsettled: the attempt the thread's queue may still have to answer for. A record for another
-// thread, a settled one, or one this code cannot decode is skipped.
-func pumpReview776QueueThreadAttempt(cfg *Config, thread string) (deliverRecord, bool, error) {
-	dir := filepath.Join(cfg.StateDir, "outbox")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return deliverRecord{}, false, nil
-		}
-		return deliverRecord{}, false, err
-	}
-	var best deliverRecord
-	found := false
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return deliverRecord{}, false, err
-		}
-		var record deliverRecord
-		if err := json.Unmarshal(raw, &record); err != nil {
-			continue
-		}
-		if record.TargetThread != thread || record.LogicalID == "" {
-			continue
-		}
-		if record.State != deliverStatePending && record.State != deliverStateUnknown {
-			continue
-		}
-		if !found || record.CreatedAt > best.CreatedAt ||
-			(record.CreatedAt == best.CreatedAt && record.LogicalID > best.LogicalID) {
-			best, found = record, true
-		}
-	}
-	return best, found, nil
+	// name it chose, so the old set need not be a prefix of today's. Nothing is adopted then: the
+	// batch takes its own id, because an attempt the ledger holds under some other name set is not
+	// this queue's attempt and completing its notices would archive a delivery nobody made. An
+	// unsettled attempt whose names cannot be recovered is the upgrade path the issue leaves to the
+	// batch's own id, not one this code can answer for.
+	return pumpReview776QueueLegacyNone, nil
 }
 
 // pumpQueueLegacyBatchID is the pre-change queue batch id: the thread and the sorted notice names,

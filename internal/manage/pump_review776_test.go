@@ -1048,6 +1048,119 @@ func TestPumpReview776AcceptedPinCompletesAfterACrash(t *testing.T) {
 	}
 }
 
+// A symlinked aside directory is refused: a link planted in its place would make every file of its
+// target look like one of a move's asides, and the recovery would then unlink files outside the queue.
+func TestPumpReview776AsideSymlinkIsRefused(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	dir := filepath.Join(cfg.StateDir, pumpQueueDir, "parent-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim.txt")
+	if err := os.WriteFile(victim, []byte("outside the queue"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, pumpReview776AsideDir)); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(victim); err != nil || string(raw) != "outside the queue" {
+		t.Errorf("the recovery touched a file outside the queue: %q %v", raw, err)
+	}
+}
+
+// The bridge's own receipt is read even when the pinned notices are young and the parent is idle, so
+// an attempt the bridge already settled is not held back until max_queue_seconds has passed.
+func TestPumpReview776PinnedReceiptIsReadBeforeTheIdleGate(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	path := pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
+	if err := os.Chtimes(path, pumpTestNow, pumpTestNow); err != nil {
+		t.Fatal(err)
+	}
+	st := pumpTestReadState(t, cfg)
+	st.QueueAttempt["parent-1"] = pumpReview776QueuePin{LogicalID: "pinid", Names: []string{"aaaaaaaaaaaaaaaa.txt"}, Body: "a-body",
+		SHA256: map[string]string{"aaaaaaaaaaaaaaaa.txt": pumpReview776TestDigest("a-body")}}
+	if err := st.pumpSave(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: "pinid", RequestID: "pinid", Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256("a-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	read := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolOperation {
+			read = true
+		}
+		if call["tool"] == deliverToolSend || call["tool"] == deliverToolSteer {
+			t.Errorf("a young idle pin opened a turn: %v", deliverSendToolsOf(t, log))
+		}
+	}
+	if !read {
+		t.Fatalf("the young idle pin's receipt was never read: %v", deliverSendToolsOf(t, log))
+	}
+	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
+		t.Error("the accepted receipt did not settle the pin")
+	}
+}
+
+// A refused prefix does not stall the queue once a notice is added: the id covers the whole queued
+// set, so the new notice is a new logical message the ledger has not refused.
+func TestPumpReview776AddedNoticeUnblocksARefusedPrefix(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	cfg := pumpTestConfig(t, bridge)
+	a := strings.Repeat("a", 60000)
+	b := strings.Repeat("b", 35000)
+	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", a)
+	pumpQueueTestNotice(t, cfg, "parent-1", "bbbbbbbbbbbbbbbb.txt", b)
+	// The prefix [a] was refused earlier under its own id.
+	prefixBody := pumpReview776QueueBody([]string{a})
+	prefixID := pumpQueueBatchID("parent-1", []string{"aaaaaaaaaaaaaaaa.txt"}, prefixBody)
+	if err := deliverSave(cfg, deliverRecord{
+		LogicalID: prefixID, RequestID: prefixID, Tool: deliverToolSend, TargetThread: "parent-1",
+		MessageSHA256: deliverMessageSHA256(prefixBody), CreatedAt: deliverNow(e), State: deliverStateRefused}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
+		t.Fatal(err)
+	}
+	sent := false
+	for _, call := range deliverSendCallsOf(t, log) {
+		if call["tool"] == deliverToolSend || call["tool"] == deliverToolSteer {
+			if id := deliverSendRequestIDOf(t, call); id != prefixID {
+				sent = true
+			}
+		}
+	}
+	if !sent {
+		t.Fatalf("a refused prefix stalled the queue after a notice was added: %v", deliverSendToolsOf(t, log))
+	}
+}
+
 // A notice whose producer-chosen logical id starts with the aside directory's name is an ordinary
 // notice: the aside area is a directory the producer cannot create, so nothing it writes is ever
 // mistaken for a move's aside and deleted.
@@ -1369,39 +1482,36 @@ func TestPumpReview776LegacyAcceptedWithUnrecoverableTextHoldsTheQueue(t *testin
 	}
 }
 
-// The pre-change lookup finds an unsettled record by its target thread, so a notice whose name
-// sorts after the old attempt's names does not hide it.
-func TestPumpReview776LegacyLookupFindsANonPrefixNameSet(t *testing.T) {
+// A pre-change attempt whose names are neither today's queue nor a prefix of it is not this batch's
+// attempt: adopting it could complete notices it never carried, so the batch takes its own id.
+func TestPumpReview776LegacyLookupIgnoresAnotherNameSet(t *testing.T) {
 	now := pumpTestNow
 	e := pumpTestEnv(t, &now)
 	bridge, log := deliverFakeBridge(t, []map[string]any{
 		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
 	})
 	cfg := pumpTestConfig(t, bridge)
-	// The old attempt carried z.txt; a.txt arrived afterwards and sorts before it.
+	// The old attempt carried z.txt alone; a.txt arrived afterwards, so its name set is neither the
+	// queue nor a prefix of it.
 	pumpQueueTestNotice(t, cfg, "parent-1", "aaaaaaaaaaaaaaaa.txt", "a-body")
 	pumpQueueTestNotice(t, cfg, "parent-1", "zzzzzzzzzzzzzzzz.txt", "z-body")
-	oldID := pumpBatchIDStrings([]string{"parent-1", "zzzzzzzzzzzzzzzz.txt"})
-	newID := pumpBatchIDStrings([]string{"parent-1", "aaaaaaaaaaaaaaaa.txt", "zzzzzzzzzzzzzzzz.txt"})
+	otherID := pumpBatchIDStrings([]string{"parent-1", "zzzzzzzzzzzzzzzz.txt"})
 	if err := deliverSave(cfg, deliverRecord{
-		LogicalID: oldID, RequestID: oldID, Tool: deliverToolSend, TargetThread: "parent-1",
+		LogicalID: otherID, RequestID: otherID, Tool: deliverToolSend, TargetThread: "parent-1",
 		MessageSHA256: deliverMessageSHA256("z-body"), CreatedAt: deliverNow(e), State: deliverStateUnknown}); err != nil {
 		t.Fatal(err)
 	}
 	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err != nil {
 		t.Fatal(err)
 	}
-	reconciled := false
 	for _, call := range deliverSendCallsOf(t, log) {
-		if call["tool"] == deliverToolOperation && deliverSendRequestIDOf(t, call) == oldID {
-			reconciled = true
-		}
-		if (call["tool"] == deliverToolSteer || call["tool"] == deliverToolSend) && deliverSendRequestIDOf(t, call) == newID {
-			t.Errorf("the round sent under the new id %q instead of reconciling the old attempt", newID)
+		if call["tool"] == deliverToolOperation {
+			t.Errorf("the round reconciled an attempt for another name set: %v", deliverSendToolsOf(t, log))
 		}
 	}
-	if !reconciled {
-		t.Fatalf("the old attempt %q was not reconciled: %v", oldID, deliverSendToolsOf(t, log))
+	if names := pumpQueueTestNames(t, cfg, "parent-1"); len(names) != 0 {
+		t.Errorf("the batch was not delivered under its own id: %v", names)
 	}
 }
 
