@@ -264,6 +264,11 @@ var (
 // 2026-10-06 decision, CRW-353). A skill-path line is admitted only inside it.
 const skillScriptsNodeJob = "skill-scripts-node"
 
+// skillScriptsNodeFile is the workflow that job lives in. The exception is keyed by file and job
+// together (CRW-939): a job name is not a place, so a workflow that copied the job would otherwise
+// inherit the one allow-list's exception and run a skill script outside the subject that admits it.
+const skillScriptsNodeFile = "ci.yml"
+
 // jobHeaderLine is a job header: two spaces, the name, a colon. workflowJobs reads the same shape.
 var jobHeaderLine = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
 
@@ -276,21 +281,23 @@ func alternation(words []string) string {
 	return strings.Join(quoted, "|")
 }
 
-// pythonInWorkflow is the lines of a workflow, numbered, that install or run Python or name a
-// path below a skills directory. A line that starts with # is a comment and is skipped; a trailing
-// # is read as part of the line, because a # inside quotes hides nothing from the shell.
+// pythonInWorkflow is the lines of the workflow file, numbered, that install or run Python or name
+// a path below a skills directory. A line that starts with # is a comment and is skipped; a
+// trailing # is read as part of the line, because a # inside quotes hides nothing from the shell.
 //
-// The staged skills' Node tests run in one named job, and a skill-path line is admitted only
-// inside it: the job names its root once and runs the tests it finds there, so neither the root
-// value nor a path below it is a skill script running anywhere else. The Python rule is unchanged
-// in every job, that one included. A job header is the shape workflowJobs reads, so a job cannot
-// be added in a form this detector misses.
-func pythonInWorkflow(text string) []string {
+// The staged skills' Node tests run in one named job of one named workflow, and a skill-path line
+// is admitted only inside that pair: the job names its root once and runs the tests it finds there,
+// so neither the root value nor a path below it is a skill script running anywhere else. file is
+// the workflow's path or base name; the job name alone does not carry the exception (CRW-939). The
+// Python rule is unchanged in every job, that one included. A job header is the shape workflowJobs
+// reads, so a job cannot be added in a form this detector misses.
+func pythonInWorkflow(file, text string) []string {
 	var found []string
+	admitted := filepath.Base(file) == skillScriptsNodeFile
 	inSkillScriptsNode := false
 	for number, line := range lines(text) {
 		if name, ok := workflowJobHeader(line); ok {
-			inSkillScriptsNode = name == skillScriptsNodeJob
+			inSkillScriptsNode = admitted && name == skillScriptsNodeJob
 			continue
 		}
 		code := strings.TrimSpace(line)
@@ -311,26 +318,96 @@ func workflowJobHeader(line string) (string, bool) {
 	return m[1], true
 }
 
-// CI installs no Python (CRW-483), and the only skill scripts it runs are the staged skills' Node
-// tests in the one skill-scripts-node job (the 2026-10-06 decision, CRW-353): the checks are Go
-// only, so no workflow sets up an interpreter or calls python or pip, and a helper script in a
-// skill's scripts/ or examples/ stays an original asset an agent runs. The job names its root once
-// and runs the tests it finds below it, so pythonInWorkflow admits a skill-path line only inside
-// that job — a skill path or a skills-root value in any other job is still refused, which is what
-// stops a job from reaching a skill script by moving the path into a variable.
-func TestWorkflow_installs_no_python(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join(repoRoot(), ".github", "workflows", "*.y*ml"))
-	if err != nil || len(files) < 2 {
-		t.Fatalf("workflow files = %v, %v", files, err)
+// workflowPythonFindings reads every workflow file under dir and reports what pythonInWorkflow
+// refuses, by file name. The caller passes a workflows directory, so a test can judge a synthetic
+// one without writing a workflow into the repository.
+func workflowPythonFindings(t *testing.T, dir string) map[string][]string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.y*ml"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	findings := map[string][]string{}
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, line := range pythonInWorkflow(string(data)) {
-			t.Errorf("%s installs or runs Python, or runs a skill asset, at line %s", filepath.Base(file), line)
+		if found := pythonInWorkflow(file, string(data)); len(found) > 0 {
+			findings[filepath.Base(file)] = found
 		}
+	}
+	return findings
+}
+
+// CI installs no Python (CRW-483), and the only skill scripts it runs are the staged skills' Node
+// tests in the one skill-scripts-node job of ci.yml (the 2026-10-06 decision, CRW-353; CRW-939):
+// the checks are Go only, so no workflow sets up an interpreter or calls python or pip, and a
+// helper script in a skill's scripts/ or examples/ stays an original asset an agent runs. The job
+// names its root once and runs the tests it finds below it, so pythonInWorkflow admits a skill-path
+// line only inside that file and job — a skill path or a skills-root value in any other job, or in
+// the same job name under another workflow, is still refused, which is what stops a job from
+// reaching a skill script by moving the path into a variable or by copying the job's name.
+func TestWorkflow_installs_no_python(t *testing.T) {
+	dir := filepath.Join(repoRoot(), ".github", "workflows")
+	files, err := filepath.Glob(filepath.Join(dir, "*.y*ml"))
+	if err != nil || len(files) < 2 {
+		t.Fatalf("workflow files = %v, %v", files, err)
+	}
+	for name, lines := range workflowPythonFindings(t, dir) {
+		for _, line := range lines {
+			t.Errorf("%s installs or runs Python, or runs a skill asset, at line %s", name, line)
+		}
+	}
+}
+
+// The exception is one file and one job. ci.yml's skill-scripts-node job may name a skill path;
+// the same job name in another workflow is a finding, because a job name is not a place and a
+// copied job would otherwise widen the allow-list's boundary (CRW-939). A workflow file that is
+// not ci.yml, or another job of ci.yml, is refused for the same reason.
+func TestWorkflow_the_skill_scripts_exception_is_one_file_and_one_job(t *testing.T) {
+	job := "name: extra\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	for _, file := range []string{"extra.yml", "release.yml", filepath.Join(".github", "workflows", "extra.yml")} {
+		if got := pythonInWorkflow(file, job); len(got) == 0 {
+			t.Errorf("%s admits a node --test run in a job named skill-scripts-node", file)
+		}
+	}
+	if got := pythonInWorkflow("ci.yml", job); len(got) != 0 {
+		t.Errorf("ci.yml's skill-scripts-node job is refused: %q", got)
+	}
+	if got := pythonInWorkflow(filepath.Join(".github", "workflows", "ci.yml"), job); len(got) != 0 {
+		t.Errorf("ci.yml's skill-scripts-node job is refused when the path is given: %q", got)
+	}
+	// The file alone is not enough either: another job of ci.yml is still refused.
+	other := "name: ci\n\njobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills\n"
+	if got := pythonInWorkflow("ci.yml", other); len(got) == 0 {
+		t.Error("ci.yml admits a skills-root value outside the skill-scripts-node job")
+	}
+}
+
+// A workflow that copies ci.yml's skill-scripts-node job is refused by the file check, driven
+// through the same directory glob the repository check reads.
+func TestWorkflow_a_copied_skill_scripts_node_job_in_another_workflow_is_a_finding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: extra\n\njobs:\n  skill-scripts-node:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: node --test port/cxc/skills/crw-qa/tests/a.test.mjs\n"
+	if err := os.WriteFile(filepath.Join(dir, "extra.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if findings := workflowPythonFindings(t, dir); len(findings["extra.yml"]) == 0 {
+		t.Error("extra.yml's skill-scripts-node job runs node --test and is not refused")
+	}
+	// The same body in ci.yml is the one admitted place.
+	if err := os.Remove(filepath.Join(dir, "extra.yml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ci.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if findings := workflowPythonFindings(t, dir); len(findings) != 0 {
+		t.Errorf("ci.yml's own skill-scripts-node job is refused: %v", findings)
 	}
 }
 
@@ -338,6 +415,9 @@ func TestWorkflow_installs_no_python(t *testing.T) {
 // asset script, and lets comments, other words that contain pip or python, and ordinary skill
 // paths through.
 func TestWorkflow_python_detector(t *testing.T) {
+	// Every row is a line of a workflow that is not ci.yml. The one job whose skill-path lines are
+	// admitted lives in ci.yml, so the same job name in another workflow is judged like any other
+	// job: the exception is keyed by file and job together (CRW-939).
 	for _, row := range []struct {
 		line  string
 		found bool
@@ -365,20 +445,24 @@ func TestWorkflow_python_detector(t *testing.T) {
 		{"      # python is installed by nobody", false},
 		{"          set -euo pipefail", false},
 		{"      - run: echo pipeline cpython", false},
-		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false},   // the roots themselves are no skill path
-		{"      SKILLS_ROOT: port/cxc/skills", true},                                            // a value that is exactly a skills root, outside the one job allowed to name it
-		{"jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", false}, // inside that job it is the job's own root
-		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true},               // the same value in another named job
-		{"      SKILLS_ROOT: 'port/cxc/skills'", true},                                          // the quoted form is the same value
-		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                        // and so is the form a trailing blank ends
-		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                   // a skill path in any other job
+		{"      - run: ls plugins/crw/skills port/cxc/skills/ plugins/crw/skillset/x", false},  // the roots themselves are no skill path
+		{"      SKILLS_ROOT: port/cxc/skills", true},                                           // a value that is exactly a skills root, outside the one job allowed to name it
+		{"jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true}, // the job's own name is not enough in another workflow
+		{"jobs:\n  other:\n    steps:\n      SKILLS_ROOT: port/cxc/skills", true},              // the same value in another named job
+		{"      SKILLS_ROOT: 'port/cxc/skills'", true},                                         // the quoted form is the same value
+		{"      SKILLS_ROOT: port/cxc/skills # the staged skills", true},                       // and so is the form a trailing blank ends
+		{"      - run: node --test port/cxc/skills/x/tests/a.test.mjs", true},                  // a skill path in any other job
 		{"      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0", false},
 	} {
-		if got := pythonInWorkflow(row.line + "\n"); (len(got) > 0) != row.found {
+		if got := pythonInWorkflow("release.yml", row.line+"\n"); (len(got) > 0) != row.found {
 			t.Errorf("%q: found = %q, want found = %v", row.line, got, row.found)
 		}
 	}
-	expectEqual(t, "line number", pythonInWorkflow("jobs:\n  a:\n    steps:\n      - run: |\n          make test\n          python3 x.py\n"),
+	// Inside ci.yml's own skill-scripts-node job the same value is the job's own root.
+	if got := pythonInWorkflow("ci.yml", "jobs:\n  skill-scripts-node:\n    steps:\n      SKILLS_ROOT: port/cxc/skills\n"); len(got) != 0 {
+		t.Errorf("ci.yml's skill-scripts-node root is refused: %q", got)
+	}
+	expectEqual(t, "line number", pythonInWorkflow("ci.yml", "jobs:\n  a:\n    steps:\n      - run: |\n          make test\n          python3 x.py\n"),
 		[]string{"6: python3 x.py"})
 }
 
@@ -628,5 +712,142 @@ func TestWorkflow_the_gate_passes_only_when_every_prerequisite_succeeded(t *test
 	}
 	if code, out := gate(t, results(many), "push", ""); code != 0 {
 		t.Errorf("a large all-success result is refused (%d)\n%.400s", code, out)
+	}
+}
+
+// skillPathsStep is the skill-scripts-node job's changed-path step, dedented: the shell the runner
+// executes when it decides whether the staged skills changed. It is the one step of that job whose
+// name begins with "Decide from the changed files".
+func skillPathsStep(t *testing.T) string {
+	t.Helper()
+	jobs, _ := workflowJobs(t)
+	const name = "      - name: Decide from the changed files whether the staged skills changed\n"
+	_, after, found := strings.Cut(jobs["skill-scripts-node"], name)
+	if !found {
+		t.Fatal("skill-scripts-node has no changed-path step")
+	}
+	_, block, found := strings.Cut(after, "\n        run: |\n")
+	if !found {
+		t.Fatal("the changed-path step has no literal shell step")
+	}
+	var lines []string
+	for _, line := range strings.Split(block, "\n") {
+		if line != "" && !strings.HasPrefix(line, "          ") {
+			break
+		}
+		lines = append(lines, strings.TrimPrefix(line, "          "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// skillPathsRun runs the job's changed-path shell as the runner does — from a script file with
+// bash's -e and pipefail — and returns the changed= line it wrote, or "" when it wrote none. The
+// variables the workflow passes are the only ones the step reads, so any inherited copy is dropped
+// first: a test process running under Actions must not change the answer.
+func skillPathsRun(t *testing.T, r *fixtureRepo, env ...string) string {
+	t.Helper()
+	output := filepath.Join(t.TempDir(), "github-output")
+	if err := os.WriteFile(output, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "skill_paths.sh")
+	if err := os.WriteFile(script, []byte(skillPathsStep(t)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	drop := []string{"PR_BASE_SHA=", "PR_HEAD_SHA=", "PUSH_BEFORE_SHA=", "GITHUB_SHA=", "GITHUB_OUTPUT=", "SKILLS_ROOT="}
+	var base []string
+	for _, entry := range os.Environ() {
+		if !slices.ContainsFunc(drop, func(prefix string) bool { return strings.HasPrefix(entry, prefix) }) {
+			base = append(base, entry)
+		}
+	}
+	// The workflow always passes all four: the step reads them under set -u, so an event with no
+	// base passes the empty string rather than nothing.
+	base = append(base, "GITHUB_OUTPUT="+output, "SKILLS_ROOT=port/cxc/skills",
+		"PR_BASE_SHA=", "PR_HEAD_SHA=", "PUSH_BEFORE_SHA=", "GITHUB_SHA=")
+	got := runEnv(t, r.root, append(base, env...), "bash", script)
+	if got.code != 0 {
+		t.Fatalf("the changed-path step exited %d: %s%s", got.code, got.stdout, got.stderr)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "changed=") {
+			return line
+		}
+	}
+	return ""
+}
+
+// skillPathsRepo is a repository whose dev branch moved a staged skill after the branch point: the
+// first commit is the branch point, dev's tip carries the staged-skill change, and the feature
+// branch starts from the branch point and then runs feature.
+func skillPathsRepo(t *testing.T, feature func(*fixtureRepo)) (*fixtureRepo, string, string) {
+	t.Helper()
+	r := newRepo(t)
+	r.write("README.md", "base\n")
+	r.write("port/cxc/skills/crw-qa/SKILL.md", "a\n")
+	r.commit()
+	r.git("branch", "dev")
+	r.git("checkout", "-q", "dev")
+	r.write("port/cxc/skills/crw-qa/SKILL.md", "b\n")
+	r.commit()
+	base := strings.TrimSpace(r.git("rev-parse", "HEAD"))
+	r.git("checkout", "-q", "-b", "feature", "dev~1")
+	feature(r)
+	r.commit()
+	head := strings.TrimSpace(r.git("rev-parse", "HEAD"))
+	return r, base, head
+}
+
+// A pull request is compared from its merge base: the commits the branch adds to its base, not the
+// base tip's own changes. dev moving the staged skills after the branch point must not select the
+// job, and a branch carrying the same staged-skill change dev has must still select it (CRW-939).
+func TestWorkflow_the_skill_paths_compare_a_pull_request_from_its_merge_base(t *testing.T) {
+	// dev changed a staged skill; this branch changed nothing below the staged skills root.
+	r, base, head := skillPathsRepo(t, func(r *fixtureRepo) {
+		r.write("internal/relay/store/store.go", "changed\n")
+	})
+	if got := skillPathsRun(t, r, "PR_BASE_SHA="+base, "PR_HEAD_SHA="+head); got != "changed=false" {
+		t.Errorf("a branch with no staged-skill change answers %q, want changed=false: dev's own change is not the pull request's", got)
+	}
+	// The branch carries the same staged-skill change dev has. Comparing the two tips directly sees
+	// no difference, but the pull request still changed the skill relative to its merge base.
+	r2, base2, head2 := skillPathsRepo(t, func(r *fixtureRepo) {
+		r.write("port/cxc/skills/crw-qa/SKILL.md", "b\n")
+		// An unrelated change beside it: two commits with the same tree, parent and message are one
+		// object, and this branch's commit must be its own so the comparison is the question.
+		r.write("docs/CI.md", "branch\n")
+	})
+	if got := skillPathsRun(t, r2, "PR_BASE_SHA="+base2, "PR_HEAD_SHA="+head2); got != "changed=true" {
+		t.Errorf("a branch carrying the same staged-skill change as dev answers %q, want changed=true", got)
+	}
+}
+
+// A push to dev compares the commit it replaced with the one it added, where the range is already
+// the pushed commits; a manual dispatch has no base to compare with, so it runs the tests.
+func TestWorkflow_the_skill_paths_keep_the_push_range_and_run_on_a_dispatch(t *testing.T) {
+	r := newRepo(t)
+	r.write("README.md", "base\n")
+	r.commit()
+	before := strings.TrimSpace(r.git("rev-parse", "HEAD"))
+	r.write("port/cxc/skills/crw-qa/SKILL.md", "a\n")
+	r.commit()
+	staged := strings.TrimSpace(r.git("rev-parse", "HEAD"))
+	if got := skillPathsRun(t, r, "PUSH_BEFORE_SHA="+before, "GITHUB_SHA="+staged); got != "changed=true" {
+		t.Errorf("a push touching a staged skill answers %q, want changed=true", got)
+	}
+	r.write("internal/relay/store/store.go", "x\n")
+	r.commit()
+	next := strings.TrimSpace(r.git("rev-parse", "HEAD"))
+	if got := skillPathsRun(t, r, "PUSH_BEFORE_SHA="+staged, "GITHUB_SHA="+next); got != "changed=false" {
+		t.Errorf("a push touching nothing staged answers %q, want changed=false", got)
+	}
+	for _, env := range [][]string{nil, {"PUSH_BEFORE_SHA=0000000000000000000000000000000000000000"}} {
+		if got := skillPathsRun(t, r, env...); got != "changed=true" {
+			t.Errorf("a manual dispatch (%v) answers %q, want changed=true", env, got)
+		}
 	}
 }

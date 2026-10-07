@@ -150,6 +150,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.mirror.outputs.mirrored != 'true'
         with:
+          # The changed-path decision below compares a pull request from its merge base, so the
+          # history the two sides share has to be here, not only the checked-out merge commit.
           fetch-depth: 0
           persist-credentials: false
       - name: Decide from the changed files whether the staged skills changed
@@ -161,18 +163,20 @@ jobs:
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          # A pull request compares its base with its head, a push to dev the previous commit with
-          # this one. A manual dispatch has neither, so it runs the tests.
+          # A pull request compares from its merge base: the commits the branch adds to its base,
+          # never the base tip's own changes. A push to dev compares the previous commit with this
+          # one, where the range is already the pushed commits. A manual dispatch has neither, so
+          # it runs the tests.
           if [[ -n "${PR_BASE_SHA}" ]]; then
-            base="${PR_BASE_SHA}"; head="${PR_HEAD_SHA}"
+            range="${PR_BASE_SHA}...${PR_HEAD_SHA}"
           elif [[ -n "${PUSH_BEFORE_SHA}" && "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
-            base="${PUSH_BEFORE_SHA}"; head="${GITHUB_SHA}"
+            range="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo 'no base to compare with; the staged skill-script tests run'
             exit 0
           fi
-          changed="$(git diff --name-only "${base}" "${head}" -- "${SKILLS_ROOT}")"
+          changed="$(git diff --name-only "${range}" -- "${SKILLS_ROOT}")"
           if [[ -n "${changed}" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             printf 'staged skill paths changed:\n%s\n' "${changed}"
