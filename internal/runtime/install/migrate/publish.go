@@ -42,13 +42,13 @@ func tempRun(name string) (string, bool) {
 // Publisher publishes files into pinned directories and never replaces one; it is not safe for concurrent use. rename and at are test
 // seams: rename is the platform's no-replace rename, and at is called before a named step ("root", "rename", "dirsync") and fails
 // it by returning an error. ensureDest is the seam for the destination root's creation, so a test can fail the step EnsureChild runs
-// between the mkdir and EnsureProjectRoot's mode chmod.
+// between the mkdir and EnsureProjectRoot's mode chmod; it reports whether its own mkdir created the root, like Pair.EnsureDest.
 type Publisher struct {
 	run        string
 	seq        int
 	rename     func(dirfd int, oldName, newName string) error
 	at         func(step string) error
-	ensureDest func(pair *Pair, perm uint32) (*Dir, error)
+	ensureDest func(pair *Pair, perm uint32) (*Dir, bool, error)
 }
 
 // NewPublisher starts a run. A platform without a no-replace rename is refused here, so nothing is written there.
@@ -59,7 +59,7 @@ func NewPublisher() (*Publisher, error) {
 	return &Publisher{
 		run:        rand.Text(),
 		rename:     noReplaceRename,
-		ensureDest: func(pair *Pair, perm uint32) (*Dir, error) { return pair.EnsureDest(perm) },
+		ensureDest: func(pair *Pair, perm uint32) (*Dir, bool, error) { return pair.EnsureDest(perm) },
 	}, nil
 }
 
@@ -204,14 +204,14 @@ func sum(r io.Reader) ([sha256.Size]byte, error) {
 	return [sha256.Size]byte(h.Sum(nil)), err
 }
 
-// EnsureProjectRoot returns the pinned W/.crw, created when absent at the private mode 0700 (under the umask) once its
-// .gitignore is there: published as crwdir.GitignoreText whenever it is absent, also in a root that already exists, so a run
-// interrupted between the mkdir and the publication is repaired by the next one before any state is copied (crwdir.EnsureDir
-// stops at an existing root). A regular .gitignore that was already there when the call began belongs to its owner and is kept
-// as it is, so a differing one is published past and the call succeeds; when it was absent and a racer makes a differing one
-// before the rename, that ReasonDiffers refusal is returned so the caller stops before copying state (state-migration.md
-// Preflight 3-4). A link, directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
-func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
+// EnsureProjectRoot returns the pinned W/.crw, created when absent at the private mode 0700 (under the umask), and whether this
+// call's own mkdir created it, once its .gitignore is there: published as crwdir.GitignoreText whenever it is absent, also in a
+// root that already exists, so a run interrupted between the mkdir and the publication is repaired by the next one before any
+// state is copied (crwdir.EnsureDir stops at an existing root). A regular .gitignore that was already there when the call began
+// belongs to its owner and is kept as it is, so a differing one is published past and the call succeeds; when it was absent and a
+// racer makes a differing one before the rename, that ReasonDiffers refusal is returned so the caller stops before copying state
+// (state-migration.md Preflight 3-4). A link, directory, hard-linked or set-ID one is refused, and one that cannot be read fails.
+func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, bool, error) {
 	// Was .gitignore already there when this call started? Capture that before EnsureDest can create the root, so a .gitignore
 	// a racer makes in the window that creation opens (or in the root step) is a conflicting initialization race, not a
 	// retained owner file: the root did not exist before the call, so no .gitignore could have.
@@ -221,13 +221,12 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		case err == nil:
 			pre = true
 		case !errors.Is(err, fs.ErrNotExist):
-			return nil, err
+			return nil, false, err
 		}
 	}
-	made := pair.Dest == nil
 	// The root's mkdir itself is private (CRW-878), so no failure between it and the chmod below can leave a root another
 	// user can read through, whatever a retry then makes of the root it finds. Only a root this call made may be tightened.
-	root, err := p.ensureDest(pair, 0o700)
+	root, made, err := p.ensureDest(pair, 0o700)
 	if err == nil && made {
 		// Give the root the private marker mode here, before the fallible .gitignore publication, so a failure below cannot
 		// leave a widened root that a retry would then find as an existing one.
@@ -237,7 +236,7 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		err = p.step("root")
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	text := crwdir.GitignoreText
 	_, err = p.publish(root, ".gitignore", strings.NewReader(text), int64(len(text)), 0o644)
@@ -245,9 +244,9 @@ func (p *Publisher) EnsureProjectRoot(pair *Pair) (*Dir, error) {
 		err = nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return root, nil
+	return root, made, nil
 }
 
 // OlderTemps lists the temporaries other runs left in dir. It only reports: nothing adopts, renames or removes them.

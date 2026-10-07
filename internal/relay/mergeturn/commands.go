@@ -3,6 +3,7 @@ package mergeturn
 import (
 	"context"
 	"database/sql"
+	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -187,6 +188,39 @@ func init() {
 	add("merge-turn-withdraw",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Withdraw(ctx, p.Text("turn"), p.Text("actor")))
+		})
+	// CRW-768: the merge train, beside merge-turn-request. The forge and checkout readers are passed
+	// per call, never stored on Service, so a caller with no reader refuses merge_target_unreadable
+	// rather than deciding a bundle from the record.
+	trainForge := TrainForgeReader{}
+	trainProof := TrainCheckoutProver{}
+	add("merge-train-open",
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			members := make([]int64, 0, len(p.Values("member")))
+			for _, raw := range p.Values("member") {
+				n, err := strconv.ParseInt(raw, 10, 64)
+				if err != nil {
+					return nil, badInvocation("--member " + raw + " is not a pull request number")
+				}
+				members = append(members, n)
+			}
+			return answer(service(r).Open(ctx, p.Text("turn"), p.Text("actor"), p.Text("base-sha"), members, reader, trainForge))
+		})
+	add("merge-train-verify",
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			return answer(service(r).Verify(ctx, p.Text("train"), p.Text("actor"), p.Text("bundle-pr"), p.Text("head"), p.Text("run"), p.Text("repo"), trainForge, trainProof))
+		})
+	add("merge-train-land",
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			return answer(service(r).TrainLand(ctx, p.Text("train"), p.Text("actor"), p.Text("landed-sha"), optional(p, "observed-base-sha"), reader, trainForge))
+		})
+	add("merge-train-close",
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			return answer(service(r).Close(ctx, p.Text("train"), p.Text("actor"), p.Text("state"), p.Text("reason")))
+		})
+	registry.AddCheckedCommand(dispatch.Command{Name: "merge-train-show", ReadOnly: true}, nil,
+		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+			return answer(service(r).Show(ctx, p.Text("train"), reader, trainForge))
 		})
 	registry.AddCheckedCommand(dispatch.Command{Name: "merge-turn-show", ReadOnly: true}, showSelectors, show)
 }

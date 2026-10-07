@@ -37,14 +37,15 @@ func migrateRootPrivateWorkspace(t *testing.T) (string, *Pair) {
 // migrateRootPrivateFailRootCreation makes the publisher's destination-root creation fail after the mkdir: the root is
 // on disk with the mode the mkdir left it, and the call returns EIO as the parent-directory sync in EnsureChild does, so
 // the mode chmod EnsureProjectRoot runs next never happens. That is the state a run interrupted between the mkdir and
-// the chmod leaves, and the state a rerun then finds as an existing root.
+// the chmod leaves, and the state a rerun then finds as an existing root. The creation reported made=true, because its
+// own mkdir did create the root: only the sync after it failed.
 func migrateRootPrivateFailRootCreation(p *Publisher) {
 	create := p.ensureDest
-	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, error) {
-		if _, err := create(pair, perm); err != nil {
-			return nil, err
+	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, bool, error) {
+		if _, made, err := create(pair, perm); err != nil {
+			return nil, made, err
 		}
-		return nil, unix.EIO
+		return nil, true, unix.EIO
 	}
 }
 
@@ -68,8 +69,8 @@ func TestMigrateRootPrivateAfterAFailedRootSync(t *testing.T) {
 	ws, pair := migrateRootPrivateWorkspace(t)
 	p := newPub(t)
 	migrateRootPrivateFailRootCreation(p)
-	if root, err := p.EnsureProjectRoot(pair); root != nil || !errors.Is(err, unix.EIO) {
-		t.Fatalf("EnsureProjectRoot = %v, %v; want no root and the interrupted creation", root, err)
+	if root, made, err := p.EnsureProjectRoot(pair); root != nil || made || !errors.Is(err, unix.EIO) {
+		t.Fatalf("EnsureProjectRoot = %v, %v, %v; want no root, no made and the interrupted creation", root, made, err)
 	}
 	migrateRootPrivateWantPrivate(t, filepath.Join(ws, crwdir.DirName))
 }
@@ -115,10 +116,10 @@ func TestMigrateRootPrivateControls(t *testing.T) {
 	migrateRootPrivateUmask(t)
 	t.Run("EnsureProjectRoot without a failure", func(t *testing.T) {
 		ws, pair := migrateRootPrivateWorkspace(t)
-		root, err := newPub(t).EnsureProjectRoot(pair)
+		root, made, err := newPub(t).EnsureProjectRoot(pair)
 		must(t, err)
-		if root == nil {
-			t.Fatal("EnsureProjectRoot returned no root")
+		if root == nil || !made {
+			t.Fatalf("EnsureProjectRoot = %v, %v; want a root this call made", root, made)
 		}
 		fi, err := os.Stat(filepath.Join(ws, crwdir.DirName))
 		if err != nil || fi.Mode().Perm() != applyTempMode || fi.Mode()&fs.ModeSticky == 0 {
@@ -155,12 +156,12 @@ func TestMigrateRootPrivateRootCreationModeIsPrivate(t *testing.T) {
 	p := newPub(t)
 	var asked []uint32
 	create := p.ensureDest
-	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, error) {
+	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, bool, error) {
 		asked = append(asked, perm)
 		return create(pair, perm)
 	}
-	if root, err := p.EnsureProjectRoot(pair); err != nil || root == nil {
-		t.Fatalf("EnsureProjectRoot = %v, %v", root, err)
+	if root, made, err := p.EnsureProjectRoot(pair); err != nil || root == nil || !made {
+		t.Fatalf("EnsureProjectRoot = %v, %v, %v", root, made, err)
 	}
 	if len(asked) != 1 || asked[0] != 0o700 {
 		t.Errorf("the root's creation was asked for %v, want one 0o700", asked)
@@ -177,10 +178,10 @@ func TestMigrateRootPrivateSeamDefaultIsArmed(t *testing.T) {
 		t.Fatal("NewPublisher left the destination-root creation seam nil")
 	}
 	_, pair := migrateRootPrivateWorkspace(t)
-	root, err := p.ensureDest(pair, 0o700)
+	root, made, err := p.ensureDest(pair, 0o700)
 	must(t, err)
-	if root == nil || pair.Dest != root {
-		t.Fatalf("the seam default must be Pair.EnsureDest: root = %v, pair.Dest = %v", root, pair.Dest)
+	if root == nil || !made || pair.Dest != root {
+		t.Fatalf("the seam default must be Pair.EnsureDest: root = %v, made = %v, pair.Dest = %v", root, made, pair.Dest)
 	}
 	if fi, err := os.Stat(filepath.Join(pair.DestPath)); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("the default seam must create the root at the mode it was given: %v %v", fi, err)
