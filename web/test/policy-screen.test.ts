@@ -156,7 +156,9 @@ async function mount(state: Record<string, unknown>) {
   const applied: Array<{ name: string; args: unknown[] }> = [];
   const handlers = {
     propose: (...args: unknown[]) => applied.push({ name: "propose", args }),
-    allowedText: (...args: unknown[]) => applied.push({ name: "allowedText", args }),
+    allowedEntryText: (...args: unknown[]) => applied.push({ name: "allowedEntryText", args }),
+    allowedEntryAdded: (...args: unknown[]) => applied.push({ name: "allowedEntryAdded", args }),
+    allowedEntryRemoved: (...args: unknown[]) => applied.push({ name: "allowedEntryRemoved", args }),
     allowedAddModel: (...args: unknown[]) => applied.push({ name: "allowedAddModel", args }),
     exceptionDraft: (...args: unknown[]) => applied.push({ name: "exceptionDraft", args }),
     removeException: (...args: unknown[]) => applied.push({ name: "removeException", args }),
@@ -242,22 +244,22 @@ test("the allowed input keeps the comma the operator is typing", async () => {
   const first = await mount(state);
   // The first keystrokes of "max, high": a split/join on every keystroke would eat the trailing comma
   // and make the second entry impossible to type.
-  fire(byLabel(first.elements, "anthropic/opus allowed efforts"), "onChange", "max, ");
-  const call = first.applied.find((c) => c.name === "allowedText");
-  const next = pure.screenAllowedText(state as never, call?.args[0] as never, call?.args[1] as never) as unknown as Record<string, unknown>;
+  fire(byLabel(first.elements, "anthropic/opus allowed effort 1"), "onChange", "max, ");
+  const call = first.applied.find((c) => c.name === "allowedEntryText");
+  const next = pure.screenAllowedEntryText(state as never, call?.args[0] as never, call?.args[1] as never, call?.args[2] as never, call?.args[3] as never) as unknown as Record<string, unknown>;
   const second = await mount(next);
-  assert.equal(byLabel(second.elements, "anthropic/opus allowed efforts")?.props.value, "max, ");
+  assert.equal(byLabel(second.elements, "anthropic/opus allowed effort 1")?.props.value, "max, ");
 });
 
 test("the allowed input an operator cleared shows what they typed", async () => {
   const pure = await import("../src/policy-state.ts");
   const state = loadedState(pure, readingBody(), catalogBody([{ id: "anthropic/opus", label: "Opus" }]));
   const first = await mount(state);
-  fire(byLabel(first.elements, "anthropic/opus allowed efforts"), "onChange", "");
-  const call = first.applied.find((c) => c.name === "allowedText");
-  const next = pure.screenAllowedText(state as never, call?.args[0] as never, call?.args[1] as never) as unknown as Record<string, unknown>;
+  fire(byLabel(first.elements, "anthropic/opus allowed effort 1"), "onChange", "");
+  const call = first.applied.find((c) => c.name === "allowedEntryText");
+  const next = pure.screenAllowedEntryText(state as never, call?.args[0] as never, call?.args[1] as never, call?.args[2] as never, call?.args[3] as never) as unknown as Record<string, unknown>;
   const second = await mount(next);
-  assert.equal(byLabel(second.elements, "anthropic/opus allowed efforts")?.props.value, "");
+  assert.equal(byLabel(second.elements, "anthropic/opus allowed effort 1")?.props.value, "");
 });
 
 test("an existing exception can be edited, not only removed", async () => {
@@ -328,21 +330,21 @@ test("a stale check keeps the inputs and asks for a re-read", async () => {
   // And the reducer keeps the pending change across the re-read it triggers.
   let state = pure.initialScreen();
   state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
-  state = pure.screenAllowedText(state, "anthropic/opus", "max, high");
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max", "high"]);
   const pending = state.change;
   const kept = pure.screenLoaded(state, pure.decodePolicy(readingBody({ digest: "b".repeat(64) })), true);
   assert.deepEqual(kept.change, pending, "the pending change survives the stale re-read");
-  assert.equal(kept.allowedText["anthropic/opus"], "max, high", "the typed text survives too");
+  assert.deepEqual(kept.allowedDraft["anthropic/opus"], ["max", "high"], "the typed text survives too");
 });
 
 test("a save in flight does not drop an edit made while it is running", async () => {
   const pure = await import("../src/policy-state.ts");
   let state = pure.initialScreen();
   state = pure.screenLoaded(state, pure.decodePolicy(readingBody()));
-  state = pure.screenAllowedText(state, "anthropic/opus", "max");
+  state = pure.screenAllowedDraft(state, "anthropic/opus", ["max"]);
   const saving = pure.screenSaveStarted(state);
   // A second edit lands while the first save is in flight.
-  const edited = pure.screenAllowedText(saving, "gpt-6.1-sol", "high");
+  const edited = pure.screenAllowedDraft(saving, "gpt-6.1-sol", ["high"]);
   const finished = pure.screenSaveFinished(edited, state.change, pure.noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
   assert.equal(finished.change?.kind, "setAllowed", "the later edit is still pending");
   assert.equal((finished.change as { model: string }).model, "gpt-6.1-sol");

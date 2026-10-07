@@ -35,7 +35,7 @@ import {
   removeExceptionLabel,
   roleControlsLabel,
   screenAllowedAddModel,
-  screenAllowedText,
+  screenAllowedDraft,
   screenDraftIsNew,
   screenEditable,
   screenEffortUnavailable,
@@ -48,7 +48,10 @@ import {
   initialScreen,
   allowedAddChoice,
   addModelOptions,
-  allowedTextOf,
+  allowedEntriesOf,
+  screenAllowedEntryAdded,
+  screenAllowedEntryRemoved,
+  screenAllowedEntryText,
   screenPropose,
   type ExceptionDraft,
   type ModelCatalog,
@@ -419,32 +422,32 @@ test("a successful save keeps an edit the operator started while it was in fligh
   // d2: the success branch always re-read without keeping the inputs, so the next edit was wiped.
   let state = initialScreen();
   state = screenLoaded(state, reading());
-  state = screenAllowedText(state, "anthropic/opus", "max");
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
   const first = state.change;
   const saving = screenSaveStarted(state);
-  const second = screenAllowedText(saving, "gpt-6.1-sol", "high");
+  const second = screenAllowedDraft(saving, "gpt-6.1-sol", ["high"]);
   const finished = screenSaveFinished(second, first, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
   // The saved model's spent draft is gone, and the later edit is still pending.
-  assert.equal(allowedTextOf(finished, "anthropic/opus", ["max", "xhigh"]), "max, xhigh", "the spent draft is dropped");
+  assert.equal(allowedEntriesOf(finished, "anthropic/opus", ["max", "xhigh"]).join(", "), "max, xhigh", "the spent draft is dropped");
   assert.equal(finished.change?.kind, "setAllowed");
   assert.equal((finished.change as { model: string }).model, "gpt-6.1-sol");
   // The screen re-reads with keepInputs, so the later edit survives the read.
   const afterSave = screenLoaded(finished, reading({ digest: "b".repeat(64) }), true);
   assert.equal((afterSave.change as { model: string })?.model, "gpt-6.1-sol", "the later edit survives the re-read");
-  assert.equal(afterSave.allowedText["gpt-6.1-sol"], "high");
+  assert.equal(afterSave.allowedDraft["gpt-6.1-sol"]?.join(", "), "high");
 });
 
 test("a successful save with nothing pending leaves no drafts behind", () => {
   let state = initialScreen();
   state = screenLoaded(state, reading());
-  state = screenAllowedText(state, "anthropic/opus", "max");
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
   const saved = state.change;
   state = screenSaveFinished(screenSaveStarted(state), saved, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
   assert.equal(state.change, null);
-  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "max, xhigh", "the input shows the file again");
+  assert.equal(allowedEntriesOf(state, "anthropic/opus", ["max", "xhigh"]).join(", "), "max, xhigh", "the input shows the file again");
   const clean = screenLoaded(state, reading({ digest: "b".repeat(64) }), true);
   assert.equal(clean.change, null);
-  assert.equal(allowedTextOf(clean, "anthropic/opus", ["max", "xhigh"]), "max, xhigh");
+  assert.equal(allowedEntriesOf(clean, "anthropic/opus", ["max", "xhigh"]).join(", "), "max, xhigh");
 });
 
 test("editing an existing exception keeps its identifier byte for byte", () => {
@@ -490,19 +493,19 @@ test("a draft changed while a save is in flight is not dropped by that save's an
   // the save started.
   let state = initialScreen();
   state = screenLoaded(state, reading());
-  state = screenAllowedText(state, "anthropic/opus", "max");
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
   const saved = state.change;
   state = screenSaveStarted(state);
   // A newer edit to the SAME model while the write is in flight.
-  state = screenAllowedText(state, "anthropic/opus", "max, xhigh");
+  state = screenAllowedDraft(state, "anthropic/opus", ["max", "xhigh"]);
   const finished = screenSaveFinished(state, saved, noticeForWrite(200, { stored: { digest: "b".repeat(64) }, registered: { digest: "b".repeat(64) }, applied: "applied", actions: [] }));
-  assert.equal(finished.allowedText["anthropic/opus"], "max, xhigh", "the newer text is kept");
+  assert.deepEqual(finished.allowedDraft["anthropic/opus"], ["max", "xhigh"], "the newer entries are kept");
   assert.deepEqual((finished.change as { efforts: string[] }).efforts, ["max", "xhigh"], "and matches the pending change");
   // An unchanged draft for the saved model IS the spent one and goes.
-  let other = screenAllowedText(screenLoaded(initialScreen(), reading()), "anthropic/opus", "max");
+  let other = screenAllowedDraft(screenLoaded(initialScreen(), reading()), "anthropic/opus", ["max"]);
   const otherSaved = other.change;
   other = screenSaveFinished(screenSaveStarted(other), otherSaved, noticeForWrite(200, { stored: { digest: "c".repeat(64) }, registered: { digest: "c".repeat(64) }, applied: "applied", actions: [] }));
-  assert.equal(other.allowedText["anthropic/opus"], undefined, "the spent draft is dropped");
+  assert.equal(other.allowedDraft["anthropic/opus"], undefined, "the spent draft is dropped");
 });
 
 test("the repair sentence stays on screen after an explicit re-read", () => {
@@ -522,6 +525,53 @@ test("the repair sentence stays on screen after an explicit re-read", () => {
   state = screenLoaded(state, reading({ digest: "3".repeat(64), registeredDigest: "3".repeat(64) }));
   assert.equal(state.repair, null);
   assert.equal(screenEditable(state), true);
+});
+
+// The three defects the sixth pre-merge evaluation found.
+
+test("an allowlist entry is edited as its own entry, so a comma inside it is not a separator", () => {
+  // d1: a comma-separated field split one stored approval into two. The Go policy parser does not
+  // forbid a comma inside an effort name and compares the value exactly, so "low,high" is ONE
+  // approved effort, not two, and splitting it would approve two others and drop the original.
+  let state = initialScreen();
+  state = screenLoaded(state, reading({ allowed: [{ model: "m", efforts: ["low,high"] }] }));
+  // The row's single entry is offered as one entry, and editing only another entry keeps it.
+  assert.deepEqual(allowedEntriesOf(state, "m", ["low,high"]), ["low,high"]);
+  state = screenAllowedEntryAdded(state, "m", ["low,high"], "none");
+  assert.deepEqual((state.change as { efforts: string[] }).efforts, ["low,high", "none"], "the comma stays inside its entry");
+  // Editing the entry's text carries it unchanged.
+  state = screenAllowedEntryText(state, "m", ["low,high"], 0, "low,high,ultra");
+  assert.deepEqual((state.change as { efforts: string[] }).efforts, ["low,high,ultra", "none"]);
+  // Removing an entry leaves the others byte for byte.
+  state = screenAllowedEntryRemoved(state, "m", ["low,high"], 1);
+  assert.deepEqual((state.change as { efforts: string[] }).efforts, ["low,high,ultra"]);
+});
+
+test("editing an existing exception keeps its model byte for byte", () => {
+  // d2: the model was trimmed, so editing only the effort sent a different model identifier.
+  const exception = { id: "legacy", role: "parent", model: " model-a ", reasoningEffort: "high", cwd: ["/srv/a"] };
+  const draft = draftForException(exception);
+  const change = changeFromExceptionDraft({ ...draft, effort: "max" });
+  assert.equal((change as { model: string }).model, " model-a ", "the stored model is not trimmed");
+  // A model the operator picks for a NEW exception is trimmed, because they are typing it.
+  const fresh = changeFromExceptionDraft({ ...draftForNewException("parent", " model-b ", "high"), id: "fresh", cwd: ["/srv/a"] });
+  assert.equal((fresh as { model: string }).model, "model-b");
+});
+
+test("an edit started after an explicit re-read survives the read", () => {
+  // d3: the manual re-read pinned keep=false when it started, so a late response wiped an edit the
+  // operator began after clicking it. The read now keeps whatever is pending when it resolves; the
+  // drafts that existed when it started were already cleared by screenReread.
+  let state = initialScreen();
+  state = screenLoaded(state, reading());
+  state = screenAllowedDraft(state, "anthropic/opus", ["max"]);
+  const beforeReread = screenReread(state);
+  assert.equal(beforeReread.change, null, "the drafts that existed at the click are dropped");
+  // The operator starts a new edit while the read is in flight.
+  const during = screenAllowedDraft(beforeReread, "gpt-6.1-sol", ["high"]);
+  const afterRead = screenLoaded(during, reading({ digest: "b".repeat(64) }), true);
+  assert.deepEqual(afterRead.allowedDraft["gpt-6.1-sol"], ["high"], "the later edit survives");
+  assert.equal((afterRead.change as { model: string }).model, "gpt-6.1-sol");
 });
 
 // The four defects the third pre-merge evaluation found.
@@ -547,16 +597,16 @@ test("cancelling an allowlist edit clears its draft so a later re-read shows the
   // d2: Cancel cleared the change but left the raw text, and the successful-save re-read kept it.
   let state = initialScreen();
   state = screenLoaded(state, reading());
-  state = screenAllowedText(state, "anthropic/opus", "low");
-  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "low");
+  state = screenAllowedDraft(state, "anthropic/opus", ["low"]);
+  assert.equal(allowedEntriesOf(state, "anthropic/opus", ["max", "xhigh"]).join(", "), "low");
   // Cancel clears the pending change AND the draft text.
   state = screenPropose(state, null);
-  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "max, xhigh");
+  assert.equal(allowedEntriesOf(state, "anthropic/opus", ["max", "xhigh"]).join(", "), "max, xhigh");
   // A later re-read of the file shows the file's value, never the cancelled draft.
-  state = screenAllowedText(state, "anthropic/opus", "low");
+  state = screenAllowedDraft(state, "anthropic/opus", ["low"]);
   state = screenPropose(state, null);
   state = screenLoaded(state, reading(), false);
-  assert.equal(allowedTextOf(state, "anthropic/opus", ["max", "xhigh"]), "max, xhigh");
+  assert.equal(allowedEntriesOf(state, "anthropic/opus", ["max", "xhigh"]).join(", "), "max, xhigh");
 });
 
 test("the new-exception draft starts with no cwd and requires at least one root", () => {
@@ -717,9 +767,9 @@ test("every control on the screen has a label, and the screen uses native contro
   assert.equal(roleControlsLabel("parent"), "parent pair controls");
   assert.equal(pairModelLabel("child", 0), "child pair 1 model");
   assert.equal(pairEffortLabel("child", 0), "child pair 1 effort");
-  assert.equal(allowedEffortsLabel("anthropic/opus"), "anthropic/opus allowed efforts");
+  assert.equal(allowedEffortsLabel("anthropic/opus", 0), "anthropic/opus allowed effort 1");
   assert.equal(removeExceptionLabel("legacy"), "Remove exception legacy");
-  for (const label of [roleControlsLabel("parent"), pairModelLabel("parent", 1), pairEffortLabel("parent", 1), allowedEffortsLabel("m"), removeExceptionLabel("x")]) {
+  for (const label of [roleControlsLabel("parent"), pairModelLabel("parent", 1), pairEffortLabel("parent", 1), allowedEffortsLabel("m", 0), removeExceptionLabel("x")]) {
     assert.ok(label.length > 0, "a control label is never empty");
   }
   // The screen composes only native, focusable elements: the browser gives them keyboard operability

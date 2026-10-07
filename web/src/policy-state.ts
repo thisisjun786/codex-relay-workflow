@@ -243,8 +243,16 @@ export interface PolicyScreenState {
   error: string | null;
   /** The one pending change, or null. */
   change: PolicyChange | null;
-  /** The raw text of each allowed-list input, keyed by model. */
-  allowedText: Record<string, string>;
+  /**
+   * The allowlist rows being edited, keyed by model: one entry per approved effort. A comma-separated
+   * field could not be lossless, because the Go policy parser does not forbid a comma inside an
+   * effort name and compares the value exactly, so splitting one stored entry on a comma would
+   * replace one approval with two (and dropping the commas would change the name). Each entry is
+   * edited in its own field.
+   */
+  allowedDraft: Record<string, string[]>;
+  /** The text of each allowlist row's "add an effort" field. */
+  allowedNew: Record<string, string>;
   /** The model the "add a model to the allowed list" select is on, or "" for its first free one. */
   allowedAddModel: string;
   /** The exception editor's draft, or null when it is closed. */
@@ -256,7 +264,7 @@ export interface PolicyScreenState {
    * one the write spent and is dropped when it lands; a draft the operator changed while the write
    * was in flight is their next edit and stays, even when it is for the same model or exception.
    */
-  savingDrafts: { allowedText: Record<string, string>; exceptionDraft: ExceptionDraft | null } | null;
+  savingDrafts: { allowedDraft: Record<string, string[]>; exceptionDraft: ExceptionDraft | null } | null;
   notice: PolicyNotice | null;
   /**
    * The repair a person must make before this screen may edit again, or null. It is separate from
@@ -799,7 +807,7 @@ export function unreachableNotice(): PolicyNotice {
 
 /** initialScreen is the state before anything has been read. */
 export function initialScreen(): PolicyScreenState {
-  return { reading: null, catalog: null, error: null, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, notice: null, repair: null };
+  return { reading: null, catalog: null, error: null, change: null, allowedDraft: {}, allowedNew: {}, allowedAddModel: "", exceptionDraft: null, saving: null, savingDrafts: null, notice: null, repair: null };
 }
 
 /**
@@ -817,7 +825,7 @@ export function screenLoaded(state: PolicyScreenState, reading: PolicyReading, k
     reading,
     error: null,
     repair,
-    ...(keepInputs ? {} : { change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null }),
+    ...(keepInputs ? {} : { change: null, allowedDraft: {}, allowedNew: {}, allowedAddModel: "", exceptionDraft: null }),
   };
 }
 
@@ -837,25 +845,53 @@ export function screenPropose(state: PolicyScreenState, change: PolicyChange | n
   // behind would show a value the operator just abandoned, and would survive the re-read that a
   // later successful save triggers. A non-null change keeps the drafts so a multi-step edit can go on.
   if (change === null) {
-    return { ...state, change: null, notice: null, allowedText: {}, exceptionDraft: null };
+    return { ...state, change: null, notice: null, allowedDraft: {}, allowedNew: {}, exceptionDraft: null };
   }
   return { ...state, change, notice: null, exceptionDraft: null };
 }
 
-/**
- * screenAllowedText records the raw text of one allowed-list input and derives the pending change
- * from it. The raw text is what the input renders, so a trailing comma the operator is about to
- * follow with another entry survives; an empty parse clears the pending change rather than sending
- * a list the server refuses.
- */
-export function screenAllowedText(state: PolicyScreenState, model: string, text: string): PolicyScreenState {
-  const efforts = parseListInput(text);
+/** allowedEntriesOf is the efforts an allowlist row is being edited as: the draft, then the file. */
+export function allowedEntriesOf(state: PolicyScreenState, model: string, saved: readonly string[]): string[] {
+  return state.allowedDraft[model] ?? [...saved];
+}
+
+/** screenAllowedDraft stores one row's entries and derives the pending change from them. An empty
+ * list clears the pending change rather than sending a list the server refuses. */
+export function screenAllowedDraft(state: PolicyScreenState, model: string, entries: string[]): PolicyScreenState {
+  const efforts = entries.filter((text) => text !== "");
   return {
     ...state,
-    allowedText: { ...state.allowedText, [model]: text },
+    allowedDraft: { ...state.allowedDraft, [model]: entries },
     change: efforts.length === 0 ? null : { kind: "setAllowed", model, efforts },
     notice: null,
   };
+}
+
+/** screenAllowedEntryText records one entry's text, without interpreting it. */
+export function screenAllowedEntryText(state: PolicyScreenState, model: string, saved: readonly string[], index: number, text: string): PolicyScreenState {
+  return screenAllowedDraft(state, model, allowedEntriesOf(state, model, saved).map((current, at) => (at === index ? text : current)));
+}
+
+/** screenAllowedEntryAdded appends one entry the operator typed. */
+export function screenAllowedEntryAdded(state: PolicyScreenState, model: string, saved: readonly string[], text: string): PolicyScreenState {
+  if (text === "") return state;
+  const next = { ...state, allowedNew: { ...state.allowedNew, [model]: "" } };
+  return screenAllowedDraft(next, model, [...allowedEntriesOf(state, model, saved), text]);
+}
+
+/** allowedNewOf is the text of a row's "add an effort" field. */
+export function allowedNewOf(state: PolicyScreenState, model: string): string {
+  return state.allowedNew[model] ?? "";
+}
+
+/** screenAllowedNewText records the text of a row's "add an effort" field. */
+export function screenAllowedNewText(state: PolicyScreenState, model: string, text: string): PolicyScreenState {
+  return { ...state, allowedNew: { ...state.allowedNew, [model]: text } };
+}
+
+/** screenAllowedEntryRemoved drops one entry from a row. */
+export function screenAllowedEntryRemoved(state: PolicyScreenState, model: string, saved: readonly string[], index: number): PolicyScreenState {
+  return screenAllowedDraft(state, model, allowedEntriesOf(state, model, saved).filter((_, at) => at !== index));
 }
 
 /**
@@ -884,12 +920,6 @@ export function addModelOptions(state: PolicyScreenState, free: readonly string[
   return [state.allowedAddModel, ...free];
 }
 
-/** allowedTextOf is the text one allowed-list input shows: the draft first, then the saved list. */
-export function allowedTextOf(state: PolicyScreenState, model: string, saved: readonly string[]): string {
-  const text = state.allowedText[model];
-  return text !== undefined ? text : saved.join(", ");
-}
-
 /** screenExceptionDraft opens or updates the exception editor. */
 export function screenExceptionDraft(state: PolicyScreenState, draft: ExceptionDraft | null): PolicyScreenState {
   return { ...state, exceptionDraft: draft };
@@ -905,7 +935,9 @@ export function changeFromExceptionDraft(draft: ExceptionDraft): PolicyChange | 
   // would create a different exception and leave the original untouched. Only a NEW id, which the
   // operator is inventing, is trimmed.
   const id = draft.isNew ? draft.id.trim() : draft.id;
-  const model = draft.model.trim();
+  // The model is carried the same way and for the same reason: an identifier is compared exactly, so
+  // trimming a stored " model-a " would change which model the exception authorizes.
+  const model = draft.isNew ? draft.model.trim() : draft.model;
   if (id === "" || model === "") return null;
   // An exception with no cwd covers no request: the bridge requires a request to state a cwd the
   // exception lists (internal/bridge/execution/execution.go exceptionCovers), so a root-less
@@ -937,7 +969,7 @@ export function screenDraftIsNew(state: PolicyScreenState): boolean {
 
 /** screenSaveStarted marks the change a save in flight is writing. */
 export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
-  return { ...state, saving: state.change, savingDrafts: { allowedText: { ...state.allowedText }, exceptionDraft: state.exceptionDraft } };
+  return { ...state, saving: state.change, savingDrafts: { allowedDraft: { ...state.allowedDraft }, exceptionDraft: state.exceptionDraft } };
 }
 
 /**
@@ -948,7 +980,7 @@ export function screenSaveStarted(state: PolicyScreenState): PolicyScreenState {
 export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange | null, notice: PolicyNotice): PolicyScreenState {
   const stillPending = saved !== null && state.change === saved;
   let change = state.change;
-  let allowedText = state.allowedText;
+  let allowedDraft = state.allowedDraft;
   let exceptionDraft = state.exceptionDraft;
   let repair = state.repair;
   if (notice.blockEditing) {
@@ -963,9 +995,9 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // it is for the same model or exception. The drafts are compared against the snapshot taken when
     // the save started, so a draft that has not moved since is the spent one and a changed one is not.
     const before = state.savingDrafts;
-    if (saved.kind === "setAllowed" && allowedText[saved.model] === before?.allowedText[saved.model]) {
-      const { [saved.model]: _spent, ...rest } = allowedText;
-      allowedText = rest;
+    if (saved.kind === "setAllowed" && allowedDraft[saved.model] === before?.allowedDraft[saved.model]) {
+      const { [saved.model]: _spent, ...rest } = allowedDraft;
+      allowedDraft = rest;
     }
     if (saved.kind === "setException" && exceptionDraft !== null && exceptionDraft === before?.exceptionDraft) {
       exceptionDraft = null;
@@ -974,7 +1006,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
     // the operator's next change.
     if (stillPending) change = null;
   }
-  return { ...state, saving: null, savingDrafts: null, notice, change, allowedText, exceptionDraft, repair };
+  return { ...state, saving: null, savingDrafts: null, notice, change, allowedDraft, exceptionDraft, repair };
 }
 
 /**
@@ -986,7 +1018,7 @@ export function screenSaveFinished(state: PolicyScreenState, saved: PolicyChange
 export function screenReread(state: PolicyScreenState): PolicyScreenState {
   // The notice goes, but the repair sentence does not: it is the server's own instruction for the
   // repair, and the block it explains is still in force. screenRepairCleared lifts both together.
-  return { ...state, change: null, allowedText: {}, allowedAddModel: "", exceptionDraft: null, notice: null };
+  return { ...state, change: null, allowedDraft: {}, allowedAddModel: "", exceptionDraft: null, notice: null };
 }
 
 /**
@@ -1040,8 +1072,8 @@ export function pairEffortLabel(role: string, index: number): string {
   return `${role} pair ${index + 1} effort`;
 }
 
-export function allowedEffortsLabel(model: string): string {
-  return `${model} allowed efforts`;
+export function allowedEffortsLabel(model: string, index: number): string {
+  return `${model} allowed effort ${index + 1}`;
 }
 
 export function removeExceptionLabel(id: string): string {

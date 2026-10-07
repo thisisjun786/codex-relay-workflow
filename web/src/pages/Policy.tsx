@@ -12,7 +12,8 @@ import {
   addModelOptions,
   exceptionRoleOptions,
   allowedEffortsLabel,
-  allowedTextOf,
+  allowedEntriesOf,
+  allowedNewOf,
   catalogNotice,
   changeFromExceptionDraft,
   checkNotice,
@@ -33,7 +34,10 @@ import {
   previewChange,
   removeExceptionLabel,
   roleControlsLabel,
-  screenAllowedText,
+  screenAllowedEntryAdded,
+  screenAllowedEntryRemoved,
+  screenAllowedEntryText,
+  screenAllowedNewText,
   screenAllowedAddModel,
   screenCatalogLoaded,
   screenEditable,
@@ -80,7 +84,10 @@ function exceptionScope(exception: PolicyExceptionView): string {
 /** What the screen calls when the operator does something. */
 export interface PolicyScreenHandlers {
   propose: (change: PolicyChange | null) => void;
-  allowedText: (model: string, text: string) => void;
+  allowedEntryText: (model: string, saved: readonly string[], index: number, text: string) => void;
+  allowedEntryAdded: (model: string, saved: readonly string[], text: string) => void;
+  allowedEntryRemoved: (model: string, saved: readonly string[], index: number) => void;
+  allowedNewText: (model: string, text: string) => void;
   allowedAddModel: (model: string) => void;
   exceptionDraft: (draft: ExceptionDraft | null) => void;
   removeException: (id: string) => void;
@@ -249,18 +256,16 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
                     <span className="row-sub">{entry.efforts.join(" · ") || "no effort listed"}</span>
                   </div>
                   {editable ? (
-                    <div className="row-actions">
-                      <label className="sub" htmlFor={`allowed-${entry.model}`}>efforts</label>
-                      <input
-                        id={`allowed-${entry.model}`}
-                        className="input"
-                        style={{ maxWidth: "220px" }}
-                        aria-label={allowedEffortsLabel(entry.model)}
-                        value={allowedTextOf(state, entry.model, entry.efforts)}
-                        onChange={(e) => handlers.allowedText(entry.model, e.target.value)}
-                      />
-                      <button className="btn" onClick={() => handlers.propose({ kind: "removeAllowed", model: entry.model })}>Remove</button>
-                    </div>
+                    <AllowedRow
+                      model={entry.model}
+                      entries={allowedEntriesOf(state, entry.model, entry.efforts)}
+                      newText={allowedNewOf(state, entry.model)}
+                      onNewText={(text) => handlers.allowedNewText(entry.model, text)}
+                      onEntryText={(index, text) => handlers.allowedEntryText(entry.model, entry.efforts, index, text)}
+                      onEntryAdded={(text) => handlers.allowedEntryAdded(entry.model, entry.efforts, text)}
+                      onEntryRemoved={(index) => handlers.allowedEntryRemoved(entry.model, entry.efforts, index)}
+                      onRemoveModel={() => handlers.propose({ kind: "removeAllowed", model: entry.model })}
+                    />
                   ) : null}
                 </section>
               ))}
@@ -397,6 +402,48 @@ export function PolicyScreen({ state, handlers, help }: { state: PolicyScreenSta
 }
 
 /** One declared exception's row: it edits the exception in place or removes it. */
+/**
+ * One allowlist row's editor: one field per approved effort, plus a field to add another. Each entry
+ * gets its own field because an effort name is an identifier the policy compares exactly and the
+ * parser does not forbid a comma inside one, so a single comma-separated field would turn one stored
+ * approval into two (or change the name) the moment it was split or joined.
+ */
+function AllowedRow({
+  model,
+  entries,
+  newText,
+  onNewText,
+  onEntryText,
+  onEntryAdded,
+  onEntryRemoved,
+  onRemoveModel,
+}: {
+  model: string;
+  entries: readonly string[];
+  newText: string;
+  onNewText: (text: string) => void;
+  onEntryText: (index: number, text: string) => void;
+  onEntryAdded: (text: string) => void;
+  onEntryRemoved: (index: number) => void;
+  onRemoveModel: () => void;
+}) {
+  return (
+    <div className="role-controls" style={{ flex: 2 }}>
+      {entries.map((effort, index) => (
+        <div className="role-selects" key={index}>
+          <input className="input" style={{ maxWidth: "220px" }} aria-label={allowedEffortsLabel(model, index)} value={effort} onChange={(e) => onEntryText(index, e.target.value)} />
+          <button className="btn" aria-label={`Remove ${model} effort ${index + 1}`} onClick={() => onEntryRemoved(index)}>Remove effort</button>
+        </div>
+      ))}
+      <div className="role-selects">
+        <input className="input" style={{ maxWidth: "220px" }} aria-label={`${model} effort to add`} placeholder="one effort name" value={newText} onChange={(e) => onNewText(e.target.value)} />
+        <button className="btn" disabled={newText === ""} onClick={() => onEntryAdded(newText)}>Add effort</button>
+        <button className="btn danger" aria-label={`Remove ${model} from the allowed list`} onClick={onRemoveModel}>Remove model</button>
+      </div>
+    </div>
+  );
+}
+
 function ExceptionRow({
   exception,
   roles,
@@ -628,10 +675,6 @@ export function PolicyPage() {
   function propose(change: PolicyChange | null) {
     apply((previous) => screenPropose(previous, change));
   }
-  /** allowedText records the raw text and derives the pending change from it. */
-  function allowedText(model: string, text: string) {
-    apply((previous) => screenAllowedText(previous, model, text));
-  }
   // keepInputs is read when the read resolves, so it is a ref rather than a dependency: it describes
   // the read that is in flight, not a reason to start another one.
   const keepInputs = useRef(false);
@@ -738,12 +781,17 @@ export function PolicyPage() {
       state={state}
       handlers={{
         propose,
-        allowedText,
+        allowedEntryText: (model, saved, index, text) => apply((previous) => screenAllowedEntryText(previous, model, saved, index, text)),
+        allowedEntryAdded: (model, saved, text) => apply((previous) => screenAllowedEntryAdded(previous, model, saved, text)),
+        allowedEntryRemoved: (model, saved, index) => apply((previous) => screenAllowedEntryRemoved(previous, model, saved, index)),
+        allowedNewText: (model, text) => apply((previous) => screenAllowedNewText(previous, model, text)),
         allowedAddModel: (model) => apply((previous) => screenAllowedAddModel(previous, model)),
         exceptionDraft: (draft) => apply((previous) => screenExceptionDraft(previous, draft)),
         removeException: (id) => propose({ kind: "removeException", id }),
         save: () => void save(),
-        reread: () => { apply(screenReread); readAgain(false); },
+        // screenReread clears the drafts that exist now; the read keeps whatever the operator starts
+        // after this point, which is why it is asked to keep the inputs rather than to drop them.
+        reread: () => { apply(screenReread); readAgain(true); },
       }}
       help={{ open: helpOpen, topic: helpTopic, openHelp, closeHelp }}
     />
