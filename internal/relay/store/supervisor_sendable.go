@@ -58,6 +58,20 @@ func (r SupervisorMessagesRow) ClaimableAt(now float64) bool {
 	return r.Unsent() && !r.HoldReason.Valid && !(r.NextEligibleAt.Valid && r.NextEligibleAt.Float64 > now)
 }
 
+// SupervisorNoticeObligationKind is the obligation_kind a fault notice's message carries. The
+// notice channel is the one relay-owned channel that yields the recipient's line to a delivery
+// waiting out a busy backoff (I-216's notice part, section 82 decision 2); every other message
+// keeps the oldest-of-the-claimable rule the rest of this file writes.
+const SupervisorNoticeObligationKind = "fault_notification"
+
+// YieldsToBusyHead reports whether this message yields the recipient's line to a delivery that
+// waits out a busy backoff at now: only a fault notice does. Whether the line is held at all is the
+// delivery path's own question (delivery.Service.BusyHeadHoldsRecipientLine), so the two channels
+// cannot disagree about which deliveries hold a line.
+func (r SupervisorMessagesRow) YieldsToBusyHead() bool {
+	return r.ObligationKind == SupervisorNoticeObligationKind
+}
+
 func supervisorColumn(alias, name string) string {
 	if alias == "" {
 		return name
