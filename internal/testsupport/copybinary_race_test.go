@@ -83,7 +83,7 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 	// The program is whatever true(1) this host has, and on a BusyBox system that is the multi-call
 	// binary rather than a tiny program. The copy count comes down from the source's own size, so a
 	// large true(1) does not fail a correct host; the count keeps at least one round, so a program
-	// past a sixteenth of the ceiling still runs and the ceiling is a budget rather than a refusal.
+	// over an eighth of the ceiling still runs and the ceiling is a budget rather than a refusal.
 	iterations := int64(copyIterations)
 	if size := info.Size(); size > 0 {
 		if affordable := copyByteBudget / (size * copyWriters); affordable < iterations {
