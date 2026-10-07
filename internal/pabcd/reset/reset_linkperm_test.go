@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +36,19 @@ func resetLinkPermCRW(t *testing.T) (root, crw string) {
 		t.Fatal(err)
 	}
 	return root, crw
+}
+
+// TestResetLinkPermCeilingFollowsThePlatform: the hop ceiling is the kernel's own, so the walk
+// cannot call a chain present that the kernel answers ELOOP for. Linux allows 40 traversals in one
+// resolution and XNU allows 32, and a single ceiling would lose a link on Darwin.
+func TestResetLinkPermCeilingFollowsThePlatform(t *testing.T) {
+	want := 40
+	if runtime.GOOS == "darwin" {
+		want = 32
+	}
+	if got := resetLinkWalkLimit(); got != want {
+		t.Errorf("resetLinkWalkLimit() = %d, want %d on %s", got, want, runtime.GOOS)
+	}
 }
 
 // TestResetLinkPermKeepsASearchDeniedMiddleDot: the search question is asked at every "." and ".."
@@ -438,6 +452,63 @@ func TestResetLinkPermVerdictsMatchStatWithoutARename(t *testing.T) {
 				t.Errorf("exists = %v, but os.Stat on the same link answers %v", got, oracleErr)
 			}
 		})
+	}
+}
+
+// TestResetLinkPermAnUnreadableTargetIsAbsentNotARefusal: a candidate link whose target cannot be
+// read through the pinned descriptor is absent, not a refusal, and the root-path judgement is not
+// reached for it — a renamed pinned directory would turn that judgement into an error and stop the
+// reset, and it opens the directories the judgement must not open. The kernel cannot resolve such a
+// link either, so absent is the oracle's answer and the link is kept.
+func TestResetLinkPermAnUnreadableTargetIsAbsentNotARefusal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("mode bits do not deny search to root")
+	}
+	base := t.TempDir()
+	sessions := filepath.Join(base, "sessions")
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("keep.txt", filepath.Join(sessions, "a.json")); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	observed, err := parent.Lstat("sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := resetPin(parent, "sessions", observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	// Rename the pinned directory away and put a fresh one at its path, so the root-path judgement
+	// would refuse, then deny search on the pinned directory, so the target cannot be read through
+	// the descriptor either.
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(sessions, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(moved, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(moved, 0o755) })
+	got, err := resetLinkTargetExists(pinned, "a.json")
+	if err != nil {
+		t.Fatalf("resetLinkTargetExists: %v (an in-root failure must be absent, not a refusal)", err)
+	}
+	if got {
+		t.Error("exists = true, want false: the target cannot be read")
 	}
 }
 

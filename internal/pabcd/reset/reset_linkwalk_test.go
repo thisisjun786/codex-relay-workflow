@@ -321,19 +321,21 @@ func TestResetLinkWalkChainEscapingThroughASplicedLink(t *testing.T) {
 }
 
 // TestResetLinkWalkCountsTheCandidateLinkInTheCeiling: the caller already read the candidate
-// link's target, and the kernel counts that link as the first of the 40 traversals it allows for
-// the whole resolution. A chain of 39 links inside the target is 40 and resolves; one of 40 is 41
-// and the OS reports a loop, so the walk must not call the target present either. Each case also
-// compares the walk with os.Stat on the same chain.
+// link's target, and the kernel counts that link as the first traversal it allows for the whole
+// resolution, so the boundary is one less than the kernel's ceiling. The walk must agree with
+// os.Stat on the same chain at every boundary row.
 func TestResetLinkWalkCountsTheCandidateLinkInTheCeiling(t *testing.T) {
+	// The ceiling is the kernel's own whole-resolution limit, so the walk must not resolve a chain
+	// the kernel refuses: Linux allows 40 traversals and XNU allows 32.
+	limit := resetLinkWalkLimit()
 	for _, tc := range []struct {
 		innerLinks int
 		wantExists bool
 	}{
-		{38, true},
-		{39, true},
-		{40, false},
-		{41, false},
+		{limit - 2, true},
+		{limit - 1, true},
+		{limit, false},
+		{limit + 1, false},
 	} {
 		t.Run(strconv.Itoa(tc.innerLinks)+"_inner_links", func(t *testing.T) {
 			dir := resetLinkWalkWorkspace(t)

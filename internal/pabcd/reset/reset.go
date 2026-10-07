@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -167,9 +168,17 @@ func resetRmIfExists(pinned *resetLinkWalkPin, name, display string, result *Res
 	return nil
 }
 
-// resetLinkWalkLimit is how many links the judgement follows before it hands the target to the OS
-// path. The issue fixes it at 40, the ceiling the kernel uses for a whole resolution.
-const resetLinkWalkLimit = 40
+// resetLinkWalkLimit is how many links the judgement follows before it answers absent. It is the
+// ceiling the kernel applies to the link itself, so the walk agrees with the stat the oracle uses:
+// Linux allows 40 traversals for one resolution and XNU allows 32. A single ceiling would judge a
+// chain of 33 to 40 links present on Darwin, where the kernel answers ELOOP and the oracle keeps
+// the link. The count starts at one because the caller already read the candidate link's target.
+func resetLinkWalkLimit() int {
+	if runtime.GOOS == "darwin" {
+		return 32
+	}
+	return 40
+}
 
 // resetLinkTargetExists is existsSync for the link name in a pinned directory.
 //
@@ -194,14 +203,25 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 	// ends in a dot component: statRoot would open the target directory for a dot-ending target
 	// (O_DIRECTORY, read only), which CRW-554 forbids, and it would answer EACCES for a directory
 	// that may only be searched where the kernel answers with the target.
-	if target, readErr := resetLinkWalkReadlink(pinned.dir, name); readErr == nil {
+	target, readErr := resetLinkWalkReadlink(pinned.dir, name)
+	if readErr == nil {
 		if exists, inside := resetLinkWalkTarget(pinned.dir, target); inside {
 			return exists, nil
 		}
+	} else {
+		// The target could not be read through the pinned descriptor, so the walk never showed it
+		// leaving the root. The kernel cannot resolve the link either, which is what the oracle's
+		// existsSync asks, so the descriptor stat decides a name that is not a link (a bare leaf, so
+		// it opens nothing) and every other failure is absent. Sending it to the root-path judgement
+		// instead would let an in-root access error refuse the whole reset and would use the
+		// directory-opening path the judgement must not use.
+		if _, err := statRoot(name); err == nil {
+			return true, nil
+		}
+		return false, nil
 	}
-	// Everything else keeps the older flow: the descriptor first, which stats the final component
-	// without opening it, then the OS on the root's own path. A target that leaves the root and a
-	// link that vanished before this readlink both reach the descriptor here.
+	// Only a target the walk proved leaves the root keeps the older flow: the descriptor first, which
+	// stats the final component without opening it, then the OS on the root's own path.
 	_, err := statRoot(name)
 	if err == nil {
 		return true, nil
@@ -231,8 +251,9 @@ func resetLinkTargetExistsWith(pinned *resetLinkWalkPin, name string, statRoot f
 // link (existsSync is false) and the direction that keeps the link.
 //
 // The hop count starts at one because the caller already read this link's target with readlink:
-// the kernel counts that link as the first of the 40 traversals it allows for the whole
-// resolution, so a chain of 40 links inside the target makes 41 and must not resolve.
+// the kernel counts that link as the first traversal it allows for the whole resolution, so a chain
+// of resetLinkWalkLimit() links inside the target makes one more than the ceiling and must not
+// resolve.
 func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 	// A target that does not resolve against the pinned directory keeps the OS-path judgement: an
 	// absolute one, and on Windows a rooted-without-volume one (backslash keep backslash dot, which
@@ -276,7 +297,7 @@ func resetLinkWalkTarget(dir *os.File, target string) (exists, inside bool) {
 		}
 		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 			hops++
-			if hops > resetLinkWalkLimit {
+			if hops > resetLinkWalkLimit() {
 				return false, true
 			}
 			link, err := resetLinkWalkReadlink(dir, path)
