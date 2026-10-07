@@ -603,20 +603,32 @@ func Merge(first, second Record) (Record, error) {
 // belongs to is not in the stored set, because the stored option set is the one the record keeps.
 func mergeOptionReplies(stored, incoming []Option) ([]Option, error) {
 	merged := append([]Option{}, stored...)
-	at := make(map[string]int, len(merged))
+	at := make(map[string][]int, len(merged))
 	for i, option := range merged {
 		key := Normalize(option.ID)
-		if _, seen := at[key]; seen {
-			return nil, fmt.Errorf("%w: the stored options %q and %q are one id to the fingerprint", ErrMergeConflict, merged[at[key]].ID, option.ID)
-		}
-		at[key] = i
+		at[key] = append(at[key], i)
 	}
 	for _, option := range incoming {
-		index, ok := at[Normalize(option.ID)]
-		if !ok {
+		indexes := at[Normalize(option.ID)]
+		if len(indexes) == 0 {
 			continue
 		}
-		storedReply, incomingReply := strings.TrimSpace(merged[index].Reply), strings.TrimSpace(option.Reply)
+		incomingReply := strings.TrimSpace(option.Reply)
+		if len(indexes) > 1 {
+			// Two stored ids the fingerprint calls one identity (a row written before this check, or
+			// one the raise path admits because the trimmed ids differ): the stored set cannot say
+			// which of them an incoming reply belongs to. Nothing is written when the raise names no
+			// reply, or when every candidate already carries it, so the fold proceeds; a reply that
+			// would have to be placed is refused rather than guessed at.
+			for _, index := range indexes {
+				if strings.TrimSpace(merged[index].Reply) != incomingReply {
+					return nil, fmt.Errorf("%w: the stored options %q and %q are one id to the fingerprint, and this raise names reply %q for it", ErrMergeConflict, merged[indexes[0]].ID, merged[indexes[1]].ID, option.Reply)
+				}
+			}
+			continue
+		}
+		index := indexes[0]
+		storedReply := strings.TrimSpace(merged[index].Reply)
 		switch {
 		case storedReply == "":
 			merged[index].Reply = incomingReply

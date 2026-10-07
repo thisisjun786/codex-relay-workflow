@@ -86,6 +86,48 @@ func TestReview818RaiseNeedsRepliesForARelationship(t *testing.T) {
 	}
 }
 
+// A question whose options name no reply has nothing for the fold to reconcile, so a repeat raise
+// of it still folds and appends its observation. Two stored ids the fingerprint calls one identity
+// (Validate refuses only an exact duplicate) must not turn that repeat raise into a refusal: there
+// is no reply to place, so the stored option set stands.
+func TestReview818ARepeatRaiseWithoutRepliesStillFolds(t *testing.T) {
+	stored := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), []Option{
+		{ID: "HOLD", Label: "hold", Effect: "hold the merge"},
+		{ID: "hold", Label: "hold again", Effect: "hold the merge"},
+	})
+	incoming := stored
+	incoming.Seen = append([]Seen{}, stored.Seen...)
+	merged, err := Merge(stored, incoming)
+	if err != nil {
+		t.Fatalf("a repeat raise that names no reply: %v", err)
+	}
+	if len(merged.Options) != len(stored.Options) {
+		t.Fatalf("the fold changed the option set: %v", merged.Options)
+	}
+	for i, option := range merged.Options {
+		if option.ID != stored.Options[i].ID || option.Reply != stored.Options[i].Reply {
+			t.Fatalf("the fold changed option %d: %+v", i, option)
+		}
+	}
+}
+
+// An option reply the stored set cannot place is refused: two stored ids that are one identity to
+// the fingerprint cannot say which option an incoming reply belongs to.
+func TestReview818AReplyThatNamesNoSingleStoredOptionIsRefused(t *testing.T) {
+	stored := review818Record(Authority{Kind: AuthorityUser}, review818Relationship(), []Option{
+		{ID: "HOLD", Label: "hold", Effect: "hold the merge"},
+		{ID: "hold", Label: "hold again", Effect: "hold the merge"},
+	})
+	incoming := stored
+	incoming.Options = []Option{
+		{ID: "hold", Label: "hold", Effect: "hold the merge", Reply: ReplyStop},
+		{ID: "HOLD", Label: "hold again", Effect: "hold the merge"},
+	}
+	if _, err := Merge(stored, incoming); !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("an incoming reply that names no single stored option = %v, want ErrMergeConflict", err)
+	}
+}
+
 // The reply is not part of the question's identity, so two raises of one question that name
 // different replies for the same option are the same question and cannot become two records. The
 // fold is refused instead: applying the record compares the chosen option's reply with the reply

@@ -395,6 +395,32 @@ func review818SetOptionJSON(t *testing.T, state, decisionID, options string) {
 	review818Exec(t, state, "UPDATE dag_user_decisions SET options_json = ? WHERE decision_id = ?", options, decisionID)
 }
 
+// A question whose options carry no reply has nothing for the fold to reconcile, so a repeat raise
+// of it must still fold and append its observation however the ids are spelled. An option id the
+// fingerprint calls one identity is admitted by the raise path (Validate refuses only an exact
+// duplicate), and refusing the fold for it would leave a record that can take no second
+// observation at all.
+func TestReview818ARepeatRaiseWithoutRepliesStillFolds(t *testing.T) {
+	state := crw737Store(t)
+	const question = "Which window does the host update take?"
+	first := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "policy",
+		"--context", question, "--option", "A=Alpha:one", "--option", "a=alpha:two",
+		"--origin-project", "PRJ-A", "--source", "report=1", "--authority", "user"))
+	decision, _ := first["decisionId"].(string)
+	if decision == "" {
+		t.Fatalf("the first raise answered %v", first)
+	}
+	second := crw737JSON(t, crw737Run(t, "--state", state, "decision-raise", "--kind", "policy",
+		"--context", question, "--option", "A=Alpha:one", "--option", "a=alpha:two",
+		"--origin-project", "PRJ-A", "--source", "report=1", "--authority", "user"))
+	if second["merged"] != true || second["decisionId"] != decision {
+		t.Fatalf("the repeat raise answered %v, want the stored record %s merged", second, decision)
+	}
+	if seen, _ := crw737List(t, state)[0].(map[string]any)["seen"].([]any); len(seen) != 2 {
+		t.Fatalf("the repeat raise left %d observations, want the appended second one", len(seen))
+	}
+}
+
 // A question's identity is its fingerprint, which normalizes an option id (ASCII-lowercased, its
 // whitespace runs collapsed). Two raises that share a fingerprint are one question whatever an id's
 // case or spacing, so the fold matches option ids the same way the fingerprint does: a stored id
