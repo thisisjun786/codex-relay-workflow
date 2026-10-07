@@ -12,7 +12,6 @@ package migrate
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
@@ -608,7 +607,7 @@ func migrateReviewFollowupDecodeManifest(rs io.ReadSeeker, limit int64) ([]migra
 			}
 			continue
 		}
-		entries, ok, err := migrateReviewFollowupReadManifest(dec, 1)
+		entries, ok, err := migrateReviewFollowupReadManifest(dec, br, 1)
 		if err != nil {
 			return nil, false
 		}
@@ -659,7 +658,7 @@ func migrateReviewFollowupTooDeep() error {
 // is what makes the whole record valid JSON: a trailing comma, a missing colon or a malformed literal ends the walk here
 // and the record is not a receipt, exactly as the receipt reader's own decode of it would fail. depth is the nesting of
 // the object holding the member, so the count of containers this walk has open is what the reader's own limit is applied
-// to; the walk is iterative, because json.Decoder.Token enforces no nesting limit of its own and a record the reader
+// to; the walk is iterative, so its stack use does not grow with the record, and a record the reader
 // refuses must not be walked into a stack overflow here.
 func migrateReviewFollowupSkipValue(dec *json.Decoder, depth int) error {
 	tok, err := dec.Token()
@@ -671,7 +670,7 @@ func migrateReviewFollowupSkipValue(dec *json.Decoder, depth int) error {
 
 // migrateReviewFollowupSkipRest consumes the rest of a value whose first token is tok: nothing more for a scalar, and for
 // an array or object every token up to its matching close. It carries its own count of the containers it has opened,
-// because Token elides the separators and enforces no depth of its own, and refuses a record the receipt reader's own
+// because Token elides the separators and does not count the record's nesting against the receipt reader's own
 // Decode would refuse for nesting too deeply.
 func migrateReviewFollowupSkipRest(dec *json.Decoder, tok json.Token, depth int) error {
 	delim, ok := tok.(json.Delim)
@@ -705,7 +704,7 @@ func migrateReviewFollowupSkipRest(dec *json.Decoder, tok json.Token, depth int)
 // so an element of any size costs the bytes of its own two strings. depth is the number of containers open around the
 // member, so the nesting is counted against the receipt reader's own limit. ok is false for a member that is not a
 // non-empty array; err is non-nil only for a malformed stream, which refuses the record.
-func migrateReviewFollowupReadManifest(dec *json.Decoder, depth int) ([]migrateReviewFollowupManifestEntry, bool, error) {
+func migrateReviewFollowupReadManifest(dec *json.Decoder, br *bufio.Reader, depth int) ([]migrateReviewFollowupManifestEntry, bool, error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, false, err
@@ -720,7 +719,7 @@ func migrateReviewFollowupReadManifest(dec *json.Decoder, depth int) ([]migrateR
 	items := 0
 	for dec.More() {
 		items++
-		entry, err := migrateReviewFollowupReadEntry(dec, depth+1)
+		entry, err := migrateReviewFollowupReadEntry(dec, br, depth+1)
 		if err != nil {
 			return nil, false, err
 		}
@@ -741,7 +740,7 @@ func migrateReviewFollowupReadManifest(dec *json.Decoder, depth int) ([]migrateR
 // migrateReviewFollowupReadEntry walks one artifactManifest element. depth counts the containers open around the element,
 // the array included. An element that is not an object names no dependency and is skipped; an object keeps the last value
 // of its path and of its kind, as the receipt reader's own map lookup does, and skips every other member.
-func migrateReviewFollowupReadEntry(dec *json.Decoder, depth int) (*migrateReviewFollowupManifestEntry, error) {
+func migrateReviewFollowupReadEntry(dec *json.Decoder, br *bufio.Reader, depth int) (*migrateReviewFollowupManifestEntry, error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, err
@@ -762,19 +761,9 @@ func migrateReviewFollowupReadEntry(dec *json.Decoder, depth int) (*migrateRevie
 			}
 			continue
 		}
-		// The value is read as its own bytes through the reader's UTF-8 normalisation (source.DecodeUTF8, gate/js.go:36-53),
-		// so a path holding invalid bytes names the plan file the reader's text holds. A value that is not a string names
-		// nothing, and it replaces an earlier value of the same key, as the reader's last-value map decode does.
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
+		text, err := migrateReviewFollowupReadField(dec, br, depth+1)
+		if err != nil {
 			return nil, err
-		}
-		if err := migrateReviewFollowupNestingWithin(raw, depth+1); err != nil {
-			return nil, err
-		}
-		var text string
-		if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &text) != nil {
-			text = ""
 		}
 		if name == "path" {
 			entry.Path = text
@@ -791,19 +780,59 @@ func migrateReviewFollowupReadEntry(dec *json.Decoder, depth int) (*migrateRevie
 	return &entry, nil
 }
 
-// migrateReviewFollowupNestingWithin counts the nesting of one value the walk has already read as bytes, so a path or kind
-// value nested past the receipt reader's limit is refused as the reader refuses it. depth is the containers open around
-// the value. A scalar has no nesting and passes.
-func migrateReviewFollowupNestingWithin(raw json.RawMessage, depth int) error {
-	d := json.NewDecoder(bytes.NewReader(raw))
-	tok, err := d.Token()
+// migrateReviewFollowupReadField returns the string a path or kind value holds, or "" when it holds anything else. A container
+// is skipped token by token, so it is never held whole. A string or a scalar is read as its own bytes through the reader's
+// UTF-8 normalisation (source.DecodeUTF8, gate/js.go:36-53), so a path holding invalid bytes names the plan file the
+// reader's text holds; a string is bounded by its one token, which is the residual the issue's answer records. depth is the
+// containers open around the value.
+func migrateReviewFollowupReadField(dec *json.Decoder, br *bufio.Reader, depth int) (string, error) {
+	c, ok, err := migrateReviewFollowupPeekValue(dec, br)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, ok := tok.(json.Delim); !ok {
-		return nil
+	if ok && (c == '{' || c == '[') {
+		tok, err := dec.Token() // consumes the colon and opens the container
+		if err != nil {
+			return "", err
+		}
+		return "", migrateReviewFollowupSkipRest(dec, tok, depth)
 	}
-	return migrateReviewFollowupSkipRest(d, tok, depth)
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return "", err
+	}
+	var text string
+	if json.Unmarshal([]byte(source.DecodeUTF8(raw)), &text) != nil {
+		return "", nil
+	}
+	return text, nil
+}
+
+// migrateReviewFollowupPeekValue returns the first byte of the value after the colon the decoder has just read a key for,
+// without consuming anything. The decoder's read-ahead holds the first bytes, and the buffered reader under it holds the rest.
+// ok is false when the whitespace before the value outruns the buffered reader's window; the caller then reads the value.
+func migrateReviewFollowupPeekValue(dec *json.Decoder, br *bufio.Reader) (byte, bool, error) {
+	ahead, err := io.ReadAll(dec.Buffered())
+	if err != nil {
+		return 0, false, err
+	}
+	for _, c := range ahead {
+		if !migrateReviewFollowupJSONSpace(c) && c != ':' {
+			return c, true, nil
+		}
+	}
+	for n := 1; ; n++ {
+		p, err := br.Peek(n)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return 0, false, nil
+		}
+		if len(p) < n {
+			return 0, false, io.ErrUnexpectedEOF
+		}
+		if c := p[n-1]; !migrateReviewFollowupJSONSpace(c) && c != ':' {
+			return c, true, nil
+		}
+	}
 }
 
 // migrateApplyReviewSubRank is the ordering key inside a rank: 0 for the artifacts an evidence manifest names and for the

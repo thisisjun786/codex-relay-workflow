@@ -771,3 +771,41 @@ func TestMigrateApplyReviewFollowupHoldsNoNonArrayManifest(t *testing.T) {
 		t.Errorf("the judgement grew the live heap by %d bytes of a %d byte manifest object", grew, size)
 	}
 }
+
+// R1m: a path or kind value that is a container is skipped token by token, never decoded whole. The value under the path
+// key is a 128 MiB array of small strings: the judgement reads it without holding it, so it grows by the bytes of one
+// token, and the entry names no path because a container is not the string the reader would use.
+func TestMigrateApplyReviewFollowupHoldsNoContainerUnderAField(t *testing.T) {
+	const size = 128 << 20
+	path := migrateReviewFollowupStreamRecord(t, t.TempDir(), "container path", func(w io.Writer) error {
+		if _, err := io.WriteString(w, "{\"artifactManifest\":[{\"path\":["); err != nil {
+			return err
+		}
+		const member = 64 << 10
+		for written := 0; written < size; written += member {
+			if written > 0 {
+				if _, err := io.WriteString(w, ","); err != nil {
+					return err
+				}
+			}
+			if _, err := io.WriteString(w, "\""); err != nil {
+				return err
+			}
+			if _, err := io.CopyN(w, &migrateReviewFollowupSpaces{n: member}, member); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, "\""); err != nil {
+				return err
+			}
+		}
+		_, err := io.WriteString(w, "],\"kind\":\"verdict\"}]}")
+		return err
+	})
+	before, peak, ok := migrateReviewFollowupJudgePeakHeap(t, path)
+	if !ok {
+		t.Error("a record whose manifest is an array is a receipt, whatever its entries hold")
+	}
+	if grew := peak - before; grew > size/8 {
+		t.Errorf("the judgement grew the live heap by %d bytes of a %d byte container under a field", grew, size)
+	}
+}
