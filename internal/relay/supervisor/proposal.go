@@ -77,11 +77,10 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 			}
 			// An omission's packet is composed from its frozen reading and the live resolution, and
 			// the resolution's recipient scope kind can move without the recipient task moving (the
-			// same task answering from the store seat instead of an initiative's). The packet is
-			// compared and, when something else about it moved, restated here too, so a claim and a
-			// transport start never send the stale kind.
+			// same task answering from the store seat instead of an initiative's), so a claim and a
+			// transport start must not send the stale kind.
 			if o != nil {
-				return c.refreshEventlessProposal(ctx, row, *o, reading, r, at, currentAttempt)
+				return c.refreshEventlessProposal(ctx, row, r, at, currentAttempt)
 			}
 		}
 		return false, nil
@@ -172,40 +171,42 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	return true, err
 }
 
-// refreshEventlessProposal re-derives an omission's packet in the writer's transaction. The packet
-// is composed from the reading the omission was frozen with, so the reading is not re-derived; what
-// can move is the resolution's recipient scope kind, which the same recipient task can change seat
-// on (an initiative's supervisor handing the store seat, or the reverse). A claim and a transport
-// start must not send the stale kind, so the packet is compared and restated here exactly as the
-// event path does, including the compatibility comparison that keeps a packet stored before
-// recipient.scopeKind existed from restating for the field alone.
-func (c *Channel) refreshEventlessProposal(ctx context.Context, row store.SupervisorMessagesRow, o Obligation, reading map[string]any, r Resolution, at string, currentAttempt int64) (bool, error) {
-	old := evidence.Decode(row.Packet)
-	observed := evidence.Dict(evidence.Item(old, "envelope"), false)["observedAt"]
-	current, err := c.composeReading(ctx, o, r, at, reading)
+// refreshEventlessProposal keeps an eventless omission's stored packet naming the seat its recipient
+// answers from now. An omission carries no event, so its packet is not recomposed here: it was
+// composed from the reading the omission was frozen with, and recomposing it would rewrite fields
+// that have not moved. What can move is the resolution's recipient scope kind, which the same
+// recipient task can change seat on (an initiative's supervisor handing the store seat, or the
+// reverse), and a claim and a transport start must not send the stale kind. Only that one field is
+// rewritten, in the stored packet's own bytes. A packet stored before the field existed is left
+// exactly as it is: nothing about an old packet is guessed at, which is the same rule the event and
+// notice paths follow.
+func (c *Channel) refreshEventlessProposal(ctx context.Context, row store.SupervisorMessagesRow, r Resolution, at string, currentAttempt int64) (bool, error) {
+	decoded, err := pyjson.Loads(row.Packet, pyjson.LoadOptions{Python: true, RangeErrors: true})
 	if err != nil {
 		return false, err
 	}
-	if observed != nil {
-		current["envelope"].(map[string]any)["observedAt"] = observed
-	}
-	comparison, err := canonicalPacket(current)
-	if err != nil {
-		return false, err
-	}
-	if !recipientScopeKindRecorded(row.Packet) {
-		comparison, err = canonicalPacket(packetWithoutRecipientScopeKind(current))
-		if err != nil {
-			return false, err
-		}
-	}
-	if comparison == row.Packet {
+	top, ok := evidence.Object(decoded)
+	if !ok {
 		return false, nil
 	}
-	encoded, err := canonicalPacket(current)
-	if err != nil {
-		return false, err
+	envelope, _ := top.Lookup("envelope")
+	region, ok := evidence.Object(envelope)
+	if !ok {
+		return false, nil
 	}
+	recipient, _ := region.Lookup("recipient")
+	person, ok := evidence.Object(recipient)
+	if !ok {
+		return false, nil
+	}
+	stored, present := person.Lookup("scopeKind")
+	if !present || stored == r.RecipientScopeKind {
+		return false, nil
+	}
+	updated := person.Set("scopeKind", r.RecipientScopeKind)
+	region = region.Set("recipient", updated)
+	top = top.Set("envelope", region)
+	encoded := pyjson.Dumps(top, pyjson.Options{SortKeys: true, Unicode: true})
 	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,updated_at=? WHERE message_id=? AND "+store.SupervisorRestatableSQL("")+" AND recipient_task_id=? AND NOT EXISTS (SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+")", encoded, at, row.MessageID, r.Recipient, row.MessageID, currentAttempt)
 	if err != nil {
 		return false, err

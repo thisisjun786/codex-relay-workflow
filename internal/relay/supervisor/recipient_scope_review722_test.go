@@ -729,3 +729,60 @@ func TestSupervisorReview722EventlessOmissionRefreshesItsRecipientScopeKind(t *t
 		t.Fatalf("the restated omission still names the old seat: recipient %v", recipient)
 	}
 }
+
+// TestSupervisorReview722PreChangeOmissionIsNotRestated: the eventless branch has the same
+// compatibility rule as the event path. An omission stored before recipient.scopeKind existed, with
+// the seat unmoved, is neither rewritten nor journalled as restated; its frozen reading and packet
+// bytes are exactly what they were.
+func TestSupervisorReview722PreChangeOmissionIsNotRestated(t *testing.T) {
+	t.Parallel()
+	f := fixture24(t)
+	reading := omissionReading24(f)
+	reading["selectors"].(map[string]any)["turn"] = "turn-9"
+	o := ObservationObligation(reading)
+	if o == nil {
+		t.Fatal("the omission reading raised no obligation")
+	}
+	result, err := f.c.StageWithReading(f.ctx, *o, reading, "", f.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := result["messageId"].(string)
+	if _, err = f.s.DB.ExecContext(f.ctx, "UPDATE supervisor_messages SET packet=? WHERE message_id=?", preChangePacket(t, result["message"].(map[string]any)["packet"].(string)), id); err != nil {
+		t.Fatal(err)
+	}
+	row, err := f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.EventID.Valid || !row.Reading.Valid {
+		t.Fatalf("the fixture is not an eventless omission: event %v reading %v", row.EventID, row.Reading)
+	}
+	r, err := f.c.Resolve(f.ctx, row.RelationshipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := f.c.refreshProposal(f.ctx, row, r, f.at, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("an omission stored before the field existed was restated for the field alone")
+	}
+	after, err := f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Packet != row.Packet {
+		t.Fatalf("the omission packet changed without a restatement:\n before %s\n after  %s", row.Packet, after.Packet)
+	}
+	if after.Reading != row.Reading {
+		t.Fatalf("the frozen reading changed: %q -> %q", row.Reading.String, after.Reading.String)
+	}
+	if after.UpdatedAt != row.UpdatedAt {
+		t.Fatalf("omission updated_at moved without a restatement: %q -> %q", row.UpdatedAt, after.UpdatedAt)
+	}
+	if n := restatedRows(t, f.s); n != 0 {
+		t.Fatalf("a restatement row was written for the field alone: %d", n)
+	}
+}
