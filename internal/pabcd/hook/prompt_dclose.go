@@ -45,6 +45,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/fsm"
@@ -209,6 +210,41 @@ func promptDcloseGoalplanPublishedSentence() string {
 // d2/d3; the settled-shape inference that tried to decide this was removed, not tuned).
 func promptDcloseGoalplanUnknownSentence() string {
 	return "the goalplan may already hold this close's commit from the first attempt; read it before retrying."
+}
+
+// promptDcloseHarnessBudget is how many UTF-16 units the hook envelope keeps before it cuts an
+// answer: harness.ContextOutput cuts at MaxContext (32000) minus 64. A refusal this close decorates
+// with its publication accounting must fit that, or the cut removes the part the operator has to
+// act on - the artifacts this close already published. The budget is restated here rather than
+// imported because the harness leg imports this package (CRW-930, c6).
+const promptDcloseHarnessBudget = 31936
+
+// promptDcloseKeepAccounting trims an over-long refusal's own detail so the accounting this close
+// appended survives the harness's cut. accounting is the joined publication sentences: everything
+// from it on is kept whole, and the detail before it is cut at a rune boundary and marked. A refusal
+// that already fits, or one whose accounting is not found, is returned unchanged. The bound is on
+// the decorated answer rather than on each detail source, because the refusal's own text - a lock
+// diagnostic that carries an owner file, for example - is not this close's to size (CRW-930, c6).
+func promptDcloseKeepAccounting(text, accounting string) string {
+	if accounting == "" || len(utf16.Encode([]rune(text))) <= promptDcloseHarnessBudget {
+		return text
+	}
+	at := strings.Index(text, accounting)
+	if at < 0 {
+		return text
+	}
+	before, after := text[:at], text[at:]
+	const marker = "\u2026 [detail truncated] "
+	room := promptDcloseHarnessBudget - len(utf16.Encode([]rune(after))) - len(utf16.Encode([]rune(marker)))
+	if room <= 0 {
+		return text
+	}
+	units := utf16.Encode([]rune(before))[:room]
+	if n := len(units); n > 0 && units[n-1] >= 0xD800 && units[n-1] < 0xDC00 {
+		// The cut would leave a high surrogate with no low one; drop it rather than emit U+FFFD.
+		units = units[:n-1]
+	}
+	return string(utf16.Decode(units)) + marker + after
 }
 
 // promptDcloseGoalplanRow is one goalplan ledger row the close owes, in the oracle's order.
@@ -800,7 +836,8 @@ func promptDclosePartialRefusal(refusal string, published promptDclosePublishedA
 	if published.planUnaccounted() {
 		tail = ""
 	}
-	return refusal[:at] + strings.Join(named, " ") + tail + refusal[at+len(claim):]
+	joined := strings.Join(named, " ")
+	return promptDcloseKeepAccounting(refusal[:at]+joined+tail+refusal[at+len(claim):], joined)
 }
 
 // promptDcloseSameOptionalText compares two optional texts, where an absent one differs from any
@@ -1232,7 +1269,8 @@ func promptDcloseRefusalNaming(refusal string, published promptDclosePublishedAr
 	if at < 0 {
 		return refusal
 	}
-	return refusal[:at] + " " + strings.Join(named, " ") + refusal[at:]
+	joined := strings.Join(named, " ")
+	return promptDcloseKeepAccounting(refusal[:at]+" "+joined+refusal[at:], joined)
 }
 
 // promptDcloseGoalplanUnreadable is the unreadable-goalplan text (:1275-1281).

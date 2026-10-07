@@ -1335,3 +1335,41 @@ func TestPromptDcloseHugeDependencyListKeepsThePublicationAccounting(t *testing.
 		t.Errorf("the bounded list did not name what it left out: %q", answer[:min(len(answer), 400)])
 	}
 }
+
+// TestPromptDcloseHugeLockDiagnosticKeepsThePublicationAccounting is the c6 case for a refusal
+// whose own text is long: the goalplan lock's busy diagnostic embeds the whole owner file, so a
+// large owner.json can push the publication accounting past the harness's cut. The bound is on the
+// decorated answer, not on each detail source, so the accounting survives whatever the refusal's
+// own text holds.
+func TestPromptDcloseHugeLockDiagnosticKeepsThePublicationAccounting(t *testing.T) {
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-huge-lock"
+	attest := promptDcloseRecoverable(t, cwd, "s1", slug, promptDcloseStr("wp-2"))
+	promptDcloseRecoveryCommittedShape(t, cwd, slug, nil)
+	planDir, err := goalplan.GoalplanDir(cwd, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(planDir, goalplan.GoalplanLockDir), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	// A lock whose owner file is far larger than the harness keeps: the busy text embeds all of it.
+	owner := "{\"pid\":1,\"acquiredAt\":\"2026-01-01T00:00:00.000Z\",\"note\":\"" + strings.Repeat("o", 60000) + "\"}"
+	promptDcloseWrite(t, cwd, filepath.Join(crwdir.DirName, goalplan.GoalplansSubdir, slug, goalplan.GoalplanLockDir, goalplan.GoalplanLockOwnerFile), owner)
+	answer := promptDcloseRun(t, cwd, "s1", "t1", attest)
+	if !strings.Contains(answer, "is busy") {
+		t.Fatalf("the retry did not answer the busy lock: %q", answer[:min(len(answer), 200)])
+	}
+	if units := len(utf16.Encode([]rune(answer))); units > 31936 {
+		t.Errorf("the refusal is %d UTF-16 units, so the harness would cut its accounting", units)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the inherited marker: %q", answer[:min(len(answer), 300)])
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanUnknownWant) {
+		t.Errorf("the refusal did not leave the goalplan unknown: %q", answer[:min(len(answer), 300)])
+	}
+	if !strings.Contains(answer, "[detail truncated]") {
+		t.Errorf("the trimmed refusal did not mark what it cut: %q", answer[:min(len(answer), 400)])
+	}
+}
