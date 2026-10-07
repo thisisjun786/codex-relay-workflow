@@ -951,3 +951,70 @@ func TestAuditDraftsReview744GradeFailureStopsTheRun(t *testing.T) {
 		t.Errorf("a ledger was written for a run that stopped before recording: %v", err)
 	}
 }
+
+// C1: a spelling whose parent is a regular file names no bundle. The kernel refuses "file/..",
+// so grading must refuse it rather than resolve the file's parent and grade the directory holding it.
+func TestAuditDraftsReview744FileParentIsNotASubstitute(t *testing.T) {
+	base := t.TempDir()
+	auditDraftsReview744BundleAt(t, base)
+	file := filepath.Join(base, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t)})
+	e, _, _ := auditTestEnv(t)
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: file + "/.."}}); err == nil {
+		t.Fatal("a spelling through a regular file was graded as the directory holding the file")
+	}
+	if _, err := os.Stat(filepath.Join(base, auditGradeFile)); !os.IsNotExist(err) {
+		t.Errorf("the directory holding the file was graded: %v", err)
+	}
+}
+
+// C1: a relative bundle named under a symlinked working directory is the directory the kernel
+// resolves, not the logical path the shell reports, so its ledger row still names the bundle
+// after the link is removed and the older ok row is skipped.
+func TestAuditDraftsReview744RelativeBundleUnderSymlinkedCwdIsOneBundle(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	bundle := filepath.Join(real, "B")
+	auditDraftsReview744BundleAt(t, bundle)
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("this host cannot make a symlink: %v", err)
+	}
+	state := t.TempDir()
+	cfg := auditSectionConfig(t, state, map[string]any{"grader": auditDraftsReview744Grader(t), "grader_timeout_seconds": 1})
+	e, _, _ := auditTestEnv(t)
+	// R1 names the bundle relatively from inside the symlinked directory and finds nothing.
+	t.Chdir(link)
+	t.Setenv("AUDIT_JSON", auditJSONClean)
+	t.Setenv("AUDIT_SLOW", "")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: "B", Round: "r1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// R2 grades the same directory by its real path, writes a usable P1 result and runs past its limit.
+	t.Chdir(base)
+	t.Setenv("AUDIT_JSON", auditJSONWithP1)
+	t.Setenv("AUDIT_SLOW", "1")
+	if _, err := AuditGrade(context.Background(), e, cfg, []AuditJob{{Bundle: bundle, Round: "r2"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The link goes away; the drafts surface must still see that R1's row names a regraded bundle.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	report, err := auditDraftsRun(e, auditDraftSectionOfState(t, state, nil, 0), auditDraftScope{Round: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Created) != 0 || len(report.Updated) != 0 {
+		t.Fatalf("the regrade under the symlinked cwd still produced a draft: %+v", report)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "graded again") {
+		t.Fatalf("the older ok row is not named as graded again: %+v", report.Skipped)
+	}
+}

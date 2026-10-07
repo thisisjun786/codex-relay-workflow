@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,11 +264,27 @@ func auditBundleResolvedPath(bundle string) (string, error) {
 	if bundle == "" {
 		return "", errors.New("the bundle directory is empty")
 	}
+	// A relative spelling is made absolute by joining the working directory without cleaning it.
+	// The kernel then resolves the logical prefix of that directory too, so a working directory
+	// reached through a symbolic link names the real directory and not the link.
+	if !filepath.IsAbs(bundle) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("bundle %s: the working directory cannot be read: %w", bundle, err)
+		}
+		bundle = wd + string(filepath.Separator) + bundle
+	}
 	// The kernel resolves a path component by component, so a link followed by ".." names the
 	// link target's parent. The whole spelling is asked for first for that reason: cleaning it
 	// would collapse "link/../B" to "work/B" and name a directory the caller's path does not.
-	if resolved, err := filepath.EvalSymlinks(bundle); err == nil {
-		return auditBundleAbs(resolved), nil
+	resolved, err := filepath.EvalSymlinks(bundle)
+	if err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	// Only a missing leaf is resolved from its parent. Any other failure, such as a component
+	// that is not a directory, is refused: the spelling then names nothing this run may grade.
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("bundle %s: the path cannot be resolved: %w", bundle, err)
 	}
 	// The path does not exist yet, so the kernel has nothing to resolve for its leaf. Its parent
 	// is resolved and the leaf rejoined, which answers the same before and after a bundle is
@@ -276,12 +293,19 @@ func auditBundleResolvedPath(bundle string) (string, error) {
 	// The parent is taken from the spelling as written, not from its cleaned form: filepath.Dir
 	// cleans, and cleaning "link/../B" to "work/B" would resolve the wrong directory and could
 	// substitute an unrelated bundle for one whose real target is gone.
-	parent, base := auditBundleSplitParent(bundle)
-	resolved, err := filepath.EvalSymlinks(parent)
+	parent, leaf := auditBundleSplitParent(bundle)
+	if leaf == "" || leaf == "." || leaf == ".." {
+		return "", fmt.Errorf("bundle %s: the last element names no directory", bundle)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return "", fmt.Errorf("bundle %s: the path cannot be resolved: %w", bundle, err)
 	}
-	return filepath.Join(resolved, base), nil
+	info, err := os.Stat(resolvedParent)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("bundle %s: its parent is not a directory", bundle)
+	}
+	return filepath.Join(resolvedParent, leaf), nil
 }
 
 // auditBundleSplitParent splits a path into the part before its last separator and the last
