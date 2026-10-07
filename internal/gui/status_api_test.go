@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/policystore"
 )
 
 // The status tests drive GET /api/status through the real guard over the package registry,
@@ -576,11 +578,13 @@ func TestStatusPolicyReadThatOutlivesItsBoundIsUnknown(t *testing.T) {
 	t.Cleanup(func() { statusPolicyTimeout = previousTimeout })
 	previous := statusPolicyReader
 	statusPolicyReader = func(ctx context.Context) statusPolicyReading {
-		// Stand in for a read that never answers: wait for the bound to expire, then report it.
+		// Stand in for a read that reports ok from what it already had after its deadline
+		// passed. That is the case the timeout branch exists to catch: the ok must not survive,
+		// or the endpoint would report a policy it never finished reading as read.
 		<-ctx.Done()
 		return statusPolicyReading{
-			State: statusUnknown, PolicyState: "unreadable", Applied: "unverifiable",
-			Reason: "the execution policy read did not finish: " + ctx.Err().Error(),
+			State: statusOK, PolicyState: "registered", Path: "/tmp/execution-policy.json",
+			Applied: policystore.AppliedApplied,
 		}
 	}
 	t.Cleanup(func() { statusPolicyReader = previous })
@@ -591,5 +595,8 @@ func TestStatusPolicyReadThatOutlivesItsBoundIsUnknown(t *testing.T) {
 	}
 	if reason, _ := policy["reason"].(string); reason == "" {
 		t.Fatalf("executionPolicy reason is blank: %#v", policy)
+	}
+	if policy["applied"] != policystore.AppliedUnverifiable {
+		t.Fatalf("applied = %v, want %q", policy["applied"], policystore.AppliedUnverifiable)
 	}
 }
