@@ -16,7 +16,7 @@ import (
 // same head. The condition is defined once, as a job-level env on go-product, and every step that
 // would do a leg's work is guarded by a step condition, never by a job-level if: GitHub reports a
 // skipped job's check as success, so a skipped leg could hide an earlier red run behind a green
-// dev-gate. validate, secrets, lint, dist, a dev push and a manual dispatch always run in full.
+// dev-gate. validate, secrets, lint, dist and a manual dispatch always run in full.
 //
 // The workflow is read as text, with the helpers workflow_test.go already defines (workflowJobs,
 // workflowSteps, matrixValues, sortedCopy, expectEqual), so this file adds no second parser.

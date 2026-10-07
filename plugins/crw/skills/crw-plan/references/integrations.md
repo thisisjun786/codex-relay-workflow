@@ -1101,17 +1101,17 @@ Keep its source baseline and delivered output identity under the non-PR evidence
 
 ### Implementation Done
 
-An implementation issue is Done when every accepted criterion maps to a commit that actually merged into the
+An implementation issue is Done when every accepted criterion maps to a commit that actually landed on the
 intended integration target, and a partial implementation never closes it. In today's operation one issue runs as
-one packet and one PR, so that mapping is its one current delivery PR's landing
-([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)). Read GitHub's current PR identity,
-repository, base branch, merged state and landing commit against the issue's
-accepted scope. A related/reference PR, superseded replacement, approval, green
-CI, merge-ready flag or closed-but-unmerged PR is not that evidence. Merging a
-prerequisite branch into another task branch is not integration into the intended
-target. Verify the landing rather than treating an accepted merge request as done.
+one packet and one delivery, so that mapping is its one current delivery's landing commit
+([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)). Under the push-only procedure
+that commit is the integrator's fast-forward of the verified merged tree; where the delivery is a pull request,
+read GitHub's current PR identity, repository, base branch, merged state and landing commit instead. A
+related/reference PR, superseded replacement, approval, green CI, merge-ready flag or closed-but-unmerged PR is
+not that evidence. Landing a prerequisite branch into another task branch is not integration into the intended
+target. Verify the landing rather than treating an accepted integration request as done.
 
-The PR must deliver the issue's accepted implementation scope; a partial merge
+The delivery must carry the issue's accepted implementation scope; a partial landing
 cannot hide remaining required implementation. For an already-approved legacy
 multi-PR issue, preserve links, owners and history, inventory required deliveries
 and reconcile through `crw-plan` before new dispatch. Its completion uses all

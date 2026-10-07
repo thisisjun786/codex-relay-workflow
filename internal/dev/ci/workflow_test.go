@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-// The CI workflow's structure (.github/workflows/ci.yml) and its one required check, dev-gate.
+// The CI workflow's structure (.github/workflows/ci.yml) and its one aggregate check, dev-gate.
 // The workflow is read as text, by its two-space job headers and six-space step items,
 // deliberately without a YAML parser.
 
@@ -122,7 +122,7 @@ func TestWorkflow_the_trigger_is_workflow_dispatch_only(t *testing.T) {
 	expectEqual(t, "ci.yml triggers", keys, []string{"workflow_dispatch"})
 }
 
-// dev-gate needs every other job, so a job cannot run outside the required check, and nothing
+// dev-gate needs every other job, so a job cannot run outside the aggregate check, and nothing
 // else waits on anything: every check starts at once.
 func TestWorkflow_the_gate_needs_every_other_job_and_nothing_else_waits(t *testing.T) {
 	jobs, order := workflowJobs(t)

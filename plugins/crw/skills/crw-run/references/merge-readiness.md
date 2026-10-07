@@ -497,7 +497,7 @@ A finding BLOCKS, and is never conditionally accepted, when it is any of these:
   criterion carries the conceded wording, under the per-criterion dispositions
   [crw-check](../../crw-check/SKILL.md) owns;
 - a material regression this change introduced;
-- an unmet required review gate or required check.
+- an unmet required review gate or the repository's named verification.
 
 A blocking finding is fixed on this pull request, or the candidate is reported
 blocked. One that arrives after the child has finished its rounds is raised to the
@@ -844,8 +844,8 @@ scratch directory (on macOS, where Go reads the counters from `HOME` rather than
 `XDG_CONFIG_HOME`, it also moves the tool's `HOME` inside that directory and pins the caches to the
 caller's `go env` values) and passes `-p=4`, so it runs under the same
 [`Go build resources:`](task-packet.md#launch-packet) line as any other local run of the parent, in
-the packages the change touches and never as a full test run. The hosted CI of the head stays the
-test suite.
+the packages the change touches and never as a full test run. The verification the repository names
+for the head (this repository's `crw-dev ci local`) stays the test suite.
 
 Read the answer by its first line and its exit status:
 
@@ -897,6 +897,10 @@ planning side of the same failure is the naming rule in
 [issue boundaries](../../crw-plan/references/issue-boundaries.md#decide-the-boundary).
 
 ### Refresh the base yourself when only the base moved
+
+**The installed relay still runs the PR path.** This section and the lane metrics below describe the
+relay's own mechanism on a pull request; the repository's rule is the integrator's verified
+fast-forward in [The three gates](#the-three-gates).
 
 The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
 the other candidates behind. Returning a candidate to its child for that alone costs a whole

@@ -846,8 +846,8 @@ Describe evidence separately:
 | Child reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
-| Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
-| Candidate ready to hand over | The child's handoff record: pull request and head, the verified base, the declared required checks and the runs by id and attempt, the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
+| Child reports normal completion | The repository's named verification and the applicable reviews finished on the current head, blocking findings resolved; a missing mandatory review or verification is blocked, not complete |
+| Candidate ready to hand over | The child's handoff record: the delivered tree and head, the verified destination tip, the verification evidence the repository names (this repository's `verification-record/1`, or the runs by id and attempt where a repository still runs hosted CI), the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
 | Parent runs its own goal loop | That task's own active goal, read back under its own identity, where a Loop was explicitly requested. A parent operating without a goal is the default and needs no authorization; what is recorded instead is its observation path and the readiness facts behind it |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
@@ -880,8 +880,8 @@ child and does not stop it.
 
 What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
 shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
-anything heavy. The whole test suite is the hosted CI of the head under verification and is not
-repeated locally
+anything heavy. The whole test suite is the verification the repository names for the tree under
+verification (this repository's `crw-dev ci local`) and is not repeated locally
 ([The three gates](references/merge-readiness.md#the-three-gates)).
 
 Where a relay holds the assignment, verify the revision it reports as current. If a

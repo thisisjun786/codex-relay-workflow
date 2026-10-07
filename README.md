@@ -312,7 +312,7 @@ milestones, and executable issues in one operation. A request for both chains
 them; definition-only stops before project and issue creation. It reuses existing
 items, creates missing ones within that request, and keeps narrow updates scoped.
 Consultation and draft-only planning do not write to Linear.
-Each implementation issue maps to one PR; work requiring several PRs is split
+Each implementation issue maps to one delivery; work requiring several deliveries is split
 into dependent issues. Non-PR research or design keeps a verified result instead.
 Initiatives represent goals; product family is a project label, while an issue's
 repository label identifies its actual edit target. Project names need no product prefix,
@@ -337,14 +337,17 @@ did. Either way it returns control to whoever is executing and starts nothing th
 
 During an existing delegated workflow, a completion check sends actionable
 in-scope corrections to the responsible task and verifies the result without
-another approval round. A capable child owns its commits, push, pull request and
-the review handling on it, and reports once the current head's required checks and
-reviews are clean. The coordinator updates the Linear record, verifies the pull
-request against the Linear criteria and its latest diff, checks and review
-resolution, then merges under Jun's standing authorization for this workflow and
-confirms the landing. Release and deployment still require Jun. Skills, bridge and
-relay all deliver to this repository on base `dev` for ordinary pull requests, with dependent pull
-requests allowed to target their prerequisite branch. Releasing a verified dev commit and
+another approval round. A capable child owns its commits and push, and, where the
+delivery is a pull request, the review handling on it; it reports once the
+repository's named verification and the applicable reviews are clean. Under the
+push-only procedure internal work integrates by one integrator, who merges the
+candidate into a local integration tree over `dev`, verifies that tree with the
+local full verification (`verification-record/1` with `result: pass`) and fast-forwards
+`dev` to it; the coordinator updates the Linear record and verifies the criteria
+against the delivered tree and confirms the landing. Release and deployment still
+require Jun. Skills, bridge and relay all deliver to this repository on base `dev`;
+an external contribution arrives as an ordinary pull request, and a dependent pull
+request may target its prerequisite branch. Releasing a verified dev commit and
 advancing main to it requires Jun's explicit release authorization.
 See [Default dev integration](plugins/crw/skills/crw-plan/references/integrations.md#default-dev-integration)
 for destination, delivery, and release boundaries. [Merge readiness](plugins/crw/skills/crw-run/references/merge-readiness.md)
