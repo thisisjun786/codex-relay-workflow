@@ -192,7 +192,7 @@ func worktreeDelWrapperOptionArg(name, option string) bool {
 		return false
 	}
 	if len(option) != 2 { // a bare single-letter option: -o0 and -c3 carry their argument attached
-		return false
+		return worktreeDelWrapperClusterArg(name, option)
 	}
 	// worktreeDelWrapperArgs are the single-letter options of each wrapper that take the next word as their argument.
 	switch name {
@@ -215,6 +215,21 @@ func worktreeDelWrapperOptionArg(name, option string) bool {
 		return option[1] == 'a'
 	}
 	return false
+}
+
+// worktreeDelWrapperClusterArg says whether a cluster of single-letter options of the wrapper named name takes the
+// next word as its own argument, because the option that takes one stands somewhere inside the cluster: exec -ca NAME
+// consumes the name, so the word after it is no command (CRW-894, review). Only exec has such a letter today; every
+// other wrapper's single-letter options are read by the table in worktreeDelWrapperOptionArg, which answers for a
+// bare option of two characters.
+func worktreeDelWrapperClusterArg(name, option string) bool {
+	if name != "exec" {
+		return false
+	}
+	// -a is exec's only argument-taking letter. It carries the rest of the cluster as its argument when a letter
+	// follows it (-ac x runs c with x as its argument), and takes the next word when it is the last letter.
+	k := strings.IndexByte(option[1:], 'a')
+	return k >= 0 && k == len(option)-2
 }
 
 // worktreeDelCommandPrefixEnv is worktreeDelCommandPrefix over the same table: the wrapper words are read there, and
@@ -1613,13 +1628,15 @@ func worktreeDelUnreadableInterpreterStdin(name string, operands []string) bool 
 	for i := 0; i < len(args); i++ {
 		word := args[i]
 		switch {
-		case word == "-": // - asks for standard input
+		case word == "-": // - is the program operand itself: the interpreter reads standard input and the words
+			// after it are its own arguments (python3 - ignored.py reads the pipe)
+			return true
 		case worktreeDelUnreadableInterpreterProgram(name, word):
 			return false // the option itself carries the program
 		case worktreeDelUnreadableInterpreterArg(name, word):
 			i++ // the option's own argument is no script operand
 		case len(word) > 1 && word[0] == '-': // any other option takes no program argument
-		case worktreeDelUnreadableStdinAlias(word):
+		case worktreeDelUnreadableStdinAliasPath(word):
 			return true // a script operand naming the process's own standard input
 		default:
 			return false // a script operand
@@ -1668,19 +1685,12 @@ func worktreeDelUnreadableInterpreterArg(name, option string) bool {
 		return false
 	}
 	if strings.HasPrefix(option, "--") {
-		switch name {
-		case "node", "nodejs":
-			switch option {
-			case "--require", "--loader", "--experimental-loader", "--conditions", "--import":
-				return true
-			}
-		case "php":
-			switch option {
-			case "--define", "--php-ini", "--zend-extension", "--include-path":
-				return true
-			}
-		}
-		return false
+		// The guard does not know the arity of every long option an interpreter accepts, and one that takes a separate
+		// argument makes the word after it no script operand: reading every long option as an argument taker is the
+		// fail-closed answer (python3 --check-hash-based-pycs default reads the pipe; CRW-894, review). An option that
+		// carries its argument attached (--opt=value) is handled above, and the program-carrying long options are read
+		// by worktreeDelUnreadableInterpreterProgram before this.
+		return true
 	}
 	letters := ""
 	switch {
@@ -2164,90 +2174,124 @@ func worktreeDelUnreadableStdinShell(name string, operands []string) bool {
 	return worktreeDelUnreadableScriptOperand(args) < 0
 }
 
-// worktreeDelUnreadableStdinFile says whether a redirection word (with the next word when the operator stands alone)
-// opens a FILE on descriptor 0, so that a pipe on the command's left is not its program: `bash </dev/null` reads
-// /dev/null. A descriptor duplication (`<&0`, `<&2`), a close (`<&-`) or a path that names the process's own standard
-// input does not open a file: bash still reads the piped program, so those keep the refusal (fail closed; the alias is
-// CRW-894, c1). A here-document and a here-string feed the shell a program of their own and are not this case
-// (CRW-726, c15(a)).
-func worktreeDelUnreadableStdinFile(word, next string, hasNext bool) bool {
+// What one redirection leaves on a shell's standard input: nothing (it redirects another descriptor, or a
+// here-document or here-string), a file, descriptor 0's own file (a path that names it, or a duplication of 0
+// itself), or a descriptor the guard cannot follow (a duplication of another descriptor, or a close).
+const (
+	worktreeDelStdinNone = iota // the word redirects no descriptor 0
+	worktreeDelStdinFile
+	worktreeDelStdinSelf  // descriptor 0 keeps what it already holds
+	worktreeDelStdinOther // a descriptor the guard cannot follow
+)
+
+// worktreeDelUnreadableStdinStep is what one redirection word (with the next word when the operator stands alone)
+// leaves on a shell's standard input. A here-document and a here-string feed the shell a program of their own and
+// are not this case (CRW-726, c15(a)).
+func worktreeDelUnreadableStdinStep(word, next string, hasNext bool) int {
 	i := strings.IndexByte(word, '<')
 	if i < 0 {
-		return false
+		return worktreeDelStdinNone
 	}
 	if descriptor := word[:i]; descriptor != "" && descriptor != "0" { // a descriptor other than 0 is not stdin
-		return false
+		return worktreeDelStdinNone
 	}
 	if strings.HasPrefix(word[i:], "<<") { // a here-document or a here-string feeds the shell a program of its own
-		return false
+		return worktreeDelStdinNone
 	}
 	rest := word[i+1:]
 	if rest == "" { // the operator is a word of its own: its target is the next word
 		if !hasNext {
-			return false
+			return worktreeDelStdinNone
 		}
 		rest = next
 	}
-	// <&N and <&- duplicate or close the descriptor, and a path that names the process's own standard input reopens
-	// the pipe the command came from: none of them opens a file, so all three keep the refusal (CRW-894, c1).
-	return !strings.HasPrefix(rest, "&") && !worktreeDelUnreadableStdinAlias(rest)
+	if strings.HasPrefix(rest, "&") { // <&N, <&-: the shell duplicates or closes descriptor 0
+		if rest == "&0" { // <&0 duplicates descriptor 0 itself, which keeps what it already holds
+			return worktreeDelStdinSelf
+		}
+		return worktreeDelStdinOther // another descriptor, or a close: the guard cannot follow it
+	}
+	if descriptor, alias := worktreeDelUnreadableStdinAlias(rest); alias {
+		if descriptor == 0 { // the path names descriptor 0's own file, so the redirection changes nothing
+			return worktreeDelStdinSelf
+		}
+		return worktreeDelStdinOther // another descriptor's file: the guard cannot follow it
+	}
+	return worktreeDelStdinFile
 }
 
-// worktreeDelUnreadableStdinAlias says whether a path names a process's own standard input: /dev/stdin, /dev/fd/N,
-// /proc/self/fd/N or /proc/<anything>/fd/N. A redirection to such a path reopens the pipe the command came from and a
-// shell that reads it reads that pipe, and the guard cannot know what the descriptor holds, so it refuses (CRW-894, c1).
-// The path is read as the kernel resolves it: `.` and `..` and a repeated separator are dropped first, so /dev/./stdin
-// and /proc/self/../self/fd/0 name the same file and are refused too. The resolution is lexical only; a symlink that
-// reaches one of these paths is not followed (the guard reads text, and a path it cannot resolve is left as written).
-func worktreeDelUnreadableStdinAlias(path string) bool {
+// worktreeDelUnreadableStdinAlias is the descriptor a path names when it is one of a process's own descriptor files:
+// /dev/stdin, /dev/fd/N, /proc/self/fd/N or /proc/<anything>/fd/N. A redirection to such a path reopens the descriptor
+// it names, so the guard cannot know what a shell that reads it reads: a pipe there is a program it cannot read
+// (CRW-894, c1). The path is read as the kernel resolves it — `.`, `..` and a repeated separator are dropped first, so
+// /dev/./stdin and /proc/self/../self/fd/0 name the same file — and the resolution is lexical only: a symlink that
+// reaches one of these paths is not followed, because the guard reads text and leaves a path it cannot resolve as
+// written. ok is false when the path is no descriptor file.
+func worktreeDelUnreadableStdinAlias(path string) (descriptor int, ok bool) {
 	path = filepath.Clean(path)
 	switch {
 	case path == "/dev/stdin":
-		return true
+		return 0, true
 	case strings.HasPrefix(path, "/dev/fd/"):
 		return worktreeDelUnreadableDescriptor(path[len("/dev/fd/"):])
 	case strings.HasPrefix(path, "/proc/"):
 		rest := path[len("/proc/"):]
 		i := strings.Index(rest, "/fd/")
 		if i <= 0 || strings.Contains(rest[:i], "/") {
-			return false
+			return 0, false
 		}
 		return worktreeDelUnreadableDescriptor(rest[i+len("/fd/"):])
 	}
-	return false
+	return 0, false
 }
 
-// worktreeDelUnreadableDescriptor says whether s is a bare descriptor number.
-func worktreeDelUnreadableDescriptor(s string) bool {
+// worktreeDelUnreadableStdinAliasPath says whether a path is one of a process's own descriptor files.
+func worktreeDelUnreadableStdinAliasPath(path string) bool {
+	_, ok := worktreeDelUnreadableStdinAlias(path)
+	return ok
+}
+
+// worktreeDelUnreadableDescriptor is the descriptor a bare run of digits names, and false when s is no such number.
+func worktreeDelUnreadableDescriptor(s string) (int, bool) {
 	if s == "" {
-		return false
+		return 0, false
 	}
+	n := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] < '0' || s[i] > '9' {
-			return false
+			return 0, false
 		}
+		n = n*10 + int(s[i]-'0')
 	}
-	return true
+	return n, true
 }
 
-// worktreeDelUnreadableStdinRedirected says whether a shell's operands replace its standard input with a file, so that
-// a pipe on its left is not its program. A redirection that opens a file on descriptor 0 does replace it, in any order:
-// an alias reopens the descriptor as it already stands, so `bash </dev/null </dev/stdin` still reads /dev/null and
-// `bash </dev/stdin` alone reads the pipe (CRW-894, c1; the order was checked in bash 5.3.9).
+// worktreeDelUnreadableStdinRedirected says whether a shell's operands leave a FILE on descriptor 0, so that a pipe on
+// the command's left is not its program. The redirections run in order and the last one that names descriptor 0 decides
+// what it holds: `bash </dev/stdin` reopens the pipe and reads it, `bash </dev/null </dev/stdin` still reads /dev/null
+// (the alias reopens the descriptor as it already stands), and `bash 3<&0 </dev/null <&3` points descriptor 0 back at
+// the pipe through a descriptor the guard cannot follow, so the refusal stays (fail closed). The order was checked in
+// bash 5.3.9 (CRW-894, c1 and its review).
 func worktreeDelUnreadableStdinRedirected(operands []string) bool {
+	file := false
 	for i := 0; i < len(operands); i++ {
 		word := operands[i]
 		if strings.Trim(word, "0123456789") == "" && i+1 < len(operands) && strings.HasPrefix(operands[i+1], "<") {
 			word, i = word+operands[i+1], i+1 // a descriptor before the operator belongs to it
 		}
-		if worktreeDelUnreadableStdinFile(word, "", false) {
-			return true
+		hasNext := i+1 < len(operands)
+		next := ""
+		if hasNext {
+			next = operands[i+1]
 		}
-		if i+1 < len(operands) && worktreeDelUnreadableStdinFile(word, operands[i+1], true) {
-			return true
+		switch worktreeDelUnreadableStdinStep(word, next, hasNext) {
+		case worktreeDelStdinFile:
+			file = true
+		case worktreeDelStdinOther:
+			file = false // the guard cannot follow it: keep the refusal (fail closed)
 		}
 	}
-	return false
+	return file
 }
 
 // worktreeDelUnreadableHereArgs is operands without the here-document and here-string operators and the target words
@@ -2821,9 +2865,10 @@ func worktreeDelUnreadableDelimiterEdge(text string, i int) bool {
 // reads its program from standard input, or a program a -c program or eval hands on to a shell inside it (CRW-894).
 func worktreeDelUnreadablePipePiece(piece string, depth int) (string, bool) {
 	name, operands, ok := worktreeDelUnreadablePieceCommand(piece)
-	// A redirection that opens a file on descriptor 0 replaces the pipe before the command runs, so nothing here reads
-	// it: printf x | python3 </dev/null, | bash -c 'bash' </dev/null (CRW-894, review).
-	redirected := worktreeDelUnreadableStdinRedirected(operands)
+	// A redirection that opens a file on descriptor 0 replaces the pipe before the command runs, so nothing inside this
+	// piece reads it: printf x | python3 </dev/null, | bash -c 'bash' </dev/null, printf x | 0</dev/null python3
+	// (CRW-894, review). The whole piece is read, so a redirection written before the command word counts too.
+	redirected := worktreeDelUnreadableStdinRedirected(worktreeDelUnreadablePlainTexts(worktreeDelUnreadableWords(piece)))
 	if ok {
 		if strings.Contains(worktreeDelUnreadableShells, " "+name+" ") {
 			if worktreeDelUnreadableStdinShell(name, operands) {
@@ -2834,7 +2879,7 @@ func worktreeDelUnreadablePipePiece(piece string, depth int) (string, bool) {
 				return "a shell program read from a pipe", true
 			}
 		} else if name == "source" || name == "." {
-			if j := worktreeDelUnreadableSourceIndex(operands); j >= 0 && worktreeDelUnreadableStdinAlias(operands[j]) {
+			if j := worktreeDelUnreadableSourceIndex(operands); j >= 0 && worktreeDelUnreadableStdinAliasPath(operands[j]) {
 				return "a shell program read from a pipe", true
 			}
 		} else if !redirected && worktreeDelUnreadableInterpreterStdin(name, operands) {
@@ -2882,7 +2927,7 @@ func worktreeDelUnreadableScriptAlias(name string, operands []string) bool {
 	}
 	args := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
 	j := worktreeDelUnreadableScriptOperand(args)
-	return j >= 0 && worktreeDelUnreadableStdinAlias(args[j])
+	return j >= 0 && worktreeDelUnreadableStdinAliasPath(args[j])
 }
 
 // worktreeDelUnreadablePipePrograms is the program texts a pipe region piece hands on to a shell inside it: the -c
@@ -2906,10 +2951,20 @@ func worktreeDelUnreadablePipePrograms(name string, operands []string, ok bool) 
 		return nil
 	}
 	dropped := worktreeDelQuoteDropRedirects(worktreeDelUnreadableHereArgs(operands))
-	if j := worktreeDelUnreadableProgramIndex(name, dropped); j >= 0 && j < len(dropped) {
-		return []string{dropped[j]}
+	program := worktreeDelUnreadableProgramIndex(name, dropped)
+	if program < 0 || program >= len(dropped) {
+		return nil
 	}
-	return nil
+	programs := []string{dropped[program]}
+	// A program that can name the operands the shell hands it runs them as a command line of its own, and that command
+	// line inherits the pipe: printf x | bash -c 'exec "$@"' _ bash runs bash with the pipe on its standard input
+	// (CRW-726 c14(c) reads the same operands in the walk; CRW-894, review).
+	if !worktreeDelCertainProgram(dropped[program]) {
+		if joined := worktreeDelShellOperandsJoin(name, operands); joined != "" {
+			programs = append(programs, joined)
+		}
+	}
+	return programs
 }
 
 // worktreeDelUnreadableCompoundKeyword is the index of the first word after a shell compound keyword and its clause

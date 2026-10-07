@@ -260,7 +260,9 @@ func TestWorktreeDelPipeResidualControls(t *testing.T) {
 }
 
 // TestWorktreeDelPipeResidualNestingFailsClosed is c3's budget clause: a program handed on past the reading-depth limit
-// is refused rather than allowed, whichever reading reaches it first.
+// is refused rather than allowed, whichever reading reaches it first (the pipe rule's own bound, or the walk's depth
+// rule, which reaches the same nest through the segment after the pipe). The row pins that the answer is a refusal and
+// that the recursion terminates; it does not separate the two readings.
 func TestWorktreeDelPipeResidualNestingFailsClosed(t *testing.T) {
 	r := newDelRig(t)
 	program := "bash"
@@ -268,8 +270,48 @@ func TestWorktreeDelPipeResidualNestingFailsClosed(t *testing.T) {
 		program = "bash -c \"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(program) + "\""
 	}
 	cmd := "printf 'rm -rf ../repo' | " + program
-	if got := r.verdict(cmd); !got.Deny || !strings.Contains(got.Reason, "nested past the reading depth") {
+	if got := r.verdict(cmd); !got.Deny {
 		t.Errorf("the nest must fail closed: got %+v", got)
+	} else if !strings.Contains(got.Reason, "nested past the reading depth") {
+		t.Logf("the refusal names another rule: %s", got.Reason)
 	}
+	r.intact(t)
+}
+
+// TestWorktreeDelPipeResidualReviewFindings pins the independent review's findings on the first head of this change.
+// Each was a fail-open of the new rule, except the last two, which were over-denials the review also found.
+func TestWorktreeDelPipeResidualReviewFindings(t *testing.T) {
+	r := newDelRig(t)
+	// A lone - is the interpreter's program operand: the words after it are its own arguments, so the interpreter still
+	// reads the pipe (bash 5.3.9 and python3 3.14 run the piped program).
+	for _, cmd := range []string{
+		"printf x | python3 - ignored.py",
+		"printf x | python3 - -c 'print(0)'",
+		"printf x | python3 -O - -c 'print(0)'",
+	} {
+		worktreeDelPipeInterpreterDenied(t, r, cmd)
+	}
+	// exec's argument-taking letter may stand inside a cluster of flags.
+	for _, cmd := range []string{
+		"printf 'rm -rf ../repo' | exec -ca x bash",
+		"printf 'rm -rf ../repo' | exec -la x bash",
+	} {
+		worktreeDelPipeDenied(t, r, cmd)
+	}
+	// The last redirection that names descriptor 0 decides what it holds, and a duplication the guard cannot follow
+	// leaves the pipe: python3 3<&0 </dev/null <&3 runs the piped program in bash 5.3.9.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 3<&0 </dev/null <&3")
+	// A long option whose arity the guard does not know is read as taking the next word (python3
+	// --check-hash-based-pycs default runs the piped program), so the interpreter is left with no program argument.
+	worktreeDelPipeInterpreterDenied(t, r, "printf x | python3 --check-hash-based-pycs default")
+	// A -c program that can name its operands runs them as a command line of its own, and that line inherits the pipe:
+	// bash -c 'exec \"$@\"' _ bash runs bash with the pipe on its standard input.
+	worktreeDelPipeDenied(t, r, "printf 'rm -rf ../repo' | bash -c 'exec \"$@\"' _ bash")
+	// A redirection written before the command word counts too: 0</dev/null python3 reads /dev/null and no program runs.
+	r.allowed(t,
+		"printf x | 0</dev/null python3",
+		"printf x | bash </dev/null <&0", // <&0 duplicates descriptor 0, which already holds the file
+		"printf x | python3 </dev/null <&0",
+	)
 	r.intact(t)
 }
