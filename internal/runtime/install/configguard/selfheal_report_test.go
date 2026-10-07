@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -240,8 +241,11 @@ func selfHealReportFakeCodex(t *testing.T, listing string) string {
 		"exit 0\n" +
 		"fi\n" +
 		"exit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	t.Setenv("PATH", dir)
 	return log
@@ -270,8 +274,11 @@ func selfHealReportFakeCodexAt(t *testing.T) string {
 
 func selfHealReportWriteFakeCodex(t *testing.T, dir, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\n"+body), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 }
 

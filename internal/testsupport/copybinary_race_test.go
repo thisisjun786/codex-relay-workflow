@@ -133,7 +133,13 @@ func copyRace(t *testing.T, copy func(source, path string) error) (busy, written
 					return
 				}
 				atomic.AddInt64(&written, info.Size())
-				if err := exec.Command(target).Run(); err != nil {
+				run := exec.Command(target)
+				// A multicall program chooses its applet from argv[0]. The copy is named after the
+				// copy, not the program, so running it under that name asks a BusyBox true(1) for an
+				// applet called copy-0-0 and it fails on a correct CopyBinary. argv[0] is therefore
+				// the source's own name; the file executed is still the copy.
+				run.Args[0] = filepath.Base(source)
+				if err := run.Run(); err != nil {
 					if errors.Is(err, syscall.ETXTBSY) {
 						atomic.AddInt64(&busy, 1)
 						continue

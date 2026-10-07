@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -69,8 +70,11 @@ func review754PlaceInstall(t *testing.T, pin Pin, dir string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, pin.Executable), []byte("gitleaks\n"), 0o755); err != nil {
-		t.Fatal(err)
+	syscall.ForkLock.RLock()
+	writeErr := os.WriteFile(filepath.Join(dir, pin.Executable), []byte("gitleaks\n"), 0o755)
+	syscall.ForkLock.RUnlock()
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	record := `{"name":"` + pin.Name + `","version":"` + pin.Version + `","sha256":"` + pin.SHA256 + `"}`
 	if err := os.WriteFile(filepath.Join(dir, recordFile), []byte(record), 0o644); err != nil {
