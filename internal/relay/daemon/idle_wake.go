@@ -45,20 +45,25 @@ type idleSubscriptions interface {
 type idleWake struct {
 	daemon *Daemon
 	holds  map[string]string
-	// woken, opened and released are what the last tick did, for the daemon's own tests.
+	// woken, opened and released are what the pass did, and notes is what it could not do: both are
+	// read by the daemon's own tests and by Tick's report.
 	woken, opened, released int
 	notes                   []string
 }
 
 func newIdleWake(d *Daemon) *idleWake { return &idleWake{daemon: d, holds: map[string]string{}} }
 
+// begin starts one tick's pass: the counts and the notes describe this tick alone.
+func (w *idleWake) begin() {
+	w.woken, w.opened, w.released = 0, 0, 0
+	w.notes = nil
+}
+
 // idle turns the status reports the host pushed since the last tick into wakes. A report for a
 // thread whose head is not waiting out a busy backoff changes nothing: WakeBusyHead writes only for
 // the deferred-busy head that is still inside its backoff, so a younger delivery, a recipient with
 // no backlog, and a report about a head that is already due are all no-ops.
 func (w *idleWake) idle(ctx context.Context, host Host, now float64) {
-	w.woken, w.opened, w.released = 0, 0, 0
-	w.notes = nil
 	reporter, ok := host.(idleReports)
 	if !ok {
 		return
@@ -106,8 +111,19 @@ func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 		w.released++
 	}
 	for recipient, thread := range wanted {
-		if _, held := w.holds[recipient]; held {
-			continue
+		if held, ok := w.holds[recipient]; ok {
+			// The hold is only real while this connection still carries it: a lost socket drops the
+			// subscription with it, and the recipient is then held again below rather than believed.
+			if held == thread && subscriptions.ThreadSubscribed(thread) {
+				continue
+			}
+			if held != thread {
+				// The recipient's thread changed under the hold: the old subscription is not the one
+				// its reports will arrive on.
+				subscriptions.ReleaseThread(held)
+				w.released++
+			}
+			delete(w.holds, recipient)
 		}
 		if subscriptions.ThreadSubscribed(thread) {
 			// This connection already receives the thread's reports, so the idle edge is already

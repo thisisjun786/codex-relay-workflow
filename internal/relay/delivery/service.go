@@ -326,16 +326,17 @@ const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 // state DeferredBusy, now and the hourly cap: see busyHeadArgs. A candidate is behind the head when the
 // head's key is smaller than its own, compared as row values in the order eligibleOrder sorts.
 //
-// CRW-904: the head is the oldest delivery that is waiting out a busy backoff OR has been woken by the
-// recipient's idle edge and not yet claimed (delivery_wakes). A woken head is still the head, so a
-// younger delivery stays behind it until the wake is spent (I-478).
+// CRW-904 adds recipient_thread_id and next_eligible_at to what this names, so the idle edge can hold a
+// subscription on the recipient and judge a wake against the deadline still on the row. A woken delivery
+// is still a head while it is inside its backoff, which is what keeps a younger delivery behind it until
+// the wake is spent (I-478); once the backoff has run out it leaves this set, exactly as it did before,
+// so a head that keeps failing before its claim cannot hold the line past its own deadline.
 const busyHeadSQL = "(SELECT recipient_task_id, recipient_thread_id, next_eligible_at, first_seen_at, created_at, event_id FROM (" +
 	"SELECT b.recipient_task_id AS recipient_task_id, b.recipient_thread_id AS recipient_thread_id, b.next_eligible_at AS next_eligible_at, be.first_seen_at AS first_seen_at, b.created_at AS created_at, b.event_id AS event_id," +
 	" ROW_NUMBER() OVER (PARTITION BY b.recipient_task_id ORDER BY be.first_seen_at, b.created_at, b.event_id) AS rn" +
 	" FROM deliveries b JOIN events be ON be.event_id = b.event_id JOIN relationships br ON br.relationship_id = b.relationship_id" +
 	" LEFT JOIN " + store.RelationshipSpentSQL + " bs ON bs.relationship_id = b.relationship_id AND bs.recipient_task_id = b.recipient_task_id" +
-	" LEFT JOIN delivery_wakes bw ON bw.event_id = b.event_id" +
-	" WHERE b.state = ? AND b.hold_reason IS NULL AND (b.next_eligible_at > ? OR bw.event_id IS NOT NULL)" +
+	" WHERE b.state = ? AND b.hold_reason IS NULL AND b.next_eligible_at > ?" +
 	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
 	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
 	" AND COALESCE(bs.spent, 0) < ?) WHERE rn = 1)"

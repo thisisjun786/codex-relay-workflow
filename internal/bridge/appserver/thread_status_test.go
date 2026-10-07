@@ -178,3 +178,67 @@ func TestThreadHold_releasing_a_thread_it_never_held_is_silent(t *testing.T) {
 		t.Fatalf("releasing a hold that was never taken sent %d unsubscribes", got)
 	}
 }
+
+// CRW-904 (review): a hold taken while a release worker is mid-unsubscribe must not be cancelled by
+// it. HoldThread takes the root's gate, which is the same gate the worker takes before it rechecks
+// readiness, so the two cannot interleave: the resume lands after the unsubscribe, or the worker's
+// recheck sees the hold and leaves the subscription standing.
+func TestThreadHold_a_pending_release_does_not_cancel_a_new_hold(t *testing.T) {
+	c, host := holdClient(t)
+	if err := c.HoldThread(context.Background(), "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	host.Script("thread/unsubscribe", fakehost.Reply{Paused: entered, Release: release})
+	c.ReleaseThread("thread-1")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
+		t.Fatalf("the release never reached the host: %v", err)
+	}
+	// The worker holds the gate while its unsubscribe is outstanding, so this hold waits for it and
+	// then re-subscribes: the subscription stands when both are done.
+	returned := make(chan error, 1)
+	go func() { returned <- c.HoldThread(context.Background(), "thread-1") }()
+	select {
+	case err := <-returned:
+		t.Fatalf("the hold was admitted while the release held the gate: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-returned; err != nil {
+		t.Fatal(err)
+	}
+	if !c.ThreadSubscribed("thread-1") {
+		t.Fatal("the new hold was cancelled by the release it raced")
+	}
+	if got := host.Count("thread/resume"); got != 2 {
+		t.Fatalf("%d resumes reached the host, want the first hold and the reopened one", got)
+	}
+}
+
+// CRW-904 (review): a hold taken after the release worker finished subscribes the thread again.
+func TestThreadHold_a_hold_after_a_release_subscribes_again(t *testing.T) {
+	c, host := holdClient(t)
+	if err := c.HoldThread(context.Background(), "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	c.ReleaseThread("thread-1")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := host.WaitCount(ctx, "thread/unsubscribe", 1); err != nil {
+		t.Fatal(err)
+	}
+	if c.ThreadSubscribed("thread-1") {
+		t.Fatal("the released hold is still recorded")
+	}
+	if err := c.HoldThread(context.Background(), "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !c.ThreadSubscribed("thread-1") {
+		t.Fatal("the reopened hold was not recorded")
+	}
+	if got := host.Count("thread/resume"); got != 2 {
+		t.Fatalf("%d resumes reached the host, want one per hold", got)
+	}
+}

@@ -137,8 +137,8 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	// heads they name before this tick's delivery pass, and the subscription below is opened for
 	// every recipient the pass leaves waiting out a busy backoff. Both are no-ops on a host that
 	// does not offer them: every scripted double, and every transport that is not the App Server.
+	d.idle.begin()
 	d.idle.idle(ctx, d.Host, now)
-	r.Notes = append(r.Notes, d.idle.notes...)
 	var sent delivery.TickCounts
 	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
 		return r, err

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -43,6 +44,9 @@ type idleHost struct {
 	holds, releases []string
 	// holdErr, when set, is what HoldThread answers.
 	holdErr error
+	// lost stands for a socket that went away: the subscription the client held went with it, so the
+	// daemon has to hold it again.
+	lost bool
 }
 
 func (h *idleHost) Close() error { return nil }
@@ -89,7 +93,14 @@ func (h *idleHost) HoldThread(_ context.Context, thread string) error {
 
 func (h *idleHost) ReleaseThread(thread string) { h.releases = append(h.releases, thread) }
 
-func (h *idleHost) ThreadSubscribed(thread string) bool { return slices.Contains(h.holds, thread) }
+// ThreadSubscribed is whether this connection still carries the subscription: a lost socket takes it
+// with it, and the relay then has to hold it again.
+func (h *idleHost) ThreadSubscribed(thread string) bool {
+	if h.lost {
+		return false
+	}
+	return slices.Contains(h.holds, thread)
+}
 
 // seedWaitingHead registers one relationship and leaves its parent's completion delivery waiting out
 // a busy backoff 300 s from now: the head the idle edge is for.
@@ -264,5 +275,46 @@ func TestIdleWake_a_host_without_the_capability_leaves_the_backoff_alone(t *test
 	}
 	if n := busyAnswers(t, s); n != 0 {
 		t.Fatal("the head was attempted with no subscription and no report")
+	}
+}
+
+func TestIdleWake_a_lost_socket_is_held_again(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{}
+	d, _ := idleDaemon(t, host)
+	ctx := context.Background()
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.holds) != 1 {
+		t.Fatalf("holds %v, want one while the head waits", host.holds)
+	}
+	// The socket went away and the subscription with it: the relay holds it again on the next tick
+	// rather than believing a hold that no longer exists.
+	host.lost = true
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.holds) != 2 {
+		t.Fatalf("holds %v, want the hold reopened after the socket was lost", host.holds)
+	}
+}
+
+func TestIdleWake_a_note_is_reported_once(t *testing.T) {
+	t.Parallel()
+	host := &idleHost{holdErr: errors.New("the host refused the resume")}
+	d, _ := idleDaemon(t, host)
+	report, err := d.Tick(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, note := range report.Notes {
+		if strings.Contains(note, "not opened") {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("the refused hold was reported %d times, want once: %v", seen, report.Notes)
 	}
 }

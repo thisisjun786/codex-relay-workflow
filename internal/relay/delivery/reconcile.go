@@ -473,7 +473,9 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 			deadline, deadlineArgs := "?", []any{next}
 			if aggregate == DeferredBusy && next != nil {
 				deadline = "CASE WHEN next_eligible_at IS NOT NULL AND next_eligible_at > ? AND next_eligible_at < ? THEN next_eligible_at ELSE ? END"
-				deadlineArgs = []any{now, next, next}
+				// The bound is the numeric instant, not the ISO string above: next_eligible_at is REAL, and
+				// SQLite orders every number before every text, so a text bound would never be exceeded.
+				deadlineArgs = []any{rc.Clock.Now(), next, next}
 			}
 			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
 				append(append([]any{aggregate}, deadlineArgs...), boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)...)

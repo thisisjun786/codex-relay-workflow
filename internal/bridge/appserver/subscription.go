@@ -130,14 +130,38 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 	if conn == nil {
 		return &TransportError{Reason: "subscription connection ended before the hold"}
 	}
-	// A hold this connection already carries is kept, not subscribed again: the reports it would
-	// make arrive are the ones it is already sending.
+	// The root's own gate serializes this against the release worker, which takes the same gate before
+	// it rechecks readiness and sends thread/unsubscribe. Taking it here means the two cannot interleave:
+	// either the worker unsubscribes first and this resume reopens the subscription after it, or this
+	// hold is recorded first and the worker's recheck sees it and leaves the subscription alone. The
+	// resume is one bounded call, so the gate is held no longer than a release holds it.
 	m.mu.Lock()
-	if r := m.roots[thread]; r != nil && r.busyHeld && r.busyOn == conn {
+	r := m.root(thread)
+	m.mu.Unlock()
+	select {
+	case <-r.gate:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.ctx.Done():
+		return m.ctx.Err()
+	}
+	defer func() { r.gate <- struct{}{} }()
+	c.mu.Lock()
+	m.mu.Lock()
+	if m.stopping || c.conn != conn {
 		m.mu.Unlock()
+		c.mu.Unlock()
+		return &TransportError{Reason: "subscription connection ended before the hold"}
+	}
+	if r.busyHeld && r.busyOn == conn {
+		// A hold this connection already carries is kept, not subscribed again: the reports it would
+		// make arrive are the ones it is already sending.
+		m.mu.Unlock()
+		c.mu.Unlock()
 		return nil
 	}
 	m.mu.Unlock()
+	c.mu.Unlock()
 	if _, err := c.request(ctx, conn, "thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}); err != nil {
 		return err
 	}
@@ -148,10 +172,12 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 		c.mu.Unlock()
 		return &TransportError{Reason: "subscription connection ended before the hold"}
 	}
-	r := m.root(thread)
-	r.connection = conn
-	r.busyHeld = true
-	r.busyOn = conn
+	// The root for this thread as it stands now: a prune can have dropped the one whose gate is held
+	// while the resume was in flight, and the hold belongs on the root the manager currently keeps.
+	current := m.root(thread)
+	current.connection = conn
+	current.busyHeld = true
+	current.busyOn = conn
 	m.start()
 	m.mu.Unlock()
 	c.mu.Unlock()
