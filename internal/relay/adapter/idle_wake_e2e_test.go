@@ -28,8 +28,11 @@ const (
 	idleE2EEvent  = "ev-e2e"
 )
 
-// idleE2EStore is a store holding one relationship and one completion delivery to its parent that
-// waits out a busy backoff 300 s from the clock's instant: the head the idle edge is for.
+// idleE2EStore is a store holding one relationship and one queued completion delivery to its parent.
+// The delivery is queued, not seeded deferred: the daemon's first tick attempts it, finds the
+// recipient mid-turn and defers it with the real backoff, which is the state the idle edge is for.
+// Seeding deferred_busy would test the wake against a row the test wrote rather than against the
+// transition the relay makes (CRW-904 correction, d4).
 func idleE2EStore(t *testing.T, ctx context.Context, socket string, now float64) *store.Store {
 	t.Helper()
 	s, err := openStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), socket)
@@ -47,7 +50,7 @@ func idleE2EStore(t *testing.T, ctx context.Context, socket string, now float64)
 	if _, err := s.DB.Exec("INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,stage,first_seen_at,last_seen_at) VALUES(?, 'rel-e2e',1,'rev-e2e','ready_for_review','child','child-e2e','turn-e2e','completed','{}','final',?,?)", idleE2EEvent, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB.Exec("INSERT INTO deliveries(event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,next_eligible_at,created_at,updated_at) VALUES(?,'rel-e2e','completion_event',?,?,'deferred_busy',0,?,?,?)", idleE2EEvent, idleE2EParent, idleE2EThread, now+300, stamp, stamp); err != nil {
+	if _, err := s.DB.Exec("INSERT INTO deliveries(event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,next_eligible_at,created_at,updated_at) VALUES(?,'rel-e2e','completion_event',?,?,'queued',0,NULL,?,?)", idleE2EEvent, idleE2EParent, idleE2EThread, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -91,16 +94,27 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	t.Cleanup(func() { _ = a.Close() })
 	d := daemon.New(s, a, &delivery.FakeClock{T: now}, nil)
 
-	// No subscription exists yet, and the head waits 300 s: the first tick opens the relay's own hold
-	// on the recipient, and nothing else happens because no report has arrived.
+	// No subscription exists yet. The first tick attempts the queued delivery, finds the recipient
+	// mid-turn and defers it with the busy backoff, and opens the relay's own hold on that recipient.
 	if _, err := d.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if got := busyAnswers(t, s); got != 1 {
+		t.Fatalf("the first tick left %d busy answers, want the one real busy deferral", got)
+	}
+	deferred, err := s.One(ctx, "SELECT state, next_eligible_at FROM deliveries WHERE event_id = ?", idleE2EEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred.Text("state") != delivery.DeferredBusy {
+		t.Fatalf("the delivery is %s, want %s after the busy deferral", deferred.Text("state"), delivery.DeferredBusy)
+	}
+	deadline := deferred.Get("next_eligible_at").(float64)
+	if deadline <= now {
+		t.Fatalf("the busy deferral left the delivery due at %.0f, want a backoff ahead", deadline)
+	}
 	if got := host.Count("thread/resume"); got != 1 {
 		t.Fatalf("%d resumes reached the host, want the relay's own hold on the recipient", got)
-	}
-	if got := busyAnswers(t, s); got != 0 {
-		t.Fatalf("the head was attempted before any idle report (%d busy answers)", got)
 	}
 	var params map[string]any
 	for _, request := range host.Requests() {
@@ -127,12 +141,12 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 		t.Fatal(err)
 	}
 
-	// The next tick turns that report into a wake and attempts the head, 300 s before its own deadline.
+	// The next tick turns that report into a wake and attempts the head, before its own deadline.
 	if _, err := d.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := busyAnswers(t, s); got != 1 {
-		t.Fatalf("the idle report did not release the head: %d busy answers, want 1", got)
+	if got := busyAnswers(t, s); got != 2 {
+		t.Fatalf("the idle report did not release the head: %d busy answers, want the deferral and the woken attempt", got)
 	}
 	row, err := s.One(ctx, "SELECT state, next_eligible_at FROM deliveries WHERE event_id = ?", idleE2EEvent)
 	if err != nil {
@@ -141,9 +155,10 @@ func TestIdleWake_end_to_end_from_a_busy_deferral_to_the_woken_attempt(t *testin
 	if row.Text("state") != delivery.DeferredBusy {
 		t.Fatalf("the delivery is %s, want %s", row.Text("state"), delivery.DeferredBusy)
 	}
-	// due = min(original, recomputed): the early wake never pushes the safety-net timer later.
-	if due := row.Get("next_eligible_at").(float64); due > now+300 {
-		t.Fatalf("the woken attempt pushed the deadline to %.0f, past the original %.0f", due, now+300)
+	// due = min(original, recomputed): the early wake never pushes the safety-net timer later than the
+	// deadline the delivery carried into the attempt.
+	if due := row.Get("next_eligible_at").(float64); due > deadline {
+		t.Fatalf("the woken attempt pushed the deadline to %.0f, past the original %.0f", due, deadline)
 	}
 	if n := countRows(t, s, "SELECT COUNT(*) FROM delivery_wakes"); n != 0 {
 		t.Fatalf("the answered attempt left %d wakes behind", n)

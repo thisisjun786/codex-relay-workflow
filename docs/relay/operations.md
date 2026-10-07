@@ -604,11 +604,20 @@ same recipient. The wake never moves
 `next_eligible_at`, so an attempt that is woken early and meets the recipient busy again keeps
 `due = min(original, recomputed)` and the early wake never pushes the safety-net timer later; the wake
 row is kept until that attempt is answered, so a busy answer that arrives late, after the original
-deadline or after the attempt was first settled uncertain, still takes the earlier deadline. The
+deadline or after the attempt was first settled uncertain, still takes the earlier deadline. A wake
+the delivery never spent — the row left `deferred_busy` for a withhold or a supersession without ever
+being claimed — is dropped with that transition, so it cannot outlive the wait it was written for and
+make a later ordinary busy deferral due at once. The
 backoff is the trigger for every case the report cannot cover: a report the relay never saw, a host
 that reports no status, a recipient the relay could not subscribe, and a recipient that is busy again
 before the attempt lands. The min send interval and the hourly budget pace the send as before, and a
 busy recipient is still never interrupted: the wake only decides when the relay looks.
+
+The two store failures this pass can meet are handed to the daemon's own halt rather than recorded as
+notes: the wake is the pass's own write and the read of the waiting heads is an observation, so a
+failure of the class that stops the store (`SQLITE_CORRUPT`, `SQLITE_NOTADB`, `SQLITE_IOERR_SHORT_READ`,
+CRW-848) ends the tick there, before the delivery pass and the supervisor channel would write into a
+store the relay has just seen damaged. Every other failure keeps the note it already had.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so

@@ -139,12 +139,24 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 	// does not offer them: every scripted double, and every transport that is not the App Server.
 	d.idle.begin()
 	d.idle.idle(ctx, d.Host, now)
+	// A store failure the idle pass could not apply is handed to this daemon's own halt before
+	// anything else writes: the delivery pass and the supervisor channel below would otherwise write
+	// into a store the relay has just seen damaged (I-564). A failure that is not the halting class
+	// leaves the pass and this tick exactly as they were, with the note the pass wrote.
+	if d.idle.haltStore(ctx, &r) {
+		r.Notes = append(r.Notes, d.idle.take()...)
+		return r, nil
+	}
 	var sent delivery.TickCounts
 	if err := (&delivery.Scheduler{Delivery: d.Delivery, Ack: d.Ack, MaxSendsTick: d.Policy.MaxSends}).Deliver(ctx, d.Host, now, &sent); err != nil {
 		return r, err
 	}
 	d.idle.hold(ctx, d.Host, now)
-	r.Notes = append(r.Notes, d.idle.notes...)
+	if d.idle.haltStore(ctx, &r) {
+		r.Notes = append(r.Notes, d.idle.take()...)
+		return r, nil
+	}
+	r.Notes = append(r.Notes, d.idle.take()...)
 	r.Delivered += sent.Delivered
 	r.Deferred += sent.Deferred
 	r.Skipped += sent.Skipped

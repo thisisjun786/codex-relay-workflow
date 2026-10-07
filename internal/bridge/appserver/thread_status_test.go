@@ -156,8 +156,13 @@ func TestThreadHold_takes_its_own_hold_beside_a_live_watch(t *testing.T) {
 	if !c.ThreadSubscribed("thread-1") {
 		t.Fatal("the thread is not subscribed while the backlog waits")
 	}
-	if got := host.Count("thread/resume"); got != 0 {
-		t.Fatalf("%d resumes reached the host; the watch already subscribes this connection", got)
+	// CRW-904 (correction, d2): a live watch is not evidence that this connection receives the
+	// thread's reports. WatchTurn only admits a watch and sends no subscribing RPC, so a watch whose
+	// resume was refused or cancelled leaves the connection unsubscribed while the watch is still live.
+	// The hold therefore sends its own override-free resume beside the watch; the cost of the other
+	// error is one redundant resume, which starts no turn and changes nothing.
+	if got := host.Count("thread/resume"); got != 1 {
+		t.Fatalf("%d resumes reached the host, want the hold's own override-free resume", got)
 	}
 	// The watch is gone and nothing but the backlog's hold keeps the root: no release may drop it.
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -247,6 +252,38 @@ func TestThreadHold_a_refused_resume_holds_nothing(t *testing.T) {
 	}
 	if c.ThreadSubscribed("thread-1") {
 		t.Fatal("a refused resume left a subscription recorded")
+	}
+}
+
+// CRW-904 (correction, d2): a live watch is not evidence that this connection receives the thread's
+// reports. WatchTurn only admits a watch and sends no subscribing RPC of its own, so when the resume
+// the delivery path sends beside it is refused or cancelled the watch is still live while the
+// connection receives nothing. `receivesOn`, which decides whether the hold owes its own resume, must
+// not read that watch as a subscription. `ThreadSubscribed` still counts it: that is the question
+// "does a busy deferral find a subscription", a different one from "do I already receive this".
+func TestThreadHold_a_live_watch_is_not_evidence_the_connection_receives_the_thread(t *testing.T) {
+	c, _ := holdClient(t)
+	watch, err := c.WatchTurn(context.Background(), "thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Finish("", false)
+	if !c.ThreadSubscribed("thread-1") {
+		t.Fatal("the live watch does not read as a subscription at all")
+	}
+	if c.ThreadHeld("thread-1") {
+		t.Fatal("a watch alone reads as the relay's own hold")
+	}
+	// The hold's own predicate: this connection receives the thread only through this relay's hold or
+	// the bridge's retention, never through a watch whose subscribing resume nobody acknowledged.
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	c.subscriptions.mu.Lock()
+	receives := c.subscriptions.receivesOn("thread-1", conn)
+	c.subscriptions.mu.Unlock()
+	if receives {
+		t.Fatal("a live watch read as a connection that already receives the thread's reports")
 	}
 }
 

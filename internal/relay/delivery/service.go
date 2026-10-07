@@ -420,6 +420,18 @@ func (d *Service) spendWake(ctx context.Context, eventID string) error {
 	return err
 }
 
+// abandonWake ends a wake the delivery never spent: the row left deferred_busy for another reason (a
+// withhold, a supersession) without ever being claimed, so no attempt of its is outstanding and the
+// deadline the wake carries is not one any later busy answer owes. Without this the row would outlive
+// the wait it was written for, and a later ordinary busy deferral would inherit an expired deadline and
+// be due at once, bypassing the backoff it just computed (CRW-904 correction, d3). A wake the claim
+// already spent is kept: an attempt of it is in flight, and that attempt's answer still owes the
+// deadline. Called inside the caller's transaction, with the row's own state change.
+func (d *Service) abandonWake(ctx context.Context, eventID string) error {
+	_, err := execSQL(ctx, d.Store, "DELETE FROM delivery_wakes WHERE event_id = ? AND spent_at IS NULL", eventID)
+	return err
+}
+
 // WakeBusyHead wakes the delivery that heads this recipient thread's line while it still waits out a
 // busy backoff: one row in delivery_wakes, written in one statement, so nothing can be woken twice and
 // nothing between the read and the write can take the place. The recipient is named by its thread,
@@ -766,6 +778,13 @@ func (d *Service) supersedeIn(ctx context.Context, eventID, reason string) error
 		return err
 	}
 	if changed == 1 {
+		// CRW-904 correction (d3): a wake the delivery never spent is ended with the wait it was
+		// written for. A row that leaves deferred_busy by a supersession has no attempt of its own
+		// outstanding, so the deadline the wake carries is not one any later busy answer owes, and
+		// keeping it would let a later ordinary busy deferral inherit an expired deadline.
+		if err := d.abandonWake(ctx, eventID); err != nil {
+			return err
+		}
 		return journal(ctx, d.Store, "delivery_superseded", eventID, Obj{{Key: "reason", Value: reason}}, d.Clock.ISO())
 	}
 	return d.annotateIn(ctx, eventID, reason)
@@ -1287,6 +1306,9 @@ func (d *Service) WithholdInactive(ctx context.Context, eventID string, r Relati
 			moved = true
 			return nil
 		}
+		if err := d.abandonWake(ctx, eventID); err != nil {
+			return err
+		}
 		if err := journal(ctx, d.Store, "delivery_withheld_inactive", eventID, Obj{{Key: "relationshipId", Value: r.ID}, {Key: "status", Value: r.Status}}, d.Clock.ISO()); err != nil {
 			return err
 		}
@@ -1307,6 +1329,9 @@ func (d *Service) withhold(ctx context.Context, eventID string, l Lifecycle, now
 			return err
 		}
 		if changed == 1 {
+			if err := d.abandonWake(ctx, eventID); err != nil {
+				return err
+			}
 			detail := l.Detail
 			if detail == "" {
 				detail = pyStr(l.WithholdReason)
@@ -1345,6 +1370,9 @@ func (d *Service) withholdSettings(ctx context.Context, eventID string, now floa
 			return nil
 		}
 		safe := true
+		if err := d.abandonWake(ctx, eventID); err != nil {
+			return err
+		}
 		if err := d.recordFailureIn(ctx, eventID, "settings_check", stamp, detail, row.S("relationship_id"), nil, reason, nil, &safe, when); err != nil {
 			return err
 		}

@@ -116,13 +116,15 @@ func TestIdleWake_a_woken_head_holds_the_line_until_it_is_claimed(t *testing.T) 
 	f := w.f
 	w.busy(true)
 	head := w.emit(0)
-	w.f.clock.Advance(1)
-	younger := w.emit(0)
 	busyFor(t, f, head, 1, 10)
 	if !w.wake(scaleParent) {
 		t.Fatal("the idle report woke no head")
 	}
-	// The wake releases the head, not the line: the younger delivery is still not attempted.
+	// CRW-904 (correction, d4): the younger delivery arrives between the wake and the claim, which is
+	// the interleaving the head priority exists for. The wake releases the head, not the line, so the
+	// younger delivery is still not attempted.
+	f.clock.Advance(1)
+	younger := w.emit(0)
 	if got := f.eligible(); len(got) != 1 || got[0] != head {
 		t.Fatalf("eligible rows are %v, want only the woken head %s", got, head)
 	}
@@ -253,12 +255,14 @@ func TestIdleWake_a_woken_head_holds_the_line_past_its_own_deadline(t *testing.T
 	f := w.f
 	w.busy(true)
 	head := w.emit(0)
-	f.clock.Advance(1)
-	younger := w.emit(0)
 	deadline := busyFor(t, f, head, 1, 10)
 	if !w.wake(scaleParent) {
 		t.Fatal("the idle report woke no head")
 	}
+	// CRW-904 (correction, d4): the younger delivery arrives between the wake and the claim, so the
+	// test exercises the interleaving and not a row that was already waiting when the wake landed.
+	f.clock.Advance(1)
+	younger := w.emit(0)
 	// The attempt is never made inside the backoff: the head's own deadline passes with the wake still
 	// unspent, which is the state a scheduler budget or an error before the claim leaves behind.
 	f.clock.T = deadline + 5
@@ -280,6 +284,57 @@ func TestIdleWake_a_woken_head_holds_the_line_past_its_own_deadline(t *testing.T
 	// The wake is spent, so the line it held is gone: the younger delivery is due on its own turn.
 	if !slices.Contains(f.eligible(), younger) {
 		t.Fatal("the younger delivery is not due after the wake was spent")
+	}
+}
+
+// CRW-904 (correction, d3): a wake the delivery never spent does not outlive the wait it was written
+// for. A woken attempt that is withheld before its send leaves deferred_busy without ever being
+// claimed, so no attempt of it is outstanding and the deadline the wake carries is not one any later
+// busy answer owes. If the row were kept, a later ordinary busy deferral would read it and take
+// due = min(expired original, its own recomputed backoff), which is already in the past, and the
+// delivery would retry without waiting the backoff it just computed.
+func TestIdleWake_an_unspent_wake_does_not_survive_a_withhold(t *testing.T) {
+	t.Parallel()
+	w := newScaleWorld(t, 1)
+	f := w.f
+	w.busy(true)
+	event := w.emit(0)
+	deadline := busyFor(t, f, event, 1, 10)
+	if !w.wake(scaleParent) {
+		t.Fatal("the idle report woke no head")
+	}
+	// The woken attempt finds the recipient archived, so the delivery is withheld before its send: the
+	// state leaves deferred_busy and no attempt of this delivery is ever claimed.
+	yes := true
+	w.f.host.threads[scaleParent].archived = &yes
+	w.pass()
+	row := f.row(event)
+	if row.S("state") != WithheldPreSend {
+		t.Fatalf("the delivery is %s, want %s after the withhold", row.S("state"), WithheldPreSend)
+	}
+	if n := f.count("SELECT COUNT(*) AS c FROM delivery_wakes"); n != 0 {
+		t.Fatalf("the withheld delivery left %d wakes behind, want the wake ended with its wait", n)
+	}
+	// The recipient is active again and the delivery's recheck comes round after the original deadline,
+	// where it finds the recipient busy once more. The backoff it computes now is the one it must wait.
+	no := false
+	w.f.host.threads[scaleParent].archived = &no
+	w.busy(true)
+	f.clock.T = row.F("next_eligible_at") + 1
+	if f.clock.Now() <= deadline {
+		t.Fatalf("the recheck at %.0f is not past the original deadline %.0f", f.clock.Now(), deadline)
+	}
+	w.pass()
+	row = f.row(event)
+	if row.S("state") != DeferredBusy {
+		t.Fatalf("the delivery is %s, want %s after the busy answer", row.S("state"), DeferredBusy)
+	}
+	want := f.delivery.Policy.DelayFor(2, "busy")
+	if got := row.F("next_eligible_at") - f.clock.Now(); got != want {
+		t.Fatalf("the busy answer left the delivery due in %.0f s, want the busy curve's %.0f s: an expired wake was inherited", got, want)
+	}
+	if slices.Contains(f.eligible(), event) {
+		t.Fatal("the delivery is due at once on an expired wake's deadline")
 	}
 }
 

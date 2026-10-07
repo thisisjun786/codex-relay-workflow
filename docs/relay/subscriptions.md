@@ -39,9 +39,13 @@ The hold is the relay's own reference, taken even when a watch or the never-run-
 already subscribed the thread (`ThreadHeld` answers for it alone, while `ThreadSubscribed` counts
 any owner). Those other owners release their subscriptions on their own schedule — a `turn/completed`
 or the release worker — and the busy backlog has to keep its idle edge through that, so it records a
-hold of its own rather than borrowing theirs. When the thread is already subscribed on this
-connection the resume is skipped, because the reports it would make arrive are the ones already
-arriving; the hold is recorded either way.
+hold of its own rather than borrowing theirs. The resume is skipped only for a subscription this
+client made and recorded itself — this relay's own hold on this connection, or the bridge's retention
+of a never-run root. A live watch is deliberately not evidence: `WatchTurn` only admits a watch and
+sends no subscribing RPC, so a watch whose resume was refused or cancelled leaves the connection
+receiving nothing while the watch is still live, and reading it as a subscription would let the hold
+record itself on a socket the recipient's idle reports never reach. The cost of the other error is one
+redundant resume on a thread that is already subscribed, which starts no turn and changes nothing.
 
 The relay releases the hold (`Client.ReleaseThread`) when the recipient's backlog empties or the
 delivery is delivered, and the ordinary release worker then sends `thread/unsubscribe` on the

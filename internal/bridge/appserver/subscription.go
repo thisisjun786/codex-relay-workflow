@@ -260,27 +260,25 @@ func (m *subscriptionManager) subscribedOn(thread string, conn *websocket.Conn) 
 	return false
 }
 
-// receivesOn reports whether conn already receives thread's reports: this relay's own hold, the
-// bridge's retention of a never-run root, or a live watch, all of them on that same connection. The
-// resume HoldThread would send is exactly what makes conn subscribed, so a subscription carried by
-// another socket is not one and the resume is still owed. The caller holds m.mu.
+// receivesOn reports whether conn is already known to receive thread's reports: this relay's own hold
+// on it, or the bridge's retention of a never-run root on it. Those two are the subscriptions this
+// client made itself and records; the resume HoldThread would send is exactly what creates them, so a
+// subscription carried by another socket is not one and the resume is still owed. The caller holds
+// m.mu.
+//
+// A live watch is deliberately not evidence. WatchTurn only admits a watch; it sends no subscribing
+// RPC of its own, and this client records no acknowledgement of the resume the delivery path sends
+// beside it (CRW-904 d2). A watch whose resume was refused or cancelled leaves the connection
+// unsubscribed while the watch is still live, so reading it as a subscription would let HoldThread
+// skip the override-free resume and record a hold on a socket the recipient's reports never reach.
+// The cost of the other error is one redundant resume on a thread that is already subscribed, which
+// starts no turn and changes nothing.
 func (m *subscriptionManager) receivesOn(thread string, conn *websocket.Conn) bool {
 	r := m.roots[thread]
 	if r == nil {
 		return false
 	}
-	if r.busyHeld && r.busyOn == conn {
-		return true
-	}
-	if r.retainedOn == conn {
-		return true
-	}
-	for _, w := range r.watches {
-		if w.connection == conn && !w.retired {
-			return true
-		}
-	}
-	return false
+	return (r.busyHeld && r.busyOn == conn) || r.retainedOn == conn
 }
 func (c *Client) watchTurn(ctx context.Context, thread string, created bool) (*TurnWatch, error) {
 	c.mu.Lock()

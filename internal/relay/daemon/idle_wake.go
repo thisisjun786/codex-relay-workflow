@@ -21,6 +21,17 @@ import (
 // by the lifecycle read before any transport call (I-30), the min send interval and the hourly cap
 // still pace the send (I-475), and the woken head keeps the line until it is claimed (I-478).
 
+// The two sites the daemon's halt records a detection at (CRW-848, store.HaltSiteWrite and
+// store.HaltSiteObservation). They are spelled here rather than imported because that code is newer
+// than this node's baseline: the pass hands its own failure to the daemon's halt, which classifies it
+// and fills the site, and the vocabulary the marker carries is these two words. The pass's own write
+// is the wake; its read of the waiting heads is an observation, exactly as the observation pass's own
+// census read is.
+const (
+	idleHaltSiteWrite       = "write"
+	idleHaltSiteObservation = "observation"
+)
+
 // idleReports is the host capability the wake needs: the thread status reports the App Server
 // pushed for the threads this connection subscribes to. A host without it (a scripted double, or a
 // transport that is not the App Server) reports none, and the backoff stays the only trigger.
@@ -49,6 +60,18 @@ type idleWake struct {
 	// refused is not retried on every tick, because the backoff is that recipient's trigger until its
 	// own deadline (CRW-904 d3).
 	refused map[string]float64
+	// unappliedErr and unappliedSite are the first store failure this pass could not apply, kept for
+	// the daemon's own halt: a store the relay has seen damaged takes no more writes (I-564), so a
+	// failure of that class must end the tick rather than become a note (CRW-904 d1). The site is the
+	// one the failure was seen at: the wake is this pass's own write, the head read an observation.
+	unappliedErr  error
+	unappliedSite string
+	// halt is the daemon's own halt (CRW-848, Daemon.halted), reached through the method the daemon
+	// satisfies rather than named: that code is newer than this node's baseline, where the pass and the
+	// daemon meet. On the baseline the method does not exist, so this stays nil and the pass only
+	// records what it could not apply; once the halt lands, New wires it here and a corrupting failure
+	// ends the tick instead of becoming a note, which is what the invariant requires.
+	halt func(context.Context, *Report, string, error) bool
 	// woken, opened and released are what the pass did, and notes is what it could not do: both are
 	// read by the daemon's own tests and by Tick's report.
 	woken, opened, released int
@@ -56,13 +79,46 @@ type idleWake struct {
 }
 
 func newIdleWake(d *Daemon) *idleWake {
-	return &idleWake{daemon: d, holds: map[string]string{}, refused: map[string]float64{}}
+	w := &idleWake{daemon: d, holds: map[string]string{}, refused: map[string]float64{}}
+	if halter, ok := any(d).(interface {
+		halted(context.Context, *Report, string, error) bool
+	}); ok {
+		w.halt = halter.halted
+	}
+	return w
 }
 
 // begin starts one tick's pass: the counts and the notes describe this tick alone.
 func (w *idleWake) begin() {
 	w.woken, w.opened, w.released = 0, 0, 0
 	w.notes = nil
+	w.unappliedErr, w.unappliedSite = nil, ""
+}
+
+// unapplied keeps the first store failure the pass could not apply, for the daemon's halt.
+func (w *idleWake) unapplied(site string, err error) {
+	if w.unappliedErr == nil {
+		w.unappliedErr, w.unappliedSite = err, site
+	}
+}
+
+// haltStore hands the pass's first unapplied store failure to the daemon's own halt and answers
+// whether the tick ended: a failure of the class that stops the store ends the tick there, so nothing
+// after this pass writes anything, and every other failure leaves the pass exactly as it was, with the
+// note it already wrote. A build without the halt answers false and the note stands alone.
+func (w *idleWake) haltStore(ctx context.Context, r *Report) bool {
+	if w.unappliedErr == nil || w.halt == nil {
+		return false
+	}
+	return w.halt(ctx, r, w.unappliedSite, w.unappliedErr)
+}
+
+// take hands the notes this pass collected to the caller and clears them, so a tick that ends at the
+// halt and one that runs to the end both append each note exactly once.
+func (w *idleWake) take() []string {
+	notes := w.notes
+	w.notes = nil
+	return notes
 }
 
 // idle turns the status reports the host pushed since the last tick into wakes. A report for a
@@ -81,6 +137,10 @@ func (w *idleWake) idle(ctx context.Context, host Host, now float64) {
 		wrote, err := w.daemon.Delivery.WakeBusyHead(ctx, report.ThreadID, now)
 		if err != nil {
 			w.notes = append(w.notes, "idle report for "+report.ThreadID+" not applied: "+err.Error())
+			// The wake is this pass's own write: a store that answers a failure of the halting class
+			// ends the tick here rather than letting the delivery pass and the supervisor channel write
+			// into a store the relay has seen damaged (I-564). Any other failure keeps its note.
+			w.unapplied(idleHaltSiteWrite, err)
 			continue
 		}
 		if wrote {
@@ -103,6 +163,9 @@ func (w *idleWake) hold(ctx context.Context, host Host, now float64) {
 	heads, err := w.daemon.Delivery.BusyHeadRecipients(ctx, now)
 	if err != nil {
 		w.notes = append(w.notes, "busy heads not read: "+err.Error())
+		// The waiting heads are read out of the store: a corrupting read is the observation site, as
+		// the observation pass's own census read is (I-564).
+		w.unapplied(idleHaltSiteObservation, err)
 		return
 	}
 	wanted := map[string]string{}
