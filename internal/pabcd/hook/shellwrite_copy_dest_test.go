@@ -136,6 +136,9 @@ func TestMemoryGateDeniesCopyAndRenameIntoMemories(t *testing.T) {
 		{"dst= keyword", "python3 -c 'import shutil; shutil.copy(src, dst=\"" + root + "/n.md\")'", root + "/n.md"},
 		{"parenthesised import", "python3 -c 'from shutil import (\n    copy,\n)\ncopy(\"/w/a\", \"" + root + "/n.md\")'", root + "/n.md"},
 		{"backslash continued import", "python3 -c 'from shutil import copy, \\\n    copyfile\ncopy(\"/w/a\", \"" + root + "/n.md\")'", root + "/n.md"},
+		{"os.renames new= keyword", "python3 -c 'import os; os.renames(old=\"/w/a\", new=\"" + root + "/n.md\")'", root + "/n.md"},
+		{"f-string field with an outer alias", "python3 -c 'import shutil as s; f\"{s.copy(\\\"/w/a\\\", \\\"" + root + "/n.md\\\")}\"'", root + "/n.md"},
+		{"exec with an outer alias", "python3 -c 'import shutil as s; exec(\"s.copy(\\\"/w/a\\\", \\\"" + root + "/n.md\\\")\")'", root + "/n.md"},
 		{"Path.rename", "python3 -c 'from pathlib import Path; Path(\"/w/a\").rename(\"" + root + "/n.md\")'", root + "/n.md"},
 		{"Path.replace", "python3 -c 'from pathlib import Path; Path(\"/w/a\").replace(\"" + root + "/n.md\")'", root + "/n.md"},
 		{"Path.symlink_to", "python3 -c 'from pathlib import Path; Path(\"" + root + "/l\").symlink_to(\"/w/a\")'", root + "/l"},
@@ -177,5 +180,44 @@ func TestMemoryGateAllowsCopyWithAGrant(t *testing.T) {
 	}
 	if state.ReadState(cwd, gateSession).MemoryWriteGrant {
 		t.Error("the grant is not spent")
+	}
+}
+
+// TestShellCopyDestinationReviewFixes pins the shapes this pull request's reviews found: the destination keyword of
+// os.renames is new, an alias any import in the program bound counts for a call made before a later rebinding, and an
+// enclosing program's imports reach an expression read recursively (an f-string replacement field, an exec program).
+func TestShellCopyDestinationReviewFixes(t *testing.T) {
+	for _, c := range []struct {
+		name, script string
+		want         []string
+	}{
+		{"os.renames new=", "import os; os.renames(old=\"/w/a\", new=\"/m/n.md\")", []string{"/m/n.md"}},
+		{"os.renames new= and old positional", "import os; os.renames(\"/w/a\", new=\"/m/n.md\")", []string{"/m/n.md"}},
+		{"alias before a later rebinding", "import shutil as s; s.copy(\"/w/a\", \"/m/n.md\"); import json as s", []string{"/m/n.md"}},
+		{"alias after a rebinding", "import json as s; import shutil as s; s.copy(\"/w/a\", \"/m/n.md\")", []string{"/m/n.md"}},
+		{"f-string field with an outer alias", "import shutil as s; f\"{s.copy('/w/a', '/m/n.md')}\"", []string{"/m/n.md"}},
+		{"exec with an outer alias", "import shutil as s; exec(\"s.copy('/w/a', '/m/n.md')\")", []string{"/m/n.md"}},
+		{"exec with an outer from-import", "from os import rename; exec(\"rename('/w/a', '/m/n.md')\")", []string{"/m/n.md"}},
+		{"an unrelated alias is still no copy", "import json as s; s.copy(\"/w/a\", \"/m/n.md\")", []string{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shellVerbScriptWrites(c.script, true); !slices.Equal(got, c.want) {
+				t.Fatalf("%q: got %q, want %q", c.script, got, c.want)
+			}
+		})
+	}
+}
+
+// The pathlib methods this issue added stay in the Python reading: a Node program keeps the reading it had before
+// CRW-900, so a JavaScript identifier named Path is not a filesystem rename.
+func TestShellCopyPathMethodsStayPythonOnly(t *testing.T) {
+	for _, script := range []string{
+		"Path(\"/w/a\").rename(\"/m/n.md\")",
+		"Path(\"/m/l\").symlink_to(\"/w/a\")",
+		"Path(\"/m/l\").hardlink_to(\"/w/a\")",
+	} {
+		if got := shellVerbScriptWritesIn(script, true, false); len(got) != 0 {
+			t.Errorf("%q: a Node program named %q", script, got)
+		}
 	}
 }

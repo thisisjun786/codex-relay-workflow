@@ -839,6 +839,12 @@ func shellWriteFStringOpenWritesRunes(rs []rune, python bool) []string {
 // (shellWriteExecUnreadableWhat). The walk keeps going after recording what, so a destination it did read is still named.
 // Every other literal keeps the one-region rule of shellWriteTripleScanRegion.
 func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what string) {
+	return shellWriteExecScanIn(rs, python, depth, shellWriteCopyImports{})
+}
+
+// shellWriteExecScanIn is shellWriteExecScan with the bindings the enclosing program made, which a program read
+// recursively (an f-string replacement field, a literal passed to exec) inherits (CRW-900 review).
+func shellWriteExecScanIn(rs []rune, python bool, depth int, outer shellWriteCopyImports) (dests []string, what string) {
 	if depth > shellWriteExecMaxDepth {
 		return []string{}, shellWriteExecUnreadableWhat
 	}
@@ -859,7 +865,7 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 	var pending pendingCall
 	var binds shellWriteCopyImports
 	if python {
-		binds = shellWriteCopyImportsOf(rs)
+		binds = shellWriteCopyImportsIn(rs, outer)
 	}
 	dests = []string{}
 	for i := 0; i < len(rs); i++ {
@@ -870,7 +876,7 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 				for _, f := range fields {
 					// The expression is read as program text: its comments are cut first, so a quote or brace in one
 					// is no syntax (a Python 3.12+ multi-line field allows a comment).
-					more, inner := shellWriteExecScan(shellVerbWithoutComments(string(rs[f[0]:f[1]]), python), python, depth)
+					more, inner := shellWriteExecScanIn(shellVerbWithoutComments(string(rs[f[0]:f[1]]), python), python, depth, binds)
 					dests = append(dests, more...)
 					if inner != "" && what == "" {
 						what = inner
@@ -913,17 +919,21 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 			case top.kind == 'p' && c == ')':
 				if shellVerbWriteMethod(rs, i+1) {
 					dests = append(dests, shellWriteEscapePath(rs, spans)...)
-				} else if at, kind, ok := shellWritePathMethodCall(rs, i+1); ok {
-					pending = pendingCall{at: at, kind: kind, recv: spans}
+				} else if python {
+					if at, kind, ok := shellWritePathMethodCall(rs, i+1); ok {
+						pending = pendingCall{at: at, kind: kind, recv: spans}
+					}
 				}
 			case top.kind == 'c' && c == ')':
 				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "dst")...)
+			case top.kind == 'n' && c == ')':
+				dests = append(dests, shellWriteCopyDest(rs, spans, 1, "new")...)
 			case top.kind == 'r' && c == ')':
 				dests = append(dests, shellWriteCopyDest(rs, spans, 0, "target")...)
 			case top.kind == 'l' && c == ')':
 				dests = append(dests, shellWriteEscapePath(rs, top.recv)...)
 			case top.kind == 'e' && c == ')':
-				more, inner := shellWriteExecProgram(rs, spans, depth)
+				more, inner := shellWriteExecProgram(rs, spans, depth, binds)
 				dests = append(dests, more...)
 				if inner != "" && what == "" {
 					what = inner
@@ -937,8 +947,9 @@ func shellWriteExecScan(rs []rune, python bool, depth int) (dests []string, what
 // shellWriteExecProgram reads the first argument of an exec, eval or compile call as program text when it is a string literal
 // Python can decode, and reports the fail-closed reason when it is not (CRW-754). The literal's value, as Python decodes it,
 // is read by the same walk one level deeper. An f-string with a replacement field has no value here, so it is unreadable too;
-// the writes inside its fields were already named by the walk above (CRW-741).
-func shellWriteExecProgram(rs []rune, spans [][2]int, depth int) ([]string, string) {
+// the writes inside its fields were already named by the walk above (CRW-741). outer is the enclosing program's bindings,
+// which the program text inherits (CRW-900 review).
+func shellWriteExecProgram(rs []rune, spans [][2]int, depth int, outer shellWriteCopyImports) ([]string, string) {
 	for _, span := range spans {
 		arg := rs[span[0]:span[1]]
 		if shellVerbBlank(arg) {
@@ -957,7 +968,7 @@ func shellWriteExecProgram(rs []rune, spans [][2]int, depth int) ([]string, stri
 			// literal with no declaration decodes as UTF-8, which is what this reader already reads.
 			return nil, shellWriteExecUnreadableWhat
 		}
-		return shellWriteExecScan(shellVerbWithoutComments(program, true), true, depth+1)
+		return shellWriteExecScanIn(shellVerbWithoutComments(program, true), true, depth+1, outer)
 	}
 	return nil, shellWriteExecUnreadableWhat
 }
@@ -1180,17 +1191,38 @@ func shellWriteCopyModuleKind(rs []rune, i int, binds shellWriteCopyImports) byt
 		if before >= 0 && rs[before] == '.' {
 			return 0 // an attribute chain (a.shutil.copy) is not the module itself
 		}
-		module := string(rs[before+1 : rend+1])
-		if module != "shutil" && module != "os" {
-			module = binds.alias[module]
+		if kind := shellWriteCopyKind(string(rs[before+1:rend+1]), name, binds); kind != 0 {
+			return kind
+		}
+		return 0
+	}
+	if modules := binds.from[name]; len(modules) > 0 && !shellWriteExecDefHeader(rs, j) {
+		for _, module := range modules {
+			if module == "os" && name == "renames" {
+				return 'n'
+			}
+		}
+		return 'c'
+	}
+	return 0
+}
+
+// shellWriteCopyKind is the frame kind of a call to a copy, rename or link function, or 0 when the call is no such
+// function: 'n' for os.renames, whose destination keyword is new, and 'c' for every other one, whose destination keyword
+// is dst. callee is the module the call names or a local name the program bound, and binds says which modules that local
+// name stands for (a name may stand for more than one, and any of them naming the function is enough).
+func shellWriteCopyKind(callee, name string, binds shellWriteCopyImports) byte {
+	modules := []string{callee}
+	if callee != "shutil" && callee != "os" {
+		modules = binds.alias[callee]
+	}
+	for _, module := range modules {
+		if module == "os" && name == "renames" {
+			return 'n'
 		}
 		if shellWriteCopyFunc(module, name) {
 			return 'c'
 		}
-		return 0
-	}
-	if binds.from[name] && !shellWriteExecDefHeader(rs, j) {
-		return 'c'
 	}
 	return 0
 }
@@ -1213,11 +1245,42 @@ func shellWriteCopyFunc(module, name string) bool {
 }
 
 // shellWriteCopyImports is what a Python program's import statements bind for the copy, rename and link calls this reader
-// names: the module each alias stands for (import shutil as s) and the function each bare name stands for
-// (from shutil import copy). Nothing else is bound, so an unimported bare name names nothing.
+// names: every module a local name was bound to (import shutil as s) and every module a from-import bound a bare name to
+// (from shutil import copy). A name keeps every binding the program gave it, so a later rebinding does not erase the
+// reading an earlier call needs; nothing else is bound, so an unimported bare name names nothing.
 type shellWriteCopyImports struct {
-	alias map[string]string
-	from  map[string]bool
+	alias map[string][]string
+	from  map[string][]string
+}
+
+// shellWriteCopyBind records that a statement bound local to module, once per module.
+func shellWriteCopyBind(binds map[string][]string, local, module string) {
+	if local == "" || local == "*" || module == "" {
+		return
+	}
+	if !slices.Contains(binds[local], module) {
+		binds[local] = append(binds[local], module)
+	}
+}
+
+// shellWriteCopyImportsMerge is the union of two binding sets: a program read inside another keeps the enclosing
+// program's imports beside its own, because an f-string replacement field and a literal passed to exec both run in the
+// scope that holds them (CRW-900 review).
+func shellWriteCopyImportsMerge(outer, inner shellWriteCopyImports) shellWriteCopyImports {
+	out := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}}
+	for _, binds := range []shellWriteCopyImports{outer, inner} {
+		for local, modules := range binds.alias {
+			for _, module := range modules {
+				shellWriteCopyBind(out.alias, local, module)
+			}
+		}
+		for local, modules := range binds.from {
+			for _, module := range modules {
+				shellWriteCopyBind(out.from, local, module)
+			}
+		}
+	}
+	return out
 }
 
 // shellWriteCopyImportsOf reads the import statements of a program. A string literal is no import text, so a name inside one
@@ -1226,7 +1289,15 @@ type shellWriteCopyImports struct {
 // whose names are parenthesised over several lines binds them all (CRW-900 review: dropping it would leave the destination of
 // the call it binds unnamed, which is the fail-open direction).
 func shellWriteCopyImportsOf(rs []rune) shellWriteCopyImports {
-	binds := shellWriteCopyImports{alias: map[string]string{}, from: map[string]bool{}}
+	binds := shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}}
+	return shellWriteCopyImportsIn(rs, binds)
+}
+
+// shellWriteCopyImportsIn is shellWriteCopyImportsOf with the bindings an enclosing program already made: the program
+// read recursively (an f-string replacement field, a literal passed to exec) runs in the scope that holds it, so those
+// names are bound there too (CRW-900 review).
+func shellWriteCopyImportsIn(rs []rune, outer shellWriteCopyImports) shellWriteCopyImports {
+	binds := shellWriteCopyImportsMerge(outer, shellWriteCopyImports{alias: map[string][]string{}, from: map[string][]string{}})
 	words := []string{}
 	flush := func() {
 		if len(words) > 0 {
@@ -1287,16 +1358,14 @@ func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports)
 			if item[1] != "" {
 				name = item[1]
 			}
-			if name != "" && name != "*" {
-				binds.alias[name] = item[0]
-			}
+			shellWriteCopyBind(binds.alias, name, item[0])
 		}
 	case len(words) >= 3 && words[0] == "from" && words[2] == "import":
 		module := words[1]
 		for _, item := range shellWriteCopyImportItems(words[3:]) {
 			if item[0] == "*" {
 				for _, known := range shellWriteCopyFuncs(module) {
-					binds.from[known] = true
+					shellWriteCopyBind(binds.from, known, module)
 				}
 				continue
 			}
@@ -1305,7 +1374,7 @@ func shellWriteCopyImportStatement(words []string, binds *shellWriteCopyImports)
 				name = item[1]
 			}
 			if name != "" && shellWriteCopyFunc(module, item[0]) {
-				binds.from[name] = true
+				shellWriteCopyBind(binds.from, name, module)
 			}
 		}
 	}
