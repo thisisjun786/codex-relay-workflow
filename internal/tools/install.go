@@ -375,11 +375,19 @@ func createRoot(dir string) ([]createRootRecord, error) {
 				// another install removed this call's directory and made its own, which is not
 				// this call's to remove.
 				location, info, statErr := componentIdentity(component, parent, childAbsent)
-				if statErr == nil && sameRecordedDirectory(created, component, info) {
+				switch {
+				case statErr != nil:
+					// The identity could not be read, so nothing here proves the directory changed
+					// hands. The record this call already holds is left alone: it carries the
+					// identity and the location taken when this call made the directory, and
+					// removeCreated verifies both again before removing, so keeping it cannot
+					// remove another install's directory while dropping it would abandon a
+					// directory this call made.
+				case sameRecordedDirectory(created, component, info):
 					// The directory is still the one this call made, and the walk resolved it
 					// again, so the location it resolves to now is the better one to keep.
 					created = recordCreated(created, component, location, info)
-				} else {
+				default:
 					created = dropCreated(created, component)
 				}
 			case errors.Is(err, fs.ErrNotExist):

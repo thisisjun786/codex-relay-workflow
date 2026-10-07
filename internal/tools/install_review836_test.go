@@ -493,3 +493,47 @@ func TestToolsReview836KeepsADirectoryTheSpellingCanNoLongerReach(t *testing.T) 
 		}
 	}
 }
+
+// C1, C3, the EEXIST read-failure side: a component this call recorded can be reached again with its
+// spelling unresolvable, so the EEXIST identity read fails. That failure proves nothing about
+// ownership, so the record this call holds must be kept -- it still carries the identity and
+// location taken when the directory was made, and removeCreated verifies both before removing.
+// Dropping it would abandon a directory this call made.
+func TestToolsReview836KeepsItsRecordWhenAnEexistReadCannotReachTheSpelling(t *testing.T) {
+	component, root, target := review836RaceHost(t)
+	spelledP := component + "/../p"
+
+	// Let the walk make and record everything, then remove the component before the ".." so a later
+	// EEXIST read of that path cannot reach the spelling while base/p is still there.
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot under a fresh root: %v", err)
+	}
+	recorded := 0
+	for _, made := range created {
+		if made.path == spelledP {
+			recorded++
+		}
+	}
+	if recorded != 1 {
+		t.Fatalf("createRoot recorded %v, want exactly one record for %s", created, spelledP)
+	}
+	if err := os.Remove(component); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Lstat(spelledP); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("the fixture did not make the spelling unresolvable: %v", statErr)
+	}
+
+	// An EEXIST whose identity read cannot reach the spelling leaves the record as it was.
+	location, info, statErr := componentIdentity(spelledP, parentLocation(spelledP), false)
+	if statErr == nil {
+		t.Fatalf("componentIdentity read %q with %v while the spelling could not be resolved", location, info)
+	}
+	removeCreated(created)
+	for _, path := range []string{target, filepath.Join(target, "q")} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+}
