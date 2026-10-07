@@ -411,11 +411,16 @@ func githubPostWordsMode(s string, mode int) ([]string, bool) {
 		case c == '<' || c == '>':
 			// An unquoted operator is a token of its own: it ends the word before it (post.sh>out is
 			// post.sh then >out) and is kept as written, so the caller can tell it from a quoted
-			// operand that only spells one. The strict mode refuses it instead.
+			// operand that only spells one. The strict mode refuses it instead. A word that is only
+			// digits or the ampersand of &> is the operator's own file descriptor or prefix
+			// (2>/dev/null, &>out), so it stays glued to its operator rather than becoming a program
+			// word of its own.
 			if mode < githubPostWordsList {
 				return nil, false
 			}
-			flush()
+			if !(started && githubPostRedirPrefix(cur.String())) {
+				flush()
+			}
 			started = true
 			cur.WriteByte(c)
 		case c == '$' || c == 0x60 || c == '\\' || c == '*' || c == '?' || c == '[' || c == ']' ||
@@ -454,6 +459,11 @@ func githubPostNormal(word string) string {
 				// a backslash or a newline; before anything else the shell keeps it literally, so a name
 				// that holds one is read as written (bash "post\q.sh" opens post\q.sh).
 				if word[j] == '\\' && j+1 < len(word) && strings.IndexByte("$\x60\"\\\n", word[j+1]) >= 0 {
+					if word[j+1] == '\n' {
+						// A backslash before a newline is the shell's line continuation: both characters go.
+						j += 2
+						continue
+					}
 					j++
 				}
 				out.WriteByte(word[j])
@@ -463,6 +473,10 @@ func githubPostNormal(word string) string {
 				return out.String()
 			}
 			i = j
+		case c == '\\' && i+1 < len(word) && word[i+1] == '\n':
+			// A backslash before a newline is the shell's line continuation: both characters go, so the
+			// word continues on the next line (po followed by a backslash-newline then st.sh is post.sh).
+			i++
 		case c == '\\' && i+1 < len(word):
 			out.WriteByte(word[i+1])
 			i++
@@ -775,25 +789,43 @@ func githubPostNormalWords(tokens []string, quoted bool) []string {
 // is reported unresolved rather than read, because the guard cannot know where the shell lands.
 // operand the shell expands names a directory the guard cannot know, so the caller refuses the command
 // rather than reading a file in the directory it happens to keep.
-func githubPostChdirUnresolved(words []string) (name string, moved, unresolved bool) {
-	if len(words) < 2 {
+func githubPostChdirUnresolved(words []string, cdpath bool) (name string, moved, unresolved bool) {
+	if len(words) == 0 {
 		return "", false, false
 	}
 	switch githubPostProgram(words[0]) {
-	case "cd", "pushd":
+	case "cd", "pushd", "popd":
 	default:
 		return "", false, false
 	}
+	operand, seen := "", false
 	for _, w := range words[1:] {
-		if strings.HasPrefix(w, "-") {
+		if w != "-" && strings.HasPrefix(w, "-") {
 			continue
 		}
-		if githubPostHoldsExpansion(w) {
-			return w, false, true
-		}
-		return w, true, false
+		operand, seen = w, true
+		break
 	}
-	return "", false, false
+	if !seen {
+		// A cd with no operand moves to HOME and a popd with none returns to the directory the stack saved,
+		// so the command text names no directory the guard can read: the state is unknown (fail closed).
+		return "", false, true
+	}
+	if operand == "-" {
+		// cd - moves to OLDPWD and pushd - rotates the stack: neither directory is named in the text.
+		return operand, false, true
+	}
+	if githubPostHoldsExpansion(operand) {
+		return operand, false, true
+	}
+	if !filepath.IsAbs(operand) && !strings.HasPrefix(operand, "./") && !strings.HasPrefix(operand, "../") &&
+		cdpath || os.Getenv("CDPATH") != "" {
+		// A relative operand that CDPATH can redirect names a directory the guard cannot know: the name is
+		// searched in CDPATH's entries before the working directory. An operand written ./ or ../ is never
+		// searched, so it stays literal.
+		return operand, false, true
+	}
+	return operand, true, false
 }
 
 // githubPostJoinDir is the directory a cd moves to, resolved against the directory the command runs in.
@@ -818,6 +850,9 @@ type githubPostCtx struct {
 	// PATH it cannot resolve (PATH="$DIR"/bin). A program file named in such a state cannot be known, so
 	// the read refuses it (fail closed) rather than reading a file the shell may not run.
 	unknown bool
+	// cdpath is set when the shell's CDPATH may be set by this command or an earlier one: a relative cd operand
+	// is then searched there first, so the directory it lands in is not known to the guard.
+	cdpath bool
 }
 
 // githubPostScriptCommand is CRW-875's file rule for one command's tokens: the leading assignments and the
@@ -839,6 +874,9 @@ func githubPostScriptCommand(tokens []string, ctx githubPostCtx, quoted, syntax 
 		raw = tokens
 	}
 	rest, out := githubPostProgramPrefix(normal, raw, ctx)
+	if out.unread {
+		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+	}
 	// env -S and env --split-string re-read their value as shell words and run them. The guard cannot read
 	// a program out of the wrapper's own words, so the value is judged as the command text it is: a value
 	// that runs a post is refused as unreadable-github-post at command, the rule the wrapper text already
@@ -866,9 +904,17 @@ func githubPostJudgeProgram(rest, raw []string, ctx githubPostCtx, syntax bool) 
 		return githubPostSite{}, false
 	}
 	if ctx.unknown {
-		// The shell is in a directory the guard cannot resolve (cd "$DIR"), so the file this command
-		// names cannot be known: it is refused rather than read where the guard happens to stand.
-		return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		// The shell is in a directory the guard cannot resolve (cd "$DIR"). Only a command that reads a
+		// program file is affected: a shell taking a file operand, or a command word that is a path, names
+		// a file the guard cannot know, so it is refused at that file. A command that runs no script
+		// (make, ls) is not a target the guard was asked to judge, so it is left to the rules below.
+		if _, prog, _, ok := githubPostShellProgramFileRaw(rest, raw, syntax); ok && githubPostShellNamed(prog) {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
+		if name := githubPostValueWord(rest[0], syntax); strings.ContainsRune(name, '/') {
+			return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+		}
+		return githubPostSite{}, false
 	}
 	if site, denied, _ := githubPostShellScript(rest, raw, ctx, syntax); denied {
 		return site, true
@@ -884,6 +930,14 @@ type githubPostPrefix struct {
 	rest  []string // the words from the program on
 	cmd   githubPostCtx
 	after githubPostCtx
+	// conditional is set when the walk peeled a word that opens a conditional body (then, do, else,
+	// elif): the command after it runs only when the compound's condition held, so the caller must not
+	// treat its directory change as a certain effect of the list (fail closed).
+	conditional bool
+	// unread is set when the walk met a shape whose program it cannot prove (a case whose pattern's ) was
+	// split off by a | read as a list separator, so the branch body that runs is not in this command): the
+	// caller refuses the command rather than judging a shape it did not fully read (fail closed).
+	unread bool
 	// split is the value of a wrapper option that re-reads its value as shell words and runs them
 	// (env -S, env --split-string): the command the shell runs is the one that text spells, so the
 	// caller judges that text as well as the words that remain.
@@ -919,6 +973,10 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 			// sourced name or a bare program is read. It persists in the shell only when no program follows
 			// it in this command (a standalone assignment); a prefix to a command is that command's own
 			// temporary environment, so the shell's PATH is unchanged after it.
+			if name, _, _ := strings.Cut(w, "="); name == "CDPATH" {
+				// A CDPATH the command sets redirects a relative cd operand: the guard cannot resolve it (fail closed).
+				out.cmd.cdpath, out.after.cdpath = true, true
+			}
 			if name, value, _ := strings.Cut(w, "="); name == "PATH" {
 				out.cmd.path = value
 				// A PATH the shell expands (PATH="$DIR"/bin) names entries the guard cannot resolve, so
@@ -943,7 +1001,7 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 			if head := githubPostProgram(w); githubPostKnownWrapper(head) {
 				if _, binary, _ := githubPostReadScriptFile(w, out.cmd.dir); binary {
 					opts, _ := shellVerbWrapper(head)
-					remain, runs, moved, unread := githubPostWrapperOptions(head, opts, words[i+1:])
+					remain, runs, moved, unread, movedExpands := githubPostWrapperOptions(head, opts, words[i+1:], raw[i+1:])
 					if !runs {
 						return nil, out
 					}
@@ -951,6 +1009,7 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 						out.split = unread
 					}
 					if moved != "" {
+						out.cmd.unknown = out.cmd.unknown || movedExpands
 						out.cmd.dir = githubPostJoinDir(out.cmd.dir, moved)
 					}
 					bare = false
@@ -966,11 +1025,16 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 			// A case statement's pattern word ends with a ) and its body follows (case x in x) cmd;;
 			// esac). The body is judged, so the case word, the subject, the in word and the pattern are
 			// skipped and the walk continues at the command the branch runs.
-			for j := i + 1; j < len(words); j++ {
-				if strings.HasSuffix(words[j], ")") {
-					i = j
-					break
-				}
+			// A case whose pattern holds a | has that | read as a list separator, so the pattern's tail and
+			// the branch body arrive in a later segment: the walk stops here and the caller carries the
+			// header until the pattern's ) arrives.
+			if idx := githubPostCasePatternIndex(words[i+1:]); idx >= 0 {
+				i = i + 1 + idx
+			} else {
+				// The pattern's ) is not in this command (its | was read as a list separator), so the branch
+				// body follows in a later segment: the caller carries the header and judges the body then.
+				out.unread = true
+				return nil, out
 			}
 			continue
 		}
@@ -983,6 +1047,9 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 					if !shellVerbAssignment(a) {
 						break
 					}
+					if name, _, _ := strings.Cut(a, "="); name == "CDPATH" {
+						out.cmd.cdpath, out.after.cdpath = true, true
+					}
 					if name, value, _ := strings.Cut(a, "="); name == "PATH" {
 						out.cmd.path, standalone = value, value
 						out.cmd.unknown = out.cmd.unknown || githubPostHoldsExpansion(value)
@@ -991,6 +1058,11 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 				continue
 			}
 			if shellVerbKeyword(head) {
+				if githubPostBodyWord(head) {
+					// then, do, else and elif open a conditional body: the command after them runs only when
+					// the compound's condition held, so its directory change is not certain.
+					out.conditional = true
+				}
 				continue
 			}
 			if githubPostControlWord(head) {
@@ -999,7 +1071,7 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 			out.rest = words[i:]
 			return out.rest, out
 		}
-		remain, runs, moved, unread := githubPostWrapperOptions(head, opts, words[i+1:])
+		remain, runs, moved, unread, movedExpands := githubPostWrapperOptions(head, opts, words[i+1:], raw[i+1:])
 		if !runs {
 			return nil, out
 		}
@@ -1007,6 +1079,7 @@ func githubPostProgramPrefix(words, raw []string, ctx githubPostCtx) (rest []str
 			out.split = unread
 		}
 		if moved != "" {
+			out.cmd.unknown = out.cmd.unknown || movedExpands
 			out.cmd.dir = githubPostJoinDir(out.cmd.dir, moved)
 		}
 		bare = false
@@ -1038,6 +1111,41 @@ func githubPostControlWord(head string) bool {
 	return false
 }
 
+// githubPostBodyWord is a shell word that opens a conditional body: then, do, else or elif. The command
+// after it runs only when the compound's condition held, so the guard cannot treat what it does as a
+// certain effect of the list (fail closed): the caller keeps the directory it had as a possible state.
+func githubPostBodyWord(head string) bool {
+	for _, name := range [...]string{"then", "do", "else", "elif"} {
+		if head == name {
+			return true
+		}
+	}
+	return false
+}
+
+// githubPostDigits is whether a word is only ASCII digits: the file-descriptor number a redirection
+// operator carries (2>/dev/null), which stays glued to its operator rather than being read as a program
+// word of its own.
+func githubPostDigits(w string) bool {
+	if w == "" {
+		return false
+	}
+	for i := 0; i < len(w); i++ {
+		if w[i] < '0' || w[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// githubPostRedirPrefix is whether a word is only the prefix a redirection operator carries: the
+// file-descriptor number of 2>/dev/null, or the ampersand of &>out. Such a word stays glued to the
+// operator that follows it rather than being read as a program word of its own, so a leading redirection
+// never hides the shell and its script file from the walk.
+func githubPostRedirPrefix(w string) bool {
+	return githubPostDigits(w) || w == "&"
+}
+
 // githubPostWrapperOptions consumes a wrapper command's options and reports the words that remain, whether
 // the wrapper runs a command at all (command -v runs none), and the directory its own option moved to
 // (env -C dir, env --chdir=dir).
@@ -1053,32 +1161,33 @@ func githubPostAssignmentBuiltin(head string) bool {
 	return false
 }
 
-func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool, string, string) {
-	dir, split := "", ""
+func githubPostWrapperOptions(head, opts string, rest, raw []string) ([]string, bool, string, string, bool) {
+	dir, dirRaw, split := "", "", ""
 	for len(rest) > 0 {
 		a := rest[0]
+		rawA := githubPostRawWord(raw, 0)
 		if a == "--" {
-			rest = rest[1:]
+			rest, raw = rest[1:], raw[1:]
 			break
 		}
 		if len(a) < 2 || a[0] != '-' {
 			break
 		}
-		rest = rest[1:]
+		rest, raw = rest[1:], raw[1:]
 		if a[1] == '-' {
 			name, value, inline := strings.Cut(a[2:], "=")
 			if shellVerbNoExec(head, name, 0) {
-				return nil, false, "", ""
+				return nil, false, "", "", false
 			}
 			if !inline && shellVerbLongValue(name) && len(rest) > 0 {
 				value = rest[0]
 				if name == "chdir" {
-					dir = rest[0]
+					dir, dirRaw = rest[0], githubPostRawWord(raw, 0)
 				}
-				rest = rest[1:]
+				rest, raw = rest[1:], raw[1:]
 			}
 			if inline && name == "chdir" {
-				dir = value
+				dir, dirRaw = value, rawA
 			}
 			// env --split-string re-reads its value as shell words and runs them, so the value is a
 			// command text the shell runs; the caller judges it as one.
@@ -1089,7 +1198,7 @@ func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool,
 		}
 		for j := 1; j < len(a); j++ {
 			if shellVerbNoExec(head, "", a[j]) {
-				return nil, false, "", ""
+				return nil, false, "", "", false
 			}
 			if strings.IndexByte(opts, a[j]) >= 0 {
 				// A value-taking option's value is the rest of the word when more of the bundle follows
@@ -1098,7 +1207,7 @@ func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool,
 				chdir := head == "env" && a[j] == 'C' || head == "sudo" && a[j] == 'D'
 				if j < len(a)-1 {
 					if chdir {
-						dir = a[j+1:]
+						dir, dirRaw = a[j+1:], rawA
 					}
 					// env -Sbash splits the attached value into shell words and runs them.
 					if head == "env" && a[j] == 'S' {
@@ -1106,13 +1215,13 @@ func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool,
 					}
 				} else if len(rest) > 0 {
 					if chdir {
-						dir = rest[0]
+						dir, dirRaw = rest[0], githubPostRawWord(raw, 0)
 					}
 					// env -S value splits the next word into shell words and runs them.
 					if head == "env" && a[j] == 'S' {
 						split = rest[0]
 					}
-					rest = rest[1:]
+					rest, raw = rest[1:], raw[1:]
 				}
 				break
 			}
@@ -1120,9 +1229,12 @@ func githubPostWrapperOptions(head, opts string, rest []string) ([]string, bool,
 	}
 	if head == "timeout" && len(rest) > 0 {
 		// timeout's duration operand
-		rest = rest[1:]
+		rest, raw = rest[1:], raw[1:]
 	}
-	return rest, true, dir, split
+	// A directory option whose operand the shell expands (env -C "$DIR", sudo -D "$DIR") names a directory
+	// the guard cannot know, so the caller marks the command's state unknown and the file read refuses (fail
+	// closed) rather than reading a directory of that literal spelling.
+	return rest, true, dir, split, dirRaw != "" && githubPostRawFileExpands(dirRaw)
 }
 
 // githubPostSegment is one command of a list with the operator that ends it.
@@ -1199,7 +1311,7 @@ func githubPostScriptList(command, cwd string, syntax bool) (githubPostSite, boo
 		for i := 0; i < opens; i++ {
 			saved = append(saved, states)
 		}
-		part = strings.TrimLeft(strings.TrimRight(strings.TrimSpace(part), ")}"), "({")
+		part, _, _ = githubPostTrimGroup(part)
 		// The words are read as written (the strict reader keeps the quote characters), so a name is decoded
 		// exactly once by the shell's own quote removal and a quote piece is not lost or applied twice. A
 		// part the strict reader refuses (a redirection, an expansion) falls back to the tolerant tokenizer,
@@ -1226,8 +1338,14 @@ func githubPostScriptList(command, cwd string, syntax bool) (githubPostSite, boo
 		// The command is judged in every state it may run in, so an uncertain cd cannot hide a posting
 		// script behind a clean copy in the directory the guard did not read.
 		next, movedStates := []githubPostCtx{}, []githubPostCtx{}
+		// cond is set when a command of this segment sits in a conditional body (then, do, else, elif), which
+		// may not run: the states before it stay possible beside the ones it would leave.
+		cond := false
 		for _, st := range states {
 			rest, out := githubPostProgramPrefix(normal, raw, st)
+			if out.unread {
+				return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
+			}
 			// env -S and env --split-string re-read their value as shell words and run them, so the
 			// value is judged as the command text it is.
 			if out.split != "" {
@@ -1236,7 +1354,10 @@ func githubPostScriptList(command, cwd string, syntax bool) (githubPostSite, boo
 					return githubPostSite{githubPostRuleUnread, githubPostWhereCommand}, true
 				}
 			}
-			if name, moved, unresolved := githubPostChdirUnresolved(rest); moved {
+			if out.conditional {
+				cond = true
+			}
+			if name, moved, unresolved := githubPostChdirUnresolved(rest, out.cmd.cdpath); moved {
 				movedStates = append(movedStates, githubPostChdirStates(out.cmd, name)...)
 				continue
 			} else if unresolved {
@@ -1257,10 +1378,10 @@ func githubPostScriptList(command, cwd string, syntax bool) (githubPostSite, boo
 		// effects do not persist and the shell keeps the state it had. A command that may not have run at
 		// all leaves both possibilities, because either state may be the one a later operand is read in.
 		switch {
-		case own:
+		case own && !cond:
 			// The command certainly ran in the current shell, so its effects are the shell's state now.
 			states, ok = githubPostDedupStates(append(next, movedStates...))
-		case certain:
+		case certain && !cond:
 			// It ran in a subshell of its own, so its effects do not persist.
 			states, ok = githubPostDedupStates(states)
 		default:
@@ -1333,6 +1454,15 @@ func githubPostDedupStates(states []githubPostCtx) ([]githubPostCtx, bool) {
 // and a trailing unquoted ) or }. Only a ( saves the directory (a subshell's cd ends with it); a { opens a
 // group in the current shell, whose cd persists, so it is counted as neither.
 func githubPostGroupDelta(part string) (opens, closes int) {
+	_, opens, closes = githubPostTrimGroup(part)
+	return opens, closes
+}
+
+// githubPostTrimGroup drops a segment's leading unquoted ( or { and its trailing unquoted ) or }, and
+// reports how many subshells each side opened and closed. A close the shell reads as an escaped literal
+// (bash post.sh\) is not a group close: trimming it would leave a shorter name that stands in for the file
+// the shell opens (a clean decoy), so a character protected by a backslash ends the trim instead.
+func githubPostTrimGroup(part string) (trimmed string, opens, closes int) {
 	s := strings.TrimSpace(part)
 	for len(s) > 0 && (s[0] == '(' || s[0] == '{') {
 		if s[0] == '(' {
@@ -1340,13 +1470,39 @@ func githubPostGroupDelta(part string) (opens, closes int) {
 		}
 		s = s[1:]
 	}
-	for len(s) > 0 && (s[len(s)-1] == ')' || s[len(s)-1] == '}') {
-		if s[len(s)-1] == ')' {
+	for len(s) > 0 {
+		c := s[len(s)-1]
+		if c != ')' && c != '}' {
+			break
+		}
+		backslashes := 0
+		for i := len(s) - 2; i >= 0 && s[i] == '\\'; i-- {
+			backslashes++
+		}
+		if backslashes%2 == 1 {
+			// An odd number of backslashes before the close escapes it: it is a literal character in the
+			// word, not the end of a group.
+			break
+		}
+		if c == ')' {
 			closes++
 		}
 		s = s[:len(s)-1]
 	}
-	return opens, closes
+	return s, opens, closes
+}
+
+// githubPostCasePatternIndex is the index of the word that ends a case statement's pattern list (the word
+// with the trailing ), case x in x) cmd). A case whose pattern is not in this command had its pattern split
+// from the header by a | inside it (a | is also a list separator), so the caller carries the header and
+// judges the branch body when the pattern arrives.
+func githubPostCasePatternIndex(words []string) int {
+	for i, w := range words {
+		if strings.HasSuffix(w, ")") {
+			return i
+		}
+	}
+	return -1
 }
 
 // githubPostDirectScript is D2: a command word that is a path holding / and naming a regular file the shell
@@ -1484,7 +1640,7 @@ func githubPostRawWord(raw []string, i int) string {
 // quoted operand keeps its meaning as a file name.
 func githubPostRawRedirection(raw string) bool {
 	i := 0
-	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
+	for i < len(raw) && (raw[i] >= '0' && raw[i] <= '9' || raw[i] == '&') {
 		i++
 	}
 	if i >= len(raw) {
@@ -1497,7 +1653,7 @@ func githubPostRawRedirection(raw string) bool {
 // after it as its target. A leading file-descriptor number is skipped, so 2> and 2>> are operators too.
 func githubPostRedirection(w string) (operator, consumesNext bool) {
 	i := 0
-	for i < len(w) && w[i] >= '0' && w[i] <= '9' {
+	for i < len(w) && (w[i] >= '0' && w[i] <= '9' || w[i] == '&') {
 		i++
 	}
 	rest := w[i:]
@@ -1557,6 +1713,16 @@ func githubPostSourcedPath(program, name string, ctx githubPostCtx) (string, boo
 // standard input (bash -s, bash -es). The bundle is read as the shell reads it, so a letter inside the
 // attached value of o or O is not a flag (zsh -ocorrect post.sh has no c flag); a long option such as
 // --norc is not a bundle at all.
+// githubPostShellNamed is whether a program word is one of the shells or the source builtins whose first
+// operand is a file the shell reads (bash, sh, zsh, dash, ksh, source, .).
+func githubPostShellNamed(program string) bool {
+	switch program {
+	case "bash", "sh", "zsh", "dash", "ksh", "source", ".":
+		return true
+	}
+	return false
+}
+
 func githubPostShellProgramWord(w string) bool {
 	if len(w) < 2 || w[0] != '-' || w[1] == '-' {
 		return false
@@ -1618,7 +1784,13 @@ func githubPostJudgeScript(name, cwd string) (githubPostSite, bool) {
 // create aliases (gh pr new, gh issue new) and the release text arguments, so a script that posts
 // through them is a target rather than a script that names no post.
 func githubPostScriptNamesPost(content string) bool {
-	return githubPostMentions(content) ||
+	if githubPostMentions(content) {
+		return true
+	}
+	// The canonical test reads the built-in create aliases (gh pr new) and the release text arguments, which
+	// the mention test's posting-verb list does not. It applies only to a text that names gh at all: without
+	// that word, ordinary prose holding issue, pr or release (a build script, a changelog) is not a target.
+	return githubPostWord(githubPostLower(content), "gh") &&
 		githubPostCanonicalNamesPost(githubPostCanonicalWords(content))
 }
 

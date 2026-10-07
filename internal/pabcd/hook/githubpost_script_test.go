@@ -333,6 +333,148 @@ func TestGitHubPostGuardRefusesAQuotedStandardInputBody(t *testing.T) {
 	}
 }
 
+// githubPostScriptDenies asserts every command is refused as unreadable-github-post.
+func githubPostScriptDenies(t *testing.T, cwd string, commands ...string) {
+	t.Helper()
+	for _, c := range commands {
+		if ans := HandleGitHubPostGuard(githubPostShell(t, cwd, c)); !strings.Contains(ans, githubPostRuleUnread) {
+			t.Errorf("%q was allowed; want refused as %s", c, githubPostRuleUnread)
+		}
+	}
+}
+
+// githubPostScriptAllows asserts every command is allowed.
+func githubPostScriptAllows(t *testing.T, cwd string, commands ...string) {
+	t.Helper()
+	for _, c := range commands {
+		if ans := HandleGitHubPostGuard(githubPostShell(t, cwd, c)); ans != "" {
+			t.Errorf("%q was refused; want allowed: %s", c, ans)
+		}
+	}
+}
+
+// TestGitHubPostScriptConditionalBodyIsJudgedInEveryDirectory: a cd in a conditional or loop body may not run,
+// so the posting script is judged in the directory the shell stays in as well as the one it may move to.
+// Both layouts are covered: the posting file in the payload's directory and in the moved-to one.
+func TestGitHubPostScriptConditionalBodyIsJudgedInEveryDirectory(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	if err := os.Mkdir(filepath.Join(cwd, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "echo clean\n")
+	githubPostScriptDenies(t, cwd,
+		"if false; then cd sub; fi; bash post.sh",
+		"while false; do cd sub; done; bash post.sh",
+		"if false; then cd sub; fi; ./post.sh")
+	// Control: a cd that certainly ran leaves the shell in sub, so its clean script is the one that runs.
+	githubPostScriptAllows(t, cwd, "cd sub; bash post.sh")
+	// Reverse layout: the posting file sits in the moved-to directory, the clean one in the payload's.
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostScriptDenies(t, cwd, "if false; then cd sub; fi; bash post.sh", "while false; do cd sub; done; bash post.sh")
+}
+
+// TestGitHubPostScriptRedirectionKeepsItsFileDescriptor: a file descriptor number glued to its redirection
+// operator (2>/dev/null, &>out) is not a program word, so the program and its file operand are still read.
+func TestGitHubPostScriptRedirectionKeepsItsFileDescriptor(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "2", "echo clean\n")
+	githubPostWrite(t, cwd, "clean.sh", "echo clean\n")
+	githubPostScriptDenies(t, cwd,
+		"2>/dev/null bash post.sh",
+		"bash 2>/dev/null post.sh",
+		"2>&1 bash post.sh",
+		"&>out bash post.sh")
+	githubPostScriptAllows(t, cwd, "bash clean.sh 2>/dev/null", "2>/dev/null make")
+}
+
+// TestGitHubPostScriptWrapperDirectoryOperandIsNotLiteral: a wrapper's directory operand the shell expands
+// ("$DIR") names a directory the guard cannot know, so a literal directory of that spelling is not read.
+func TestGitHubPostScriptWrapperDirectoryOperandIsNotLiteral(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	if err := os.Mkdir(filepath.Join(cwd, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(cwd, "$DIR"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, cwd, "$DIR/post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostScriptDenies(t, cwd,
+		"DIR=sub; env -C \"$DIR\" bash post.sh",
+		"DIR=sub; env --chdir=\"$DIR\" bash post.sh",
+		"DIR=sub; sudo -D \"$DIR\" bash post.sh")
+}
+
+// TestGitHubPostScriptNamelessAndPathCdAreNotGuessed: a cd with no operand goes to HOME, cd - to OLDPWD, and a
+// CDPATH (set in the environment or on the command) redirects a relative operand; none of these is read where
+// the guard stands.
+func TestGitHubPostScriptNamelessAndPathCdAreNotGuessed(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	home := os.Getenv("HOME")
+	evil := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(evil, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, cwd, "post.sh", "echo clean\n")
+	githubPostWrite(t, home, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "sub/post.sh", "echo clean\n")
+	githubPostWrite(t, cwd, "sub/clean.sh", "echo clean\n")
+	githubPostWrite(t, evil, "sub/post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostScriptDenies(t, cwd, "cd; bash post.sh", "cd sub; cd -; bash post.sh", "CDPATH="+evil+" cd sub; bash post.sh")
+	t.Setenv("CDPATH", evil)
+	githubPostScriptDenies(t, cwd, "cd sub; bash post.sh")
+	t.Setenv("CDPATH", "")
+	// Controls: a cd with a literal ./ operand is never searched in CDPATH, and the moved-to clean script runs.
+	githubPostScriptAllows(t, cwd, "cd ./sub; bash clean.sh")
+}
+
+// TestGitHubPostScriptEscapedOperandNamesTheShellsFile: a backslash-escaped ) and a backslash-newline continuation
+// are part of the file name the shell opens, so a clean decoy of the trimmed or joined spelling is not read.
+func TestGitHubPostScriptEscapedOperandNamesTheShellsFile(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh)", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "post.sh\\", "echo clean\n")
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostWrite(t, cwd, "po\nst.sh", "echo clean\n")
+	githubPostScriptDenies(t, cwd, "bash post.sh\\)", "bash po\\\nst.sh")
+}
+
+// TestGitHubPostScriptNoPostWordIsNotATarget: a script or a command with no gh word is not a post target, and
+// a cd the shell expands is only refused where a program file could run from it.
+func TestGitHubPostScriptNoPostWordIsNotATarget(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "build.sh", "echo issue\nmake\n")
+	githubPostScriptAllows(t, cwd, "bash build.sh", "cd \"$PWD\" && make", "cd \"$DIR\" && ls")
+}
+
+// TestGitHubPostScriptCasePatternWithAPipe: a case pattern with | has that | read as a list separator, so the
+// branch body that runs cannot be read from this command and is refused rather than passed.
+func TestGitHubPostScriptCasePatternWithAPipe(t *testing.T) {
+	githubPostTempHome(t)
+	cwd := t.TempDir()
+	t.Setenv("TMPDIR", cwd)
+	githubPostWrite(t, cwd, "post.sh", "gh pr comment 1 -b \"$(env)\"\n")
+	githubPostScriptDenies(t, cwd, "case x in a|b) bash post.sh;; esac")
+}
+
 // TestGitHubPostGuardReadsAScriptBehindAnAttachedValueOption: o and O take their value from the same word
 // when more of the bundle follows (zsh -ocorrect post.sh), so the next word is the program file and the
 // letters inside the value are not flags.
