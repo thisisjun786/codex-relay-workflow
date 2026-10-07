@@ -47,6 +47,8 @@ type localOptions struct {
 	Env []string
 	// output is the file the changed-path decision writes its answer to, set once per run.
 	output string
+	// script counts the step scripts written under the run's temporary root.
+	script int
 }
 
 // Local is `crw-dev ci local`: run every ci.yml job and step locally, or install the
@@ -354,11 +356,15 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 		dir = filepath.Join(worktree, step.workdir)
 	}
 	stepEnv := append(append([]string{}, env...), localStepEnvValues(step.env, opts, leg)...)
-	// The command runs through bash -c, so a ci.yml run text that is a block scalar (a loop, a
-	// heredoc) runs as the runner runs it. A heavy step goes through the gate as
-	// <gate> bash -c <command>: the command is one argv element, never concatenated into a shell
-	// word, so a run text that carries its own quotes keeps them.
-	argv := localGateArgv(opts.HeavyGate, step.heavy, command)
+	// The command runs as a script file through bash, so a ci.yml run text that is a block scalar
+	// (a loop, a heredoc) runs as the runner runs it, and a gate between this process and bash
+	// never sees the command's own characters. systemd-run, for one, expands the arguments it is
+	// handed, which would otherwise mangle a run text that uses a shell variable.
+	script, err := localWriteScript(opts, command)
+	if err != nil {
+		return localFailed, err.Error()
+	}
+	argv := localGateArgv(opts.HeavyGate, step.heavy, script)
 	shell := exec.Command(argv[0], argv[1:]...)
 	shell.Dir = dir
 	shell.Env = stepEnv
@@ -374,17 +380,32 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	return localPassed, ""
 }
 
-// localGateArgv is the argv a step runs: bash -c <command>, with the heavy-check gate's own
-// words prepended for a heavy step. The command stays one argv element, so a ci.yml run text that
-// is a block scalar (a loop, a heredoc) or carries its own quotes reaches bash unchanged.
-func localGateArgv(gate string, heavy bool, command string) []string {
-	argv := []string{"bash", "-c", command}
+// localGateArgv is the argv a step runs: bash <script>, with the heavy-check gate's own words
+// prepended for a heavy step. The step's command lives in the script file, so a gate between this
+// process and bash never sees the command's own characters.
+func localGateArgv(gate string, heavy bool, script string) []string {
+	argv := []string{"bash", script}
 	if heavy {
 		if words := strings.Fields(gate); len(words) > 0 {
 			argv = append(words, argv...)
 		}
 	}
 	return argv
+}
+
+// localWriteScript writes a step's command to a script in the run's temporary root and returns its
+// path. The file lives under the run's own root, so it is removed with the rest.
+func localWriteScript(opts localOptions, command string) (string, error) {
+	dir := filepath.Join(filepath.Dir(opts.output), "steps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	opts.script++
+	path := filepath.Join(dir, fmt.Sprintf("step-%03d.sh", opts.script))
+	if err := os.WriteFile(path, []byte(command+"\n"), 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // localStepEnv is the isolated environment every step runs in: HOME and the XDG directories point
@@ -413,9 +434,10 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"GITHUB_OUTPUT=" + opts.output,
 		"GITHUB_EVENT_NAME=pull_request",
 	}
-	// The host's caches and PATH are inherited: they decide how fast a step runs, not what it
+	// The host's caches, PATH and the user runtime directory are inherited: they decide how fast a
+	// step runs and whether the heavy-check gate can reach the user's systemd, not what it
 	// decides. GOFLAGS is left as the host set it, and GOCACHE is never cleared.
-	for _, name := range []string{"PATH", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "GOENV"} {
+	for _, name := range []string{"PATH", "GOCACHE", "GOMODCACHE", "GOPATH", "GOFLAGS", "GOPROXY", "GOENV", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}

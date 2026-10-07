@@ -395,23 +395,40 @@ func TestLocal_removes_its_clean_worktree(t *testing.T) {
 	}
 }
 
-// The gate a heavy step goes through is prepended as argv, so a run text that is a block scalar
-// (a loop, a heredoc) keeps its own quoting and runs through bash -c as the runner runs it.
+// The gate a heavy step goes through is prepended as argv, and the step's command travels as a
+// script file, so a gate between the run and bash never sees the command's own characters.
 func TestLocal_gate_prefixes_a_heavy_step_as_argv(t *testing.T) {
-	gate := localGateArgv("gate.sh --flag", true, "make lint")
-	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "bash", "-c", "make lint"})
-	light := localGateArgv("gate.sh", false, "make lint")
-	expectEqual(t, "a light step's argv", light, []string{"bash", "-c", "make lint"})
-	none := localGateArgv("", true, "make lint")
-	expectEqual(t, "no gate", none, []string{"bash", "-c", "make lint"})
+	gate := localGateArgv("gate.sh --flag", true, "/tmp/step-001.sh")
+	expectEqual(t, "a heavy step's argv", gate, []string{"gate.sh", "--flag", "bash", "/tmp/step-001.sh"})
+	light := localGateArgv("gate.sh", false, "/tmp/step-001.sh")
+	expectEqual(t, "a light step's argv", light, []string{"bash", "/tmp/step-001.sh"})
+	none := localGateArgv("", true, "/tmp/step-001.sh")
+	expectEqual(t, "no gate", none, []string{"bash", "/tmp/step-001.sh"})
+}
 
-	// A block scalar keeps its newlines and its quotes: the command is one argv element.
-	block := localGateArgv("gate.sh", true, localDistBuilds)
-	if len(block) != 4 || block[3] != localDistBuilds {
-		t.Fatalf("the block scalar is not one argv element: %#v", block)
+// A step's command reaches bash as a file, so no gate between the run and bash can expand it
+// (systemd-run expands the arguments it is handed) and a block scalar survives verbatim.
+func TestLocal_write_script_keeps_the_command_verbatim(t *testing.T) {
+	dir := t.TempDir()
+	opts := localOptions{output: filepath.Join(dir, "runner", "output")}
+	command := localDistBuilds
+	path, err := localWriteScript(opts, command)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(block[3], "\n") {
-		t.Error("the block scalar's newlines were lost")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != command+"\n" {
+		t.Errorf("the script is not the command verbatim:\n%q\nwant\n%q", data, command+"\n")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("the script is not executable: %v, %v", info.Mode(), err)
+	}
+	// The command itself is never an argv element, so the shell's characters cannot be touched.
+	if strings.Contains(strings.Join(localGateArgv("gate.sh", true, path), " "), "target in linux/amd64") {
+		t.Error("the command reached the argv")
 	}
 }
 
