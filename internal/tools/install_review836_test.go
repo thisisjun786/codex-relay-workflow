@@ -614,3 +614,117 @@ func TestToolsReview836KeepsTheParentLocationWhenItCannotBeOpened(t *testing.T) 
 		t.Errorf("%s survived the cleanup of %v: %v", target, created, statErr)
 	}
 }
+
+// C2, d1: a recovery that finds the entry it made replaced by a regular file must leave that file alone.
+// The seam replaces the directory with a file holding data, the way a peer does between the mkdir and the
+// identity read; the cleanup must neither remove the file nor report success for an entry it does not hold.
+func TestToolsReview836RecoveryNeverRemovesAFile(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "a")
+	target := filepath.Join(parent, "b")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	replaced := false
+	saved := createRootAfterMkdir
+	createRootAfterMkdir = func(component string) {
+		if component != target || replaced {
+			return
+		}
+		replaced = true
+		if err := os.Remove(target); err != nil {
+			t.Errorf("the seam could not empty the made directory: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("keep\n"), 0o644); err != nil {
+			t.Errorf("the seam could not put a file in its place: %v", err)
+		}
+	}
+	t.Cleanup(func() { createRootAfterMkdir = saved })
+
+	created, err := createRoot(target)
+	if err != nil {
+		t.Logf("createRoot answered %v", err)
+	}
+	removeCreated(created)
+	raw, readErr := os.ReadFile(target)
+	if readErr != nil || string(raw) != "keep\n" {
+		t.Fatalf("the file a peer put at %s was removed or changed: %q %v", target, raw, readErr)
+	}
+}
+
+// C2, d2: a directory this call recorded keeps its inode while the record stands, so a directory another
+// install makes at the same name after the recorded one is removed can never be taken for this call's.
+// The recorded directory is removed behind the record's back, then a new one is made at its name.
+func TestToolsReview836HeldDirectoryIsNotReusedWhileRecorded(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "a")
+	target := filepath.Join(parent, "b")
+
+	created, err := createRoot(target)
+	if err != nil {
+		t.Fatalf("createRoot under a fresh root: %v", err)
+	}
+	made, found := review836RecordFor(created, target)
+	if !found {
+		t.Fatalf("createRoot recorded %v, want %s", created, target)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatalf("the recorded directory could not be removed behind the record: %v", err)
+	}
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("another install could not make a directory at the path: %v", err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(made.info, info) {
+		t.Fatalf("the directory another install made at %s has the identity this call recorded", target)
+	}
+	removeCreated(created)
+	if _, statErr := os.Lstat(target); statErr != nil {
+		t.Fatalf("this call removed the directory another install made at %s: %v", target, statErr)
+	}
+}
+
+// C3, d3: a link that is retargeted after the parent was opened and before the entry is made must not
+// leave this call's directory in the parent the link used to name. The entry is removed and the walk
+// recomputes under the parent the spelling names now, so the success is at the requested location.
+func TestToolsReview836RetargetAfterParentOpenedMakesItUnderTheSpelling(t *testing.T) {
+	first, second, link, root := review836RetargetHost(t)
+	component := link + "/../p"
+
+	retargeted := false
+	saved := createRootAfterParentOpened
+	createRootAfterParentOpened = func(path string) {
+		if path != component || retargeted {
+			return
+		}
+		retargeted = true
+		if err := os.Remove(link); err != nil {
+			t.Errorf("the seam could not remove the link: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(second, "inner"), link); err != nil {
+			t.Errorf("the seam could not retarget the link: %v", err)
+		}
+	}
+	t.Cleanup(func() { createRootAfterParentOpened = saved })
+
+	created, err := createRoot(root)
+	if err != nil {
+		t.Fatalf("createRoot across a retargeted parent: %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(first, "p")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("the directory made under the old parent was left behind: %v", statErr)
+	}
+	if info, statErr := os.Lstat(filepath.Join(second, "p")); statErr != nil || !info.IsDir() {
+		t.Fatalf("the directory was not made where the spelling now names: %v", statErr)
+	}
+	removeCreated(created)
+	for _, path := range []string{filepath.Join(second, "p"), filepath.Join(second, "p", "q")} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("%s survived the cleanup of %v: %v", path, created, statErr)
+		}
+	}
+}
