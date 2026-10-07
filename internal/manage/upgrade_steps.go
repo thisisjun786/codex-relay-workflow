@@ -16,19 +16,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const (
-	upgradeSumsName     = "SHA256SUMS"
-	upgradeArchiveGlob  = "crw_*_linux_amd64.tar.gz"
-	upgradeRuntimeDir   = ".local/share/crw-runtime"
-	upgradeStoreTimeout = 5 * time.Second
+	upgradeSumsName    = "SHA256SUMS"
+	upgradeArchiveGlob = "crw_*_linux_amd64.tar.gz"
+	upgradeRuntimeDir  = ".local/share/crw-runtime"
 	// upgradeCommandTimeout bounds one forge call; upgradeInstallTimeout one lifecycle command,
 	// which exercises the bridge and may copy a large relay state.
 	upgradeCommandTimeout = 60 * time.Second
 	upgradeInstallTimeout = 30 * time.Minute
+	// upgradeServiceInterval and upgradeServiceBudget are how often, and for how long, the
+	// post-check reads the service status again after starting it.
+	upgradeServiceInterval = 2 * time.Second
+	upgradeServiceBudget   = 60 * time.Second
 )
 
 // upgradeRunCommand runs exe and returns its stdout, stderr and exit status.
@@ -72,45 +73,60 @@ func upgradeOutputHead(text string) string {
 	return text[:upgradeRecordHead]
 }
 
-// verifySums is step 1: find the archive and verify it against the SHA256SUMS beside it.
+// verifySums is step 1: copy the release archive and its SHA256SUMS into the run directory, then
+// verify the copy against the copied sums. The originals in the release directory are opened once,
+// by the copy, and never again: the bytes that were checked are the bytes every later step reads,
+// so replacing an original after the check cannot change what is unpacked and run.
 func (r *upgradeRunState) verifySums() (string, int, string) {
 	matches, err := filepath.Glob(filepath.Join(r.opts.ReleaseDir, upgradeArchiveGlob))
 	if err != nil || len(matches) == 0 {
 		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("no %s in %s", upgradeArchiveGlob, r.opts.ReleaseDir))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	archive := matches[0]
-	sums, err := os.ReadFile(filepath.Join(r.opts.ReleaseDir, upgradeSumsName))
+	name := filepath.Base(matches[0])
+	pinned := filepath.Join(r.dir, name)
+	if err := upgradeCopy(matches[0], pinned); err != nil {
+		r.note(upgradeStepSums, nil, 1, "", err)
+		return "", upgradeExitRefused, upgradeReasonSumsFailed
+	}
+	if err := upgradeCopy(filepath.Join(r.opts.ReleaseDir, upgradeSumsName), filepath.Join(r.dir, upgradeSumsName)); err != nil {
+		r.note(upgradeStepSums, nil, 1, "", err)
+		return "", upgradeExitRefused, upgradeReasonSumsFailed
+	}
+	sums, err := os.ReadFile(filepath.Join(r.dir, upgradeSumsName))
 	if err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	want := upgradeSumsFor(string(sums), filepath.Base(archive))
+	want := upgradeSumsFor(string(sums), name)
 	if want == "" {
-		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s names no digest for %s", upgradeSumsName, filepath.Base(archive)))
+		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s names no digest for %s", upgradeSumsName, name))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	got, err := upgradeFileDigest(archive)
+	got, err := upgradeFileDigest(pinned)
 	if err != nil {
 		r.note(upgradeStepSums, nil, 1, "", err)
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
 	if !strings.EqualFold(got, want) {
-		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s does not match %s", filepath.Base(archive), upgradeSumsName))
+		r.note(upgradeStepSums, nil, 1, "", fmt.Errorf("%s does not match %s", name, upgradeSumsName))
 		return "", upgradeExitRefused, upgradeReasonSumsFailed
 	}
-	r.note(upgradeStepSums, nil, 0, want+"  "+filepath.Base(archive), nil)
-	// Pin the verified bytes so the archive cannot be swapped after the check; the installer
-	// rechecks against the SHA256SUMS, so that file is pinned too.
-	pinned := filepath.Join(r.dir, filepath.Base(archive))
-	for _, src := range []string{archive, filepath.Join(r.opts.ReleaseDir, upgradeSumsName)} {
-		if err := upgradeCopy(src, filepath.Join(r.dir, filepath.Base(src))); err != nil {
-			r.note(upgradeStepSums, nil, 1, "", err)
-			return "", upgradeExitRefused, upgradeReasonSumsFailed
-		}
+	r.digest = strings.ToLower(got)
+	r.note(upgradeStepSums, nil, 0, want+"  "+name, nil)
+	if upgradeSumsVerified != nil {
+		upgradeSumsVerified(r.opts.ReleaseDir)
 	}
 	return pinned, 0, ""
 }
+
+// upgradeSumsVerified runs at the one moment the release directory's originals could still change
+// what runs: after the copied archive's digest has been compared with the copied SHA256SUMS, and
+// before anything is unpacked. It is nil everywhere but a test, which uses it to replace the
+// release directory's archive there. The run never opens that archive again, so what replaced it
+// cannot be what runs; the baseline hashed the original and then copied it, and the same
+// replacement between those two reads changed the bytes that were executed.
+var upgradeSumsVerified func(releaseDir string)
 
 // upgradeCopy copies src to dst, so a later reader cannot be given different bytes.
 func upgradeCopy(src, dst string) error {
@@ -154,7 +170,9 @@ func upgradeFileDigest(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractAndResolve is step 2: unpack the archive and resolve the version to a full commit SHA.
+// extractAndResolve is step 2: unpack the verified copy and resolve the version to a full commit
+// SHA. The unpacked crw's version is kept, because the post-check compares the installed runtime's
+// version with the one this archive carried.
 func (r *upgradeRunState) extractAndResolve() (int, string) {
 	r.extract = filepath.Join(r.dir, "extract")
 	if err := os.MkdirAll(r.extract, 0o700); err != nil {
@@ -168,6 +186,7 @@ func (r *upgradeRunState) extractAndResolve() (int, string) {
 	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonExtractFailed
 	}
+	r.version = strings.TrimSpace(version)
 	for _, ref := range upgradeCommitRefs(version) {
 		out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepCommit, "gh", "api", "repos/"+r.cfg.Repository+"/commits/"+ref)
 		if err != nil || code != 0 {
@@ -228,40 +247,68 @@ func (r *upgradeRunState) checkDevGate() (int, string) {
 	return r.refuse(upgradeStepDevGate, upgradeReasonDevGate, out, fmt.Errorf("no dev-gate check run concluded success"))
 }
 
-// checkOpenAttempts is step 4: read the store read-only and refuse while any attempt is unsettled.
+// upgradeDoctorAnswer is the part of the relay doctor's answer this command reads: where the store
+// is, and how many attempts the service that holds it still has open.
+type upgradeDoctorAnswer struct {
+	StateSelection struct {
+		Path string `json:"path"`
+	} `json:"stateSelection"`
+	Contents struct {
+		Available    bool   `json:"available"`
+		OpenAttempts *int64 `json:"openAttempts"`
+	} `json:"contents"`
+}
+
+// upgradeParseDoctorAnswer reads the doctor's answer; an answer that is not JSON is an error, so a
+// reader never mistakes an unreadable store for an empty one.
+func upgradeParseDoctorAnswer(out string) (upgradeDoctorAnswer, error) {
+	var answer upgradeDoctorAnswer
+	if err := json.Unmarshal([]byte(out), &answer); err != nil {
+		return answer, fmt.Errorf("the relay doctor answer: %w", err)
+	}
+	return answer, nil
+}
+
+// checkOpenAttempts is step 4: ask the running runtime's own relay for its doctor answer and refuse
+// while any attempt is still open. The count is the doctor's contents.openAttempts alone; contents
+// that are unavailable, or that carry no count, are refused rather than read as an absence, so a
+// store nobody could read never looks like a store with nothing open.
 func (r *upgradeRunState) checkOpenAttempts() (int, string) {
-	state, err := r.relayState()
+	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
-		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, "", err)
+		// There is no running runtime to ask, which is the pointer's own refusal: the same reason the
+		// snapshot reported for this host before this step moved ahead of it.
+		return r.refuse(upgradeStepAttempts, upgradeReasonPointer, "", err)
 	}
-	r.state = state
-	ctx, cancel := context.WithTimeout(r.ctx, upgradeStoreTimeout)
-	defer cancel()
-	read, err := store.OpenReadOnly(ctx, filepath.Join(state, "relay.sqlite3"), upgradeStoreTimeout)
-	if err != nil {
-		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, "", err)
+	args := []string{"--socket", r.cfg.Relay.Socket}
+	if r.cfg.Relay.State != "" {
+		args = append([]string{"--state", r.cfg.Relay.State}, args...)
 	}
-	defer read.Close()
-	var open int
-	query := "select count(*) from attempts where internal_state != 'settled'"
-	if err := read.QueryRowContext(ctx, query).Scan(&open); err != nil {
-		r.note(upgradeStepAttempts, []string{query}, 1, "", err)
+	args = append(args, "doctor")
+	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepAttempts,
+		filepath.Join(pointer, "bin", "codex-session-relay"), args...)
+	if err != nil || code != 0 {
 		return upgradeExitRefused, upgradeReasonStoreRead
 	}
-	r.note(upgradeStepAttempts, []string{query}, 0, fmt.Sprintf("%d", open), nil)
-	if open != 0 {
+	answer, err := upgradeParseDoctorAnswer(out)
+	if err != nil {
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, err)
+	}
+	state := r.cfg.Relay.State
+	if state == "" {
+		state = answer.StateSelection.Path
+	}
+	if state == "" {
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, errors.New("the doctor named no state directory"))
+	}
+	r.state = state
+	if !answer.Contents.Available || answer.Contents.OpenAttempts == nil {
+		return r.refuse(upgradeStepAttempts, upgradeReasonStoreRead, out, fmt.Errorf("the doctor's contents carry no open attempt count"))
+	}
+	if *answer.Contents.OpenAttempts != 0 {
 		return upgradeExitOpenAttempts, upgradeReasonOpenAttempts
 	}
 	return 0, ""
-}
-
-// relayState is the state directory the run reads and stops: configured, else the doctor's.
-func (r *upgradeRunState) relayState() (string, error) {
-	if r.cfg.Relay.State != "" {
-		return r.cfg.Relay.State, nil
-	}
-	state, err := r.e.relayHelperDoctorState(r.ctx, r.cfg.Relay.Socket)
-	return state, err
 }
 
 // snapshot is step 5: what the run must be able to compare afterwards.
@@ -283,13 +330,15 @@ func (r *upgradeRunState) snapshot() (int, string) {
 }
 
 // stopAndUpdate is step 6: stop with the running executable, then install with the extracted one.
-// It returns the status and reason to report: a stop that did not succeed stops the run before
-// the runtime is replaced, and the two failures are named apart in the record.
+// The runtime the pointer names is recorded before the stop, so the restart after it can fall back
+// to the runtime the service was running. A stop that did not succeed stops the run before the
+// runtime is replaced, and the two failures are named apart in the record.
 func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	pointer, err := upgradePointerTarget(r.e)
 	if err != nil {
 		return r.refuse(upgradeStepStop, upgradeReasonStopFailed, "", err)
 	}
+	r.previous = pointer
 	if _, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepStop,
 		filepath.Join(pointer, "bin", "codex-session-relay"),
 		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "stop"); err != nil || code != 0 {
@@ -300,7 +349,11 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	if r.opts.Issue != "" {
 		args = append(args, "--issue", r.opts.Issue)
 	}
-	_, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
+	out, code, err := r.command(r.ctx, upgradeInstallTimeout, upgradeStepUpdate, filepath.Join(r.extract, "crw"), args...)
+	if err == nil && code == 0 {
+		r.updated = true
+		r.installed = upgradeInstalledRuntime(out)
+	}
 	if err != nil {
 		return upgradeExitUpdateFailed, upgradeReasonUpdateFailed
 	}
@@ -310,47 +363,133 @@ func (r *upgradeRunState) stopAndUpdate() (int, string) {
 	return 0, ""
 }
 
-// start is step 7: start from the new pointer's executable, whether or not the update succeeded.
+// upgradeInstalledRuntime is the runtime directory the update's own answer names, or "" when the
+// answer names none. Nothing else can say where the update put the runtime, and the post-check
+// refuses rather than comparing the pointer with a guess.
+func upgradeInstalledRuntime(answer string) string {
+	var reported struct {
+		Environment string `json:"environment"`
+	}
+	if json.Unmarshal([]byte(answer), &reported) != nil {
+		return ""
+	}
+	return reported.Environment
+}
+
+// start is step 7: start again, whatever the update did. The pointer's runtime is used when it
+// still resolves; otherwise the runtime the pointer named before the stop, which is what the
+// service was running, so a pointer the update broke cannot leave the service down. Which runtime
+// was used is written into the record.
 func (r *upgradeRunState) start() {
-	pointer, err := upgradePointerTarget(r.e)
-	if err != nil {
+	runtime, from := "", ""
+	if pointer, err := upgradePointerTarget(r.e); err == nil {
+		runtime, from = pointer, "the pointer"
+	} else if r.previous != "" {
+		runtime, from = r.previous, "the runtime the pointer named before the stop"
+	} else {
 		r.note(upgradeStepStart, nil, 1, "", err)
 		return
 	}
+	r.startFrom = runtime
 	// The recovery step runs detached, so a cancellation after the stop cannot leave it down.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), upgradeInstallTimeout)
 	defer cancel()
-	_, _, _ = r.command(ctx, upgradeInstallTimeout, upgradeStepStart, filepath.Join(pointer, "bin", "codex-session-relay"),
-		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start")
+	argv := []string{filepath.Join(runtime, "bin", "codex-session-relay"),
+		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "start"}
+	out, stderr, code, err := upgradeRunCommand(ctx, argv[0], argv[1:]...)
+	r.note(upgradeStepStart, argv, code, "started from "+from+": "+runtime+"\n"+out+stderr, err)
 }
 
-// postCheck is step 8: the new pointer and version, the service running and matching, and an
-// unchanged configuration file.
-func (r *upgradeRunState) postCheck() (int, string) {
+// upgradePostCheck is what step 8 established: the status and reason it reports, every reason it
+// found, and whether the configuration file changed.
+type upgradePostCheck struct {
+	code          int
+	reason        string
+	reasons       []string
+	configChanged bool
+}
+
+// postCheck is step 8: the pointer must name the runtime the update installed and that runtime's
+// crw must report the version the archive carried, the service must come up running and matching
+// within the wait budget, and the configuration file must be unchanged.
+func (r *upgradeRunState) postCheck() upgradePostCheck {
+	var post upgradePostCheck
 	pointer, err := upgradePointerTarget(r.e)
-	if err != nil {
+	switch {
+	case err != nil:
 		r.note(upgradeStepPostCheck, nil, 1, "", err)
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+	case r.updated && r.installed == "":
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the update named no runtime it installed, so nothing shows the pointer names what it installed"))
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+	case r.updated && !upgradeSameDirectory(pointer, r.installed):
+		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the runtime pointer names %s, not %s, the runtime the update installed", pointer, r.installed))
+		post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+	default:
+		version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
+		got := strings.TrimSpace(version)
+		if err != nil || code != 0 || got != r.version {
+			r.note(upgradeStepPostCheck, nil, 1, version, fmt.Errorf("the runtime's crw reports the version %q, not %q, the version the archive carried", got, r.version))
+			post.reasons = append(post.reasons, upgradeReasonRuntimeMismatch)
+		}
 	}
-	version, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "crw"), "--version")
-	if err != nil || code != 0 || strings.TrimSpace(version) == "" {
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+	runtime := r.startFrom
+	if runtime == "" {
+		runtime = pointer
 	}
-	out, code, err := r.command(r.ctx, upgradeCommandTimeout, upgradeStepPostCheck, filepath.Join(pointer, "bin", "codex-session-relay"),
-		"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "status")
-	if err != nil || code != 0 {
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+	if runtime != "" && !r.waitForService(runtime) {
+		post.reasons = append(post.reasons, upgradeReasonPostCheck)
 	}
-	if !upgradeServiceRunning(out) {
-		r.note(upgradeStepPostCheck, nil, 1, out, fmt.Errorf("the service is not running and matching"))
-		return upgradeExitPostCheck, upgradeReasonPostCheck
-	}
-	digest, err := upgradeFileDigest(upgradeConfigPath(r.e))
-	if err != nil || digest != r.beforeConfig {
+	if digest, err := upgradeFileDigest(upgradeConfigPath(r.e)); err != nil || digest != r.beforeConfig {
 		r.note(upgradeStepPostCheck, nil, 1, "", fmt.Errorf("the configuration file changed"))
-		return upgradeExitPostCheck, upgradeReasonPostCheck
+		post.reasons = append(post.reasons, upgradeReasonConfigChanged)
+		post.configChanged = true
 	}
-	return 0, ""
+	if len(post.reasons) == 0 {
+		return post
+	}
+	post.code = upgradeExitPostCheck
+	post.reason = post.reasons[0]
+	return post
+}
+
+// waitForService reads the service status again every upgradeServiceInterval until it reports the
+// daemon running and matching, or upgradeServiceBudget passes; the last answer is recorded either
+// way. The wait is measured on the wall clock, not on Env.Now: a test's fixed clock must not be
+// able to stop it ending.
+func (r *upgradeRunState) waitForService(runtime string) bool {
+	ctx, cancel := context.WithTimeout(r.ctx, upgradeServiceBudget)
+	defer cancel()
+	relay := filepath.Join(runtime, "bin", "codex-session-relay")
+	last := ""
+	for {
+		out, code, err := r.command(ctx, upgradeCommandTimeout, upgradeStepPostCheck, relay,
+			"--state", r.state, "--socket", r.cfg.Relay.Socket, "service", "status")
+		last = out
+		if err == nil && code == 0 && upgradeServiceRunning(out) {
+			return true
+		}
+		if ctx.Err() != nil {
+			r.note(upgradeStepPostCheck, nil, 1, last, fmt.Errorf("the service did not report itself running and matching within %s", upgradeServiceBudget))
+			return false
+		}
+		if !upgradeWait(ctx, upgradeServiceInterval) {
+			r.note(upgradeStepPostCheck, nil, 1, last, fmt.Errorf("the wait for the service ended before it reported itself running and matching"))
+			return false
+		}
+	}
+}
+
+// upgradeWait waits for one interval, or until ctx ends; false when the context ended first.
+func upgradeWait(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // upgradeServiceRunning reports whether a status answer says the daemon runs and matches.
@@ -368,6 +507,20 @@ func upgradeServiceRunning(out string) bool {
 		return false
 	}
 	return answer.LaunchPolicy.MatchesRunning == "same"
+}
+
+// upgradeSameDirectory reports whether two spellings name the same directory, resolving both so a
+// path through a symbolic link compares equal to its target.
+func upgradeSameDirectory(a, b string) bool {
+	if a == b {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return resolvedA == resolvedB
 }
 
 // upgradePointerTarget is where the runtime pointer resolves, as a real path.

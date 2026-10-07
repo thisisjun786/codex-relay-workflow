@@ -12,7 +12,7 @@ import (
 
 // runtime-upgrade replaces the relay runtime from a release archive whose commit is green on the
 // dev gate, after proving no relay attempt is still open. Every step's command, exit status and
-// output head is left in W/record.json.
+// output head is left in W/record.json, together with every reason that applied to the run.
 
 // upgradeRecordHead is how many bytes of a command's output the record keeps.
 const upgradeRecordHead = 2000
@@ -40,6 +40,10 @@ const (
 	upgradeReasonStopFailed    = "service_stop_failed"
 	upgradeReasonPostCheck     = "postcheck_failed"
 	upgradeReasonUpdateFailed  = "update_failed"
+	// The post-check's own findings are named apart from upgradeReasonPostCheck, so the record
+	// says what was found rather than only that the post-check refused.
+	upgradeReasonConfigChanged   = "config_changed"
+	upgradeReasonRuntimeMismatch = "runtime_mismatch"
 )
 
 const (
@@ -75,15 +79,19 @@ type upgradeStepRecord struct {
 }
 
 type upgradeRecord struct {
-	ReleaseDir string              `json:"release_dir"`
-	Issue      string              `json:"issue,omitempty"`
-	DryRun     bool                `json:"dry_run"`
-	StartedAt  string              `json:"started_at"`
-	Directory  string              `json:"directory"`
-	ExtractDir string              `json:"extract_dir,omitempty"`
-	Outcome    string              `json:"outcome"`
-	Reason     string              `json:"reason,omitempty"`
-	Steps      []upgradeStepRecord `json:"steps"`
+	ReleaseDir string `json:"release_dir"`
+	Issue      string `json:"issue,omitempty"`
+	DryRun     bool   `json:"dry_run"`
+	StartedAt  string `json:"started_at"`
+	Directory  string `json:"directory"`
+	ExtractDir string `json:"extract_dir,omitempty"`
+	// StartFrom is the runtime directory the restart was called from, so the record says which
+	// executable the service came back on.
+	StartFrom string              `json:"start_from,omitempty"`
+	Outcome   string              `json:"outcome"`
+	Reason    string              `json:"reason,omitempty"`
+	Reasons   []string            `json:"reasons,omitempty"`
+	Steps     []upgradeStepRecord `json:"steps"`
 }
 
 var upgradeCommand = Command{
@@ -161,7 +169,20 @@ type upgradeRunState struct {
 	state   string
 	started time.Time
 
+	// digest is the verified archive's SHA-256, version the cleaned version the unpacked crw
+	// printed, installed the runtime directory the update reported it produced, previous the
+	// runtime the pointer named before the stop, and startFrom the runtime the restart used.
+	digest    string
+	version   string
+	installed string
+	previous  string
+	startFrom string
+	// updated reports whether the update ran and ended successfully, so the post-check knows
+	// whether an install target is something it has to compare the pointer with.
+	updated bool
+
 	beforeConfig string
+	reasons      []string
 	steps        []upgradeStepRecord
 }
 
@@ -183,7 +204,8 @@ func (r *upgradeRunState) run() int {
 	return code
 }
 
-// execute performs the nine steps in order. Each stop returns before the step after it.
+// execute performs the steps in order. Each stop returns before the step after it; the steps
+// after the update always run, because the service has to come back either way.
 func (r *upgradeRunState) execute() (int, string) {
 	archive, code, reason := r.verifySums()
 	if code != 0 {
@@ -210,12 +232,26 @@ func (r *upgradeRunState) execute() (int, string) {
 	updateCode, updateReason := r.stopAndUpdate()
 	r.start()
 
-	postCode, postReason := r.postCheck()
+	post := r.postCheck()
+	return r.outcome(updateCode, updateReason, post)
+}
+
+// outcome is the run's final status and reason, in the decided order: a configuration change the
+// post-check found outranks a failed update, which in turn outranks the post-check's other
+// findings. Every reason that applied is kept in the record, so a run that both failed to update
+// and changed the configuration names both.
+func (r *upgradeRunState) outcome(updateCode int, updateReason string, post upgradePostCheck) (int, string) {
 	if updateCode != 0 {
-		return updateCode, updateReason
+		r.reasons = append(r.reasons, updateReason)
 	}
-	if postCode != 0 {
-		return postCode, postReason
+	r.reasons = append(r.reasons, post.reasons...)
+	switch {
+	case post.configChanged:
+		return upgradeExitPostCheck, upgradeReasonConfigChanged
+	case updateCode != 0:
+		return updateCode, updateReason
+	case post.code != 0:
+		return post.code, post.reason
 	}
 	return 0, ""
 }
@@ -228,7 +264,9 @@ func (r *upgradeRunState) write(reason string) error {
 		StartedAt:  r.started.Format(time.RFC3339),
 		Directory:  r.dir,
 		ExtractDir: r.extract,
+		StartFrom:  r.startFrom,
 		Outcome:    "ok",
+		Reasons:    r.reasons,
 		Steps:      r.steps,
 	}
 	if reason != "" {

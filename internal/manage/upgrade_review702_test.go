@@ -1,0 +1,220 @@
+package manage
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// The review-702 cases: the defects the post-merge review of PR #702 found in
+// crw manage runtime-upgrade, one test per decided answer.
+
+// upgradeReview702Swapped is an archive whose crw is not the verified one: it records that it ran
+// and answers with a version that resolves nowhere. It is what an adversary puts in the release
+// directory in the moment between the checksum being verified and the bytes being used.
+func upgradeReview702Swapped(t *testing.T, marker string) []byte {
+	t.Helper()
+	return upgradeTarGz(t, map[string]string{"crw": "#!/bin/sh\n" +
+		"printf 'swapped\\n' >> " + coreShellQuote(marker) + "\n" +
+		"printf '%s\\n' 'v0.4.0-9999-gdeadbeef'\nexit 0\n"})
+}
+
+// TestUpgradeReview702SwappedArchiveIsNotRun: the release directory's archive is replaced at the
+// moment the adversary has the chance - as soon as the checksum has been verified, before the bytes
+// are used. The replacement really takes (the release directory holds the swapped archive when the
+// run goes on), and it still changes nothing: the run unpacks the archive whose digest it verified,
+// and the crw of the swapped archive never runs. The baseline hashes the original archive and then
+// copies that same original, so the same replacement between those two reads is what it unpacks and
+// runs; here the run has already copied the archive it verified, and the seam's swap reaches only
+// the release directory.
+func TestUpgradeReview702SwappedArchiveIsNotRun(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "swapped-crw-ran")
+	swapped := upgradeReview702Swapped(t, marker)
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true})
+	verified, err := os.ReadFile(filepath.Join(h.release, upgradeArchiveName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replaced := false
+	old := upgradeSumsVerified
+	upgradeSumsVerified = func(releaseDir string) {
+		replaced = true
+		if err := os.WriteFile(filepath.Join(releaseDir, upgradeArchiveName), swapped, 0o600); err != nil {
+			t.Errorf("replace the release archive: %v", err)
+		}
+	}
+	t.Cleanup(func() { upgradeSumsVerified = old })
+
+	code := h.run("--release-dir", h.release, "--dry-run")
+
+	if !replaced {
+		t.Fatal("the release archive was never replaced, so this case proves nothing")
+	}
+	onDisk, err := os.ReadFile(filepath.Join(h.release, upgradeArchiveName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(onDisk, verified) {
+		t.Fatal("the release directory still holds the verified archive, so the replacement did not take")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the crw of the archive that replaced the verified one ran")
+	}
+	if code != 0 {
+		t.Fatalf("exit %d, want 0; the record is %+v", code, h.recordOf(t))
+	}
+	pinned, err := os.ReadFile(filepath.Join(h.recordOf(t).Directory, upgradeArchiveName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(pinned, verified) {
+		t.Error("the archive the run unpacked is not the archive whose checksum it verified")
+	}
+	if calls := strings.Join(h.ghCallLines(), " "); !strings.Contains(calls, "commits/eb2567df7") {
+		t.Errorf("the verified archive's version did not resolve through gh: %q", calls)
+	}
+}
+
+// TestUpgradeReview702StartRunsWhenUpdateBreaksThePointer: an update that removes the owned pointer
+// and fails must still leave the service running, started from the runtime the pointer named before
+// the stop, and the record must say so.
+func TestUpgradeReview702StartRunsWhenUpdateBreaksThePointer(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+		pointer: true, installExit: 1, breakPointer: true})
+	if code := h.run("--release-dir", h.release); code == 0 {
+		t.Fatal("a broken pointer reported success")
+	}
+	if !h.calledFrom(filepath.Join(h.previous, "bin", "codex-session-relay"), "service start") {
+		t.Errorf("the service was not started from the runtime the pointer named before the stop: %q", h.callLines())
+	}
+	if got, _ := h.recordJSON(t)["start_from"].(string); got != h.previous {
+		t.Errorf("the record names %q as what the service was started from, want %q", got, h.previous)
+	}
+}
+
+// TestUpgradeReview702ConfigChangeWinsOverUpdateFailure: a configuration change the post-check
+// found outranks a failed update, and the record keeps both reasons.
+func TestUpgradeReview702ConfigChangeWinsOverUpdateFailure(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+		pointer: true, installExit: 1, mutateConfig: true})
+	if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+		t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+	}
+	if got := h.recordOf(t).Reason; got != upgradeReasonConfigChanged {
+		t.Errorf("reason %q, want %q", got, upgradeReasonConfigChanged)
+	}
+	reasons := upgradeReview702Reasons(t, h)
+	for _, want := range []string{upgradeReasonUpdateFailed, upgradeReasonConfigChanged} {
+		if !slices.Contains(reasons, want) {
+			t.Errorf("the record does not name %q: %v", want, reasons)
+		}
+	}
+}
+
+// upgradeReview702Reasons is the reasons the record names, read from the record as written.
+func upgradeReview702Reasons(t *testing.T, h *upgradeEnv) []string {
+	t.Helper()
+	var out []string
+	values, _ := h.recordJSON(t)["reasons"].([]any)
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// TestUpgradeReview702StalePointerIsAMismatch: the post-check passes only when the pointer names
+// the runtime the update reported it installed and that runtime reports the archive's version.
+func TestUpgradeReview702StalePointerIsAMismatch(t *testing.T) {
+	t.Run("the pointer still names the previous runtime", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+			pointer: true, produceRuntime: true})
+		if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+			t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
+		}
+		if target, err := h.pointerTarget(); err != nil || target != h.previous {
+			t.Errorf("the pointer was moved to %q (%v), want it left at %q", target, err, h.previous)
+		}
+	})
+	t.Run("the update names no runtime", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true})
+		if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+			t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
+		}
+	})
+	t.Run("the installed runtime reports another version", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+			produceRuntime: true, pointAtIt: true, installedVersion: "v0.4.0-4633-gdeadbeef"})
+		if code := h.run("--release-dir", h.release); code != upgradeExitPostCheck {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitPostCheck, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonRuntimeMismatch {
+			t.Errorf("reason %q, want %q", got, upgradeReasonRuntimeMismatch)
+		}
+	})
+}
+
+// TestUpgradeReview702SlowWorkerIsWaitedFor: a service that answers running but not yet matching is
+// read again, and a worker that settles a little later is not treated as a failure.
+func TestUpgradeReview702SlowWorkerIsWaitedFor(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit), pointer: true,
+		produceRuntime: true, pointAtIt: true,
+		statusAnswers: []string{upgradeStatusUnknown, upgradeStatusUnknown, upgradeStatusSame}})
+	if code := h.run("--release-dir", h.release); code != 0 {
+		t.Fatalf("exit %d, want 0; the record is %+v", code, h.recordOf(t))
+	}
+	if reads := upgradeReview702StatusReads(h); reads != 3 {
+		t.Errorf("the service status was read %d times, want 3", reads)
+	}
+}
+
+// TestUpgradeReview702OpenAttemptsFromDoctor: the open attempt count is the relay doctor's
+// contents.openAttempts, read from the runtime the pointer names, and contents that could not be
+// read are refused rather than read as none.
+func TestUpgradeReview702OpenAttemptsFromDoctor(t *testing.T) {
+	t.Run("two open attempts refuse", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+			pointer: true, openAttempts: 2})
+		if code := h.run("--release-dir", h.release, "--dry-run"); code != upgradeExitOpenAttempts {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitOpenAttempts, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonOpenAttempts {
+			t.Errorf("reason %q, want %q", got, upgradeReasonOpenAttempts)
+		}
+		if !h.calledFrom(filepath.Join(h.previous, "bin", "codex-session-relay"), "doctor") {
+			t.Errorf("the runtime the pointer names was not asked for its doctor answer: %q", h.callLines())
+		}
+	})
+	t.Run("unreadable contents refuse", func(t *testing.T) {
+		h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+			pointer: true, doctorUnavailable: true})
+		if code := h.run("--release-dir", h.release, "--dry-run"); code != upgradeExitRefused {
+			t.Fatalf("exit %d, want %d; the record is %+v", code, upgradeExitRefused, h.recordOf(t))
+		}
+		if got := h.recordOf(t).Reason; got != upgradeReasonStoreRead {
+			t.Errorf("reason %q, want %q", got, upgradeReasonStoreRead)
+		}
+	})
+}
+
+// upgradeReview702StatusReads is how many times the run read the service status.
+func upgradeReview702StatusReads(h *upgradeEnv) int {
+	reads := 0
+	for _, line := range h.callArgs() {
+		if strings.Contains(line, "service status") {
+			reads++
+		}
+	}
+	return reads
+}
