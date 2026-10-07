@@ -146,3 +146,43 @@ func TestMigrateRootPrivateControls(t *testing.T) {
 		}
 	})
 }
+
+// The issue's first requirement, pinned at the seam itself: the mode the root's creation is asked for is 0o700, not
+// 0o777. The behavioural cases above observe the root that is left behind; this one names the mode that decides it.
+func TestMigrateRootPrivateRootCreationModeIsPrivate(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	_, pair := migrateRootPrivateWorkspace(t)
+	p := newPub(t)
+	var asked []uint32
+	create := p.ensureDest
+	p.ensureDest = func(pair *Pair, perm uint32) (*Dir, error) {
+		asked = append(asked, perm)
+		return create(pair, perm)
+	}
+	if root, err := p.EnsureProjectRoot(pair); err != nil || root == nil {
+		t.Fatalf("EnsureProjectRoot = %v, %v", root, err)
+	}
+	if len(asked) != 1 || asked[0] != 0o700 {
+		t.Errorf("the root's creation was asked for %v, want one 0o700", asked)
+	}
+}
+
+// Every Publisher in the repository comes from NewPublisher, and EnsureProjectRoot reaches the destination root only
+// through the seam, so a constructor that left it nil would panic there instead of creating a private root. The seam
+// is otherwise unset by construction, which is the one way this field differs from rename and at.
+func TestMigrateRootPrivateSeamDefaultIsArmed(t *testing.T) {
+	migrateRootPrivateUmask(t)
+	p := newPub(t)
+	if p.ensureDest == nil {
+		t.Fatal("NewPublisher left the destination-root creation seam nil")
+	}
+	_, pair := migrateRootPrivateWorkspace(t)
+	root, err := p.ensureDest(pair, 0o700)
+	must(t, err)
+	if root == nil || pair.Dest != root {
+		t.Fatalf("the seam default must be Pair.EnsureDest: root = %v, pair.Dest = %v", root, pair.Dest)
+	}
+	if fi, err := os.Stat(filepath.Join(pair.DestPath)); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("the default seam must create the root at the mode it was given: %v %v", fi, err)
+	}
+}
