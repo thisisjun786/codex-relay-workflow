@@ -863,6 +863,65 @@ func TestMigrateOwnedDirIdentityFailedFinalReadKeepsTheCreation(t *testing.T) {
 	}
 }
 
+// C2(1): when the descriptor identity read fails after a successful rename, the handle that replaces it is
+// opened fresh and its own identity is read before it is used. A handle the run never verified must not be
+// handed back as this run's directory. The head before this cycle built the replacement handle from the
+// name alone and stamped the expected identity on it, so a racer that took the name in that window had its
+// own directory handed back carrying this run's identity - and the next attempt then chmodded that racer's
+// directory as if this run had created it.
+func TestMigrateOwnedDirIdentityUnverifiedReopenIsNotHandedBack(t *testing.T) {
+	ws := isolate(t) + "/ws"
+	mkdirs(t, filepath.Join(ws, ProjectSourceName, "sessions"))
+	put(t, filepath.Join(ws, ProjectSourceName, "sessions", "a.json"), migrateOwnedDirIdentitySessionBody, 0o644)
+	r, err := Open(Options{Scope: ScopeProject, Cwd: ws})
+	must(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	restore := dirIdentity
+	t.Cleanup(func() { dirIdentity = restore })
+	// The identity read of the root fails, and in the same seam the racer moves this run's root aside and
+	// puts its own 0700 directory at the name.
+	dirIdentity = func(f *os.File) (fileID, error) {
+		if f.Name() != apDst(ws, "") {
+			return restore(f)
+		}
+		// Only after this run's own creation has put a directory at the name, so the earlier lookup of an
+		// absent root is untouched and the racer takes the name of a root that exists.
+		if fi, serr := os.Stat(apDst(ws, "")); serr != nil || !fi.IsDir() {
+			return restore(f)
+		}
+		dirIdentity = restore
+		if rerr := os.Rename(apDst(ws, ""), apDst(ws, "")+".ours"); rerr != nil {
+			return fileID{}, rerr
+		}
+		mkdirs(t, apDst(ws, ""))
+		must(t, os.Chmod(apDst(ws, ""), 0o700))
+		return fileID{}, unix.EIO
+	}
+	_, _, aerr := r.Project.EnsureDest(0o700)
+	dirIdentity = restore
+	if aerr == nil {
+		t.Fatal("the attempt must fail on the unreadable descriptor identity")
+	}
+	// Whatever the pair kept, the identity it recorded must be the identity of the directory its handle
+	// actually names: a handle that was never verified must never be recorded as this run's directory.
+	if held := r.Project.createdDir; held != nil {
+		var st unix.Stat_t
+		must(t, unix.Fstat(held.fd(), &st))
+		if got := (fileID{uint64(st.Dev), uint64(st.Ino)}); got != r.Project.created {
+			t.Errorf("the recorded identity %v is not the identity %v of the handle this run kept", r.Project.created, got)
+		}
+	}
+	// The retry must not treat the racer's directory as this run's, and must keep its mode.
+	if _, made, rerr := r.Project.EnsureDest(0o700); rerr != nil {
+		t.Fatalf("the retry: %v", rerr)
+	} else if made {
+		t.Error("the retry must not report the racer's directory as one this run created")
+	}
+	if fi, serr := os.Stat(apDst(ws, "")); serr != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("the racer's root must keep its mode: %v %v", fi, serr)
+	}
+}
+
 // C2(1): the descriptor identity read of the published root can fail even though the rename succeeded.
 // The creation is still this run's - the name was checked against the identity read at the temporary - so
 // the caller must record that identity and hold a handle, and a retry then finishes the root's mode. The

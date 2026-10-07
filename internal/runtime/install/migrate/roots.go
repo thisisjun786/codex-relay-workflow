@@ -632,7 +632,8 @@ func (d *Dir) EnsureChild(name string, perm uint32) (child *Dir, made bool, err 
 	}()
 	fd, err = d.migrateOwnedDirIdentityClaim(tmp, tmpID, perm)
 	if err != nil {
-		fd = -1
+		// fd is the pin the claim still holds, or -1 where it holds none. It is kept so the deferred
+		// cleanup removes the temporary while that directory is still referenced, and closed after it.
 		return nil, false, err
 	}
 	if err := migrateOwnedDirIdentityStep("rename"); err != nil {
@@ -723,6 +724,11 @@ func (d *Dir) migrateOwnedDirIdentityTemp(perm uint32) (string, fileID, error) {
 // migrateOwnedDirIdentityClaim gives the temporary directory this run created exactly perm and returns a
 // read handle held open on it, or -1 when this platform cannot pin a directory without permission.
 //
+// On failure it returns the pin it still holds together with the error, so the caller keeps that directory
+// referenced until its cleanup has removed it; the removal compares the identity recorded at creation,
+// and with the pin released first the kernel could free that inode and hand it to another directory. It
+// returns -1 with an error only where it holds no pin at all.
+//
 // The pinned handle is opened before any mode is given and needs no permission on the directory, so a
 // regular file, a link or another owner's directory at the name is refused with no mode changed. The
 // returned handle is opened after the mode was given, so the umask cannot stop it, and it is what fsync
@@ -747,55 +753,45 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32)
 	}
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
+		return fd, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
 	}
 	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &st, want); err != nil {
-		_ = unix.Close(fd)
-		return -1, err
+		return fd, err
 	}
 	if err := ownedDirIdentityFchmod(fd, perm); err != nil {
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
+		return fd, &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 	}
 	// The read handle is opened and checked while the pin is still held. Closing the pin first would free
 	// this directory's inode for reuse, and a replacement that took the name and the recycled inode would
 	// then pass every check below; holding the pin across the open is what makes device and inode equality
 	// prove the handle names the very directory the mode was just given to.
 	if err := migrateOwnedDirIdentityStep("held"); err != nil {
-		_ = unix.Close(fd)
-		return -1, err
+		return fd, err
 	}
 	held, err := unix.Openat(d.fd(), tmp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "open", Path: d.join(tmp), Err: err}
+		return fd, &fs.PathError{Op: "open", Path: d.join(tmp), Err: err}
 	}
 	var heldSt unix.Stat_t
 	if err := unix.Fstat(held, &heldSt); err != nil {
 		_ = unix.Close(held)
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
+		return fd, &fs.PathError{Op: "stat", Path: d.join(tmp), Err: err}
 	}
 	if (fileID{uint64(heldSt.Dev), uint64(heldSt.Ino)}) != (fileID{uint64(st.Dev), uint64(st.Ino)}) {
 		_ = unix.Close(held)
-		_ = unix.Close(fd)
-		return -1, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
+		return fd, refuse(applyReasonChanged, d.join(tmp), "the temporary name is not the directory this run created")
 	}
 	if err := migrateOwnedDirIdentityOwned(d.join(tmp), &heldSt, want); err != nil {
 		_ = unix.Close(held)
-		_ = unix.Close(fd)
-		return -1, err
+		return fd, err
 	}
 	if uint32(heldSt.Mode)&0o7777 != perm {
 		_ = unix.Close(held)
-		_ = unix.Close(fd)
-		return -1, refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(heldSt.Mode)&0o7777, perm))
+		return fd, refuse(applyReasonChanged, d.join(tmp), fmt.Sprintf("the temporary directory is %#o, want %#o", uint32(heldSt.Mode)&0o7777, perm))
 	}
 	if err := unix.Fsync(held); err != nil {
 		_ = unix.Close(held)
-		_ = unix.Close(fd)
-		return -1, &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
+		return fd, &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
 	}
 	// The read handle is verified; the pin has done its work and is released.
 	_ = unix.Close(fd)
@@ -871,52 +867,54 @@ func (d *Dir) migrateOwnedDirIdentitySyncMode(tmp string, want fileID, perm uint
 	return fd, nil
 }
 
-// migrateOwnedDirIdentityChild returns the pinned directory this run renamed to name. fd is the read
-// handle the creation already holds on that directory, or -1 when the platform gave none; the entry at
-// name is checked to hold the same directory at exactly perm, so a swap between the rename and this
-// point is refused rather than published into. The handle becomes the child's, so the caller closes it
-// with the child.
+// migrateOwnedDirIdentityChild returns the pinned directory this run renamed to name, with the entry at
+// name checked to hold that very directory at exactly perm, so a swap between the rename and this point
+// is refused rather than published into. The handle becomes the child's, so the caller closes it with the
+// child.
 //
-// A check that fails still returns the handle, with the error: the rename already put this run's own
+// The returned handle is always one whose identity was read and checked against the directory this run
+// created: fd is that verified handle when the creation holds one, and otherwise a fresh handle is opened
+// and its own identity read. A handle that was not verified is never handed back.
+//
+// A failed check still returns that verified handle, with the error: the rename already put this run's own
 // directory at the name, so the creation succeeded even though this attempt could not confirm it. The
 // caller records that directory's identity and holds the handle, so a retry recognises its own root and
 // finishes its mode instead of reading it as another actor's. The name is what a retry compares against
 // that identity, so a directory a racer swapped in is still refused.
 func (d *Dir) migrateOwnedDirIdentityChild(name string, fd int, want fileID, perm uint32) (*Dir, error) {
-	if fd < 0 {
-		opened, err := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return nil, &fs.PathError{Op: "open", Path: d.join(name), Err: err}
-		}
-		fd = opened
-	}
-	child, err := newDir(fd, d.join(name))
-	if err != nil {
-		// newDir closed the descriptor it was handed, so this call must not close that number again.
-		// The rename already put this run's own directory at the name and that name is what the checks
-		// below compare, so a fresh handle carrying the identity read at the temporary is built instead:
-		// the caller can then record this run's identity and hold the pin, where returning nothing would
-		// make a retry read this run's own root as another actor's and never finish its mode.
-		reopened, oerr := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if oerr != nil {
-			return nil, err
-		}
-		child = newDirWith(reopened, d.join(name), want)
-	}
 	var st unix.Stat_t
-	if err := migrateOwnedDirIdentityLstat(d.fd(), name, &st); err != nil {
-		return child, &fs.PathError{Op: "lstat", Path: d.join(name), Err: err}
+	err := migrateOwnedDirIdentityLstat(d.fd(), name, &st)
+	if err == nil {
+		if err = migrateOwnedDirIdentityOwned(d.join(name), &st, want); err == nil && (fileID{uint64(st.Dev), uint64(st.Ino)}) != want {
+			err = refuse(applyReasonChanged, d.join(name), "the entry at the name is not the directory this run created")
+		}
+		if err == nil && uint32(st.Mode)&0o7777 != perm {
+			err = refuse(applyReasonChanged, d.join(name), fmt.Sprintf("the directory is %#o, want %#o", uint32(st.Mode)&0o7777, perm))
+		}
 	}
-	if err := migrateOwnedDirIdentityOwned(d.join(name), &st, want); err != nil {
-		return child, err
+	if fd >= 0 {
+		// The handle the creation holds is the one whose identity was read and checked when it was pinned.
+		child, nerr := newDir(fd, d.join(name))
+		if nerr == nil {
+			return child, err
+		}
+		// newDir closed the descriptor it was handed, so this call must not close that number again.
+		fd = -1
 	}
-	if (fileID{uint64(st.Dev), uint64(st.Ino)}) != child.id {
-		return child, refuse(applyReasonChanged, d.join(name), "the entry at the name is not the directory this run created")
+	opened, oerr := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if oerr != nil {
+		return nil, errors.Join(err, &fs.PathError{Op: "open", Path: d.join(name), Err: oerr})
 	}
-	if uint32(st.Mode)&0o7777 != perm {
-		return child, refuse(applyReasonChanged, d.join(name), fmt.Sprintf("the directory is %#o, want %#o", uint32(st.Mode)&0o7777, perm))
+	var openedSt unix.Stat_t
+	if ferr := unix.Fstat(opened, &openedSt); ferr != nil {
+		_ = unix.Close(opened)
+		return nil, errors.Join(err, &fs.PathError{Op: "stat", Path: d.join(name), Err: ferr})
 	}
-	return child, nil
+	if (fileID{uint64(openedSt.Dev), uint64(openedSt.Ino)}) != want {
+		_ = unix.Close(opened)
+		return nil, errors.Join(err, refuse(applyReasonChanged, d.join(name), "the entry at the name is not the directory this run created"))
+	}
+	return newDirWith(opened, d.join(name), want), err
 }
 
 // migrateOwnedDirIdentityOwned refuses a descriptor or a name that is not the directory this run created:
