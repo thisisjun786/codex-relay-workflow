@@ -5664,6 +5664,64 @@ workflow, contract file, golden, skill document or `plugin.json` changes, and no
 repository setting or branch is touched. The implementation, the merge-lane scripts, the CI
 workflow, the rulesets, `POLICY.md` and the test leg rebalance ship as the follow-ups above.
 
+### Correction: the bundle lands as one merge commit and one CI run (CRW-768, Jun 10-06 18:1x·18:2x, management 18:5x)
+
+The strict conclusion above stands, but the shape of the landing changed after this section was
+written, and the two passages of section 81 it named as the reason to keep a small cap are
+superseded. A train is no longer a chain of per-member prefix trees that each earn their own
+`dev-gate`: the lane now builds **one bundle pull request** over the verified members, runs **one**
+full CI on its single tree, and lands it as **one merge commit**. The bundle's size is uncapped — k
+members cost one run, not k, so the runner limit that capped a train at 3 or 4 no longer applies.
+
+What that replaces, in the two passages:
+
+- Section 81's "keep k = 2" is replaced by **no count cap and one bundle merge commit** (one CI run).
+  The cap existed to bound the number of prefix trees that each needed a green `dev-gate`; one
+  bundle tree needs one, whatever the size.
+- Section 81's "do not take option 1" is replaced by **the light mode with the crw-lane full run**
+  (the temporary CI light mode, CRW-790): a pull request the merge lane has not labeled `crw-lane`
+  skips the go-product test legs' work while the job still concludes success, and the label — and
+  every later push while it stays — runs them in full. The bundle pull request carries `crw-lane`,
+  so its one run is a full one.
+
+The commands (CRW-768, `internal/relay/mergeturn/train.go`) are `merge-train-open`,
+`merge-train-verify`, `merge-train-land`, `merge-train-close` and `merge-train-show`. The relay
+reads the pull request, the run, the jobs, the commits and the ancestry from the forge itself, and
+the chain from the given checkout; the caller's values are compared and never trusted (the
+second-generation correction condition). The member conditions are: the leader is the holding turn
+and its pull request is the first member; every other member has a waiting turn on the same target
+of any parent; members are given in the order the plan's edges require, with no count cap; a
+duplicate, an order against a plan edge, a member head that is not the accepted head, and a base
+other than the forge's dev tip are `disposition_conflict` with no event. `merge-train-verify`
+reads the open `crw-lane` bundle pull request on dev and this repository's `ci.yml` run for its
+head, requires every expected job (one named list, pinned to `ci.yml`) to be a success on the newest
+attempt, requires every go-product `test-*` leg's `Test and replay the contract corpus` step to have
+concluded success (a skipped or absent test step is `disposition_conflict`), and proves in the
+checkout that the head's first-parent chain down to the base is one two-parent merge per member in
+order whose second parent is that member's accepted head and whose tree is what `git merge-tree
+--write-tree` merges from its parents (the tree-identity rule of `crw skill base-refresh check`).
+`merge-train-land` requires the forge's dev tip to be the merge commit M whose parents are the base
+D and the verified head H and every member's accepted head an ancestor of M, then records every
+member turn landed with M. The per-member mapping (the relationship, the ruled event, the head fixed
+at the ruling, the accepted head, the member head in the train, the order, the base, the combined
+head, the final tree and M) is recorded in the verify and land event details in the common format
+the delivery-record work also reads.
+
+The failure handling: a member touching a failed job's packages is removed and the rest re-bundled;
+when no member can be named the bundle is halved with a predecessor and its successors kept on the
+same side; a set that failed twice goes one by one; a removed member rides alone; a train whose base
+moved outside the lane is abandoned and reopened.
+
+**Section 79 (a)'s tree-keyed reuse is cancelled in this design** (CRW-766, Canceled): a bundle pull
+request runs the full CI on its final tree once and lands as one merge commit, so no per-member
+prefix reuse path remains. The existing full merge CI and the body-edit mirror (CRW-779, CRW-821)
+stay as they are.
+
+One appended zone statement carries decision 9: a `merge_trains_train_id_not_null` `BEFORE INSERT`
+trigger after the CRW-767 merge-train triggers, so a NULL `train_id` is refused at the door. No
+shipped statement is edited and an existing NULL row is never deleted or rewritten; no train command
+reads it, because every reader addresses a train by a non-empty id.
+
 ## 80. CRW-185's completion criteria and its 2026-10-01 research rows, judged against the built DAG scheduler (CRW-762)
 
 Decision (design only, 2026-10-06): the DAG plan store and the DAG scheduler satisfy CRW-185's six

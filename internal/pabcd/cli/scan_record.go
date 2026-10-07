@@ -35,6 +35,12 @@ func cliPublishedScanRecordRun(a ScanCliArgs, appendEvent func(string, state.Int
 	if a.Action == ScanActionHelp {
 		return CliResult{Output: scanRecordHelp}
 	}
+	// CRW-871: a direct caller builds ScanCliArgs and bypasses ParseScanCliArgs, and this runner locks,
+	// reads and writes through the sanitised key, so a non-canonical id would rewrite a DIFFERENT
+	// session's file. The judgement runs before the lock is taken, as the parser's does for the CLI.
+	if !state.IsCanonicalSessionID(a.SessionID) {
+		return CliResult{Code: 1, Output: "scan record: " + sessionAliasRefusalText}
+	}
 	var round float64
 	derivedCount := 0
 	err := state.WithSessionLock(a.Cwd, a.SessionID, func() error {

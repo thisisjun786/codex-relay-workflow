@@ -802,6 +802,17 @@ BEGIN SELECT RAISE(ABORT, 'merge_train_members rows are append-only: never delet
 BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never updated'); END`,
 	`CREATE TRIGGER IF NOT EXISTS merge_train_events_no_delete BEFORE DELETE ON merge_train_events
 BEGIN SELECT RAISE(ABORT, 'merge_train_events rows are append-only: never deleted'); END`,
+	// CRW-768 decision 9: merge_trains is a SQLite rowid table, so its TEXT PRIMARY KEY does not mean NOT NULL
+	// and the shipped CHECK (train_id <> '') lets a NULL through; two NULL rows were inserted into one table
+	// before this guard (the CRW-767 post-merge finding P1). A NULL row can be found by no string id, and the
+	// member and event tables' NOT NULL keys could never point at one, so the row is refused at the door. The
+	// guard is appended, never edited into a shipped statement, and a BEFORE INSERT trigger cannot touch a row
+	// that already exists: a store that already holds one keeps it untouched, and no train command reads it,
+	// because every reader addresses a train by a non-empty id. UPDATE is already refused by
+	// merge_trains_no_update, an empty id by the shipped CHECK, and a repeat by the PRIMARY KEY.
+	`CREATE TRIGGER IF NOT EXISTS merge_trains_train_id_not_null BEFORE INSERT ON merge_trains
+WHEN NEW.train_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'merge_trains.train_id is NULL: a train is addressed by a non-empty id'); END`,
 	// CRW-736: the user-decision record (crw-user-decision/1, internal/relay/decisions) as a zone
 	// table. One column per field of the record's field list, with the object and array fields held
 	// as JSON text, decision_id as the primary key and fingerprint indexed. The table is not

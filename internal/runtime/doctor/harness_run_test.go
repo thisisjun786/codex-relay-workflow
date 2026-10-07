@@ -257,8 +257,8 @@ func TestHarnessRunDoctorRecorded(t *testing.T) {
 			tmp := t.TempDir()
 			opts, options, env, states, version := harnessRunCase(recorded.Name)
 			root := harnessRunPayload(t, tmp, harnessRunPayloadName(recorded.Name), opts)
-			options.CodexHome = filepath.Join(tmp, "codex")
-			if err := os.MkdirAll(options.CodexHome, 0o755); err != nil {
+			options.CodexHome = harnessRunString(filepath.Join(tmp, "codex"))
+			if err := os.MkdirAll(*options.CodexHome, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			projectRoot := filepath.Join(tmp, "cwd")
@@ -327,8 +327,8 @@ func TestHarnessRunDoctorTextRender(t *testing.T) {
 	tmp := t.TempDir()
 	opts, options, env, states, version := harnessRunCase("healthy_assembly")
 	root := harnessRunPayload(t, tmp, harnessRunPayloadName("healthy_assembly"), opts)
-	options.CodexHome = filepath.Join(tmp, "codex")
-	if err := os.MkdirAll(options.CodexHome, 0o755); err != nil {
+	options.CodexHome = harnessRunString(filepath.Join(tmp, "codex"))
+	if err := os.MkdirAll(*options.CodexHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	report := RunHarnessDoctor(root, harnessRunStub(states, version), options, tmp, harnessRunEnv(env), time.Now())
