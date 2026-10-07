@@ -617,3 +617,115 @@ func TestSupervisorReview722MovedNoticeIsRestatedWithScopeKind(t *testing.T) {
 		t.Fatalf("restatement rows: %d, want 1", n)
 	}
 }
+
+// TestSupervisorReview722StageNoticeKeepsAPreChangeNotice: a notice stored before recipient.scopeKind
+// existed is compared by StageNotice too, not only by refreshNotice. Staging the same notification
+// again with nothing else moved neither rewrites the packet nor journals a restatement: the field
+// alone is not a change to the notice.
+func TestSupervisorReview722StageNoticeKeepsAPreChangeNotice(t *testing.T) {
+	t.Parallel()
+	w := newNoticeWorld(t)
+	w.seed(t, nsSeed{signature: nsProjectSig, scope: nsProjectScope, state: "reserved", lease: nsNow + 300})
+	w.exec(t, "INSERT INTO recipient_lifecycle (task_id, deliverable, observed_at) VALUES ('parent','yes','2023-11-14T22:13:10.000000+00:00')")
+	id := stageNoticeForReview722(t, w)
+	row, err := w.c.Get(w.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.s.DB.ExecContext(w.ctx, "UPDATE supervisor_messages SET packet=? WHERE message_id=?", preChangePacket(t, row.Packet), id); err != nil {
+		t.Fatal(err)
+	}
+	row, err = w.c.Get(w.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := w.channel.StageNotice(w.ctx, w.facts(t, nsID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer["restated"] == true {
+		t.Fatalf("staging a pre-change notice restated it for the field alone: %v", answer)
+	}
+	after, err := w.c.Get(w.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Packet != row.Packet {
+		t.Fatalf("the notice packet was rewritten without a restatement:\n before %s\n after  %s", row.Packet, after.Packet)
+	}
+	if after.UpdatedAt != row.UpdatedAt {
+		t.Fatalf("notice updated_at moved without a restatement: %q -> %q", row.UpdatedAt, after.UpdatedAt)
+	}
+	if n := restatedRows(t, w.s); n != 0 {
+		t.Fatalf("a restatement row was written for the field alone: %d", n)
+	}
+}
+
+// TestSupervisorReview722EventlessOmissionRefreshesItsRecipientScopeKind: an omission carries no
+// event, so its packet is composed from its frozen reading and the live resolution. The same task
+// can change seat (the store seat answering instead of an initiative's supervisor) without the
+// recipient task moving, and a claim or a transport start must not send the stale kind.
+func TestSupervisorReview722EventlessOmissionRefreshesItsRecipientScopeKind(t *testing.T) {
+	t.Parallel()
+	f := fixture24(t)
+	// A turn the fixture holds no final event for, so this omission is not superseded by one.
+	reading := omissionReading24(f)
+	reading["selectors"].(map[string]any)["turn"] = "turn-9"
+	o := ObservationObligation(reading)
+	if o == nil {
+		t.Fatal("the omission reading raised no obligation")
+	}
+	result, err := f.c.StageWithReading(f.ctx, *o, reading, "", f.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := result["messageId"].(string)
+	row, err := f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.EventID.Valid {
+		t.Fatalf("the omission was staged with an event: %v", row.EventID)
+	}
+	if recipient := recipientOfPacket(t, row.Packet); recipient["scopeKind"] != "initiative" {
+		t.Fatalf("the omission was staged without the initiative kind: recipient %v", recipient)
+	}
+	// The same task takes the store seat and the initiative level goes, so the recipient task does
+	// not move while the seat it answers from does.
+	if err = storeseed.InsertScopeBinding(f.ctx, f.s, store.ScopeBindingsRow{BindingID: "bnd-review722-store",
+		Role: "supervisor", ScopeKind: "store", ScopeKey: "store", TaskID: "supervisor", HostID: "host",
+		Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.DB.ExecContext(f.ctx, "UPDATE scope_bindings SET status='released' WHERE scope_kind='initiative'"); err != nil {
+		t.Fatal(err)
+	}
+	row, err = f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.c.Resolve(f.ctx, row.RelationshipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Recipient != row.RecipientTaskID {
+		t.Fatalf("the fixture moved the recipient task: %q -> %q", row.RecipientTaskID, r.Recipient)
+	}
+	if r.RecipientScopeKind != "store" {
+		t.Fatalf("the fixture did not move the seat: %q", r.RecipientScopeKind)
+	}
+	changed, err := f.c.refreshProposal(f.ctx, row, r, f.at, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("an eventless omission was not restated when the seat its recipient answers from moved")
+	}
+	after, err := f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recipient := recipientOfPacket(t, after.Packet); recipient["scopeKind"] != "store" {
+		t.Fatalf("the restated omission still names the old seat: recipient %v", recipient)
+	}
+}

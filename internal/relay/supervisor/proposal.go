@@ -75,6 +75,14 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 			if err != sql.ErrNoRows {
 				return false, err
 			}
+			// An omission's packet is composed from its frozen reading and the live resolution, and
+			// the resolution's recipient scope kind can move without the recipient task moving (the
+			// same task answering from the store seat instead of an initiative's). The packet is
+			// compared and, when something else about it moved, restated here too, so a claim and a
+			// transport start never send the stale kind.
+			if o != nil {
+				return c.refreshEventlessProposal(ctx, row, *o, reading, r, at, currentAttempt)
+			}
 		}
 		return false, nil
 	}
@@ -160,6 +168,60 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 		instant = "transport_start"
 	}
 	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says moved after staging and nothing had been sent, so the message now carries what is owed now"}}, pyjson.Options{})
+	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
+	return true, err
+}
+
+// refreshEventlessProposal re-derives an omission's packet in the writer's transaction. The packet
+// is composed from the reading the omission was frozen with, so the reading is not re-derived; what
+// can move is the resolution's recipient scope kind, which the same recipient task can change seat
+// on (an initiative's supervisor handing the store seat, or the reverse). A claim and a transport
+// start must not send the stale kind, so the packet is compared and restated here exactly as the
+// event path does, including the compatibility comparison that keeps a packet stored before
+// recipient.scopeKind existed from restating for the field alone.
+func (c *Channel) refreshEventlessProposal(ctx context.Context, row store.SupervisorMessagesRow, o Obligation, reading map[string]any, r Resolution, at string, currentAttempt int64) (bool, error) {
+	old := evidence.Decode(row.Packet)
+	observed := evidence.Dict(evidence.Item(old, "envelope"), false)["observedAt"]
+	current, err := c.composeReading(ctx, o, r, at, reading)
+	if err != nil {
+		return false, err
+	}
+	if observed != nil {
+		current["envelope"].(map[string]any)["observedAt"] = observed
+	}
+	comparison, err := canonicalPacket(current)
+	if err != nil {
+		return false, err
+	}
+	if !recipientScopeKindRecorded(row.Packet) {
+		comparison, err = canonicalPacket(packetWithoutRecipientScopeKind(current))
+		if err != nil {
+			return false, err
+		}
+	}
+	if comparison == row.Packet {
+		return false, nil
+	}
+	encoded, err := canonicalPacket(current)
+	if err != nil {
+		return false, err
+	}
+	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,updated_at=? WHERE message_id=? AND "+store.SupervisorRestatableSQL("")+" AND recipient_task_id=? AND NOT EXISTS (SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+")", encoded, at, row.MessageID, r.Recipient, row.MessageID, currentAttempt)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n != 1 {
+		return false, Refusal{"superseded_revision", "the report was sent; the staged packet cannot be changed"}
+	}
+	instant := "claim"
+	if row.State == "sending" {
+		instant = "transport_start"
+	}
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "at", Value: instant}, {Key: "reason", Value: "the recipient of this omission now answers from another scope, so the packet records the seat it is addressed to now"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }

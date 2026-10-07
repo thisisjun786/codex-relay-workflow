@@ -75,7 +75,15 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		id = r.Text("message_id")
 		moving := !faults.NoticeAddressed(r, live)
 		moved := moving || r.Text("relationship_id") != relation
-		same := noticeDumps(packet) == r.Text("packet")
+		// A packet stored before recipient.scopeKind existed carries no such field, so the freshly
+		// composed one always differs. Compare without it there, the same way refreshNotice does:
+		// adding the field alone is not a change to the notice, so it is neither rewritten nor
+		// journalled as restated. A restatement made for something else still writes it.
+		staged := packet
+		if !recipientScopeKindRecorded(r.Text("packet")) {
+			staged = packetWithoutRecipientScopeKind(packet)
+		}
+		same := noticeDumps(staged) == r.Text("packet")
 		if same && !moved && r.Get("hold_reason") == nil {
 			return finish(false, "this notification is already staged; one notification is one message", false)
 		}
