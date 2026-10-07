@@ -17,8 +17,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/gate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/goalplan"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
@@ -78,16 +80,35 @@ func loopInitWriteState(cwd string, next state.State) error {
 }
 
 // loopInitCreationLockRounds bounds how many extra times init re-attempts the creation lock after the
-// lock's own retry budget (5+10+20+40 ms) runs out, and loopInitCreationLockWait pauses between those
-// rounds. The holder may be another init that publishes just after its budget — its plan write stages
-// a file, fsyncs it and fsyncs the directory after the rename — and the answer the criterion owes that
-// loser is the "a plan already exists at slug ..." refusal, not the lock's busy message (CRW-646 c1).
-// A genuinely stale lock still ends with the busy message once the rounds are spent, which is the
-// recovery the shared lock offers. Wait is a test seam: production sleeps 50 ms, so the bound is
-// about 0.4 s of extra waiting.
-const loopInitCreationLockRounds = 8
+// lock's own retry budget (5+10+20+40 ms) runs out, and loopInitPlanWaitRounds bounds the separate
+// wait for a plan a competing init publishes after the session lock's budget ran out. Each round of
+// either re-checks the plan, so a loser whose winner publishes during the wait answers the criterion's
+// "a plan already exists at slug ..." refusal rather than the shared lock's busy message (CRW-646
+// c1). Their production values give a loser about 1.8 s (goalplan lock) or 1.5 s (session lock) of
+// grace — far more than a plan write needs, a staged file plus its fsync and the directory fsync —
+// before it reports the busy message, which is that lock's documented recovery for an abandoned
+// directory. The waits are test seams.
+const (
+	loopInitCreationLockRounds = 10
+	loopInitPlanWaitRounds     = 15
+)
 
-var loopInitCreationLockWait = func() { time.Sleep(50 * time.Millisecond) }
+var loopInitCreationLockWait = func() { time.Sleep(100 * time.Millisecond) }
+
+var loopInitPlanWait = func() { time.Sleep(100 * time.Millisecond) }
+
+// loopInitAwaitPlan waits a bounded time for slug's plan to appear, answering its refusal when it
+// does. It is how the loser of a concurrent creation keeps the criterion's "a plan already exists at
+// slug ..." answer when the winner publishes after the loser's lock budget has run out (CRW-646 c1).
+func loopInitAwaitPlan(cwd, slug string) (LoopCliResult, bool) {
+	for attempt := 0; attempt < loopInitPlanWaitRounds; attempt++ {
+		if result, present := loopInitPlanRefusal(cwd, slug); present {
+			return result, true
+		}
+		loopInitPlanWait()
+	}
+	return loopInitPlanRefusal(cwd, slug)
+}
 
 // loopInitWriteGoalplanHook, when non-nil, replaces the plan publication of init's creation step so a
 // test can drive the case where the plan is published and a step after its rename fails (CRW-646,
@@ -210,18 +231,17 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	if sessionID == "" {
 		return loopInitCreate(args, slug, objective)
 	}
-	// Taking the session lock creates the state directory, so when that directory is not there yet the
-	// source-identity gate runs BEFORE the lock: a bound cycle this workspace cannot close would
-	// otherwise leave a fresh .crw behind while the command answered "Nothing was written" (the
-	// oracle checks before any write). When the directory is already there the lock creates nothing,
-	// so the gate inside the lock alone is enough and the oracle's single source capture is kept. The
-	// in-lock check stays authoritative either way, so a state that changed in between is judged
-	// there (CRW-646 c2).
-	if _, err := os.Stat(filepath.Dir(state.StatePath(args.Cwd, sessionID))); errors.Is(err, fs.ErrNotExist) {
-		if verdict := session.CheckBound(args.Cwd, sessionID); !verdict.OK {
-			return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, nil
-		}
-	}
+	// Every session pre-write check runs inside the lock below, the source-identity gate included: the
+	// order the criterion fixes is session lock first, then goalplan lock, and a check that ran before
+	// the lock would not be serialized against another writer of the same session (CRW-646 c2). Taking
+	// the lock creates the state root, which is where the lock file itself lives; the refusal below
+	// therefore names the artifacts it did not write (the plan, the created row and the binding), and
+	// the state root this call created is taken back so a refused init leaves the workspace as it found
+	// it.
+	_, rootErr := os.Stat(filepath.Join(args.Cwd, crwdir.DirName))
+	stateRootExisted := rootErr == nil
+	_, sessionsErr := os.Stat(filepath.Join(args.Cwd, crwdir.DirName, state.SessionsSubdir))
+	sessionsExisted := sessionsErr == nil
 	var answer LoopCliResult
 	err := state.WithSessionLock(args.Cwd, sessionID, func() error {
 		result, err := loopInitBound(args, slug, objective, sessionID)
@@ -230,17 +250,43 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	})
 	if err != nil {
 		// The lock's wait budget ran out (the create's EEXIST is what the lock returns when another
-		// holder keeps its file). The competing init may have published the plan inside that window,
-		// and then the criterion's "already exists" refusal is the answer owed, not the lock file's
-		// own error (CRW-646 c1). An error the callback itself returned is not this case.
+		// holder keeps its file). The competing init may publish the plan after that budget, so keep
+		// looking for it before reporting the lock file's own error (CRW-646 c1). An error the
+		// callback itself returned is not this case.
 		if errors.Is(err, fs.ErrExist) {
-			if result, present := loopInitPlanRefusal(args.Cwd, slug); present {
+			if result, present := loopInitAwaitPlan(args.Cwd, slug); present {
 				return result, nil
 			}
 		}
 		return LoopCliResult{}, err
 	}
+	if !sessionsExisted && answer.Code != 0 {
+		loopInitRemoveCreatedStateRoot(args.Cwd, stateRootExisted)
+	}
 	return answer, nil
+}
+
+// loopInitRemoveCreatedStateRoot takes back the state root a refused bound init created. Taking the
+// session lock creates .crw, its .gitignore and its sessions directory; a refusal that wrote none of
+// the artifacts init owns should not leave them behind, or the command's own "Nothing was written"
+// would be false about the workspace (CRW-646 c2, and the review finding on this pull request).
+//
+// Every removal refuses to touch anything another writer put there. The lock file is NOT touched: the
+// session lock's own release already removed the file this call created, and a file that appeared
+// again belongs to a competing holder. The directories go through rmdir, which removes an empty
+// directory only, so a session file, a plan or a fresh lock a concurrent writer left keeps the tree.
+// The .gitignore is removed only while it still holds exactly the text this package writes.
+func loopInitRemoveCreatedStateRoot(cwd string, stateRootExisted bool) {
+	root := filepath.Join(cwd, crwdir.DirName)
+	_ = syscall.Rmdir(filepath.Join(root, state.SessionsSubdir))
+	if stateRootExisted {
+		return
+	}
+	ignore := filepath.Join(root, ".gitignore")
+	if raw, err := os.ReadFile(ignore); err == nil && string(raw) == crwdir.GitignoreText {
+		_ = os.Remove(ignore)
+	}
+	_ = syscall.Rmdir(root)
 }
 
 // loopInitPlanRefusal is the one "a plan of this slug must not be created" predicate: init's outer

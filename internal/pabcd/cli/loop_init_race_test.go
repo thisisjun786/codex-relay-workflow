@@ -387,7 +387,9 @@ func TestLoopInitAnswersAlreadyExistsWhenTheLockTimesOut(t *testing.T) {
 			t.Fatal(err)
 		}
 		go func() {
-			time.Sleep(200 * time.Millisecond) // after the lock's own 75 ms budget
+			// Publish well after the lock's own 75 ms budget and inside the loser's extended wait, so the
+			// case proves that wait holds the criterion's answer rather than the lock's busy message.
+			time.Sleep(1300 * time.Millisecond)
 			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Ship the export feature"})
 			published <- goalplan.WriteGoalplan(cwd, plan)
 		}()
@@ -528,11 +530,16 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	const id = "rec-slock"
 	const slug = "bound-objective"
 	loopSession(t, cwd, id)
+	published := make(chan error, 1)
 	loopInitAfterAbsenceCheck = func() {
-		plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
-		if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
-			t.Fatal(err)
-		}
+		// The competing init holds the session lock and publishes only after this init's session-lock
+		// budget (about 285 ms) has run out, so the loser is already reporting the lock error when the
+		// plan appears and must still answer the criterion's refusal.
+		go func() {
+			time.Sleep(600 * time.Millisecond)
+			plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "Bound objective"})
+			published <- goalplan.WriteGoalplan(cwd, plan)
+		}()
 	}
 	t.Cleanup(func() { loopInitAfterAbsenceCheck = nil })
 	// Another holder keeps the session lock file, so acquisition runs out its budget.
@@ -544,5 +551,8 @@ func TestLoopInitAnswersAlreadyExistsWhenTheSessionLockTimesOut(t *testing.T) {
 	want := "loop init: a plan already exists at slug '" + slug + "' (use show/validate)"
 	if result.Code != 1 || result.Output != want {
 		t.Fatalf("got %d %q\nwant 1 %q", result.Code, result.Output, want)
+	}
+	if err := <-published; err != nil {
+		t.Fatalf("the competing init could not publish: %v", err)
 	}
 }
