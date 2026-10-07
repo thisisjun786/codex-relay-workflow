@@ -326,10 +326,17 @@ const memlogRedacted = "***"
 // kernel kept apart, not on the joined line, so a value that carries a space is masked
 // whole. The group assignment keeps the unmasked arguments, so a mask never changes which
 // group a process is counted in.
+//
+// The decision reads the original words and skips none of them; masking writes only into the
+// output list. A word that was masked as the value of a valueless credential option is judged
+// again as a name, so a credential option that follows one has its own value masked too. That
+// over-masks the value of a credential option whose name is not itself a credential (the word
+// after it is masked as if it were a value), which is accepted: the alternative leaves the
+// second credential option's value in the clear.
 func memlogRedactCommand(args []string) string {
 	tokens := append([]string(nil), args...)
-	for i := 0; i < len(tokens); i++ {
-		name, _, hasValue := strings.Cut(tokens[i], "=")
+	for i := range args {
+		name, _, hasValue := strings.Cut(args[i], "=")
 		switch {
 		case hasValue:
 			if memlogNamesACredential(name) {
@@ -337,7 +344,6 @@ func memlogRedactCommand(args []string) string {
 			}
 		case strings.HasPrefix(name, "-") && memlogNamesACredential(name) && i+1 < len(tokens):
 			tokens[i+1] = memlogRedacted
-			i++
 		}
 	}
 	return memlogShorten(strings.Join(tokens, " "))
