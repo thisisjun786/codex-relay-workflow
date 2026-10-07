@@ -10,9 +10,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -277,4 +279,86 @@ func TestTheOperatorCommandSurface(t *testing.T) {
 	if _, stderr, code := run("unpack"); code != install.Usage || !strings.Contains(stderr, "backup-state") {
 		t.Fatalf("invalid choice: exit %d %s", code, stderr)
 	}
+}
+
+// Failure class 1 (data loss): the listing's probe of a linked store's log must not read a filesystem error that is
+// not ENOENT as "there is no log" (CRW-862 generation 3). The store's database resolves to a file whose name is 252
+// bytes, so its "-wal" name is 256 bytes, past NAME_MAX: the probe fails with ENAMETOOLONG while the database itself
+// opens. Before the fix that error was read as absence, so the copy was taken without the log, the integrity gate
+// passed on the database alone and the manifest marked a restore candidate although committed frames may have been
+// left out. Refused after the fix, naming the log's path and the error, with no artifact left behind.
+//
+// The operator command is the route that reaches the listing: the install route reads the store's schema first, and
+// that reading refuses on the same too-long name before the listing runs. The control keeps the other half of the
+// rule: a linked store whose log really is absent is still copied.
+//
+// sequential: replaces the service reading.
+func TestTheBackupRefusesALogProbeErrorThatIsNotAbsence(t *testing.T) {
+	// linkedStore points the state directory's relay.sqlite3 at a database under data/ and returns the path it
+	// resolves to, which is the layout a relay that keeps its store elsewhere leaves; the write gate sits beside the
+	// resolved database, where the relay's own writers leave it.
+	linkedStore := func(t *testing.T, h *host, name string) string {
+		t.Helper()
+		dir := filepath.Join(h.relayState, "data")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// The database is made under a short name and renamed: SQLite could not create its own sidecars beside a name
+		// past NAME_MAX, so it could not be created there at all.
+		short := filepath.Join(dir, "real.sqlite3")
+		testsupport.Create(t, short, "", "go")
+		real := filepath.Join(dir, name)
+		if real != short {
+			if err := os.Rename(short, real); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Remove(filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(real, filepath.Join(h.relayState, "relay.sqlite3")); err != nil {
+			t.Fatal(err)
+		}
+		return real
+	}
+	stopped := func(t *testing.T) {
+		t.Helper()
+		restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+			return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+		})
+		t.Cleanup(restore)
+	}
+	t.Run("the probe fails", func(t *testing.T) {
+		h := backupStateHost(t)
+		stopped(t)
+		real := linkedStore(t, h, strings.Repeat("d", 252))
+		// the construction this test is about: the database opens and its log's name is past NAME_MAX
+		if _, err := os.Lstat(real); err != nil {
+			t.Fatalf("the resolved database cannot be examined: %v", err)
+		}
+		if _, err := os.Lstat(real + "-wal"); !errors.Is(err, syscall.ENAMETOOLONG) {
+			t.Fatalf("the fixture needs the -wal name past NAME_MAX: os.Lstat(%q) = %v", real+"-wal", err)
+		}
+		dest := filepath.Join(h.home, "operator-backup")
+		result, code := install.BackupState(context.Background(), h.options(), dest)
+		if code != install.Refused || at(result, "applied") != false {
+			t.Fatalf("a log probe error that is not absence must refuse: exit %d\n%s", code, golden.Canon(result))
+		}
+		refused := text(at(result, "refused"))
+		if !strings.Contains(refused, real+"-wal") || !strings.Contains(refused, "file name too long") {
+			t.Fatalf("the refusal must name the log's path and the error: %s", refused)
+		}
+		nothingAt(t, dest)
+		nothingAt(t, dest+install.ManifestSuffix)
+	})
+	t.Run("the log is absent", func(t *testing.T) {
+		h := backupStateHost(t)
+		stopped(t)
+		linkedStore(t, h, "real.sqlite3")
+		dest := filepath.Join(h.home, "operator-backup")
+		result, code := install.BackupState(context.Background(), h.options(), dest)
+		if code != install.OK || at(result, "applied") != true || at(result, "stateBackup", "made") != true {
+			t.Fatalf("a linked store with no log must still be copied: exit %d\n%s", code, golden.Canon(result))
+		}
+	})
 }

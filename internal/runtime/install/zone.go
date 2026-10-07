@@ -667,6 +667,11 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 				return nil, nil, fmt.Errorf("the state directory already holds %s, which the store's log %s would have to be copied over", walSidecar, resolved+"-wal")
 			}
 			entries = append(entries, backedUp{Path: walSidecar, Kind: "link-file", Size: info.Size(), Mode: uint32(info.Mode().Perm()), CopyMode: uint32(copyMode(false, info.Mode().Perm())), LinkTarget: resolved + "-wal", source: resolved + "-wal", storeWal: true})
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			// A probe error that is not ENOENT (EIO, ESTALE, EACCES, ENAMETOOLONG) must not be read as "there is no
+			// log": the database would be copied without its log and the manifest would mark a restore candidate
+			// although committed frames were left out (CRW-862 generation 3, failure class 1).
+			return nil, nil, fmt.Errorf("the store's write-ahead log %s could not be examined: %v", resolved+"-wal", err)
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
