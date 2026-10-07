@@ -423,6 +423,17 @@ func statusTree(t *testing.T, root string) []string {
 // configuration directory nor the state directory gains a file.
 func TestStatusReadsWriteNothing(t *testing.T) {
 	root := t.TempDir()
+	// The real manage path runs below, so the argument list is recorded around it rather than
+	// faked: this test must discriminate the non-writing form of each command, and a fixture with
+	// no relay store would otherwise let dag-review exit before it ever reaches the offset write
+	// the flag suppresses.
+	previous := statusManage
+	var calls []string
+	statusManage = func(ctx context.Context, args []string) (int, string, string) {
+		calls = append(calls, strings.Join(args, " "))
+		return statusRunManage(ctx, args)
+	}
+	t.Cleanup(func() { statusManage = previous })
 	codexHome := filepath.Join(root, "codex-home")
 	stateRoot := filepath.Join(root, "xdg-state")
 	configHome := filepath.Join(root, "xdg-config")
@@ -468,6 +479,17 @@ func TestStatusReadsWriteNothing(t *testing.T) {
 	after := statusTree(t, root)
 	if strings.Join(before, "\n") != strings.Join(after, "\n") {
 		t.Fatalf("the request changed the tree:\nbefore: %v\nafter:  %v", before, after)
+	}
+	// The same run proves the argument lists: the file comparison alone cannot tell the two
+	// commands' non-writing forms apart when a fixture stops them before the write.
+	want := []string{statusArgRelay, statusArgCapacity, statusArgDag, statusArgHostRead}
+	if len(calls) != len(want) {
+		t.Fatalf("manage calls = %q, want %q", calls, want)
+	}
+	for i, args := range want {
+		if calls[i] != args {
+			t.Fatalf("manage call %d = %q, want %q (all %q)", i, calls[i], args, calls)
+		}
 	}
 }
 

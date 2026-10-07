@@ -140,7 +140,7 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
               key={`relationship-${index}`}
               id={text(relationship.issueKey)}
               sub={`generation ${text(relationship.executionGeneration)} · ${text(relationship.relationshipStatus)} · next ${text(relationship.nextExpectedAction)} · head ${text(relationship.head?.revisionHash)}`}
-              state={relationship.read?.state ?? "ok"}
+              state={relationship.read?.state ?? "unknown"}
               reason={relationship.read?.reason}
             />
           )}
@@ -157,7 +157,7 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
               key={`plan-${index}`}
               id={text(plan.planId)}
               sub={`revision ${text(plan.revision)} · ${stagesText(plan.stages)} · blocked ${text(plan.blocked)} of ${text(plan.denominator)}`}
-              state={plan.read?.state ?? "ok"}
+              state={plan.read?.state ?? "unknown"}
               reason={plan.read?.reason}
             />
           )}
@@ -174,7 +174,7 @@ function RelaySection({ source }: { source: StatusSource<RelayDocument> }) {
               key={`turn-${index}`}
               id={`#${text(turn.prNumber)}`}
               sub={`${text(turn.state)} · holder ${text(turn.holderTaskId)} · updated ${text(turn.updatedAt)}`}
-              state={turn.read?.state ?? "ok"}
+              state={turn.read?.state ?? "unknown"}
               reason={turn.read?.reason}
             />
           )}
