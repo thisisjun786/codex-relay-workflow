@@ -61,7 +61,7 @@ type policyWriteDigest struct {
 	Digest string `json:"digest"`
 	// RecordBackup is the wiring record's own backup, taken by the installer. It is a different
 	// artifact from the top-level backup, which holds the policy file's previous bytes.
-	RecordBackup string `json:"recordBackup,omitempty"`
+	RecordBackup pathText `json:"recordBackup,omitempty"`
 	// RestartRequired is the installer's advice about a bridge or relay service already running.
 	RestartRequired string `json:"restartRequired,omitempty"`
 }
@@ -78,7 +78,9 @@ type policyWriteBody struct {
 	Applied    string             `json:"applied"`
 	Actions    []string           `json:"actions"`
 	Backup     pathText           `json:"backup,omitempty"`
-	Warnings   []string           `json:"warnings,omitempty"`
+	// Warnings may name a path (a directory that could not be synced, a policy that was written and
+	// whose record could not be read back), so they carry the same spelling the error body's do.
+	Warnings textList `json:"warnings,omitempty"`
 }
 
 // policyWriteErrorBody is every refusal of the write route. Only the fields the outcome has are
@@ -94,7 +96,11 @@ type policyWriteErrorBody struct {
 	RegisteredDigest string      `json:"registeredDigest,omitempty"`
 	Backup           pathText    `json:"backup,omitempty"`
 	Recovery         messageText `json:"recovery,omitempty"`
-	Step             string      `json:"step,omitempty"`
+	// Kept names a file holding bytes this write did not create and therefore never deletes. A
+	// recovery that names it is the only place those bytes exist, so dropping it from the body would
+	// leave the caller with no way to reach them.
+	Kept pathText `json:"kept,omitempty"`
+	Step string   `json:"step,omitempty"`
 	// Warnings carry what the outcome could not establish: a restore whose directory was not synced,
 	// for example, is still a restore but may not survive a power loss.
 	Warnings textList `json:"warnings,omitempty"`
@@ -187,7 +193,7 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 		var registered *policyWriteDigest
 		if result.RegisteredDigest != "" {
 			registered = &policyWriteDigest{Digest: result.RegisteredDigest,
-				RecordBackup: result.RecordBackup, RestartRequired: result.RestartRequired}
+				RecordBackup: pathText(result.RecordBackup), RestartRequired: result.RestartRequired}
 		}
 		return Response{Status: http.StatusOK, Body: policyWriteBody{
 			Stored:     policyWriteDigest{Digest: result.StoredDigest},
@@ -195,7 +201,7 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 			Applied:    result.Applied,
 			Actions:    emptyIfNil(result.Actions),
 			Backup:     pathText(result.Backup),
-			Warnings:   result.Warnings,
+			Warnings:   textList(result.Warnings),
 		}}, nil
 	case policystore.WriteStaleDigest:
 		return Response{Status: http.StatusConflict, Body: policyWriteErrorBody{
@@ -213,7 +219,8 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 	case policystore.WriteRecoveryNeeded:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "recovery_needed", FileDigest: result.FileDigest, RegisteredDigest: result.RegisteredDigest,
-			Backup: pathText(result.Backup), Recovery: messageText(result.Recovery), Errors: textList(emptyIfNil(result.Errors))}}, nil
+			Backup: pathText(result.Backup), Kept: pathText(result.Kept),
+			Recovery: messageText(result.Recovery), Errors: textList(emptyIfNil(result.Errors))}}, nil
 	case policystore.WriteCancelled:
 		return Response{Status: http.StatusInternalServerError, Body: policyWriteErrorBody{
 			Error: "cancelled", Step: result.Step, Backup: pathText(result.Backup), FileDigest: result.FileDigest}}, nil

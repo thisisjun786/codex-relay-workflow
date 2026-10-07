@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
 
@@ -107,9 +109,9 @@ type RegisterAnswer struct {
 // been decoded to its byte.
 type RegisterFunc func(ctx context.Context, path string) RegisterAnswer
 
-// writeLocate and writePublish are the two steps a test replaces to drive a state it cannot
-// otherwise reach: the record as a request saw it before it waited for the lock, and the moment
-// between the replacement and the registration. The production values are Locate and publishPolicy.
+// writeLocate and writeSwap are the two steps a test replaces to drive a state it cannot otherwise
+// reach: the record as a request saw it before it waited for the lock, and the moment between the
+// replacement and the registration. The production values are Locate and swapPolicy.
 var (
 	writeLocate = Locate
 	writeSwap   = swapPolicy
@@ -165,11 +167,14 @@ type WriteResult struct {
 	// RestartRequired is the installer's advice about a bridge or relay service already running: it
 	// keeps the policy it started under until it is restarted.
 	RestartRequired string
-	Recovery        string
-	Restored        bool
-	Applied         string
-	Actions         []string
-	Step            string
+	// Kept names a file holding bytes this write did not create and therefore never deletes (a
+	// document that raced the exchange). It is empty when no such bytes exist.
+	Kept     string
+	Recovery string
+	Restored bool
+	Applied  string
+	Actions  []string
+	Step     string
 }
 
 // Write applies one change to the execution policy the wiring record names, and brings the record's
@@ -310,15 +315,13 @@ func Write(ctx context.Context, env LookupEnv, opts WriteOptions, request WriteR
 	case kept != "":
 		// Bytes this call did not create are kept: the file and the record do not describe one
 		// document, so the answer is a recovery that names where those bytes are.
-		if kept != "" {
-			warnings = append(warnings, "the bytes the exchange displaced are kept at "+kept)
-		}
 		observed, readErr := digestAt(path)
 		if readErr != nil {
 			observed = ""
 		}
 		return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: observed, RegisteredDigest: original, Backup: reported,
-			Recovery: recoveryAdvice(path, reported), Warnings: warnings, Errors: []string{err.Error()}}
+			Kept: pyvalue.FSDecode(kept), Recovery: recoveryAdviceKept(path, reported, pyvalue.FSDecode(kept)),
+			Warnings: warnings, Errors: []string{err.Error()}}
 	case err == nil:
 		// The file held the bytes this run read and now holds the candidate.
 	case errors.Is(err, errPolicyMoved):
@@ -421,6 +424,26 @@ func recoveryFrom(env LookupEnv, path, fileDigest, backup string, warnings []str
 // restart advice. A success established by re-reading (the lost-answer case) passes the zero envelope,
 // because nothing in an answer that was not trusted may be reported.
 func storedResult(ctx context.Context, env LookupEnv, running func(context.Context, LookupEnv) Running, path, stored, backup string, envelope registrationEnvelope, warnings, extra []string) WriteResult {
+	// The registration answers about the file it read, which is the file at the path now: the
+	// installer opens the path itself, so an editor that saved after this run published leaves a
+	// record naming bytes this run did not write. What is stored is therefore read back rather than
+	// assumed to be the candidate.
+	current, readErr := ReadRaw(path)
+	if readErr != nil {
+		// The file cannot be read back, so what is stored is not established: the digest this run tried
+		// to write is not reported as the file's. The record's digest is read rather than assumed, and
+		// is left empty when the record itself cannot be read.
+		located := Locate(env)
+		registered := ""
+		if located.State == Registered && located.RegisteredDigest != "" {
+			registered = located.RegisteredDigest
+		}
+		warnings = append(warnings, "the execution policy could not be read back after the registration: "+readErr.Error())
+		return WriteResult{Kind: WriteRecoveryNeeded, RegisteredDigest: registered, Backup: backup,
+			Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+			Errors: []string{"the execution policy could not be read back after the registration: " + readErr.Error()}}
+	}
+	stored = digestOfBytes(current)
 	registered := stored
 	located := Locate(env)
 	established := located.State == Registered && located.RegisteredDigest != ""
@@ -487,18 +510,26 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 			Errors: []string{detail + "; the file holds neither the bytes this write published nor the ones the record names, so it was left as it stands"}}
 	}
 	var syncErr error
+	// keptPath names a file holding bytes this call did not delete. A publication whose exchange ran
+	// and whose read-back failed leaves the bytes it displaced at that path, so the file is named in
+	// the answer rather than silently abandoned.
+	var keptPath string
 	if observed == published {
 		displaced, kept, err := swap(ctx, encoded, current, raw, mode)
 		switch {
 		case err == nil:
-		case kept != "":
-			warnings = append(warnings, "the bytes the exchange displaced are kept at "+kept)
-			fallthrough
 		case errors.Is(err, errPolicyMoved):
 			now, _ := digestAt(path)
 			return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: now, RegisteredDigest: original, Backup: backup,
-				Recovery: recoveryAdvice(path, backup), Warnings: warnings,
+				Kept: pyvalue.FSDecode(kept), Recovery: recoveryAdviceKept(path, backup, pyvalue.FSDecode(kept)), Warnings: warnings,
 				Errors: []string{detail + "; the file changed while the restore was running, so it was left as it stands"}}
+		case errors.Is(err, errExchangeHappened):
+			// The exchange ran, so the original bytes are at the path; what it displaced could not be
+			// read back, or the exchange could not be undone. What the path holds is read below rather
+			// than assumed, the durability of the replacement was not established, and the file the
+			// exchange left its bytes at is named rather than deleted.
+			keptPath = pyvalue.FSDecode(kept)
+			syncErr = err
 		case displaced == nil:
 			now, _ := digestAt(path)
 			return WriteResult{Kind: WriteRecoveryNeeded, FileDigest: now, RegisteredDigest: original, Backup: backup,
@@ -539,11 +570,11 @@ func restoreResult(ctx context.Context, swap SwapFunc, env LookupEnv, encoded, p
 	}
 	if syncErr != nil {
 		return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
-			Backup: backup, Warnings: append(warnings, "the original bytes are back and the directory could not be synced ("+syncErr.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
+			Backup: backup, Kept: keptPath, Warnings: append(warnings, "the original bytes are back and the restore's durability was not established ("+syncErr.Error()+"), so a host that loses power now may find the new bytes; the next write is then refused because the file and the wiring record name different digests"),
 			Errors: []string{detail}, Step: "restored"}
 	}
 	return WriteResult{Kind: WriteRegisterFailed, Restored: true, FileDigest: confirmed, RegisteredDigest: original,
-		Backup: backup, Warnings: warnings, Errors: []string{detail}, Step: "restored"}
+		Backup: backup, Kept: keptPath, Warnings: warnings, Errors: []string{detail}, Step: "restored"}
 }
 
 // registerWithInstaller is the production registration step: the same code crw install register-mcp
@@ -610,6 +641,16 @@ func recoveryAdvice(path, backup string) string {
 	return advice
 }
 
+// recoveryAdviceKept is recoveryAdvice for a write that kept bytes another writer put there: the kept
+// file is named, because it is the only place those bytes exist.
+func recoveryAdviceKept(path, backup, kept string) string {
+	advice := recoveryAdvice(path, backup)
+	if kept != "" {
+		advice += "; the bytes this write did not create are kept at " + kept
+	}
+	return advice
+}
+
 // candidateBytes renders the bytes one change produces, through the same decode, apply and encode
 // the check judged the candidate with, so the bytes written are exactly the bytes Check approved.
 func candidateBytes(raw []byte, change Change) ([]byte, error) {
@@ -642,6 +683,19 @@ func digestAt(path string) (string, error) {
 		return "", err
 	}
 	return digestOfBytes(raw), nil
+}
+
+// readRegularKernel reads the bytes of the regular file at path, which is already a kernel spelling
+// (os.CreateTemp's answer, for example). Unlike ReadRaw it does not fs-encode the path again: a
+// directory whose own name holds bytes that look like a WTF-8 surrogate would otherwise be read as
+// a different file or refused.
+func readRegularKernel(path string) ([]byte, error) {
+	file, err := reading.OpenRegular(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
 // backupPolicy writes the bytes the decision was made from to <path>.backup-<UTC> and fsyncs them
@@ -682,13 +736,6 @@ func backupPolicy(path string, raw []byte, now time.Time) (string, error) {
 	return name, nil
 }
 
-// publishPolicy replaces the policy file durably: a temporary file in the file's own directory takes
-// the mode the file already has, its bytes are fsynced, it is renamed over the file, and the
-// directory is fsynced so the rename itself survives a power loss. renamed reports whether the path
-// now holds the new bytes: a failure after the rename is a file that was replaced whose durability
-// was not established, which a caller must not report as nothing written.
-// The context is checked immediately before the rename: everything before it is reversible, and a
-// request that ended during the temporary file's write must not replace the policy.
 // swapPolicy replaces the policy file durably and only while it still holds expected: a temporary
 // file beside it takes the mode the file already has and the new bytes, its contents are fsynced,
 // the two are exchanged atomically, and the directory is fsynced so the exchange survives a power
@@ -737,7 +784,7 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 	// are lost to a decision made before it saved.
 	// The displaced content is read with the package's own non-blocking reader, so a path that became a
 	// named pipe after it was judged cannot hang the request while the policy lock is held.
-	displaced, readErr := readRegular(temporary)
+	displaced, readErr := readRegularKernel(temporary)
 	if readErr != nil {
 		// The exchange ran and what it displaced cannot be read. The bytes are kept at the temporary
 		// path, which is never removed, and the caller is told the replacement stands.
@@ -754,7 +801,7 @@ func swapPolicy(ctx context.Context, path string, expected, next []byte, mode os
 	}
 	// The undo moved this call's own candidate back to the temporary path unless a writer saved again
 	// in between; that writer's document is kept and named rather than deleted.
-	if back, backErr := readRegular(temporary); backErr == nil && bytes.Equal(back, next) {
+	if back, backErr := readRegularKernel(temporary); backErr == nil && bytes.Equal(back, next) {
 		_ = os.Remove(temporary)
 		return nil, "", errPolicyMoved
 	}
