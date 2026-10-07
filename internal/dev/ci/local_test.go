@@ -17,13 +17,44 @@ import (
 // localFixture is a scratch repository with one commit.
 type localFixture struct {
 	*fixtureRepo
+	// work is the work root this fixture's runs make their clean worktrees in: outside the temporary
+	// directories, and removed when the test ends.
+	work string
+}
+
+// localTestWorkRoot is a work root for a test: a directory of its own under CRW_CI_TEST_WORK_ROOT
+// (or the user's cache directory), removed when the test ends. The root must lie outside TMPDIR,
+// /tmp and /var/tmp, the same rule the command applies; where no such directory is configured the
+// test says so and is skipped, rather than running in a place the command would refuse.
+func localTestWorkRoot(t *testing.T) string {
+	t.Helper()
+	base := os.Getenv("CRW_CI_TEST_WORK_ROOT")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skip("no work root outside the temporary directories: set CRW_CI_TEST_WORK_ROOT")
+		}
+		base = filepath.Join(home, ".cache", "crw-ci-local-test")
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(base, "work-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	if _, err := localWorkRoot(localOptions{WorkRoot: root}); err != nil {
+		t.Skipf("the test work root %s is refused (%v): set CRW_CI_TEST_WORK_ROOT to a directory outside TMPDIR, /tmp and /var/tmp", root, err)
+	}
+	return root
 }
 
 // newLocalFixture makes a repository whose HEAD carries the files the run reads: a workflow, a
 // go.mod, a scripts/ci/secrets.sh, a go.sum and a web/package-lock.json.
 func newLocalFixture(t *testing.T) *localFixture {
 	t.Helper()
-	repo := &localFixture{newRepo(t)}
+	repo := &localFixture{fixtureRepo: newRepo(t), work: localTestWorkRoot(t)}
 	repo.write(".github/workflows/ci.yml", localFixtureWorkflow)
 	repo.write("go.mod", "module fixture\n\ngo 1.27\n\ntoolchain go1.27.1\n\nrequire (\n\thonx.dev/x v1.0.0\n\thonnef.co/go/tools v0.8.1\n)\n")
 	repo.write("go.sum", "example.com/x v1.0.0 h1:fixture\n")
@@ -69,11 +100,12 @@ func localFixturePlan(command string) []localJob {
 // localRunOptions is a run over the fixture, with the given table.
 func localRunOptions(repo *localFixture, plan []localJob, record string) localOptions {
 	return localOptions{
-		Root:   repo.root,
-		Commit: "HEAD",
-		Record: record,
-		Runner: "local",
-		Plan:   plan,
+		Root:     repo.root,
+		Commit:   "HEAD",
+		Record:   record,
+		Runner:   "local",
+		Plan:     plan,
+		WorkRoot: repo.work,
 	}
 }
 

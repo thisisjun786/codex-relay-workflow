@@ -237,6 +237,8 @@ type workflowStep struct {
 	name string
 	uses string
 	run  string
+	// nodeVersion is the with: node-version a setup-node step names, ""
+	nodeVersion string
 }
 
 // workflowJob is one job of a parsed ci.yml.
@@ -248,6 +250,7 @@ type workflowJob struct {
 var (
 	localWorkflowJobHeader = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):$`)
 	localWorkflowStepKey   = regexp.MustCompile(`^        ([a-z][a-z-]*):(?: (.*))?$`)
+	localWorkflowWithNode  = regexp.MustCompile(`^          node-version: (.+)$`)
 )
 
 // parseWorkflow reads .github/workflows/ci.yml's job and step names, their run text (a block
@@ -283,6 +286,10 @@ func parseWorkflow(text string) ([]workflowJob, error) {
 			continue
 		}
 		step := &(*steps)[len(*steps)-1]
+		if w := localWorkflowWithNode.FindStringSubmatch(line); w != nil {
+			step.nodeVersion = localYAMLScalar(w[1])
+			continue
+		}
 		m := localWorkflowStepKey.FindStringSubmatch(line)
 		if m == nil {
 			continue

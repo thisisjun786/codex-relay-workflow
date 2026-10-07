@@ -42,7 +42,11 @@ type localOptions struct {
 	Runner    string
 	HeavyGate string
 	Keep      bool
-	Plan      []localJob
+	// WorkRoot is the directory the clean worktree is made in; it may not be inside TMPDIR, /tmp or /var/tmp.
+	WorkRoot string
+	// Parallel is the Go test parallelism every step runs with (GOFLAGS=-p=N); 0 means 4.
+	Parallel int
+	Plan     []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
 	// output is the file the changed-path decision writes its answer to, set once per run.
@@ -65,6 +69,8 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	heavyGate := flags.String("heavy-gate", "", "the heavy-check gate to run heavy steps through (default $"+localHeavyGateEnv+")")
 	runner := flags.String("runner", "local", "where this run happened; the record names it")
 	keep := flags.Bool("keep", false, "keep the clean worktree for debugging")
+	workRoot := flags.String("work-root", "", "the directory the clean worktree is made in (default: the XDG state directory); never inside TMPDIR, /tmp or /var/tmp")
+	parallel := flags.Int("parallel", 4, "the Go test parallelism every step runs with (GOFLAGS=-p=N)")
 	description := "Run every job and step of .github/workflows/ci.yml locally, in a clean worktree of the\n" +
 		"commit being verified, and write a verification-record/1. The record is answered without\n" +
 		"running again only when the tree, the ci.yml digest, the tool versions, the dependency\n" +
@@ -84,6 +90,8 @@ func Local(args []string, stdout, stderr io.Writer) int {
 		Runner:    *runner,
 		HeavyGate: *heavyGate,
 		Keep:      *keep,
+		WorkRoot:  *workRoot,
+		Parallel:  *parallel,
 	}
 	if opts.Record == "" {
 		opts.Record = filepath.Join(root, localRecordDefault)
@@ -143,6 +151,9 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 			return verificationRecord{}, false, fmt.Errorf("--reuse: %w", err)
 		}
 		ok, why := localReuse(reused, current)
+		if ok {
+			ok, why = localValidateReuse(reused, plan)
+		}
 		if ok {
 			// The record answers: write it to --record so the caller finds it where it asked.
 			if _, err := writeRecord(opts.Record, reused); err != nil {
@@ -269,7 +280,14 @@ func localRepository(root string) string {
 
 // localExecute runs the table in a clean worktree of the verified commit and assembles the record.
 func localExecute(opts localOptions, plan []localJob, current verificationRecord, stdout io.Writer) (verificationRecord, bool, error) {
-	temp, err := os.MkdirTemp(localTempDir(), localTempPrefix)
+	root, err := localWorkRoot(opts)
+	if err != nil {
+		return verificationRecord{}, false, err
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return verificationRecord{}, false, err
+	}
+	temp, err := os.MkdirTemp(root, localTempPrefix)
 	if err != nil {
 		return verificationRecord{}, false, err
 	}
@@ -302,9 +320,32 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 		return verificationRecord{}, false, err
 	}
 	record := current
+	record.Sealed = true
+	record.PlanDigest = planDigest(plan)
+	record.IgnoredEnv = localIgnoredEnv(os.Environ())
 	record.Pins = pins
 	record.Tools = localObservedVersions(current.Tools, pins)
-	record.PinMismatch = localPinMismatch(pins, record.Tools)
+	workflowData, err := os.ReadFile(filepath.Join(worktree, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		return verificationRecord{}, false, err
+	}
+	workflowJobs, err := parseWorkflow(string(workflowData))
+	if err != nil {
+		return verificationRecord{}, false, err
+	}
+	// The record's node pin is the distinct setup-node pins of the workflow; the mismatch is per job.
+	var nodePins []string
+	for _, job := range workflowJobs {
+		for _, step := range job.steps {
+			if step.nodeVersion != "" {
+				nodePins = append(nodePins, step.nodeVersion)
+			}
+		}
+	}
+	if nodes := localSortedUnique(nodePins); len(nodes) > 0 {
+		pins["node"] = strings.Join(nodes, ",")
+	}
+	record.PinMismatch = localSortedUnique(append(localPinMismatch(pins, record.Tools), localNodeMismatch(plan, workflowJobs, record.Tools["node"])...))
 	// The steps read the same base the record names (the blob and secret range) and the commit
 	// itself (the changed-path decisions), so the environment carries the resolved values rather
 	// than the caller's flags.
@@ -459,9 +500,13 @@ func localWriteScript(opts localOptions, command string) (string, error) {
 	return path, nil
 }
 
-// localStepEnv is the isolated environment every step runs in: HOME and the XDG directories point
-// into a temporary root, TZ is UTC, and the caches the host already configured are passed through
-// (they change speed, never the result).
+// localInheritedEnv is the caller's variables a step may inherit. Everything else the caller sets
+// stays out of a step, and localIgnoredEnv names the Go, Node and npm variables that were left out.
+var localInheritedEnv = []string{"PATH", "LANG", "TMPDIR", "GOCACHE", "GOMODCACHE", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_CACHE"}
+
+// localStepEnv is the sealed environment every step runs in: HOME and the XDG directories point into
+// the run's own home, TZ is UTC, GOTOOLCHAIN is local, and GOFLAGS is set by the engine alone (its
+// parallelism). The caller's other variables are not inherited.
 func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	runner := filepath.Join(temp, "runner")
 	for _, dir := range []string{home, filepath.Join(home, "config"), filepath.Join(home, "cache"),
@@ -474,9 +519,10 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	if err := os.WriteFile(opts.output, nil, 0o644); err != nil {
 		return nil, err
 	}
-	// GOENV is never inherited: the host's Go environment file can change what the Go steps build.
-	// With HOME and XDG_CONFIG_HOME in the run's own home, Go reads its default file there, which is
-	// empty (localIsolatedGoEnv).
+	parallel := opts.Parallel
+	if parallel <= 0 {
+		parallel = 4
+	}
 	env := []string{
 		"HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
@@ -484,22 +530,99 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"XDG_DATA_HOME=" + filepath.Join(home, "data"),
 		"XDG_STATE_HOME=" + filepath.Join(home, "state"),
 		"TZ=UTC",
+		"GOTOOLCHAIN=local",
+		fmt.Sprintf("GOFLAGS=-p=%d", parallel),
 		"RUNNER_TEMP=" + runner,
 		"GITHUB_OUTPUT=" + opts.output,
 		"GITHUB_EVENT_NAME=pull_request",
 	}
-	// The host's caches, PATH and the user runtime directory are inherited: they decide how fast a
-	// step runs and whether the heavy-check gate can reach the user's systemd, not what it
-	// decides. GOFLAGS is left as the host set it, and GOCACHE is never cleared.
-	for _, name := range []string{"PATH", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOPROXY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+	for _, name := range localInheritedEnv {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}
 	}
-	// GOFLAGS is inherited without the flags that select or skip tests: a full run runs every test.
-	env = append(env, "GOFLAGS="+localFullRunFlags(os.Getenv("GOFLAGS")))
 	env = append(env, opts.Env...)
 	return env, nil
+}
+
+// localIgnoredEnv names the caller's variables a sealed step does not inherit and that could change
+// what a step does: the Go, cgo, Node and npm settings. The record names them; it never carries their
+// values.
+func localIgnoredEnv(environ []string) []string {
+	inherited := map[string]bool{}
+	for _, name := range localInheritedEnv {
+		inherited[name] = true
+	}
+	var ignored []string
+	for _, entry := range environ {
+		name, _, _ := strings.Cut(entry, "=")
+		if inherited[name] {
+			continue
+		}
+		if strings.HasPrefix(name, "GO") || strings.HasPrefix(name, "CGO_") || strings.HasPrefix(name, "NODE") || strings.HasPrefix(name, "NPM_") || strings.HasPrefix(name, "npm_") {
+			ignored = append(ignored, name)
+		}
+	}
+	return localSortedUnique(ignored)
+}
+
+// localNodeMismatch names every job whose ci.yml setup-node pin differs from the Node the host runs
+// the steps with. The pin is the job's own, read from its setup-node step, never one shared pin.
+func localNodeMismatch(plan []localJob, jobs []workflowJob, observed string) []string {
+	var out []string
+	for _, job := range plan {
+		wj := workflowJobNamed(jobs, job.name)
+		if wj == nil {
+			continue
+		}
+		pin := ""
+		for _, step := range wj.steps {
+			if step.nodeVersion != "" {
+				pin = step.nodeVersion
+			}
+		}
+		if pin != "" && observed != pin {
+			out = append(out, job.name+":node")
+		}
+	}
+	return out
+}
+
+// localWorkRoot is the directory a clean worktree is made in: the caller's choice, or the XDG state
+// directory of the real user. A root inside TMPDIR, /tmp or /var/tmp is refused, because the
+// repository's own checkout tests assert the checkout lies outside them.
+func localWorkRoot(opts localOptions) (string, error) {
+	root := opts.WorkRoot
+	if root == "" {
+		state := os.Getenv("XDG_STATE_HOME")
+		if state == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			state = filepath.Join(home, ".local", "state")
+		}
+		root = filepath.Join(state, "crw-ci-local")
+	}
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("the work root %q is not absolute", root)
+	}
+	root = filepath.Clean(root)
+	for _, banned := range []string{localTempDir(), os.TempDir(), "/tmp", "/var/tmp"} {
+		if banned == "" {
+			continue
+		}
+		if localWithin(root, filepath.Clean(banned)) {
+			return "", fmt.Errorf("work_root_in_tmp: %s is inside %s; choose a work root outside the temporary directories with --work-root", root, banned)
+		}
+	}
+	return root, nil
+}
+
+// localWithin reports whether path is dir or lies below it.
+func localWithin(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // localStepEnvValues is a step's own environment with the run's placeholders filled in.

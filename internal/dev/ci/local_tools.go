@@ -38,11 +38,6 @@ func localToolPinsFrom(read func(path string) ([]byte, error)) (map[string]strin
 			pins["staticcheck"] = string(m[2])
 		}
 	}
-	if data, err := read(".github/workflows/ci.yml"); err == nil {
-		if m := ciNodeVersion.FindSubmatch(data); m != nil {
-			pins["node"] = string(m[1])
-		}
-	}
 	if data, err := read("scripts/ci/secrets.sh"); err == nil {
 		if m := secretsVersion.FindSubmatch(data); m != nil {
 			pins["gitleaks"] = string(m[1])

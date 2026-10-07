@@ -106,6 +106,34 @@ A step's result is `passed`, `failed`, `missing_tool`,
 is `failed`, `missing_tool` or `skipped`: one step that fails, does not run
 or lacks its tool fails the run, and the record names it with its reason.
 
+### Sealed runs
+
+A step runs in a sealed environment built from an allowlist, not from the caller's environment
+minus a denylist: HOME and the XDG directories point into the run's own home, TZ is UTC,
+GOTOOLCHAIN is local, and GOFLAGS is set by the engine alone (its parallelism, from
+--parallel). The caller's other variables do not reach a step, and the record names the Go,
+cgo, Node and npm variables it left out in ignoredEnv (names only). A caller's GOFLAGS with
+-exec, -toolexec, -overlay, -modfile, -run or -count therefore cannot change what a step runs.
+
+Each job's Node pin is read from its own setup-node step in the commit's ci.yml, not from a
+shared first match. The host's Node is observed in the same isolation, and a job whose pin
+differs is named in pinMismatch as `job:node`; such a record is kept but never reused. The
+gitleaks and staticcheck pins are the ones secrets.sh and go.mod fix, and the steps fetch
+or run those pins, so they are recorded at the pin.
+
+The clean worktree is made under a work root: the directory given by --work-root, or the XDG
+state directory of the real user. A root inside TMPDIR, /tmp or /var/tmp is refused with the
+name work_root_in_tmp, because the repository's own checkout tests assert the checkout lies
+outside those directories.
+
+### Reuse validation
+
+A record answers a run only when every key above matches and the record is sound: its digest
+is valid, it is sealed, it was made from the plan the commit's table gives (planDigest), it
+matches that plan one job and one step at a time, every step passed (or is a not-applicable
+step the plan marks as such), its result equals the result its steps recompute to, and it has
+no pinMismatch. Any other record is not reused: the engine runs the table again and says why.
+
 ### Reuse
 
 `--reuse <record>` answers an existing record instead of running only when the **tree**, the

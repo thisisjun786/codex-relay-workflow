@@ -60,6 +60,9 @@ type verificationRecord struct {
 	Arch         string            `json:"arch"`
 	Result       string            `json:"result"`
 	Jobs         []recordJob       `json:"jobs"`
+	Sealed       bool              `json:"sealed"`
+	PlanDigest   string            `json:"planDigest"`
+	IgnoredEnv   []string          `json:"ignoredEnv"`
 	Digest       string            `json:"digest"`
 }
 
@@ -290,4 +293,91 @@ func localSortedUnique(items []string) []string {
 	out := slices.DeleteFunc(slices.Clone(items), func(s string) bool { return s == "" })
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+// planDigest is the sha256 of the plan's every field, so a record names the table it was made from.
+func planDigest(plan []localJob) string {
+	var b strings.Builder
+	for _, job := range plan {
+		fmt.Fprintf(&b, "job %q legs %q\n", job.name, job.legs)
+		for _, step := range job.steps {
+			fmt.Fprintf(&b, "step %q kind %q action %q command %q uses %q workdir %q scope %q tool %q env %q legs %q heavy %t note %q\n",
+				step.name, step.kind, step.action, step.command, step.uses, step.workdir, step.scope, step.tool, step.env, step.legs, step.heavy, step.note)
+		}
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// localExpectedJob is one record job the plan produces, with its steps' kinds in order.
+type localExpectedJob struct {
+	name  string
+	kinds []string
+}
+
+// localExpectedJobs is the record's jobs and steps the plan produces, leg by leg, as the engine
+// writes them.
+func localExpectedJobs(plan []localJob) []localExpectedJob {
+	var out []localExpectedJob
+	for _, job := range plan {
+		legs := job.legs
+		if legs == nil {
+			legs = []string{""}
+		}
+		for _, leg := range legs {
+			entry := localExpectedJob{name: job.name}
+			if leg != "" {
+				entry.name = job.name + " (" + leg + ")"
+			}
+			for _, step := range job.steps {
+				if step.legs != nil && !localContains(step.legs, leg) {
+					continue
+				}
+				entry.kinds = append(entry.kinds, step.kind)
+			}
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// localValidateReuse decides whether a record that matches every key may answer the run: it must be
+// sealed, made from this plan, match the plan one job and one step at a time, have every step passed
+// (or an allowed not-applicable step), and carry a result that the steps recompute to.
+func localValidateReuse(reused verificationRecord, plan []localJob) (bool, string) {
+	if !reused.Sealed {
+		return false, "the record is not sealed"
+	}
+	if reused.PlanDigest != planDigest(plan) {
+		return false, "the record was made from another plan"
+	}
+	expected := localExpectedJobs(plan)
+	if len(reused.Jobs) != len(expected) {
+		return false, fmt.Sprintf("the record has %d jobs, the plan has %d", len(reused.Jobs), len(expected))
+	}
+	recomputed := localPass
+	for i, job := range reused.Jobs {
+		want := expected[i]
+		if job.Name != want.name {
+			return false, fmt.Sprintf("job %d is %q, the plan has %q", i, job.Name, want.name)
+		}
+		if len(job.Steps) != len(want.kinds) {
+			return false, fmt.Sprintf("%s has %d steps, the plan has %d", job.Name, len(job.Steps), len(want.kinds))
+		}
+		for n, step := range job.Steps {
+			switch step.Result {
+			case localPassed:
+			case localNotApplicableResult:
+				if want.kinds[n] != localNotApplicable {
+					return false, fmt.Sprintf("%s / %s is not applicable, the plan runs it", job.Name, step.Name)
+				}
+			default:
+				return false, fmt.Sprintf("%s / %s is %s", job.Name, step.Name, step.Result)
+			}
+		}
+	}
+	if recomputed != reused.Result {
+		return false, fmt.Sprintf("the stored result %q does not match its steps (%q)", reused.Result, recomputed)
+	}
+	return true, "every step passed and the record matches the plan"
 }
