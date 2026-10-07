@@ -65,12 +65,15 @@ type policyWriteDigest struct {
 // running relay has it, and the work a caller must still do. The three are separate fields because
 // they are three separate facts.
 type policyWriteBody struct {
-	Stored     policyWriteDigest `json:"stored"`
-	Registered policyWriteDigest `json:"registered"`
-	Applied    string            `json:"applied"`
-	Actions    []string          `json:"actions"`
-	Backup     string            `json:"backup,omitempty"`
-	Warnings   []string          `json:"warnings,omitempty"`
+	Stored policyWriteDigest `json:"stored"`
+	// Registered is omitted when the wiring record could not be read back after the registration
+	// reported success: the digest it names was not established, and reporting the file's digest here
+	// would equate two facts this answer exists to keep apart.
+	Registered *policyWriteDigest `json:"registered,omitempty"`
+	Applied    string             `json:"applied"`
+	Actions    []string           `json:"actions"`
+	Backup     string             `json:"backup,omitempty"`
+	Warnings   []string           `json:"warnings,omitempty"`
 }
 
 // policyWriteErrorBody is every refusal of the write route. Only the fields the outcome has are
@@ -173,9 +176,13 @@ func policyWriteHandler(_ *Env, r *http.Request) (Response, error) {
 		policystore.WriteRequest{ExpectedDigest: request.ExpectedDigest, Change: request.Change})
 	switch result.Kind {
 	case policystore.WriteStored:
+		var registered *policyWriteDigest
+		if result.RegisteredDigest != "" {
+			registered = &policyWriteDigest{Digest: result.RegisteredDigest}
+		}
 		return Response{Status: http.StatusOK, Body: policyWriteBody{
 			Stored:     policyWriteDigest{Digest: result.StoredDigest},
-			Registered: policyWriteDigest{Digest: result.RegisteredDigest},
+			Registered: registered,
 			Applied:    result.Applied,
 			Actions:    emptyIfNil(result.Actions),
 			Backup:     result.Backup,

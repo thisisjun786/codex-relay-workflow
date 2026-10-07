@@ -587,10 +587,20 @@ func TestTheStoredBytesAreTheCandidateTheCheckJudged(t *testing.T) {
 // TestAQueuedWriteDecidesAgainstTheRecordUnderTheLock is the queued-write finding: a request that
 // read the old record before it waited must not refuse a policy another writer has since registered.
 func TestAQueuedWriteDecidesAgainstTheRecordUnderTheLock(t *testing.T) {
-	env, _ := host(t, policyText, true)
+	env, file := host(t, policyText, true)
 	old := digestOf(policyText)
-	// The first locate is answered as the request saw the record before it waited; the second, under
-	// the lock, is the real one, which another writer has already moved to the new digest.
+	// Another writer has already completed: the file holds the new bytes and the record names them.
+	updated, err := candidateBytes([]byte(policyText), removeLegacy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, updated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newDigest := digestOfBytes(updated)
+	rewriteRecord(t, env, file, newDigest)
+	// The queued request read the record before that writer ran, so its first locate is answered with
+	// the digest the record held then; the read under the lock is the real one.
 	first := true
 	restore := writeLocate
 	writeLocate = func(env LookupEnv) Located {
@@ -604,7 +614,8 @@ func TestAQueuedWriteDecidesAgainstTheRecordUnderTheLock(t *testing.T) {
 	t.Cleanup(func() { writeLocate = restore })
 	opts := WriteOptions{Register: updatingRegisters(t, env), Running: unavailableRunning()}
 	result := Write(context.Background(), envOf(env), opts,
-		WriteRequest{ExpectedDigest: old, Change: removeLegacy()})
+		WriteRequest{ExpectedDigest: newDigest,
+			Change: Change{Kind: KindSetAllowed, Model: "openai/gpt-5", Efforts: []string{"high", "max"}}})
 	if result.Kind != WriteStored {
 		t.Fatalf("kind = %q (%v), want %q: a queued write refused against a record it had already outlived", result.Kind, result.Errors, WriteStored)
 	}
@@ -879,5 +890,14 @@ func TestARecordThatCannotBeReadBackIsNotReportedAsTheFileDigest(t *testing.T) {
 	}
 	if len(result.Warnings) == 0 {
 		t.Fatal("a record that could not be read back carries no warning")
+	}
+	if result.RegisteredDigest != "" {
+		t.Fatalf("registered = %q, want it unestablished rather than taken from the file", result.RegisteredDigest)
+	}
+	if result.Applied != AppliedUnverifiable {
+		t.Fatalf("applied = %q, want %q", result.Applied, AppliedUnverifiable)
+	}
+	if result.StoredDigest == "" {
+		t.Fatal("the stored digest is not reported")
 	}
 }
