@@ -149,6 +149,72 @@ func TestPromptDcloseStateWriteFailureNamesTheCleanMarkerAndPlan(t *testing.T) {
 	}
 }
 
+// promptDcloseCommittedRecoveryState is a recoverable session whose plan commit already landed: it
+// carries the D-close marker of wp-1 and a stored unverified-subagent record whose write-back the
+// reader would truncate, so the IDLE-write guard refuses the resting state while the file stays
+// readable.
+func promptDcloseCommittedRecoveryState(slug, epoch string) string {
+	claim := strings.Repeat("x", state.MaxReceiptClaimLen+1)
+	return "{\"phase\":\"C\",\"sessionId\":\"s1\",\"slug\":\"" + slug + "\",\"orchestrationActive\":true,\"checkEpoch\":\"" + epoch +
+		"\",\"flags\":{\"auditPassed\":true,\"checkPassed\":true}," +
+		"\"dcloseRecovery\":{\"sessionId\":\"s1\",\"checkEpoch\":\"" + epoch + "\",\"closedWorkPhaseId\":\"wp-1\",\"nextWorkPhaseId\":\"wp-2\"}," +
+		"\"unverifiedSubagents\":[{\"agentId\":\"a1\",\"turnId\":\"t1\",\"agentType\":\"worker\",\"attempts\":1,\"receiptClaimed\":\"" + claim +
+		"\",\"recordedAt\":\"2026-01-01T00:00:00.000Z\",\"resolvable\":false}]}"
+}
+
+// TestPromptDcloseRecoveryAlreadyCommittedPlanIsNamedByALaterRefusal is the d1 case: a marker-matched
+// retry whose plan commit already landed (the settled shape is on disk, so the retry rewrites
+// nothing) continues the same close, so a later refusal must name the goalplan that close published
+// as well as the marker. The plan is committed by the first attempt and only the marker is inherited,
+// so a branch that recorded the plan only when this invocation rewrote it would drop it.
+func TestPromptDcloseRecoveryAlreadyCommittedPlanIsNamedByALaterRefusal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode this case needs")
+	}
+	cwd := promptDcloseRepo(t)
+	slug := "chat-recovery-plan-committed"
+	// The settled shape the first attempt wrote: the target done, the recorded successor started, the
+	// cursor on it. CloseFixedWorkPhase reads this as already_done, so the retry writes no plan.
+	plan := goalplan.BuildGoalplan(goalplan.NewGoalplanInput{Objective: "committed " + slug})
+	plan.Slug = slug
+	plan.WorkPhases = []goalplan.GoalplanWorkPhase{
+		{ID: "wp-1", Title: "one", Status: goalplan.WorkPhaseDone, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+		{ID: "wp-2", Title: "two", Status: goalplan.WorkPhaseInProgress, Tasks: []goalplan.GoalplanTask{}, CriteriaIDs: []string{}},
+	}
+	plan.ActiveWorkPhaseID = promptDcloseStr("wp-2")
+	if err := goalplan.WriteGoalplan(cwd, plan); err != nil {
+		t.Fatal(err)
+	}
+	promptSubmitStateFile(t, cwd, "s1", func(s *state.State) {
+		s.Phase, s.Slug, s.OrchestrationActive = state.PhaseC, slug, true
+		s.CheckEpoch = promptDcloseStr("c-recovery-committed")
+		s.Flags = state.Flags{AuditPassed: true, CheckPassed: true}
+		s.DcloseRecovery = &state.DcloseRecoveryMarker{SessionID: "s1", CheckEpoch: "c-recovery-committed",
+			ClosedWorkPhaseID: "wp-1", NextWorkPhaseID: promptDcloseStr("wp-2")}
+	})
+	// A stored record whose write-back would lose it: the IDLE-write guard refuses the resting state
+	// while the file stays readable, so the retry reaches the guard after the plan commit the first
+	// attempt already landed.
+	promptDcloseWrite(t, cwd, filepath.Join(".crw", "sessions", "s1.json"),
+		promptDcloseCommittedRecoveryState(slug, "c-recovery-committed"))
+	answer, panicked := promptDcloseRunWith(t, cwd, "s1", "t1", promptDcloseAttest("wp-1", ""), nil)
+	if panicked != nil {
+		t.Fatalf("the close panicked: %v", panicked)
+	}
+	if !strings.Contains(answer, "cannot be rewritten without losing a stored record") {
+		t.Errorf("the retry did not refuse at the IDLE-write guard: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseMarkerPublishedSentence()) {
+		t.Errorf("the refusal did not name the marker this close published: %q", answer)
+	}
+	if !strings.Contains(answer, promptDcloseGoalplanPublishedSentence()) {
+		t.Errorf("the refusal did not name the goalplan this close already committed: %q", answer)
+	}
+	if strings.Contains(answer, "Nothing was written.") {
+		t.Errorf("the refusal denied the artifacts this close published: %q", answer)
+	}
+}
+
 // TestPromptDclosePlanFailureWhoseReasonHoldsTheDenialKeepsTheTrailingClaim is the d1 case: a plan
 // write error whose own text contains "Nothing was written." must not make the partial refusal edit
 // that inner phrase and leave the false trailing claim behind. The trailing claim is the one the

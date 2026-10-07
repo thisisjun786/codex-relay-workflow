@@ -571,6 +571,11 @@ func promptDclosePlanWork(p PromptSubmitPayload, held state.State, plan *goalpla
 			return promptDclosePlanOutcome{output: refusal}, nil
 		}
 		closeResult, writeClosedPlan = out.result, out.writePlan
+		// A retry whose plan commit already landed rewrites nothing but still continues this close, so
+		// the plan counts as published for every refusal below (CRW-930, d1).
+		if out.planCommitted {
+			published.plan = promptDclosePublication{landed: true}
+		}
 	} else {
 		// §35-3: a non-empty all-done plan closes only the cycle. It needs no target and writes no
 		// recovery marker or goalplan row. This sits inside the non-recovery branch so a matching
@@ -741,6 +746,10 @@ func promptDcloseOutstandingMarkerRefusal(sessionID, closedWorkPhaseID string) s
 type promptDcloseRecoveryOutcome struct {
 	result    promptDcloseCloseResult
 	writePlan bool
+	// planCommitted is true when the plan's settled shape is already on disk (CloseFixedWorkPhase's
+	// already_done): the first attempt of this same close committed the plan, so a later refusal of
+	// the retry must name it even though this invocation rewrites nothing (CRW-930, d1).
+	planCommitted bool
 }
 
 // promptDcloseRecoveryClose is the recoveringDclose arm (:990-1136): the legacy marker refusal, the
@@ -818,6 +827,11 @@ func promptDcloseRecoveryClose(p PromptSubmitPayload, held state.State, plan *go
 			"restore that work-phase and repeat the same D request. Nothing was written."), true
 	case goalplan.WorkPhaseCloseFixedOK:
 		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: promptDcloseString(closed.ClosedID), plan: closed.Plan}, writePlan: true}, "", false
+	case goalplan.WorkPhaseCloseFixedAlreadyDone:
+		// The settled shape is already on disk, so the first attempt of this close committed the plan:
+		// this invocation rewrites nothing, but the plan is one of the artifacts the close published and
+		// every later refusal must name it (CRW-930, d1).
+		return promptDcloseRecoveryOutcome{result: promptDcloseCloseResult{kind: "ok", closedID: closePhaseID, plan: plan}, planCommitted: true}, "", false
 	}
 	// already_done and any other answer: the close settled on the fixed target, and the plan is
 	// written only when an absent-target resume activated the recorded successor (§53).
