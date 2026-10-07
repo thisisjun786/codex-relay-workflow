@@ -68,7 +68,8 @@ export const HELP_CONTENT: Record<HelpTopicId, HelpEntry> = {
           <li>Main model keeps the original session's model. Choosing a model overrides that role only.</li>
           <li>Session effort follows the parent session's effort; pick a level to override it.</li>
           <li>The model list comes from the catalog. When it cannot be read the previous list or an error state is shown, never a fabricated one.</li>
-          <li>An effort is greyed out only when the catalog advertises a ladder that omits it. An unreported ladder is not evidence that the model refuses it.</li>
+          <li>An effort is greyed out for two reasons: the selected model's catalog ladder does not offer it, or the helper-role store does not hold it. The store keeps low, medium, high and xhigh, so a name the catalog or the execution policy uses (none, max) is listed but never selectable. An unreported ladder is not evidence that the model refuses it.</li>
+          <li>When the selected model offers no effort the helper-role store accepts, no level is selectable and the role uses the session effort; a saved effort is kept, not silently changed.</li>
         </ul>
       </>
     ),

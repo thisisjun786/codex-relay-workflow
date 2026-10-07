@@ -174,11 +174,13 @@ func orchestrateTransitionDClose(ctx context.Context, seams *orchestrateCommitSe
 // interview.MaxTrackerArray and drops an unnamed ontology entity, so the same write is refused when cliInterviewIntact
 // says the file holds a record the rebuild cannot keep. The reason names which record the caller would lose.
 func orchestrateTransitionStateWritable(cwd, sessionID string, kept state.State) (string, bool) {
-	if !cliVerdictsIntact(cwd, sessionID, len(kept.UnverifiedSubagents)) {
-		return orchestrateTransitionUnverifiedRefusalReason, false
-	}
+	// The interview check runs first because cliVerdictsIntact now covers the tracker too, and the interview
+	// loss must keep its own reason (the shared judgement's interview class, reached through that guard).
 	if !cliInterviewIntact(cwd, sessionID) {
 		return cliInterviewRefusalReason, false
+	}
+	if !cliVerdictsIntact(cwd, sessionID, len(kept.UnverifiedSubagents)) {
+		return orchestrateTransitionUnverifiedRefusalReason, false
 	}
 	return "", true
 }
