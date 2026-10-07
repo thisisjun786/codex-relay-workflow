@@ -710,6 +710,18 @@ func (d *Dir) migrateOwnedDirIdentityClaim(tmp string, want fileID, perm uint32)
 	if err := migrateOwnedDirIdentityFchmod(fd, perm); err != nil {
 		return &fs.PathError{Op: "chmod", Path: d.join(tmp), Err: err}
 	}
+	// The mode is made durable on the directory itself before its name is published, so a crash
+	// cannot leave the final name durable with the corrected mode lost - the state this issue exists
+	// to make recoverable. The handle above is opened without permission and cannot be synced, so the
+	// directory is opened for reading now that it carries perm and that handle is synced.
+	sync, err := unix.Openat(d.fd(), tmp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return &fs.PathError{Op: "open", Path: d.join(tmp), Err: err}
+	}
+	defer unix.Close(sync)
+	if err := unix.Fsync(sync); err != nil {
+		return &fs.PathError{Op: "fsync", Path: d.join(tmp), Err: err}
+	}
 	return nil
 }
 
