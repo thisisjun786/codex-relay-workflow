@@ -36,6 +36,10 @@ const statusSchema = "crw-gui-status/1"
 // command and reports its own reason instead of being cut off here.
 const statusSourceTimeout = 45 * time.Second
 
+// statusPolicyTimeout bounds the policy read. It is separate from statusSourceTimeout so a test
+// can drive the timeout path without waiting out the manage sources' bound.
+var statusPolicyTimeout = statusSourceTimeout
+
 // The two answers of one read.
 const (
 	statusOK      = "ok"
@@ -82,6 +86,12 @@ type statusManageRunner func(ctx context.Context, args []string) (code int, stdo
 var statusManageGate = make(chan struct{}, 1)
 
 var statusManage statusManageRunner = statusRunManage
+
+// statusPolicyReader is the policy seam: the same read the policy endpoint exposes, replaceable
+// so a test can observe the deadline it runs under and the case where it does not answer.
+type statusPolicyReaderFunc func(ctx context.Context) statusPolicyReading
+
+var statusPolicyReader statusPolicyReaderFunc = statusPolicyReadProduction
 
 // statusRunManage is the production seam: crw manage, in this process, with the output captured.
 func statusRunManage(ctx context.Context, args []string) (int, string, string) {
@@ -223,6 +233,25 @@ func statusAppServerSource(ctx context.Context) statusMark {
 // statusPolicyRead reads the execution policy the wiring record names, through the same
 // internal/policystore reads GET /api/policy uses. It writes nothing.
 func statusPolicyRead(ctx context.Context) statusPolicyReading {
+	// The policy read is a source like the manage reads, so it gets the same bound: a read that
+	// does not answer inside it is unknown with a reason rather than something that holds the
+	// request open.
+	readCtx, cancel := context.WithTimeout(ctx, statusPolicyTimeout)
+	defer cancel()
+	reading := statusPolicyReader(readCtx)
+	if err := readCtx.Err(); err != nil && reading.State == statusOK {
+		// The read reported ok only because it fell back on what it already had; the deadline is
+		// the fact that decides, so it is reported rather than passed on as a success.
+		return statusPolicyReading{State: statusUnknown, PolicyState: reading.PolicyState,
+			Path: reading.Path, Applied: policystore.AppliedUnverifiable,
+			Reason: "the execution policy read did not finish: " + err.Error()}
+	}
+	return reading
+}
+
+// statusPolicyReadProduction is the policy read itself: the same internal/policystore calls
+// GET /api/policy makes. It writes nothing.
+func statusPolicyReadProduction(ctx context.Context) statusPolicyReading {
 	located := policystore.Locate(envLookup)
 	reading := policystore.Read(located)
 	running := policystore.RunningDigest(ctx, envLookup)

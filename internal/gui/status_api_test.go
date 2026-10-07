@@ -547,3 +547,49 @@ func TestStatusCancelledRequestIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// The plan promises a time bound on every source, the policy read included. This pins it: the
+// read runs under its own deadline, and a policy read that does not finish inside the bound is
+// unknown with a reason rather than left to hold the request open.
+func TestStatusPolicyReadIsBounded(t *testing.T) {
+	policyHost(t, policyText, true)
+	previous := statusPolicyReader
+	var gotDeadline bool
+	statusPolicyReader = func(ctx context.Context) statusPolicyReading {
+		_, gotDeadline = ctx.Deadline()
+		return statusPolicyReadProduction(ctx)
+	}
+	t.Cleanup(func() { statusPolicyReader = previous })
+	fakeStatusManage(t, okStatusSources())
+	decodeStatus(t, statusServer(t))
+	if !gotDeadline {
+		t.Fatal("the policy read ran without a deadline")
+	}
+}
+
+// TestStatusPolicyReadThatOutlivesItsBoundIsUnknown pins the other half: a read that does not
+// finish inside the bound is unknown with a reason, never a blank or an ok.
+func TestStatusPolicyReadThatOutlivesItsBoundIsUnknown(t *testing.T) {
+	// A short bound keeps the test quick while it still exercises the real timeout path.
+	previousTimeout := statusPolicyTimeout
+	statusPolicyTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { statusPolicyTimeout = previousTimeout })
+	previous := statusPolicyReader
+	statusPolicyReader = func(ctx context.Context) statusPolicyReading {
+		// Stand in for a read that never answers: wait for the bound to expire, then report it.
+		<-ctx.Done()
+		return statusPolicyReading{
+			State: statusUnknown, PolicyState: "unreadable", Applied: "unverifiable",
+			Reason: "the execution policy read did not finish: " + ctx.Err().Error(),
+		}
+	}
+	t.Cleanup(func() { statusPolicyReader = previous })
+	fakeStatusManage(t, okStatusSources())
+	policy := object(t, bar(t, decodeStatus(t, statusServer(t))), "executionPolicy")
+	if state, _ := policy["state"].(string); state != "unknown" {
+		t.Fatalf("executionPolicy state = %q, want unknown", state)
+	}
+	if reason, _ := policy["reason"].(string); reason == "" {
+		t.Fatalf("executionPolicy reason is blank: %#v", policy)
+	}
+}
