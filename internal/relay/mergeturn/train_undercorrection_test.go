@@ -690,3 +690,31 @@ func TestTheLaneGateRefusesAReplacedHeadThatAnotherNodeStillAccepts(t *testing.T
 		t.Fatalf("the refusal does not name the replaced relationship: %s", refusal.Detail)
 	}
 }
+
+// CRW-906 final round, delta review ad054763: a head the active acceptance of this relationship reaches only
+// through its own base refresh is that relationship's current result, so a superseded acceptance's refresh
+// row for the same head must not refuse a turn holding it.
+func TestTheLaneGateKeepsAHeadThatTheActiveAcceptanceReachesByARefresh(t *testing.T) {
+	w := newFx(t)
+	w.ucLaneRelationship("rel-c", 2)
+	refresh := "dbr-" + strings.Repeat("c", 60)
+	w.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?, 'acc-rel-c', 1, 'rel-c', 1, 'ev-r1', 'rev-r1', 'head-refreshed', ?, ?, 'base-0', '{}', '[]', ?, 0, '2023-11-14T22:13:20.000000+00:00')",
+		refresh, fxRepo, fxBase, alpha.TaskID)
+	w.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE relationship_id = 'rel-c'")
+	w.exec("INSERT INTO dag_acceptances (acceptance_id, plan_id, node_id, manifest_digest, relationship_id, execution_generation, event_id, revision_hash, criteria_set_digest, verdict, head_sha, repository, pr_number, ack_tier, verdict_turn_id, rule_version_json, accepted_by_task_id, coordinator_epoch, accepted_at, state)"+
+		" VALUES ('acc-rel-c2', 'plan-x', 'node-c', 'manifest-c2', 'rel-c', 2, 'ev-c2', 'rev-c2', 'crit-1', 'verified', 'head-b', ?, 1, 'bound', 'turn-1', '{}', ?, 0, '2023-11-14T22:13:21.000000+00:00', 'active')",
+		fxRepo, alpha.TaskID)
+	w.exec("INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at)"+
+		" VALUES (?, 'acc-rel-c2', 1, 'rel-c', 2, 'ev-r2', 'rev-r2', 'head-refreshed', ?, ?, 'base-0', '{}', '[]', ?, 0, '2023-11-14T22:13:22.000000+00:00')",
+		"dbr-"+strings.Repeat("d", 60), fxRepo, fxBase, alpha.TaskID)
+	turn := store.MergeTurnsRow{TurnID: "mtn-refresh-current", TargetKey: "tgt-x", Repository: fxRepo, BaseRef: fxBase, ProjectKey: fxA,
+		HolderTaskID: alpha.TaskID, CandidateHead: "head-refreshed", State: Holding}
+	refusal, err := underCorrectionRefusal(w.ctx, w.s.Querier(w.ctx), turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refusal != nil {
+		t.Fatalf("a head the active acceptance reaches by its own refresh was refused: %s", refusal.Detail)
+	}
+}

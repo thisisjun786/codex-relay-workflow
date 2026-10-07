@@ -552,7 +552,8 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		return err
 	}
 	// A bundle carries a head through whichever node's member it is: two accepted nodes can name the same
-	// commit, so the member is matched by the repository and its head, not by the acceptance's relationship.
+	// commit, so a member is matched by the repository and its head. The acceptance's own member is matched
+	// wherever its train names the repository, as before.
 	forge := acc.Repository
 	if has, err := queryOne(ctx, q, "SELECT forge_repository FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge); err != nil {
 		return err
@@ -565,9 +566,9 @@ func (s *Scheduler) refuseLiveBundleCarrying(ctx context.Context, q store.Querie
 		}
 		var train string
 		found, err := queryOne(ctx, q, "SELECT m.train_id FROM merge_train_members m JOIN merge_trains t ON t.train_id = m.train_id"+
-			" WHERE lower(t.repository) = lower(?) AND lower(trim(m.member_head)) = lower(trim(?))"+
+			" WHERE (lower(t.repository) = lower(?) OR m.relationship_id = ?) AND lower(trim(m.member_head)) = lower(trim(?))"+
 			" AND (SELECT kind FROM merge_train_events e WHERE e.train_id = m.train_id ORDER BY e.seq DESC LIMIT 1) IN ('opened','verified')"+
-			" ORDER BY m.train_id, m.seq LIMIT 1", []any{forge, head}, &train)
+			" ORDER BY m.train_id, m.seq LIMIT 1", []any{forge, acc.RelationshipID, head}, &train)
 		if err != nil {
 			return err
 		}

@@ -61,3 +61,26 @@ func TestACorrectionIsNotRecordedOverALiveBundleCarryingTheHeadThroughAnotherNod
 		t.Fatalf("the refused correction wrote the execution %q", got)
 	}
 }
+
+// CRW-906 final round, delta review ad054763: a legacy acceptance keeps its local target and has no forge row;
+// a live bundle that carries its head through its own relationship is still refused, whatever repository the
+// bundle's train names.
+func TestACorrectionIsNotRecordedOverALiveBundleCarryingTheHeadThroughItsOwnLegacyNode(t *testing.T) {
+	t.Parallel()
+	k, accepted := rvSettledSharedRoot(t)
+	rid := accepted["B"].RelationshipID
+	prepared := k.rvPrepare("sr", "B")
+	acOpenByHand(t, k, rid, prepared.DispatchRequestID, "needs_changes_revision", 2, true)
+	k.exec("UPDATE dag_acceptances SET repository = '/synthetic/checkout', head_sha = 'head-b' WHERE relationship_id = ?", rid)
+	k.exec("DELETE FROM dag_acceptance_forge WHERE acceptance_id = (SELECT acceptance_id FROM dag_acceptances WHERE relationship_id = ?)", rid)
+	k.exec("INSERT INTO merge_trains (train_id, target_key, repository, base_ref, base_sha, leader_task_id, created_at) VALUES ('trn-legacy', 'tgt', 'owner/repo', 'dev', 'base-0', 'parent', 't')")
+	k.exec("INSERT INTO merge_train_members (train_id, seq, turn_id, pr_number, relationship_id, member_head) VALUES ('trn-legacy', 1, 'turn-legacy', 5, ?, 'head-b')", rid)
+	k.exec("INSERT INTO merge_train_events (train_id, seq, kind, actor, detail_json, recorded_at) VALUES ('trn-legacy', 1, 'opened', 'parent', '{}', 't')")
+	_, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest)
+	if refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("a correction over a live bundle carrying a legacy node's own head = %v, want disposition_conflict", err)
+	}
+	if !strings.Contains(err.Error(), "trn-legacy") {
+		t.Fatalf("the refusal does not name the bundle: %v", err)
+	}
+}

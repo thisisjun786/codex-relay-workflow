@@ -213,10 +213,18 @@ func ucReplacedHead(ctx context.Context, q store.Querier, repository, head strin
 			" WHERE a.state <> 'active' AND " + identity + " = lower(?) AND lower(trim(f.head_sha)) = lower(trim(?))"
 		args = []any{repository, head, repository, head}
 	}
-	// A relationship that still holds the head actively is not replaced by it: its own head is the plan's result.
-	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +
-		" WHERE a2.state = 'active' AND lower(trim(a2.head_sha)) = lower(trim(?))) ORDER BY relationship_id LIMIT 1"
+	// A relationship that still holds the head actively, as its acceptance's head or through a base refresh of
+	// it, is not replaced by it: the head is that relationship's own current result.
+	held := "lower(trim(a2.head_sha)) = lower(trim(?))"
 	args = append(args, head)
+	if refreshedHeads, err := ucZoneTable(ctx, q, "dag_base_refreshes"); err != nil {
+		return "", err
+	} else if refreshedHeads {
+		held += " OR a2.acceptance_id IN (SELECT f2.acceptance_id FROM dag_base_refreshes f2 WHERE lower(trim(f2.head_sha)) = lower(trim(?)))"
+		args = append(args, head)
+	}
+	query = "SELECT relationship_id FROM (" + query + ") WHERE relationship_id NOT IN (SELECT a2.relationship_id FROM dag_acceptances a2" +
+		" WHERE a2.state = 'active' AND (" + held + ")) ORDER BY relationship_id LIMIT 1"
 	var relationship string
 	if err := q.QueryRowContext(ctx, query, args...).Scan(&relationship); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
