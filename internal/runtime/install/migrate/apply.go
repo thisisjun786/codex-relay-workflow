@@ -36,6 +36,13 @@ const (
 // applyReasonChanged refuses a source that moved between classification and publication, which stops the run.
 const applyReasonChanged Reason = "changed"
 
+// migrateReviewFollowupReceiptReadCap is the size bound the receipt reader applies, which is what decides whether a planned
+// record under evidence/ can be judged by its content at all: gate.ParseSourceBoundReceipt reads a receipt with
+// readFile(path, maxText), maxText being V8's longest string, the most the oracle's readFileSync(path, "utf8") returns
+// (internal/pabcd/gate/js.go:19-20). A record larger than this is one the receipt reader itself cannot read, so it keeps
+// the name judgement instead of being opened here.
+const migrateReviewFollowupReceiptReadCap = 0x1fffffe8
+
 // migrateOwnedDirBeforeEnsureChild runs between the lookup that found a destination directory absent
 // and the mkdir that would create it, so a case can put another actor's creation in that window; it is
 // nil in a run, and only a test sets it.
@@ -379,10 +386,10 @@ func (a *applyRun) writeFiles() error {
 // entries a receipt names, each resolved against the receipt's own directory, whose kinds are the verdict and
 // artifact-identity files the receipt is judged with (internal/pabcd/gate/receipt.go:35-36, gate/manifest.go:89-143), and
 // the records that are receipts. A record is a receipt by its content, never by its name (CRW-879): a planned written
-// regular file under evidence/ whose bytes, read within attentionReadCap, are a JSON object with a non-empty
+// regular file under evidence/ whose bytes, read within the receipt reader's own bound, are a JSON object with a non-empty
 // artifactManifest array. The receipt reader takes the name its caller chose (gate/receipt.go:104-108), so a dependency
 // order that only knew the conventional qa-receipt.json name published a receipt under another name before the artifact it
-// refers to. A record that cannot be read, is over the bound or holds no manifest array is not judged by content, and one
+// refers to. A record that cannot be read, is past that bound or holds no manifest array is not judged by content, and one
 // carrying the conventional name keeps the place the name gave it, so an unreadable receipt still orders after its
 // dependencies. Nothing here decides what is copied or fails the run: a record this run cannot read contributes no key and
 // is reported by attention.
@@ -422,16 +429,16 @@ func (a *applyRun) migrateApplyReviewReferences() (refs, receipts map[string]boo
 // artifactManifest array, whatever the file is called: the receipt reader takes the caller's chosen name
 // (internal/pabcd/gate/receipt.go:104-108), so a dependency order that only knew the conventional qa-receipt.json name left
 // a receipt under another name publishing before the artifact it refers to (CRW-879). A file this run cannot open, one past
-// attentionReadCap, or one that is not such an object returns ok false with a nil manifest, and the caller falls back to the
-// name judgement for it. Only the entries whose kind is verdict or artifact-identity name a dependency; an entry of another
-// kind, or one that is not an object, contributes no key and never fails the run.
+// migrateReviewFollowupReceiptReadCap, or one that is not such an object returns ok false with a nil manifest, and the
+// caller falls back to the name judgement for it. Only the entries whose kind is verdict or artifact-identity name a
+// dependency; an entry of another kind, or one that is not an object, contributes no key and never fails the run.
 func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) (manifest []struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
 }, ok bool) {
-	if it.Size > attentionReadCap {
-		// The plan already measured it, so a record past the bound is refused without opening it: the same judgement the
-		// read below would reach, at no cost to a large artifact.
+	if it.Size > migrateReviewFollowupReceiptReadCap {
+		// The plan already measured it, so a record past the receipt reader's bound is refused without opening it: the
+		// receipt reader could not read it either, so it keeps the name judgement.
 		return nil, false
 	}
 	dir := classifyDirPart(it.Source)
@@ -444,9 +451,9 @@ func (a *applyRun) migrateReviewFollowupReceiptManifest(it Item) (manifest []str
 	if err != nil {
 		return nil, false
 	}
-	data, err := io.ReadAll(io.LimitReader(f, attentionReadCap+1))
+	data, err := io.ReadAll(io.LimitReader(f, migrateReviewFollowupReceiptReadCap+1))
 	_ = f.Close()
-	if err != nil || len(data) > attentionReadCap {
+	if err != nil || len(data) > migrateReviewFollowupReceiptReadCap {
 		return nil, false
 	}
 	var view struct {

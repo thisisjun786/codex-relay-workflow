@@ -31,13 +31,12 @@ func TestMigrateApplyReviewFollowupPublishesTheArtifactOfAReceiptUnderAnotherNam
 	}
 }
 
-// Control: the QA receipt name still takes the referrer's place, for a manifest this run can read and for one it cannot,
-// so the dependencies-first order an unreadable record kept before is unchanged.
+// Control: the QA receipt name still takes the referrer's place, for a manifest this run can read and for one it cannot
+// judge by content, so the dependencies-first order an unreadable record kept before is unchanged.
 func TestMigrateApplyReviewFollowupKeepsTheQaReceiptOrder(t *testing.T) {
 	for name, receipt := range map[string]string{
-		"readable manifest": "{\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}]}",
-		"manifest too large to read": "{\"note\":\"" + strings.Repeat("x", attentionReadCap) +
-			"\",\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}]}",
+		"readable manifest":          "{\"artifactManifest\":[{\"path\":\"verdict.json\",\"kind\":\"verdict\"}]}",
+		"manifest of the wrong type": "{\"artifactManifest\":\"verdict.json\"}",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, r, p := apPlan(t, map[string]string{
@@ -114,13 +113,11 @@ func TestMigrateApplyReviewFollowupDoesNotCountAWriteItNeverRenamed(t *testing.T
 	}
 }
 
-// Control: a file past the bound the scan reads is not judged by content, so it keeps the plan order the name judgement
-// gave it and its dependencies are not hoisted.
-func TestMigrateApplyReviewFollowupKeepsPlanOrderPastTheReadBound(t *testing.T) {
-	receipt := "{\"note\":\"" + strings.Repeat("x", attentionReadCap) +
-		"\",\"artifactManifest\":[{\"path\":\"z/verdict.json\",\"kind\":\"verdict\"}]}"
+// Control: a record under evidence/ that holds no manifest array is not a receipt, so its dependencies are not hoisted and
+// the plan order stands. This is the case that keeps the content judgement from reordering every artifact group.
+func TestMigrateApplyReviewFollowupKeepsPlanOrderWithoutAManifest(t *testing.T) {
 	_, r, p := apPlan(t, map[string]string{
-		"evidence/s/a.json":         receipt,
+		"evidence/s/a.json":         "{\"verdict\":true}",
 		"evidence/s/z/verdict.json": "v",
 	}, nil)
 	pub, leaves := migrateApplyReviewRenames(t)
@@ -129,6 +126,6 @@ func TestMigrateApplyReviewFollowupKeepsPlanOrderPastTheReadBound(t *testing.T) 
 	}
 	got := leaves()
 	if a, v := slices.Index(got, "a.json"), slices.Index(got, "verdict.json"); a < 0 || v < 0 || a > v {
-		t.Errorf("a record past the bound must keep the plan order: %v", got)
+		t.Errorf("a record with no manifest array must keep the plan order: %v", got)
 	}
 }
