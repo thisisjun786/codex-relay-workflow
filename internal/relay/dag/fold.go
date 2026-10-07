@@ -32,14 +32,19 @@ func Apply(prev State, rev Revision) (State, Diff, []Violation) {
 	if prev.ProjectKey == "" {
 		prev.ProjectKey = rev.ProjectKey
 	}
-	next, diff, more := applyChanges(prev, rev.Changes, true)
+	next, diff, more := applyChanges(prev, rev.Changes, rev.FeatureCriteria, true)
 	return next, diff, append(vs, more...)
 }
+
+// sameNode is whether two node specs are the same spec. It compares the digests of the two specs rather
+// than the structs, because a node now carries lists (packet_id's covers and owns, CRW-839) and a
+// struct is not comparable with a slice in it.
+func sameNode(a, b Node) bool { return canonical(nodeObject(a)) == canonical(nodeObject(b)) }
 
 // applyChanges is the fold. strict adds the graph-size limits: a replay of committed events does not
 // re-judge them, since the limits are a rule of the writer and a log written under an older limit is
 // still the log.
-func applyChanges(prev State, changes []Change, strict bool) (State, Diff, []Violation) {
+func applyChanges(prev State, changes []Change, decls []FeatureCriteriaDecl, strict bool) (State, Diff, []Violation) {
 	var vs []Violation
 	add := func(rule, path, format string, args ...any) {
 		vs = append(vs, Violation{Rule: rule, Path: path, Detail: fmt.Sprintf(format, args...)})
@@ -199,11 +204,24 @@ func applyChanges(prev State, changes []Change, strict bool) (State, Diff, []Vio
 		vs = append(vs, checkEdge(liveEdges[id], live, edgePath(id))...)
 	}
 	vs = append(vs, findCycle(live, liveEdges)...)
+	// The packet rules of the plan the changes produce (CRW-839). They are the writer's, like the size
+	// limits: a plan written before packets existed holds no packet and no declaration and is still the log.
+	criteriaRows := applyFeatureCriteria(prev.FeatureCriteria, prev.Revision+1, decls)
+	if strict {
+		nodePath := func(id string) string {
+			if i, ok := addedNode[id]; ok {
+				return fmt.Sprintf("changes[%d].node.node_id", i)
+			}
+			return "nodes." + id
+		}
+		vs = append(vs, checkPackets(live, liveCriteria(criteriaRows), nodePath)...)
+	}
 	if len(vs) > 0 {
 		return State{}, Diff{}, vs
 	}
 
 	next, diff, more := materialize(prev, live, liveEdges)
+	next.FeatureCriteria = criteriaRows
 	var err error
 	if next.Lifecycle, err = applyLifecycle(prev.Lifecycle, next.Revision, changes); err != nil {
 		// unreachable for a revision whose changes passed the checks above; a violation rather than a panic if it is ever not
@@ -446,7 +464,7 @@ func materialize(prev State, live map[string]liveNode, liveEdges map[string]Edge
 		}
 		had[row.NodeID] = true
 		cur, ok := live[row.NodeID]
-		if ok && cur.Node == row.Node && slice[row.NodeID] == row.SliceDigest && cur.Supersedes == row.SupersedesNodeID {
+		if ok && sameNode(cur.Node, row.Node) && slice[row.NodeID] == row.SliceDigest && cur.Supersedes == row.SupersedesNodeID {
 			continue
 		}
 		row.RetiredRev = rev
@@ -502,6 +520,7 @@ func (s State) At(rev int64) Snapshot {
 	snap := Snapshot{PlanID: s.PlanID, ProjectKey: s.ProjectKey, Revision: rev, Nodes: []SnapNode{}, Edges: []SnapEdge{}}
 	var nodeLife map[string]string
 	snap.PlanState, nodeLife = lifeAt(s.Lifecycle, rev)
+	snap.FeatureCriteria = criteriaAt(s.FeatureCriteria, rev)
 	for _, row := range s.Nodes {
 		if row.IntroducedRev <= rev && (row.RetiredRev == 0 || row.RetiredRev > rev) {
 			snap.Nodes = append(snap.Nodes, SnapNode{Node: row.Node, SliceDigest: row.SliceDigest, SupersedesNodeID: row.SupersedesNodeID, IntroducedRev: row.IntroducedRev, Lifecycle: nodeLife[row.NodeID]})
@@ -514,13 +533,14 @@ func (s State) At(rev int64) Snapshot {
 	}
 	sort.Slice(snap.Nodes, func(i, j int) bool { return snap.Nodes[i].NodeID < snap.Nodes[j].NodeID })
 	sort.Slice(snap.Edges, func(i, j int) bool { return snap.Edges[i].EdgeID < snap.Edges[j].EdgeID })
-	snap.StateDigest = stateDigest(snap.PlanID, snap.ProjectKey, snap.PlanState, snap.Nodes, snap.Edges)
+	snap.StateDigest = stateDigest(snap.PlanID, snap.ProjectKey, snap.PlanState, snap.Nodes, snap.Edges, snap.FeatureCriteria)
 	return snap
 }
 
 // StateFromSnapshot is the state a snapshot stands for: its live rows and no history.
 func StateFromSnapshot(s Snapshot) State {
 	st := State{PlanID: s.PlanID, ProjectKey: s.ProjectKey, Revision: s.Revision}
+	st.FeatureCriteria = append([]FeatureCriteriaRow(nil), s.FeatureCriteria...)
 	for _, n := range s.Nodes {
 		st.Nodes = append(st.Nodes, NodeVersion{Node: n.Node, SliceDigest: n.SliceDigest, SupersedesNodeID: n.SupersedesNodeID, IntroducedRev: n.IntroducedRev})
 		if n.Lifecycle != "" {
@@ -547,7 +567,7 @@ func Replay(base Snapshot, events []Event) (Snapshot, error) {
 		if ev.ParentRevisionNo != st.Revision || ev.RevisionNo != st.Revision+1 {
 			return Snapshot{}, fmt.Errorf("event %d (parent %d) does not follow revision %d: the log is missing, repeats or reorders an event", ev.RevisionNo, ev.ParentRevisionNo, st.Revision)
 		}
-		next, _, vs := applyChanges(st, ev.Changes, false)
+		next, _, vs := applyChanges(st, ev.Changes, ev.FeatureCriteria, false)
 		if len(vs) > 0 {
 			return Snapshot{}, fmt.Errorf("event %d does not apply: %s", ev.RevisionNo, (&PlanRejected{Violations: vs}).refusal().Detail)
 		}

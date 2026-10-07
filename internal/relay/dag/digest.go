@@ -30,8 +30,38 @@ func nodeObject(n Node) map[string]any {
 	if n.Title != "" {
 		m["title"] = n.Title
 	}
+	// The packet identity is part of the node's spec, and an unset field is absent, so a node without a
+	// packet_id digests exactly as it did before there were packets (CRW-839).
+	if n.PacketID != "" {
+		m["packet_id"] = n.PacketID
+	}
+	if len(n.Covers) > 0 {
+		m["covers"] = sortedList(n.Covers)
+	}
+	if len(n.Owns) > 0 {
+		m["owns"] = sortedList(n.Owns)
+	}
 	return m
 }
+
+// sortedList is a string list in sorted order as canonical JSON reads it, so two equal lists serialize
+// equally however they were spelled.
+func sortedList(in []string) []any {
+	sorted := append([]string(nil), in...)
+	sort.Strings(sorted)
+	out := make([]any, len(sorted))
+	for i, s := range sorted {
+		out[i] = s
+	}
+	return out
+}
+
+// CriteriaJSON is one issue's declared criteria as the store keeps them (CRW-839).
+func CriteriaJSON(list []Criterion) string { return canonical(criteriaList(list)) }
+
+// IDsJSON is a list of identifiers as the store keeps it, in sorted order so two equal lists are one
+// value (CRW-839).
+func IDsJSON(list []string) string { return canonical(sortedList(list)) }
 
 // edgeObject is an edge's spec with the fields that apply to it: an unset optional field is absent,
 // so equal specs serialize equally.
@@ -111,7 +141,7 @@ func SliceDigest(n Node, incoming []Edge) string {
 // stateDigest is the digest of a plan's live content: what two equal plans share whatever revisions
 // produced them. The lifecycle (CRW-281) is part of it only when it is not the default, so a plan that was never
 // paused, cancelled or archived digests exactly as it did before there were lifecycle changes.
-func stateDigest(planID, project, planState string, nodes []SnapNode, edges []SnapEdge) string {
+func stateDigest(planID, project, planState string, nodes []SnapNode, edges []SnapEdge, criteria []FeatureCriteriaRow) string {
 	ns := make([]any, len(nodes))
 	for i, n := range nodes {
 		m := nodeObject(n.Node)
@@ -132,6 +162,14 @@ func stateDigest(planID, project, planState string, nodes []SnapNode, edges []Sn
 	if planState != "" {
 		content["plan_state"] = planState
 	}
+	if len(criteria) > 0 {
+		// present only when the plan declares a feature's criteria, so a plan that declares none digests as it always did
+		cs := make([]any, len(criteria))
+		for i, r := range criteria {
+			cs[i] = featureCriteriaObject(r)
+		}
+		content["feature_criteria"] = cs
+	}
 	return Digest(content)
 }
 
@@ -142,6 +180,14 @@ func RequestDigest(r Revision) string {
 	for i, c := range r.Changes {
 		changes[i] = changeObject(c)
 	}
-	return Digest(map[string]any{"schema": SchemaRevision, "plan_id": r.PlanID, "project_key": r.ProjectKey, "request_id": r.RequestID,
-		"expected_parent_revision": r.ExpectedParent, "coordinator_epoch": r.CoordinatorEpoch, "author_task_id": r.AuthorTaskID, "changes": changes})
+	m := map[string]any{"schema": SchemaRevision, "plan_id": r.PlanID, "project_key": r.ProjectKey, "request_id": r.RequestID,
+		"expected_parent_revision": r.ExpectedParent, "coordinator_epoch": r.CoordinatorEpoch, "author_task_id": r.AuthorTaskID, "changes": changes}
+	if len(r.FeatureCriteria) > 0 {
+		decls := make([]any, len(r.FeatureCriteria))
+		for i, d := range r.FeatureCriteria {
+			decls[i] = map[string]any{"issue_key": d.IssueKey, "criteria": criteriaList(d.Criteria)}
+		}
+		m["feature_criteria"] = decls
+	}
+	return Digest(m)
 }

@@ -156,6 +156,17 @@ func nodeAnswer(n SnapNode) contract.OrderedObject {
 		// only a node the plan paused, cancelled or archived carries the key: an active node reads as it always did
 		o = append(o, contract.Field{Key: "lifecycle", Value: n.Lifecycle})
 	}
+	// The packet identity of a feature issue's node (CRW-839): present only on a node that carries it, so
+	// a node without a packet reads as it always did.
+	if n.PacketID != "" {
+		o = append(o, contract.Field{Key: "packet_id", Value: n.PacketID})
+	}
+	if len(n.Covers) > 0 {
+		o = append(o, contract.Field{Key: "covers", Value: sortedList(n.Covers)})
+	}
+	if len(n.Owns) > 0 {
+		o = append(o, contract.Field{Key: "owns", Value: sortedList(n.Owns)})
+	}
 	return o
 }
 
@@ -192,6 +203,14 @@ func snapshotAnswer(s Snapshot, head int64, logVerified any) contract.OrderedObj
 	}
 	if s.PlanState != "" {
 		o = append(o, contract.Field{Key: "plan_state", Value: s.PlanState}) // present only while the plan is paused
+	}
+	if len(s.FeatureCriteria) > 0 {
+		// present only when the plan declares a feature's criteria (CRW-839)
+		cs := make([]any, len(s.FeatureCriteria))
+		for i, r := range s.FeatureCriteria {
+			cs[i] = featureCriteriaObject(r)
+		}
+		o = append(o, contract.Field{Key: "feature_criteria", Value: cs})
 	}
 	return append(o, contract.Field{Key: "nodes", Value: nodes}, contract.Field{Key: "edges", Value: edges})
 }
