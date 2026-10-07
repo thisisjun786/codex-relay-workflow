@@ -1112,6 +1112,44 @@ func TestImproveReview799ManyDraftsDoNotExhaustDescriptors(t *testing.T) {
 // filesystem that will not give the unnamed temporary file its one name: the run writes the bundle
 // again as a named temporary file instead of failing, and the bundle is complete. The named file is
 // removed through the descriptor it was created on, so a plain run leaves no temporary file.
+// TestImproveReview799EmptyPathLinkFallbackStillWrites covers the first fallback: a kernel that
+// refuses to name the file a descriptor holds with an empty old path does not make the run fail or
+// lose the unnamed temporary file, because the descriptor's own /proc entry names the same file.
+// The run writes the bundle and leaves no temporary file behind.
+func TestImproveReview799EmptyPathLinkFallbackStillWrites(t *testing.T) {
+	s := improveTestSetup(t)
+	improveReview799Store(t, s)
+	improveInputRelayConfig(t, s)
+	out := filepath.Join(improveReview799OutDir(t, s), "bundle.json")
+	previous := improveEmptyPathLink
+	forced := false
+	improveEmptyPathLink = func(fd, dirfd int, name string) error {
+		forced = true
+		return fmt.Errorf("this kernel refuses an empty old path")
+	}
+	t.Cleanup(func() { improveEmptyPathLink = previous })
+	code, _, stderr := improveTestRun(t, s, "--out", out)
+	if !forced {
+		t.Fatalf("the run never tried to name the temporary file with an empty old path: exit %d, stderr %q", code, stderr)
+	}
+	if code != 0 {
+		t.Fatalf("a run whose empty-path link is refused: exit %d, stderr %q, want the bundle", code, stderr)
+	}
+	if bundle := improveTestReadBundle(t, out); bundle.Schema != improveBundleSchema {
+		t.Errorf("the fallback did not write the bundle: %+v", bundle)
+	}
+	entries, err := os.ReadDir(filepath.Dir(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "improve-bundle-") {
+			t.Errorf("the run left the temporary file %s", entry.Name())
+		}
+	}
+}
+
+// TestImproveReview799UnnameableTemporaryFileStillWrites covers the fallback for a kernel or
 // TestImproveReview799StdoutRunStillChecksInputIdentity covers the promise for a run that prints the
 // bundle instead of writing it: C2 is about the inputs the collection read, so a path that no longer
 // names the file that was read is refused whether or not there is a destination to compare against.

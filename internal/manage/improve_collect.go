@@ -85,6 +85,12 @@ var improveInputAfterRead func()
 // leaves it nil.
 var improveTemporaryLink func(fd, dirfd int, name string) error
 
+// improveEmptyPathLink is the linkat call with an empty old path that names the file a descriptor
+// holds. It is the seam a test uses to make that one spelling fail and prove the descriptor's
+// /proc entry names the same file in its place, so the run keeps the unnamed temporary file.
+// Production leaves it nil.
+var improveEmptyPathLink func(fd, dirfd int, name string) error
+
 // improveStoreFile is the relay store's file name inside a state directory.
 const improveStoreFile = "relay.sqlite3"
 
@@ -644,15 +650,35 @@ func improveWriteTemporary(dirfd int, held os.FileInfo, plan improveOutputPlan, 
 }
 
 // improveLinkTemporary gives the unnamed temporary file its one name through the directory
-// descriptor. Linux's linkat with an empty old path names the file a descriptor holds, which is the
-// only way an unnamed file receives a name; a kernel or filesystem that refuses it is answered by
-// writing the bundle again as a named temporary file.
+// descriptor, so the file stays unnamed until the last moment and a refusal releases it by closing
+// the descriptor. Two spellings name the file a descriptor holds: linkat with an empty old path,
+// which a kernel may refuse to a caller without CAP_DAC_READ_SEARCH, and the descriptor's
+// /proc/self/fd entry, which needs no such capability. The second is tried when the first is
+// refused, so the run keeps the unnamed file rather than falling back to a named one; only when
+// neither works is the bundle written again as a named temporary file.
 func improveLinkTemporary(fd, dirfd int, name string) error {
 	if improveTemporaryLink != nil {
 		return improveTemporaryLink(fd, dirfd, name)
 	}
+	if err := improveLinkAtEmptyPath(fd, dirfd, name); err == nil {
+		return nil
+	}
+	// The descriptor's own /proc entry names the same file, and AT_SYMLINK_FOLLOW makes the link
+	// follow it to the file rather than to the link. This spelling is the alternative the linkat
+	// manual page gives for AT_EMPTY_PATH.
+	return unix.Linkat(unix.AT_FDCWD, improveProcSelfFd(fd), dirfd, name, unix.AT_SYMLINK_FOLLOW)
+}
+
+// improveLinkAtEmptyPath names the file a descriptor holds with an empty old path.
+func improveLinkAtEmptyPath(fd, dirfd int, name string) error {
+	if improveEmptyPathLink != nil {
+		return improveEmptyPathLink(fd, dirfd, name)
+	}
 	return unix.Linkat(fd, "", dirfd, name, improveAtEmptyPath)
 }
+
+// improveProcSelfFd is the /proc entry of an open descriptor.
+func improveProcSelfFd(fd int) string { return fmt.Sprintf("/proc/self/fd/%d", fd) }
 
 // improveCreateTemporary creates the bundle's temporary file unnamed in the directory the
 // descriptor names, so the file has no name to remove and a refusal releases it by closing the
