@@ -30,6 +30,12 @@ const (
 	// guiDriftIndex is the file a fresh build always writes; its absence means the directory was
 	// never built.
 	guiDriftIndex = "index.html"
+	// guiAssetLimit is the size a screen asset must stay under: the bound is exclusive, so an asset
+	// of exactly guiAssetLimit bytes is refused. It is the repository's 2 MiB applied as an exclusive
+	// bound, unlike the large-blob gate's inclusive reading of the same figure (largeblob.go's
+	// largeBlobLimit), because a committed screen asset is a build artifact that must stay under the
+	// ceiling rather than sit at it.
+	guiAssetLimit = 2 << 20
 )
 
 // GuiDrift is `crw-dev ci gui-drift`.
@@ -224,9 +230,9 @@ func guiDriftCommitted(root, revision string) (map[string]guiDriftEntry, error) 
 		if err != nil {
 			return nil, fmt.Errorf("%s has no size in %s: %v", path, revision, err)
 		}
-		if size > largeBlobLimit {
-			return nil, fmt.Errorf("%s is %d bytes, over the %d byte limit a committed screen asset may have",
-				path, size, int64(largeBlobLimit))
+		if size >= guiAssetLimit {
+			return nil, fmt.Errorf("%s is %d bytes; a committed screen asset must be under %d bytes",
+				path, size, int64(guiAssetLimit))
 		}
 		rel, ok := strings.CutPrefix(path, guiAssetsDir+"/")
 		if !ok || rel == "" {
@@ -304,9 +310,9 @@ func guiDriftFresh(built string) (map[string][]byte, error) {
 		if err != nil {
 			return err
 		}
-		if len(data) > largeBlobLimit {
-			return fmt.Errorf("%s is %d bytes, over the %d byte limit a screen asset may have",
-				rel, len(data), int64(largeBlobLimit))
+		if len(data) >= guiAssetLimit {
+			return fmt.Errorf("%s is %d bytes; a screen asset must be under %d bytes",
+				rel, len(data), int64(guiAssetLimit))
 		}
 		files[rel] = data
 		return nil

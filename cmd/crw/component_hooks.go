@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/affordance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
+	pabcdhook "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
 	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
@@ -67,6 +68,20 @@ func componentHooks() []componentHook {
 		// Spawn attach hook: the recursion and final-gate leg, with its own stdin policy and answer.
 		{"pre-tool-use-attaching-skills", "pre-tool-use", func(c invocation, in io.Reader) int {
 			return spawn.RunHook(c.ctx, in, c.stdout, os.LookupEnv)
+		}},
+		// GitHub post guard: CRW's own protection (no CXC oracle), with its own stdin policy and answer.
+		{"pre-tool-use-guarding-github-post", "pre-tool-use", func(c invocation, in io.Reader) int {
+			done := make(chan string, 1)
+			go func() { done <- pabcdhook.GitHubPostAnswer(in) }()
+			select {
+			case answer := <-done:
+				if answer != "" {
+					_, _ = io.WriteString(c.stdout, answer)
+				}
+				return 0
+			case <-c.ctx.Done():
+				return harness.Interrupted
+			}
 		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.
 		{"session-start-ensuring-provider-bridge", "session-start", func(c invocation, in io.Reader) int {

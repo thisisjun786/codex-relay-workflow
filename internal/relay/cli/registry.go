@@ -26,4 +26,6 @@ func init() {
 		supervisorShowCommand, showCommand, statusCommand, daemonCommand)
 	dispatch.Register(nil, serviceCommands()...)
 	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, mergeEvidenceCommand)
+	// The user-decision commands (CRW-737).
+	dispatch.Register(nil, decisionCommands...)
 }

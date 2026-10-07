@@ -76,6 +76,7 @@ var (
 	ErrUnknownBlockingKind = errors.New("decisions: unknown blocking kind")
 	ErrUnknownAuthority    = errors.New("decisions: unknown authority kind")
 	ErrBadNeededBy         = errors.New("decisions: needed_by is not an RFC3339 timestamp")
+	ErrBadRaisedAt         = errors.New("decisions: raised_at is not an RFC3339 timestamp")
 	ErrRecommendation      = errors.New("decisions: the recommendation names no option")
 	ErrAmbiguousField      = errors.New("decisions: a field holds one of the fingerprint's delimiters")
 	ErrControlCharacter    = errors.New("decisions: a field holds a control character")
@@ -321,18 +322,33 @@ func Validate(record Record) error {
 	if record.Authority.Kind != "" && !IsAuthorityKind(record.Authority.Kind) {
 		return fmt.Errorf("%w: %q", ErrUnknownAuthority, record.Authority.Kind)
 	}
-	if record.NeededBy != "" {
-		// RFC 3339's fraction separator is ".", but Go's parser also takes a comma; refuse the
-		// comma explicitly and otherwise keep the value as written, fractional seconds included.
-		if strings.Contains(record.NeededBy, ",") {
-			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
-		}
-		if _, err := time.Parse(time.RFC3339Nano, record.NeededBy); err != nil {
-			return fmt.Errorf("%w: %q", ErrBadNeededBy, record.NeededBy)
-		}
+	if err := checkRFC3339Field(record.NeededBy, ErrBadNeededBy); err != nil {
+		return err
+	}
+	// raised_at is a timestamp too, checked the same way and kept as written: the value a Raise
+	// returns and the value List reads back must be the same text, and only its instant orders.
+	if err := checkRFC3339Field(record.RaisedAt, ErrBadRaisedAt); err != nil {
+		return err
 	}
 	if record.Recommendation != nil && !ids[strings.TrimSpace(record.Recommendation.Option)] {
 		return fmt.Errorf("%w: %q", ErrRecommendation, record.Recommendation.Option)
+	}
+	return nil
+}
+
+// checkRFC3339Field refuses a timestamp field that is not RFC 3339. RFC 3339's fraction separator is
+// ".", but Go's parser also takes a comma, so the comma is refused explicitly; the value is
+// otherwise kept as written, fractional seconds included, because a stored value must read back as
+// the text it was stored with.
+func checkRFC3339Field(value string, refusal error) error {
+	if value == "" {
+		return nil
+	}
+	if strings.Contains(value, ",") {
+		return fmt.Errorf("%w: %q", refusal, value)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+		return fmt.Errorf("%w: %q", refusal, value)
 	}
 	return nil
 }
